@@ -70,7 +70,7 @@ for (const switched of [false, true]) {
         },
       })
     const restore = replaceGlobal('window', {
-      location: { pathname: '/' },
+      location: new URL('/', a.conn.origin),
       history: { pushState: (_: unknown, __: string, path: string) => paths.push(path) },
       dispatchEvent() {},
     })

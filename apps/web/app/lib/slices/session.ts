@@ -1,3 +1,9 @@
+import {
+  acceptHostedPolicy,
+  allowsAccountOrigin,
+  hostedLockMessage,
+  hostedPolicyRevision,
+} from '../client/hosted_policy'
 import { accountHistoryState, routeOwnerFor } from '../client/account_paths'
 import { BOOK_COORDINATION_ERROR } from '../client/book_store'
 import { accountAdmission, addInstance, setGuest } from '../client/book'
@@ -45,6 +51,7 @@ import {
   pageHref,
   readLocal,
   resolveInstance,
+  normalizeOrigin,
   sessionStore,
   shareOrigin,
   writeLocal,
@@ -1559,7 +1566,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (get().token || get().guest) return 'Log out before switching instances'
       const mark = sessionMark()
       try {
+        if (!allowsAccountOrigin(normalizeOrigin(address) ?? address)) return hostedLockMessage()
         const { origin, info } = await resolveInstance(address)
+        if (!allowsAccountOrigin(origin)) return hostedLockMessage()
         if (get().token || get().guest) return 'Log out before switching instances'
         if (mark !== sessionMark()) return 'Instance selection changed'
         if (origin !== home.origin || home.info?.id !== info.id) {
@@ -1578,10 +1587,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     },
 
     loadSettings: async (background = false) => {
+      const revision = hostedPolicyRevision()
       const mark = sessionMark()
       try {
         const settings = await api.getSettings(background)
-        if (mark === sessionMark()) set({ settings: siteSettings(settings) })
+        if (mark === sessionMark()) {
+          set({ settings: siteSettings(settings) })
+          acceptHostedPolicy(acct.conn.origin, settings.client_other_instances, revision)
+        }
       } catch (e) {
         if (mark === sessionMark()) fail(e)
       }

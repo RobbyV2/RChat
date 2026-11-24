@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useSyncExternalStore } from 'react'
+import { watchHostedPolicy } from '../../lib/client/hosted_policy'
 import { client } from '../../lib/client/client'
 import { AccountProvider, useAccount } from '../../lib/client/react'
 import { P2pProvider } from '../../lib/client/p2p_react'
@@ -17,6 +18,7 @@ export function PeerCodeDialog({ request }: { request: PeerLinkRequest }) {
   const available = useSyncExternalStore(
     fn => {
       const off = [
+        watchHostedPolicy(fn),
         client.subscribe(fn),
         ...sessions.flatMap(account => [
           account.identities.subscribe(fn),

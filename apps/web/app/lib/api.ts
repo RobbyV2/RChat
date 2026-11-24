@@ -237,9 +237,12 @@ export class ApiClient {
     body?: unknown,
     extra: Record<string, string> = {},
     keepalive = false,
-    timeoutMs = 0
+    timeoutMs = 0,
+    signal?: AbortSignal
   ): Promise<T> {
-    return handleResponse<T>(await this.send(method, path, body, extra, keepalive, timeoutMs))
+    return handleResponse<T>(
+      await this.send(method, path, body, extra, keepalive, timeoutMs, signal)
+    )
   }
 
   async page<T>(path: string, signal?: AbortSignal): Promise<Page<T>> {
@@ -530,8 +533,16 @@ export const endpoints = (c: ApiClient) => ({
   createServer: (name: string, password?: string) =>
     c.req<ServerDetail>('POST', '/servers', { name, password }),
   getServer: (name: string) => c.req<ServerDetail>('GET', `/servers/${seg(name)}`),
-  serverAvailable: (name: string) =>
-    c.req<{ available: boolean }>('GET', `/servers/${seg(name)}/available`),
+  serverAvailable: (name: string, signal?: AbortSignal) =>
+    c.req<{ available: boolean }>(
+      'GET',
+      `/servers/${seg(name)}/available`,
+      undefined,
+      {},
+      false,
+      0,
+      signal
+    ),
   getInvite: (
     name: string,
     password?: string | null,
@@ -548,7 +559,8 @@ export const endpoints = (c: ApiClient) => ({
     c.req<InviteLinkInfo | null>('GET', `/servers/${seg(name)}/invite`),
   renewInvite: (name: string) => c.req<InviteLinkInfo>('POST', `/servers/${seg(name)}/invite`),
   revokeInvite: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}/invite`),
-  searchServers: (q: string) => c.req<ServerMatch[]>('GET', `/server_search?q=${seg(q)}`),
+  searchServers: (q: string, signal?: AbortSignal) =>
+    c.req<ServerMatch[]>('GET', `/server_search?q=${seg(q)}`, undefined, {}, false, 0, signal),
   guestAccess: (name: string, password?: string) =>
     c.req<{ grant: string | null }>('POST', `/servers/${seg(name)}/guest_access`, { password }),
   listMembers: (name: string, cursor: string | null, filter: MemberFilter = {}) =>

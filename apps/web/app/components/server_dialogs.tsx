@@ -5,6 +5,7 @@ import { openPeerLink, peerCode } from '../lib/client/peer_links'
 import { SwitcherDialog } from './account_switcher'
 import { AddInstanceDialog, AddInstanceFlow, useAddingAllowed } from './add_instance'
 import { submittedLinkTarget, routeInstanceLink } from '../lib/client/instance_links'
+import { allowsAccountOrigin } from '../lib/client/hosted_policy'
 import { client } from '../lib/client/client'
 import type { AccountSession } from '../lib/client/session'
 import { accountStorage } from '../lib/client/keys'
@@ -63,29 +64,35 @@ function AddServerDialog({
   const nameTaken = creating && taken?.id === id && taken.taken
 
   useEffect(() => {
-    if (!joining || !id || id.includes('/') || /^(?:rci1|rcp1)\./i.test(id)) {
-      setSuggestions([])
-      return
+    setSuggestions([])
+    setTaken(null)
+    if (selecting || !id || /^(?:rci1|rcp1)\./i.test(id) || (joining && id.includes('/'))) return
+    const controller = new AbortController()
+    const mark = selection.current
+    const valid = () =>
+      !controller.signal.aborted &&
+      selection.current === mark &&
+      allowsAccountOrigin(acting.conn.origin) &&
+      client.live().includes(acting)
+    const timer = setTimeout(async () => {
+      if (!valid()) return
+      try {
+        if (joining) {
+          const matches = await api.searchServers(id, controller.signal)
+          if (valid()) setSuggestions(matches)
+        } else {
+          const result = await api.serverAvailable(id, controller.signal)
+          if (valid()) setTaken({ id, taken: !result.available })
+        }
+      } catch {
+        /* Availability is optional. Submit still checks with the server. */
+      }
+    }, 400)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
     }
-    const t = setTimeout(() => {
-      api
-        .searchServers(id)
-        .then(setSuggestions)
-        .catch(() => setSuggestions([]))
-    }, 400)
-    return () => clearTimeout(t)
-  }, [id, joining])
-
-  useEffect(() => {
-    if (!creating || !id || /^(?:rci1|rcp1)\./i.test(id)) return
-    const t = setTimeout(() => {
-      api
-        .serverAvailable(id)
-        .then(r => setTaken({ id, taken: !r.available }))
-        .catch(() => setTaken(null))
-    }, 400)
-    return () => clearTimeout(t)
-  }, [id, creating])
+  }, [id, joining, selecting, selection, acting, api])
 
   const rename = (value: string) => {
     setName(value)
@@ -96,7 +103,14 @@ function AddServerDialog({
 
   const submit = async () => {
     const trimmed = name.trim()
-    if (!trimmed || busy || selecting) return
+    if (
+      !trimmed ||
+      busy ||
+      selecting ||
+      !allowsAccountOrigin(acting.conn.origin) ||
+      !client.live().includes(acting)
+    )
+      return
     if (/^(?:rci1|rcp1)\./i.test(trimmed)) {
       const peer = peerCode(trimmed)
       if (joining && peer) {
@@ -276,6 +290,7 @@ function AccountServerDialog({
   const [switchError, setSwitchError] = useState('')
   const [adding, setAdding] = useState(false)
   const choices = sessions.filter(a => {
+    if (!allowsAccountOrigin(a.conn.origin)) return false
     if (a === owner || a.store.getState().me || a.store.getState().guest) return true
     const target = a.credentialTarget
     const keys = accountStorage(a.conn)
@@ -284,6 +299,15 @@ function AccountServerDialog({
       : typeof target === 'string' && !!readLocal(keys.token(target))
   })
   const close = owner.store.getState().closeDialog
+  const dialog = owner.store.getState().activeDialog
+  const lostActor = !choices.includes(acting) || (!!switching && !choices.includes(switching))
+  useEffect(() => {
+    if (lostActor && owner.store.getState().activeDialog === dialog) {
+      selection.current++
+      close()
+    }
+  }, [lostActor, close, owner, dialog])
+  if (lostActor) return null
   const addModal = adding && (
     <Dialog full title="Add an instance" onClose={() => setAdding(false)}>
       <AddInstanceFlow
@@ -314,13 +338,14 @@ function AccountServerDialog({
               return
             }
             const next = choices.find(s => s.renderKey === Number(e.target.value))
-            if (!next) return
+            if (!next || !allowsAccountOrigin(next.conn.origin)) return
             setSwitching(next)
             if (!next.store.getState().me && !next.store.getState().guest)
               await next.store.getState().bootstrap()
             if (mark !== selection.current) return
             setSwitching(null)
             if (
+              allowsAccountOrigin(next.conn.origin) &&
               client.live().includes(next) &&
               (next.store.getState().me || next.store.getState().guest)
             )

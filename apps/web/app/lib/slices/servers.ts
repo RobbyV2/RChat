@@ -1,3 +1,4 @@
+import { acceptHostedPolicy } from '../client/hosted_policy'
 import type { AccountSession } from '../client/session'
 // Servers and their members: server details, the member lists and lookups, channel layout
 // sends, roles, bans, the admin lists, and leaving or losing a server.
@@ -1161,7 +1162,12 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
     updateSettings: patch =>
       act(async () => {
-        set({ settings: siteSettings(await api.patchSettings(patch)) })
+        const mark = sessionMark()
+        const origin = home.origin
+        const settings = siteSettings(await api.patchSettings(patch))
+        if (mark !== sessionMark() || origin !== home.origin) return
+        set({ settings })
+        acceptHostedPolicy(home.origin, settings.client_other_instances)
       }),
   }
 
@@ -1478,6 +1484,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     brand_changed: ev => get().setBrand(ev.brand),
     settings_changed: ev => {
       const settings = siteSettings(ev.settings)
+      acceptHostedPolicy(home.origin, settings.client_other_instances)
       const p2pFlip = settings.p2p_attachments !== get().settings.p2p_attachments
       set({ settings, ...(p2pFlip ? { p2pAvailability: {} } : {}) })
       const { view } = get()

@@ -65,7 +65,7 @@ function withBookTransaction(factory: IDBFactory, commit: () => Book): Promise<B
   })
 }
 
-export function createBookStore() {
+export function createBookStore(project: (book: Book) => Book = b => b) {
   let volatile: Book | null = null
   const read = () => {
     const raw = readLocal('rchat_book')
@@ -74,13 +74,10 @@ export function createBookStore() {
           migrateBook(localKeys('rchat_'), readLocal, defaultEndpoints()?.origin ?? null))
       : parseBook(raw)
   }
-  const book = createStore<Book>(() => read())
+  const book = createStore<Book>(() => project(read()))
   const pending: Edit[] = []
   const publish = (base = read()) =>
-    book.setState(
-      pending.reduce((b, apply) => apply(b), base),
-      true
-    )
+    book.setState(project(pending.reduce((b, apply) => apply(b), base)), true)
   if (typeof window !== 'undefined')
     window.addEventListener?.('storage', event => {
       if (event.key === 'rchat_book' || event.key === null) publish()
@@ -148,5 +145,5 @@ export function createBookStore() {
   }
   // Enrollment edits can also update a pinned manifest. Run them only while holding the lock.
   const updateStoredBook = (apply: Edit) => updateBook(apply, undefined, false)
-  return { book, updateBook, updateStoredBook, readStoredBook: read }
+  return { book, updateBook, updateStoredBook, readStoredBook: read, refreshBook: () => publish() }
 }

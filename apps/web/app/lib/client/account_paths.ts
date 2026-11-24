@@ -1,3 +1,4 @@
+import { allowsAccountOrigin } from './hosted_policy'
 import type { Book } from './book'
 import { isClientHost, ownInstance, readLocal } from '../instances'
 import { accountStorage } from './keys'
@@ -75,6 +76,7 @@ export function resolvePageAccount(pathname: string, historyState: unknown): Acc
       // An expired session may already be absent from the book while its login
       // form is returning to this very account's link.
       if (
+        allowsAccountOrigin(session.conn.origin) &&
         session.conn.host === owner.host &&
         session.credentialTarget === owner.username &&
         usernameOf(session) === owner.username
@@ -105,7 +107,7 @@ export function resolvePageAccount(pathname: string, historyState: unknown): Acc
       const home = client.live().find(a => a.isHome) ?? shown
       const share =
         /^\/(?:i|invite|config)\//.test(route.path) || parsePath(route.path)?.kind === 'message'
-      if (share && home.conn.origin !== own) {
+      if (!allowsAccountOrigin(home.conn.origin) || (share && home.conn.origin !== own)) {
         return (
           client
             .live()
@@ -148,7 +150,7 @@ export function resolvePageAccount(pathname: string, historyState: unknown): Acc
 
 export function selectPageAccount(pathname: string, historyState: unknown): AccountSession | null {
   const account = resolvePageAccount(pathname, historyState)
-  if (account) client.show(account, 'none')
-  else client.blockPage()
-  return account
+  if (account && client.show(account, 'none')) return account
+  client.blockPage()
+  return null
 }

@@ -93,6 +93,7 @@ export class WsClient {
   stop() {
     this.finishGap(false)
     this.stopped = true
+    this.token = null
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.connectTimer) clearTimeout(this.connectTimer)
     this.reconnectTimer = null

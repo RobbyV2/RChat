@@ -1,3 +1,5 @@
+import { createSavedSession } from './saved_session'
+import { allowsAccountOrigin, visibleBook, watchHostedPolicy } from './hosted_policy'
 import { AccountManager } from './account_manager'
 import { viewPath, type Nav } from '../view'
 import { accountHistoryState, routeOwnerFor } from './account_paths'
@@ -5,7 +7,7 @@ import { createBookStore } from './book_store'
 import { createPaletteControls } from './palette_ui'
 import { CallGuard } from './calls'
 import { createInstanceRegistry } from './instance_registry'
-import { writeLocal } from '../instances'
+import { ownInstance, writeLocal } from '../instances'
 import type { Theme } from '../types'
 import type { AccountId, AccountSession } from './session'
 
@@ -34,7 +36,7 @@ function createClient() {
   let nextKey = 0
   let live: readonly AccountSession[] = []
   const calls = new CallGuard()
-  const books = createBookStore()
+  const books = createBookStore(visibleBook)
   const instances = createInstanceRegistry(books.book.getState())
   const listeners = new Set<() => void>()
   const subscriptions = new Map<AccountSession, () => void>()
@@ -93,6 +95,26 @@ function createClient() {
     },
     publish: () => publish([...live]),
   })
+  watchHostedPolicy(() => {
+    books.refreshBook()
+    const selected = foreground ?? live.find(a => a.isHome)
+    if (selected && !allowsAccountOrigin(selected.conn.origin)) {
+      pageBlocked = true
+      foreground =
+        live.find(a => allowsAccountOrigin(a.conn.origin)) ??
+        createSavedSession(ownInstance()!.origin)
+    }
+    for (const account of [...live]) {
+      if (allowsAccountOrigin(account.conn.origin)) continue
+      account.store.setSocket(false)
+      account.tabLock.stop()
+      account.deliveryLock.stop()
+      account.store.dispose()
+    }
+    if (!allowsAccountOrigin(instances.home.origin)) instances.setHome(ownInstance()!.origin, null)
+    accounts.schedule()
+    publish([...live])
+  })
   return {
     ...books,
     accounts,
@@ -107,7 +129,7 @@ function createClient() {
       this.shown = () => foreground ?? home()
     },
     canWritePage(account: AccountSession) {
-      return !pageBlocked && this.shown() === account
+      return allowsAccountOrigin(account.conn.origin) && !pageBlocked && this.shown() === account
     },
     ownsHistoryEntry(account: AccountSession) {
       return this.canWritePage(account) && noticeOwner !== account
@@ -129,7 +151,7 @@ function createClient() {
       pageBlocked = true
     },
     show(account: AccountSession, nav: Nav | 'notice' = 'push') {
-      if (!subscriptions.has(account)) return false
+      if (!allowsAccountOrigin(account.conn.origin) || !subscriptions.has(account)) return false
       actorSelection++
       const wasPending = noticeOwner !== null
       noticeOwner?.store.cancelNavigation()

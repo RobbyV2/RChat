@@ -652,6 +652,13 @@ export function createChatStore(acct: AccountSession) {
     )
       trimWindows()
   })
+  let disposed = false
+  const clearConnectionCredentials = () => {
+    home.ws.stop()
+    home.api.setToken(null)
+    home.api.setGrants({})
+    home.ws.setGrants({})
+  }
   return Object.assign(chatStore, {
     setSocket: (on: boolean) => sessionHub.setSocket(on),
     canOpenDm: (id: number) => sessionHub.canOpenDm(id),
@@ -664,10 +671,7 @@ export function createChatStore(acct: AccountSession) {
     },
     retireCredentials() {
       const expired = chatStore.getState().authExpired
-      home.ws.stop()
-      home.api.setToken(null)
-      home.api.setGrants({})
-      home.ws.setGrants({})
+      clearConnectionCredentials()
       acct.rtc.leave()
       acct.files.setAccount(null)
       acct.identities.setAccount(null)
@@ -688,14 +692,16 @@ export function createChatStore(acct: AccountSession) {
       }
     },
     dispose() {
+      if (disposed) return
+      disposed = true
       client.detach(acct)
       unbindMedia?.()
       unbindMedia = undefined
       unsubscribeStore()
       unsubscribeViewing()
       sessionHub.dispose()
-      sessionHub.forgetSession()
-      home.ws.stop()
+      clearConnectionCredentials()
+      resetSessionCaches()
       acct.disposeSideStores()
     },
   })
@@ -704,7 +710,7 @@ export function createChatStore(acct: AccountSession) {
 export const getHomeSession = (() => {
   let session: AccountSession
   return () => {
-    if (!session) {
+    if (!session || !client.live().includes(session)) {
       session = new AccountSession(client.homeInstance(), defaultViewing)
     }
     return session

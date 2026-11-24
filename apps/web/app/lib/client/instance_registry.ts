@@ -1,3 +1,4 @@
+import { allowsAccountOrigin } from './hosted_policy'
 import {
   clientOnly,
   createHomeConnection,
@@ -95,6 +96,8 @@ export class InstanceRegistry {
 
 export function createInstanceRegistry(book: Book) {
   let home = createHomeConnection()
+  if (!allowsAccountOrigin(home.origin))
+    home = new InstanceConnection(pageEndpoints(), null, true, true)
   // An old selected address can outlive the login that selected it.
   if (
     clientOnly() &&

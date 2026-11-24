@@ -1,3 +1,4 @@
+import { allowsAccountOrigin } from './client/hosted_policy'
 import { client } from './client/client'
 import type { AccountSession } from './client/session'
 import { Ended } from './slices/ctx'
@@ -56,11 +57,14 @@ export function createInviteCache(account: AccountSession) {
   const connections = new Map<string, Entry<InstanceConnection>>()
   const invites = new Map<string, Entry<Invite>>()
   const requested = new Set<string>()
+  const anonymous = new WeakSet<InstanceConnection>()
 
-  const knownAccount = (origin: string) =>
-    account.conn.origin === origin
+  const knownAccount = (origin: string) => {
+    if (!allowsAccountOrigin(origin)) return undefined
+    return account.conn.origin === origin
       ? account
       : client.live().find(other => other.conn.origin === origin)
+  }
 
   function remoteConnection(origin: string) {
     const known = knownAccount(origin)
@@ -73,7 +77,9 @@ export function createInviteCache(account: AccountSession) {
         throw new InstanceError(
           `${hostOf(origin) ?? origin} runs an RChat API this client can't use`
         )
-      return new InstanceConnection(endpointsFrom(origin, info), info)
+      const connection = new InstanceConnection(endpointsFrom(origin, info), info)
+      anonymous.add(connection)
+      return connection
     })
   }
 
@@ -102,7 +108,11 @@ export function createInviteCache(account: AccountSession) {
       part: 'metadata' | { revision: string },
       fresh = false
     ) => {
-      if (!current() || (target && target.conn !== conn) || conn.origin !== origin)
+      if (
+        !current() ||
+        (target ? target.conn !== conn : !anonymous.has(conn)) ||
+        conn.origin !== origin
+      )
         throw new Ended()
       const load = () => conn.api.getInvite(server, password, part)
       const result =

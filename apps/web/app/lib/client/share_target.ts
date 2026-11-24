@@ -9,8 +9,7 @@ import { startMode } from '../attachments'
 import { readOnly } from '../reactions'
 import { sourceAccess } from '../forward_viewing'
 import { client } from './client'
-import { canAddInstance } from './adding'
-import { defaultEndpoints } from '../instances'
+import { allowsAccountOrigin } from './hosted_policy'
 
 // Keep a one-use worker ticket through the normal signed-out startup redirect.
 export function shareLoginHref(href: string, search: string) {
@@ -36,8 +35,7 @@ export function shareRooms(
   streamer = client.device.streamer
 ): ShareRoom[] {
   const s = account.store.getState()
-  if (!s.me || s.guest || (!canAddInstance() && account.conn.origin !== defaultEndpoints()?.origin))
-    return []
+  if (!s.me || s.guest || !allowsAccountOrigin(account.conn.origin)) return []
   const rooms: ShareRoom[] = []
   const counts = { dm: 0, channel: 0, peer: 0, peer_channel: 0 }
   const names = {
@@ -149,7 +147,7 @@ export async function attachShare(
   const room = shareRooms(owner, payload.files).find(r => r.key === key)
   if (!current() || !room || room.reason || !client.live().includes(account)) return false
   if (identity) account.identities.show(identity)
-  client.show(account)
+  if (!client.show(account)) return false
   if (identity) client.accounts.reconcile()
   else account.identities.viewed()?.p2p.closeHome()
   const intent = client.actorSelectionMark()

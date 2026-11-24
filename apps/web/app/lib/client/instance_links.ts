@@ -4,7 +4,7 @@ import { parseInvite, parseInviteAt, safeNext } from '../invite'
 import { hostOf } from '../qualified'
 import { accountPath, parseAccountPath, parsePath } from '../view'
 import { accountHistoryState, routeOwnerFor, resolvePageAccount } from './account_paths'
-import { canAddInstance } from './adding'
+import { allowsAccountOrigin, hostedLockMessage, watchHostedPolicy } from './hosted_policy'
 import { client } from './client'
 import { accountStorage } from './keys'
 import { openAccountNotice } from './notice_owner'
@@ -68,6 +68,7 @@ export function submittedLinkTarget(owner: AccountSession, href: string) {
 const preference = (origin: string) => 'rchat_link_account@' + origin
 
 function eligibleUsers(origin: string) {
+  if (!allowsAccountOrigin(origin)) return []
   const group = client.book.getState().instances.find(i => i.origin === origin)
   const users = new Set<string>()
   for (const a of client.live()) {
@@ -100,6 +101,7 @@ export function linkChoice(source: AccountSession, origin: string) {
 }
 
 async function openTarget(owner: AccountSession, target: InstanceTarget) {
+  if (!allowsAccountOrigin(target.origin)) return
   const state = owner.store.getState()
   const invite = parseInvite(target.path, target.origin)
   const route = parsePath(target.path)
@@ -126,6 +128,7 @@ async function openTarget(owner: AccountSession, target: InstanceTarget) {
     })
   try {
     await openAccountNotice(owner, () => {
+      if (!allowsAccountOrigin(target.origin)) return false
       if (invite) return state.openInvite(invite.server, invite.password, invite.code, target.path)
       switch (route?.kind) {
         case 'message':
@@ -140,6 +143,7 @@ async function openTarget(owner: AccountSession, target: InstanceTarget) {
           return owner.store.canOpenDm(route.dmId).then(ok => {
             if (
               ok &&
+              allowsAccountOrigin(target.origin) &&
               client.shown() === owner &&
               mark === owner.lifetime.sessionMark() &&
               nav === owner.store.navigationMark()
@@ -180,21 +184,25 @@ export async function routeInstanceLink(
   const route = parseAccountPath(target.path)
   if (!route) return
   let { origin } = target
+  if (!allowsAccountOrigin(origin) || !allowsAccountOrigin(source.conn.origin))
+    return source.store.getState().setError(hostedLockMessage())
   const explicit = route.owner?.username
   if (route.owner && route.owner.host !== hostOf(origin)) {
     if (origin !== ownInstance()?.origin) return
+    if (!allowsAccountOrigin(new URL(origin).protocol + '//' + route.owner.host))
+      return source.store.getState().setError(hostedLockMessage())
     const account = resolvePageAccount(target.path, null)
     if (!account) return source.store.getState().setError('This account is unavailable.')
     origin = account.conn.origin
   }
-  if (!canAddInstance() && origin !== ownInstance()?.origin)
-    return source.store.getState().setError("This site's app only connects to its own instance.")
   const destination = { origin, path: route.path }
   source.store.cancelNavigation()
   const mark = source.lifetime.sessionMark()
   const nav = source.store.navigationMark()
   const shown = client.shownVersion()
   const current = () =>
+    allowsAccountOrigin(origin) &&
+    allowsAccountOrigin(source.conn.origin) &&
     client.shown() === source &&
     client.live().includes(source) &&
     client.shownVersion() === shown &&
@@ -267,6 +275,7 @@ export async function routeInstanceLink(
       function finish(value: { account: string | AccountSession; remember?: boolean } | null) {
         offStore()
         offClient()
+        offPolicy()
         if (source.store.getState().activeDialog === dialog) source.store.getState().closeDialog()
         resolve(value)
       }
@@ -275,6 +284,7 @@ export async function routeInstanceLink(
       }
       const offStore = source.store.subscribe(check)
       const offClient = client.subscribe(check)
+      const offPolicy = watchHostedPolicy(check)
       source.store.getState().openDialog(dialog)
     }
   )

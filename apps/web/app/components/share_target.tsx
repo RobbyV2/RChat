@@ -4,6 +4,11 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { AccountProvider, useLiveSessions, useStore } from '../lib/client/react'
 import { P2pProvider, useP2p } from '../lib/client/p2p_react'
 import { client } from '../lib/client/client'
+import {
+  allowsAccountOrigin,
+  hostedPolicyRevision,
+  watchHostedPolicy,
+} from '../lib/client/hosted_policy'
 import { createSwitcherSource, liveSwitcherRows } from '../lib/client/switcher_rows'
 import { shareChoices as choices, prepareShareOwner } from '../lib/client/share_owners'
 import { awaitingInstance } from '../lib/instances'
@@ -55,6 +60,7 @@ function Destinations({
   const joined = state.me?.servers ?? []
   const [loading, setLoading] = useState('')
   async function load(name: string) {
+    if (!allowsAccountOrigin(owner.account.conn.origin)) return
     setLoading(name)
     try {
       await owner.account.store.getState().discoverChannels(name, true)
@@ -136,12 +142,22 @@ function Destinations({
             </button>
           ))}
       {!owner.identity && state.serversMore && (
-        <button type="button" className={textBtn} onClick={() => void state.loadMoreServers()}>
+        <button
+          type="button"
+          className={textBtn}
+          onClick={() =>
+            allowsAccountOrigin(owner.account.conn.origin) && void state.loadMoreServers()
+          }
+        >
           More servers
         </button>
       )}
       {!owner.identity && state.dmsMore && (
-        <button type="button" className={textBtn} onClick={() => void state.loadMoreDms()}>
+        <button
+          type="button"
+          className={textBtn}
+          onClick={() => allowsAccountOrigin(owner.account.conn.origin) && void state.loadMoreDms()}
+        >
           More direct messages
         </button>
       )}
@@ -173,6 +189,7 @@ function Picker({
   const [source] = useState(createSwitcherSource)
   const model = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
   useLiveSessions()
+  useSyncExternalStore(watchHostedPolicy, hostedPolicyRevision, hostedPolicyRevision)
   const owners = choices(model.groups)
   const shown = client.shown()
   const [key, setKey] = useState(

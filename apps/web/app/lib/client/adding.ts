@@ -1,12 +1,1 @@
-import { clientOnly } from '../instances'
-import { client } from './client'
-import { addingAllowed } from '../add_instance'
-import { shellInfo } from '../platform'
-export function canAddInstance() {
-  const own = client.live().find(a => a.conn.isDefault)
-  return addingAllowed(
-    !!shellInfo(),
-    clientOnly(),
-    own?.store.getState().settings.client_other_instances !== false
-  )
-}
+export { canAddInstance } from './hosted_policy'

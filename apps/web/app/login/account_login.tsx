@@ -1,6 +1,8 @@
+import { canAddInstance, hostedLockMessage } from '../lib/client/hosted_policy'
+import { ownInstance } from '../lib/instances'
 import { routeOwnerFor } from '../lib/client/account_paths'
 import type { AccountSession } from '../lib/client/session'
-import { accountPath, type RouteOwner } from '../lib/view'
+import { accountPath, parseAccountPath, type RouteOwner } from '../lib/view'
 
 // An explicit logout ends the actor's session. The login page can now accept a
 // different username on this connection. Automatic reauthentication keeps its pin.
@@ -30,9 +32,23 @@ export function SignedOutAccount({ account }: { account: AccountSession }) {
 }
 
 export function UnavailableAccount() {
+  const page = typeof window === 'undefined' ? null : window
+  const path =
+    page && (new URLSearchParams(page.location.search).get('next') ?? page.location.pathname)
+  const owner = path && parseAccountPath(path)?.owner
+  const origin = ownInstance()?.origin
+  const entry = page?.history.state
+  const restricted =
+    !canAddInstance() &&
+    origin &&
+    owner &&
+    (owner.host !== new URL(origin).host ||
+      (entry?.acct === (owner.username ?? '~guest') + '@' + owner.host &&
+        entry.rchatOrigin &&
+        entry.rchatOrigin !== origin))
   return (
     <main className="flex h-app flex-col items-center justify-center gap-3 px-6 text-center">
-      <p>This saved account is unavailable.</p>
+      <p>{restricted ? hostedLockMessage() : 'This saved account is unavailable.'}</p>
       <a className="text-primary underline" href="/">
         Back to home
       </a>

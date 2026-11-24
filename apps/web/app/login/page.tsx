@@ -1,4 +1,5 @@
 'use client'
+import { watchPagePolicy } from '../lib/client/hosted_policy'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { AccountProvider, useAccount, useStore } from '../lib/client/react'
@@ -39,9 +40,7 @@ export default function LoginPage() {
           : null
       setDestination(account && route ? { account, next, owner: route.owner ?? pin } : null)
     }
-    resolve()
-    window.addEventListener('popstate', resolve)
-    return () => window.removeEventListener('popstate', resolve)
+    return watchPagePolicy(resolve)
   }, [])
   if (destination === undefined) return null
   if (!destination) return <UnavailableAccount />
@@ -98,7 +97,7 @@ function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) 
         <h1 className="flex justify-center">
           <img src="/rchat_logo.png" alt="RChat" className="h-16 w-auto" />
         </h1>
-        {adding || welcome ? (
+        {(allowed && (adding || welcome)) || (welcome && awaitingInstance(account.conn)) ? (
           <>
             {welcome && (
               <>

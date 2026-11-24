@@ -2,11 +2,16 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { Shield } from 'lucide-react'
-import { canAddInstance } from '../lib/client/adding'
+import {
+  allowsAccountOrigin,
+  canAddInstance,
+  hostedLockMessage,
+  watchHostedPolicy,
+} from '../lib/client/hosted_policy'
 import { client } from '../lib/client/client'
 import { AccountSession } from '../lib/client/session'
 import { createSavedSession } from '../lib/client/saved_session'
-import { AccountProvider, useAccount, useLiveSessions, useStore } from '../lib/client/react'
+import { AccountProvider, useAccount, useStore } from '../lib/client/react'
 import { accountStorage } from '../lib/client/keys'
 import { afterProbe, alreadySignedIn, trustText, type AddStep } from '../lib/add_instance'
 import {
@@ -30,9 +35,7 @@ const primary =
   'rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:opacity-50'
 const secondary = 'rounded-full border border-outline px-4 py-2 text-sm text-primary'
 export function useAddingAllowed() {
-  const sessions = useLiveSessions()
-  const own = sessions.find(a => a.conn.isDefault)
-  return useSyncExternalStore(own?.store.subscribe ?? (() => () => {}), canAddInstance, () => true)
+  return useSyncExternalStore(watchHostedPolicy, canAddInstance, () => true)
 }
 interface Target {
   origin: string
@@ -139,6 +142,7 @@ export function AddInstanceFlow({
     []
   )
   function authenticate(t: Target) {
+    if (!allowsAccountOrigin(t.origin)) return
     discard()
     accountStorage(t.conn)
     rememberInstance(t.origin, t.info)
@@ -201,6 +205,7 @@ export function AddInstanceFlow({
     setBusy(false)
   }
   function complete(a: AccountSession) {
+    if (!allowsAccountOrigin(a.conn.origin)) return
     if (temp.current !== a) discard()
     temp.current = null
     setSession(a)
@@ -208,7 +213,7 @@ export function AddInstanceFlow({
     else onDone(a)
   }
   function useExisting(user: string | null) {
-    if (!target) return
+    if (!target || !allowsAccountOrigin(target.origin)) return
     const a =
       client
         .live()
@@ -353,6 +358,7 @@ export function AddInstanceFlow({
               adding
               owner={initialUsername ? { username: initialUsername, host: target.conn.host } : null}
               selectAccount={(name, mode) => {
+                if (!allowsAccountOrigin(target.origin)) return null
                 const keys = accountStorage(target.conn)
                 if (
                   name === null
@@ -410,6 +416,13 @@ export function AddInstanceDialog({
 }) {
   const actor = useAccount()
   const close = actor.store.getState().closeDialog
+  const allowed = useAddingAllowed()
+  if (!allowed && (!initialOrigin || !allowsAccountOrigin(initialOrigin)))
+    return (
+      <Dialog full title="Add an account" onClose={close}>
+        {hostedLockMessage()}
+      </Dialog>
+    )
   return (
     <Dialog full title={initialOrigin ? 'Add an account' : 'Add an instance'} onClose={close}>
       <AddInstanceFlow

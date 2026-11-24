@@ -1,4 +1,5 @@
 'use client'
+import { watchPagePolicy } from '../lib/client/hosted_policy'
 import { useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import { Activity, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -146,9 +147,7 @@ export default function AppShell() {
       }
       start(account)
     }
-    select()
-    window.addEventListener('popstate', select)
-    return () => window.removeEventListener('popstate', select)
+    return watchPagePolicy(select)
   }, [router, start])
 
   useEffect(() => {

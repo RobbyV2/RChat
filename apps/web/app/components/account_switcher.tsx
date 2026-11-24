@@ -31,6 +31,7 @@ import { confirmIdentityRemoval } from '../lib/client/identity_enrollment'
 import { useMask, useStore } from '../lib/store'
 import type { SettingsSection } from '../lib/settings_sections'
 import { AccountTag, ActorAvatar, InstanceTag } from './account_tag'
+import { hostedLockMessage } from '../lib/client/hosted_policy'
 import { useAddingAllowed } from './add_instance'
 import { longPress } from './context_menu'
 import { RailInstance } from './instance_badge'
@@ -486,6 +487,7 @@ function AccountList({
           )
         })}
       </div>
+      {manage && !canAdd && <p className="px-3 text-sm">{hostedLockMessage()}</p>}
       <footer className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-outline-variant p-2">
         {canAdd && (
           <button

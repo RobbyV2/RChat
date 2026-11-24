@@ -1,3 +1,4 @@
+import { allowsAccountOrigin } from './hosted_policy'
 import { client } from './client'
 import type { AccountSession } from './session'
 import type { P2pApp } from '../p2p/app/runtime'
@@ -20,7 +21,9 @@ export function selectPeerActor<T>(eligible: readonly T[], actor: T | null) {
 export function peerLinkRequest(account: AccountSession, link: PeerLink, actor: P2pApp | null) {
   const candidates = new Map<P2pApp, { owner: AccountSession; valid(): boolean }>()
   const live = client.live()
-  const sessions = [...new Set([account, ...live])]
+  const sessions = [...new Set([account, ...live])].filter(owner =>
+    allowsAccountOrigin(owner.conn.origin)
+  )
   const actorMark = account.lifetime.sessionMark()
   const actorUsername = account.store.getState().me?.username
   const actorOrigin = account.conn.origin
@@ -34,6 +37,8 @@ export function peerLinkRequest(account: AccountSession, link: PeerLink, actor: 
         const now = owner.store.getState()
         const peer = app.useP2p.getState()
         return (
+          allowsAccountOrigin(origin) &&
+          allowsAccountOrigin(actorOrigin) &&
           !!username &&
           owner.lifetime.sessionMark() === mark &&
           owner.conn.origin === origin &&
