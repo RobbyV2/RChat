@@ -72,15 +72,30 @@ describe('memberPerms', () => {
 describe('Manage reports', () => {
   test('is included in the full permission mask', () => {
     expect(Perm.ManageReports).toBe(512)
-    expect(ALL_PERMS).toBe(62463)
-    expect(memberPerms({ is_admin: true, perms: 0, role_ids: [] }, [])).toBe(62463)
-    expect(adminMask(0)).toBe(62463)
+    expect(ALL_PERMS).toBe(127999)
+    expect(memberPerms({ is_admin: true, perms: 0, role_ids: [] }, [])).toBe(127999)
+    expect(adminMask(0)).toBe(127999)
     expect(adminMask(Perm.Kick | Perm.ManageReports)).toBe(516)
-    expect(PERM_ITEMS.at(-1)).toEqual({
+    expect(PERM_ITEMS.find(p => p.bit === Perm.ManageReports)).toEqual({
       label: 'Manage reports',
       bit: Perm.ManageReports,
       hint: 'See and act on reports in this server',
     })
+  })
+})
+
+describe('Reset server profiles', () => {
+  test('is a permission of its own in the full mask', () => {
+    expect(Perm.ManageProfiles).toBe(65536)
+    expect(ALL_PERMS & Perm.ManageProfiles).toBe(Perm.ManageProfiles)
+    expect(adminMask(Perm.Kick)).toBe(Perm.Kick)
+    expect(PERM_ITEMS.at(-1)).toEqual({
+      label: 'Reset server profiles',
+      bit: Perm.ManageProfiles,
+      hint: "Clear and lock other members' server profiles",
+    })
+    expect(new Set(PERM_ITEMS.map(p => p.bit)).size).toBe(PERM_ITEMS.length)
+    expect(PERM_ITEMS.reduce((mask, p) => mask | p.bit, 0)).toBe(ALL_PERMS)
   })
 })
 
@@ -110,10 +125,10 @@ describe('granting perms', () => {
     expect(canGrant(ma | kick, false, kick)).toBe(true)
     expect(canGrant(ma | kick, false, ma | kick)).toBe(true)
     expect(canGrant(ma | kick, false, Perm.DeleteServer)).toBe(false)
-    expect(canGrant(ma, false, 1 << 16)).toBe(true)
+    expect(canGrant(ma, false, 1 << 17)).toBe(true)
     expect(canGrant(0, true, ALL_PERMS)).toBe(true)
     expect(adminMask(0)).toBe(ALL_PERMS)
-    expect(adminMask(kick | (1 << 16))).toBe(kick)
+    expect(adminMask(kick | (1 << 17))).toBe(kick)
     expect(canPromote(ma | kick, false)).toBe(false)
     expect(canPromote(ALL_PERMS, false)).toBe(true)
     expect(canPromote(ma, true)).toBe(true)

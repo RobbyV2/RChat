@@ -14,6 +14,9 @@ import { cacheKey, countOf, moveCounts, unindexAll, resetHeld, storedSize } from
 import { serverWire, type RoomRecord, type ServerCache } from '../db'
 import { contentEvOf, headerOk, validate2, type WireV2 } from '../event_v2'
 import { cutOut } from '../flows'
+import { cleanName } from '../keys'
+import { roomExtras, sameExtras } from '../../profile_fields'
+import { settleIntent } from '../../profile_reset'
 import {
   chanFactsOf,
   channelPermsOf,
@@ -304,13 +307,41 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
     }))
   // Out by a removal (our leave, a kick, a ban): what we set for ourselves here ends with the
   // membership. In with it kept (a new copy, back after a cascade): it is written again.
-  if (was === 'join' && now !== 'join' && mine?.rem && cx.rooms.get(room)?.profile)
+  const ours = cx.rooms.get(room)
+  if (was === 'join' && now !== 'join' && mine?.rem && (ours?.profile || ours?.profileGone))
     await cx.updateRoom(room, cur => {
-      const { profile: _, ...rest } = cur
+      const { profile: _, profileGone: _g, ...rest } = cur
       return rest
     })
   if (now === 'join' && was !== 'join' && cx.rooms.get(room)?.profile)
     void cx.refreshMe(room).catch(() => {})
+  // What a reset that counts cleared of our profile goes out of what we set for ourselves here,
+  // so nothing we write later brings it back; it comes back once no reset clears it.
+  const written = roomExtras(mine?.profile, cleanName)
+  const settled = (cur: RoomRecord) =>
+    settleIntent(
+      roomExtras(cur.profile, cleanName),
+      roomExtras(cur.profileGone, cleanName),
+      written,
+      mine?.reset
+    )
+  const kept = cx.rooms.get(room)
+  const next = now === 'join' && kept ? settled(kept) : null
+  if (next) {
+    await cx.updateRoom(room, cur => {
+      const s = settled(cur)
+      if (!s) return cur
+      const { intent, gone } = s
+      const { profile: _, profileGone: _g, ...rest } = cur
+      return {
+        ...rest,
+        ...(Object.keys(intent).length ? { profile: intent } : {}),
+        ...(Object.keys(gone).length ? { profileGone: gone } : {}),
+      }
+    })
+    if (!sameExtras(next.intent, roomExtras(kept?.profile, cleanName)))
+      void cx.refreshMe(room).catch(() => {})
+  }
   // We are in now: everything the gates held back may come.
   if (now === 'join' && was !== 'join') cx.sync.loadOlder(room)
   // A new copy: links are drawn again soon, once we know more of who is in.

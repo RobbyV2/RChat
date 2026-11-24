@@ -107,6 +107,8 @@ export interface RoomRecord {
   kind: 'dm' | 'server'
   // P2P servers: what we set for ourselves in this server, written into our `profile` there.
   profile?: RoomExtras
+  // What resets of our profile there cleared out of `profile`, kept in case they stop counting.
+  profileGone?: RoomExtras
   // When this device sent its `profile` writes of the last hour there.
   profileAt?: number[]
   // The other member of a DM ('' for a server).

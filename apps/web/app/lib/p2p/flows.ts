@@ -195,6 +195,7 @@ export const actParts = (t: string, to?: string): { act: string; who?: string } 
     add: 'Invite',
     assign: 'Give a role to',
     revoke: 'Take a role from',
+    profile_reset: 'Reset the server profile of',
   }
   const plain: Record<string, string> = {
     code: 'Make an invite code',
@@ -286,6 +287,8 @@ export const effectHolds = (
       return same(s.settings, c)
     case 'profile_mode':
       return (s.profiles ?? 'all') === c.mode
+    case 'profile_reset':
+      return !!to && to.reset?.last === id
     case 'profile':
       return same(s.members[me]?.profile, c)
     default:

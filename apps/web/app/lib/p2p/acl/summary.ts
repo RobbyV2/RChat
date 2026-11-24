@@ -1,6 +1,7 @@
 import type { EvalResult } from './facts'
 import type { Ix } from './reach'
 import { roomMode } from '../../profile_fields'
+import type { ResetFact } from '../../profile_reset'
 import type { ProfilesMode } from '../../types'
 import { EVERYONE, gt, permsQ, poster, rank, evalLimits, type AclContent, type Rank } from './rules'
 
@@ -9,7 +10,7 @@ import { EVERYONE, gt, permsQ, poster, rank, evalLimits, type AclContent, type R
 // (acl_room.ts) is a SummarySource.
 
 // The shape of the page's summary: a cached one of another shape is not used.
-export const SUM_SHAPE = 5
+export const SUM_SHAPE = 6
 
 export type Membership = 'invite' | 'join' | 'leave' | 'ban'
 
@@ -32,6 +33,8 @@ export interface MemberSum {
   // The time and id of the live join (or genesis) that started a member's membership.
   joinTs?: number
   joinId?: string
+  // The resets of their room profile that count: what they hide, and the lock.
+  reset?: ResetFact
   // The account binding a member posted last: its profile's, else its join's (badge.ts).
   binding?: string
   // Who let a member in: the author of the invite its live join used (for one out with no removal
@@ -304,6 +307,8 @@ export function buildSummary(
       }
     // Any event of a third member may vouch for a pending invite, or stop doing so (W3(e)).
     if (any) for (const ik of F.pending.keys()) touched.add(ik)
+    // A reset counts by its author's standing: whoever they reset is worked out with them.
+    for (const a of [...touched]) for (const T of ix.profileResetBy.get(a) ?? []) touched.add(T)
     if (memo.usable !== usable)
       for (const l of ix.codeAdds.values())
         for (const g of l) if (typeof ix.ev[g].c.to === 'string') touched.add(ix.ev[g].c.to)
@@ -408,6 +413,8 @@ function memberSum(src: SummarySource, ik: string): MemberSum | undefined {
       sum.joinId = ix.ids[j]
     }
     if (j >= 0 && ix.ev[j].t === 'join') letIn(src, sum, ik, j)
+    const reset = F.profileReset.get(ik)
+    if (reset) sum.reset = reset
     const b = sum.profile?.binding ?? (j >= 0 ? ix.ev[j].c.binding : undefined)
     if (typeof b === 'string') sum.binding = b
   }

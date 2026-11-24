@@ -12,6 +12,7 @@ import {
   invalid,
   invalidLine,
   limit,
+  locked,
   notFound,
   offAccount,
   offApp,
@@ -36,6 +37,7 @@ const KINDS: Record<ReasonKind, true> = {
   conflict: true,
   sign_in: true,
   unavailable: true,
+  locked: true,
   app: true,
 }
 
@@ -245,9 +247,10 @@ describe('the shape', () => {
       unavailable('c', 'x'),
       fromApp('a', 'x'),
       limit('subs', '1', '1'),
+      locked(9, 'x'),
     ]
     for (const r of made) expect(KINDS[(r.reason as Reason).kind]).toBe(true)
-    expect(new Set(made.map(r => r.reason?.kind)).size).toBe(11)
+    expect(new Set(made.map(r => r.reason?.kind)).size).toBe(12)
   })
 
   test('the kinds and the shared fields are the ones the errors of the server have', () => {
@@ -261,11 +264,15 @@ describe('the shape', () => {
     const kinds = [...body('ReasonKind').matchAll(/^ {4}(\w+),$/gm)].map(m => snake(m[1]))
     expect(kinds.sort()).toEqual(Object.keys(KINDS).sort())
     const fields = [...body('Reason').matchAll(/^ {4}pub (\w+):/gm)].map(m => m[1])
-    expect(fields.sort()).toEqual(['control', 'field', 'kind', 'retry_after'])
+    expect(fields.sort()).toEqual(['control', 'field', 'kind', 'retry_after', 'until'])
     const ours = new Set(
-      [invalid('f', 'x'), rate('c', 1, 'x'), fromApp('a', 'x'), limit('subs', '1', '1')].flatMap(
-        r => Object.keys(r.reason ?? {})
-      )
+      [
+        invalid('f', 'x'),
+        rate('c', 1, 'x'),
+        fromApp('a', 'x'),
+        limit('subs', '1', '1'),
+        locked(9, 'x'),
+      ].flatMap(r => Object.keys(r.reason ?? {}))
     )
     for (const field of fields) expect(ours.has(field)).toBe(true)
     expect([...ours].filter(k => !fields.includes(k)).sort()).toEqual([
@@ -285,5 +292,6 @@ describe('the shape', () => {
     expect(keys(unavailable('c', 'x', 1))).toEqual(['control', 'kind', 'retry_after'])
     expect(keys(fromApp('a', 'x'))).toEqual(['app', 'kind', 'text'])
     expect(keys(limit('subs', '1', '1'))).toEqual(['cap', 'control', 'kind', 'used', 'who'])
+    expect(locked(9, 'x')).toEqual({ error: 'x', reason: { kind: 'locked', until: 9 } })
   })
 })

@@ -198,6 +198,10 @@ describe('P2P server flows: devices and roles', () => {
     expect(flows.actParts('kick')).toEqual({ act: 'Kick' })
     expect(flows.actParts('mark')).toEqual({ act: 'Sync' })
     expect(flows.actParts('role_meta')).toEqual({ act: 'Rename or recolor a role' })
+    expect(flows.actParts('profile_reset', 'bob')).toEqual({
+      act: 'Reset the server profile of',
+      who: 'bob',
+    })
   })
 
   test('moving a role down warns', () => {
@@ -256,6 +260,10 @@ describe('P2P server flows: what a lost device removal signs again', () => {
     const named = { ...s, profiles: 'no_names' as const }
     expect(holds('profile_mode', { mode: 'no_names' }, named)).toBe(true)
     expect(holds('profile_mode', { mode: 'all' }, named)).toBe(false)
+    const reset = sum({ dan: { m: 'join', reset: { last: 'e1', hide: ['name'] } } })
+    expect(holds('profile_reset', { to: 'dan', fields: ['name'] }, reset)).toBe(true)
+    expect(holds('profile_reset', { to: 'dan', fields: ['name'] }, reset, 'e0')).toBe(false)
+    expect(holds('profile_reset', { to: 'dan', fields: ['name'] }, s)).toBe(false)
     // What the summary can't show is never signed again.
     expect(holds('mark', {}, s)).toBe(false)
   })

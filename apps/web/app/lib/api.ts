@@ -3,6 +3,7 @@ import { apiRoot, versionedBase, type ApiPrefix } from './api_version'
 import { localUntil, type TimeoutWire } from './timeouts'
 import { DEFAULT_DM_QUERY, queryParams, type DmQuery } from './dm_list'
 import { ALL_PERMS } from './types'
+import { resetBody, type LockSecs, type ResetField } from './profile_reset'
 import type {
   AccountFilter,
   AccountServer,
@@ -573,6 +574,20 @@ export const endpoints = (c: ApiClient) => ({
     c.req<ServerProfile>('PATCH', `/servers/${seg(server)}/profile`, patch),
   resetServerProfile: (server: string) =>
     c.req<ServerProfile>('DELETE', `/servers/${seg(server)}/profile`),
+  resetMemberProfile: (
+    server: string,
+    username: string,
+    fields: readonly ResetField[],
+    secs: LockSecs,
+    reason: string
+  ) =>
+    c.req<unknown>(
+      'POST',
+      `/servers/${seg(server)}/members/${seg(username)}/profile/reset`,
+      resetBody(fields, secs, reason)
+    ),
+  unlockMemberProfile: (server: string, username: string) =>
+    c.req<unknown>('DELETE', `/servers/${seg(server)}/members/${seg(username)}/profile/lock`),
   createServer: (name: string, password?: string) =>
     c.req<ServerDetail>('POST', '/servers', { name, password }),
   getServer: (name: string) => c.req<ServerDetail>('GET', `/servers/${seg(name)}`),

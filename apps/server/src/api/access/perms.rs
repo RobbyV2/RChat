@@ -20,9 +20,10 @@ pub enum Perm {
     ManageInvites = 8192,
     ManageRoles = 16384,
     AssignRoles = 32768,
+    ManageProfiles = 65536,
 }
 
-pub const ALL_PERMS: i64 = 62463;
+pub const ALL_PERMS: i64 = 127999;
 pub const PRE_DELEGATION_PERMS: i64 = 1023;
 
 /// A client may echo newer bits it read without having controls for them.

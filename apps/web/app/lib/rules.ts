@@ -53,6 +53,11 @@ export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
     bit: Perm.ManageReports,
     hint: 'See and act on reports in this server',
   },
+  {
+    label: 'Reset server profiles',
+    bit: Perm.ManageProfiles,
+    hint: "Clear and lock other members' server profiles",
+  },
 ]
 
 export const PROFANITY_TARGETS: { key: ProfanityTarget; label: string }[] = [

@@ -124,6 +124,9 @@ export class Ix {
   roleNamed = new Map<string, number[]>()
   roleMetaEv = new Map<string, number[]>()
   profileModeEv: number[] = []
+  // `profile_reset` writes by the member they name, and the members each author named.
+  profileResetEv = new Map<string, number[]>()
+  profileResetBy = new Map<string, Set<string>>()
   profileBy = new Map<string, number[]>()
   settingsEv: number[] = []
   upgradeEv: number[] = []
@@ -232,6 +235,12 @@ export class Ix {
         break
       case 'profile_mode':
         this.profileModeEv.push(i)
+        break
+      case 'profile_reset':
+        if (typeof c.to === 'string') {
+          pushM(this.profileResetEv, c.to, i)
+          addS(this.profileResetBy, e.a, c.to)
+        }
         break
       case 'assign':
         pushM(this.assignEv, `${c.to}|${c.role}`, i)

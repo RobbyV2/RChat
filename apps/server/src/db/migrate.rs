@@ -258,7 +258,11 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 45: configured group responsible for each managed membership or role.
 /// 46: provider ownership of directory group aliases and indexed claim digests.
 /// 47: server profiles (`member_profiles`, `servers.profiles_mode`).
-pub const SCHEMA_VERSION: i64 = 47;
+/// 48: the Reset server profiles permission, given to roles and admin permission sets with Kick.
+pub const SCHEMA_VERSION: i64 = 48;
+
+/// The schema version that has the Reset server profiles permission.
+pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 18] {
@@ -664,6 +668,9 @@ pub(super) async fn init_schema(
             }
         }
     }
+    if version < MANAGE_PROFILES_SINCE {
+        grant_manage_profiles(conn).await?;
+    }
     if stored_setting(conn, BUILTIN_STATE).await?.is_none() {
         let t = now();
         sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
@@ -728,6 +735,33 @@ async fn grant_manage_reports(conn: &mut AnyConnection) -> anyhow::Result<()> {
     .rows_affected();
     if n > 0 {
         tracing::info!("gave {n} roles with Kick the Manage reports permission");
+    }
+    Ok(())
+}
+
+/// Gives Reset server profiles to every admin permission set and role that includes Kick. An
+/// admin with every permission (`perms` 0) holds it already.
+async fn grant_manage_profiles(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    let (profiles, kick) = (Perm::ManageProfiles as i64, Perm::Kick as i64);
+    for (sql, who) in [
+        (
+            "UPDATE members SET perms = perms | $1 WHERE is_admin <> 0 AND perms <> 0 AND (perms & $2) <> 0 AND (perms & $1) = 0",
+            "admins",
+        ),
+        (
+            "UPDATE roles SET perms = perms | $1 WHERE (perms & $2) <> 0 AND (perms & $1) = 0",
+            "roles",
+        ),
+    ] {
+        let n = sqlx::query(sql)
+            .bind(profiles)
+            .bind(kick)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        if n > 0 {
+            tracing::info!("gave {n} {who} with Kick the Reset server profiles permission");
+        }
     }
     Ok(())
 }

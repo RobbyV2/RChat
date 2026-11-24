@@ -12,6 +12,7 @@ export type ReasonKind =
   | 'conflict'
   | 'sign_in'
   | 'unavailable'
+  | 'locked'
   | 'app'
 
 export interface Reason {
@@ -19,6 +20,7 @@ export interface Reason {
   control?: string
   field?: string
   retry_after?: number
+  until?: number
   used?: string
   cap?: string
   who?: 'operator' | 'owner' | 'author'
@@ -77,6 +79,12 @@ export const cliLine = (r: Refusal): string =>
 export const rate = (control: string, retry: number, text: string): Refusal => ({
   error: text,
   reason: { kind: 'rate', control, retry_after: retry },
+})
+
+// Locked by a moderator until `until` (unix seconds).
+export const locked = (until: number, text: string): Refusal => ({
+  error: text,
+  reason: { kind: 'locked', until },
 })
 
 export const offSite = (control: string, text: string): Refusal => ({

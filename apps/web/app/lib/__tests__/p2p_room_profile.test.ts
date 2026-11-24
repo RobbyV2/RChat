@@ -1,7 +1,20 @@
 import { describe, expect, test } from 'bun:test'
 import { AclWorld, devOwner, TestReplica } from './p2p_acl_world'
 import { AGREED } from '../p2p/limits'
-import { KICK, RULES_NEXT, RULES_VERSION, SERVER } from '../p2p/acl/rules'
+import {
+  KICK,
+  PROFILES,
+  profileResetOk,
+  resetBit,
+  ROLES,
+  RULES_NEXT,
+  RULES_VERSION,
+  SERVER,
+  type AclEv,
+} from '../p2p/acl/rules'
+import type { FactsQ } from '../p2p/acl/facts'
+import { mayResetProfile } from '../p2p/state'
+import { FOREVER, hiddenFields, roomLock, settleIntent, shownExtras } from '../profile_reset'
 import { applySummary, diffSummary, emptySummary } from '../p2p/acl/summary'
 import { cleanName } from '../p2p/keys'
 import {
@@ -131,6 +144,264 @@ describe('profile writes of one device in a room', () => {
     expect(writeFits(times, start + 3_600_000)).toBe(true)
     expect(recentWrites(times, start + 3_600_001)).toEqual(times.slice(2))
     expect(recentWrites([start + 50], start)).toEqual([])
+  })
+})
+
+describe('profile_reset: a moderator clears parts of a room profile, read at display', () => {
+  const NOW = 1_700_000_000
+  const resetOf = (w: AclWorld, who: string) => F(w).profileReset.get(who)
+  const shown = (w: AclWorld, who: string, now = NOW) =>
+    shownExtras(extrasOf(w, who), resetOf(w, who), now)
+  const mine = { name: 'Al', nick: 'Ali', bio: 'here', av: { kind: 'identicon' }, bn: '#112233' }
+  // O owns; A holds Kick at 5, B holds Kick at 3, C and D are plain.
+  const club = () => {
+    const w = world()
+    const HIGH = role(w, 5, KICK)
+    const LOW = role(w, 3, KICK)
+    for (const d of ['A1', 'B1', 'C1', 'D1']) join(w, d)
+    w.ok('O1', 'assign', { to: 'A', role: HIGH })
+    w.ok('O1', 'assign', { to: 'B', role: LOW })
+    for (const d of ['A1', 'B1', 'C1', 'D1']) w.ok(d, 'profile', mine)
+    return { w, HIGH, LOW }
+  }
+
+  test('an owner, or a member with Kick who outranks the member, resets; anyone else is admitted and not read', () => {
+    const { w } = club()
+    const rows: [string, string, Record<string, unknown>, string, boolean][] = [
+      ['a plain member', 'D1', { to: 'C', fields: ['name'] }, 'C', false],
+      ['a member on themselves', 'A1', { to: 'A', fields: ['name'] }, 'A', false],
+      ['a moderator on one above', 'B1', { to: 'A', fields: ['name'] }, 'A', false],
+      ['a moderator on an owner', 'A1', { to: 'O', fields: ['name'] }, 'O', false],
+      ['someone who is not in', 'A1', { to: 'Z', fields: ['name'] }, 'Z', false],
+      ['fields that are no list', 'O1', { to: 'C', fields: 'name' }, 'C', false],
+      ['a lock end that is no time', 'O1', { to: 'C', fields: ['name'], until: -4 }, 'C', false],
+      ['a moderator on a plain member', 'B1', { to: 'C', fields: ['name'], later: 1 }, 'C', true],
+      ['a moderator on one below', 'A1', { to: 'B', fields: ['bio'] }, 'B', true],
+      ['the owner on a moderator', 'O1', { to: 'A' }, 'A', true],
+    ]
+    for (const [what, dev, c, who, counts] of rows) {
+      expect([what, w.act(dev, 'profile_reset', c).v.s]).toEqual([what, 'A'])
+      expect([what, resetOf(w, who) !== undefined]).toEqual([what, counts])
+    }
+    expect(shown(w, 'C')).toEqual({ bio: 'here', av: { kind: 'identicon' }, bn: '#112233' })
+    expect(shown(w, 'B')).toEqual({ nick: 'Ali', av: { kind: 'identicon' }, bn: '#112233' })
+    expect(shown(w, 'A')).toEqual({})
+    expect(shown(w, 'D')).toEqual(extrasOf(w, 'D'))
+    expect(extrasOf(w, 'C').nick).toBe('Ali')
+    expect(w.state().cut.size).toBe(0)
+  })
+
+  test('it hides what was written before it or at the same time, and nothing written after', () => {
+    const { w } = club()
+    const before = w.heads()
+    const reset = w.ok('O1', 'profile_reset', { to: 'C', fields: ['name', 'banner'] })
+    expect(resetOf(w, 'C')).toEqual({ last: reset.id, hide: ['name', 'banner'] })
+    w.ok('C1', 'profile', { ...mine, nick: 'Sly' }, { ap: before })
+    expect(extrasOf(w, 'C').nick).toBe('Sly')
+    expect(shown(w, 'C')).toEqual({ bio: 'here', av: { kind: 'identicon' } })
+    w.ok('C1', 'profile', { ...mine, nick: 'Fair' })
+    expect(resetOf(w, 'C')).toEqual({ last: reset.id, hide: [] })
+    expect(shown(w, 'C').nick).toBe('Fair')
+    const second = w.ok('A1', 'profile_reset', { to: 'C', fields: ['bio'] })
+    expect(resetOf(w, 'C')).toEqual({ last: second.id, hide: ['bio'] })
+    expect(shown(w, 'C')).toEqual({ nick: 'Fair', av: { kind: 'identicon' }, bn: '#112233' })
+  })
+
+  test('a lock hides its parts of later writes until its end on the reader clock, or until it is lifted', () => {
+    const { w } = club()
+    const lock = w.ok('O1', 'profile_reset', { to: 'C', fields: ['name'], until: NOW + 600 })
+    w.ok('C1', 'profile', { ...mine, nick: 'Again' })
+    expect(resetOf(w, 'C')).toEqual({
+      last: lock.id,
+      hide: [],
+      lock: { until: NOW + 600, fields: ['name'] },
+    })
+    expect(shown(w, 'C').nick).toBeUndefined()
+    expect(shown(w, 'C').bio).toBe('here')
+    expect(roomLock(resetOf(w, 'C'), NOW)).toEqual({ locked: true, until: NOW + 600 })
+    expect(shown(w, 'C', NOW + 600).nick).toBe('Again')
+    w.ok('A1', 'profile_reset', { to: 'C', fields: ['bio'] })
+    expect(resetOf(w, 'C')?.lock).toEqual({ until: NOW + 600, fields: ['name'] })
+    expect(hiddenFields(resetOf(w, 'C'), NOW)).toEqual(['name', 'bio'])
+    w.ok('C1', 'profile_reset', { to: 'C', fields: [], until: 0 })
+    w.ok('D1', 'profile_reset', { to: 'C', fields: [], until: 0 })
+    expect(roomLock(resetOf(w, 'C'), NOW).locked).toBe(true)
+    const lifted = w.ok('B1', 'profile_reset', { to: 'C', fields: [], until: 0 })
+    expect(resetOf(w, 'C')).toEqual({ last: lifted.id, hide: ['bio'] })
+    expect(roomLock(resetOf(w, 'C'), NOW)).toEqual({ locked: false })
+    expect(shown(w, 'C').nick).toBe('Again')
+    w.ok('O1', 'profile_reset', { to: 'C', fields: [], until: FOREVER })
+    expect(roomLock(resetOf(w, 'C'), NOW * 1000)).toEqual({ locked: true, until: null })
+  })
+
+  test('a lock alone holds the profile as it was: a part changed while it runs shows once it ends', () => {
+    const { w } = club()
+    const lock = w.ok('O1', 'profile_reset', { to: 'C', fields: [], until: NOW + 600 })
+    expect(shown(w, 'C')).toEqual(extrasOf(w, 'C'))
+    w.ok('C1', 'profile', { ...mine, nick: 'Sneaky', bio: 'new' })
+    expect(resetOf(w, 'C')).toEqual({
+      last: lock.id,
+      hide: [],
+      lock: { until: NOW + 600, fields: ['name', 'bio'] },
+    })
+    expect(roomLock(resetOf(w, 'C'), NOW).locked).toBe(true)
+    expect(shown(w, 'C')).toEqual({ av: { kind: 'identicon' }, bn: '#112233' })
+    expect(shown(w, 'C', NOW + 600)).toMatchObject({ nick: 'Sneaky', bio: 'new' })
+    w.ok('C1', 'profile', { name: 'Al', bio: 'here', bn: '#445566' })
+    expect(shown(w, 'C')).toEqual({ bio: 'here' })
+  })
+
+  test('a part the lock does not list, written while it runs, shows once it ends', () => {
+    const { w } = club()
+    w.ok('O1', 'profile_reset', { to: 'C', fields: ['name'], until: NOW + 600 })
+    w.ok('C1', 'profile', { ...mine, bio: 'new' })
+    expect(resetOf(w, 'C')?.lock?.fields).toEqual(['name', 'bio'])
+    expect(shown(w, 'C')).toEqual({ av: { kind: 'identicon' }, bn: '#112233' })
+    expect(shown(w, 'C', NOW + 600)).toEqual({ ...extrasOf(w, 'C'), bio: 'new' })
+  })
+
+  test('our write without what a lock cleared keeps the rest showing while it runs', () => {
+    const { w } = club()
+    w.ok('O1', 'profile_reset', { to: 'C', fields: ['name'], until: NOW + 600 })
+    w.ok('C1', 'profile', { name: 'Al', bio: 'here', av: { kind: 'identicon' }, bn: '#112233' })
+    expect(resetOf(w, 'C')?.hide).toEqual(['name'])
+    expect(resetOf(w, 'C')?.lock?.fields).toEqual(['name'])
+    expect(shown(w, 'C')).toEqual({ bio: 'here', av: { kind: 'identicon' }, bn: '#112233' })
+  })
+
+  test('a part we took out stays out, and comes back once its reset stops counting', () => {
+    const { w, LOW } = club()
+    const before = w.heads()
+    w.ok('B1', 'profile_reset', { to: 'C', fields: ['name'] })
+    const set = roomExtras(mine, cleanName)
+    const out = settleIntent(set, {}, extrasOf(w, 'C'), resetOf(w, 'C'))
+    expect(out).toEqual({ intent: roomExtras({ ...mine, nick: undefined }), gone: { nick: 'Ali' } })
+    if (!out) return
+    w.ok('C1', 'profile', { name: 'Al', ...out.intent })
+    expect(resetOf(w, 'C')?.hide).toEqual(['name'])
+    expect(settleIntent(out.intent, out.gone, extrasOf(w, 'C'), resetOf(w, 'C'))).toBeNull()
+    w.ok('O1', 'revoke', { to: 'B', role: LOW }, { ap: before })
+    expect(resetOf(w, 'C')).toBeUndefined()
+    expect(settleIntent(out.intent, out.gone, extrasOf(w, 'C'), resetOf(w, 'C'))).toEqual({
+      intent: set,
+      gone: {},
+    })
+  })
+
+  test('a reset concurrent with its author losing the role does not count, in any order', () => {
+    const { w, LOW } = club()
+    const before = w.heads()
+    w.ok('O1', 'revoke', { to: 'B', role: LOW })
+    const late = w.ok('B1', 'profile_reset', { to: 'C', fields: ['name'] }, { ap: before })
+    expect(w.state().cut.has(late.id)).toBe(false)
+    expect(resetOf(w, 'C')).toBeUndefined()
+    expect(shown(w, 'C').nick).toBe('Ali')
+    const r = new TestReplica(AGREED)
+    for (const e of [...w.all].reverse()) r.receive(e)
+    expect(r.state().facts.profileReset.get('C')).toBeUndefined()
+  })
+
+  test('a reset concurrent with its author moving below the member does not count', () => {
+    const { w, HIGH } = club()
+    const MID = role(w, 4, 0)
+    w.ok('O1', 'assign', { to: 'C', role: MID })
+    const before = w.heads()
+    w.ok('O1', 'role_move', { role: HIGH, pos: 2 })
+    w.ok('A1', 'profile_reset', { to: 'C', fields: ['name'] }, { ap: before })
+    expect(resetOf(w, 'C')).toBeUndefined()
+    w.ok('O1', 'profile_reset', { to: 'C', fields: ['name'] })
+    expect(shown(w, 'C').nick).toBeUndefined()
+  })
+
+  test('a reset and its lock end with the membership', () => {
+    const { w } = club()
+    w.ok('O1', 'profile_reset', { to: 'C', until: FOREVER })
+    expect(roomLock(resetOf(w, 'C'), NOW).locked).toBe(true)
+    w.ok('C1', 'leave')
+    expect(resetOf(w, 'C')).toBeUndefined()
+    join(w, 'C2')
+    expect(F(w).mem.has('C')).toBe(true)
+    w.ok('C2', 'profile', { ...mine, nick: 'Back' })
+    expect(resetOf(w, 'C')).toBeUndefined()
+    expect(shown(w, 'C')).toEqual(extrasOf(w, 'C'))
+  })
+
+  test('from the next rules version the bit of its own is asked for, and Kick alone is not enough', () => {
+    expect([2, RULES_VERSION, null, undefined, '5'].map(resetBit)).toEqual(Array(5).fill(KICK))
+    expect([RULES_NEXT, RULES_NEXT + 1].map(resetBit)).toEqual([PROFILES, PROFILES])
+    expect(PROFILES).toBe(8388608)
+    const St = (bits: number): FactsQ =>
+      ({
+        owners: new Set(['O']),
+        mem: new Set(['O', 'A', 'C']),
+        bits: new Map([
+          ['everyone', 0],
+          ['R', bits],
+        ]),
+        pos: new Map([['R', 5]]),
+        holds: new Map([['A', new Set(['R'])]]),
+      }) as unknown as FactsQ
+    const e = (a: string, to: string) => ({ a, c: { to, fields: ['name'] } }) as unknown as AclEv
+    expect(profileResetOk(e('A', 'C'), St(KICK), resetBit(RULES_VERSION))).toBe(true)
+    expect(profileResetOk(e('A', 'C'), St(KICK | ROLES), resetBit(RULES_NEXT))).toBe(false)
+    expect(profileResetOk(e('A', 'C'), St(PROFILES), resetBit(RULES_NEXT))).toBe(true)
+    expect(profileResetOk(e('A', 'C'), St(PROFILES), resetBit(RULES_VERSION))).toBe(false)
+    expect(profileResetOk(e('O', 'C'), St(0), resetBit(RULES_NEXT))).toBe(true)
+    expect(profileResetOk(e('A', 'O'), St(PROFILES), resetBit(RULES_NEXT))).toBe(false)
+    expect(profileResetOk(e('C', 'A'), St(PROFILES), resetBit(RULES_NEXT))).toBe(false)
+  })
+
+  test('the page offers a reset to those whose reset would count', () => {
+    const member = (rank: [number, string], perms: number, m: 'join' | 'leave' = 'join') => ({
+      m,
+      rank,
+      perms,
+      roles: [] as string[],
+      devs: [] as string[],
+      profile: null,
+    })
+    const s = (rules: number) => ({
+      ...emptySummary(),
+      rules,
+      owners: ['O'],
+      members: {
+        O: member([Infinity, ''], 0x7fffffff),
+        A: member([5, 'R'], KICK),
+        P: member([5, 'S'], PROFILES),
+        C: member([-1, ''], 0),
+        Gone: member([-1, ''], 0, 'leave'),
+      },
+    })
+    const may = (rules: number, by: string, to: string) => mayResetProfile(s(rules), by, to)
+    expect(may(RULES_VERSION, 'A', 'C')).toBe(true)
+    expect(may(RULES_VERSION, 'P', 'C')).toBe(false)
+    expect(may(RULES_NEXT, 'A', 'C')).toBe(false)
+    expect(may(RULES_NEXT, 'P', 'C')).toBe(true)
+    expect(may(RULES_VERSION, 'O', 'A')).toBe(true)
+    expect(may(RULES_VERSION, 'A', 'A')).toBe(false)
+    expect(may(RULES_VERSION, 'A', 'P')).toBe(false)
+    expect(may(RULES_VERSION, 'A', 'O')).toBe(false)
+    expect(may(RULES_VERSION, 'O', 'O')).toBe(false)
+    expect(may(RULES_VERSION, 'O', 'Gone')).toBe(false)
+    expect(may(RULES_VERSION, 'C', 'A')).toBe(false)
+  })
+
+  test('a reset that stops counting leaves the page summary of its member', () => {
+    const m = {
+      m: 'join' as const,
+      rank: [-1, ''] as const,
+      perms: 0,
+      roles: [],
+      devs: [],
+      profile: null,
+    }
+    const plain = { ...emptySummary(), members: { C: m } }
+    const reset = { ...emptySummary(), members: { C: { ...m, reset: { last: 'r', hide: [] } } } }
+    expect(applySummary(reset, diffSummary(reset, plain)).members.C.reset).toBeUndefined()
+    expect(applySummary(plain, diffSummary(plain, reset)).members.C.reset).toEqual({
+      last: 'r',
+      hide: [],
+    })
   })
 })
 

@@ -1,4 +1,5 @@
 import { LOCAL } from '../limits'
+import type { ResetFact } from '../../profile_reset'
 import { FastEval } from './eval'
 import {
   factsInScope,
@@ -331,6 +332,15 @@ class SnapFacts implements Facts {
   }
   get profileMode() {
     return this.V.profileModeOf()
+  }
+  get profileReset() {
+    return this.one('profileReset', () =>
+      lazyMap(
+        T => this.V.profileResetOf(T) !== undefined,
+        T => this.V.profileResetOf(T),
+        () => this.full().profileReset as ReadonlyMap<string, ResetFact>
+      )
+    )
   }
   get overwrites() {
     return this.one('overwrites', () => {

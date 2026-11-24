@@ -509,7 +509,8 @@ pub struct Role {
     /// of others), 4 Kick (also bans), 8 Delete server, 16 Manage admins,
     /// 32 Mention everyone and roles (`@everyone`, `@here` and every role), 64 View audit log,
     /// 128 Timeout members, 256 Manage webhooks, 512 Manage reports (see and act on reports in the
-    /// server), 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles.
+    /// server), 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign
+    /// roles, 65536 Reset server profiles (clear and lock the server profile of another member).
     #[schema(example = 6)]
     pub perms: i64,
     /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
@@ -2347,6 +2348,14 @@ fn api_routes(
             get(profiles::get_profile)
                 .patch(profiles::patch_profile)
                 .delete(profiles::delete_profile),
+        )
+        .route(
+            "/servers/{name}/members/{username}/profile/reset",
+            post(profiles::reset_member_profile),
+        )
+        .route(
+            "/servers/{name}/members/{username}/profile/lock",
+            delete(profiles::unlock_member_profile),
         )
         .route(
             "/servers/{name}/voice/{guest}/disconnect",

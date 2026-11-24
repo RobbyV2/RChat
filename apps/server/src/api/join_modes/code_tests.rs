@@ -332,6 +332,7 @@ async fn dead_and_unknown_codes_get_the_same_answer() {
                 control: None,
                 retry_after: None,
                 field: Some("password".to_string()),
+                until: None,
             })
         )
     );
@@ -587,6 +588,7 @@ async fn invite_links_are_only_for_servers_people_join_with_an_invite_or_passwor
                 control: None,
                 retry_after: None,
                 field: Some("standing_link".to_string()),
+                until: None,
             })
         )
     );

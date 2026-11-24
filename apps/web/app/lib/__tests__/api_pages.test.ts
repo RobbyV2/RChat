@@ -67,6 +67,29 @@ describe('admin perms', () => {
   })
 })
 
+describe('resetting a member server profile', () => {
+  test('posts the fields and the lock, and lifts a lock by its own route', async () => {
+    const sent: [string, string, unknown][] = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : null
+      sent.push([init?.method ?? 'GET', new URL(String(input), 'http://localhost').pathname, body])
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as typeof fetch
+    await api.resetMemberProfile('club', 'bob b', ['avatar', 'name'], 604800, ' spam ')
+    await api.resetMemberProfile('club', 'bob', ['bio'], null, '')
+    await api.unlockMemberProfile('club', 'bob')
+    expect(sent).toEqual([
+      [
+        'POST',
+        '/api/servers/club/members/bob%20b/profile/reset',
+        { fields: ['name', 'avatar'], lock_secs: 604800, reason: 'spam' },
+      ],
+      ['POST', '/api/servers/club/members/bob/profile/reset', { fields: ['bio'] }],
+      ['DELETE', '/api/servers/club/members/bob/profile/lock', null],
+    ])
+  })
+})
+
 describe('notePresence', () => {
   test('patches the loaded member and the cached member info', () => {
     useStore.setState({

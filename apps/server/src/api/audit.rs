@@ -31,6 +31,8 @@ pub enum Action {
     MemberTimeout,
     MemberUntimeout,
     MemberProfileName,
+    MemberProfileReset,
+    MemberProfileUnlock,
     VoiceDisconnect,
     VoiceMute,
     VoiceUnmute,
@@ -89,6 +91,8 @@ pub const ACTIONS: &[Action] = &[
     Action::MemberTimeout,
     Action::MemberUntimeout,
     Action::MemberProfileName,
+    Action::MemberProfileReset,
+    Action::MemberProfileUnlock,
     Action::VoiceDisconnect,
     Action::VoiceMute,
     Action::VoiceUnmute,
@@ -154,6 +158,8 @@ impl Action {
             Action::MemberTimeout => "member.timeout",
             Action::MemberUntimeout => "member.untimeout",
             Action::MemberProfileName => "member.profile_name",
+            Action::MemberProfileReset => "member.profile_reset",
+            Action::MemberProfileUnlock => "member.profile_unlock",
             Action::VoiceDisconnect => "member.voice_disconnect",
             Action::VoiceMute => "member.voice_mute",
             Action::VoiceUnmute => "member.voice_unmute",
@@ -674,8 +680,9 @@ pub struct AuditEntry {
     /// Dotted action name; the part before the dot is its group. `member`: `join` (with an
     /// extra password or invite link: the target is that password by its id and label, never
     /// its code; `kind` in the details is `password`, `link` or `standing`), `kick`, `ban`,
-    /// `unban`, `timeout`, `untimeout`, `voice_disconnect`, `voice_mute`, `voice_unmute` (of a
-    /// guest in voice), `admin_grant`, `admin_revoke`, `admin_transfer`, `admin_perms`. `role`: `create`,
+    /// `unban`, `timeout`, `untimeout`, `profile_name` (a member's own server name),
+    /// `profile_reset` and `profile_unlock` (of a member's server profile), `voice_disconnect`,
+    /// `voice_mute`, `voice_unmute` (of a guest in voice), `admin_grant`, `admin_revoke`, `admin_transfer`, `admin_perms`. `role`: `create`,
     /// `update`, `delete`, `assign`, `unassign`. `channel`: `create`, `update` (name, topic, slow
     /// mode, restrictions), `delete`, `perm_set`, `perm_clear`, `reorder`, `category_create`,
     /// `category_update`, `category_delete`. `server`: `update` (name and colors),

@@ -1,5 +1,6 @@
 import { guestLabel } from './guest_voice'
 import { MODE_LABELS, isProfilesMode } from './profile_fields'
+import { FOREVER, RESET_FIELDS, RESET_LABELS, isResetField } from './profile_reset'
 import { PERM_ITEMS } from './rules'
 import { slowLabel } from './slowmode'
 import { durationText } from './timeouts'
@@ -89,6 +90,7 @@ const FIELD_LABELS: Record<string, string> = {
   owner: 'Owner',
   upload_expiry: 'File expiry',
   profiles_mode: 'Server profiles',
+  lock_until: 'Locked until',
 }
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
@@ -115,6 +117,7 @@ export function valueText(field: string, v: unknown): string {
     if (field === 'expires_at') return 'Never'
     if (field === 'max_uses') return 'Unlimited'
     if (field === 'until') return 'Not timed out'
+    if (field === 'lock_until') return 'Not locked'
     return 'None'
   }
   if (field === 'authors' && Array.isArray(v))
@@ -133,7 +136,9 @@ export function valueText(field: string, v: unknown): string {
     if (field === 'slowmode_seconds') return slowLabel(v)
     if (field === 'upload_expiry') return durationText(v)
     if (field === 'perms') return permNames(v)
-    if (field === 'expires_at' || field === 'until') return new Date(v * 1000).toLocaleString()
+    if (field === 'lock_until' && v >= FOREVER) return 'Until unlocked'
+    if (field === 'expires_at' || field === 'until' || field === 'lock_until')
+      return new Date(v * 1000).toLocaleString()
     if (field === 'duration' || field === 'remaining') return durationText(v)
     return String(v)
   }
@@ -161,6 +166,7 @@ const FACTS = [
   'channels',
   'duration',
   'remaining',
+  'lock_until',
   'reason',
   'total',
   'count',
@@ -307,6 +313,36 @@ function serverName(entry: AuditEntry): Part[] {
   return [t(' changed their server name')]
 }
 
+// What a moderator cleared of a member's server profile: the parts, the member, and the name
+// that went (theirs: streamer blur).
+function profileReset(entry: AuditEntry, actor: Part[], user: Part[]): Part[] {
+  const raw = entry.hidden ? [] : entry.details.fields
+  const fields = RESET_FIELDS.filter(
+    f => Array.isArray(raw) && raw.filter(isResetField).includes(f)
+  )
+  if (!fields.length)
+    return [
+      ...actor,
+      t(entry.hidden ? ' reset the server profile of ' : ' locked the server profile of '),
+      ...user,
+    ]
+  const labels = fields.map(f => RESET_LABELS[f].toLowerCase())
+  const what =
+    fields.length === RESET_FIELDS.length
+      ? 'server profile'
+      : labels.length === 1
+        ? labels[0]
+        : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+  const old = str(entry.details.old_name)
+  const by = entry.target?.user?.username
+  return [
+    ...actor,
+    t(` reset the ${what} of `),
+    ...user,
+    ...(old ? [t(', who was named '), { text: old, name: true, by }] : []),
+  ]
+}
+
 // Whether a details value is a server name (streamer blur).
 export const isNameValue = (entry: AuditEntry, field: string) =>
   (entry.action === 'server.update' && field === 'name') || field === 'owner'
@@ -358,6 +394,10 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(' changed the admin permissions of '), ...user]
     case 'member.profile_name':
       return [...actor, ...serverName(entry)]
+    case 'member.profile_reset':
+      return profileReset(entry, actor, user)
+    case 'member.profile_unlock':
+      return [...actor, t(' unlocked the server profile of '), ...user]
     case 'role.create':
       return [...actor, t(` created ${roleText(entry)}`)]
     case 'role.update': {

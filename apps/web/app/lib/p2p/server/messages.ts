@@ -6,7 +6,7 @@ import { TOO_BIG_TEXT, slowText } from '../flows'
 import { can, isOwner, membersOf, outranks, P } from '../state'
 import { DmError, mentionsIn } from '../dm'
 import { cleanName } from '../keys'
-import { memberExtras, roomProfile } from '../../profile_fields'
+import { shownRoomProfile } from '../../profile_reset'
 import type { ServerCtx } from './context'
 import {
   ServerError,
@@ -27,7 +27,7 @@ export function mentionables(cx: ServerCtx, room: string) {
     const names = [
       c?.petname,
       c?.name,
-      roomProfile(memberExtras(m, cleanName), s.profiles).look?.name,
+      shownRoomProfile(m, s.profiles, cx.clock.now(), cleanName).look?.name,
       cx.idents.get(m.ik)?.profile?.name,
       typeof m.profile?.name === 'string' ? m.profile.name : undefined,
     ]

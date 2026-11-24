@@ -19,9 +19,10 @@ export const Perm = {
   ManageInvites: 8192,
   ManageRoles: 16384,
   AssignRoles: 32768,
+  ManageProfiles: 65536,
 } as const
 
-export const ALL_PERMS = 62463
+export const ALL_PERMS = 127999
 
 export const hasPerm = (perms: number, perm: number) => (perms & perm) !== 0
 
@@ -580,6 +581,9 @@ export interface ProfileMember {
   online: boolean
   timeout?: TimeoutWire
   profile?: MemberLook
+  // Until when (unix seconds) a moderator locked their server profile. Only for viewers who
+  // can reset server profiles.
+  profile_locked_until?: number
 }
 
 export interface Profile {

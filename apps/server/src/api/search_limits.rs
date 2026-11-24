@@ -321,6 +321,7 @@ mod tests {
             control: None,
             retry_after: Some(wait),
             field: None,
+            until: None,
         }
     }
 
@@ -803,6 +804,7 @@ mod tests {
                 control: Some(CONCURRENT.to_string()),
                 retry_after: Some(2),
                 field: None,
+                until: None,
             }
         );
         assert!(

@@ -38,12 +38,17 @@ export const CHANNELS = P.ManageChannels
 export const MESSAGES = P.ManageMessages
 export const SEND = P.SendMessages
 export const VIEW = P.ViewChannel
+// Reset server profiles: read from rules RULES_NEXT on. Up to rules 4, Kick stands in for it.
+export const PROFILES = 8388608
 export const ALL = 0x7fffffff
 export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
 export const RULES_VERSION = 4
 export const RULES_NEXT = 5
 export const knownRules = (rules: unknown) => rules === 2 || rules === RULES_VERSION
+// The bit a moderator needs to reset another member's room profile under `rules`.
+export const resetBit = (rules: unknown) =>
+  typeof rules === 'number' && rules >= RULES_NEXT ? PROFILES : KICK
 export function textOnlyChannel(rules: unknown, channel: AclContent | undefined) {
   return (
     rules === RULES_VERSION && (channel?.kind ?? 'text') === 'text' && channel?.text_only === true
@@ -511,6 +516,19 @@ export const roleMetaOk = (e: AclEv, St: FactsQ) =>
 export const profileModeOk = (e: AclEv, St: FactsQ) =>
   (e.c.mode === 'all' || e.c.mode === 'no_names' || e.c.mode === 'off') &&
   (St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & SERVER) !== 0))
+
+// profile_reset is a register on the role_meta pattern, keyed by the member it names (`to`):
+// admitted, cut and live by the generic rule, with its Authority read only at display. A write
+// counts when it names a member other than its author who is not an owner, and its author, in
+// St(w), is an owner or holds `bit` (resetBit) and outranks that member. Its parts and lock end
+// are read where it is shown; a malformed one is not read.
+export const profileResetOk = (e: AclEv, St: FactsQ, bit: number) =>
+  typeof e.c.to === 'string' &&
+  e.c.to !== e.a &&
+  St.mem.has(e.c.to) &&
+  !St.owners.has(e.c.to) &&
+  (St.owners.has(e.a) ||
+    (St.mem.has(e.a) && (permsQ(St, e.a) & bit) !== 0 && gt(rank(St, e.a), rank(St, e.c.to))))
 
 export function classify(e: AclEv, F: FactsQ): { cls: Cls; self: boolean } {
   switch (e.t) {

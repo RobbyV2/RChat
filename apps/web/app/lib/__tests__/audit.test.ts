@@ -498,4 +498,58 @@ describe('the member privacy option', () => {
     )
     expect(factsOf(named('Ali', 'Al'))).toEqual([])
   })
+
+  test('a reset says what was cleared, whose it was and the name that went', () => {
+    const target = {
+      kind: 'user' as const,
+      id: null,
+      name: 'bob',
+      user: user('bob', 'Bob'),
+      staff: false,
+      deleted: false,
+    }
+    const reset = (details: Record<string, unknown>) =>
+      entry({ action: 'member.profile_reset', target, details })
+    expect(
+      sentence(reset({ fields: ['name', 'avatar'], old_name: 'Robert', lock_until: null }))
+    ).toEqual([
+      { text: 'Alice', name: true, by: 'alice' },
+      { text: ' reset the server name and avatar of ' },
+      { text: 'Bob', name: true, by: 'bob' },
+      { text: ', who was named ' },
+      { text: 'Robert', name: true, by: 'bob' },
+    ])
+    expect(sentenceText(reset({ fields: ['bio'], old_name: null }))).toBe(
+      'Alice reset the description of Bob'
+    )
+    expect(sentenceText(reset({ fields: ['banner', 'bio', 'name'], old_name: null }))).toBe(
+      'Alice reset the server name, description and banner color of Bob'
+    )
+    expect(sentenceText(reset({ fields: ['name', 'bio', 'avatar', 'banner'] }))).toBe(
+      'Alice reset the server profile of Bob'
+    )
+    expect(sentenceText(reset({ fields: [], lock_until: 1_800_000_000 }))).toBe(
+      'Alice locked the server profile of Bob'
+    )
+    expect(sentenceText({ ...reset({}), hidden: true })).toBe(
+      'Alice reset the server profile of someone'
+    )
+    const facts = factsOf(reset({ fields: ['name'], lock_until: 1_800_000_000, reason: 'spam' }))
+    expect(facts).toEqual([
+      ['Locked until', new Date(1_800_000_000_000).toLocaleString()],
+      ['Reason', 'spam'],
+    ])
+    expect(factsOf(reset({ fields: ['name'], old_name: null, reason: 'spam' }))).toEqual([
+      ['Reason', 'spam'],
+    ])
+    expect(valueText('lock_until', 2 ** 63)).toBe('Until unlocked')
+    expect(valueText('lock_until', null)).toBe('Not locked')
+    const unlock = entry({
+      action: 'member.profile_unlock',
+      target,
+      details: { changes: [{ field: 'lock_until', before: 1_800_000_000, after: null }] },
+    })
+    expect(sentenceText(unlock)).toBe('Alice unlocked the server profile of Bob')
+    expect(fieldLabel('lock_until')).toBe('Locked until')
+  })
 })

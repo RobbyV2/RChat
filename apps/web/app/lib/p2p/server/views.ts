@@ -1,7 +1,7 @@
 import { RULES_VERSION, gt, restricts, type Rank } from '../acl/rules'
 import type { MemberSum, Summary } from '../acl/summary'
 import { cleanName } from '../keys'
-import { memberExtras, roomProfile } from '../../profile_fields'
+import { roomLock, shownRoomProfile } from '../../profile_reset'
 import type { Shown } from '../acl_room'
 import { getEvents } from '../dag'
 import { serverWire, type EventRecord, type OutboxRecord, type RoomRecord } from '../db'
@@ -58,6 +58,7 @@ export interface ViewEnv {
   frozen(): boolean
   voice(): ServerView['voice']
   syncing(): boolean
+  now(): number
   lim: Pick<Local, 'display' | 'server'>
 }
 
@@ -74,15 +75,23 @@ export function view(cx: ServerCtx, room: string): ServerView | null {
     frozen: () => cx.frozen(room),
     voice: () => cx.voice.channels(room),
     syncing: () => !!cx.sync.pullingState(room),
+    now: () => cx.clock.now(),
     lim: cx.local,
   })
 }
 
-// The nickname and avatar a member set for this server, as its mode shows them.
-const nickOf = (s: Summary, m: MemberSum): Pick<MemberView, 'nick' | 'av'> => {
-  const look = roomProfile(memberExtras(m, cleanName), s.profiles).look
-  if (!look) return {}
+// The nickname and avatar a member set for this server, as its mode and the resets of their
+// profile show them at `at`, and whether a moderator's lock on their profile runs.
+const nickOf = (
+  s: Summary,
+  m: MemberSum,
+  at: number
+): Pick<MemberView, 'nick' | 'av' | 'profileLocked'> => {
+  const look = shownRoomProfile(m, s.profiles, at, cleanName).look
+  const locked = roomLock(m.reset, Math.floor(at / 1000)).locked
+  if (!look) return locked ? { profileLocked: true } : {}
   return {
+    ...(locked ? { profileLocked: true as const } : {}),
     ...(look.name ? { nick: look.name } : {}),
     ...(look.avatar_kind
       ? { av: { kind: look.avatar_kind, ...(look.avatar_color ? { bg: look.avatar_color } : {}) } }
@@ -99,6 +108,7 @@ export function serverView(
   env: ViewEnv
 ): ServerView {
   const online = env.online()
+  const clock = env.now()
   const owners = s.owners
   const meRank = memberOf(s, env.me)?.rank
   const banner = membershipOf(s, env.me) === 'join' && can(s, env.me, P.Ban)
@@ -110,7 +120,7 @@ export function serverView(
       ik: m.ik,
       m: m.m,
       name: env.name(m.ik),
-      ...nickOf(s, m),
+      ...nickOf(s, m, clock),
       owner: owners.includes(m.ik),
       online: m.m === 'join' && online.has(m.ik),
       contact: env.contact(m.ik),

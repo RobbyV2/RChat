@@ -5,6 +5,7 @@ import {
   cmp,
   EVERYONE,
   P as ACL_P,
+  resetBit,
   type AclContent,
   type ChanFacts,
   type Rank,
@@ -105,6 +106,14 @@ export const rankOf = (s: Summary, ik: string): Rank => s.members[ik]?.rank ?? [
 // Whether `ik` outranks `other` (acting on a member needs it).
 export const outranks = (s: Summary, ik: string, other: string) =>
   cmp(rankOf(s, ik), rankOf(s, other)) > 0
+
+// Whether `ik` may reset the room profile of `other`, or lift its lock: an owner, or a member
+// with the bit the room's rules ask for who outranks them. Never one's own, never an owner's.
+export const mayResetProfile = (s: Summary, ik: string, other: string) =>
+  ik !== other &&
+  s.members[other]?.m === 'join' &&
+  !isOwner(s, other) &&
+  (isOwner(s, ik) || (can(s, ik, resetBit(s.rules)) && outranks(s, ik, other)))
 
 export const membersOf = (s: Summary) => Object.entries(s.members).map(([ik, m]) => ({ ik, ...m }))
 

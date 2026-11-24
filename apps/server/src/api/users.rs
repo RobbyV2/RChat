@@ -51,6 +51,11 @@ pub struct ProfileMember {
     /// and while server profiles are off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<crate::api::profiles::MemberLook>,
+    /// Until when (unix seconds) a moderator locked the user's server profile;
+    /// 9223372036854775807 for a lock that stays until it is lifted. Only for viewers with the
+    /// Reset server profiles permission; absent otherwise and when it is not locked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_locked_until: Option<i64>,
 }
 
 /// A user's mini profile.
@@ -122,6 +127,11 @@ pub struct MemberFacts {
     /// and while server profiles are off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<crate::api::profiles::MemberLook>,
+    /// Until when (unix seconds) a moderator locked the user's server profile;
+    /// 9223372036854775807 for a lock that stays until it is lifted. Only for viewers with the
+    /// Reset server profiles permission; absent otherwise and when it is not locked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_locked_until: Option<i64>,
 }
 
 impl From<MemberFacts> for ProfileMember {
@@ -136,6 +146,7 @@ impl From<MemberFacts> for ProfileMember {
             online,
             timeout,
             profile,
+            profile_locked_until,
         } = facts;
         ProfileMember {
             is_admin,
@@ -147,6 +158,7 @@ impl From<MemberFacts> for ProfileMember {
             online,
             timeout,
             profile,
+            profile_locked_until,
         }
     }
 }
@@ -235,6 +247,10 @@ async fn member_facts(
                 }
                 false => None,
             };
+            let profile_locked_until = match access.can_view(db, Perm::ManageProfiles).await {
+                true => crate::api::profiles::locked_until(db, &lite.name, username).await?,
+                false => None,
+            };
             Ok(Some(MemberFacts {
                 is_admin: r.try_get::<i64, _>(0)? != 0,
                 is_creator: lite.creator.as_deref() == Some(username),
@@ -245,6 +261,7 @@ async fn member_facts(
                 online: state.hub.is_online(&lite.name, username),
                 timeout,
                 profile: crate::api::profiles::look_of(db, &lite.name, username).await?,
+                profile_locked_until,
             }))
         }
         None => Ok(None),
@@ -589,6 +606,7 @@ mod tests {
             control: None,
             retry_after: None,
             field: Some(field.to_string()),
+            until: None,
         };
         (StatusCode::BAD_REQUEST, text.to_string(), Some(reason))
     }
@@ -961,6 +979,42 @@ mod tests {
                 .is_none_or(|facts| facts.server_bio.is_none()),
             "a server that keeps its members shows no server description outside it"
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn profile_locks_show_to_those_who_can_lift_them() {
+        let (state, path) = temp_state("card_profile_lock").await;
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            lookup_profile_per_minute: 10_000,
+            lookup_misses_per_hour: 0,
+            ..crate::limits::Limits::default()
+        }));
+        let db = &state.db;
+        world(&state).await;
+        add_member(db, "vault", "carol", 0, 0, 500).await;
+        let until = crate::db::now() + 600;
+        exec(db, &format!("INSERT INTO member_profiles(server, username, locked_until, updated_at) VALUES('vault', 'bob', {until}, 1)")).await;
+        let lock = |viewer: &'static str| {
+            let state = state.clone();
+            async move {
+                card_for(&state, in_server(by(viewer), "vault"), "bob")
+                    .await
+                    .unwrap_or_else(|e| panic!("{viewer}: {}", e.1))
+                    .member
+                    .expect("membership")
+                    .profile_locked_until
+            }
+        };
+        assert_eq!(lock("alice").await, Some(until));
+        assert_eq!(lock("carol").await, None);
+        assert_eq!(lock("bob").await, None);
+        exec(
+            db,
+            "UPDATE member_profiles SET locked_until = 5 WHERE username = 'bob'",
+        )
+        .await;
+        assert_eq!(lock("alice").await, None, "a lock that ended");
         done(state, path).await;
     }
 

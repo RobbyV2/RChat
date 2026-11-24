@@ -185,6 +185,8 @@ export interface MemberView {
   // The nickname and avatar they set for this server, when its mode shows them.
   nick?: string
   av?: RoomExtras['av']
+  // A moderator locked their profile in this server and the lock runs.
+  profileLocked?: true
   owner: boolean
   online: boolean
   contact: boolean
@@ -410,6 +412,7 @@ export const RESIGN_ACL = [
   'settings',
   'role_meta',
   'profile_mode',
+  'profile_reset',
   'code',
   'code_revoke',
 ]

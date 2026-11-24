@@ -295,13 +295,13 @@ pub struct UsernameReq {
 pub struct PermsReq {
     /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin messages of
     /// others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and roles, 64 View
-    /// audit log, 128 Timeout members, 256 Manage webhooks, 512 Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles and 32768 Assign roles. Bits outside 62463
+    /// audit log, 128 Timeout members, 256 Manage webhooks, 512 Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles and 65536 Reset server profiles. Bits outside 127999
     /// are dropped. For an admin, 0 means all permissions.
     #[schema(example = 7)]
     perms: i64,
-    /// The permission bits `perms` sets; send 62463. The admin keeps the bits they hold outside
+    /// The permission bits `perms` sets; send 127999. The admin keeps the bits they hold outside
     /// it. Set bits within 1023 are also added for compatibility. Defaults to 511.
-    #[schema(example = 62463)]
+    #[schema(example = 127999)]
     mask: Option<i64>,
 }
 
@@ -318,7 +318,7 @@ pub struct RoleReq {
     /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
     /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention
     /// everyone and roles, 64 View audit log, 128 Timeout members, 256 Manage webhooks, 512
-    /// Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles and 32768 Assign roles. Bits outside 62463 are dropped.
+    /// Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles and 65536 Reset server profiles. Bits outside 127999 are dropped.
     /// Roles only add permissions to members who are not admins. Admins use their own admin
     /// permissions.
     #[schema(example = 6)]
@@ -340,7 +340,7 @@ pub struct RolePatch {
     name: Option<String>,
     /// New role color as `#rrggbb`, stored as sent.
     color: Option<String>,
-    /// New permission bitmask (see `RoleReq.perms`). Bits outside 62463 are dropped.
+    /// New permission bitmask (see `RoleReq.perms`). Bits outside 127999 are dropped.
     perms: Option<i64>,
     /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`). Turning it
     /// on needs the Mention everyone permission.
@@ -4901,7 +4901,7 @@ pub(crate) async fn transfer_admin(
 /// Set an admin's permissions
 ///
 /// Replaces the permission bits of the admin `username` that `mask` covers and also adds set bits
-/// within 1023 (bits outside 62463 are dropped; 0 means all permissions). Taking permissions away
+/// within 1023 (bits outside 127999 are dropped; 0 means all permissions). Taking permissions away
 /// works on any admin, like revoking admin. When the new permissions add any the admin did not
 /// have, all of the new permissions must be ones you have (equal is fine), so only callers holding
 /// every permission can set 0. A nonzero update must leave a supported permission. Requires the Manage admins server permission. Emits
@@ -9412,6 +9412,7 @@ mod tests {
             control: None,
             retry_after: None,
             field: Some(field.to_string()),
+            until: None,
         };
         (StatusCode::BAD_REQUEST, text.to_string(), Some(reason))
     }
@@ -11277,7 +11278,7 @@ mod tests {
             mem_user("alice", false),
             id,
             None,
-            Some(ALL_PERMS | (1 << 16)),
+            Some(ALL_PERMS | (1 << 17)),
         )
         .await
         .expect("every bit");
@@ -11787,7 +11788,7 @@ mod tests {
         let err = patch(" ", "#000000", Some(MA)).await.err().map(|e| e.0);
         assert_eq!(err, Some(StatusCode::BAD_REQUEST));
         assert_eq!(role_row(db, id).await, before);
-        let Json(role) = patch("helpers", "#00ff00", Some(MA | (1 << 16)))
+        let Json(role) = patch("helpers", "#00ff00", Some(MA | (1 << 17)))
             .await
             .expect("valid");
         assert_eq!(

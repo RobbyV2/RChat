@@ -8,6 +8,13 @@ import {
   writeFits,
   type RoomExtras,
 } from '../../profile_fields'
+import {
+  resetContent,
+  roomLock,
+  unlockContent,
+  type LockSecs,
+  type ResetField,
+} from '../../profile_reset'
 import type { ProfilesMode } from '../../types'
 import type { Plan } from '../acl_room'
 import {
@@ -23,7 +30,7 @@ import { signRevocation2, headerOk, type WireV2 } from '../event_v2'
 import { CANT_TEXT, VOUCH_WAIT_TEXT } from '../flows'
 import { memberBindingDue } from '../badge'
 import { cleanName, keyId } from '../keys'
-import { can, memberOf, P } from '../state'
+import { can, mayResetProfile, memberOf, P } from '../state'
 import { MOVED_TEXT } from '../dm'
 import type { ServerCtx } from './context'
 import { ServerError, sizeOfWire } from './types'
@@ -414,6 +421,8 @@ export async function writeProfile(cx: ServerCtx, room: string) {
 export async function setRoomProfile(cx: ServerCtx, room: string, intent: RoomExtras) {
   const m = memberOf(cx.sumOf(room), cx.me)
   if (m?.m !== 'join') throw new ServerError(CANT_TEXT)
+  if (roomLock(m.reset, Math.floor(cx.clock.now() / 1000)).locked)
+    throw new ServerError(PROFILE_LOCKED_TEXT)
   const next = roomExtras(intent, cleanName)
   if (!writeFits(cx.rooms.get(room)?.profileAt, cx.clock.now()))
     throw new ServerError(PROFILE_OFTEN_TEXT)
@@ -423,6 +432,29 @@ export async function setRoomProfile(cx: ServerCtx, room: string, intent: RoomEx
   })
   await writeProfile(cx, room)
   cx.changed(room)
+}
+
+export const PROFILE_LOCKED_TEXT = 'A moderator locked your server profile.'
+
+// Clears parts of a member's profile here, with a lock when `secs` is given (`profile_reset`).
+export async function resetRoomProfile(
+  cx: ServerCtx,
+  room: string,
+  to: string,
+  fields: readonly ResetField[],
+  secs: LockSecs
+) {
+  // Admitted by the generic rule: one we may not make would show nothing.
+  if (!mayResetProfile(cx.sumOf(room), cx.me, to)) throw new ServerError(CANT_TEXT)
+  if (!fields.length && secs === null) throw new ServerError(CANT_TEXT)
+  const now = Math.floor(cx.clock.now() / 1000)
+  return cx.emit(room, 'profile_reset', () => resetContent(to, fields, secs, now))
+}
+
+// Lifts the lock on a member's profile here.
+export async function unlockRoomProfile(cx: ServerCtx, room: string, to: string) {
+  if (!mayResetProfile(cx.sumOf(room), cx.me, to)) throw new ServerError(CANT_TEXT)
+  return cx.emit(room, 'profile_reset', () => unlockContent(to))
 }
 
 // What members may set in their profile here (`profile_mode`).

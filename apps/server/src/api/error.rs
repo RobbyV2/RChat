@@ -37,6 +37,8 @@ pub enum ReasonKind {
     /// The server can't do it right now. Try again, after `retry_after` seconds when it is
     /// given.
     Unavailable,
+    /// A moderator locked it. `until` is when the lock ends.
+    Locked,
 }
 
 /// Why a request was refused, for programs. An error without one is a denial about a server,
@@ -57,6 +59,10 @@ pub struct Reason {
     /// The name of the request value that is wrong.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
+    /// When (unix seconds) a lock ends; 9223372036854775807 for one that stays until a
+    /// moderator lifts it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<i64>,
 }
 
 impl Reason {
@@ -66,6 +72,7 @@ impl Reason {
             control: None,
             retry_after: None,
             field: None,
+            until: None,
         }
     }
 
@@ -188,6 +195,15 @@ impl ApiError {
             error,
             Reason::of(ReasonKind::SignIn),
         )
+    }
+
+    /// 403: locked by a moderator until `until`.
+    pub fn locked(error: impl Into<String>, until: i64) -> ApiError {
+        let reason = Reason {
+            until: Some(until),
+            ..Reason::of(ReasonKind::Locked)
+        };
+        ApiError::because(StatusCode::FORBIDDEN, error, reason)
     }
 
     /// 503: the server can't do it right now.
@@ -394,6 +410,7 @@ mod tests {
             (ApiError::conflict(StatusCode::CONFLICT, "a"), "conflict"),
             (ApiError::sign_in("a"), "sign_in"),
             (ApiError::unavailable("a", None), "unavailable"),
+            (ApiError::locked("a", 9), "locked"),
         ];
         let mut kinds = Vec::new();
         for (ApiError(status, error, reason), kind) in made {
@@ -420,11 +437,17 @@ mod tests {
                 (reason.kind == ReasonKind::Invalid).then_some("name"),
                 "{kind}"
             );
+            assert_eq!(
+                reason.until,
+                (reason.kind == ReasonKind::Locked).then_some(9),
+                "{kind}"
+            );
             let fixed = match reason.kind {
                 ReasonKind::Invalid => Some(StatusCode::BAD_REQUEST),
                 ReasonKind::Rate => Some(StatusCode::TOO_MANY_REQUESTS),
                 ReasonKind::SignIn => Some(StatusCode::UNAUTHORIZED),
                 ReasonKind::Unavailable => Some(StatusCode::SERVICE_UNAVAILABLE),
+                ReasonKind::Locked => Some(StatusCode::FORBIDDEN),
                 ReasonKind::OffSite
                 | ReasonKind::OffAccount
                 | ReasonKind::OffServer
@@ -443,7 +466,7 @@ mod tests {
         }
         kinds.sort();
         kinds.dedup();
-        assert_eq!(kinds.len(), 12);
+        assert_eq!(kinds.len(), 13);
     }
 
     #[test]

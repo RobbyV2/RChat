@@ -1989,6 +1989,7 @@ mod tests {
                 control,
                 retry_after,
                 field,
+                until: _,
             } = reason.expect("a reason");
             assert_eq!(
                 (kind, control, retry_after, field.as_deref()),

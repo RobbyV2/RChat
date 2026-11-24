@@ -1,5 +1,15 @@
 import { addS, EMPTY, firstTrue, Ix, type BitW } from './reach'
 import { LOCAL } from '../limits'
+import { roomExtras, type RoomExtras } from '../../profile_fields'
+import {
+  changedParts,
+  partOf,
+  RESET_FIELDS,
+  resetContentOk,
+  resetFields,
+  resetUntil,
+  type ResetFact,
+} from '../../profile_reset'
 import {
   RULES_VERSION,
   ALL,
@@ -12,6 +22,9 @@ import {
   NEG,
   roleMetaOk,
   profileModeOk,
+  profileResetOk,
+  rank,
+  resetBit,
   ROLES,
   SERVER,
   TOP,
@@ -97,6 +110,8 @@ export interface Facts extends FactsQ {
   roleMeta: RMap<string, AclContent>
   // What members may set in their room profile (`profile_mode`, a display register).
   profileMode: AclContent | undefined
+  // The resets that count for a member's room profile (`profile_reset`, a display register).
+  profileReset: RMap<string, ResetFact>
   addsTo: RMap<string, readonly Pend[]>
   consumed: RSet<string>
   codeOk: RSet<string>
@@ -743,7 +758,9 @@ export abstract class View {
   roleMetaOf(R: string): AclContent | undefined {
     const ix = this.ix
     const ws = (ix.roleMetaEv.get(R) ?? EMPTY).filter(
-      x => roleMetaOk(ix.ev[x], ix.rec[x].local.facts) && !this.metaDenied(x)
+      x =>
+        roleMetaOk(ix.ev[x], ix.rec[x].local.facts) &&
+        !this.metaDenied(x, ROLES, [ix.rec[x].local.facts.pos.get(R) ?? -1, R])
     )
     const r = this.register(ws)
     return r && ix.ev[r.win].c
@@ -753,14 +770,71 @@ export abstract class View {
   profileModeOf(): AclContent | undefined {
     const ix = this.ix
     const ws = ix.profileModeEv.filter(
-      x => profileModeOk(ix.ev[x], ix.rec[x].local.facts) && !this.metaDenied(x, SERVER, false)
+      x => profileModeOk(ix.ev[x], ix.rec[x].local.facts) && !this.metaDenied(x, SERVER)
     )
     const r = this.register(ws)
     return r && ix.ev[r.win].c
   }
+  // ProfileReset(T): the live `profile_reset` writes naming T whose Authority holds in their
+  // own admission state and after the denies concurrent with them, as for RoleMeta, and that
+  // came after the join T's membership started with (a reset ends with the membership). Each
+  // clears the parts it lists of T's latest profile write that carries them, unless that write
+  // came after it. The latest that carries a lock end sets the lock, which readers hold against
+  // their own clock: while it runs, the parts it lists don't show, and neither does a part of
+  // T's profile write that differs from T's latest write before the lock.
+  profileResetOf(T: string): ResetFact | undefined {
+    const ix = this.ix
+    const all = ix.profileResetEv.get(T)
+    if (!all || !this.mem(T)) return undefined
+    const bit = resetBit(ix.ev[ix.genesis]?.c.rules)
+    const rem = ix.remEv.get(T) ?? EMPTY
+    const joins = (ix.memEv.get(T) ?? EMPTY).filter(
+      g => this.live(g) && rem.every(r => !this.effIn(r) || ix.before(r, g))
+    )
+    const rs = all.filter(x => {
+      const St = ix.rec[x].local.facts
+      return (
+        this.live(x) &&
+        resetContentOk(ix.ev[x].c) &&
+        profileResetOk(ix.ev[x], St, bit) &&
+        !this.metaDenied(x, bit, rank(St, T)) &&
+        joins.some(g => ix.before(g, x))
+      )
+    })
+    const last = this.register(rs)
+    if (!last) return undefined
+    const ws = ix.profileBy.get(T) ?? EMPTY
+    const read = new Map<number, RoomExtras>()
+    const extras = (x: number) => {
+      let e = read.get(x)
+      if (!e) read.set(x, (e = roomExtras(ix.ev[x].c)))
+      return e
+    }
+    const listed = (x: number) => resetFields(ix.ev[x].c.fields) ?? []
+    const hide = RESET_FIELDS.filter(f => {
+      const w = this.register(ws.filter(x => partOf(extras(x), f) !== undefined))?.win
+      return w !== undefined && rs.some(x => !ix.before(x, w) && listed(x).includes(f))
+    })
+    const out: ResetFact = { last: ix.ids[last.win], hide }
+    const lock = this.register(rs.filter(x => resetUntil(ix.ev[x].c.until) !== null))
+    const until = lock && resetUntil(ix.ev[lock.win].c.until)
+    if (lock && until) {
+      const w = this.register(ws)?.win
+      const p = this.register(ws.filter(x => ix.before(x, lock.win)))?.win
+      const then =
+        p !== undefined && w !== undefined && ix.ev[p].c.in === ix.ev[w].c.in ? extras(p) : {}
+      const since = w === undefined ? [] : changedParts(extras(w), then)
+      const fields = listed(lock.win)
+      out.lock = {
+        until,
+        fields: RESET_FIELDS.filter(f => fields.includes(f) || since.includes(f)),
+      }
+    }
+    return out
+  }
   // Whether the denies concurrent with the write `w` take from its author what its Authority
-  // needs: the permission `bit`, and with `ranked` a rank above the role it names.
-  private metaDenied(w: number, bit: number = ROLES, ranked = true): boolean {
+  // needs: the permission `bit`, and a rank above `over` when one is given.
+  private metaDenied(w: number, bit: number, over?: Rank): boolean {
     const ix = this.ix
     const e = ix.ev[w]
     const St = ix.rec[w].local.facts
@@ -789,7 +863,7 @@ export abstract class View {
       const r: Rank = [Math.min(St.pos.get(X) ?? -1, down.get(X) ?? Infinity), X]
       if (gt(r, me)) me = r
     }
-    return (perms & bit) === 0 || (ranked && !gt(me, [St.pos.get(e.c.role) ?? -1, e.c.role]))
+    return (perms & bit) === 0 || (over !== undefined && !gt(me, over))
   }
   overwrite(ch: string, subj: string): AclContent | undefined {
     const r = this.register(this.ix.chpermEv.get(`${ch}|${subj}`) ?? EMPTY)
@@ -921,6 +995,11 @@ export function fullFacts(V: View): Facts {
     const m = V.roleMetaOf(R)
     if (m) roleMeta.set(R, m)
   }
+  const profileReset = new Map<string, ResetFact>()
+  for (const T of ix.profileResetEv.keys()) {
+    const r = V.profileResetOf(T)
+    if (r) profileReset.set(T, r)
+  }
   const overwrites = new Map<string, Map<string, AclContent>>()
   for (const [key, xs] of ix.chpermEv) {
     const { ch, subj } = ix.ev[xs[0]].c
@@ -952,6 +1031,7 @@ export function fullFacts(V: View): Facts {
     overwrites,
     roleMeta,
     profileMode: V.profileModeOf(),
+    profileReset,
     addsTo,
     consumed,
     codeOk,
@@ -1020,6 +1100,7 @@ const EMPTY_FACTS: Facts = {
   overwrites: new Map(),
   roleMeta: new Map(),
   profileMode: undefined,
+  profileReset: new Map(),
   addsTo: new Map(),
   consumed: new Set(),
   codeOk: new Set(),

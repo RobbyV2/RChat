@@ -11,7 +11,14 @@ import { CANT_TEXT, cutOut, TOO_OFTEN_TEXT, type Reached } from '../flows'
 import type { Message } from '../frames'
 import { Gossip, type LinkKind } from '../gossip'
 import { cleanName, keyId, verifyProfile, liveCerts, type Cert, type Profile } from '../keys'
-import { memberExtras, roomProfile, type PlaceProfile, type RoomExtras } from '../../profile_fields'
+import type { PlaceProfile, RoomExtras } from '../../profile_fields'
+import {
+  roomLock,
+  shownRoomProfile,
+  type LockSecs,
+  type LockState,
+  type ResetField,
+} from '../../profile_reset'
 import type { ProfilesMode } from '../../types'
 import { mergeCerts, mergeRevocations, displayName } from '../contacts'
 import { LOCAL, type Local } from '../limits'
@@ -1000,10 +1007,25 @@ export class Servers {
     return storage.setProfileMode(ctx(this), room, mode)
   }
 
-  // A member's room profile as the room shows it under its mode.
+  // A member's room profile as the room shows it now, under its mode and the resets that count.
   roomProfileOf(room: string, ik: string): PlaceProfile {
     const s = this.sumOf(room)
-    return roomProfile(memberExtras(memberOf(s, ik), cleanName), s.profiles)
+    return shownRoomProfile(memberOf(s, ik), s.profiles, this.clock.now(), cleanName)
+  }
+
+  // Whether a moderator's lock on a member's room profile runs now.
+  roomLockOf(room: string, ik: string): LockState {
+    return roomLock(memberOf(this.sumOf(room), ik)?.reset, Math.floor(this.clock.now() / 1000))
+  }
+
+  // Clears parts of another member's room profile, with a lock when `secs` is given.
+  resetRoomProfile(room: string, ik: string, fields: readonly ResetField[], secs: LockSecs) {
+    return storage.resetRoomProfile(ctx(this), room, ik, fields, secs)
+  }
+
+  // Lifts the lock on another member's room profile.
+  unlockRoomProfile(room: string, ik: string) {
+    return storage.unlockRoomProfile(ctx(this), room, ik)
   }
 
   refreshBadge() {

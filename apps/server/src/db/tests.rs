@@ -14,6 +14,7 @@ use crate::api::test_util::{add_member, done, temp_state};
 use crate::limits::Limits;
 
 // Pre-delegation roles holding both DeleteServer and ManageAdmins gain these rights in v43.
+const RESET_PROFILES: i64 = Perm::ManageProfiles as i64;
 const DELEGATED_RIGHTS: i64 = Perm::ManageServer as i64
     | Perm::ManageInvites as i64
     | Perm::ManageRoles as i64
@@ -1324,6 +1325,60 @@ async fn server_profiles_upgrade_keeps_servers_and_adds_the_mode() {
 }
 
 #[tokio::test]
+async fn the_reset_profiles_permission_reaches_kick_holders_once() {
+    on_each_database("manage_profiles_upgrade", |url| async move {
+        let db = open(Some(&url)).await.unwrap();
+        let before = MANAGE_PROFILES_SINCE - 1;
+        let (kick, bit) = (Perm::Kick as i64, Perm::ManageProfiles as i64);
+        let every_before = ALL_PERMS & !bit;
+        let mut setup = vec![
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('old', 'Old', NULL, 7)".to_string(),
+            format!("UPDATE settings SET value='{before}' WHERE key='schema_version'"),
+        ];
+        let admins = [("every", 0), ("explicit", every_before), ("kicker", kick | 1), ("channels", 1)];
+        for (name, perms) in admins {
+            setup.push(format!("INSERT INTO users(username,display_name,password_hash,password_kind,avatar_kind,created_at) VALUES('{name}','{name}','fixture','text','identicon',12)"));
+            setup.push(format!("INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('old', '{name}', 1, {perms}, 8)"));
+        }
+        setup.push("INSERT INTO users(username,display_name,password_hash,password_kind,avatar_kind,created_at) VALUES('plain','plain','fixture','text','identicon',12)".to_string());
+        setup.push(format!("INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('old', 'plain', 0, {kick}, 8)"));
+        let roles = [("mods", kick | 128), ("helpers", 2), ("all", every_before)];
+        for (name, perms) in roles {
+            setup.push(format!("INSERT INTO roles(server, name, color, perms) VALUES('old', '{name}', '#112233', {perms})"));
+        }
+        for sql in setup {
+            sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&db).await.unwrap();
+        }
+        close(&db).await;
+        let member = |name: &str| format!("SELECT perms FROM members WHERE server = 'old' AND username = '{name}'");
+        let role = |name: &str| format!("SELECT perms FROM roles WHERE server = 'old' AND name = '{name}'");
+        for round in 0..2 {
+            let db = open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db, &member("every")).await, 0);
+            assert_eq!(count(&db, &member("explicit")).await, ALL_PERMS);
+            assert_eq!(count(&db, &member("kicker")).await, kick | 1 | bit);
+            assert_eq!(count(&db, &member("channels")).await, 1);
+            assert_eq!(count(&db, &member("plain")).await, kick);
+            assert_eq!(count(&db, &role("helpers")).await, 2);
+            assert_eq!(count(&db, &role("all")).await, ALL_PERMS);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM members WHERE server = 'old' AND joined_at = 8").await, 5);
+            let mods = match round {
+                0 => kick | 128 | bit,
+                _ => kick | 128,
+            };
+            assert_eq!(count(&db, &role("mods")).await, mods);
+            sqlx::query("UPDATE roles SET perms = $1 WHERE server = 'old' AND name = 'mods'")
+                .bind(kick | 128)
+                .execute(&db)
+                .await
+                .unwrap();
+            close(&db).await;
+        }
+    }).await;
+}
+
+#[tokio::test]
 async fn sso_tables_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("sso_schema_upgrade");
     let tables = [
@@ -1697,7 +1752,7 @@ async fn group_mentions_are_added_to_an_old_database() {
         assert_eq!(
             count(
                 &db,
-                &format!("SELECT COUNT(*) FROM roles WHERE name = 'old' AND perms = {} AND mentionable = 0", 543 | DELEGATED_RIGHTS)
+                &format!("SELECT COUNT(*) FROM roles WHERE name = 'old' AND perms = {} AND mentionable = 0", 543 | DELEGATED_RIGHTS | RESET_PROFILES)
             )
             .await,
             1
@@ -1708,7 +1763,7 @@ async fn group_mentions_are_added_to_an_old_database() {
         );
         assert_eq!(
             count(&db, "SELECT perms FROM members WHERE username = 'kick'").await,
-            516
+            516 | RESET_PROFILES
         );
         assert_eq!(
             count(&db, "SELECT perms FROM members WHERE username = 'plain'").await,
@@ -1864,7 +1919,7 @@ async fn audit_log_is_added_to_an_old_database() {
         for (name, perms) in [
             ("all", ALL_PERMS),
             ("zero", 0),
-            ("kick", 516),
+            ("kick", 516 | RESET_PROFILES),
             ("plain", 63),
         ] {
             assert_eq!(
@@ -1879,7 +1934,7 @@ async fn audit_log_is_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            575 | DELEGATED_RIGHTS
+            575 | DELEGATED_RIGHTS | RESET_PROFILES
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_audit_log_%'").await,
@@ -1969,7 +2024,7 @@ async fn timeouts_are_added_to_an_old_database() {
         for (name, perms) in [
             ("all", ALL_PERMS),
             ("zero", 0),
-            ("kick", 516),
+            ("kick", 516 | RESET_PROFILES),
             ("plain", 127),
         ] {
             assert_eq!(
@@ -1984,7 +2039,7 @@ async fn timeouts_are_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            639 | DELEGATED_RIGHTS
+            639 | DELEGATED_RIGHTS | RESET_PROFILES
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_member_timeouts_until'").await,
@@ -2067,7 +2122,7 @@ async fn webhooks_are_added_to_an_old_database() {
         for (name, perms) in [
             ("all", ALL_PERMS),
             ("zero", 0),
-            ("kick", 516),
+            ("kick", 516 | RESET_PROFILES),
             ("plain", 255),
         ] {
             assert_eq!(
@@ -2082,7 +2137,7 @@ async fn webhooks_are_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            767 | DELEGATED_RIGHTS
+            767 | DELEGATED_RIGHTS | RESET_PROFILES
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%webhook%'").await,
@@ -3578,7 +3633,7 @@ async fn upgraded_report_perms(db: &Db, mod_perms: i64) {
     for (name, perms) in [
         ("all", ALL_PERMS),
         ("zero", 0),
-        ("kick", 516),
+        ("kick", 516 | RESET_PROFILES),
         ("chan", 1),
         ("plain", 511),
     ] {
@@ -3625,7 +3680,7 @@ async fn report_perms_upgrade(url: &str) {
     close(&db).await;
     for _ in 0..2 {
         let db = open(Some(url)).await.expect("upgrade");
-        upgraded_report_perms(&db, 516).await;
+        upgraded_report_perms(&db, 516 | RESET_PROFILES).await;
         close(&db).await;
     }
     let db = open(Some(url)).await.expect("open");
