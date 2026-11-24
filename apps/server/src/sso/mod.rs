@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod audit;
 pub mod config;
 #[cfg(test)]
 pub(crate) mod fake_idp;

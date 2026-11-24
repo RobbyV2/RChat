@@ -3,6 +3,322 @@ use crate::db::now;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
+use crate::api::{Settings, UserRef, auth, features::Registration, names, policy::Policy};
+use crate::db::{AvatarKind, Db, NO_PASSWORD_HASH, User, secret_key};
+use axum::http::StatusCode;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+/// The persisted lookup key for an opaque, case-sensitive OIDC subject or session ID.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub struct OidcKey(String);
+
+impl OidcKey {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for OidcKey {
+    type Error = &'static str;
+
+    fn try_from(encoded: String) -> Result<Self, Self::Error> {
+        if encoded.len() == 64
+            && encoded
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            Ok(Self(encoded))
+        } else {
+            Err("Invalid OIDC lookup key")
+        }
+    }
+}
+
+/// Hash the exact claim bytes once, including opaque IDs that already look like a digest.
+pub fn oidc_key(raw: &str) -> OidcKey {
+    OidcKey(hex::encode(Sha256::digest(raw.as_bytes())))
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Identity {
+    pub provider: String,
+    pub issuer: String,
+    pub subject: OidcKey,
+    pub username_claim: Option<String>,
+    #[serde(default)]
+    pub scim_key: Option<String>,
+    pub display: Option<String>,
+    pub groups: Vec<String>,
+    pub sid: Option<OidcKey>,
+}
+
+#[allow(clippy::large_enum_variant)] // The exchange returns the profile of the committed session.
+pub enum SignIn {
+    Session {
+        user: User,
+        created: bool,
+        token: String,
+    },
+    NeedsUsername {
+        suggestion: Option<String>,
+        reason: NameIssue,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NameIssue {
+    Taken,
+    Invalid,
+}
+
+pub fn clean_username(raw: &str) -> Option<String> {
+    let local: String = raw
+        .trim()
+        .split('@')
+        .next()?
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    let name: String = local.trim().chars().take(crate::api::NAME_MAX).collect();
+    (!name.is_empty()).then_some(name)
+}
+
+pub async fn display_from_claim(db: &Db, raw: &str) -> Result<Option<String>, ApiError> {
+    if raw.contains('@') {
+        return Ok(None);
+    }
+    let clipped: String = raw.trim().chars().take(auth::DISPLAY_NAME_MAX).collect();
+    match auth::shaped_display_name(db, &clipped).await {
+        Ok(name) => Ok(Some(name)),
+        Err(e) if e.0 == StatusCode::BAD_REQUEST => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn user_name_key(raw: &str) -> String {
+    hex::encode(Sha256::digest(raw.trim().to_lowercase().as_bytes()))
+}
+pub fn has_password(user: &User) -> bool {
+    !user.password_hash.starts_with('!')
+}
+fn forbidden(message: &str) -> ApiError {
+    ApiError(StatusCode::FORBIDDEN, message.into(), None)
+}
+fn suspended() -> ApiError {
+    forbidden("This account is suspended")
+}
+
+pub async fn sign_in(
+    state: &AppState,
+    id: &Identity,
+    picked: Option<&str>,
+) -> Result<SignIn, ApiError> {
+    for _ in 0..2 {
+        if let Some(result) = sign_in_once(state, id, picked).await? {
+            return Ok(result);
+        }
+    }
+    Err(forbidden("Sign-in changed. Try again"))
+}
+
+async fn linked_username(
+    conn: &mut sqlx::AnyConnection,
+    id: &Identity,
+) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar("SELECT username FROM sso_links WHERE issuer=$1 AND subject=$2")
+        .bind(&id.issuer)
+        .bind(id.subject.as_str())
+        .fetch_optional(conn)
+        .await
+}
+
+// None means a link changed concurrently. Drop all tentative account writes and
+// resolve the issuer/subject pair again in a new transaction.
+async fn sign_in_once(
+    state: &AppState,
+    id: &Identity,
+    picked: Option<&str>,
+) -> Result<Option<SignIn>, ApiError> {
+    let config = &state.sso.config;
+    let provider = config
+        .providers
+        .iter()
+        .find(|p| p.id == id.provider && p.issuer == id.issuer)
+        .ok_or_else(|| forbidden("Unknown sign-in provider"))?;
+    let settings = Settings::cached(&state.db).await;
+    let display = match (&id.display, provider.sync_profile) {
+        (Some(raw), true) => display_from_claim(&state.db, raw).await?,
+        _ => None,
+    };
+    let defaults = &Policy::cached(&state.db).await.default_servers;
+    let mut tx = auth::begin_account_write(&state.db).await?;
+    let mut linked = linked_username(&mut tx, id).await?;
+    if linked.is_none() {
+        // A concurrent first login may have committed while this transaction
+        // waited for registration's server and username locks.
+        auth::lock_account_creation(&mut tx, defaults).await?;
+        linked = linked_username(&mut tx, id).await?;
+    } else if display.is_some() {
+        crate::db::lock_new_usernames(&mut tx).await?;
+    }
+    let t = now();
+    let already_linked = linked.is_some();
+    let mut username = linked;
+    if username.is_none()
+        && config.scim.as_ref().and_then(|s| s.provider.as_ref()) == Some(&id.provider)
+        && let Some(key) = id.scim_key.as_deref()
+    {
+        username = sqlx::query_scalar(
+            "SELECT s.username FROM scim_users s JOIN users u ON u.username = s.username
+             WHERE s.user_name_key = $1 AND s.deleted_at IS NULL
+             AND NOT EXISTS(SELECT 1 FROM sso_links l WHERE l.username = s.username AND l.issuer = $2)",
+        )
+        .bind(key)
+        .bind(&id.issuer)
+        .fetch_optional(&mut *tx)
+        .await?;
+    }
+    let mut joined = None;
+    let username = match username {
+        Some(key) => key,
+        None => {
+            if !provider.auto_create || settings.registration == Registration::Closed {
+                return Err(forbidden("New accounts are closed"));
+            }
+            let suggestion = picked
+                .map(str::to_owned)
+                .or_else(|| id.username_claim.as_deref().and_then(clean_username));
+            let Some(name) = suggestion.as_deref() else {
+                return Ok(Some(SignIn::NeedsUsername {
+                    suggestion: None,
+                    reason: NameIssue::Invalid,
+                }));
+            };
+            let key = match auth::check_new_username(&mut tx, &settings, name).await {
+                Ok(key) => key,
+                Err(e) if picked.is_none() && e.0 == StatusCode::BAD_REQUEST => {
+                    let reason = match e.1.as_str() {
+                        "Username is taken"
+                        | "Username is banned"
+                        | "Content blocked by profanity filter" => NameIssue::Taken,
+                        _ => NameIssue::Invalid,
+                    };
+                    return Ok(Some(SignIn::NeedsUsername { suggestion, reason }));
+                }
+                Err(e) => return Err(e),
+            };
+            let shown = match display.as_deref() {
+                Some(shown) if names::refusal(&mut tx, &key, shown).await?.is_none() => shown,
+                _ => name,
+            };
+            joined = Some(
+                auth::add_account(
+                    &mut tx,
+                    &state.limits,
+                    defaults,
+                    auth::NewAccount {
+                        username: &key,
+                        display_name: shown,
+                        password_hash: NO_PASSWORD_HASH,
+                        password_kind: "text",
+                        avatar_kind: AvatarKind::Identicon,
+                        avatar_color: None,
+                        first_is_admin: true,
+                    },
+                    t,
+                )
+                .await?,
+            );
+            key
+        }
+    };
+    // Keep suspension and purge ordered with the link/profile write.
+    let row = sqlx::query("UPDATE users SET suspended_at = suspended_at WHERE username=$1 AND suspended_at IS NULL AND password_hash <> '!purging' RETURNING *")
+        .bind(&username).fetch_optional(&mut *tx).await?.ok_or_else(suspended)?;
+    let mut user = User::from_row(&row)?;
+    let changed = if !already_linked {
+        sqlx::query(
+            "INSERT INTO sso_links(issuer, subject, provider, username, linked_at, last_login_at)
+             VALUES($1, $2, $3, $4, $5, $5) ON CONFLICT DO NOTHING",
+        )
+        .bind(&id.issuer)
+        .bind(id.subject.as_str())
+        .bind(&id.provider)
+        .bind(&username)
+        .bind(t)
+        .execute(&mut *tx)
+        .await?
+    } else {
+        sqlx::query(
+            "UPDATE sso_links SET last_login_at=$3 WHERE issuer=$1 AND subject=$2 AND username=$4",
+        )
+        .bind(&id.issuer)
+        .bind(id.subject.as_str())
+        .bind(t)
+        .bind(&username)
+        .execute(&mut *tx)
+        .await?
+    };
+    if changed.rows_affected() != 1 {
+        tx.rollback().await?;
+        return Ok(None);
+    }
+    let mut renamed = false;
+    if joined.is_none()
+        && let Some(name) = display
+        && name != user.display_name
+    {
+        let taken = if name.to_lowercase() == username {
+            names::three_looks(&username, &name)
+                || names::capitals_pass_for_another(&mut *tx, &name, &username).await?
+        } else {
+            names::passes_for_another(&mut *tx, &name, &username).await?
+        };
+        if !taken {
+            auth::update_display_name(&mut tx, &username, &name).await?;
+            user.display_name = name;
+            renamed = true;
+        }
+    }
+    // The active user row and its verified link are locked until this bearer
+    // commits. A subsequent purge removes the link and bearer together.
+    let token = auth::new_token();
+    sqlx::query("INSERT INTO tokens(token, username, created_at, sso_provider, sso_sid) VALUES($1,$2,$3,$4,$5)")
+        .bind(secret_key(&token))
+        .bind(&username)
+        .bind(t)
+        .bind(&id.provider)
+        .bind(id.sid.as_ref().map(OidcKey::as_str))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let created = joined.is_some();
+    if let Some(joined) = joined {
+        auth::announce_account(state, &user, joined).await;
+    } else if renamed {
+        state.hub.broadcast(WsEvent::UserUpdated {
+            user: UserRef::from_user(&user),
+            scope: crate::api::access::user_scope(&state.read(), &username).await,
+        });
+    }
+    super::audit::note(
+        &state.db,
+        &username,
+        "sso.sign_in",
+        None,
+        serde_json::json!({"provider":id.provider,"created":created}),
+    )
+    .await;
+    Ok(Some(SignIn::Session {
+        user,
+        created,
+        token,
+    }))
+}
+
 pub async fn suspend(state: &AppState, username: &str) -> Result<bool, ApiError> {
     let mut tx = state.db.begin().await?;
     let changed = sqlx::query(
@@ -44,7 +360,7 @@ mod tests {
     use crate::api::{auth, test_util::each_db, user_for_token};
     use axum::{Json, extract::State, http::StatusCode};
     use serde_json::json;
-    async fn account(state: &AppState, name: &str) -> String {
+    pub(super) async fn account(state: &AppState, name: &str) -> String {
         auth::register(
             State(state.clone()),
             Json(
@@ -120,3 +436,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "accounts/tests.rs"]
+mod sign_in_tests;

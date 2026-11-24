@@ -179,7 +179,11 @@ pub(crate) fn three_looks(username: &str, shown: &str) -> bool {
 pub(crate) const OTHER_USERNAME_SQL: &str = "SELECT 1 FROM users WHERE username_key IN ($1, $2, $3) AND username <> $4 UNION ALL SELECT 1 FROM users WHERE username_key_alt IN ($1, $2, $3) AND username <> $4 LIMIT 1";
 
 /// Whether one of `keys` (up to three) is a stored key of an account other than `me`.
-async fn another_holds(db: &Db, keys: &[String], me: &str) -> sqlx::Result<bool> {
+async fn another_holds<'e>(
+    db: impl sqlx::Executor<'e, Database = sqlx::Any>,
+    keys: &[String],
+    me: &str,
+) -> sqlx::Result<bool> {
     let Some(first) = keys.first() else {
         return Ok(false);
     };
@@ -196,15 +200,19 @@ async fn another_holds(db: &Db, keys: &[String], me: &str) -> sqlx::Result<bool>
 
 /// Whether `name` passes for the username of an account other than `me`, compared by
 /// `name_keys` through the stored keys.
-pub(crate) async fn passes_for_another(db: &Db, name: &str, me: &str) -> sqlx::Result<bool> {
+pub(crate) async fn passes_for_another<'e>(
+    db: impl sqlx::Executor<'e, Database = sqlx::Any>,
+    name: &str,
+    me: &str,
+) -> sqlx::Result<bool> {
     another_holds(db, &name_keys(name), me).await
 }
 
 /// Whether the capitals of `shown`, the username `me` in another case, pass for the username of
 /// another account: only the keys they add to the username's own are compared, so an account
 /// that already passes for another keeps its own name and still gains no further look-alike.
-pub(crate) async fn capitals_pass_for_another(
-    db: &Db,
+pub(crate) async fn capitals_pass_for_another<'e>(
+    db: impl sqlx::Executor<'e, Database = sqlx::Any>,
     shown: &str,
     me: &str,
 ) -> sqlx::Result<bool> {

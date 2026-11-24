@@ -654,7 +654,7 @@ pub(crate) async fn register(
         .default_servers
         .clone();
     crate::api::network_caps::take(&state, crate::api::network_caps::Kind::SignUp).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = begin_account_write(&state.db).await?;
     let t = now();
     let joined = add_account(
         &mut tx,
@@ -710,6 +710,20 @@ pub(crate) fn username_key(username: &str) -> Result<String, ApiError> {
     Ok(key)
 }
 
+/// Apply registration's name policy on the connection holding the new-username lock.
+pub(crate) async fn check_new_username(
+    conn: &mut sqlx::AnyConnection,
+    settings: &Settings,
+    name: &str,
+) -> Result<String, ApiError> {
+    let key = username_key(name)?;
+    settings.check_profanity(ProfanityTarget::Usernames, name)?;
+    if let Some(reason) = names::refusal(conn, &key, name).await? {
+        return Err(NotAdded::Refused(reason).into());
+    }
+    Ok(key)
+}
+
 /// A new account, however it is made.
 pub(crate) struct NewAccount<'a> {
     /// The lowercase username.
@@ -725,6 +739,26 @@ pub(crate) struct NewAccount<'a> {
 
 /// The default servers a new account joined, each with its join message when one was posted.
 pub(crate) type Joined = Vec<(String, Option<i64>)>;
+
+/// SQLite must reserve its writer before reading names or counting accounts.
+pub(crate) async fn begin_account_write(db: &Db) -> sqlx::Result<sqlx::Transaction<'_, sqlx::Any>> {
+    if crate::db::is_sqlite(db) {
+        db.begin_with("BEGIN IMMEDIATE").await
+    } else {
+        db.begin().await
+    }
+}
+
+/// Serialize creation across password, managed and SSO accounts in the same lock order.
+pub(crate) async fn lock_account_creation(
+    tx: &mut sqlx::AnyConnection,
+    defaults: &[String],
+) -> sqlx::Result<()> {
+    for server in lock_order(defaults) {
+        lock_server(tx, server).await?;
+    }
+    crate::db::lock_new_usernames(tx).await
+}
 
 /// Adds an account in `tx`: its row, its memberships of the default servers `defaults` (in
 /// order; one that is missing, bans the username or is full is skipped) and its self DM. The
@@ -745,10 +779,7 @@ pub(crate) async fn add_account(
         avatar_color,
         first_is_admin,
     } = account;
-    for server in lock_order(defaults) {
-        lock_server(tx, server).await?;
-    }
-    crate::db::lock_new_usernames(tx).await?;
+    lock_account_creation(tx, defaults).await?;
     let user_count: i64 = sqlx::query("SELECT COUNT(*) FROM (SELECT 1 FROM users LIMIT 1) t")
         .fetch_one(&mut **tx)
         .await?
@@ -1200,6 +1231,24 @@ pub struct MeUpdated {
     pub appear_offline: bool,
 }
 
+pub(crate) async fn update_display_name(
+    conn: &mut sqlx::AnyConnection,
+    username: &str,
+    name: &str,
+) -> sqlx::Result<()> {
+    let (key, alt) = names::username_keys(username, name);
+    sqlx::query(
+            "UPDATE users SET display_name = $1, username_key = $2, username_key_alt = $3 WHERE username = $4",
+        )
+        .bind(name)
+        .bind(key)
+        .bind(alt)
+        .bind(username)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 pub const BIO_MAX: usize = 190;
 
 pub const DISPLAY_NAME_MAX: usize = 32;
@@ -1372,16 +1421,7 @@ pub(crate) async fn patch_me(
             .await?;
     }
     if let Some(name) = &display_name {
-        let (key, alt) = names::username_keys(&user.username, name);
-        sqlx::query(
-            "UPDATE users SET display_name = $1, username_key = $2, username_key_alt = $3 WHERE username = $4",
-        )
-        .bind(name)
-        .bind(key)
-        .bind(alt)
-        .bind(&user.username)
-        .execute(&mut *tx)
-        .await?;
+        update_display_name(&mut tx, &user.username, name).await?;
     }
     if let Some(text) = &bio {
         sqlx::query("UPDATE users SET bio = $1 WHERE username = $2")
