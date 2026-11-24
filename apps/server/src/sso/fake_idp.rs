@@ -367,6 +367,11 @@ async fn end_session(Query(query): Query<HashMap<String, String>>) -> Response {
 }
 
 pub(crate) async fn serve(state: AppState) -> (SocketAddr, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    serve_on(state, listener)
+}
+
+pub(crate) fn serve_on(state: AppState, listener: TcpListener) -> (SocketAddr, JoinHandle<()>) {
     use crate::server::client_ip::{ClientIp, ProxyTrust};
     let app = crate::api::routes(
         state.clone(),
@@ -375,7 +380,7 @@ pub(crate) async fn serve(state: AppState) -> (SocketAddr, JoinHandle<()>) {
         None,
     )
     .with_state(state);
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let app = Router::new().nest("/api", app.clone()).merge(app);
     let addr = listener.local_addr().unwrap();
     (
         addr,

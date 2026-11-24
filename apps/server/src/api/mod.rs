@@ -30,6 +30,7 @@ pub mod media;
 pub mod messages;
 pub mod names;
 pub mod network_caps;
+pub mod oidc;
 pub mod openapi;
 pub mod p2p_backup;
 pub mod p2p_identity;
@@ -2116,6 +2117,9 @@ pub fn routes(
         let strict_routes = Router::new()
             .route("/auth/register", post(auth::register))
             .route("/auth/login", post(auth::login))
+            .route("/auth/oidc/{provider}/start", get(oidc::start))
+            .route("/auth/oidc/{provider}/callback", get(oidc::callback))
+            .route("/auth/oidc/exchange", post(oidc::exchange))
             .route("/auth/words/{username}", get(auth::words))
             .route("/auth/recovery/challenge", post(recovery::challenge))
             .route("/auth/recovery", post(recovery::recover))
