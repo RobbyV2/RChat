@@ -12,18 +12,20 @@ import { accountStorage } from './keys'
 import type { AccountSession } from './session'
 
 interface Counts {
+  incoming: number
   instance: number
   peers: Readonly<Record<string, number>>
   unread: number
 }
 
-const emptyCounts: Counts = { instance: 0, unread: 0, peers: {} }
+const emptyCounts: Counts = { incoming: 0, instance: 0, unread: 0, peers: {} }
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 const total = (counts: Counts) =>
   counts.instance + Object.values(counts.peers).reduce((sum, n) => sum + n, 0)
 const equal = (a: Counts | null, b: Counts) =>
   a?.instance === b.instance &&
+  a.incoming === b.incoming &&
   a.unread === b.unread &&
   Object.keys(a.peers).length === Object.keys(b.peers).length &&
   Object.entries(a.peers).every(([id, n]) => b.peers[id] === n)
@@ -42,7 +44,7 @@ function readCounts(key: string): Counts | null {
     const counts = JSON.parse(readLocal(key) ?? 'null')
     if (!count(counts?.unread)) return null
     if (counts.instance === undefined && count(counts.badge))
-      return { instance: counts.badge, unread: counts.unread, peers: {} }
+      return { incoming: 0, instance: counts.badge, unread: counts.unread, peers: {} }
     if (
       !count(counts.instance) ||
       !counts.peers ||
@@ -51,7 +53,12 @@ function readCounts(key: string): Counts | null {
       !Object.values(counts.peers).every(count)
     )
       return null
-    return { instance: counts.instance, unread: counts.unread, peers: counts.peers }
+    return {
+      incoming: count(counts.incoming) ? counts.incoming : 0,
+      instance: counts.instance,
+      unread: counts.unread,
+      peers: counts.peers,
+    }
   } catch {
     return null
   }
@@ -105,7 +112,12 @@ export function createAccountCounts(account: AccountSession) {
       for (const id of account.identities.enabledIds(owner))
         if (!(id in peers) && Object.hasOwn(previousPeers, id)) peers[id] = previousPeers[id]!
     previousPeers = peers
-    const local = { instance, peers, unread: unreadCount(state) }
+    const local = {
+      incoming: state.friendCounts.incoming,
+      instance,
+      peers,
+      unread: unreadCount(state),
+    }
     const follows = account.mode === 'parked' || (account.mode === 'lite' && !leader)
     if (!follows && leader && state.me && state.readsReady) {
       persist(local)
@@ -131,6 +143,7 @@ export function createAccountCounts(account: AccountSession) {
       if (
         s.reads !== prev.reads ||
         s.readsReady !== prev.readsReady ||
+        s.friendCounts !== prev.friendCounts ||
         s.me !== prev.me ||
         s.guest !== prev.guest ||
         s.pings !== prev.pings ||
@@ -198,7 +211,15 @@ export function createAccountCounts(account: AccountSession) {
           ? state.notifyPrefs
           : parseNotify(readLocal(account.conn.scoped(notifyKey(owner))))
         const pings = mergePings(initial.pings, state.pings, items)
+        const friendCounts =
+          friends &&
+          initial.friendCounts === state.friendCounts &&
+          count(friends.incoming) &&
+          count(friends.outgoing)
+            ? { incoming: friends.incoming, outgoing: friends.outgoing }
+            : state.friendCounts
         account.store.setState({
+          friendCounts,
           reads: mergeReads(initial.reads, state.reads, items, () => 0),
           pings:
             friends && initial.pings[FRIENDS_SCOPE] === state.pings[FRIENDS_SCOPE]
@@ -211,6 +232,10 @@ export function createAccountCounts(account: AccountSession) {
         })
         const latest = account.store.getState()
         const counts = {
+          incoming:
+            latest.friendCounts !== initial.friendCounts
+              ? latest.friendCounts.incoming
+              : (before?.incoming ?? latest.friendCounts.incoming),
           instance: allPings(latest),
           peers: saved?.peers ?? {},
           unread: unreadCount(latest),
@@ -270,12 +295,14 @@ export function createAccountCounts(account: AccountSession) {
       const owner = username(account)
       track(owner)
       if (owner && account.mode === 'parked' && account.tabLock.holds(account.conn.origin, owner)) {
+        saved = key ? readCounts(key) : null
         const peers: Record<string, number> = Object.assign(Object.create(null), saved?.peers)
         for (const adapter of account.inbox.inboxAdapters())
           if (adapter.count && adapter.countReady?.() !== false && adapter.id.startsWith('p2p:'))
             peers[decodeURIComponent(adapter.id.slice(4))] = adapter.count()
         if (saved || account.store.getState().readsReady || Object.keys(peers).length)
           persist({
+            incoming: saved?.incoming ?? account.store.getState().friendCounts.incoming,
             instance: saved?.instance ?? allPings(account.store.getState()),
             unread: saved?.unread ?? unreadCount(account.store.getState()),
             peers,

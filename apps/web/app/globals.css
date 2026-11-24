@@ -603,7 +603,7 @@ body {
   background: var(--color-primary);
 }
 
-.drag-line:is([data-group='dm'], [data-group='channel'], [data-group='category'])::before {
+.drag-line:is([data-group^='dm:'], [data-group='channel'], [data-group='category'])::before {
   content: '';
   position: absolute;
   top: -3.5px;

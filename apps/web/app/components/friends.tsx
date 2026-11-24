@@ -396,13 +396,14 @@ export default function FriendsPanel() {
 }
 
 // The "Friends" row at the top of the DM list.
-export function FriendsEntry() {
+export function FriendsEntry({ incomingTotal }: { incomingTotal?: number } = {}) {
   const openFriends = useStore(s => s.openFriends)
   const closePanel = useStore(s => s.closePanel)
   const active = useStore(s => s.panel?.kind === 'friends')
   const pings = useFriendPings()
-  const incoming = useIncomingCount()
-  const count = Math.max(pings, incoming)
+  const local = useIncomingCount()
+  const incoming = incomingTotal ?? local
+  const count = incomingTotal ?? Math.max(pings, incoming)
   return (
     <button
       onClick={() => (active ? closePanel() : openFriends(incoming > 0 ? 'pending' : 'online'))}

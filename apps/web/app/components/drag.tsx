@@ -114,6 +114,8 @@ const none: Resolved = { target: null, zone: null, onto: null }
 
 const resolve = (a: Active, rect: DOMRect): Resolved => {
   if (offSide(a.x, rect.left, rect.right)) return none
+  if (a.scope.hasAttribute('data-contained-drop') && (a.y < rect.top || a.y > rect.bottom))
+    return none
   const zones = [...a.scope.querySelectorAll<HTMLElement>('[data-drop-zone]')].filter(
     z => a.spec.zones?.(z.dataset.dropZone ?? '') ?? true
   )

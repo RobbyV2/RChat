@@ -1526,12 +1526,12 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   > = {
     setDraft: (key, text) => set(s => ({ drafts: keyed(s.drafts, key, text || null) })),
 
-    startDm: username =>
+    startDm: (username, nav = 'push') =>
       act(async () => {
         const dm = await live(api.openDm(username))
         set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))
         pinSelf()
-        await get().openDm(dm.id)
+        await get().openDm(dm.id, nav)
       }),
 
     messageUser: (username, content) =>

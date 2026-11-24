@@ -42,6 +42,12 @@ export class AccountManager {
   private recency = 0
   budget = 8
   constructor(private ports: Ports) {}
+  lastShown(account: AccountSession) {
+    const username = usernameOf(account)
+    return username === undefined
+      ? 0
+      : (this.entries.get(key(account.conn.origin, username))?.lastShown ?? 0)
+  }
   mode = (account: AccountSession) => account.mode
   setBudget = (value: number) => {
     this.budget = limit(value)

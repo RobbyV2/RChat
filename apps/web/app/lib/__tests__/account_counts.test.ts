@@ -43,15 +43,29 @@ test('the device badge counts each account and sibling inbox source once and fol
     a.inbox.addInboxAdapter({ ...a.inbox.instanceInbox, id: 'p2p:work', count: () => 2 })
     b.inbox.addInboxAdapter({ ...b.inbox.instanceInbox, id: 'p2p:main', count: () => 4 })
     expect(totalInboxCount([a, a, b])).toBe(9)
-    expect(a.counts.breakdown()).toEqual({ instance: 0, unread: 0, peers: { main: 3, work: 2 } })
+    expect(a.counts.breakdown()).toEqual({
+      incoming: 0,
+      instance: 0,
+      unread: 0,
+      peers: { main: 3, work: 2 },
+    })
     b.mode = 'lite'
     const key = 'rchat_counts:' + JSON.stringify([b.conn.origin, 'sam'])
     memoryStorage.setItem(key, JSON.stringify({ badge: 8, unread: 3 }))
     tab.events.dispatchEvent(Object.assign(new Event('storage'), { key }))
     expect(totalInboxCount([a, b])).toBe(13)
-    memoryStorage.setItem(key, JSON.stringify({ instance: 2, unread: 1, peers: { work: 6 } }))
+    memoryStorage.setItem(
+      key,
+      JSON.stringify({ incoming: 4, instance: 2, unread: 1, peers: { work: 6 } })
+    )
     tab.events.dispatchEvent(Object.assign(new Event('storage'), { key }))
-    expect(b.counts.breakdown()).toEqual({ instance: 2, unread: 1, peers: { work: 6 } })
+    expect(a.counts.breakdown().incoming).toBe(0)
+    expect(b.counts.breakdown()).toEqual({
+      incoming: 4,
+      instance: 2,
+      unread: 1,
+      peers: { work: 6 },
+    })
     memoryStorage.removeItem(key)
     tab.events.dispatchEvent(Object.assign(new Event('storage'), { key }))
     expect(totalInboxCount([a, b])).toBe(9)
@@ -126,7 +140,7 @@ test('parked polling counts only its qualified account and discards a response a
   }
 })
 
-test('parked polls retain peer badges, concurrent clears and subsequent parked periods', async () => {
+test('parked polls retain peer badges, incoming requests, concurrent clears and subsequent parked periods', async () => {
   const a = testAccount('sam', 'https://park-period.example')
   const tab = browser()
   a.tabLock.holds = () => true
@@ -147,7 +161,7 @@ test('parked polls retain peer badges, concurrent clears and subsequent parked p
   globalThis.fetch = Object.assign(
     async (url: RequestInfo | URL) =>
       String(url).endsWith('/friends/summary')
-        ? Response.json({ incoming: 0, outgoing: 0, pings: 1, pings_until: 1 })
+        ? Response.json({ incoming: 3, outgoing: 1, pings: 1, pings_until: 1 })
         : batch.promise,
     original
   )
@@ -158,15 +172,20 @@ test('parked polls retain peer badges, concurrent clears and subsequent parked p
     a.mode = 'parked'
     a.counts.modeChanged()
     a.inbox.removeInboxAdapter('p2p:work')
+    // A connected tab published newer peer counts before our storage event arrived.
+    memoryStorage.setItem(snapshot, JSON.stringify({ instance: 1, peers: { work: 6 }, unread: 0 }))
     let pending = a.counts.poll()
     reply()
     await pending
-    expect(a.counts.breakdown().peers).toEqual({ work: 4 })
+    expect(a.counts.breakdown().peers).toEqual({ work: 6 })
+    expect(a.counts.breakdown().incoming).toBe(3)
+    expect(a.store.getState().friendCounts).toEqual({ incoming: 3, outgoing: 1 })
     expect(!!a.store.getState().pings.friends).toBe(true)
     expect(!!a.store.getState().groupPings.c1).toBe(true)
     batch = Promise.withResolvers<Response>()
     pending = a.counts.poll()
     a.store.setState({
+      friendCounts: { incoming: 2, outgoing: 0 },
       pings: {},
       groupPings: {},
       reads: {
@@ -176,7 +195,12 @@ test('parked polls retain peer badges, concurrent clears and subsequent parked p
     })
     reply()
     await pending
-    expect(a.counts.breakdown()).toEqual({ instance: 0, unread: 1, peers: { work: 4 } })
+    expect(a.counts.breakdown()).toEqual({
+      incoming: 2,
+      instance: 0,
+      unread: 1,
+      peers: { work: 6 },
+    })
     expect(a.store.getState().pings).toEqual({})
     expect(a.store.getState().groupPings).toEqual({})
     batch = Promise.withResolvers<Response>()

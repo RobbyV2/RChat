@@ -425,7 +425,7 @@ export interface RChatState {
   ) => Promise<string | null>
   showToast: (text: string, name?: string) => void
   consumeInviteJoin: () => void
-  startDm: (username: string) => Promise<void>
+  startDm: (username: string, nav?: Nav) => Promise<void>
   messageUser: (username: string, content: string) => Promise<void>
   loadMoreDms: () => Promise<void>
   loadMoreServers: () => Promise<void>
