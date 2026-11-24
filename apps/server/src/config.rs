@@ -195,6 +195,8 @@ pub struct AppConfig {
     pub secrets: Secrets,
     #[serde(skip)]
     pub controls: ControlSeeds,
+    #[serde(skip)]
+    pub sso: crate::sso::config::SsoConfig,
     /// `DATABASE_LIGHT_COMMITS`.
     #[serde(skip)]
     pub light_commits: crate::db::LightCommits,
@@ -228,24 +230,39 @@ fn lookup(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
 }
 
 fn secret(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
-    let direct = lookup(env, name).filter(|v| !v.trim().is_empty());
-    let file = lookup(env, &format!("{name}_FILE"))
-        .filter(|p| !p.trim().is_empty())
-        .and_then(|p| match std::fs::read_to_string(p.trim()) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                tracing::error!("{name}_FILE can not be read: {e}");
-                None
-            }
-        });
-    direct
-        .or(file)
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
+    secret_from(&|key| lookup(env, key), name)
 }
 
-/// A secret from the environment: `NAME`, or the contents of the file named by `NAME_FILE`.
-/// Blank values count as unset.
+fn secret_from(get: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<String> {
+    read_secret(get, name).unwrap_or_else(|error| {
+        tracing::error!("{error}");
+        None
+    })
+}
+
+pub(crate) fn read_secret(
+    get: &dyn Fn(&str) -> Option<String>,
+    name: &str,
+) -> anyhow::Result<Option<String>> {
+    if let Some(value) = get(name).filter(|s| !s.trim().is_empty()) {
+        return Ok(Some(value.trim().to_owned()));
+    }
+    let key = format!("{name}_FILE");
+    let Some(path) = get(&key).filter(|s| !s.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let contents = std::fs::read_to_string(path.trim())
+        .map_err(|error| anyhow::anyhow!("{key} cannot be read: {error}"))?;
+    let value = contents.trim();
+    Ok((!value.is_empty()).then(|| value.to_owned()))
+}
+
+/// A secret from an explicit environment map, with the same file fallback as `env_secret`.
+pub fn env_secret_in(env: &HashMap<String, String>, name: &str) -> Option<String> {
+    secret_from(&|key| env.get(key).cloned(), name)
+}
+
+/// A process environment secret: `NAME`, or the contents of the file named by `NAME_FILE`.
 pub fn env_secret(name: &str) -> Option<String> {
     secret(&None, name)
 }
@@ -345,6 +362,10 @@ impl AppConfig {
             p2p_secret: secret(&env, "P2P_SECRET"),
         };
         config.controls = ControlSeeds::load(&|name| lookup(&env, name))?;
+        config.sso = crate::sso::config::SsoConfig::load(
+            &|name| lookup(&env, name),
+            config.public_url.as_deref(),
+        )?;
         config.swagger_ui = lookup(&env, "SWAGGER_UI");
         config.light_commits =
             crate::db::LightCommits::parse(lookup(&env, "DATABASE_LIGHT_COMMITS").as_deref())?;

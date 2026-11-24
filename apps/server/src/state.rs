@@ -18,6 +18,7 @@ pub struct AppState {
     pub(crate) replicas: Arc<crate::db::replica::Replicas>,
     pub instance: Arc<Instance>,
     pub limits: Arc<Limits>,
+    pub sso: Arc<crate::sso::Sso>,
 }
 
 impl AppState {
@@ -39,6 +40,7 @@ impl AppState {
             replicas: Arc::default(),
             instance,
             limits: limits.clone(),
+            sso: Arc::new(crate::sso::Sso::off()),
         }
         .with_limits(limits)
     }
@@ -48,6 +50,10 @@ impl AppState {
     pub fn with_limits(self, limits: Arc<Limits>) -> AppState {
         self.hub.set_limits(limits.ws_limits());
         AppState { limits, ..self }
+    }
+
+    pub fn with_sso(self, sso: Arc<crate::sso::Sso>) -> Self {
+        Self { sso, ..self }
     }
 
     pub fn read(&self) -> Db {

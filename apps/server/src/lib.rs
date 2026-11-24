@@ -16,5 +16,6 @@ pub mod relay;
 pub mod run;
 pub mod server;
 pub mod spoilers;
+pub mod sso;
 pub mod state;
 pub mod ws;

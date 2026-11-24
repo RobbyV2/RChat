@@ -41,7 +41,8 @@ const reads = (code: string) => {
       while (i < lines.length && !lines[i].startsWith('}')) i++
       continue
     }
-    if (read.test(lines[i])) found.push({ line: i + 1, text: lines[i] })
+    const expression = lines[i].replace(/\bfn\s+\w+/, 'fn')
+    if (read.test(expression)) found.push({ line: i + 1, text: lines[i] })
   }
   return found
 }
@@ -108,6 +109,8 @@ describe('env reads', () => {
     for (const way of ways) expect(reads(way).length).toBe(1)
     expect(reads('let dir = std::env::temp_dir();')).toEqual([])
     expect(reads('let root = env!("CARGO_MANIFEST_DIR");')).toEqual([])
+    expect(reads('pub fn from_env(env: &HashMap<String, String>) { env.get("X"); }')).toEqual([])
+    expect(reads('fn from_env() { std::env::var("X"); }')).toHaveLength(1)
   })
 
   test('code after a test module is scanned', () => {

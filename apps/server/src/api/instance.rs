@@ -80,11 +80,11 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         p2p_backup: _,
         display_names: _,
         onboarding: _,
-        password_login: _,
+        password_login,
         sfu: _,
         p2p,
         client_other_instances: _,
-        registration: _,
+        registration,
         upload_expiry_max_days: _,
         server_creation: _,
         server_joining: _,
@@ -114,6 +114,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
             reports: true,
             report_forms: true,
         },
+        state.sso.auth_info(password_login, registration),
         &state.limits,
     );
     if !p2p && !p2p_attachments {
@@ -518,6 +519,96 @@ mod tests {
 
     async fn json(res: reqwest::Response) -> serde_json::Value {
         serde_json::from_slice(&res.bytes().await.expect("body")).expect("json")
+    }
+
+    #[tokio::test]
+    async fn instance_info_shows_providers_and_no_secrets() {
+        let (state, path) = temp_state("instance_auth").await;
+        let get = |addr: SocketAddr| async move {
+            reqwest::get(format!("http://{addr}/api/instance"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        };
+        let (addr, server) = serve(state.clone()).await;
+        let info: serde_json::Value = serde_json::from_str(&get(addr).await).unwrap();
+        assert_eq!(
+            info["auth"],
+            serde_json::json!({"password_login": true, "registration": "open", "providers": []})
+        );
+        server.abort();
+        let config = AppConfig::from_map(&[
+            ("OIDC_PROVIDERS", "authentik"),
+            (
+                "OIDC_AUTHENTIK_ISSUER",
+                "https://auth.example.com/application/o/rchat/",
+            ),
+            ("OIDC_AUTHENTIK_CLIENT_ID", "rchat-client-id"),
+            ("OIDC_AUTHENTIK_CLIENT_SECRET", "s3cret-value"),
+            ("OIDC_AUTHENTIK_NAME", "Authentik"),
+            ("SCIM_TOKEN", &"t".repeat(40)),
+            (
+                "SSO_GROUP_MAP",
+                r#"{"Engineering":[{"server":"eng","role":"Dev"}]}"#,
+            ),
+            ("PUBLIC_URL", "https://chat.example.com"),
+        ])
+        .expect("config");
+        let state = state.with_sso(std::sync::Arc::new(
+            crate::sso::Sso::new(config.sso).expect("sso"),
+        ));
+        let (addr, server) = serve(state.clone()).await;
+        let text = get(addr).await;
+        let info: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            info["auth"],
+            serde_json::json!({
+                "password_login": true,
+                "registration": "open",
+                "providers": [{"id": "authentik", "name": "Authentik"}]
+            })
+        );
+        for hidden in [
+            "rchat-client-id",
+            "s3cret",
+            "auth.example.com",
+            "Engineering",
+            "tttt",
+        ] {
+            assert!(!text.contains(hidden), "{hidden} in {text}");
+        }
+        let client = reqwest::Client::new();
+        let root = register(&client, &format!("http://{addr}"), "root").await;
+        let res = client
+            .patch(format!("http://{addr}/api/admin/settings"))
+            .header("content-type", "application/json")
+            .bearer_auth(&root)
+            .body(r#"{"password_login": false, "registration": "sso"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let info: serde_json::Value = serde_json::from_str(&get(addr).await).unwrap();
+        assert_eq!(
+            (
+                &info["auth"]["password_login"],
+                &info["auth"]["registration"]
+            ),
+            (&serde_json::json!(false), &serde_json::json!("sso")),
+            "the switches change live"
+        );
+        let doc = serde_json::to_value(<crate::api::openapi::ApiDoc as utoipa::OpenApi>::openapi())
+            .expect("doc");
+        let schemas = &doc["components"]["schemas"];
+        assert!(schemas["InstanceInfo"]["properties"]["auth"].is_object());
+        for key in ["password_login", "registration", "providers"] {
+            assert!(schemas["AuthInfo"]["properties"][key].is_object(), "{key}");
+        }
+        assert!(schemas["ProviderInfo"]["properties"]["name"].is_object());
+        server.abort();
+        done(state, path).await;
     }
 
     #[tokio::test]
@@ -1448,6 +1539,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_public_addresses_reject_passwords() {
+        let (state, path) = temp_state("instance_address_credentials").await;
+        for (field, config) in [
+            (
+                "PUBLIC_URL",
+                InstanceConfig {
+                    public_url: Some("https://:fixture@chat.example".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "PUBLIC_API_URL",
+                InstanceConfig {
+                    api_url: Some("https://:fixture@chat.example/api".into()),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let error = Instance::load(&state.db, &config)
+                .await
+                .err()
+                .expect("credentials rejected")
+                .to_string();
+            assert!(error.contains(field));
+            assert!(!error.contains("fixture"));
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn public_url_sets_issuer_and_urls() {
         let (mut state, path) = temp_state("instance_public").await;
         state.instance = Instance::load(
@@ -1500,7 +1621,14 @@ mod tests {
             let (db, limits) = (state.db.clone(), state.limits.clone());
             async move {
                 let instance = Instance::load(&db, &config).await.expect("instance");
-                instance.discovery(origin, features, &limits).peerjs_url
+                instance
+                    .discovery(
+                        origin,
+                        features,
+                        crate::sso::Sso::off().auth_info(true, Default::default()),
+                        &limits,
+                    )
+                    .peerjs_url
             }
         };
         for (origin, same, ported) in [
@@ -1572,7 +1700,12 @@ mod tests {
                 "https" => ["https", "wss"],
                 _ => ["http", "ws"],
             };
-            let info = instance.discovery(origin, features, &state.limits);
+            let info = instance.discovery(
+                origin,
+                features,
+                state.sso.auth_info(true, Default::default()),
+                &state.limits,
+            );
             assert_eq!(info.public_url, origin);
             for (what, address) in [
                 ("api_url", &info.api_url),
@@ -1703,6 +1836,7 @@ mod tests {
                 reports: true,
                 report_forms: true,
             },
+            state.sso.auth_info(true, Default::default()),
             &state.limits,
         );
         assert_eq!(info.peerjs_url, "https://chat.example:9443/peerjs");

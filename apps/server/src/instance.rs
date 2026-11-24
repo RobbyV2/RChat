@@ -111,7 +111,11 @@ pub fn origin_url(raw: &str, what: &str, schemes: &[&str]) -> anyhow::Result<Url
     if !schemes.contains(&url.scheme()) || url.host().is_none() {
         anyhow::bail!("{what} must be a {} URL", schemes.join(" or "));
     }
-    if url.query().is_some() || url.fragment().is_some() || !url.username().is_empty() {
+    if url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
         anyhow::bail!("{what} must not carry a query, fragment or credentials");
     }
     Ok(url)
@@ -363,6 +367,7 @@ impl Instance {
         &self,
         origin: &str,
         features: Features,
+        auth: crate::sso::AuthInfo,
         limits: &crate::limits::Limits,
     ) -> InstanceInfo {
         let origin = origin.to_string();
@@ -407,6 +412,7 @@ impl Instance {
             (None, None) => format!("{origin}/peerjs"),
         };
         InstanceInfo {
+            auth,
             software: SOFTWARE.to_string(),
             id: self.id.clone(),
             name: self.name.clone(),
@@ -565,6 +571,8 @@ impl Limits {
 /// from trusted proxies).
 #[derive(Clone, Serialize, ToSchema)]
 pub struct InstanceInfo {
+    /// Live sign-in policy and public labels for configured providers.
+    pub auth: crate::sso::AuthInfo,
     /// Always `rchat`.
     #[schema(example = "rchat")]
     pub software: String,

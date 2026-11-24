@@ -287,7 +287,15 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
         held.hold([crate::relay::follow_revocations(&relay, &hub, &db)]);
     }
     let mut state = AppState::new(db, hub, config.s3()?, bus, instance)
-        .with_limits(Arc::new(config.limits.clone()));
+        .with_limits(Arc::new(config.limits.clone()))
+        .with_sso(Arc::new(crate::sso::Sso::new(config.sso.clone())?));
+    let policy = crate::api::Settings::cached(&state.db).await;
+    for warning in state
+        .sso
+        .policy_warnings(policy.password_login, policy.registration)
+    {
+        tracing::warn!("{warning}");
+    }
     let urls = config.replica_urls()?;
     if !urls.is_empty() {
         state.replicas = Arc::new(crate::db::replica::Replicas::open(&urls, &state.limits)?);
