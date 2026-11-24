@@ -3,6 +3,8 @@ import type { AvatarKind } from '../types'
 
 export interface BookIdentity {
   local: string
+  enrollment?: string
+  pendingImport?: { id: string; ik: string }
   ik: string | null
   name: string
   background: boolean
@@ -155,6 +157,32 @@ export const addIdentity = (book: Book, origin: string, username: string, identi
   peers(book, origin, username, ids =>
     ids.some(i => i.local === identity.local) || ids.length >= 8 ? ids : [...ids, identity]
   )
+export const describeIdentity = (
+  book: Book,
+  origin: string,
+  username: string,
+  local: string,
+  added: number,
+  ik: string | null,
+  name: string
+) =>
+  peers(book, origin, username, ids =>
+    ids.map(i =>
+      i.local === local && i.added === added && !i.pendingImport
+        ? { ...i, ik, name: name || i.name }
+        : i
+    )
+  )
+
+// The caller validates the record inside a serialized book edit.
+export const editIdentity = (
+  book: Book,
+  origin: string,
+  username: string,
+  local: string,
+  apply: (record: BookIdentity) => BookIdentity
+) => peers(book, origin, username, ids => ids.map(i => (i.local === local ? apply(i) : i)))
+
 export const removeIdentity = (book: Book, origin: string, username: string, local: string) =>
   peers(book, origin, username, ids => ids.filter(i => i.local !== local))
 export const moveIdentity = (
@@ -244,6 +272,12 @@ export function parseBook(raw: string | null): Book {
           )
             book = addIdentity(book, origin, a.username.toLowerCase(), {
               local: p.local,
+              ...(typeof p.enrollment === 'string' ? { enrollment: p.enrollment } : {}),
+              ...(record(p.pendingImport) &&
+              typeof p.pendingImport.id === 'string' &&
+              typeof p.pendingImport.ik === 'string'
+                ? { pendingImport: { id: p.pendingImport.id, ik: p.pendingImport.ik } }
+                : {}),
               name: p.name,
               ik: typeof p.ik === 'string' ? p.ik : null,
               background: p.background !== false,

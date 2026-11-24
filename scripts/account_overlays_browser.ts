@@ -57,23 +57,69 @@ try {
           body: `<html data-theme="${colorScheme}"><meta name="viewport" content="width=device-width"><style>${css}</style><body><script type="module" src="/bundle.js"></script></body></html>`,
         })
       })
-      await page.goto('https://shown.test/')
+      await page.goto('https://shown.test/?enrollment')
       const button = (name: string) => page.getByRole('button', { name, exact: true })
       await button('P2P settings').click()
-      const opener = button('Turn on P2P')
-      await opener.click()
-      const dialog = page.getByRole('dialog', { name: 'Turn on peer-to-peer' })
-      assert(
-        await dialog.evaluate(el => el.matches(':modal') && el.contains(document.activeElement))
-      )
-      await dialog.getByLabel('P2P display name').fill('Reader')
-      await page.keyboard.press('Escape')
-      await dialog.waitFor({ state: 'detached' })
-      assert(await opener.evaluate(el => el === document.activeElement))
-      await opener.click()
-      await button('Cancel').click()
+      const dialog = page.getByRole('dialog', { name: 'Add a P2P identity' })
+      const press = async (locator: ReturnType<typeof button>) => {
+        if (viewport.width < 500) await locator.tap()
+        else await locator.click()
+      }
+      for (const entry of ['Turn on P2P', 'Add a P2P identity']) {
+        const settings = page.getByRole('dialog', { name: 'Settings' })
+        const opener = settings.getByRole('button', { name: entry, exact: true })
+        await press(opener)
+        assert(
+          await dialog.evaluate(el => el.matches(':modal') && el.contains(document.activeElement))
+        )
+        const trust = dialog.getByRole('button', { name: 'I trust this app' })
+        await page.keyboard.press('Tab')
+        assert(await dialog.evaluate(el => el.contains(document.activeElement)))
+        await press(trust)
+        await dialog.getByLabel('Identity name').fill('Work')
+        await page.keyboard.press('Escape')
+        await dialog.waitFor({ state: 'detached' })
+        assert(await opener.evaluate(el => el === document.activeElement))
+        await page.keyboard.press('Enter')
+        await press(dialog.getByRole('button', { name: 'Cancel' }))
+        await dialog.waitFor({ state: 'detached' })
+        assert(await opener.evaluate(el => el === document.activeElement))
+        await press(opener)
+        if (viewport.width < 500) await page.touchscreen.tap(2, 2)
+        else await page.mouse.click(2, 2)
+        await dialog.waitFor({ state: 'detached' })
+        assert(await opener.evaluate(el => el === document.activeElement))
+        if (entry === 'Turn on P2P') {
+          await press(opener)
+          await press(dialog.getByRole('button', { name: 'I trust this app' }))
+          await dialog.getByLabel('Identity name').fill('Main')
+          await press(dialog.getByRole('button', { name: 'Continue', exact: true }))
+          await press(dialog.getByRole('button', { name: 'Create without a recovery phrase' }))
+          await dialog.waitFor({ state: 'detached' })
+          await press(button('P2P settings'))
+        }
+      }
       await button('Close settings').click()
 
+      await press(button('Add a P2P identity'))
+      await press(dialog.getByRole('button', { name: 'I trust this app' }))
+      await dialog.getByLabel('Identity name').fill('Home entry')
+      await press(dialog.getByRole('button', { name: 'Cancel' }))
+      await press(page.locator('[data-switcher-tile]'))
+      const switcher = page.getByRole('dialog', { name: 'Switch account' })
+      await press(switcher.getByRole('button', { name: 'Manage accounts', exact: true }))
+      const manage = page.getByRole('dialog', { name: 'Manage accounts' })
+      await press(manage.getByTitle('Account actions', { exact: true }).first())
+      await press(manage.getByRole('button', { name: 'Add a P2P identity' }))
+      await press(manage.getByRole('button', { name: 'I trust this app' }))
+      await manage.getByLabel('Identity name').fill('Switcher entry')
+      await press(manage.getByRole('button', { name: 'Cancel' }))
+      assert.deepEqual(errors, [])
+      if (process.argv.includes('--enrollment')) {
+        await page.close()
+        continue
+      }
+      await page.goto('https://shown.test/')
       await button('Owner settings').click()
       await button('Create link').click()
       const share = 'https://owner.test/config/' + link.id + '/'
@@ -168,7 +214,7 @@ try {
       assert(await relayOpener.evaluate(el => el === document.activeElement))
       assert.deepEqual(await page.evaluate(() => JSON.parse(document.body.dataset.events!)), [
         'owner.test call_decline',
-        'owner DM 3 none',
+        'owner DM 3 push',
         'left shown call',
         'owner.test capture',
         'owner.test call_accept',

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -25,14 +25,9 @@ import {
   type SwitcherRow,
 } from '../lib/client/switcher_rows'
 import { switchActor, switcherSession } from '../lib/client/switch_actor'
-import {
-  addIdentity,
-  removeIdentity,
-  setConnected,
-  setIdentityBackground,
-} from '../lib/client/book'
-import { p2pTrustText } from '../lib/add_instance'
-import { shellInfo } from '../lib/platform'
+import { setConnected, setIdentityBackground } from '../lib/client/book'
+import { IdentityEnrollment } from './p2p/identity_enrollment'
+import { confirmIdentityRemoval } from '../lib/client/identity_enrollment'
 import { useMask, useStore } from '../lib/store'
 import type { SettingsSection } from '../lib/settings_sections'
 import { AccountTag, ActorAvatar, InstanceTag } from './account_tag'
@@ -231,11 +226,6 @@ function AccountList({
   const list = useRef<HTMLDivElement>(null)
   const [actions, setActions] = useState<string | null>(null)
   const [adding, setAdding] = useState<SwitcherRow | null>(null)
-  const [name, setName] = useState('')
-  const [trusted, setTrusted] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const identityNameId = useId()
   const reorder = (from: OrderTarget, to: OrderTarget) =>
     void client.updateBook(book => moveSwitcherRow(book, from, to))
   const drag = (target: OrderTarget, index: number) => ({
@@ -285,44 +275,6 @@ function AccountList({
       ;(chosen ?? first)?.focus()
     }
   }, [modeChange, manage, adding])
-  const addPeer = async () => {
-    if (!adding?.username || !trusted || busy || !name.trim()) return
-    const account = switcherSession(adding)
-    if (!account) return
-    setBusy(true)
-    setError('')
-    try {
-      const main = account.identities.get()
-      const app =
-        main &&
-        !main.useP2p.getState().enabled &&
-        !client.book
-          .getState()
-          .instances.find(i => i.origin === adding.origin)
-          ?.accounts.find(a => a.username === adding.username)
-          ?.identities.some(i => i.local === 'main')
-          ? main
-          : account.identities.add()
-      await app.p2p.enable(name.trim())
-      if (!app.useP2p.getState().enabled) throw Error('Could not enable this identity')
-      const username = adding.username
-      await client.updateBook(b =>
-        addIdentity(b, adding.origin, username, {
-          local: app.localId,
-          ik: app.useP2p.getState().ik,
-          name: name.trim(),
-          background: true,
-          added: Date.now(),
-        })
-      )
-      setAdding(null)
-      setActions(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
   const signOut = (r: SwitcherRow) => {
     const target = switcherSession(r)
     const mark = target?.lifetime.sessionMark()
@@ -347,77 +299,12 @@ function AccountList({
   }
   const removePeer = (r: SwitcherRow) => {
     const account = switcherSession(r)
-    if (!account || !r.username || !r.local) return
-    const local = r.local,
-      user = r.username
-    const mark = account.lifetime.sessionMark()
-    const app = account.identities.get(local)
-    const current = () =>
-      switcherSession(r) === account &&
-      account.lifetime.sessionMark() === mark &&
-      account.identities.get(local) === app
-    owner.store.getState().askConfirm({
-      title: 'Remove P2P data from this browser?',
-      body: 'Your P2P identity and contacts are deleted from this browser. Without a backup they are gone for good.',
-      confirm: 'Remove',
-      action: async () => {
-        if (!current()) return
-        const ok = app
-          ? await app.p2p.removeData(user)
-          : await account.identities
-              .offlineData()
-              .find(s => s.id === local)
-              ?.remove()
-        if (!current()) return
-        if (!ok) {
-          owner.store.getState().setError("Couldn't remove P2P data")
-          return
-        }
-        if (local !== 'main') account.identities.unregister(local)
-        await client.updateBook(b =>
-          account.lifetime.sessionMark() === mark && switcherSession(r) === account
-            ? removeIdentity(b, r.origin, user, local)
-            : b
-        )
-      },
-    })
+    if (account && r.local) confirmIdentityRemoval(owner, account, r.local)
   }
-  if (adding)
-    return (
-      <div className="flex flex-col gap-3 p-4">
-        <h3 className="font-semibold">Add a P2P identity</h3>
-        {!trusted ? (
-          <>
-            <p className="text-sm">{p2pTrustText(shellInfo() ? null : window.location.host)}</p>
-            <button className={actionClass} onClick={() => setTrusted(true)}>
-              I trust this app
-            </button>
-          </>
-        ) : (
-          <>
-            <label htmlFor={identityNameId}>Identity name</label>
-            <input
-              id={identityNameId}
-              className="rounded-lg border p-2"
-              value={name}
-              maxLength={32}
-              onChange={e => setName(e.target.value)}
-            />
-            <button
-              className={actionClass}
-              disabled={busy || !name.trim()}
-              onClick={() => void addPeer()}
-            >
-              Create identity
-            </button>
-          </>
-        )}
-        {error && <p role="alert">{error}</p>}
-        <button className={actionClass} onClick={() => setAdding(null)} disabled={busy}>
-          Cancel
-        </button>
-      </div>
-    )
+  if (adding) {
+    const target = switcherSession(adding)
+    if (target) return <IdentityEnrollment account={target} cancel={() => setAdding(null)} />
+  }
   return (
     <div ref={list} onKeyDown={keys} className="flex min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -566,9 +453,6 @@ function AccountList({
                                   className={actionClass}
                                   onClick={() => {
                                     setAdding(r)
-                                    setName('')
-                                    setTrusted(false)
-                                    setError('')
                                   }}
                                 >
                                   Add a P2P identity

@@ -308,6 +308,7 @@ test('signout while opening the import database cancels the write and both journ
       dump,
       summary: summarize(dump),
       kind: 'new',
+      destinationKey: null,
       already: false,
       files: null,
     })
@@ -412,6 +413,80 @@ test('a previous reader finishing startup leaves the new account’s older chat 
     }
   }
 })
+
+test('Bob invites two identities of Alice into one room and sends each a private DM', async () => {
+  const alice = testAccount('alice2', 'https://identity-members.test')
+  const bob = testAccount('bob', alice.conn.origin)
+  alice.discovery.done()
+  bob.discovery.done()
+  const hub = new Hub()
+  const options = {
+    transport: () => hub.transport(),
+    leaderDeps: () => ({ ...webLeaderDeps(), locks: null, channel: () => null }),
+  }
+  const main = createP2pApp(alice, 'main', options)
+  const work = createP2pApp(alice, 'work', options)
+  const sender = createP2pApp(bob, 'main', options)
+  const slots = [
+    [main, 'alice2'],
+    [work, 'alice2'],
+    [sender, 'bob'],
+  ] as const
+  try {
+    for (const [app, username] of slots) {
+      await app.p2pAccount(username)
+      await app.p2p.enable(app === sender ? 'Bob' : app.localId)
+    }
+    await waitFor(
+      () => slots.every(([app]) => app.node?.status === 'online'),
+      'all three identities'
+    )
+    const room = await sender.servers!.create('Shared room')
+    for (const app of [main, work]) {
+      await sender.p2p.addContact(await app.node!.myCard())
+      await waitFor(
+        () => app.node!.contact(sender.node!.ik)?.state === 'incoming',
+        'received request'
+      )
+      await app.p2p.accept(sender.node!.ik)
+      await waitFor(() => sender.node!.presence(app.node!.ik) === 'online', 'mutual contact')
+      await sender.servers!.invite(room, app.node!.ik)
+      await waitFor(() => app.servers!.invites().length > 0, 'private invitation')
+      await app.servers!.acceptInvite(room)
+      await waitFor(() => app.servers!.myMembership(room) === 'join', 'identity joined')
+      await sender.p2pDm.openDm(app.node!.ik)
+      const dm = sender.useP2p.getState().chat!.room
+      expect(await sender.p2pDm.send(dm, `only for ${app.localId}`)).toBe(true)
+      await app.p2pDm.openDm(sender.node!.ik)
+      await waitFor(
+        () =>
+          !!app.useP2p.getState().chat?.messages.some(m => m.body === `only for ${app.localId}`),
+        'private signed message'
+      )
+    }
+    const members = sender.servers!.view(room)!.members.map(m => m.ik)
+    expect(members).toContain(main.node!.ik)
+    expect(members).toContain(work.node!.ik)
+    expect(main.useP2p.getState().chat!.room).not.toBe(work.useP2p.getState().chat!.room)
+    expect(main.useP2p.getState().chat!.messages.some(m => m.body === 'only for work')).toBe(false)
+    expect(await work.p2p.removeData()).toBe(true)
+    expect(main.servers!.myMembership(room)).toBe('join')
+    expect(hub.online(main.node!.peerId)).toBe(true)
+  } finally {
+    for (const [app, user] of slots) {
+      const db = app.dbFor(user)
+      await app.dispose()
+      memoryStorage.removeItem(
+        peerStorage(app === sender ? bob.conn : alice.conn, user, app.localId).scoped(
+          app.p2pKey(user)
+        )
+      )
+      await removeP2pDb(db)
+    }
+    alice.store.dispose()
+    bob.store.dispose()
+  }
+}, 60_000)
 
 test('parking a managed identity keeps only its own drafts until signout', async () => {
   const user = 'sam'

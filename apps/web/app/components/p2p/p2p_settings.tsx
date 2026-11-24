@@ -1,10 +1,12 @@
 'use client'
 import { useAccount } from '../../lib/client/react'
-import { withP2pIdentity } from '../../lib/client/p2p_react'
+import { confirmIdentityRemoval, identityRecords } from '../../lib/client/identity_enrollment'
+import { client } from '../../lib/client/client'
+import { P2pProvider, withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { useStore } from '../../lib/store'
 import { autoChoices } from '../../lib/p2p/app'
 import { cleanName } from '../../lib/p2p/keys'
@@ -347,10 +349,6 @@ function AdvancedLimits() {
   )
 }
 
-const REMOVE_TITLE = 'Remove P2P data from this browser?'
-const REMOVE_BODY =
-  'Your P2P identity and contacts are deleted from this browser. Without a backup they are gone for good.'
-
 // Settings > Peer-to-peer while the instance has P2P off: only removing this browser's data.
 export function P2pOffSection() {
   const account = useAccount()
@@ -358,22 +356,20 @@ export function P2pOffSection() {
   const { label } = useInstanceLabel()
   const username = useStore(s => s.me?.username ?? null)
   const off = useStore(s => !s.settings.p2p)
-  const ask = useStore(s => s.askConfirm)
+
   const guest = useStore(s => s.guest)
   const session = account.lifetime.sessionMark()
   const [done, setDone] = useState<{ session: object; username: string; ok: boolean } | null>(null)
   if (!off || guest || username === null) return null
   const data = account.identities.offlineData()
+  const nameOf = (id: string) =>
+    identityRecords(client.book.getState(), account.conn.origin, username)?.find(
+      peer => peer.local === id
+    )?.name ?? id
   const result = done?.session === session && done.username === username ? done : null
   if (!result && !data.length) return null
   const remove = (slot: (typeof data)[number]) =>
-    ask({
-      title:
-        slot.id === 'main' ? REMOVE_TITLE : `Remove P2P data for ${slot.id} from this browser?`,
-      body: REMOVE_BODY,
-      confirm: 'Remove',
-      action: () => void slot.remove().then(ok => setDone({ session, username, ok })),
-    })
+    confirmIdentityRemoval(account, account, slot.id, ok => setDone({ session, username, ok }))
   return (
     <section aria-label="Peer-to-peer">
       <p className={sectionCls}>Peer-to-peer</p>
@@ -394,9 +390,14 @@ export function P2pOffSection() {
           ))}
         {data.map(slot => (
           <button key={slot.id} onClick={() => remove(slot)} className={dangerBtn}>
-            {slot.id === 'main'
-              ? 'Remove P2P data from this browser'
-              : `Remove P2P data for ${slot.id} from this browser`}
+            {slot.id === 'main' ? (
+              'Remove P2P data from this browser'
+            ) : (
+              <>
+                Remove P2P data for <span className="streamer">{nameOf(slot.id)}</span> from this
+                browser
+              </>
+            )}
           </button>
         ))}
       </div>
@@ -409,6 +410,19 @@ function P2pSectionBody() {
   const identity = useP2pApp()!
   const { p2p } = identity
 
+  const account = useAccount()
+  const username = useStore(s => s.me?.username)
+  const record = useSyncExternalStore(
+    client.book.subscribe,
+    () =>
+      username
+        ? identityRecords(client.book.getState(), account.conn.origin, username)?.find(
+            i => i.local === identity.localId
+          )
+        : undefined,
+    () => undefined
+  )
+  const name = useP2p(s => s.name)
   const signedIn = useStore(s => s.me !== null)
   const enabled = useP2p(s => s.enabled)
   const loading = useP2p(s => s.loading)
@@ -427,17 +441,12 @@ function P2pSectionBody() {
   }, [enabled])
   if (!signedIn) return null
   const offer = iceOffer(info)
-  const remove = () =>
-    ask({
-      title: REMOVE_TITLE,
-      body: REMOVE_BODY,
-      confirm: 'Remove',
-      action: () => void p2p.removeData(),
-    })
+  const remove = () => confirmIdentityRemoval(account, account, identity.localId)
   return (
     <section aria-label="Peer-to-peer">
       <p className={`${sectionCls} flex items-center gap-2`}>
-        Peer-to-peer <P2pBadge />
+        Peer-to-peer <P2pBadge />{' '}
+        {enabled && <span className="streamer">{name || record?.name || identity.localId}</span>}
       </p>
       {!enabled ? (
         <div className="flex flex-col items-start gap-2 px-2">
@@ -449,7 +458,13 @@ function P2pSectionBody() {
               <LabelText text={error} />
             </p>
           )}
-          <button onClick={() => p2p.openDialog({ kind: 'enable' })} className={filledBtn}>
+          <button
+            onClick={() => {
+              account.identities.show(identity)
+              p2p.openDialog({ kind: 'enable' })
+            }}
+            className={filledBtn}
+          >
             Turn on P2P
           </button>
         </div>
@@ -544,4 +559,31 @@ function P2pSectionBody() {
   )
 }
 
-export const P2pSection = withP2pIdentity(P2pSectionBody)
+const IdentitySettings = withP2pIdentity(P2pSectionBody)
+
+export function P2pSection() {
+  const account = useAccount()
+  const snapshot = () =>
+    account.identities
+      .list()
+      .map(app => app.localId)
+      .join(',')
+  const ids = useSyncExternalStore(account.identities.subscribe, snapshot, snapshot)
+  const apps = ids ? ids.split(',').map(id => account.identities.get(id)!) : []
+  if (!apps.length) return null
+  return (
+    <>
+      {apps.map(app => (
+        <P2pProvider key={app.localId} identity={app}>
+          <IdentitySettings />
+        </P2pProvider>
+      ))}
+      <button
+        className={textBtn}
+        onClick={() => account.identities.viewed()?.p2p.openDialog({ kind: 'enable' })}
+      >
+        Add a P2P identity
+      </button>
+    </>
+  )
+}

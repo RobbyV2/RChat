@@ -23,6 +23,7 @@ test('disabled P2P Settings can remove saved slots only for the live signed-in o
         <SettingsMenu />
       </AccountProvider>
     )
+  const text = (html: string) => html.replace(/<[^>]+>/g, '')
   const db = owner.keys.db()!
   const work = owner.keys.db('work')!
   const otherDb = other.keys.db()!
@@ -44,12 +45,12 @@ test('disabled P2P Settings can remove saved slots only for the live signed-in o
     const html = render()
     expect(html).toContain('data-settings-section="p2p" aria-current="page"')
     expect(html).toContain('Remove P2P data from this browser')
-    expect(html).toContain('Remove P2P data for work')
+    expect(text(html)).toContain('Remove P2P data for work')
     expect(owner.identities.list()).toEqual([])
     const [main, sibling] = owner.identities.offlineData()
     expect(await sibling.remove()).toBe(true)
     expect((await indexedDB.databases()).map(d => d.name)).not.toContain(work)
-    expect(render()).not.toContain('Remove P2P data for work')
+    expect(text(render())).not.toContain('Remove P2P data for work')
     expect(owner.identities.list()).toEqual([])
 
     owner.store.setState({ guest: true })

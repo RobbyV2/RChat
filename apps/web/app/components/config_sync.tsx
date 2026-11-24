@@ -60,6 +60,9 @@ import {
   whileSlow,
   type FilesKey,
 } from '../lib/p2p/transfer'
+import { IdentityEnrollment } from './p2p/identity_enrollment'
+import { p2pTrustText } from '../lib/add_instance'
+import { shellInfo } from '../lib/platform'
 import { P2pExportOption, P2pImport, SlowNote, type PassState } from './p2p/p2p_transfer'
 import { useInstanceLabel } from './instance_badge'
 
@@ -872,10 +875,55 @@ function ImportSections({
   files: FilesPart | null
   onDone: (applied: boolean, error: string | null) => void
 }) {
+  const account = useAccount()
+  const [importMode, setImportMode] = useState<'choose' | 'existing' | 'new'>('choose')
+  const [trusted, setTrusted] = useState(false)
   const p2pOn = useP2p(s => s.account !== null)
   return (
     <>
-      {doc.p2p && p2pOn && <P2pImport section={doc.p2p} files={files} />}
+      {doc.p2p &&
+        p2pOn &&
+        (importMode === 'new' ? (
+          <IdentityEnrollment
+            account={account}
+            imported={{ section: doc.p2p, files }}
+            cancel={() => setImportMode('choose')}
+          />
+        ) : importMode === 'existing' && trusted ? (
+          <P2pImport section={doc.p2p} files={files} />
+        ) : importMode === 'existing' ? (
+          <div className="flex flex-col gap-2">
+            <strong>Keep your P2P identity in an app you trust</strong>
+            <p>
+              {p2pTrustText(
+                shellInfo() || typeof window === 'undefined' ? null : window.location.host
+              )}
+            </p>
+            <p>
+              Attach to{' '}
+              <span className="streamer">
+                {account.store.getState().me?.username}@{new URL(account.conn.origin).host}
+              </span>
+            </p>
+            <button className={filledBtn} onClick={() => setTrusted(true)}>
+              I trust this app
+            </button>
+            <button className={textBtn} onClick={() => setImportMode('choose')}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {identity?.p2p.hasData(account.store.getState().me?.username ?? '') && (
+              <button className={textBtn} onClick={() => setImportMode('existing')}>
+                Import into the selected identity
+              </button>
+            )}
+            <button className={textBtn} onClick={() => setImportMode('new')}>
+              Attach as a new P2P identity
+            </button>
+          </div>
+        ))}
       {(!doc.p2p || !p2pOn || presentSections(doc).length > 0) && (
         <ImportPreview identity={identity} doc={doc} onDone={onDone} />
       )}

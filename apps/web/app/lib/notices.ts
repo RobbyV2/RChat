@@ -35,6 +35,7 @@ export interface AlertInput {
   name: string
   // Desktop title in streamer mode.
   generic: string
+  recipient?: string
   // Routed clicks resolve after navigation. Panel clicks complete in place.
   go: ((switching?: boolean) => void) | ((switching?: boolean) => Promise<void> | false)
 }
@@ -131,7 +132,7 @@ export const headline = (n: Notice): Piece[] => {
   return [{ text: what }]
 }
 
-export const context = (n: Notice): Piece[] => {
+const conversationContext = (n: Notice): Piece[] => {
   if (n.lead !== undefined) return []
   if (n.dm) return [{ text: 'Direct message' }]
   const out: Piece[] = []
@@ -141,6 +142,15 @@ export const context = (n: Notice): Piece[] => {
     out.push({ text: `#${n.channel}`, blur: true })
   }
   return out
+}
+
+export const context = (n: Notice): Piece[] => {
+  const pieces = conversationContext(n)
+  if (n.recipient) {
+    if (pieces.length) pieces.push({ text: ' · ' })
+    pieces.push({ text: n.recipient, blur: true })
+  }
+  return pieces
 }
 
 // Message text for a toast or system notification: markdown and spoilers masked, including a
@@ -157,5 +167,8 @@ export const desktopText = (n: Notice, streamer: boolean) => {
   if (streamer) return { title: n.generic, body: '' }
   const named = n.count > 1 && n.authors.length > 1
   const where = n.channel !== null && n.lead === undefined && !named ? ` in #${n.channel}` : ''
-  return { title: `${plain(headline(n))}${where}`, body: alertBody(n.body, false) }
+  return {
+    title: `${plain(headline(n))}${where}${n.recipient ? ' · ' + n.recipient : ''}`,
+    body: alertBody(n.body, false),
+  }
 }

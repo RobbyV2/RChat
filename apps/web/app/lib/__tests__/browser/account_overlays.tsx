@@ -8,14 +8,16 @@ import { ServerRail } from '../../../components/server_rail'
 import { registerAppActions } from '../../actions'
 import { createRoot } from 'react-dom/client'
 import { AppPreview } from '../../../components/app_preview'
-import { P2pDialogs } from '../../../components/p2p/p2p_home'
+import { P2pHome, P2pDialogs } from '../../../components/p2p/p2p_home'
 import SettingsMenu from '../../../components/settings_menu'
 import { ViewingPrompt } from '../../../components/viewing_prompt'
+import { SwitcherDialog, AccountSwitcherTile } from '../../../components/account_switcher'
+import { addAccount, addInstance } from '../../client/book'
+import { useStore } from '../../store'
 import { client } from '../../client/client'
 import { AccountProvider } from '../../client/react'
 import { AccountSession } from '../../client/session'
 import { endpointsFrom, InstanceConnection } from '../../instances'
-import { createPeerFixture } from '../peer_fixture'
 import type { Me } from '../../types'
 
 const shown = client.shown()
@@ -41,7 +43,10 @@ shown.store.setState({ me, view: { kind: 'channel', server: 'garden', channelId:
 owner.store.setState({ me, view: { kind: 'channel', server: 'garden', channelId: 1 } })
 shown.api.setToken('shown-token')
 owner.api.setToken('owner-token')
-createPeerFixture(owner, me.username).useP2p.setState({ account: me.username, enabled: false })
+for (const account of [shown, owner]) {
+  account.store.setState(s => ({ guest: false, settings: { ...s.settings, p2p: true } }))
+  account.identities.setAccount(me.username)
+}
 
 const events: string[] = []
 function record(event: string) {
@@ -52,20 +57,23 @@ for (const account of [shown, owner]) {
   account.conn.ws.ensureConnected = () => {}
   account.conn.ws.sendVoice = message => {
     record(account.conn.host + ' ' + message.type)
-    if (message.type === 'call_accept')
-      queueMicrotask(() => {
-        const call = account.store.getState().call
-        if (call) account.store.setState({ call: { ...call, state: 'active' } })
-      })
-    if (message.type === 'call_accept') {
-      const call = account.store.getState().call!
-      account.store.setState({ call: { ...call, state: 'active' } })
-    }
+    if (message.type === 'call_accept' || message.type === 'call_leave')
+      queueMicrotask(() =>
+        account.store.getState().applyWsEvent({
+          type: 'call_state',
+          dm_id: message.dm_id,
+          dm_users: ['reader', 'peer'],
+          from: 'peer',
+          kind: 'rtc',
+          video: false,
+          state: message.type === 'call_accept' ? 'active' : 'ended',
+        })
+      )
     return true
   }
   account.rtc.join = async () => record(account.conn.host + ' capture')
 }
-owner.store.setState({ openDm: async (id, nav) => record('owner DM ' + id + ' ' + nav) })
+owner.store.setState({ openDm: async (id, nav = 'push') => record('owner DM ' + id + ' ' + nav) })
 
 function ring() {
   if (!client.calls.current())
@@ -99,39 +107,86 @@ const router = {
   prefetch() {},
   bfcacheId: 'test',
 }
-createRoot(document.body.appendChild(document.createElement('main'))).render(
-  <AccountProvider session={shown}>
-    <button onClick={() => shown.store.getState().openDialog({ kind: 'settings', section: 'p2p' })}>
-      P2P settings
-    </button>
-    <button
-      onClick={() => owner.store.getState().openDialog({ kind: 'settings', section: 'sync' })}
-    >
-      Owner settings
-    </button>
-    <section aria-label="Shown account overlays">
-      <ContextMenu />
-      <AppPreview />
-    </section>
-    <button onClick={ring}>Ring owner</button>
-    <button onClick={promptBoth}>Prompt both relays</button>
-    <CallBanner />
-    <RelayPrompt />
-    <ViewingPrompt />
-    <P2pDialogs />
-    <SettingsMenu />
-    <AccountProvider session={owner}>
-      {callControls}
-      <RelayPrompt />
-      <ConfirmDialog />
+function EnrollmentFixture() {
+  const switcher = useStore(s => s.activeDialog?.kind === 'account_switcher')
+  return (
+    <>
+      <AccountSwitcherTile />
+      <button
+        onClick={() => shown.store.getState().openDialog({ kind: 'settings', section: 'p2p' })}
+      >
+        P2P settings
+      </button>
+      <P2pHome onMenu={() => {}} />
       <SettingsMenu />
-      <section aria-label="Owner account rail and overlays">
-        <AppRouterContext.Provider value={router}>
-          <ServerRail />
-        </AppRouterContext.Provider>
+      <P2pDialogs />
+      {switcher && <SwitcherDialog initialManage={false} />}
+    </>
+  )
+}
+const root = createRoot(document.body.appendChild(document.createElement('main')))
+if (location.search === '?enrollment') {
+  shown.store.setState({ token: 'fixture-token' })
+  const origin = shown.conn.origin
+  void Promise.resolve(
+    client.updateBook(book =>
+      addAccount(
+        addInstance(book, { origin, id: 'enrollment', name: 'Shown' }),
+        origin,
+        {
+          username: me.username,
+          display: null,
+          avatar: null,
+          added: 1,
+          connect: true,
+          identities: [],
+        },
+        origin
+      )
+    )
+  ).then(() =>
+    root.render(
+      <AccountProvider session={shown}>
+        <EnrollmentFixture />
+      </AccountProvider>
+    )
+  )
+} else
+  root.render(
+    <AccountProvider session={shown}>
+      <button
+        onClick={() => shown.store.getState().openDialog({ kind: 'settings', section: 'p2p' })}
+      >
+        P2P settings
+      </button>
+      <button
+        onClick={() => owner.store.getState().openDialog({ kind: 'settings', section: 'sync' })}
+      >
+        Owner settings
+      </button>
+      <section aria-label="Shown account overlays">
         <ContextMenu />
         <AppPreview />
       </section>
+      <button onClick={ring}>Ring owner</button>
+      <button onClick={promptBoth}>Prompt both relays</button>
+      <CallBanner />
+      <RelayPrompt />
+      <ViewingPrompt />
+      <P2pDialogs />
+      <SettingsMenu />
+      <AccountProvider session={owner}>
+        {callControls}
+        <RelayPrompt />
+        <ConfirmDialog />
+        <SettingsMenu />
+        <section aria-label="Owner account rail and overlays">
+          <AppRouterContext.Provider value={router}>
+            <ServerRail />
+          </AppRouterContext.Provider>
+          <ContextMenu />
+          <AppPreview />
+        </section>
+      </AccountProvider>
     </AccountProvider>
-  </AccountProvider>
-)
+  )

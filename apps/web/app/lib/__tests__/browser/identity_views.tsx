@@ -1,3 +1,5 @@
+import { IdentityEnrollment } from '../../../components/p2p/identity_enrollment'
+import { addAccount, addIdentity, addInstance } from '../../client/book'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ContactRow } from '../../../components/p2p/p2p_home'
@@ -306,6 +308,37 @@ function exportFixture() {
   )
 }
 
+async function enrollmentFixture() {
+  client.show(account)
+  await client.updateBook(book =>
+    addIdentity(
+      addAccount(
+        addInstance(book, {
+          origin: account.conn.origin,
+          id: 'owner',
+          name: 'Owner',
+        }),
+        account.conn.origin,
+        { username: 'sam', display: null, avatar: null, identities: [], added: 1, connect: true },
+        null
+      ),
+      account.conn.origin,
+      'sam',
+      { local: 'main', ik: self, name: 'Main', added: 1, background: true }
+    )
+  )
+  return (
+    <AccountProvider session={account}>
+      <IdentityEnrollment
+        account={account}
+        cancel={() => {
+          document.body.dataset.finished = 'yes'
+        }}
+      />
+    </AccountProvider>
+  )
+}
+
 registerAppActions()
 const calls = new URLSearchParams(location.search).has('calls')
 if (calls) {
@@ -327,7 +360,8 @@ if (calls) {
 }
 const root = createRoot(document.body.appendChild(document.createElement('main')))
 const query = new URLSearchParams(location.search)
-if (query.has('exports')) root.render(exportFixture())
+if (query.has('enroll')) void enrollmentFixture().then(view => root.render(view))
+else if (query.has('exports')) root.render(exportFixture())
 else if (query.has('dock')) {
   void dockFixture(query.get('dock') === 'voice', query.has('background')).then(view =>
     root.render(view)

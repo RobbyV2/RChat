@@ -32,6 +32,12 @@ export function bindP2pHost(app: P2pApp, account: AccountSession, live: () => bo
       state().alertFrom({
         ...alert,
         key: scopeKey(alert.key),
+        ...(account.identities.list().filter(peer => peer.useP2p.getState().enabled).length > 1 ||
+        localId !== 'main'
+          ? {
+              recipient: `${app.useP2p.getState().name || localId} · P2P · ${state().me?.username}@${account.conn.host}`,
+            }
+          : {}),
         go: account.lifetime.inSession(() => {
           if (!live()) return
           account.identities.show(app)

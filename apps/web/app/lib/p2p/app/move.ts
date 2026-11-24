@@ -1,9 +1,12 @@
+import { keyId } from '../keys'
+import { claimImportedKey } from '../../client/identity_enrollment'
 import { P2pStore } from '../db'
 import { webLeaderDeps } from '../leader'
 import {
   alreadyImported,
   applyImport,
   Cancelled,
+  CHANGED,
   defaultKdf,
   exportP2p,
   exportP2pWithFiles,
@@ -30,6 +33,7 @@ import type { IdentityScope, P2pParts } from './scope'
 
 export interface Unlocked {
   dump: Dump
+  destinationKey: string | null
   summary: Summary
   kind: ImportKind
   // This identity already took this file in: importing changes nothing.
@@ -187,15 +191,17 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
       const st = useP2p.getState()
       let kind: ImportKind = 'new'
       let already = false
+      let destinationKey: string | null = null
       if (st.ik !== null || (await hasDb(op.name))) {
         const local = await withDb(s => s.self(), op)
+        destinationKey = local ? keyId(local.ik.pk) : null
         kind = importKind(local, dump)
         already = alreadyImported(local, dump)
       }
       op.check()
       if (kind !== 'merge' && readImports(username).includes(dump.id))
         throw new TransferError(IMPORTED_HERE)
-      return { dump, summary: summarize(dump), kind, already, files }
+      return { dump, destinationKey, summary: summarize(dump), kind, already, files }
     },
 
     // Runs in the tab that holds the account's P2P lock: the node stops, the import writes in one
@@ -205,6 +211,7 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
       u: Unlocked,
       progress?: (done: number) => void
     ): Promise<{ ok: true; res: Imported } | { ok: false; error: string }> {
+      if (u.destinationKey === undefined) return { ok: false, error: CHANGED }
       const username = useP2p.getState().account
       if (!username || !scope.current(username)) return { ok: false, error: 'Sign in first' }
       if (useP2p.getState().elsewhere) return { ok: false, error: ELSEWHERE_IMPORT }
@@ -215,14 +222,37 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
         const close = () => s.close()
         try {
           op.check()
-          op.signal.addEventListener('abort', close)
           const lim = state.identityLimits(username)
-          const res: Imported = await applyImport(s.db, u.dump, u.kind, {
-            lim,
-            signal: op.signal,
-            check: op.check,
-          })
+          const readDestination = async () => {
+            const self = await s.self()
+            return self ? keyId(self.ik.pk) : null
+          }
+          const managed = scope.owner.identities.get(scope.localId)?.useP2p === useP2p
+          const claim = managed
+            ? await claimImportedKey(scope.owner, scope.localId, keyId(u.dump.self.ik.pk), {
+                expected: u.destinationKey,
+                readDestination,
+              })
+            : null
+          let res: Imported
+          try {
+            op.check()
+            res = await applyImport(s.db, u.dump, u.kind, {
+              destinationKey: u.destinationKey,
+              lim,
+              signal: op.signal,
+              check: () => {
+                op.check()
+                claim?.check()
+              },
+            })
+          } catch (error) {
+            await claim?.rollback()
+            throw error
+          }
+          await claim?.commit()
           op.check()
+          op.signal.addEventListener('abort', close)
           rememberImport(username, u.dump.id)
           if (u.files)
             res.files = await importFiles(s.db, u.files.blob, u.files.key, progress, lim.transfer)

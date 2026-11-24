@@ -193,6 +193,30 @@ try {
         }
       }
       await identityExports(page)
+      await page.goto('https://shown.test/?enroll')
+      await page
+        .getByRole('heading', { name: 'Keep your P2P identity in an app you trust' })
+        .waitFor()
+      assert.equal(await page.getByLabel('Identity name').count(), 0)
+      await page.getByRole('button', { name: 'I trust this app' }).click()
+      assert.equal(
+        await page.getByLabel('Attach to account').locator('option:checked').innerText(),
+        'sam@owner.test'
+      )
+      await page.getByLabel('Identity name').fill('Work')
+      await page.getByRole('button', { name: 'Continue', exact: true }).click()
+      await page.getByRole('button', { name: 'Create without a recovery phrase' }).click()
+      await page.waitForFunction(() => document.body.dataset.finished === 'yes')
+      const peers = await page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem('rchat_book')!).instances.find(
+            (i: { id: string }) => i.id === 'owner'
+          ).accounts[0].identities
+      )
+      assert.equal(peers.length, 2)
+      assert.ok(
+        peers.some((i: { local: string; name: string }) => i.local !== 'main' && i.name === 'Work')
+      )
       assert.deepEqual(errors, [])
       await page.close()
     }

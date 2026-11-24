@@ -137,7 +137,7 @@ const register = async (p: Page, base: string) => {
     const name = `${base}${Math.random().toString(36).slice(2, 8)}`
     await p.getByRole('button', { name: 'Create account' }).first().click()
     await typeIn(p.getByRole('textbox', { name: 'Username' }), name)
-    await typeIn(p.getByRole('textbox', { name: 'Password' }), PASSWORD)
+    await typeIn(p.getByLabel('Password', { exact: true }), PASSWORD)
     await p.getByRole('button', { name: 'Create account' }).last().click()
     if (await until(() => rail.isVisible(), 10_000)) return
   }
@@ -159,8 +159,10 @@ const turnOn = async (p: Page, name: string) => {
   const off = p.getByRole('button', { name: 'Turn on P2P' })
   await openP2p(p, off)
   await off.click()
-  await typeIn(p.getByRole('textbox', { name: 'P2P display name' }), name)
-  await p.getByRole('button', { name: 'Turn on', exact: true }).click()
+  await p.getByRole('button', { name: 'I trust this app', exact: true }).click()
+  await typeIn(p.getByRole('textbox', { name: 'Identity name', exact: true }), name)
+  await p.getByRole('button', { name: 'Continue', exact: true }).click()
+  await p.getByRole('button', { name: 'Create without a recovery phrase', exact: true }).click()
   await openP2p(p, p.locator('[data-p2p-status]'))
 }
 

@@ -1232,6 +1232,7 @@ export const applyImport = async (
   opts: {
     now?: number
     label?: string
+    destinationKey?: string | null
     lim?: TransferLimits
     signal?: AbortSignal
     check?: () => void
@@ -1254,6 +1255,11 @@ export const applyImport = async (
     if (opts.signal?.aborted) throw new Cancelled()
     opts.check?.()
     const local = (await tx.objectStore('self').get('me')) as SelfRecord | undefined
+    if (
+      opts.destinationKey !== undefined &&
+      (local ? keyId(local.ik.pk) : null) !== opts.destinationKey
+    )
+      throw new TransferError(CHANGED)
     if (importKind(local, dump) !== kind) throw new TransferError(CHANGED)
     if (alreadyImported(local, dump)) {
       await tx.done

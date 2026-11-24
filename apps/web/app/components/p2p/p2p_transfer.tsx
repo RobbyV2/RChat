@@ -4,6 +4,7 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useEffect, useRef, useState } from 'react'
+import { client } from '../../lib/client/client'
 import { useStore } from '../../lib/store'
 import { type FilesPart, type Unlocked } from '../../lib/p2p/app'
 import {
@@ -159,13 +160,18 @@ const caseText = {
 function P2pImportBody({
   section,
   files = null,
+  enrolling = false,
+  onImported,
+  onApplying,
 }: {
   section: P2pSection
   files?: FilesPart | null
+  enrolling?: boolean
+  onImported?: () => void
+  onApplying?: (busy: boolean) => void
 }) {
   const identity = useP2pApp()!
   const { p2pTransfer, p2p } = identity
-
   const signedIn = useStore(s => s.me !== null)
   const ask = useStore(s => s.askConfirm)
   const closeDialog = useStore(s => s.closeDialog)
@@ -190,7 +196,25 @@ function P2pImportBody({
     setPart(null)
     try {
       const watch = { progress: setPart, signal: ctl.signal }
-      setUnlocked(await whileSlow(p2pTransfer.unlock(section, pass, files, watch), setLate))
+      const result = await whileSlow(p2pTransfer.unlock(section, pass, files, watch), setLate)
+      if (
+        enrolling &&
+        (result.kind !== 'new' ||
+          client.book
+            .getState()
+            .instances.some(i =>
+              i.accounts.some(a => a.identities.some(peer => peer.ik === result.summary.ik))
+            ) ||
+          client
+            .live()
+            .some(a =>
+              a.identities
+                .list()
+                .some(peer => peer !== identity && peer.useP2p.getState().ik === result.summary.ik)
+            ))
+      )
+        throw Error('This identity already belongs to a saved account on this device')
+      setUnlocked(result)
       setPass('')
     } catch (e) {
       if (!(e instanceof Cancelled)) setError(e instanceof Error ? e.message : String(e))
@@ -201,13 +225,23 @@ function P2pImportBody({
   }
 
   const apply = async (u: Unlocked) => {
+    onApplying?.(true)
     setBusy('apply')
     setError(null)
     setRead(0)
-    const out = await p2pTransfer.apply(u, setRead)
-    setBusy(null)
-    if (!out.ok) return setError(out.error)
+    let out: Awaited<ReturnType<typeof p2pTransfer.apply>>
+    try {
+      out = await p2pTransfer.apply(u, setRead)
+      if (!out.ok) throw Error(out.error)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return
+    } finally {
+      onApplying?.(false)
+      setBusy(null)
+    }
     setUnlocked(null)
+    onImported?.()
     const f = out.res.files
     const filesText = !f
       ? ''

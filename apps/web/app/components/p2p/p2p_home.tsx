@@ -1,4 +1,6 @@
 'use client'
+import { IdentityEnrollment } from './identity_enrollment'
+import { client } from '../../lib/client/client'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -6,7 +8,7 @@ import type { P2pApp } from '../../lib/p2p/app/runtime'
 
 import { useAccount } from '../../lib/client/react'
 
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useSyncExternalStore, useState } from 'react'
 import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
 import { useStore, type RChatState } from '../../lib/store'
 
@@ -36,8 +38,6 @@ import { MutedIcon } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
 import {
-  CloseButton,
-  useBackdrop,
   dangerBtn,
   Dialog,
   fieldCls,
@@ -45,6 +45,7 @@ import {
   iconBtn,
   Masked,
   textBtn,
+  useBackdrop,
 } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
@@ -304,70 +305,29 @@ function EnableDialogBody() {
   const identity = useP2pApp()!
   const { p2p } = identity
 
+  const account = useAccount()
   const frame = useRef<HTMLDialogElement>(null)
   const backdrop = useBackdrop(p2p.closeDialog)
   useLayoutEffect(() => {
-    const el = frame.current!
-    el.showModal()
-    return () => el.close()
+    const dialog = frame.current!
+    dialog.showModal()
+    return () => dialog.close()
   }, [])
-  const [name, setName] = useState('')
-  const turnOn = () => {
-    p2p.closeDialog()
-    void p2p.enable(name)
-  }
   return (
     <dialog
       ref={frame}
-      aria-labelledby="p2p-enable-title"
+      aria-label="Add a P2P identity"
       aria-modal="true"
-      onCancel={e => {
-        e.preventDefault()
+      onCancel={event => {
+        event.preventDefault()
         p2p.closeDialog()
       }}
-      onKeyDown={e => e.stopPropagation()}
+      onKeyDown={event => event.stopPropagation()}
       className="fixed inset-0 m-auto max-h-[85dvh] w-[min(24rem,calc(100%-2rem))] max-w-full overflow-y-auto rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
       {...backdrop}
     >
-      <div className="p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id="p2p-enable-title" className="text-lg font-medium">
-            Turn on peer-to-peer
-          </h2>
-          <CloseButton onClick={p2p.closeDialog} compact />
-        </div>
-        <div className="flex flex-col items-start gap-3 text-sm">
-          <P2pBadge />
-          <p>{ENABLE_COPY}</p>
-          <p className="text-on-surface-variant">
-            On iPhone and iPad, Safari may delete this data after 7 days without a visit. Install
-            the app to keep it longer.
-          </p>
-          <label className="flex w-full flex-col gap-1">
-            <span className="text-xs text-on-surface-variant">
-              Name shown to contacts (not your account name)
-            </span>
-            <input
-              value={name}
-              maxLength={32}
-              onChange={e => setName(e.target.value)}
-              onKeyDown={e => {
-                if (enterKey(e)) turnOn()
-              }}
-              placeholder="P2P user"
-              aria-label="P2P display name"
-              className={`${fieldCls} streamer`}
-            />
-          </label>
-        </div>
-        <div className="mt-6 flex justify-end gap-2">
-          <button onClick={p2p.closeDialog} className={textBtn}>
-            Cancel
-          </button>
-          <button onClick={turnOn} className={filledBtn}>
-            Turn on
-          </button>
-        </div>
+      <div className="p-3">
+        <IdentityEnrollment account={account} cancel={p2p.closeDialog} />
       </div>
     </dialog>
   )
@@ -421,6 +381,11 @@ function ContactRowBody({
   const unread = !!summary && !!scope && summary.unread > 0 && !mutedOf(prefs, scope, Date.now())
   const notice = noticeText(c)
   const shield = shieldOf(c)
+  const ownsContact = () =>
+    client.book
+      .getState()
+      .instances.some(i => i.accounts.some(a => a.identities.some(peer => peer.ik === c.ik)))
+  const yours = useSyncExternalStore(client.book.subscribe, ownsContact, () => false)
   const chip = useHasChip(c.ik)
   const closeDrawer = useDrawerClose()
   return (
@@ -460,6 +425,7 @@ function ContactRowBody({
             >
               <Masked text={displayName(c)} />
             </span>
+            {yours && <span className="text-xs text-on-surface-variant">yours</span>}
             <ContactShield kind={shield} size={14} />
             <AccountChip ik={c.ik} />
             {scope && <MutedIcon scope={scope} size={12} className="text-on-surface-variant" />}
@@ -665,6 +631,11 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
           </span>
         )}
         <span className="flex-1" />
+        {enabled && (
+          <button className={textBtn} onClick={() => p2p.openDialog({ kind: 'enable' })}>
+            Add a P2P identity
+          </button>
+        )}
         {adds && (
           <>
             <button

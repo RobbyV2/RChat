@@ -136,13 +136,20 @@ export async function check({ actors, origins, fillCredentials, signIn }) {
         .click()
       await dialog().getByRole('button', { name: 'I trust this app' }).click()
       await dialog().getByLabel('Identity name').fill(name)
-      await dialog().getByRole('button', { name: 'Create identity' }).click()
+      await dialog().getByRole('button', { name: 'Continue', exact: true }).click()
+      await dialog().getByRole('button', { name: 'Create without a recovery phrase' }).click()
+      await p.locator('[data-switcher-tile]:visible').filter({ hasText: name }).waitFor()
+      await manage()
       return dialog().locator('[data-account-row]').filter({ hasText: name })
     }
     await (await createPeer('work')).waitFor()
     const games = await createPeer('games')
     await games.waitFor()
     const gamesLocal = JSON.parse(await games.getAttribute('data-account-row'))[2]
+    // A25 opens each newly created identity. Leave games before disabling its background work.
+    await dialog().locator('[data-account-row]').filter({ hasText: 'work' }).click()
+    await p.locator('[data-switcher-tile]:visible').filter({ hasText: 'work' }).waitFor()
+    await manage()
     const peerActions = await actions('Alpha', 'alice2', gamesLocal)
     const peerToggle = peerActions.getByRole('switch', { name: 'Run in the background' })
     await peerToggle.click()

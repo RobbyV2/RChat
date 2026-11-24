@@ -85,13 +85,14 @@ export function createBookStore() {
     window.addEventListener?.('storage', event => {
       if (event.key === 'rchat_book' || event.key === null) publish()
     })
-  const updateBook = (apply: Edit, onReadOnly?: () => void) => {
+  const updateBook = (apply: Edit, onReadOnly?: () => void, optimistic = true) => {
     const edit: Edit = b => apply(b)
-    pending.push(edit)
+    const preview: Edit = optimistic ? edit : b => b
+    pending.push(preview)
     let result: Book | undefined
     const finish = (next: Book) => {
       result = next
-      pending.splice(pending.indexOf(edit), 1)
+      pending.splice(pending.indexOf(preview), 1)
       publish(next)
       return next
     }
@@ -145,5 +146,7 @@ export function createBookStore() {
       ? locks.request('rchat_book', () => transaction(commit)).catch(() => transaction(withoutLock))
       : transaction(withoutLock)
   }
-  return { book, updateBook }
+  // Enrollment edits can also update a pinned manifest. Run them only while holding the lock.
+  const updateStoredBook = (apply: Edit) => updateBook(apply, undefined, false)
+  return { book, updateBook, updateStoredBook, readStoredBook: read }
 }

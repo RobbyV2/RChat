@@ -1,4 +1,6 @@
 import { client } from './client'
+import { describeIdentity } from './book'
+import { identityRecords } from './identity_enrollment'
 import { saveRequestBadge } from './request_badge'
 import { requests } from '../p2p/contacts'
 import { peerStorage } from './keys'
@@ -45,7 +47,7 @@ function savedIds(key: string): string[] {
 }
 
 export class P2pIdentities {
-  private entries = new Map<string, { app: P2pApp; detach: () => void }>()
+  private entries = new Map<string, { app: P2pApp; manifest: string; detach: () => void }>()
   private listeners = new Set<() => void>()
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
@@ -148,7 +150,8 @@ export class P2pIdentities {
         !now.settings.p2p
       )
     }
-    const ids = ['main', ...savedIds(account.keys.local('rchat_p2p_identities'))]
+    const manifest = account.keys.local('rchat_p2p_identities')
+    const ids = ['main', ...savedIds(manifest)]
     return ids.flatMap(id => {
       const storage = peerStorage(account.conn, username, id)
       const flag = storage.scoped(p2pKey(username))
@@ -176,6 +179,8 @@ export class P2pIdentities {
               await removeP2pDb(db)
               if (readLocal(flag) !== deleting) return true
               if (!writeLocal(flag, null)) return false
+              if (id !== 'main')
+                writeLocal(manifest, JSON.stringify(savedIds(manifest).filter(i => i !== id)))
               if (current()) removed()
               return true
             } catch {
@@ -203,6 +208,22 @@ export class P2pIdentities {
     let lastRequests: number | undefined
     const offView = app.useP2p.subscribe((now, before) => {
       if (!live()) return
+      if (now.ik && (now.ik !== before.ik || now.name !== before.name)) {
+        const origin = account.conn.origin
+        const record = identityRecords(client.book.getState(), origin, username)?.find(
+          i => i.local === localId
+        )
+        if (record && !record.pendingImport && (record.ik !== now.ik || record.name !== now.name))
+          void client.updateBook(book =>
+            live() &&
+            account.conn.origin === origin &&
+            app.useP2p.getState().ik === now.ik &&
+            identityRecords(book, origin, username)?.find(i => i.local === localId)?.ik ===
+              record.ik
+              ? describeIdentity(book, origin, username, localId, record.added, now.ik!, now.name)
+              : book
+          )
+      }
       if (!now.me || now.elsewhere) lastRequests = undefined
       else if (now.contacts !== before.contacts && app.isCurrent()) {
         const count = requests(now.contacts).length
@@ -226,7 +247,7 @@ export class P2pIdentities {
       stopPings()
       account.inbox.removeInboxAdapter(inbox.id)
     }
-    this.entries.set(localId, { app, detach })
+    this.entries.set(localId, { app, manifest: account.keys.local('rchat_p2p_identities'), detach })
     const enabled = parseOn(
       readLocal(peerStorage(account.conn, username, localId).scoped(p2pKey(username)))
     )
@@ -259,6 +280,15 @@ export class P2pIdentities {
     }
   }
 
+  saveSlot(key: string, localId: string) {
+    const ids = new Set(['main', ...savedIds(key)])
+    if (ids.has(localId)) return true
+    if (ids.size >= MAX_IDENTITIES) return false
+    ids.delete('main')
+    ids.add(localId)
+    return writeLocal(key, JSON.stringify([...ids]))
+  }
+
   add(localId: string = crypto.randomUUID()) {
     const username = this.username
     const state = this.account.store.getState()
@@ -268,10 +298,8 @@ export class P2pIdentities {
     const existing = this.get(localId)
     if (existing) return existing
     const key = this.account.keys.local('rchat_p2p_identities')
-    const ids = new Set([...savedIds(key), ...this.entries.keys(), localId])
-    if (ids.size > MAX_IDENTITIES) throw new Error('An account can hold up to eight P2P identities')
-    ids.delete('main')
-    if (!writeLocal(key, JSON.stringify([...ids]))) throw new Error('Unable to save P2P identities')
+    if (this.entries.size >= MAX_IDENTITIES || !this.saveSlot(key, localId))
+      throw new Error('Unable to save P2P identities (maximum eight)')
     return this.attach(localId, username)
   }
 
@@ -285,8 +313,30 @@ export class P2pIdentities {
     )
       return false
     const key = this.account.keys.local('rchat_p2p_identities')
-    if (!writeLocal(key, JSON.stringify(savedIds(key).filter(id => id !== localId))))
+    return this.releaseSlot(localId, key)
+  }
+
+  emptySlotCleanup(localId: string, manifest: string, app: P2pApp) {
+    const generation = this.generation
+    return () => {
+      const current = this.get(localId)
+      if (current && this.generation === generation && current !== app) return false
+      return this.releaseSlot(localId, manifest, true)
+    }
+  }
+
+  // A detached enrollment still owns its original namespaced manifest entry.
+  releaseSlot(localId: string, manifest: string, emptyOnly = false) {
+    const entry = this.entries.get(localId)
+    const attached = entry?.manifest === manifest ? entry : undefined
+    if (localId === 'main' || (emptyOnly && attached?.app.useP2p.getState().ik)) return false
+    const ids = savedIds(manifest)
+    if (
+      ids.includes(localId) &&
+      !writeLocal(manifest, JSON.stringify(ids.filter(id => id !== localId)))
+    )
       throw new Error('Unable to save P2P identities')
+    if (!attached) return true
     const covered = this.coversView()
     if (this.viewedId === localId) this.viewedId = 'main'
     const state = this.account.store.getState()
@@ -299,7 +349,7 @@ export class P2pIdentities {
     )
       state.clearForward()
     this.entries.delete(localId)
-    entry.detach()
+    attached.detach()
     if (covered && !this.coversView()) instanceUncovered(this.account)
     this.changed()
     return true
