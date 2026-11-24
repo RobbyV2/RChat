@@ -1,4 +1,4 @@
-import { readLocal, writeLocal } from '../instances'
+import { isClientHost, readLocal, writeLocal } from '../instances'
 import { createSavedSession, savedConnection } from './saved_session'
 import type { Book } from './book'
 import type { AccountSession } from './session'
@@ -129,6 +129,7 @@ export class AccountManager {
       { origin: string; username: string | null; connect: boolean; credential: string }
     >()
     for (const instance of ports.book().instances) {
+      if (isClientHost(instance.origin)) continue
       const existing = ports.live().find(a => a.conn.origin === instance.origin)
       const conn = existing?.conn ?? savedConnection(instance.origin)
       const keys = accountStorage(conn)

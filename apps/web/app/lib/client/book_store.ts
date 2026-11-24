@@ -70,7 +70,8 @@ export function createBookStore() {
   const read = () => {
     const raw = readLocal('rchat_book')
     return raw === null
-      ? (volatile ?? migrateBook(localKeys('rchat_'), readLocal, defaultEndpoints().origin))
+      ? (volatile ??
+          migrateBook(localKeys('rchat_'), readLocal, defaultEndpoints()?.origin ?? null))
       : parseBook(raw)
   }
   const book = createStore<Book>(() => read())

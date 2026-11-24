@@ -7,6 +7,7 @@ import { useStore } from '../lib/store'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import { client } from '../lib/client/client'
 import { accountHistoryState, selectPageAccount, routeOwnerFor } from '../lib/client/account_paths'
+import { awaitingInstance, clientOnly } from '../lib/instances'
 import { accountPath, parseAccountPath, viewKey } from '../lib/view'
 import {
   loginHref,
@@ -114,6 +115,18 @@ export default function AppShell() {
       if (!account) {
         setRoute('missing')
         return
+      }
+      if (awaitingInstance(account.conn)) {
+        setRoute('login')
+        router.replace('/login/')
+        return
+      }
+      if (clientOnly() && !parseAccountPath(window.location.pathname)?.owner) {
+        const path = accountPath(
+          window.location.pathname + window.location.search + window.location.hash,
+          routeOwnerFor(account)
+        )
+        window.history.replaceState(accountHistoryState(account, window.history.state), '', path)
       }
       markEntry(account)
       const local = parseAccountPath(window.location.pathname)?.path

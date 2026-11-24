@@ -11,7 +11,7 @@ import { accountStorage } from '../lib/client/keys'
 import { afterProbe, alreadySignedIn, trustText, type AddStep } from '../lib/add_instance'
 import {
   InstanceConnection,
-  defaultEndpoints,
+  ownInstance,
   endpointsFrom,
   knownInstances,
   normalizeOrigin,
@@ -151,26 +151,24 @@ export function AddInstanceFlow({
     setBusy(true)
     setError('')
     try {
-      if (!canAddInstance() && normalizeOrigin(raw) !== defaultEndpoints().origin)
-        throw new Error(
-          `This site's app only connects to ${new URL(defaultEndpoints().origin).host}.`
-        )
+      const own = ownInstance()
+      if (own && !canAddInstance() && normalizeOrigin(raw) !== own.origin)
+        throw new Error(`This site's app only connects to ${new URL(own.origin).host}.`)
       const { origin, info } = await resolveInstance(raw)
       if (token !== generation.current) return
-      const own = defaultEndpoints()
-      if (!canAddInstance() && origin !== own.origin)
+      if (own && !canAddInstance() && origin !== own.origin)
         throw new Error(`This site's app only connects to ${new URL(own.origin).host}.`)
       const result = afterProbe(client.book.getState(), origin, info.id, {
         shell: !!shellInfo(),
         pageOrigin: window.location.origin,
-        ownOrigin: process.env.NEXT_PUBLIC_CLIENT_ONLY === 'true' ? null : own.origin,
+        ownOrigin: own?.origin ?? null,
         knownAccountEntry: direct,
       })
       if (result.error) throw new Error(result.error)
       const conn = new InstanceConnection(
-        origin === own.origin ? own : endpointsFrom(origin, info),
+        origin === own?.origin ? own : endpointsFrom(origin, info),
         info,
-        origin === own.origin
+        origin === own?.origin
       )
       const settings = siteSettings(await conn.api.getSettings())
       if (token !== generation.current) return
@@ -244,7 +242,7 @@ export function AddInstanceFlow({
           {!streamer && (
             <div className="flex flex-wrap gap-2">
               {knownInstances()
-                .filter(i => allowed || i.origin === defaultEndpoints().origin)
+                .filter(i => allowed || i.origin === ownInstance()?.origin)
                 .map(({ origin, info }) => (
                   <button
                     type="button"

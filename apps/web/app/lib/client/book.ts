@@ -1,3 +1,4 @@
+import { accountUsername } from '../qualified'
 import type { AvatarKind } from '../types'
 
 export interface BookIdentity {
@@ -112,8 +113,8 @@ export function addAccount(
   input: BookAccount,
   own: string | null
 ): Book {
-  const username = input.username.toLowerCase()
-  if (!/^[a-z0-9_.-]+$/.test(username) || accountAdmission(book, origin, username)) return book
+  const username = accountUsername(input.username)
+  if (!username || accountAdmission(book, origin, username)) return book
   return edit(book, origin, i => {
     const old = i.accounts.find(a => a.username === username)
     const account: BookAccount = { ...input, username }

@@ -1,3 +1,4 @@
+import { clientOnly } from './instances'
 import { ApiError, createApi } from './api'
 import { guestSessionHeaders, postGuest } from './guest_chat'
 import { readLocal, writeLocal } from './instances'
@@ -89,7 +90,7 @@ export class WidgetConnection {
   }
   async start() {
     try {
-      if (!this.parent || !/^[a-f0-9]{32}$/.test(this.id)) throw Error()
+      if (clientOnly() || !this.parent || !/^[a-f0-9]{32}$/.test(this.id)) throw Error()
       const key = new URLSearchParams(location.hash.slice(1)).get('key')
       const session = await this.api.req<{ ticket: string; mode: WidgetMode }>(
         'POST',

@@ -32,7 +32,8 @@ function createClient() {
   let nextKey = 0
   let live: readonly AccountSession[] = []
   const calls = new CallGuard()
-  const instances = createInstanceRegistry()
+  const books = createBookStore()
+  const instances = createInstanceRegistry(books.book.getState())
   const listeners = new Set<() => void>()
   const subscriptions = new Map<AccountSession, () => void>()
 
@@ -74,7 +75,6 @@ function createClient() {
     },
   }
 
-  const books = createBookStore()
   const accounts = new AccountManager({
     book: books.book.getState,
     shown: (): AccountSession => client.shown(),

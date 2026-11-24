@@ -75,6 +75,14 @@ For indexed channel search on Postgres, install `btree_gist` and `intarray` or a
 
 Never run an older release on a database that a newer release upgraded.
 
+### Run only the app
+
+```bash
+just src build-client
+```
+
+Serve `apps/web/out/` on a static host that returns `index.html` for unknown paths. People choose the RChat instances they use when they open the app. To build and serve it locally, run `just src client`. Set `PORT` to choose a port (default 3000).
+
 ### Scaling
 
 For more load, run many copies of the same image on one Postgres database and one Redis server, and give each copy its roles with `RCHAT_ROLES`. Set `REDIS_URL` on every copy and `PEERJS_BUILTIN=false`, and send `/peerjs` to one separate PeerJS server (`deploy/peer`). Both examples above do this. Upgrade all copies together. With `WS_SOCKETS_MAX` set, run the `gateway` role on copies of its own: a full copy answers `/api/ready` with 503.
@@ -104,6 +112,8 @@ Settings live in `.env.local` or in the environment (`docker run -e NAME=value`)
 Other instances accept this instance's identity assertions only when its public address uses port 443.
 
 ## Desktop and mobile apps
+
+The desktop and mobile apps are client-only. On first launch, enter the address of your RChat instance.
 
 Build the apps with `just src desktop-build` (installers in `target/release/bundle/`), `just src mobile-init android` then `just src android-build`, and `just src mobile-init ios` then `just src ios-sideload` (on a Mac). They need the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 

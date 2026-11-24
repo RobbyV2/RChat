@@ -1,14 +1,19 @@
 import {
+  clientOnly,
   createHomeConnection,
   defaultEndpoints,
   endpointsFrom,
   InstanceConnection,
   InstanceError,
   normalizeOrigin,
+  pageEndpoints,
+  readLocal,
   rememberHome,
   rememberInstance,
   type Endpoints,
 } from '../instances'
+import type { Book } from './book'
+import { storedCredential } from './credentials'
 import { accountStorage } from './keys'
 import { normalizeHost } from '../qualified'
 import type { InstanceInfo } from '../types'
@@ -18,7 +23,7 @@ export class InstanceRegistry {
 
   constructor(
     readonly home: InstanceConnection,
-    private defaults: () => Endpoints
+    private defaults: () => Endpoints | null
   ) {}
 
   list() {
@@ -67,7 +72,7 @@ export class InstanceRegistry {
     const key = normalizeOrigin(origin)
     if (!key) throw new InstanceError('Not an instance address')
     const defaults = this.defaults()
-    const isDefault = key === defaults.origin
+    const isDefault = key === defaults?.origin
     this.home.ws.stop()
     this.home.retarget(isDefault ? defaults : endpointsFrom(key, info), info, isDefault)
     this.others.delete(key)
@@ -88,5 +93,15 @@ export class InstanceRegistry {
   }
 }
 
-export const createInstanceRegistry = () =>
-  new InstanceRegistry(createHomeConnection(), defaultEndpoints)
+export function createInstanceRegistry(book: Book) {
+  let home = createHomeConnection()
+  // An old selected address can outlive the login that selected it.
+  if (
+    clientOnly() &&
+    !home.isDefault &&
+    !storedCredential(home, book) &&
+    readLocal(accountStorage(home).key('rchat_guest')) !== '1'
+  )
+    home = new InstanceConnection(pageEndpoints(), null, true, true)
+  return new InstanceRegistry(home, defaultEndpoints)
+}

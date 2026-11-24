@@ -116,3 +116,7 @@ start-prod: deps
   sleep 2
   {{DOTENVX}} "{{CARGO_TARGET}}/release/server" 2>&1 | sed 's/^/[RUST] /' &
   wait
+
+# Serve the client-only app with SPA fallback
+client: deps build-client
+  cd {{ROOT}} && bunx serve apps/web/out -s -l "${PORT:-3000}"

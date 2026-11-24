@@ -1,6 +1,6 @@
 import { storedCredential } from './client/credentials'
 import { accountStorage } from './client/keys'
-import { readLocal } from './instances'
+import { awaitingInstance, readLocal } from './instances'
 import { client } from './client/client'
 import type { Theme } from './types'
 
@@ -37,6 +37,10 @@ export const keptSession = (conn = client.shown().conn, target?: string | null) 
 export const startApp = async (toLogin: () => void, account = client.shown()) => {
   const st = account.store.getState()
   restoreStreamer(account)
+  if (awaitingInstance(account.conn)) {
+    toLogin()
+    return
+  }
   if (!st.token && !st.guest && !keptSession(account.conn, account.credentialTarget)) {
     if (st.syncInvite() || st.syncConfigLink()) await st.loadSettings()
     else toLogin()

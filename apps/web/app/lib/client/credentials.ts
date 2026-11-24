@@ -1,4 +1,5 @@
-import { readLocal, writeLocal, type InstanceConnection } from '../instances'
+import { clientOnly, localKeys, readLocal, writeLocal, type InstanceConnection } from '../instances'
+import { accountUsername } from '../qualified'
 import { accountStorage, peerStorage } from './keys'
 import { addInstance, addAccount, addIdentity, type Book, type BookAccount } from './book'
 import type { Me } from '../types'
@@ -21,6 +22,19 @@ export function storedCredential(conn: InstanceConnection, book: Book, target?: 
   for (const account of accounts) {
     const token = readLocal(keys.token(account.username))
     if (token) return { token, username: account.username, key: keys.token(account.username) }
+  }
+  // A selected remote can have a qualified token before /me has populated
+  // the book. Only consider keys in the namespace bound to this connection.
+  if (clientOnly() && conn.isHome && !conn.isDefault && !accounts.length) {
+    const prefix = 'rchat_token:'
+    const suffix = keys.token('').slice(prefix.length)
+    for (const key of localKeys(prefix)) {
+      if (!suffix || !key.endsWith(suffix)) continue
+      const username = accountUsername(key.slice(prefix.length, key.length - suffix.length))
+      if (!username || key !== keys.token(username)) continue
+      const token = readLocal(key)
+      if (token) return { token, username, key }
+    }
   }
   return null
 }

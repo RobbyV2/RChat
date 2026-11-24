@@ -9,6 +9,7 @@ import {
 } from '../client/credentials'
 import { addInstance, parseBook } from '../client/book'
 import { createBookStore } from '../client/book_store'
+import { createInstanceRegistry } from '../client/instance_registry'
 
 const origin = 'https://alpha.example'
 const connection = (url = origin, own = false) =>
@@ -183,6 +184,52 @@ test('blocked browser coordination rolls back optimistic admissions and retains 
     if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage)
     else Reflect.deleteProperty(globalThis, 'localStorage')
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow)
+    else Reflect.deleteProperty(globalThis, 'window')
+  }
+})
+
+test('client-only home requires a credential scoped to the selected remote or a remembered guest', () => {
+  const previousMode = process.env.NEXT_PUBLIC_CLIENT_ONLY
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { localStorage: storage, location: new URL('https://app.example') },
+  })
+  try {
+    process.env.NEXT_PUBLIC_CLIENT_ONLY = 'true'
+    const book = parseBook(null)
+    const homeWith = (entries: Record<string, string>) => {
+      storage.clear()
+      storage.setItem('rchat_home', origin)
+      for (const [key, value] of Object.entries(entries)) storage.setItem(key, value)
+      return createInstanceRegistry(book).home
+    }
+    expect(homeWith({}).isDefault).toBe(true)
+    expect(homeWith({ 'rchat_guest@alpha.example': '0' }).isDefault).toBe(true)
+    expect(homeWith({ 'rchat_guest@alpha.example': '1' }).origin).toBe(origin)
+    for (const key of ['rchat_token@alpha.example', 'rchat_token:alice@alpha.example']) {
+      const home = homeWith({ [key]: 'offline-token' })
+      expect(home.origin).toBe(origin)
+      expect(storedCredential(home, book)?.token).toBe('offline-token')
+      expect(
+        homeWith({ [key]: 'token', 'rchat_auth_origin@alpha.example': 'http://alpha.example' })
+          .isDefault
+      ).toBe(true)
+    }
+    for (const username of ['zoë', 'a b', '名前', 'a/b?c#d']) {
+      const key = 'rchat_token:' + username + '@alpha.example'
+      const home = homeWith({ [key]: 'qualified-token' })
+      expect(home.origin).toBe(origin)
+      expect(storedCredential(home, book)).toEqual({ token: 'qualified-token', username, key })
+      const verified = accountUpdate(home, me(username))(book)
+      expect(parseBook(JSON.stringify(verified)).instances[0]?.accounts[0]?.username).toBe(username)
+    }
+    process.env.NEXT_PUBLIC_CLIENT_ONLY = 'false'
+    expect(homeWith({}).origin).toBe(origin)
+  } finally {
+    if (previousMode === undefined) delete process.env.NEXT_PUBLIC_CLIENT_ONLY
+    else process.env.NEXT_PUBLIC_CLIENT_ONLY = previousMode
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
     else Reflect.deleteProperty(globalThis, 'window')
   }
 })

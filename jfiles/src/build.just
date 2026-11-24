@@ -35,6 +35,11 @@ build-static api_url: deps build-wasm
   cd {{WEB}} && cp out/index.html out/404.html
   @echo "Static site in {{WEB}}/out (API: {{api_url}}); serve it on any static host."
 
+# Build the client-only app for a static host
+build-client: deps build-wasm
+  cd {{ROOT}} && STATIC_EXPORT=true NEXT_PUBLIC_CLIENT_ONLY=true bun run build
+  cd {{WEB}} && cp out/index.html out/404.html
+
 # Build everything for production (full mode)
 build-all: build-wasm build-api build-frontend
   @echo ""

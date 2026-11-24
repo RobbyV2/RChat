@@ -190,6 +190,8 @@ export function endpointsFrom(origin: string, info: InstanceInfo | null): Endpoi
   }
 }
 
+export const clientOnly = () => process.env.NEXT_PUBLIC_CLIENT_ONLY === 'true'
+
 const bakedApi = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '') || undefined
 const bakedWs = process.env.NEXT_PUBLIC_WS_URL?.replace(/\/+$/, '') || undefined
 
@@ -215,13 +217,24 @@ export function homeEndpoints(
   }
 }
 
-export const defaultEndpoints = (): Endpoints =>
+export const pageEndpoints = (): Endpoints =>
   homeEndpoints(
     () => (typeof window !== 'undefined' ? window.location : undefined),
-    { api: bakedApi, ws: bakedWs },
+    clientOnly() ? {} : { api: bakedApi, ws: bakedWs },
     getBasePath,
     { host: process.env.HOST, port: process.env.SERVER_PORT }
   )
+
+// Wire the home store before a user chooses a server, but never probe a client-only host.
+export const defaultEndpoints = (): Endpoints | null => (clientOnly() ? null : pageEndpoints())
+
+export const ownInstance = (answered = true) => (answered ? defaultEndpoints() : null)
+
+export const isClientHost = (origin: string) =>
+  clientOnly() && typeof window !== 'undefined' && origin === window.location.origin
+
+export const awaitingInstance = (conn: InstanceConnection) =>
+  clientOnly() && conn.isHome && conn.isDefault
 
 const isUrl = (v: unknown, protocols: string[]) => {
   if (typeof v !== 'string') return false
@@ -278,6 +291,8 @@ export async function fetchInstance(
   fetcher: Fetcher = (input, init) => fetch(input, init),
   timeoutMs = 8000
 ): Promise<InstanceInfo> {
+  if (isClientHost(origin))
+    throw new InstanceError('Enter the address of an RChat instance. This address serves the app.')
   const host = hostOf(origin) ?? origin
   for (const path of ['/api/instance', '/.well-known/rchat']) {
     let res: Response
@@ -493,7 +508,9 @@ export function savedHome(defaultOrigin: string, store: StorageLike | null = sto
 }
 
 export function createHomeConnection() {
-  const defaults = defaultEndpoints()
+  // The unconnected home store needs addresses to construct its API and socket,
+  // even on a shell that has no server of its own. Startup waits for Add an instance.
+  const defaults = pageEndpoints()
   const origin = savedHome(defaults.origin)
   const info = readKnown()[origin] ?? null
   return origin === defaults.origin

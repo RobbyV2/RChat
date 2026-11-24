@@ -7,6 +7,7 @@ import { routeOwnerFor, selectPageAccount } from '../lib/client/account_paths'
 import type { AccountSession } from '../lib/client/session'
 import { accountPath, parseAccountPath, type RouteOwner } from '../lib/view'
 import { safeNext } from '../lib/invite'
+import { awaitingInstance } from '../lib/instances'
 import { shellInfo } from '../lib/platform'
 import { UnavailableAccount } from './account_login'
 import { AddInstanceFlow, useAddingAllowed } from '../components/add_instance'
@@ -65,9 +66,11 @@ function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) 
   const [adding, setAdding] = useState(false)
   const welcome =
     !owner &&
-    (missing ||
+    (awaitingInstance(account.conn) ||
+      missing ||
       (!!shellInfo() && !client.book.getState().instances.some(i => i.accounts.length || i.guest)))
   useEffect(() => {
+    if (awaitingInstance(account.conn)) return
     let live = true
     void account.store
       .getState()

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   createHomeConnection,
+  ownInstance,
   knownInstances,
   InstanceConnection,
   InstanceError,
@@ -760,4 +761,18 @@ describe('portability boundary', () => {
     )
     expect(offenders).toEqual([])
   })
+})
+
+test('the hosted client has an own instance only if discovery succeeds, and client-only builds have none', () => {
+  const original = process.env.NEXT_PUBLIC_CLIENT_ONLY
+  try {
+    process.env.NEXT_PUBLIC_CLIENT_ONLY = 'false'
+    expect(typeof ownInstance()?.origin).toBe('string')
+    expect(ownInstance(false)).toBeNull()
+    process.env.NEXT_PUBLIC_CLIENT_ONLY = 'true'
+    expect(ownInstance()).toBeNull()
+  } finally {
+    if (original === undefined) delete process.env.NEXT_PUBLIC_CLIENT_ONLY
+    else process.env.NEXT_PUBLIC_CLIENT_ONLY = original
+  }
 })

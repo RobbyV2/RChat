@@ -1,5 +1,7 @@
-import { defaultEndpoints } from '../instances'
-import { createSavedSession } from './saved_session'
+import type { Book } from './book'
+import { isClientHost, ownInstance, readLocal } from '../instances'
+import { accountStorage } from './keys'
+import { createSavedSession, savedConnection } from './saved_session'
 import { hostOf } from '../qualified'
 import { parseAccountPath, parsePath, type RouteOwner } from '../view'
 import { client } from './client'
@@ -32,6 +34,18 @@ export function accountHistoryState(account: AccountSession, previous: unknown) 
   }
 }
 
+function firstSavedLogin(book: Book) {
+  for (const instance of book.instances) {
+    if (isClientHost(instance.origin)) continue
+    const keys = accountStorage(savedConnection(instance.origin))
+    const row = instance.accounts.find(a => readLocal(keys.token(a.username)))
+    if (row) return { origin: instance.origin, username: row.username }
+    if (instance.guest && readLocal(keys.key('rchat_guest')) === '1')
+      return { origin: instance.origin, username: null }
+  }
+  return null
+}
+
 // A prefix can represent multiple origins with the same authority. Only this
 // entry's recorded origin can disambiguate those for Back and Forward.
 function resolvePageAccount(pathname: string, historyState: unknown): AccountSession | null {
@@ -39,8 +53,7 @@ function resolvePageAccount(pathname: string, historyState: unknown): AccountSes
   if (!route) return null
   const shown = client.shown()
   const book = client.book.getState()
-  const defaults = defaultEndpoints()
-  const own = defaults.origin
+  const own = ownInstance()?.origin
   const primary = book.instances.find(i => i.origin === own)?.accounts.find(a => a.primary)
   const history = historyState as { acct?: unknown; rchatOrigin?: unknown } | null
   const { owner } = route
@@ -77,6 +90,13 @@ function resolvePageAccount(pathname: string, historyState: unknown): AccountSes
       origin = Array.from(origins)[0]
     }
     username = owner.username
+  } else if (!own) {
+    // A standalone client has no primary server. Open the first saved login
+    // when returning to the bare app URL.
+    const candidate = firstSavedLogin(book)
+    if (!candidate) return client.live().find(a => a.isHome) ?? shown
+    origin = candidate.origin
+    username = candidate.username
   } else {
     if (!primary) {
       // Older profiles can first open offline, before /me has identified an
@@ -103,6 +123,7 @@ function resolvePageAccount(pathname: string, historyState: unknown): AccountSes
     origin = own
     username = primary.username
   }
+  if (isClientHost(origin)) return null
   const live = client.live().find(a => a.conn.origin === origin && usernameOf(a) === username)
   let next = live
   if (!next) {

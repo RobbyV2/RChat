@@ -3,6 +3,16 @@ export interface Qualified {
   host: string | null
 }
 
+export const accountUsername = (value: string) => {
+  const lower = value.toLowerCase()
+  return lower !== '' &&
+    lower.trim() === lower &&
+    !/[@\p{Cc}]/u.test(lower) &&
+    [...lower].length <= 100
+    ? lower
+    : null
+}
+
 const PORT = /:(\d+)$/
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 

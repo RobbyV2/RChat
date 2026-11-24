@@ -27,7 +27,7 @@ function instance(book: Book, origin: string, usernames: string[]) {
         added: 0,
         connect: true,
       },
-      defaultEndpoints().origin
+      defaultEndpoints()!.origin
     )
   }
   return next
@@ -91,7 +91,7 @@ test('ambiguous account paths require an exact known origin in the history entry
 
 test('named, guest and primary paths select separate stores and record their own history', () => {
   fixture()
-  const own = defaultEndpoints().origin
+  const own = defaultEndpoints()!.origin
   const target = 'https://route-owner.example'
   const book = setGuest(
     instance(instance(parseBook(null), own, ['reader', 'second']), target, ['reader']),

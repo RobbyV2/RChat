@@ -1,10 +1,10 @@
-import { defaultEndpoints, endpointsFrom, InstanceConnection, readKnown } from '../instances'
+import { ownInstance, endpointsFrom, InstanceConnection, readKnown } from '../instances'
 import type { AccountSession } from './session'
 
 export function savedConnection(origin: string) {
-  const defaults = defaultEndpoints()
+  const defaults = ownInstance()
   const info = readKnown()[origin] ?? null
-  const isDefault = origin === defaults.origin
+  const isDefault = origin === defaults?.origin
   return new InstanceConnection(isDefault ? defaults : endpointsFrom(origin, info), info, isDefault)
 }
 export function createSavedSession(origin: string, username?: string | null): AccountSession {

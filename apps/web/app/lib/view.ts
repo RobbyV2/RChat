@@ -1,18 +1,8 @@
-import { isHost, normalizeHost } from './qualified'
+import { accountUsername, isHost, normalizeHost } from './qualified'
 
 export interface RouteOwner {
   username: string | null
   host: string
-}
-
-const routeUsername = (value: string) => {
-  const lower = value.toLowerCase()
-  return lower !== '' &&
-    lower.trim() === lower &&
-    !/[@\p{Cc}]/u.test(lower) &&
-    [...lower].length <= 100
-    ? lower
-    : null
 }
 
 const routeHost = (value: string) =>
@@ -32,7 +22,7 @@ export function parseAccountPath(href: string): { owner: RouteOwner | null; path
   let username: string | null = null
   if (at !== -1) {
     try {
-      username = routeUsername(decodeURIComponent(prefix.slice(0, at)))
+      username = accountUsername(decodeURIComponent(prefix.slice(0, at)))
     } catch {
       return null
     }
@@ -49,7 +39,7 @@ export function accountPath(href: string, owner?: RouteOwner | null): string {
   if (!route) throw new Error('Invalid local account path')
   if (!owner) return route.path
   const host = routeHost(owner.host)
-  const username = owner.username === null ? null : routeUsername(owner.username)
+  const username = owner.username === null ? null : accountUsername(owner.username)
   if (!host || (owner.username !== null && username === null))
     throw new Error('Invalid route owner')
   return '/@' + (username === null ? '' : encodeURIComponent(username) + '@') + host + route.path

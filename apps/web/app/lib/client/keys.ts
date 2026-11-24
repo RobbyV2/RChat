@@ -1,6 +1,6 @@
 import { dbName } from '../p2p/db'
 import {
-  defaultEndpoints,
+  pageEndpoints,
   readLocal,
   readKnown,
   localKeys,
@@ -22,7 +22,7 @@ function uniqueRemote(
   const candidates = new Set<string>()
   let home: string
   try {
-    home = defaultEndpoints().origin
+    home = pageEndpoints().origin
   } catch {
     return false
   }
