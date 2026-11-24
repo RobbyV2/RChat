@@ -89,15 +89,66 @@ try {
   await page.getByRole('option', { name: /Search the server/ }).waitFor()
   assert.equal(await page.locator('[data-palette-item="thread_14"]').count(), 0)
   await input.fill('Willow')
-  await page.locator('[data-palette-item="dm_72"]').click()
+  const dm = page.locator('[data-palette-item="dm_72"]')
+  await dm.locator('[data-masked-word]').waitFor()
+  assert.equal(await page.locator('[data-palette-owner]').count(), 0)
+  assert.doesNotMatch((await dm.textContent()) ?? '', /Willow/)
+  await dm.hover()
+  await input.press('Alt+Enter')
+  await dm.getByText('Willow', { exact: true }).waitFor()
+  await input.press('Enter')
   assert.equal(await page.locator('body').getAttribute('data-selection'), 'owner/dm/72')
+  assert.equal(await page.locator('body').getAttribute('data-foreground'), 'selected')
   await page.keyboard.press('Control+k')
   await input.fill('Rocket notebook')
   await page.locator('[data-palette-item^="message_"]').first().click()
   assert.equal(await page.locator('body').getAttribute('data-selection'), 'owner/message/37')
+  await page.goto('https://shown.test/?results&grouped')
+  const foreignRequests: string[] = []
+  let foreignHost = 'shown.test'
+  page.on('request', r => {
+    const url = new URL(r.url())
+    if (url.host === foreignHost && url.pathname.startsWith('/api/'))
+      foreignRequests.push(url.pathname)
+  })
+  await owner.getByRole('button', { name: 'Command palette', exact: true }).click()
+  await input.fill('>Switch to')
+  for (const host of ['shown.test', 'owner.test']) {
+    await page.getByRole('option', { name: 'Switch to Reader on ' + host }).waitFor()
+    await page.getByRole('option', { name: 'Switch to Field on ' + host }).waitFor()
+  }
+  await input.fill('#Hidden notebook')
+  const thread = page.locator('[data-palette-item="thread_14"]')
+  await thread.waitFor()
+  await page
+    .getByRole('button', { name: 'Block thread author' })
+    .evaluate(el => (el as HTMLButtonElement).click())
+  await thread.waitFor({ state: 'detached' })
+  assert.doesNotMatch(await page.getByRole('listbox').innerText(), /Hidden notebook/)
+  await input.fill('Willow')
+  const foreign = page
+    .getByRole('group', { name: /reader · shown.test · Go to/ })
+    .getByRole('option')
+  await foreign.locator('[data-masked-word]').waitFor()
+  assert.doesNotMatch((await foreign.textContent()) ?? '', /Willow/)
+  await foreign.hover()
+  await page.getByText('Alt+Enter Show masked text').waitFor()
+  await input.press('Alt+Enter')
+  await foreign.getByText('Willow', { exact: true }).waitFor()
+  await input.press('Escape')
+  foreignHost = 'owner.test'
+  await shown.getByRole('button', { name: 'Command palette', exact: true }).click()
+  await input.fill('Willow')
+  const search = page.locator('[data-palette-item="search_server"]')
+  await search.hover()
+  await input.press('Alt+Enter')
+  assert.doesNotMatch(await search.innerText(), /Willow/)
+  assert.equal(await search.locator('[data-masked-word]').count(), 0)
+  assert.equal(await page.locator('body').getAttribute('data-selection'), null)
+  assert.deepEqual(foreignRequests, [])
   assert.deepEqual(errors, [])
   console.log(
-    'Passed two-session Home, composer, palette settings, history, thread visibility and result navigation'
+    'Passed account palette settings, blocked threads, foreground selection, same-brand Switch rows and single/foreign filtered-word reveal'
   )
 } finally {
   await browser.close()

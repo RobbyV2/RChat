@@ -16,14 +16,14 @@ import type { P2pMessage } from './dm'
 export const P2P_SOURCE = 'p2p'
 
 // Each account has its own palette index. Its main identity keeps the on-disk IDs.
-const sourceId = (app?: P2pApp) =>
+export const p2pSourceId = (app?: P2pApp) =>
   app && app.localId !== 'main' ? `${P2P_SOURCE}:${encodeURIComponent(app.localId)}` : P2P_SOURCE
 const docPrefix = (app?: P2pApp) => {
-  const source = sourceId(app)
+  const source = p2pSourceId(app)
   return source === P2P_SOURCE ? 'p' : source + ':'
 }
 const bucketPrefix = (app?: P2pApp) => {
-  const source = sourceId(app)
+  const source = p2pSourceId(app)
   return source === P2P_SOURCE ? 'p:' : source + ':'
 }
 
@@ -60,7 +60,7 @@ export const p2pDoc = (
     id: docPrefix(app) + m.id,
     kind: 'message',
     bucket: p2pBucket(room, ch, app),
-    source: sourceId(app),
+    source: p2pSourceId(app),
     server: null,
     channel: null,
     dm: null,
@@ -141,7 +141,7 @@ const reconcilePlace = (
 }
 
 export const createIndexSource = (app: P2pApp): IndexSource => ({
-  id: sourceId(app),
+  id: p2pSourceId(app),
   visible: d => {
     const { useP2p } = app
     return app.isCurrent() && p2pDocVisible(useP2p.getState(), d, app)

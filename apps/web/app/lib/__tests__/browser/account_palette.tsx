@@ -4,10 +4,12 @@ import { SessionServices } from '../../../[[...slug]]/app_shell'
 import { ContextMenu } from '../../../components/context_menu'
 import { HomePage } from '../../../components/home'
 import { MessageComposer } from '../../../components/message_composer'
-import { PaletteHost } from '../../../components/palette'
+import { PaletteButton, PaletteHost } from '../../../components/palette'
 import { PaletteSettingsSection } from '../../../components/palette_settings'
 import { registerAppActions } from '../../actions'
 import { client } from '../../client/client'
+import { accountStorage } from '../../client/keys'
+import { setMasking } from '../../profanity'
 import { AccountProvider } from '../../client/react'
 import { AccountSession } from '../../client/session'
 import { endpointsFrom, InstanceConnection } from '../../instances'
@@ -108,6 +110,7 @@ if (results) {
   for (const account of [shown, owner]) {
     const privateMessage = account.store.getState().messages.d1[0]
     const record = (action: string, id: number) => {
+      document.body.dataset.foreground = client.shown() === account ? 'selected' : 'other'
       document.body.dataset.selection = [account === shown ? 'shown' : 'owner', action, id].join(
         '/'
       )
@@ -136,18 +139,62 @@ if (results) {
   }
 }
 
+const grouped = new URLSearchParams(location.search).has('grouped')
+if (grouped) {
+  const accounts = [shown, owner]
+  client.book.setState({
+    instances: accounts.map(account => ({
+      origin: account.conn.origin,
+      name: 'Garden',
+      id: account.renderKey.toString(),
+      accounts: [
+        {
+          username: me.username,
+          display: me.display_name,
+          avatar: null,
+          connect: true,
+          added: 1,
+          identities: [{ local: 'field', name: 'Field', ik: null, added: 1, background: false }],
+        },
+      ],
+      guest: false,
+    })),
+  })
+  for (const account of accounts) {
+    const token = 'fixture-' + account.conn.host
+    localStorage.setItem(accountStorage(account.conn).token(me.username), token)
+    account.store.setState({ token })
+  }
+}
+if (results) {
+  // In the grouped fixture only the foreign result owner filters this word.
+  await setMasking(true, async () => text => text.replaceAll('Willow', '******'))
+  const filtered = grouped ? shown : owner
+  filtered.store.setState({ profanityReady: true })
+}
 registerAppActions()
 createRoot(document.body.appendChild(document.createElement('main'))).render(
   <AppRouterContext.Provider value={router}>
     {[shown, owner].map(account => (
       <AccountProvider key={account.renderKey} session={account}>
-        <SessionServices />
+        {!grouped && <SessionServices />}
+        {grouped && account === shown && (
+          <button onClick={() => shown.store.setState({ blocked: { reader: true } })}>
+            Block thread author
+          </button>
+        )}
         {results && account === owner && <PaletteHost />}
         <section aria-label={account === shown ? 'Shown' : 'Owner'}>
-          <PaletteSettingsSection />
-          <HomePage onMenu={() => {}} />
-          <MessageComposer />
-          <ContextMenu />
+          {grouped ? (
+            <PaletteButton />
+          ) : (
+            <>
+              <PaletteSettingsSection />
+              <HomePage onMenu={() => {}} />
+              <MessageComposer />
+              <ContextMenu />
+            </>
+          )}
         </section>
       </AccountProvider>
     ))}

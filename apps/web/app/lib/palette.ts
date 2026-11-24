@@ -89,6 +89,9 @@ export interface PaletteItem {
   action?: string
   title: string
   subtitle?: string
+  // Original words for an explicit reveal when this row already has filtered display text.
+  originalTitle?: string
+  originalSubtitle?: string
   group: PaletteGroup
   icon?: LucideIcon
   keywords?: string[]
@@ -112,9 +115,11 @@ export interface PaletteItem {
 // Whether `item` shows text the personal filter masks (its title or subtitle name).
 export const hasMasked = (item: PaletteItem | undefined, mask: (text: string) => string) =>
   !!item &&
-  !item.own &&
-  ((!!item.name && mask(item.title) !== item.title) ||
-    (!!item.subtitleName && !!item.subtitle && mask(item.subtitle) !== item.subtitle))
+  (!!item.originalTitle ||
+    !!item.originalSubtitle ||
+    (!item.own &&
+      ((!!item.name && mask(item.title) !== item.title) ||
+        (!!item.subtitleName && !!item.subtitle && mask(item.subtitle) !== item.subtitle))))
 
 export interface PaletteCommand extends PaletteItem {
   // Also offered when the text starts with this after `/` (for example `/poll`).

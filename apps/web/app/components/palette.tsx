@@ -29,7 +29,8 @@ import {
   usePalette,
   type PaletteItem,
 } from '../lib/palette'
-import { buildSections, flatItems, noApi, type ResultCtx } from '../lib/palette_results'
+import { accountPaletteSections, createPaletteChanges } from '../lib/client/palette_accounts'
+import { flatItems, noApi, type ResultCtx } from '../lib/palette_results'
 import {
   closePalette,
   closePalettePoll,
@@ -47,7 +48,7 @@ import { useMask, useStore } from '../lib/store'
 import { ApiConsoleFor } from './api_console'
 import { useMedia } from './context_menu'
 import { CreatePollDialog } from './poll_dialog'
-import { Masked, SheetGrip, iconBtn, textBtn } from './ui'
+import { Masked, MaskedText, SheetGrip, iconBtn, textBtn } from './ui'
 
 const SHEET = '(max-width: 767px)'
 
@@ -144,7 +145,9 @@ function Title({ item, hits }: { item: PaletteItem; hits: number[] }) {
     <span
       className={`truncate text-sm ${item.danger ? 'text-error' : 'text-on-surface'} ${item.name ? 'streamer' : ''}`}
     >
-      {parts ? (
+      {item.originalTitle ? (
+        <MaskedText key={item.originalTitle} text={item.originalTitle} shown={item.title} />
+      ) : parts ? (
         parts.map((p, i) =>
           p.hit ? (
             <mark key={i} className="bg-transparent font-semibold text-primary">
@@ -201,7 +204,17 @@ function Row({
           <span
             className={`truncate text-xs text-on-surface-variant ${item.subtitleName ? 'streamer' : ''}`}
           >
-            {item.subtitleName ? <Masked text={item.subtitle} own={item.own} /> : item.subtitle}
+            {item.originalSubtitle ? (
+              <MaskedText
+                key={item.originalSubtitle}
+                text={item.originalSubtitle}
+                shown={item.subtitle}
+              />
+            ) : item.subtitleName ? (
+              <Masked text={item.subtitle} own={item.own} />
+            ) : (
+              item.subtitle
+            )}
           </span>
         )}
       </span>
@@ -336,6 +349,8 @@ function useResults(text: string) {
   const recents = useHome(x => x.prefs.recents)
   const indexTick = useIndexStatus(x => x.docs + x.bytes)
   const actions = useSyncExternalStore(subscribeActions, actionsVersion, actionsVersion)
+  const changes = useMemo(() => createPaletteChanges(acct), [acct])
+  const owners = useSyncExternalStore(changes.subscribe, changes.getSnapshot, changes.getSnapshot)
   return useMemo(() => {
     const ctx: ResultCtx = {
       usage,
@@ -350,8 +365,9 @@ function useResults(text: string) {
     void viewing
     void indexTick
     void actions
-    return buildSections(s, text, ctx, acct)
-  }, [acct, s, text, usage, mask, ops, history, recents, indexTick, actions, viewing])
+    void owners
+    return accountPaletteSections(acct, text, ctx)
+  }, [acct, s, text, usage, mask, ops, history, recents, indexTick, actions, viewing, owners])
 }
 
 function ListView() {
@@ -389,13 +405,16 @@ function ListView() {
     document.getElementById(`${listId}-${current}`)?.scrollIntoView({ block: 'nearest' })
   }, [current, listId])
 
+  const ownerOf = (item: PaletteItem) =>
+    sections.find(s => s.items.some(row => row.item === item))?.owner?.account ?? acct
+
   const pick = (item: PaletteItem | undefined) => {
     if (!item || item.available?.() === false) return
     if (item.arg) {
       setPaletteView({ kind: 'arg', item })
       return
     }
-    if (counted(item.id)) acct.palettePrefs.noteUsed(item.id)
+    if (counted(item.id)) ownerOf(item).palettePrefs.noteUsed(item.id)
     if (!item.keepOpen) closePalette()
     void item.run()
   }
@@ -410,7 +429,9 @@ function ListView() {
       if (n) setActive(Math.max(0, Math.min(n - 1, current + (e.key === 'PageDown' ? 8 : -8))))
     } else if (e.key === 'Enter' && e.altKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
-      revealMasked(document.getElementById(`${listId}-${current}`), acct)
+      const item = items[current]
+      if (item && item.available?.() !== false)
+        revealMasked(document.getElementById(`${listId}-${current}`), ownerOf(item))
     } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       e.preventDefault()
       pick(items[current])
@@ -478,8 +499,26 @@ function ListView() {
         aria-label="Results"
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2"
       >
-        {sections.map(sec => (
-          <div key={`${sec.group}:${sec.label}`} role="group" aria-label={sec.label}>
+        {sections.map((sec, ix) => (
+          <div
+            key={JSON.stringify([
+              sec.owner?.account.renderKey,
+              sec.owner?.local,
+              sec.group,
+              sec.label,
+            ])}
+            role="group"
+            aria-label={sec.owner ? mask(sec.owner.label) + ' · ' + sec.label : sec.label}
+            data-palette-owner={sec.owner?.account.renderKey}
+            data-palette-identity={sec.owner?.local}
+          >
+            {sec.owner &&
+              (sections[ix - 1]?.owner?.account !== sec.owner.account ||
+                sections[ix - 1]?.owner?.local !== sec.owner.local) && (
+                <h3 className="streamer px-3 pt-3 text-sm font-semibold">
+                  <Masked text={sec.owner.label} />
+                </h3>
+              )}
             <p className="px-3 pt-2 pb-1 text-[11px] font-medium tracking-wide text-on-surface-variant uppercase">
               {sec.label}
             </p>

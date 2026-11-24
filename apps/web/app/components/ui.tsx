@@ -507,6 +507,10 @@ export function Masked({
   const mine = useOwn(by)
   const mask = useMask(own || mine, file)
   const shown = code ? maskOutsideCode(text, mask) : mask(text)
+  return <MaskedText text={text} shown={shown} />
+}
+
+export function MaskedText({ text, shown }: { text: string; shown: string }) {
   if (shown === text) return <>{text}</>
   return (
     <>

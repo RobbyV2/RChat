@@ -1,6 +1,8 @@
 import { liveSwitcherRows } from '../client/switcher_rows'
 import { switchActor } from '../client/switch_actor'
 import { canAddInstance } from '../client/adding'
+import { instanceLabel } from '../instance_label'
+import { ownInstance } from '../instances'
 import {
   Check,
   CheckCheck,
@@ -52,6 +54,9 @@ export const goActions: Action[] = [
   },
 ]
 
+const switchGroups = () =>
+  liveSwitcherRows().groups.filter(g => canAddInstance() || g.origin === ownInstance()?.origin)
+
 export const globalActions: Action[] = [
   {
     id: 'switch_account',
@@ -78,24 +83,26 @@ export const globalActions: Action[] = [
     group: 'navigation',
     icon: Command,
     available: () => true,
-    expand: () =>
-      liveSwitcherRows().groups.flatMap(g =>
+    expand: () => {
+      const groups = switchGroups()
+      return groups.flatMap(g =>
         g.rows
           .filter(r => r.status !== 'Signed out')
           .map(r => ({
             key: JSON.stringify([r.origin, r.username, r.local]),
-            label: 'Switch to ' + r.display + ' on ' + g.name,
+            label: 'Switch to ' + r.display + ' on ' + instanceLabel(g, g.host, groups),
             name: true,
             subtitle: r.local ? 'P2P · ' + r.username : (r.username ?? 'Guest'),
             subtitleName: true,
             args: { key: JSON.stringify([r.origin, r.username, r.local]) },
           }))
-      ),
+      )
+    },
     run: ({ acct }, { key }) => {
-      const r = liveSwitcherRows()
-        .groups.flatMap(g => g.rows)
+      const r = switchGroups()
+        .flatMap(g => g.rows)
         .find(r => JSON.stringify([r.origin, r.username, r.local]) === key)
-      if (r) void switchActor(r, acct)
+      if (r && r.status !== 'Signed out') void switchActor(r, acct)
     },
   },
   {

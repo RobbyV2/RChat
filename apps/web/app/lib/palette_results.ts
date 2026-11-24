@@ -39,6 +39,7 @@ import type { IndexDoc, PaletteIndex } from './palette_index'
 import { openPalette, setPaletteView } from './palette_store'
 import { SHORTCUTS, shortcutLabel } from './shortcuts'
 import { client } from './client/client'
+import type { AccountSession } from './client/session'
 import type { RChatState } from './store_types'
 import type { Message, UserRef } from './types'
 
@@ -57,6 +58,7 @@ export interface Section {
   group: PaletteGroup
   label: string
   items: Ranked<PaletteItem>[]
+  owner?: { account: AccountSession; local: string | null; label: string }
 }
 
 const SNIPPET_MAX = 120
@@ -165,7 +167,8 @@ export const threadItems = (
       )
         continue
       for (const m of s.messages[`c${c.id}`] ?? [])
-        if (m.reply_count > 0 && m.kind === 'user') roots.push({ m, server })
+        if (m.reply_count > 0 && m.kind === 'user' && !Object.hasOwn(s.blocked, m.author.username))
+          roots.push({ m, server })
     }
   roots.sort((a, b) => b.m.created_at - a.m.created_at)
   return roots.slice(0, THREADS_MAX).map(({ m, server }) => {
@@ -179,7 +182,9 @@ export const threadItems = (
       run: async () => {
         const at = acct.lifetime.sessionMark()
         if (m.channel_id !== null) await acct.store.getState().openChannel(server, m.channel_id)
-        if (at === acct.lifetime.sessionMark()) await acct.store.getState().openThread(m)
+        const state = acct.store.getState()
+        if (at === acct.lifetime.sessionMark() && !Object.hasOwn(state.blocked, m.author.username))
+          await state.openThread(m)
       },
     }
   })
@@ -419,12 +424,14 @@ export const buildSections = (
   s: RChatState,
   text: string,
   ctx: ResultCtx,
-  acct = client.shown()
+  acct = client.shown(),
+  contentOnly = false,
+  commandState = s
 ): Section[] => {
   const { mode, q } = parseQuery(text)
   const { usage, now } = ctx
   const out: Section[] = []
-  const commands = paletteCommands(paletteCtx(s, acct))
+  const commands = contentOnly ? [] : paletteCommands(paletteCtx(commandState, acct))
   const selection = commands.filter(c => c.group === 'selection')
   const others = commands.filter(c => c.group !== 'selection')
   const r = <T extends PaletteItem>(items: T[], query = q) => rank(items, query, usage, now)
@@ -507,7 +514,15 @@ export const buildSections = (
   )
   take(out, 'people', r(peopleItems(s, ctx, q, acct)), 5)
   take(out, 'commands', r(others), 8, 'Commands')
-  take(out, 'messages', [...messageItems(s, ctx, q, 6, acct), ...searchServerItem(s, q, acct)], 7)
+  take(
+    out,
+    'messages',
+    [
+      ...messageItems(s, ctx, q, 6, acct),
+      ...(contentOnly || acct.identities.coversView() ? [] : searchServerItem(s, q, acct)),
+    ],
+    7
+  )
   return out
 }
 
