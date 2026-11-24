@@ -29,6 +29,7 @@ function createClient() {
   let foreground: AccountSession | null = null
   let noticeOwner: AccountSession | null = null
   let pageBlocked = false
+  let actorSelection = 0
   let nextKey = 0
   let live: readonly AccountSession[] = []
   const calls = new CallGuard()
@@ -117,13 +118,17 @@ function createClient() {
       noticeOwner = null
       publish([...live])
     },
+    actorSelectionMark: () => actorSelection,
+    cancelActorSelection: () => ++actorSelection,
     blockPage() {
+      actorSelection++
       noticeOwner?.store.cancelNavigation()
       noticeOwner = null
       pageBlocked = true
     },
     show(account: AccountSession, nav: Nav | 'notice' = 'push') {
       if (!subscriptions.has(account)) return false
+      actorSelection++
       const wasPending = noticeOwner !== null
       noticeOwner?.store.cancelNavigation()
       noticeOwner = nav === 'notice' ? account : null

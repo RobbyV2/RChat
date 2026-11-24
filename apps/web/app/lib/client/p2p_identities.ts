@@ -1,3 +1,6 @@
+import { client } from './client'
+import { saveRequestBadge } from './request_badge'
+import { requests } from '../p2p/contacts'
 import { peerStorage } from './keys'
 import { clearHiddenForward } from '../forward_viewing'
 import { readLocal, writeLocal } from '../instances'
@@ -70,7 +73,9 @@ export class P2pIdentities {
     )
   }
   show(app: P2pApp) {
-    if (this.get(app.localId) !== app || this.viewedId === app.localId) return
+    if (this.get(app.localId) !== app) return
+    if (client.canWritePage(this.account)) client.cancelActorSelection()
+    if (this.viewedId === app.localId) return
     const covered = this.coversView()
     this.viewedId = app.localId
     if (covered && !this.coversView()) instanceUncovered(this.account)
@@ -151,6 +156,7 @@ export class P2pIdentities {
       const enabled = readLocal(flag)
       if (!db || !parseOn(enabled)) return []
       let claimed = false
+      const removed = () => this.dataRemoved(username, id)
       return [
         {
           id,
@@ -170,7 +176,7 @@ export class P2pIdentities {
               await removeP2pDb(db)
               if (readLocal(flag) !== deleting) return true
               if (!writeLocal(flag, null)) return false
-              if (current()) account.counts.peerRemoved(username, id)
+              if (current()) removed()
               return true
             } catch {
               if (readLocal(flag) === deleting) writeLocal(flag, enabled)
@@ -182,14 +188,27 @@ export class P2pIdentities {
     })
   }
 
+  dataRemoved(username: string, localId: string) {
+    saveRequestBadge(this.account.conn.origin, username, localId, null)
+    this.account.counts.peerRemoved(username, localId)
+    this.changed()
+  }
+
   private attach(localId: string, username: string) {
     const account = this.account
     const app = createP2pApp(account, localId)
     const state = account.store.getState
     let attached = true
     const live = () => attached && state().me?.username === username
+    let lastRequests: number | undefined
     const offView = app.useP2p.subscribe((now, before) => {
       if (!live()) return
+      if (!now.me || now.elsewhere) lastRequests = undefined
+      else if (now.contacts !== before.contacts && app.isCurrent()) {
+        const count = requests(now.contacts).length
+        if (count !== lastRequests) saveRequestBadge(account.conn.origin, username, localId, count)
+        lastRequests = count
+      }
       if (now.enabled !== before.enabled) this.changed()
       if (now.servers !== before.servers) clearHiddenForward(account)
       if (this.viewed() === app && coversInstance(before) && !coversInstance(now))

@@ -1,0 +1,685 @@
+'use client'
+
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronLeft,
+  GripVertical,
+  MoreHorizontal,
+  Plus,
+  Settings,
+  X,
+} from 'lucide-react'
+import { client } from '../lib/client/client'
+import { accountStorage } from '../lib/client/keys'
+import { savedConnection } from '../lib/client/saved_session'
+import { readLocal } from '../lib/instances'
+import { useAccount } from '../lib/client/react'
+import {
+  createSwitcherSource,
+  moveSwitcherRow,
+  type OrderTarget,
+  signOutSwitcherAccount,
+  type SwitcherRow,
+} from '../lib/client/switcher_rows'
+import { switchActor, switcherSession } from '../lib/client/switch_actor'
+import {
+  addIdentity,
+  removeIdentity,
+  setConnected,
+  setIdentityBackground,
+} from '../lib/client/book'
+import { p2pTrustText } from '../lib/add_instance'
+import { shellInfo } from '../lib/platform'
+import { useMask, useStore } from '../lib/store'
+import type { SettingsSection } from '../lib/settings_sections'
+import { AccountTag, ActorAvatar, InstanceTag } from './account_tag'
+import { useAddingAllowed } from './add_instance'
+import { longPress } from './context_menu'
+import { RailInstance } from './instance_badge'
+import { Masked, SheetGrip, useEscape } from './ui'
+
+function useRows() {
+  const [source] = useState(createSwitcherSource)
+  return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+}
+const keyOf = (row: SwitcherRow) => JSON.stringify([row.origin, row.username, row.local])
+const actionClass =
+  'rounded-lg px-3 py-2 text-left text-sm text-primary hover:bg-surface-container-highest focus-visible:outline-2'
+const smallButton =
+  'inline-flex size-9 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container-highest disabled:opacity-35'
+
+export function AccountSwitcherTile() {
+  const account = useAccount()
+  const model = useRows()
+  const streamer = useStore(s => s.streamer)
+  const mask = useMask()
+  const group = model.groups.find(g => g.rows.some(r => r.active))
+  const row = group?.rows.find(r => r.active)
+  if (!row || !group) return <RailInstance />
+  const title = streamer
+    ? 'Switch account'
+    : 'Acting as ' +
+      mask(row.display) +
+      ' on ' +
+      mask(group.name) +
+      ' (' +
+      mask(group.host) +
+      ').' +
+      (model.otherBadge ? ' ' + model.otherBadge + ' mentions on other accounts' : '')
+  return (
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      title={title}
+      aria-label={title}
+      data-switcher-tile
+      onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
+      className="flex w-16 flex-col items-center gap-0.5 rounded-xl py-1.5 text-center hover:bg-surface-container-high"
+    >
+      <span className="relative mb-1">
+        <ActorAvatar row={row} size={36} />
+        <span className="absolute -right-2 -bottom-1">
+          <InstanceTag origin={group.origin} name={group.name} />
+        </span>
+        {model.otherBadge > 0 && (
+          <span className="absolute -left-2 -top-1 rounded-full bg-danger px-1 text-[10px] font-bold text-on-danger">
+            {model.otherBadge}
+          </span>
+        )}
+      </span>
+      <span className="streamer w-full truncate px-0.5 text-xs font-semibold">
+        <Masked text={row.display} />
+      </span>
+      <span className="streamer w-full truncate px-0.5 text-[10px] text-on-surface-variant">
+        <Masked text={group.name} />
+      </span>
+    </button>
+  )
+}
+
+export function SettingsAccountPicker({ section }: { section: SettingsSection }) {
+  const owner = useAccount()
+  const model = useRows()
+  const mask = useMask()
+  const rows = model.groups.flatMap(g =>
+    g.rows
+      .filter(r => r.local === null && r.status !== 'Signed out')
+      .map(r => ({ row: r, name: g.name }))
+  )
+  if (rows.length < 2) return null
+  const current = rows.find(({ row }) => switcherSession(row) === owner)
+  return (
+    <label className="flex min-w-28 flex-col gap-1 text-xs text-on-surface-variant">
+      Settings for
+      <select
+        value={current ? keyOf(current.row) : ''}
+        className="streamer max-w-full rounded-lg bg-surface-container-high px-2 py-1 text-sm text-on-surface"
+        onChange={e => {
+          const next = rows.find(({ row }) => keyOf(row) === e.target.value)?.row
+          if (!next) return
+          void switchActor(next, owner, target => {
+            target.store.getState().openDialog({ kind: 'settings', section })
+          }).catch(e => owner.store.getState().setError(String(e)))
+        }}
+      >
+        {rows.map(({ row, name }) => (
+          <option key={keyOf(row)} value={keyOf(row)}>
+            {mask(row.display)} · {mask(name)}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+const sameLevel = (a: OrderTarget, b: OrderTarget) =>
+  a.username === undefined
+    ? b.username === undefined
+    : b.username !== undefined &&
+      a.origin === b.origin &&
+      (a.local === undefined
+        ? b.local === undefined
+        : b.local !== undefined && a.username === b.username)
+
+function OrderHandle({
+  label: name,
+  target,
+  index,
+  order,
+  reorder,
+}: {
+  label: string
+  target: OrderTarget
+  index: number
+  order: OrderTarget[]
+  reorder: (t: OrderTarget, to: OrderTarget) => void
+}) {
+  const mask = useMask()
+  const streamer = useStore(s => s.streamer)
+  const label = streamer
+    ? target.local
+      ? 'identity'
+      : target.username
+        ? 'account'
+        : 'instance'
+    : mask(name)
+  return (
+    <span className="inline-flex shrink-0 items-center">
+      <button
+        type="button"
+        draggable
+        data-order-target={JSON.stringify(target)}
+        data-order-index={index}
+        aria-label={'Drag ' + label}
+        title={'Drag ' + label}
+        className={smallButton + ' touch-none cursor-grab'}
+        onDragStart={e => {
+          e.dataTransfer.setData('application/x-rchat-order', JSON.stringify(target))
+          e.dataTransfer.effectAllowed = 'move'
+        }}
+        onPointerDown={e => {
+          if (e.pointerType === 'touch') e.currentTarget.setPointerCapture(e.pointerId)
+        }}
+        onPointerUp={e => {
+          if (e.pointerType !== 'touch') return
+          const el = document
+            .elementFromPoint(e.clientX, e.clientY)
+            ?.closest<HTMLElement>('[data-drop-target]')
+          if (!el) return
+          const other = JSON.parse(el.dataset.dropTarget!) as OrderTarget
+          if (sameLevel(target, other)) reorder(target, other)
+        }}
+      >
+        <GripVertical size={16} />
+      </button>
+      <button
+        type="button"
+        aria-label={'Move ' + label + ' up'}
+        disabled={index === 0}
+        className={smallButton}
+        onClick={() => reorder(target, order[index - 1])}
+      >
+        <ArrowUp size={14} />
+      </button>
+      <button
+        type="button"
+        aria-label={'Move ' + label + ' down'}
+        disabled={index === order.length - 1}
+        className={smallButton}
+        onClick={() => reorder(target, order[index + 1])}
+      >
+        <ArrowDown size={14} />
+      </button>
+    </span>
+  )
+}
+
+function AccountList({
+  manage,
+  modeChange,
+}: {
+  manage: boolean
+  modeChange?: (manage: boolean) => void
+}) {
+  const owner = useAccount()
+  const model = useRows()
+  const canAdd = useAddingAllowed()
+  const flat = model.groups.flatMap(g => g.rows)
+  const list = useRef<HTMLDivElement>(null)
+  const [actions, setActions] = useState<string | null>(null)
+  const [adding, setAdding] = useState<SwitcherRow | null>(null)
+  const [name, setName] = useState('')
+  const [trusted, setTrusted] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const identityNameId = useId()
+  const reorder = (from: OrderTarget, to: OrderTarget) =>
+    void client.updateBook(book => moveSwitcherRow(book, from, to))
+  const drag = (target: OrderTarget, index: number) => ({
+    'data-drop-target': JSON.stringify(target),
+    'data-drop-index': index,
+    onDragOver: (e: React.DragEvent) => {
+      if (e.dataTransfer.types.includes('application/x-rchat-order')) e.preventDefault()
+    },
+    onDrop: (e: React.DragEvent) => {
+      const raw = e.dataTransfer.getData('application/x-rchat-order')
+      if (!raw) return
+      e.preventDefault()
+      e.stopPropagation()
+      try {
+        const from = JSON.parse(raw) as OrderTarget
+        if (sameLevel(from, target)) reorder(from, target)
+      } catch {
+        /* Ignore foreign drags. */
+      }
+    },
+  })
+  const select = (r: SwitcherRow) =>
+    void switchActor(r, owner).catch(e => owner.store.getState().setError(String(e)))
+  const keys = (e: KeyboardEvent) => {
+    if (manage || adding || e.altKey || e.ctrlKey || e.metaKey) return
+    const rows = Array.from(
+      list.current?.querySelectorAll<HTMLButtonElement>('button[data-account-row]') ?? []
+    )
+    const i = rows.indexOf(document.activeElement as HTMLButtonElement)
+    if (/^[1-9]$/.test(e.key)) {
+      const row = flat[Number(e.key) - 1]
+      if (row) {
+        e.preventDefault()
+        select(row)
+      }
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      rows[(i + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus()
+    }
+  }
+  useEffect(() => {
+    if (modeChange && !manage && !adding) {
+      const chosen = list.current?.querySelector<HTMLButtonElement>('button[aria-current="true"]')
+      const first = list.current?.querySelector<HTMLButtonElement>('button[data-account-row]')
+      ;(chosen ?? first)?.focus()
+    }
+  }, [modeChange, manage, adding])
+  const addPeer = async () => {
+    if (!adding?.username || !trusted || busy || !name.trim()) return
+    const account = switcherSession(adding)
+    if (!account) return
+    setBusy(true)
+    setError('')
+    try {
+      const main = account.identities.get()
+      const app =
+        main &&
+        !main.useP2p.getState().enabled &&
+        !client.book
+          .getState()
+          .instances.find(i => i.origin === adding.origin)
+          ?.accounts.find(a => a.username === adding.username)
+          ?.identities.some(i => i.local === 'main')
+          ? main
+          : account.identities.add()
+      await app.p2p.enable(name.trim())
+      if (!app.useP2p.getState().enabled) throw Error('Could not enable this identity')
+      const username = adding.username
+      await client.updateBook(b =>
+        addIdentity(b, adding.origin, username, {
+          local: app.localId,
+          ik: app.useP2p.getState().ik,
+          name: name.trim(),
+          background: true,
+          added: Date.now(),
+        })
+      )
+      setAdding(null)
+      setActions(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const signOut = (r: SwitcherRow) => {
+    const target = switcherSession(r)
+    const mark = target?.lifetime.sessionMark()
+    const storage = accountStorage(target?.conn ?? savedConnection(r.origin))
+    const key = r.username === null ? storage.key('rchat_guest') : storage.token(r.username)
+    const credential = readLocal(key)
+    owner.store.getState().askConfirm({
+      title: 'Sign out of this account?',
+      body: 'Other accounts on this device stay signed in.',
+      confirm: 'Sign out',
+      action: async () => {
+        if (
+          readLocal(key) !== credential ||
+          switcherSession(r) !== target ||
+          target?.lifetime.sessionMark() !== mark
+        )
+          return
+        await signOutSwitcherAccount(r.origin, r.username)
+        setActions(null)
+      },
+    })
+  }
+  const removePeer = (r: SwitcherRow) => {
+    const account = switcherSession(r)
+    if (!account || !r.username || !r.local) return
+    const local = r.local,
+      user = r.username
+    const mark = account.lifetime.sessionMark()
+    const app = account.identities.get(local)
+    const current = () =>
+      switcherSession(r) === account &&
+      account.lifetime.sessionMark() === mark &&
+      account.identities.get(local) === app
+    owner.store.getState().askConfirm({
+      title: 'Remove P2P data from this browser?',
+      body: 'Your P2P identity and contacts are deleted from this browser. Without a backup they are gone for good.',
+      confirm: 'Remove',
+      action: async () => {
+        if (!current()) return
+        const ok = app
+          ? await app.p2p.removeData(user)
+          : await account.identities
+              .offlineData()
+              .find(s => s.id === local)
+              ?.remove()
+        if (!current()) return
+        if (!ok) {
+          owner.store.getState().setError("Couldn't remove P2P data")
+          return
+        }
+        if (local !== 'main') account.identities.unregister(local)
+        await client.updateBook(b =>
+          account.lifetime.sessionMark() === mark && switcherSession(r) === account
+            ? removeIdentity(b, r.origin, user, local)
+            : b
+        )
+      },
+    })
+  }
+  if (adding)
+    return (
+      <div className="flex flex-col gap-3 p-4">
+        <h3 className="font-semibold">Add a P2P identity</h3>
+        {!trusted ? (
+          <>
+            <p className="text-sm">{p2pTrustText(shellInfo() ? null : window.location.host)}</p>
+            <button className={actionClass} onClick={() => setTrusted(true)}>
+              I trust this app
+            </button>
+          </>
+        ) : (
+          <>
+            <label htmlFor={identityNameId}>Identity name</label>
+            <input
+              id={identityNameId}
+              className="rounded-lg border p-2"
+              value={name}
+              maxLength={32}
+              onChange={e => setName(e.target.value)}
+            />
+            <button
+              className={actionClass}
+              disabled={busy || !name.trim()}
+              onClick={() => void addPeer()}
+            >
+              Create identity
+            </button>
+          </>
+        )}
+        {error && <p role="alert">{error}</p>}
+        <button className={actionClass} onClick={() => setAdding(null)} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+    )
+  return (
+    <div ref={list} onKeyDown={keys} className="flex min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto py-1">
+        {model.groups.map((g, gi) => {
+          const accounts = g.rows.filter(r => r.local === null && r.username !== null)
+          return (
+            <section key={g.origin} aria-label={g.name}>
+              {(model.groups.length > 1 || manage) && (
+                <div
+                  className="sticky top-0 z-10 flex min-h-10 items-center gap-2 bg-surface-container px-3 py-1"
+                  {...drag({ origin: g.origin }, gi)}
+                >
+                  <InstanceTag origin={g.origin} name={g.name} />
+                  <span className="streamer min-w-0 flex-1 truncate text-sm font-semibold">
+                    <Masked text={g.name} />{' '}
+                    <small className="font-normal text-on-surface-variant">
+                      <Masked text={g.host} />
+                    </small>
+                  </span>
+                  {manage && model.groups.length > 1 && (
+                    <OrderHandle
+                      label={g.name}
+                      target={{ origin: g.origin }}
+                      index={gi}
+                      order={model.groups}
+                      reorder={reorder}
+                    />
+                  )}
+                </div>
+              )}
+              {g.rows.map(r => {
+                const key = keyOf(r),
+                  own = !!r.username
+                const peers = g.rows.filter(
+                  x => x.username === r.username && x.local !== null && x.saved
+                )
+                const ordered = r.local ? peers : accounts
+                const index = ordered.indexOf(r)
+                const target = {
+                  origin: r.origin,
+                  username: r.username ?? undefined,
+                  local: r.local ?? undefined,
+                }
+                const opened = actions === key
+                return (
+                  <div
+                    key={key}
+                    className={r.local ? 'pl-5' : ''}
+                    {...(manage && own && r.saved ? drag(target, index) : {})}
+                  >
+                    <div className="flex min-h-12 items-center gap-1 px-1">
+                      <button
+                        type="button"
+                        data-account-row={key}
+                        aria-current={r.active ? 'true' : undefined}
+                        {...longPress(() => setActions(key))}
+                        onClick={() => select(r)}
+                        className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-lg px-2 text-left hover:bg-surface-container-highest"
+                      >
+                        <ActorAvatar row={r} size={r.local ? 24 : 32} />
+                        <span className="min-w-0 flex-1">
+                          <span className="streamer block truncate text-sm font-medium">
+                            <Masked text={r.display} />{' '}
+                            {!r.local && r.username && (
+                              <small className="font-normal text-on-surface-variant">
+                                @<Masked text={r.username} />
+                              </small>
+                            )}
+                          </span>
+                          <span className="block text-xs text-on-surface-variant">
+                            {r.local ? 'P2P · ' : ''}
+                            {r.status}
+                          </span>
+                        </span>
+                        {r.status === 'Signed out' && (
+                          <span className="text-xs text-primary">Sign in</span>
+                        )}
+                        {r.badge > 0 && (
+                          <span className="rounded-full bg-secondary-container px-2 text-xs text-on-secondary-container">
+                            {r.badge}
+                          </span>
+                        )}
+                        {r.unread && (
+                          <span aria-label="Unread" className="size-2 rounded-full bg-primary" />
+                        )}
+                        {r.active && <Check size={16} aria-label="Acting as" />}
+                      </button>
+                      {manage && own && r.saved && ordered.length > 1 && (
+                        <OrderHandle
+                          label={r.display}
+                          target={target}
+                          index={index}
+                          order={ordered.map(row => ({
+                            origin: row.origin,
+                            username: row.username!,
+                            local: row.local ?? undefined,
+                          }))}
+                          reorder={reorder}
+                        />
+                      )}
+                      {(manage || opened) && (
+                        <button
+                          className={smallButton}
+                          title="Account actions"
+                          aria-expanded={opened}
+                          onClick={() => setActions(opened ? null : key)}
+                        >
+                          <MoreHorizontal size={18} />
+                        </button>
+                      )}
+                    </div>
+                    {opened && (
+                      <div className="mx-2 mb-2 flex flex-wrap gap-1 rounded-xl bg-surface-container-high p-1">
+                        {own && (
+                          <button
+                            className={actionClass}
+                            role="switch"
+                            aria-checked={r.background}
+                            onClick={() =>
+                              void client.updateBook(b =>
+                                r.local
+                                  ? setIdentityBackground(
+                                      b,
+                                      r.origin,
+                                      r.username!,
+                                      r.local,
+                                      !r.background
+                                    )
+                                  : setConnected(b, r.origin, r.username!, !r.background)
+                              )
+                            }
+                          >
+                            {r.local ? 'Run in the background' : 'Keep connected'}
+                          </button>
+                        )}
+                        {r.local ? (
+                          <button className={actionClass} onClick={() => removePeer(r)}>
+                            Remove identity
+                          </button>
+                        ) : (
+                          <>
+                            {own &&
+                              switcherSession(r)?.store.getState().settings.p2p &&
+                              r.status !== 'Signed out' && (
+                                <button
+                                  className={actionClass}
+                                  onClick={() => {
+                                    setAdding(r)
+                                    setName('')
+                                    setTrusted(false)
+                                    setError('')
+                                  }}
+                                >
+                                  Add a P2P identity
+                                </button>
+                              )}
+                            {r.status !== 'Signed out' && (
+                              <button className={actionClass} onClick={() => signOut(r)}>
+                                Sign out
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+              <button
+                className={actionClass + ' mx-1 flex items-center gap-2'}
+                onClick={() =>
+                  owner.store.getState().openDialog({ kind: 'add_instance', origin: g.origin })
+                }
+              >
+                <Plus size={15} />
+                Add an account on{' '}
+                <span className="streamer">
+                  <Masked text={g.name} />
+                </span>
+              </button>
+            </section>
+          )
+        })}
+      </div>
+      <footer className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-outline-variant p-2">
+        {canAdd && (
+          <button
+            className={actionClass + ' flex items-center gap-2'}
+            onClick={() => owner.store.getState().openDialog({ kind: 'add_instance' })}
+          >
+            <Plus size={16} />
+            Add an instance
+          </button>
+        )}
+        {modeChange && (
+          <button
+            className={actionClass + ' flex items-center gap-2'}
+            onClick={() => {
+              modeChange(!manage)
+              setActions(null)
+            }}
+          >
+            {manage ? <ChevronLeft size={16} /> : <Settings size={16} />}{' '}
+            {manage ? 'Back to accounts' : 'Manage accounts'}
+          </button>
+        )}
+      </footer>
+    </div>
+  )
+}
+
+export function ManageAccounts() {
+  return (
+    <section aria-label="Accounts on this device">
+      <h3 className="mb-2 text-sm font-semibold">Accounts on this device</h3>
+      <AccountList manage />
+    </section>
+  )
+}
+
+export function SwitcherDialog({ initialManage }: { initialManage: boolean }) {
+  const owner = useAccount()
+  const [manage, setManage] = useState(initialManage)
+  const model = useRows()
+  const group = model.groups.find(g => g.rows.some(r => r.active))
+  const actor = group?.rows.find(r => r.active)
+  const close = owner.store.getState().closeDialog
+  useEscape(close)
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end bg-scrim/40 md:items-start md:bg-transparent"
+      onMouseDown={e => {
+        if (e.target === e.currentTarget) close()
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={manage ? 'Manage accounts' : 'Switch account'}
+        className="flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-surface-container pb-safe text-on-surface shadow-elevation-3 md:mt-2 md:ml-20 md:max-h-[calc(100dvh-1rem)] md:w-[26rem] md:rounded-2xl md:pb-0"
+      >
+        <span className="md:hidden">
+          <SheetGrip />
+        </span>
+        <header className="flex items-center justify-between gap-2 px-4 py-2">
+          <h2 className="font-semibold">
+            {manage ? (
+              'Manage accounts'
+            ) : actor && group ? (
+              <span className="inline-flex items-center gap-1">
+                Acting as <AccountTag row={actor} name={group.name} />
+              </span>
+            ) : (
+              'Switch account'
+            )}
+          </h2>
+          <button title="Close account switcher" className={smallButton} onClick={close}>
+            <X size={18} />
+          </button>
+        </header>
+        <AccountList manage={manage} modeChange={setManage} />
+      </section>
+    </div>
+  )
+}

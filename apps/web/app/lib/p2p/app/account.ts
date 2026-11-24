@@ -668,7 +668,7 @@ export function createAccountPart(
           error,
         })
       else if (error) useP2p.setState({ error })
-      if (ok) owner.counts.peerRemoved(username, scope.localId)
+      if (ok) owner.identities.dataRemoved(username, scope.localId)
       return ok
     },
 

@@ -19,6 +19,7 @@ export const SHORTCUTS: Shortcut[] = [
   ...FORMATS.flatMap(({ label, keys }): Shortcut[] =>
     keys === null ? [] : [{ keys, action: label, where: 'composer' }]
   ),
+  { keys: 'Mod+Shift+L', action: 'Switch account', where: 'anywhere' },
   { keys: 'Mod+K', action: 'Open the command palette', where: 'anywhere' },
   { keys: 'Escape', action: 'Mark the conversation as read, close a panel', where: 'anywhere' },
   { keys: 'Shift+Escape', action: 'Mark everything as read', where: 'anywhere' },
@@ -62,3 +63,7 @@ export const selectKey = (
 export const allKey = (
   e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>
 ) => (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a'
+
+export const switchAccountKey = (
+  e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>
+) => (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l'

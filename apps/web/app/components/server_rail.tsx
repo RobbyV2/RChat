@@ -40,7 +40,7 @@ import { serverInitial } from '../lib/rules'
 import { longPress } from './context_menu'
 import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
-import { RailInstance } from './instance_badge'
+import { AccountSwitcherTile } from './account_switcher'
 import { ThemeToggle } from './status_clock'
 import { PaletteButton } from './palette'
 import { Sentinel, iconBtn, useOwnServer } from './ui'
@@ -354,7 +354,7 @@ export function ServerRail() {
   return (
     <nav className="flex h-full w-18 shrink-0 flex-col bg-surface-container-lowest">
       <div data-rail="instance" className="flex shrink-0 flex-col items-center gap-1.5 pt-2">
-        <RailInstance />
+        <AccountSwitcherTile />
         <div className="h-px w-8 bg-outline-variant" />
       </div>
       <div

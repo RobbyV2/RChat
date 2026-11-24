@@ -157,6 +157,36 @@ export const addIdentity = (book: Book, origin: string, username: string, identi
   )
 export const removeIdentity = (book: Book, origin: string, username: string, local: string) =>
   peers(book, origin, username, ids => ids.filter(i => i.local !== local))
+export const moveIdentity = (
+  book: Book,
+  origin: string,
+  username: string,
+  local: string,
+  to: number
+) =>
+  peers(book, origin, username, ids =>
+    towards(
+      ids,
+      ids.findIndex(i => i.local === local),
+      to
+    )
+  )
+
+export const setConnected = (book: Book, origin: string, username: string, connect: boolean) =>
+  edit(book, origin, i => ({
+    ...i,
+    accounts: i.accounts.map(a => (a.username === username ? { ...a, connect } : a)),
+  }))
+
+export const setIdentityBackground = (
+  book: Book,
+  origin: string,
+  username: string,
+  local: string,
+  background: boolean
+) =>
+  peers(book, origin, username, ids => ids.map(i => (i.local === local ? { ...i, background } : i)))
+
 export function parseBook(raw: string | null): Book {
   const data = json(raw)
   let book: Book = { v: 1, instances: [] }

@@ -1,7 +1,7 @@
 'use client'
 import { useP2p } from '../lib/client/p2p_react'
 
-import { useAddingAllowed } from './add_instance'
+import { ManageAccounts, SettingsAccountPicker } from './account_switcher'
 import { useAccount } from '../lib/client/react'
 
 import { AnnouncementSetting } from './announcements'
@@ -732,27 +732,17 @@ function ConnectionSection() {
 
 function ProfileSection() {
   const account = useAccount()
-  const canAdd = useAddingAllowed()
   const { label } = useInstanceLabel()
   return (
     <div className="flex flex-col gap-8">
       <AccountCard />
-      <div className="flex flex-wrap gap-3 text-sm text-primary">
-        <button
-          onClick={() =>
-            account.store
-              .getState()
-              .openDialog({ kind: 'add_instance', origin: account.conn.origin })
-          }
-        >
-          Add an account on <span className="streamer">{account.conn.name}</span>
-        </button>
-        {canAdd && (
-          <button onClick={() => account.store.getState().openDialog({ kind: 'add_instance' })}>
-            Add an instance
-          </button>
-        )}
-      </div>
+      <button
+        className="self-start text-sm text-primary"
+        onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
+      >
+        Switch account
+      </button>
+      <ManageAccounts />
       <ProfileFields />
       <SignInSection />
       <section>
@@ -993,6 +983,7 @@ function Menu() {
           className="flex min-w-0 flex-1 gap-1 overflow-x-auto p-3 md:w-56 md:flex-none md:flex-col md:overflow-y-auto md:border-r md:border-outline-variant md:bg-surface-container-low md:p-4"
         >
           <NavAccount />
+          <SettingsAccountPicker section={section} />
           {shown.map(key => (
             <button
               key={key}

@@ -1,5 +1,6 @@
 'use client'
 
+import { SwitcherDialog } from './account_switcher'
 import { AddInstanceDialog, AddInstanceFlow, useAddingAllowed } from './add_instance'
 import { client } from '../lib/client/client'
 import type { AccountSession } from '../lib/client/session'
@@ -365,7 +366,9 @@ function AccountServerDialog({
 }
 export function ServerDialogs() {
   const dialog = useStore(s => s.activeDialog)
-  if (dialog?.kind === 'add_instance') return <AddInstanceDialog initialOrigin={dialog.origin} />
+  if (dialog?.kind === 'account_switcher') return <SwitcherDialog initialManage={!!dialog.manage} />
+  if (dialog?.kind === 'add_instance')
+    return <AddInstanceDialog initialOrigin={dialog.origin} initialUsername={dialog.username} />
   return dialog?.kind === 'add_server' ? (
     <AccountServerDialog
       key={`${dialog.join ?? ''}:${dialog.locked ? 1 : 0}:${dialog.tab ?? ''}`}

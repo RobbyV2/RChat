@@ -1,3 +1,5 @@
+import { liveSwitcherRows } from '../client/switcher_rows'
+import { switchActor } from '../client/switch_actor'
 import { canAddInstance } from '../client/adding'
 import {
   Check,
@@ -51,6 +53,51 @@ export const goActions: Action[] = [
 ]
 
 export const globalActions: Action[] = [
+  {
+    id: 'switch_account',
+    title: 'Switch account',
+    scope: 'global',
+    group: 'navigation',
+    icon: Command,
+    hint: 'Mod+Shift+L',
+    available: () => true,
+    run: ({ acct }) => acct.store.getState().openDialog({ kind: 'account_switcher' }),
+  },
+  {
+    id: 'manage_accounts',
+    title: 'Manage accounts',
+    scope: 'global',
+    icon: Command,
+    available: () => true,
+    run: ({ acct }) => acct.store.getState().openDialog({ kind: 'account_switcher', manage: true }),
+  },
+  {
+    id: 'switch_to_actor',
+    title: 'Switch to account',
+    scope: 'global',
+    group: 'navigation',
+    icon: Command,
+    available: () => true,
+    expand: () =>
+      liveSwitcherRows().groups.flatMap(g =>
+        g.rows
+          .filter(r => r.status !== 'Signed out')
+          .map(r => ({
+            key: JSON.stringify([r.origin, r.username, r.local]),
+            label: 'Switch to ' + r.display + ' on ' + g.name,
+            name: true,
+            subtitle: r.local ? 'P2P · ' + r.username : (r.username ?? 'Guest'),
+            subtitleName: true,
+            args: { key: JSON.stringify([r.origin, r.username, r.local]) },
+          }))
+      ),
+    run: ({ acct }, { key }) => {
+      const r = liveSwitcherRows()
+        .groups.flatMap(g => g.rows)
+        .find(r => JSON.stringify([r.origin, r.username, r.local]) === key)
+      if (r) void switchActor(r, acct)
+    },
+  },
   {
     id: 'hangup',
     title: 'Leave call',

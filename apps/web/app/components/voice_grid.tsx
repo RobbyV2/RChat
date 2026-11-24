@@ -1598,6 +1598,7 @@ function ContactCallBanner() {
   const user = p2pUser(c.peer, name)
   const avatar = (size: number) => <RingAvatar user={user} size={size} streamer={streamer} />
   const go = () => {
+    if (account !== client.shown() && !client.show(account)) return
     if (identity) account.identities.show(identity)
     p2pApp?.openHome()
     void p2pDm?.openDm(c.peer)

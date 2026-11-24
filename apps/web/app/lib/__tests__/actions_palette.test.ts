@@ -1,6 +1,6 @@
 import { peerStorage } from '../client/keys'
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
 import { Copy, Trash2 } from 'lucide-react'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -10,6 +10,8 @@ import { actionById, allActions, defineAction, runAction } from '../actions/regi
 import type { Args, Target } from '../actions/types'
 import { shareOrigin } from '../instances'
 import { api, home } from './home_instance'
+import { client } from '../client/client'
+import { parseBook, type Book } from '../client/book'
 import { EMPTY_NOTIFY } from '../notify'
 
 import type { PaletteCommand } from '../palette'
@@ -29,6 +31,13 @@ const realSharing = sharing()
 const realSearch = api.search
 
 beforeAll(registerAppActions)
+
+// The pinned rows describe one session with no saved switch targets.
+let previousBook: Book
+beforeEach(() => {
+  previousBook = client.book.getState()
+  client.book.setState(parseBook(null), true)
+})
 
 afterEach(() => {
   setSharing(realSharing)
@@ -60,6 +69,7 @@ afterEach(() => {
     contextMenu: null,
     streamer: false,
   })
+  client.book.setState(previousBook, true)
 })
 
 afterAll(resetSessionCaches)
@@ -269,6 +279,8 @@ const IDS = [
   'untimeout_s_bob',
   'leave_server',
   'poll',
+  'switch_account',
+  'manage_accounts',
   'mark_all_read',
   'mark_dms_read',
   'start_dm',
@@ -337,6 +349,8 @@ const LOOKS = [
   ['untimeout_s_bob', 'Remove timeout: Bob', 'commands', 'TimerOff', '', '', 'name'],
   ['leave_server', 'Leave this server', 'commands', 'LogOut', '', '', 'danger'],
   ['poll', 'Create poll', 'commands', 'ChartColumn', '', '', ''],
+  ['switch_account', 'Switch account', 'navigation', 'Command', '', 'Mod+Shift+L', ''],
+  ['manage_accounts', 'Manage accounts', 'commands', 'Command', '', '', ''],
   ['mark_all_read', 'Mark everything as read', 'commands', 'CheckCheck', '', 'Shift+Escape', ''],
   ['mark_dms_read', 'Mark all DMs as read', 'commands', 'Check', '', '', ''],
   ['start_dm', 'Start a DM', 'commands', 'MessageSquare', '', '', ''],
@@ -475,38 +489,38 @@ const ORDER: Record<string, string> = {
   channelState: [
     'home inbox mark_read_here jump_unread jump_present select pins copy_link_here',
     'search_channel jump_date mute_here level_here mark_server_read mute_server level_server server_settings',
-    'audit_log webhooks timeout_member untimeout_s_bob leave_server poll mark_all_read mark_dms_read',
+    'audit_log webhooks timeout_member untimeout_s_bob leave_server poll switch_account manage_accounts mark_all_read mark_dms_read',
     'start_dm create_server add_instance join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer typing profanity',
     'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information apps.preview',
   ].join(' '),
   dmState: [
     'home inbox mark_read_here jump_unread jump_present select pins copy_link_here',
-    'mute_here level_here poll call video_call close_dm mark_all_read mark_dms_read',
+    'mute_here level_here poll call video_call close_dm switch_account manage_accounts mark_all_read mark_dms_read',
     'start_dm create_server add_instance join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer typing profanity',
     'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
   ].join(' '),
   homeState: [
-    'inbox mark_all_read mark_dms_read start_dm create_server add_instance join_server palette_help logout',
+    'inbox switch_account manage_accounts mark_all_read mark_dms_read start_dm create_server add_instance join_server palette_help logout',
     'friends add_friends block accept_carol deny_carol unfriend_dave unblock_erin theme',
     'streamer typing profanity spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy',
     'settings_sync settings_palette settings_information',
   ].join(' '),
   guestState: [
     'home mark_read_here jump_unread jump_present select pins copy_link_here search_channel',
-    'jump_date mute_here level_here mark_server_read mute_server level_server add_instance join_server palette_help',
+    'jump_date mute_here level_here mark_server_read mute_server level_server switch_account manage_accounts add_instance join_server palette_help',
     'theme streamer typing profanity spoilers settings_settings settings_profile settings_general settings_notifications settings_sync',
     'settings_palette settings_information',
   ].join(' '),
   signedOutState: [
-    'home add_instance join_server palette_help theme streamer settings_settings settings_profile settings_general settings_notifications settings_sync',
+    'home switch_account manage_accounts add_instance join_server palette_help theme streamer settings_settings settings_profile settings_general settings_notifications settings_sync',
     'settings_palette settings_information',
   ].join(' '),
   mutedState: [
     'home inbox mark_read_here jump_unread jump_present select pins copy_link_here',
     'search_channel jump_date unmute_here level_here mark_server_read unmute_server level_server server_settings',
-    'audit_log webhooks timeout_member untimeout_s_bob poll mark_all_read mark_dms_read start_dm',
+    'audit_log webhooks timeout_member untimeout_s_bob poll switch_account manage_accounts mark_all_read mark_dms_read start_dm',
     'create_server add_instance join_server palette_help logout friends add_friends block accept_carol',
     'deny_carol unfriend_dave unblock_erin theme streamer typing profanity spoilers',
     'appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
@@ -552,6 +566,8 @@ const RUNS: Record<string, Record<string, unknown[]>> = {
       ['leaveServer', 's'],
     ],
     poll: [['poll', { kind: 'channel', id: 1 }]],
+    switch_account: [['openDialog', { kind: 'account_switcher' }]],
+    manage_accounts: [['openDialog', { kind: 'account_switcher', manage: true }]],
     add_instance: [['openDialog', { kind: 'add_instance' }]],
     mark_all_read: [['askMarkAllRead', { pending: false, mark: 'fn' }]],
     mark_dms_read: [['markDmsRead']],
@@ -753,7 +769,7 @@ test('rows come in the pinned order in each state', () => {
   expect(order(awayState())).toBe(`home ${ORDER.homeState}`)
   expect(order(selectionState())).toBe([...SELECTION_IDS, without(channel, 'select')].join(' '))
   expect(order(voiceState())).toBe(
-    channel.flatMap(id => (id === 'poll' ? [id, ...VOICE_IDS] : [id])).join(' ')
+    channel.flatMap(id => (id === 'manage_accounts' ? [id, ...VOICE_IDS] : [id])).join(' ')
   )
 })
 

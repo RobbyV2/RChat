@@ -88,11 +88,13 @@ export function TrustNotice({
 }
 export function AddInstanceFlow({
   initialOrigin,
+  initialUsername,
   stay = false,
   onCancel,
   onDone,
 }: {
   initialOrigin?: string
+  initialUsername?: string
   stay?: boolean
   onCancel?: () => void
   onDone: (a: AccountSession) => void
@@ -346,6 +348,7 @@ export function AddInstanceFlow({
             <SignInStep
               key={session.renderKey}
               adding
+              owner={initialUsername ? { username: initialUsername, host: target.conn.host } : null}
               selectAccount={(name, mode) => {
                 const keys = accountStorage(target.conn)
                 if (
@@ -395,13 +398,20 @@ export function AddInstanceFlow({
     </div>
   )
 }
-export function AddInstanceDialog({ initialOrigin }: { initialOrigin?: string }) {
+export function AddInstanceDialog({
+  initialOrigin,
+  initialUsername,
+}: {
+  initialOrigin?: string
+  initialUsername?: string
+}) {
   const actor = useAccount()
   const close = actor.store.getState().closeDialog
   return (
     <Dialog full title={initialOrigin ? 'Add an account' : 'Add an instance'} onClose={close}>
       <AddInstanceFlow
         initialOrigin={initialOrigin}
+        initialUsername={initialUsername}
         onCancel={close}
         onDone={a => {
           close()

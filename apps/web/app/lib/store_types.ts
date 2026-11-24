@@ -126,7 +126,8 @@ export interface AdminPlace {
 }
 
 export type ActiveDialog =
-  | { kind: 'add_instance'; origin?: string }
+  | { kind: 'add_instance'; origin?: string; username?: string }
+  | { kind: 'account_switcher'; manage?: boolean }
   | { kind: 'add_server'; join?: string; locked?: boolean; tab?: 'create' | 'join' }
   | { kind: 'app_preview'; server: string }
   | { kind: 'server_settings'; server: string }

@@ -42,7 +42,7 @@ import {
 } from '../lib/palette_store'
 import type { AccountSession } from '../lib/client/session'
 import { useIndexStatus } from '../lib/palette_sync'
-import { shortcutLabel } from '../lib/shortcuts'
+import { shortcutLabel, switchAccountKey } from '../lib/shortcuts'
 import { useMask, useStore } from '../lib/store'
 import { ApiConsoleFor } from './api_console'
 import { useMedia } from './context_menu'
@@ -70,7 +70,8 @@ export function PaletteHost() {
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (!paletteKey(e) || e.isComposing || e.repeat) return
+      const switching = switchAccountKey(e)
+      if ((!switching && !paletteKey(e)) || e.isComposing || e.repeat) return
       if (
         client.live().some(account => {
           const state = account.store.getState()
@@ -84,7 +85,12 @@ export function PaletteHost() {
         return
       e.preventDefault()
       e.stopPropagation()
-      togglePalette(acct)
+      if (switching) {
+        closePalette()
+        const state = acct.store.getState()
+        if (state.activeDialog?.kind === 'account_switcher') state.closeDialog()
+        else state.openDialog({ kind: 'account_switcher' })
+      } else togglePalette(acct)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
