@@ -19,7 +19,7 @@ import { EMPTY_NOTIFY, muteEnd, notifyValue, setLevel, setMute } from '../notify
 import { setNotifier } from '../platform'
 import { resetMasking, setMasking } from '../profanity'
 import { webNotifier } from '../platform/web_notifications'
-import { home } from './home_instance'
+import { home, pinEmptyBook } from './home_instance'
 import { fakeNotifier } from './fake_notifier'
 import { alertBody, context, headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
@@ -28,6 +28,7 @@ import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { keyId, newKeyPair } from '../p2p/keys'
 
 afterAll(resetSessionCaches)
+pinEmptyBook()
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

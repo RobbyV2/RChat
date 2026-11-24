@@ -1,3 +1,4 @@
+import { afterEach, beforeEach } from 'bun:test'
 import { addAccount, addInstance, parseBook } from '../client/book'
 import { client } from '../client/client'
 import { instanceDescriptor } from '../client/credentials'
@@ -23,4 +24,21 @@ export function installPrimaryAccount(username: string) {
     else localStorage.setItem('rchat_book', raw)
     client.book.setState(previous, true)
   }
+}
+
+// Account paths and account lists read the book, which other test files leave filled.
+export function pinEmptyBook() {
+  let previous = client.book.getState()
+  let raw: string | null = null
+  beforeEach(() => {
+    previous = client.book.getState()
+    raw = localStorage.getItem('rchat_book')
+    localStorage.removeItem('rchat_book')
+    client.book.setState(parseBook(null), true)
+  })
+  afterEach(() => {
+    if (raw === null) localStorage.removeItem('rchat_book')
+    else localStorage.setItem('rchat_book', raw)
+    client.book.setState(previous, true)
+  })
 }
