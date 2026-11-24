@@ -578,7 +578,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
 }
 
 // The newest unread notifications, for Home. Opens the full inbox for the rest.
-export function InboxPreview({ max = 5 }: { max?: number }) {
+export function InboxPreview({ max = 5, beforeOpen }: { max?: number; beforeOpen?: () => void }) {
   const { adapterOf, open, read, entries, more, loading, failed, reload } = useInbox(DEFAULT_VIEW)
   const setOpen = useStore(s => s.setInboxOpen)
   const shown = entries.slice(0, max)
@@ -602,11 +602,27 @@ export function InboxPreview({ max = 5 }: { max?: number }) {
       ) : (
         <ul aria-label="Unread notifications">
           {shown.map(e => (
-            <Row key={e.key} adapter={adapterOf(e.adapter)} entry={e} onOpen={open} onRead={read} />
+            <Row
+              key={e.key}
+              adapter={adapterOf(e.adapter)}
+              entry={e}
+              onOpen={e => {
+                beforeOpen?.()
+                open(e)
+              }}
+              onRead={read}
+            />
           ))}
         </ul>
       )}
-      <button type="button" onClick={() => setOpen(true)} className={`${textBtnCls} self-start`}>
+      <button
+        type="button"
+        onClick={() => {
+          beforeOpen?.()
+          setOpen(true)
+        }}
+        className={`${textBtnCls} self-start`}
+      >
         Open inbox
       </button>
     </div>

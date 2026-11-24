@@ -6,6 +6,7 @@ import { DM_SORTS, clearDmFilters, dmListPrefs, filtersOn, type DmListPrefs } fr
 import type { NotifyScope } from '../notify'
 import { sharing } from '../platform'
 import type { DmSummary } from '../types'
+import { client } from '../client/client'
 import { signedIn } from './global'
 import { notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
@@ -100,7 +101,8 @@ export const dmActions: Action[] = [
     order: 100,
     available: ctx => dmAt(ctx, 'home') !== null,
     run: ({ acct, dm }) => {
-      if (dm) void acct.store.getState().openDm(dm.id)
+      if (!dm || (client.shown() !== acct && !client.show(acct))) return
+      void acct.store.getState().openDm(dm.id)
     },
   },
   notifySettings('dm_notify', 'dm', ['dm'], notifyScope),

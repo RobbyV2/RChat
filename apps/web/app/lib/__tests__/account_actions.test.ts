@@ -42,11 +42,19 @@ test('a DM menu opens the selected account’s conversation when IDs overlap', (
         },
       })
     }
+    client.show(a, 'none')
     openActionMenu(5, 5, { kind: 'dm', dm, where: 'home' }, {}, b)
     expect(client.overlayOwner()).toBe(b)
+    expect(client.shown()).toBe(a)
     const row = b.store.getState().contextMenu?.items.find(item => item.label === 'Open')
     expect(row?.action).not.toBeUndefined()
     row?.action?.()
+    expect(client.shown()).toBe(b)
+    expect(visits).toEqual(['two.test/7'])
+    client.show(a, 'none')
+    b.lifetime.endSession()
+    row?.action?.()
+    expect(client.shown()).toBe(a)
     expect(visits).toEqual(['two.test/7'])
     expect(a.store.getState().contextMenu).toBeNull()
   } finally {

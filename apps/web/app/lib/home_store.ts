@@ -99,12 +99,12 @@ export function createHomeStore(acct: AccountSession) {
   }
 
   // Records a P2P conversation or channel when it opens.
-  const noteP2pVisit = (st: P2pState, prev: P2pState, now = Date.now()) => {
+  const noteP2pVisit = (st: P2pState, prev: P2pState, now = Date.now(), local = 'main') => {
     const c = st.chat
     if (!c || (c.room === prev.chat?.room && (c.ch ?? null) === (prev.chat?.ch ?? null))) return
     const owner = store.getState().me?.username
     if (!owner || useHome.getState().owner !== owner || st.account !== owner) return
-    save(pushP2pRecent(useHome.getState().prefs, c.room, c.ch ?? null, now))
+    save(pushP2pRecent(useHome.getState().prefs, c.room, c.ch ?? null, now, local))
   }
 
   // Keeps Home's state on the signed-in account and records every view it opens.

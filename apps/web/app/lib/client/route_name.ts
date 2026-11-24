@@ -6,7 +6,15 @@ export interface NameActor<T> {
   lastShown: number
 }
 
-export function routeName<T>(raw: string, actor: T, candidates: readonly NameActor<T>[]) {
+type RoutedName<T> =
+  | { account: T; name: string; error?: never; host?: never }
+  | { error: string; host?: string; account?: never; name?: never }
+
+export function routeName<T>(
+  raw: string,
+  actor: T,
+  candidates: readonly NameActor<T>[]
+): RoutedName<T> {
   const parsed = parseQualified(raw.trim())
   const name = accountUsername(parsed.name)
   const { host } = parsed
@@ -22,7 +30,8 @@ export function routeName<T>(raw: string, actor: T, candidates: readonly NameAct
       : undefined)
   if (!selected)
     return {
+      ...(host ? { host } : {}),
       error: host ? `You're not signed in on ${host}.` : 'Sign in to start a direct message',
-    } as const
-  return { account: selected.account, name } as const
+    }
+  return { account: selected.account, name }
 }

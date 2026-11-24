@@ -21,6 +21,7 @@ test('route names by actor then host recency, including ports and Unicode', () =
   })
   expect(routeName('bob@beta.test', 'a', candidates)).toEqual({
     error: "You're not signed in on beta.test.",
+    host: 'beta.test',
   })
   expect(routeName('bob@wrong/host', 'a', candidates).error).toBe(
     'Enter a username or username@host'

@@ -234,7 +234,7 @@ export class P2pIdentities {
       if (now.servers !== before.servers) clearHiddenForward(account)
       if (this.viewed() === app && coversInstance(before) && !coversInstance(now))
         instanceUncovered(account)
-      if (localId === 'main') account.home.noteP2pVisit(now, before)
+      account.home.noteP2pVisit(now, before, Date.now(), localId)
     })
     const inbox = createP2pInbox(account, app, live)
     const stopIndex = startP2pIndex(account, { app })

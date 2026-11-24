@@ -1,10 +1,10 @@
 'use client'
-import { useP2pApp, useP2p } from '../lib/client/p2p_react'
+import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 import type { P2pApp } from '../lib/p2p/app/runtime'
 
-import { useAccount } from '../lib/client/react'
+import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, useId, useSyncExternalStore, type ReactNode } from 'react'
 import { logoutForLogin } from '../login/account_login'
 import { useRouter } from 'next/navigation'
 import {
@@ -80,6 +80,21 @@ import { KeyAvatar, P2pBadge, PresenceDot } from './p2p/p2p_badge'
 import { ElsewhereNotice } from './p2p/p2p_home'
 import { LabelText, useInstanceLabel } from './instance_badge'
 
+import { client } from '../lib/client/client'
+import { ownInstance } from '../lib/instances'
+import { createSwitcherSource } from '../lib/client/switcher_rows'
+import { switchActor, switcherSession } from '../lib/client/switch_actor'
+import { routeName } from '../lib/client/route_name'
+import { homeActors, type HomeActor } from '../lib/client/home_actors'
+import type { AccountSession } from '../lib/client/session'
+import { useAddingAllowed } from './add_instance'
+import { AccountTag, ActorAvatar } from './account_tag'
+
+function showOwner(account: AccountSession, peer?: P2pApp | null) {
+  if (client.shown() !== account) client.show(account)
+  if (peer && account.identities.viewed() !== peer) account.identities.show(peer)
+}
+
 const card = 'flex min-w-0 flex-col gap-1 rounded-3xl bg-surface-container-low p-4'
 
 const rowCls =
@@ -130,7 +145,7 @@ function UnreadMark({ unread, pings }: { unread: boolean; pings: number }) {
   )
 }
 
-function Greeting() {
+function Greeting({ total, accounts = 1 }: { total?: number; accounts?: number } = {}) {
   const me = useStore(s => s.me)
   const streamer = useStore(s => s.streamer)
   const pings = useInboxCount()
@@ -150,7 +165,11 @@ function Greeting() {
         )}
       </h1>
       <p className="text-sm text-on-surface-variant">
-        {pings > 0 ? `You have ${pingLabel(pings)}.` : "You're all caught up."}
+        {accounts > 1
+          ? `You have ${pingLabel(total ?? pings)} across ${accounts} accounts.`
+          : (total ?? pings) > 0
+            ? `You have ${pingLabel(total ?? pings)}.`
+            : "You're all caught up."}
       </p>
     </div>
   )
@@ -243,32 +262,53 @@ const p2pAct = (identity: P2pApp) => (state: CardState, dialog: P2pDialog) => {
   else p2p.openDialog(entry === 'enable' ? { kind: 'enable' } : dialog)
 }
 
-function QuickActions() {
+function QuickActions({ as, accounts }: { as?: ReactNode; accounts?: HomeActor[] } = {}) {
   const identity = useP2pApp()
 
   const acct = useAccount()
   const openDialog = useStore(s => s.openDialog)
-  const startDm = useStore(s => s.startDm)
+  const canAdd = useAddingAllowed()
   const palette = usePalette(s => s.open)
   const p2pOn = useStore(s => s.settings.p2p)
   const p2pState = useP2pCard().state
   const [asking, setAsking] = useState(false)
   const [name, setName] = useState('')
+  const [problem, setProblem] = useState<{ error: string; host?: string } | null>(null)
   const submit = () => {
-    const target = name.trim().replace(/^@/, '').toLowerCase()
+    const target = name.trim().replace(/^@/, '')
     if (!target) return
+    const candidates = accounts ? accounts.filter(a => a.row.username).map(a => a.account) : [acct]
+    const routed = routeName(
+      target,
+      acct,
+      candidates.map(account => ({
+        account,
+        host: account.conn.host,
+        lastShown: client.accounts.lastShown(account),
+      }))
+    )
+    if (!routed.account) {
+      setProblem(routed)
+      return
+    }
+    setProblem(null)
     setAsking(false)
     setName('')
-    void startDm(target)
+    showOwner(routed.account)
+    void routed.account.store.getState().startDm(routed.name)
   }
   return (
     <section aria-label="Quick actions" className="flex flex-col gap-2">
+      {as}
       <div
         className={`grid grid-cols-2 gap-2 ${palette && !p2pOn ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}
       >
         <button
           type="button"
-          onClick={() => openDialog({ kind: 'add_server', tab: 'create' })}
+          onClick={() => {
+            showOwner(acct)
+            openDialog({ kind: 'add_server', tab: 'create' })
+          }}
           className={actionCls}
         >
           <Plus size={18} className="shrink-0 text-primary" />
@@ -276,7 +316,10 @@ function QuickActions() {
         </button>
         <button
           type="button"
-          onClick={() => openDialog({ kind: 'add_server', tab: 'join' })}
+          onClick={() => {
+            showOwner(acct)
+            openDialog({ kind: 'add_server', tab: 'join' })
+          }}
           className={actionCls}
         >
           <Compass size={18} className="shrink-0 text-primary" />
@@ -292,7 +335,14 @@ function QuickActions() {
           <span className="min-w-0 leading-tight">Message someone</span>
         </button>
         {palette && (
-          <button type="button" onClick={() => palette(acct)} className={actionCls}>
+          <button
+            type="button"
+            onClick={() => {
+              showOwner(acct)
+              palette(acct)
+            }}
+            className={actionCls}
+          >
             <Command size={18} className="shrink-0 text-primary" />
             <span className="min-w-0 leading-tight">Command palette</span>
             <kbd className="ml-auto shrink-0 rounded-md border border-outline-variant px-1.5 font-sans text-xs text-on-surface-variant max-sm:hidden">
@@ -305,7 +355,12 @@ function QuickActions() {
             <button
               type="button"
               data-p2p-action="contact"
-              onClick={() => identity && p2pAct(identity)(p2pState, { kind: 'add' })}
+              onClick={() => {
+                if (identity) {
+                  showOwner(acct, identity)
+                  p2pAct(identity)(p2pState, { kind: 'add' })
+                }
+              }}
               className={p2pActionCls}
             >
               <UserPlus size={18} className="shrink-0 text-tertiary" />
@@ -314,9 +369,12 @@ function QuickActions() {
             <button
               type="button"
               data-p2p-action="join"
-              onClick={() =>
-                identity && p2pAct(identity)(p2pState, { kind: 'server_new', tab: 'join' })
-              }
+              onClick={() => {
+                if (identity) {
+                  showOwner(acct, identity)
+                  p2pAct(identity)(p2pState, { kind: 'server_new', tab: 'join' })
+                }
+              }}
               className={p2pActionCls}
             >
               <Waypoints size={18} className="shrink-0 text-tertiary" />
@@ -325,6 +383,20 @@ function QuickActions() {
           </>
         )}
       </div>
+      {asking && problem && (
+        <p role="alert">
+          {problem.error}{' '}
+          {canAdd && problem.host && (
+            <button
+              type="button"
+              className={textBtn}
+              onClick={() => openDialog({ kind: 'add_instance', origin: problem.host })}
+            >
+              Add {problem.host}
+            </button>
+          )}
+        </p>
+      )}
       {asking && (
         <form
           className="flex gap-2"
@@ -337,7 +409,10 @@ function QuickActions() {
             autoFocus
             aria-label="Username"
             value={name}
-            onChange={e => setName(e.target.value)}
+            onChange={e => {
+              setName(e.target.value)
+              setProblem(null)
+            }}
             onKeyDown={e => {
               if (e.key === 'Escape') setAsking(false)
               else if (enterKey(e)) {
@@ -345,7 +420,7 @@ function QuickActions() {
                 submit()
               }
             }}
-            placeholder="username"
+            placeholder="username or username@host"
             className={fieldCls}
           />
           <button type="submit" disabled={!name.trim()} className={filledBtn}>
@@ -398,15 +473,27 @@ function RecentItem({
   card: () => CardMenu
 }) {
   const acct = useAccount()
+  const identity = useP2pApp()
+  const navigate = () => {
+    showOwner(acct, p2p ? identity : null)
+    open()
+  }
 
   return (
     <button
       type="button"
       data-recent={id}
-      onClick={open}
+      onClick={navigate}
       title={title}
       {...longPress((x, y) =>
-        openActionMenu(x, y, { kind: 'card', key: id, open, ...card() }, undefined, acct)
+        openActionMenu(
+          x,
+          y,
+          { kind: 'card', key: id, open: navigate, ...card() },
+          undefined,
+          acct,
+          p2p ? identity : undefined
+        )
       )}
       className={rowCls}
     >
@@ -583,14 +670,40 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
   )
 }
 
-const p2pPlaceKeys = (st: Pick<P2pState, 'rooms' | 'servers' | 'contacts'>) =>
-  new Set(placesOf(st).map(p => recentKey({ kind: 'p2p', room: p.room, ch: p.ch, at: 0 })))
+const p2pPlaceKeys = (st: Pick<P2pState, 'rooms' | 'servers' | 'contacts'>, local?: string) =>
+  new Set(placesOf(st).map(p => recentKey({ kind: 'p2p', room: p.room, ch: p.ch, at: 0, local })))
 
-function JumpBackIn({ recents }: { recents: Recent[] }) {
+function JumpBackIn({ recents, action }: { recents: Recent[]; action?: ReactNode }) {
+  const account = useAccount()
+  const source = useMemo(() => {
+    const snapshot = () =>
+      JSON.stringify(
+        account.identities
+          .list()
+          .flatMap(app => Array.from(p2pPlaceKeys(app.useP2p.getState(), app.localId)))
+      )
+    const subscribe = (notify: () => void) => {
+      let stops: (() => void)[] = []
+      const bind = () => {
+        stops.forEach(stop => stop())
+        stops = account.identities.list().map(app => app.useP2p.subscribe(notify))
+        notify()
+      }
+      const off = account.identities.subscribe(bind)
+      bind()
+      return () => {
+        off()
+        stops.forEach(stop => stop())
+      }
+    }
+    return { snapshot, subscribe }
+  }, [account])
+  const peerPlaces = useSyncExternalStore(source.subscribe, source.snapshot, source.snapshot)
   const joined = useStore(s => s.me?.servers)
   const serversMore = useStore(s => s.serversMore)
   const dms = useStore(s => s.dms)
   const details = useStore(s => s.servers)
+  const viewed = useP2pApp()
   const p2pRooms = useP2p(s => s.rooms)
   const p2pServers = useP2p(s => s.servers)
   const contacts = useP2p(s => s.contacts)
@@ -602,19 +715,38 @@ function JumpBackIn({ recents }: { recents: Recent[] }) {
       channels: Object.fromEntries(
         Object.entries(details).map(([name, d]) => [name, d.channels.map(c => c.id)])
       ),
-      p2p: p2pPlaceKeys({ rooms: p2pRooms, servers: p2pServers, contacts }),
+      p2p: new Set<string>([
+        ...p2pPlaceKeys({ rooms: p2pRooms, servers: p2pServers, contacts }, viewed?.localId),
+        ...JSON.parse(peerPlaces),
+      ]),
     }
     return recents.filter(r => recentShown(r, at)).slice(0, RECENTS_SHOWN)
-  }, [recents, joined, serversMore, dms, details, p2pRooms, p2pServers, contacts])
+  }, [
+    recents,
+    joined,
+    serversMore,
+    dms,
+    details,
+    p2pRooms,
+    p2pServers,
+    contacts,
+    viewed,
+    peerPlaces,
+  ])
   return (
-    <Card title="Jump back in" icon={<House size={18} />}>
+    <Card title="Jump back in" action={action} icon={<House size={18} />}>
       {shown.length === 0 ? (
         <Empty>Channels and DMs you open show up here.</Empty>
       ) : (
         <div className="flex flex-col">
           {shown.map(r =>
             r.kind === 'p2p' ? (
-              <P2pRecentRow key={recentKey(r)} recent={r} />
+              <P2pProvider
+                key={recentKey(r)}
+                identity={account.identities.get(r.local ?? 'main') ?? null}
+              >
+                <P2pRecentRow recent={r} />
+              </P2pProvider>
             ) : (
               <RecentRow key={recentKey(r)} recent={r} />
             )
@@ -652,18 +784,30 @@ function UnreadRow({
   card: () => CardMenu
 }) {
   const acct = useAccount()
+  const identity = useP2pApp()
+  const navigate = () => {
+    showOwner(acct, p2p ? identity : null)
+    open()
+  }
 
   return (
     <div
       data-unread-server={id}
       {...longPress((x, y) =>
-        openActionMenu(x, y, { kind: 'card', key: id, open, ...card() }, undefined, acct)
+        openActionMenu(
+          x,
+          y,
+          { kind: 'card', key: id, open: navigate, ...card() },
+          undefined,
+          acct,
+          p2p ? identity : undefined
+        )
       )}
       className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-surface-container-high"
     >
       <button
         type="button"
-        onClick={open}
+        onClick={navigate}
         className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-primary"
       >
         {glyph}
@@ -909,7 +1053,10 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
       type="button"
       data-pinned-dm={dm.id}
       title={streamer ? 'Direct message' : mask(dm.other.display_name)}
-      onClick={() => void openDm(dm.id)}
+      onClick={() => {
+        showOwner(acct)
+        void openDm(dm.id)
+      }}
       {...longPress(
         (x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'home' }, undefined, acct),
         {
@@ -942,13 +1089,13 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
   )
 }
 
-function PinnedDms() {
+function PinnedDms({ action }: { action?: ReactNode } = {}) {
   const dms = useStore(s => s.dms)
   const layout = useStore(s => s.layout)
   const dragging = useDrag(s => s.group === 'home_dm')
   const pinned = useMemo(() => dmSections(dms, layout).pinned.slice(0, PINNED_SHOWN), [dms, layout])
   return (
-    <Card title="Pinned DMs" icon={<Pin size={18} />}>
+    <Card title="Pinned DMs" action={action} icon={<Pin size={18} />}>
       {pinned.length === 0 ? (
         <Empty>Pin a DM from its menu to keep it here.</Empty>
       ) : (
@@ -969,7 +1116,9 @@ function PinnedDms() {
 
 const P2P_ROW_ICONS = { requests: MessageCircle, invites: Compass, asks: Users } as const
 
-function P2pCard() {
+function P2pCard({ actor }: { actor?: HomeActor } = {}) {
+  const unique = useId()
+  const heading = actor ? unique : 'home-p2p'
   const identity = useP2pApp()
   const p2p = identity?.p2p
   const p2pDm = identity?.p2pDm
@@ -984,13 +1133,20 @@ function P2pCard() {
   return (
     <section
       data-p2p-home
-      aria-labelledby="home-p2p"
+      aria-labelledby={heading}
+      onClickCapture={
+        actor
+          ? e => {
+              if ((e.target as HTMLElement).closest('button')) showOwner(actor.account, actor.peer)
+            }
+          : undefined
+      }
       className="flex min-w-0 flex-col gap-1 rounded-3xl border-2 border-dashed border-tertiary/70 bg-surface-container-low p-[calc(1rem-2px)]"
     >
       <div className="flex min-h-9 min-w-0 items-center gap-2 px-2">
         <Waypoints size={18} className="shrink-0 text-tertiary" />
-        <h2 id="home-p2p" className="min-w-0 truncate font-medium text-on-surface">
-          Peer-to-peer
+        <h2 id={heading} className="min-w-0 truncate font-medium text-on-surface">
+          {actor ? <AccountTag row={actor.row} name={actor.instance} /> : 'Peer-to-peer'}
         </h2>
         <P2pBadge />
         <button
@@ -1179,6 +1335,7 @@ function GuestHome() {
           <button
             type="button"
             onClick={() => {
+              if (!client.show(loginAccount, 'none')) return
               logoutForLogin(loginAccount)
               router.replace(signup ? '/login?mode=register' : '/login')
             }}
@@ -1190,6 +1347,268 @@ function GuestHome() {
       </div>
     </div>
   )
+}
+
+function ActorScope({ actor, children }: { actor: HomeActor; children: ReactNode }) {
+  return (
+    <AccountProvider session={actor.account}>
+      <P2pProvider identity={actor.peer ?? actor.account.identities.viewed() ?? null}>
+        {children}
+      </P2pProvider>
+    </AccountProvider>
+  )
+}
+function HomeActorLabel({ actor }: { actor: HomeActor }) {
+  return (
+    <>
+      <AccountTag row={actor.row} name={actor.instance} />
+      <span className="streamer text-xs">
+        <Masked text={actor.instance} />
+      </span>
+    </>
+  )
+}
+function ActorChips({
+  accounts,
+  active,
+  onPick,
+}: {
+  accounts: HomeActor[]
+  active: HomeActor
+  onPick: (key: string) => void
+}) {
+  if (accounts.length < 2) return null
+  return (
+    <div aria-label="Account" className="flex max-w-full flex-wrap gap-1">
+      {accounts.map(actor => (
+        <button
+          key={actor.key}
+          type="button"
+          aria-pressed={actor === active}
+          onClick={() => onPick(actor.key)}
+          className="flex items-center gap-1 rounded-full px-2 py-1 aria-pressed:bg-secondary-container"
+        >
+          <HomeActorLabel actor={actor} />
+        </button>
+      ))}
+    </div>
+  )
+}
+function GroupUnread({ actor }: { actor: HomeActor }) {
+  const key = useStore(actor.account.home.unreadSummaryKey)
+  const summary = useMemo(() => parseSummary(key), [key])
+  const peerRows = useP2pUnread()
+  const [all, setAll] = useState(false)
+  const direct = actor.peer ? peerRows.dms : summary.dms
+  const servers = actor.peer
+    ? peerRows.servers.map(r => <P2pServerUnreadRow key={r.v.id} {...r} />)
+    : summary.servers.map(r => <ServerUnreadRow key={r.name} {...r} />)
+  if (!direct.pings && !direct.unread && !servers.length) return null
+  return (
+    <section data-home-unread-owner={actor.key}>
+      <h3 className="flex items-center gap-1 px-2 py-1">
+        <HomeActorLabel actor={actor} />
+        <button
+          type="button"
+          className="ml-auto rounded-full p-1.5"
+          aria-label="Mark all as read"
+          title="Mark all as read"
+          onClick={() => {
+            const state = actor.account.store.getState()
+            if (!actor.peer) state.askMarkAllRead()
+            else {
+              const extra = actor.peer.p2pMarkAll()
+              if (extra.pending)
+                state.askConfirm({
+                  title: 'Mark all as read?',
+                  body: 'Mark this identity’s unread messages as read.',
+                  confirm: 'Mark read',
+                  action: extra.mark,
+                })
+            }
+          }}
+        >
+          <CheckCheck size={16} />
+        </button>
+      </h3>
+      {(direct.pings > 0 || direct.unread) &&
+        (actor.peer ? (
+          <P2pDmUnreadRow pings={direct.pings} />
+        ) : (
+          <DmUnreadRow pings={direct.pings} />
+        ))}
+      {all ? servers : servers.slice(0, UNREAD_SHOWN)}
+      {servers.length > UNREAD_SHOWN && (
+        <button type="button" className={textBtn} onClick={() => setAll(!all)}>
+          {all ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </section>
+  )
+}
+function AccountHistory({ action }: { action: ReactNode }) {
+  const recents = useHome(s => s.prefs.recents)
+  return <JumpBackIn recents={recents} action={action} />
+}
+function AccountCard({
+  accounts,
+  kind,
+}: {
+  accounts: HomeActor[]
+  kind: 'recent' | 'inbox' | 'pinned'
+}) {
+  const [chosen, setChosen] = useState('')
+  const actor = accounts.find(a => a.key === chosen) ?? accounts[0]
+  const choices = <ActorChips accounts={accounts} active={actor} onPick={setChosen} />
+  return (
+    <ActorScope key={actor.key} actor={actor}>
+      {kind === 'recent' ? (
+        <AccountHistory action={choices} />
+      ) : kind === 'pinned' ? (
+        <PinnedDms action={choices} />
+      ) : (
+        <Card title="Inbox" icon={<Bell size={18} />} action={choices}>
+          <InboxPreview max={INBOX_SHOWN} beforeOpen={() => showOwner(actor.account)} />
+        </Card>
+      )}
+    </ActorScope>
+  )
+}
+function MultiHome({ actors }: { actors: HomeActor[] }) {
+  const shown = useAccount()
+  const canAdd = useAddingAllowed()
+  const streamer = useStore(s => s.streamer)
+  const accounts = actors
+    .filter(a => !a.peer)
+    .sort((a, b) => Number(b.account === shown) - Number(a.account === shown))
+  const identities = actors.filter(a => a.peer)
+  const [chosen, setChosen] = useState('')
+  const actor = actors.find(a => a.key === chosen) ?? actors.find(a => a.row.active) ?? accounts[0]
+  const peers = actor.account.identities
+  const quickIdentity = () =>
+    actor.peer ?? peers.list().find(app => app.useP2p.getState().enabled) ?? peers.get() ?? null
+  const identity = useSyncExternalStore(peers.subscribe, quickIdentity, quickIdentity)
+  const picker = (
+    <label className="inline-flex w-fit items-center gap-2 rounded-full bg-surface-container px-3 py-1 text-sm">
+      As <ActorAvatar row={actor.row} size={20} />
+      <select
+        aria-label="As"
+        className="streamer bg-transparent"
+        value={actor.key}
+        onChange={e => setChosen(e.target.value)}
+      >
+        {actors.map(a => (
+          <option value={a.key} key={a.key}>
+            {streamer
+              ? a.peer
+                ? 'P2P identity'
+                : 'Account'
+              : (a.peer
+                  ? a.row.display + ' · P2P · ' + a.row.username
+                  : (a.row.username ?? 'Guest')) +
+                ' on ' +
+                a.instance}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+  const total = accounts.reduce((n, a) => n + a.account.counts.value(), 0)
+  return (
+    <div className="flex flex-col gap-4">
+      <Greeting total={total} accounts={accounts.length} />
+      <div aria-label="Accounts" className="flex gap-2 overflow-x-auto">
+        {actors.map(a => (
+          <button
+            type="button"
+            key={a.key}
+            aria-pressed={a.row.active}
+            onClick={() => void switchActor(a.row, shown)}
+            className="flex shrink-0 flex-col gap-1 rounded-xl bg-surface-container-low p-2 text-left aria-pressed:bg-secondary-container"
+          >
+            <span className="flex items-center gap-1">
+              <HomeActorLabel actor={a} />
+            </span>
+            <span className="text-xs">
+              {a.row.status} {a.row.badge > 0 && <PingBadge count={a.row.badge} />}
+            </span>
+          </button>
+        ))}
+        {canAdd && (
+          <button
+            className={textBtn}
+            onClick={() => shown.store.getState().openDialog({ kind: 'add_instance' })}
+          >
+            Add an instance
+          </button>
+        )}
+      </div>
+      <AccountProvider session={actor.account} key={actor.key}>
+        {actor.row.username ? (
+          <P2pProvider identity={identity}>
+            <QuickActions as={picker} accounts={accounts} />
+          </P2pProvider>
+        ) : (
+          <>
+            {picker}
+            <GuestHome />
+          </>
+        )}
+      </AccountProvider>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+        <Card title="Unread" icon={<Bell size={18} />}>
+          <div className="flex flex-col gap-1">
+            {actors.map(a => (
+              <ActorScope key={a.key} actor={a}>
+                <GroupUnread actor={a} />
+              </ActorScope>
+            ))}
+            <p className="hidden px-2 py-3 text-sm text-on-surface-variant only:block">
+              Nothing unread.
+            </p>
+          </div>
+        </Card>
+        <div className="flex flex-col gap-3">
+          {identities.map(a => (
+            <ActorScope key={a.key} actor={a}>
+              {identities.length < 3 ? (
+                <P2pCard actor={a} />
+              ) : (
+                <details className="rounded-xl border border-dashed border-tertiary p-2">
+                  <summary className="cursor-pointer">
+                    <span className="inline-flex items-center gap-1">
+                      <HomeActorLabel actor={a} />
+                    </span>
+                  </summary>
+                  <P2pCard actor={a} />
+                </details>
+              )}
+            </ActorScope>
+          ))}
+        </div>
+        <AccountCard accounts={accounts} kind="recent" />
+        <AccountCard accounts={accounts} kind="inbox" />
+        <AccountCard accounts={accounts} kind="pinned" />
+        <Card title="Friends" icon={<Users size={18} />} className="lg:col-span-2">
+          <FriendsSection max={5} />
+        </Card>
+      </div>
+    </div>
+  )
+}
+function HomeContent({ member }: { member: boolean }) {
+  const [source] = useState(createSwitcherSource)
+  const model = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  useLiveSessions()
+  const allowed = useAddingAllowed()
+  const actors = homeActors(
+    model.groups,
+    allowed ? undefined : ownInstance()?.origin,
+    switcherSession
+  )
+  if (actors.length > 1 && (member || actors.some(a => a.row.active)))
+    return <MultiHome actors={actors} />
+  return member ? <MemberHome /> : <GuestHome />
 }
 
 function MemberHome() {
@@ -1285,7 +1704,7 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-5xl flex-col px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-6">
-          {signedIn && !guest ? <MemberHome /> : <GuestHome />}
+          <HomeContent member={signedIn && !guest} />
         </div>
       </div>
     </main>

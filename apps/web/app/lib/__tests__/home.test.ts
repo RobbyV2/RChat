@@ -10,6 +10,8 @@ import {
   isNewAccount,
   parseHome,
   pushRecent,
+  pushP2pRecent,
+  recentKey,
   recentShown,
   shownTips,
   unreadChannels,
@@ -20,6 +22,14 @@ import { paletteShortcut, registerPalette, usePalette } from '../palette'
 const names = { channel: null, serverName: null }
 
 describe('home prefs', () => {
+  test('historical main and sibling visits to the same room restore and clear separately', () => {
+    const main = pushP2pRecent(EMPTY_HOME, 'room', 'channel', 1)
+    const mixed = pushP2pRecent(main, 'room', 'channel', 2, 'work')
+    const restored = parseHome(homeValue(mixed))
+    expect(restored).toEqual(mixed)
+    expect(restored.recents.map(recentKey)).toEqual(['P["work","room","channel"]', 'proom/channel'])
+    expect(dropRecent(restored, recentKey(restored.recents[0]))).toEqual(main)
+  })
   test('bad or foreign data gives the defaults', () => {
     for (const raw of [null, '', '{', '[]', '"x"', '{"v":2,"recents":[]}', 'null'])
       expect(parseHome(raw)).toEqual(EMPTY_HOME)

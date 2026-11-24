@@ -16,7 +16,7 @@ export type Recent =
     }
   | { kind: 'dm'; dmId: number; at: number }
   // A P2P conversation (`ch` null) or P2P server channel; names come from P2P when shown.
-  | { kind: 'p2p'; room: string; ch: string | null; at: number }
+  | { kind: 'p2p'; room: string; ch: string | null; at: number; local?: string }
 
 export interface HomePrefs {
   v: 1
@@ -44,7 +44,9 @@ export const recentKey = (r: Recent | View) =>
     ? `c${r.channelId}`
     : r.kind === 'dm'
       ? `d${r.dmId}`
-      : `p${r.ch === null ? r.room : `${r.room}/${r.ch}`}`
+      : r.local && r.local !== 'main'
+        ? 'P' + JSON.stringify([r.local, r.room, r.ch])
+        : `p${r.ch === null ? r.room : `${r.room}/${r.ch}`}`
 
 const P2P_ID_MAX = 200
 
@@ -56,8 +58,20 @@ const recentOf = (x: unknown): Recent | null => {
   const o = x as Record<string, unknown>
   const at = typeof o.at === 'number' && Number.isFinite(o.at) ? o.at : 0
   if (o.kind === 'dm' && isId(o.dmId)) return { kind: 'dm', dmId: o.dmId, at }
-  if (o.kind === 'p2p' && p2pId(o.room) && (o.ch === null || p2pId(o.ch)))
-    return { kind: 'p2p', room: o.room as string, ch: o.ch === null ? null : (o.ch as string), at }
+  if (
+    o.kind === 'p2p' &&
+    (o.local === undefined ||
+      (typeof o.local === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(o.local))) &&
+    p2pId(o.room) &&
+    (o.ch === null || p2pId(o.ch))
+  )
+    return {
+      kind: 'p2p',
+      room: o.room as string,
+      ch: o.ch === null ? null : (o.ch as string),
+      at,
+      ...(typeof o.local === 'string' && o.local !== 'main' ? { local: o.local } : {}),
+    }
   if (o.kind === 'channel' && isId(o.channelId) && typeof o.server === 'string' && o.server)
     return {
       kind: 'channel',
@@ -129,9 +143,10 @@ export const pushP2pRecent = (
   prefs: HomePrefs,
   room: string,
   ch: string | null,
-  at: number
+  at: number,
+  local = 'main'
 ): HomePrefs => {
-  const entry: Recent = { kind: 'p2p', room, ch, at }
+  const entry: Recent = { kind: 'p2p', room, ch, at, ...(local !== 'main' ? { local } : {}) }
   const key = recentKey(entry)
   const rest = prefs.recents.filter(r => recentKey(r) !== key)
   return { ...prefs, recents: [entry, ...rest].slice(0, RECENTS_MAX) }
