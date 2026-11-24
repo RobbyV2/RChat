@@ -154,6 +154,7 @@ pub struct User {
     pub created_at: i64,
     pub recovery_pub: Option<String>,
     pub recovery_set_at: Option<i64>,
+    pub suspended_at: Option<i64>,
     /// The temporary password the account still signs in with. Read with a session
     /// (`api::token_row`) and by `temp_password`; an account read any other way has `None`.
     pub temp: Option<TempPassword>,
@@ -222,10 +223,13 @@ impl User {
             created_at: row.try_get("created_at")?,
             recovery_pub: row.try_get("recovery_pub")?,
             recovery_set_at: row.try_get("recovery_set_at")?,
+            suspended_at: row.try_get("suspended_at")?,
             temp: TempPassword::from_row(row),
         })
     }
 }
+
+pub const NO_PASSWORD_HASH: &str = "!sso";
 
 pub const PURGING_HASH: &str = "!purging";
 

@@ -919,7 +919,7 @@ async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
     let token = new_token();
     let mut tx = db.begin().await?;
     let held = sqlx::query(
-        "UPDATE users SET password_hash = password_hash WHERE username = $1 AND password_hash = $2",
+        "UPDATE users SET password_hash = password_hash WHERE username = $1 AND password_hash = $2 AND suspended_at IS NULL",
     )
     .bind(&user.username)
     .bind(&user.password_hash)
@@ -982,6 +982,9 @@ pub(crate) async fn login_at(
     let account = names::sign_in_account(db, &username).await?;
     throttle_attempt(db, &names::pace_keys(account.as_ref(), &username), t).await?;
     let (secret, _) = secret_from(&username, password, words, false)?;
+    let account = account.filter(|user| {
+        user.suspended_at.is_none() && user.password_hash != crate::db::NO_PASSWORD_HASH
+    });
     let hash = match &account {
         Some(user) => user.password_hash.as_str(),
         None => dummy_hash().await,

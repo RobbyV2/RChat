@@ -55,6 +55,7 @@ pub struct Swept {
     pub bulk_delete_jobs: u64,
     pub webhook_deliveries: u64,
     pub recovery_challenges: u64,
+    pub sso_pending: u64,
     pub reports: u64,
     pub p2p_backups: u64,
     pub member_counts: u64,
@@ -115,6 +116,7 @@ pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Re
     )
     .await?;
     Ok(Swept {
+        sso_pending: delete_batched(db,"DELETE FROM sso_pending WHERE id IN (SELECT id FROM sso_pending WHERE expires_at < $1 LIMIT $2)",t).await?,
         guest_grants: stale_grants + ended_grants,
         server_passwords: delete_batched(
             db,

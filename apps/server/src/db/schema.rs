@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS users(
   username TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
   password_kind TEXT NOT NULL CHECK(password_kind IN ('text','words')),
   avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT, bio TEXT,
-  is_site_admin INTEGER NOT NULL DEFAULT 0, appear_offline INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, presence_seq INTEGER NOT NULL DEFAULT 0, recovery_pub TEXT, recovery_set_at INTEGER, username_key TEXT, username_key_alt TEXT);
-CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL DEFAULT 0);
+  is_site_admin INTEGER NOT NULL DEFAULT 0, appear_offline INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, presence_seq INTEGER NOT NULL DEFAULT 0, recovery_pub TEXT, recovery_set_at INTEGER, suspended_at INTEGER, username_key TEXT, username_key_alt TEXT);
+CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL DEFAULT 0, sso_provider TEXT, sso_sid TEXT);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count INTEGER NOT NULL, last_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures INTEGER NOT NULL, last_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS recovery_challenges(nonce TEXT PRIMARY KEY, username TEXT NOT NULL, expires_at INTEGER NOT NULL);
@@ -25,6 +25,16 @@ CREATE INDEX IF NOT EXISTS idx_announcement_dismissals_announcement ON announcem
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY, username_key TEXT, username_key_alt TEXT);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id INTEGER, join_messages INTEGER NOT NULL DEFAULT 1, leave_messages INTEGER NOT NULL DEFAULT 1, layout_version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, upload_expiry INTEGER, upload_expiry_by TEXT, public_read INTEGER, guest_voice INTEGER NOT NULL DEFAULT 1, guest_voice_opt_in INTEGER NOT NULL DEFAULT 0, guest_chat_opt_in INTEGER NOT NULL DEFAULT 0, members_visible INTEGER NOT NULL DEFAULT 1, join_mode TEXT, listed INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS sso_links(issuer TEXT NOT NULL, subject TEXT NOT NULL, provider TEXT NOT NULL, username TEXT NOT NULL, linked_at INTEGER NOT NULL, last_login_at INTEGER NOT NULL, PRIMARY KEY(issuer,subject), UNIQUE(username,issuer));
+CREATE TABLE IF NOT EXISTS sso_pending(id TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, provider TEXT NOT NULL, data TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS scim_users(id TEXT NOT NULL PRIMARY KEY, username TEXT NOT NULL UNIQUE, user_name_key TEXT NOT NULL UNIQUE, external_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+CREATE TABLE IF NOT EXISTS scim_groups(id TEXT NOT NULL PRIMARY KEY, display_name TEXT NOT NULL UNIQUE, external_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS scim_group_members(group_id TEXT NOT NULL REFERENCES scim_groups(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(group_id, username));
+CREATE TABLE IF NOT EXISTS sso_user_groups(username TEXT NOT NULL, source TEXT NOT NULL, grp TEXT NOT NULL, PRIMARY KEY(username,source,grp));
+CREATE TABLE IF NOT EXISTS sso_grants(username TEXT NOT NULL, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, role_id INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, PRIMARY KEY(username,server,role_id));
+CREATE INDEX IF NOT EXISTS idx_sso_pending_expires ON sso_pending(expires_at);
+CREATE INDEX IF NOT EXISTS idx_scim_group_members_username ON scim_group_members(username);
+CREATE INDEX IF NOT EXISTS idx_sso_grants_server ON sso_grants(server);
 CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, topic TEXT, category_id INTEGER, position INTEGER NOT NULL DEFAULT 0, sensitive INTEGER NOT NULL DEFAULT 0, text_only INTEGER NOT NULL DEFAULT 0, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS widgets(id TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, mode TEXT NOT NULL, enabled INTEGER NOT NULL, composer INTEGER NOT NULL, origins TEXT NOT NULL, revision TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS widgets_server_id ON widgets(server, id);
@@ -169,8 +179,8 @@ CREATE TABLE IF NOT EXISTS users(
   username TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
   password_kind TEXT NOT NULL CHECK(password_kind IN ('text','words')),
   avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT, bio TEXT,
-  is_site_admin BIGINT NOT NULL DEFAULT 0, appear_offline BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, presence_seq BIGINT NOT NULL DEFAULT 0, recovery_pub TEXT, recovery_set_at BIGINT, username_key TEXT, username_key_alt TEXT);
-CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at BIGINT NOT NULL, last_used_at BIGINT NOT NULL DEFAULT 0);
+  is_site_admin BIGINT NOT NULL DEFAULT 0, appear_offline BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, presence_seq BIGINT NOT NULL DEFAULT 0, recovery_pub TEXT, recovery_set_at BIGINT, suspended_at BIGINT, username_key TEXT, username_key_alt TEXT);
+CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at BIGINT NOT NULL, last_used_at BIGINT NOT NULL DEFAULT 0, sso_provider TEXT, sso_sid TEXT);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count BIGINT NOT NULL, last_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures BIGINT NOT NULL, last_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS recovery_challenges(nonce TEXT PRIMARY KEY, username TEXT NOT NULL, expires_at BIGINT NOT NULL);
@@ -186,6 +196,16 @@ CREATE INDEX IF NOT EXISTS idx_announcement_dismissals_announcement ON announcem
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY, username_key TEXT, username_key_alt TEXT);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id BIGINT, join_messages BIGINT NOT NULL DEFAULT 1, leave_messages BIGINT NOT NULL DEFAULT 1, layout_version BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, upload_expiry BIGINT, upload_expiry_by TEXT, public_read BIGINT, guest_voice BIGINT NOT NULL DEFAULT 1, guest_voice_opt_in BIGINT NOT NULL DEFAULT 0, guest_chat_opt_in BIGINT NOT NULL DEFAULT 0, members_visible BIGINT NOT NULL DEFAULT 1, join_mode TEXT, listed BIGINT NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS sso_links(issuer TEXT NOT NULL, subject TEXT NOT NULL, provider TEXT NOT NULL, username TEXT NOT NULL, linked_at BIGINT NOT NULL, last_login_at BIGINT NOT NULL, PRIMARY KEY(issuer,subject), UNIQUE(username,issuer));
+CREATE TABLE IF NOT EXISTS sso_pending(id TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, provider TEXT NOT NULL, data TEXT NOT NULL, expires_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS scim_users(id TEXT NOT NULL PRIMARY KEY, username TEXT NOT NULL UNIQUE, user_name_key TEXT NOT NULL UNIQUE, external_id TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, deleted_at BIGINT);
+CREATE TABLE IF NOT EXISTS scim_groups(id TEXT NOT NULL PRIMARY KEY, display_name TEXT NOT NULL UNIQUE, external_id TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS scim_group_members(group_id TEXT NOT NULL REFERENCES scim_groups(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(group_id, username));
+CREATE TABLE IF NOT EXISTS sso_user_groups(username TEXT NOT NULL, source TEXT NOT NULL, grp TEXT NOT NULL, PRIMARY KEY(username,source,grp));
+CREATE TABLE IF NOT EXISTS sso_grants(username TEXT NOT NULL, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, role_id BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, PRIMARY KEY(username,server,role_id));
+CREATE INDEX IF NOT EXISTS idx_sso_pending_expires ON sso_pending(expires_at);
+CREATE INDEX IF NOT EXISTS idx_scim_group_members_username ON scim_group_members(username);
+CREATE INDEX IF NOT EXISTS idx_sso_grants_server ON sso_grants(server);
 CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, topic TEXT, category_id BIGINT, position BIGINT NOT NULL DEFAULT 0, sensitive BIGINT NOT NULL DEFAULT 0, text_only BIGINT NOT NULL DEFAULT 0, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS widgets(id TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, mode TEXT NOT NULL, enabled BIGINT NOT NULL, composer BIGINT NOT NULL, origins TEXT NOT NULL, revision TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS widgets_server_id ON widgets(server, id);

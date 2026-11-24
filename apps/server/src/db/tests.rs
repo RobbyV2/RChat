@@ -1240,6 +1240,88 @@ async fn an_interrupted_migration_backfills_on_the_next_boot() {
 }
 
 #[tokio::test]
+async fn sso_ids_require_a_value() {
+    for (state, db) in crate::api::test_util::each_db("sso_non_null_ids").await {
+        for sql in [
+            "INSERT INTO sso_pending(id,kind,provider,data,expires_at) VALUES(NULL,'flow','test','{}',1)",
+            "INSERT INTO scim_users(id,username,user_name_key,created_at,updated_at) VALUES(NULL,'alice','key',1,1)",
+            "INSERT INTO scim_groups(id,display_name,created_at,updated_at) VALUES(NULL,'group',1,1)",
+        ] {
+            let error = sqlx::query(sql)
+                .execute(&state.db)
+                .await
+                .expect_err("null primary key");
+            assert!(
+                error
+                    .as_database_error()
+                    .is_some_and(|e| matches!(e.kind(), sqlx::error::ErrorKind::NotNullViolation)),
+                "{error}"
+            );
+        }
+        db.done(state).await;
+    }
+}
+
+#[tokio::test]
+async fn sso_tables_migrate_onto_an_old_database() {
+    let path = crate::db::temp_db_path("sso_schema_upgrade");
+    let tables = [
+        "sso_links",
+        "sso_pending",
+        "scim_group_members",
+        "scim_groups",
+        "scim_users",
+        "sso_user_groups",
+        "sso_grants",
+    ];
+    let db = open(path.to_str()).await.unwrap();
+    for t in tables {
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {t}")))
+            .execute(&db)
+            .await
+            .unwrap();
+    }
+    for stmt in [
+        "DROP INDEX idx_tokens_sso",
+        "ALTER TABLE tokens DROP COLUMN sso_sid",
+        "ALTER TABLE tokens DROP COLUMN sso_provider",
+        "ALTER TABLE users DROP COLUMN suspended_at",
+        "UPDATE settings SET value = '43' WHERE key = 'schema_version'",
+        "INSERT INTO users(username,display_name,password_hash,password_kind,avatar_kind,created_at) VALUES('alice','Alice','fixture','text','identicon',12)",
+        "INSERT INTO tokens(token,username,created_at) VALUES('h:fixture','alice',17)",
+    ] {
+        sqlx::query(stmt).execute(&db).await.unwrap();
+    }
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open(path.to_str()).await.unwrap();
+        assert_eq!(count(&db,"SELECT COUNT(*) FROM users WHERE username='alice' AND display_name='Alice' AND password_hash='fixture' AND created_at=12 AND suspended_at IS NULL").await,1);
+        assert_eq!(count(&db,"SELECT COUNT(*) FROM tokens WHERE username='alice' AND token='h:fixture' AND created_at=17 AND sso_provider IS NULL AND sso_sid IS NULL").await,1);
+        for t in tables {
+            assert_eq!(count(&db, &format!("SELECT COUNT(*) FROM {t}")).await, 0);
+        }
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_tokens_sso'"
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT CAST(value AS INTEGER) FROM settings WHERE key='schema_version'"
+            )
+            .await,
+            SCHEMA_VERSION
+        );
+        close(&db).await;
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
 async fn guest_grant_networks_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("grant_network_upgrade");
     let wipe = || {
@@ -3138,7 +3220,14 @@ async fn stale_rows_are_swept() {
             .await
             .expect("ping");
     }
+    for (id, at) in [("expired", t - 1), ("waiting", t)] {
+        sqlx::query("INSERT INTO sso_pending(id, kind, provider, data, expires_at) VALUES($1,'flow','test','{}',$2)").bind(id).bind(at).execute(db).await.expect("pending");
+    }
     let swept = sweep_stale_at(db, &state.limits, t).await.expect("sweep");
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM sso_pending WHERE id = 'waiting'").await,
+        1
+    );
     assert_eq!(
         swept,
         Swept {
@@ -3154,6 +3243,7 @@ async fn stale_rows_are_swept() {
             bulk_delete_jobs: 1,
             webhook_deliveries: 0,
             recovery_challenges: 1,
+            sso_pending: 1,
             reports: 0,
             p2p_backups: 0,
             member_counts: 0,

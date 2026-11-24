@@ -112,6 +112,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("media", "charged_server TEXT"),
     ("users", "recovery_pub TEXT"),
     ("users", "recovery_set_at {INT}"),
+    ("users", "suspended_at {INT}"),
+    ("tokens", "sso_provider TEXT"),
+    ("tokens", "sso_sid TEXT"),
     ("servers", "upload_expiry {INT}"),
     ("media", "ttl {INT}"),
     ("media", "kept_by TEXT"),
@@ -244,11 +247,13 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 41: scheduled announcements and account dismissals.
 /// 42: text-only channels.
 /// 43: independent server management permissions.
-pub const SCHEMA_VERSION: i64 = 43;
+/// 44: account suspension, sign-in providers and provisioning.
+pub const SCHEMA_VERSION: i64 = 44;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 18] {
     [
+        "CREATE INDEX IF NOT EXISTS idx_tokens_sso ON tokens(sso_provider, sso_sid) WHERE sso_sid IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key_alt ON users(username_key_alt)",
         "CREATE INDEX IF NOT EXISTS idx_banned_usernames_username_key ON banned_usernames(username_key)",

@@ -1903,7 +1903,7 @@ pub(crate) async fn token_row(
 ) -> sqlx::Result<Option<AnyRow>> {
     let (born_after, used_after) = limits.session_cutoffs(crate::db::now());
     sqlx::query(
-        "SELECT u.*, t.created_at AS session_created_at, tp.issued_at AS temp_issued_at, tp.expires_at AS temp_expires_at FROM tokens t JOIN users u ON u.username = t.username LEFT JOIN temp_passwords tp ON tp.username = u.username WHERE t.token = $1 AND u.password_hash <> '!purging' AND t.created_at >= $2 AND (t.last_used_at >= $3 OR t.created_at >= $3)",
+        "SELECT u.*, t.created_at AS session_created_at, tp.issued_at AS temp_issued_at, tp.expires_at AS temp_expires_at FROM tokens t JOIN users u ON u.username = t.username LEFT JOIN temp_passwords tp ON tp.username = u.username WHERE t.token = $1 AND u.suspended_at IS NULL AND u.password_hash <> '!purging' AND t.created_at >= $2 AND (t.last_used_at >= $3 OR t.created_at >= $3)",
     )
     .bind(crate::db::secret_key(token))
     .bind(born_after)
@@ -2794,6 +2794,7 @@ pub(crate) mod test_util {
             created_at: now(),
             recovery_pub: None,
             recovery_set_at: None,
+            suspended_at: None,
             temp: None,
         }
     }

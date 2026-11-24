@@ -1156,6 +1156,7 @@ fn poster(hook: &Hook, name: &str, kind: AvatarKind, color: Option<String>) -> U
         created_at: 0,
         recovery_pub: None,
         recovery_set_at: None,
+        suspended_at: None,
         temp: None,
     }
 }

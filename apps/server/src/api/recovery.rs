@@ -172,7 +172,7 @@ pub(crate) async fn recover_at(
     let token = new_token();
     let mut tx = db.begin().await?;
     let changed = sqlx::query(
-        "UPDATE users SET password_hash = $1, password_kind = $2 WHERE username = $3 AND password_hash = $4 AND recovery_pub = $5",
+        "UPDATE users SET password_hash = $1, password_kind = $2 WHERE username = $3 AND password_hash = $4 AND recovery_pub = $5 AND suspended_at IS NULL",
     )
     .bind(&password_hash)
     .bind(password_kind)
@@ -1255,6 +1255,32 @@ mod tests {
             two_recoveries_in_turn_both_work(&state).await;
             pg_done(state, pg).await;
         }
+    }
+
+    #[tokio::test]
+    async fn a_suspended_account_cannot_recover_a_session() {
+        let (state, path) = temp_state("suspended_recovery").await;
+        add_user(&state, "alice", "original", Some(KEY)).await;
+        let nonce = nonce_for(&state, "alice", T).await;
+        crate::sso::accounts::suspend(&state, "alice")
+            .await
+            .unwrap();
+        let result = recover_at(
+            &state,
+            recovery(
+                "alice",
+                &nonce,
+                &sign(RECOVER, "alice", &nonce),
+                text("replacement"),
+            ),
+            T,
+        )
+        .await;
+        assert_eq!(refusal(result), wrong());
+        assert!(tokens_of(&state, "alice").await.is_empty());
+        let user = get_user(&state.db, "alice").await.unwrap().unwrap();
+        assert!(verify_password("original", &user.password_hash).await);
+        done(state, path).await;
     }
 
     #[tokio::test]

@@ -1297,6 +1297,7 @@ async fn hide_user_in(
         });
     }
     let servers = member_servers(tx, key).await?;
+    drop_sso_rows(tx, key).await?;
     for sql in [
         "DELETE FROM tokens WHERE username = $1",
         "DELETE FROM config_shares WHERE owner = $1",
@@ -1601,7 +1602,21 @@ pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
     Ok(done)
 }
 
+async fn drop_sso_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> sqlx::Result<()> {
+    for sql in [
+        "DELETE FROM sso_links WHERE username = $1",
+        "DELETE FROM scim_users WHERE username = $1",
+        "DELETE FROM scim_group_members WHERE username = $1",
+        "DELETE FROM sso_user_groups WHERE username = $1",
+        "DELETE FROM sso_grants WHERE username = $1",
+    ] {
+        sqlx::query(sql).bind(key).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> sqlx::Result<()> {
+    drop_sso_rows(tx, key).await?;
     for sql in [
         "DELETE FROM messages WHERE author = $1",
         "UPDATE messages SET fwd_author = NULL WHERE fwd_author = $1",
@@ -1867,6 +1882,71 @@ mod tests {
         register(State(state.clone()), Json(req)).await
     }
 
+    #[tokio::test]
+    async fn purge_drops_sso_rows() {
+        for (state, db) in crate::api::test_util::each_db("purge_sso_rows").await {
+            for name in ["root", "bob", "carol", "dora"] {
+                let _ = reg(&state, name).await.unwrap();
+            }
+            sqlx::query("INSERT INTO scim_groups(id,display_name,created_at,updated_at) VALUES('group','Group',1,1)").execute(&state.db).await.unwrap();
+            for user in ["bob", "carol", "dora"] {
+                for stmt in [
+                    "INSERT INTO sso_links(issuer,subject,provider,username,linked_at,last_login_at) VALUES('issuer',$1,'idp',$1,1,1)",
+                    "INSERT INTO scim_users(id,username,user_name_key,created_at,updated_at) VALUES($1,$1,$1,1,1)",
+                    "INSERT INTO scim_group_members(group_id,username) VALUES('group',$1)",
+                    "INSERT INTO sso_user_groups(username,source,grp) VALUES($1,'idp','group')",
+                    "INSERT INTO sso_grants(username,server,created_at) VALUES($1,'rchat',1)",
+                ] {
+                    sqlx::query(stmt)
+                        .bind(user)
+                        .execute(&state.db)
+                        .await
+                        .unwrap();
+                }
+            }
+            let root = crate::db::get_user(&state.db, "root")
+                .await
+                .unwrap()
+                .unwrap();
+            let _ = delete_user(State(state.clone()), Authed(root), Path("bob".into()))
+                .await
+                .unwrap();
+            settle(&state.db).await;
+            sqlx::query("UPDATE users SET password_hash = $1 WHERE username = 'dora'")
+                .bind(PURGING_HASH)
+                .execute(&state.db)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO pending_purges(kind,key,created_at,claimed_at) VALUES('user','dora',1,0)").execute(&state.db).await.unwrap();
+            assert_eq!(resume_purges(&state).await.unwrap(), 1);
+            settle(&state.db).await;
+            for table in [
+                "sso_links",
+                "scim_users",
+                "scim_group_members",
+                "sso_user_groups",
+                "sso_grants",
+            ] {
+                assert_eq!(
+                    count(
+                        &state.db,
+                        &format!("SELECT COUNT(*) FROM {table} WHERE username='carol'")
+                    )
+                    .await,
+                    1
+                );
+                assert_eq!(
+                    count(
+                        &state.db,
+                        &format!("SELECT COUNT(*) FROM {table} WHERE username IN ('bob','dora')")
+                    )
+                    .await,
+                    0
+                );
+            }
+            db.done(state).await;
+        }
+    }
     async fn settle(db: &Db) {
         for _ in 0..200 {
             if count(db, "SELECT COUNT(*) FROM pending_purges").await == 0 {
@@ -4467,6 +4547,7 @@ mod tests {
                 created_at,
                 recovery_pub: _,
                 recovery_set_at: _,
+                suspended_at: _,
                 temp: _,
             } = u.clone();
             (

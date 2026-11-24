@@ -1,3 +1,4 @@
+pub mod accounts;
 pub mod config;
 
 use crate::api::features::Registration;
