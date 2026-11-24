@@ -98,16 +98,25 @@
     if (info.os !== 'macos')
       await wait('window buttons', () => document.querySelector('button[aria-label="Close"]'))
 
-    const settings = await wait('sign in or chat', () => {
-      const connect = find('button', 'Connect')
-      const input = connect?.closest('form')?.querySelector('input')
-      if (input && !input.value) {
-        type(input, SMOKE_INSTANCE)
-        setTimeout(() => connect.click(), 100)
-      }
-      find('button', 'Continue as a guest')?.click()
-      return document.querySelector('button[title="Settings"]')
-    })
+    if (sessionStorage.getItem(PHASE) === 'opened') {
+      const connect = await wait('instance address', () => exact('button', 'Connect'))
+      type(connect.closest('form').querySelector('input'), SMOKE_INSTANCE)
+      await wait('enabled Connect button', () => !connect.disabled)
+      connect.click()
+      const trust = await wait('instance trust notice', () => exact('button', 'I trust this app'))
+      const host = new window.URL(SMOKE_INSTANCE).host
+      if (trust.closest('section')?.querySelector('p strong')?.textContent !== host)
+        throw new Error('unexpected host in trust notice')
+      if (!find('p', 'Guests allowed'))
+        throw new Error('guest access missing from instance preview')
+      trust.click()
+      const guest = await wait('guest sign-in', () => exact('button', 'Browse as a guest'))
+      sessionStorage.setItem(PHASE, 'guest')
+      guest.click()
+    }
+    const settings = await wait('chat settings button', () =>
+      document.querySelector('button[title="Settings"]')
+    )
 
     const prefs = await invoke('desktop_settings')
     if (typeof prefs.minimize_to_tray !== 'boolean' || typeof prefs.server?.port !== 'number')
