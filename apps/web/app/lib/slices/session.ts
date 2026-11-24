@@ -2153,10 +2153,15 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     blockUser: async username => {
       if (!get().me || get().guest) return null
-      const at = sessionMark()
       try {
-        const b = await api.block(username.trim())
-        if (at === sessionMark()) noteBlocked(b)
+        await friendsHub.mutate(
+          username,
+          () => api.block(username.trim()),
+          (b, claim) => {
+            if (claim('block')) noteBlocked(b)
+            friendsHub.reconcileBlock(b.user.username, claim)
+          }
+        )
         return null
       } catch (e) {
         return errorText(e)
@@ -2166,9 +2171,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     unblockUser: (username, name) =>
       act(async () => {
         if (!get().me) return
-        await live(api.unblock(username))
-        noteUnblocked(username)
-        if (name) toast('Unblocked', name)
+        await friendsHub.mutate(
+          username,
+          () => api.unblock(username),
+          (_, claim) => {
+            if (claim('block')) noteUnblocked(username)
+            if (name) toast('Unblocked', name)
+          }
+        )
       }),
 
     askBlock: user => {

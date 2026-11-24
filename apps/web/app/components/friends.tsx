@@ -1,14 +1,24 @@
 'use client'
 
 import { useAccount } from '../lib/client/react'
+import { client } from '../lib/client/client'
+import { friendNames } from '../lib/client/friend_names'
+import { useAddingAllowed } from './add_instance'
+import {
+  useFriendAccounts,
+  FriendGroups,
+  PeerFriendGroups,
+  type FriendAccount,
+} from './friends_accounts'
+import { AccountTag } from './account_tag'
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Check, MessageCircle, MoreVertical, UserMinus, UserPlus, Users, X } from 'lucide-react'
 import { ApiError } from '../lib/api'
 import { messageFriend } from '../lib/actions/member'
 import { openActionMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
-import { useStore } from '../lib/store'
+import { useMask, useStore } from '../lib/store'
 import { bannerColor } from '../lib/profile'
 import { scopePings } from '../lib/pings'
 import { badgePings } from '../lib/selectors'
@@ -19,7 +29,6 @@ import {
   FRIEND_TABS,
   HIDDEN_PREVIEW,
   REQUEST_POLICIES,
-  parseNames,
   relationLabel,
   sendLabel,
   sendable,
@@ -28,6 +37,7 @@ import {
   type Relation,
   type SendResult,
 } from '../lib/friends'
+import type { ActiveDialog } from '../lib/store_types'
 import type { Friend, FriendRequest, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
@@ -112,6 +122,12 @@ export function FriendRow({ friend }: { friend: Friend }) {
     >
       <div
         {...profileTrigger(store, user, null)}
+        onClickCapture={() => {
+          if (client.shown() !== acct) client.show(acct)
+        }}
+        onKeyDownCapture={e => {
+          if ((e.key === 'Enter' || e.key === ' ') && client.shown() !== acct) client.show(acct)
+        }}
         className="flex min-w-0 flex-1 items-center gap-3"
       >
         <Avatar user={user} online={online} />
@@ -164,6 +180,12 @@ export function RequestRow({ request }: { request: FriendRequest }) {
     >
       <div
         {...profileTrigger(store, user, null)}
+        onClickCapture={() => {
+          if (client.shown() !== acct) client.show(acct)
+        }}
+        onKeyDownCapture={e => {
+          if ((e.key === 'Enter' || e.key === ' ') && client.shown() !== acct) client.show(acct)
+        }}
         className="flex min-w-0 flex-1 items-center gap-3"
       >
         <Avatar user={user} />
@@ -214,7 +236,7 @@ function Heading({ children }: { children: ReactNode }) {
   )
 }
 
-function FriendList({ online }: { online: boolean }) {
+function FriendList({ online, add }: { online: boolean; add?: () => void }) {
   const page = useStore(s => (online ? s.onlineFriends : s.friends))
   const load = useStore(s => (online ? s.loadOnlineFriends : s.loadFriends))
   const setTab = useStore(s => s.setFriendsTab)
@@ -249,7 +271,7 @@ function FriendList({ online }: { online: boolean }) {
           <Empty>
             {online ? 'No friends are online.' : 'No friends yet.'}{' '}
             <button
-              onClick={() => setTab('add')}
+              onClick={add ?? (() => setTab('add'))}
               className="font-medium text-primary hover:underline"
             >
               Add friend
@@ -294,20 +316,94 @@ function Pending() {
 }
 
 // Names typed by hand ("alice bob, carol"), then the preview and confirm dialog.
-export function AddFriendBox({ autoFocus = false }: { autoFocus?: boolean }) {
-  const askAddFriends = useStore(s => s.askAddFriends)
+export function AddFriendBox({
+  autoFocus = false,
+  entries = [],
+  initial,
+}: {
+  autoFocus?: boolean
+  entries?: FriendAccount[]
+  initial?: FriendAccount
+}) {
+  const shown = useAccount()
+  const [picked, setPicked] = useState(initial?.account ?? shown)
+  const mask = useMask()
+  const account =
+    entries.find(e => e.account === picked)?.account ??
+    (!entries.length && picked === shown ? shown : null)
+  const allowed = useAddingAllowed()
+  const [hint, setHint] = useState('')
+  const [unknown, setUnknown] = useState('')
   const [text, setText] = useState('')
-  const names = parseNames(text)
   return (
     <form
       className="flex flex-col gap-2 px-2"
       onSubmit={e => {
         e.preventDefault()
-        if (!names.length) return
-        askAddFriends(names)
+        if (!text.trim() || !account) return
+        const choices = entries.map(e => ({
+          account: e.account,
+          host: e.account.conn.host,
+          lastShown: client.accounts.lastShown(e.account),
+        }))
+        if (!choices.length) choices.push({ account: shown, host: shown.conn.host, lastShown: 0 })
+        const result = friendNames(text, account, choices)
+        if ('error' in result) {
+          setHint(result.error!)
+          setUnknown(result.host ?? '')
+          if (result.as) setPicked(result.as)
+          return
+        }
+        if (!result.names.length) return
+        const entry = entries.find(e => e.account === account)
+        if (entry && account.store.getState().me?.username !== entry.row.username) return
+        account.store.getState().askAddFriends([...result.names])
         setText('')
+        setHint('')
+        setUnknown('')
       }}
     >
+      {(entries.length > 1 || !account) && (
+        <label className="flex items-center gap-2 text-sm">
+          As
+          <select
+            className="streamer rounded-lg bg-surface-container px-2 py-1"
+            value={account?.renderKey ?? ''}
+            onChange={e => {
+              setPicked(entries.find(x => String(x.account.renderKey) === e.target.value)!.account)
+              setHint('')
+              setUnknown('')
+            }}
+          >
+            {!account && (
+              <option disabled value="">
+                Choose an account
+              </option>
+            )}
+            {entries.map(x => (
+              <option key={x.account.renderKey} value={x.account.renderKey}>
+                {mask(x.row.display)} · {mask(x.name)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {hint && (
+        <p role="alert" className="text-sm text-on-surface-variant">
+          {hint}{' '}
+          {unknown && allowed && (
+            <button
+              type="button"
+              className={textBtn}
+              onClick={() =>
+                shown.store.getState().openDialog({ kind: 'add_instance', origin: unknown })
+              }
+            >
+              Add {unknown}
+            </button>
+          )}
+        </p>
+      )}
       <p className="text-sm text-on-surface-variant">
         Add friends by username. Separate several names with spaces.
       </p>
@@ -315,7 +411,11 @@ export function AddFriendBox({ autoFocus = false }: { autoFocus?: boolean }) {
         <input
           autoFocus={autoFocus}
           value={text}
-          onChange={e => setText(e.target.value)}
+          onChange={e => {
+            setText(e.target.value)
+            setHint('')
+            setUnknown('')
+          }}
           placeholder="Username"
           aria-label="Usernames to add"
           autoCapitalize="none"
@@ -323,7 +423,7 @@ export function AddFriendBox({ autoFocus = false }: { autoFocus?: boolean }) {
           spellCheck={false}
           className={fieldCls}
         />
-        <button type="submit" disabled={!names.length} className={filledBtn}>
+        <button type="submit" disabled={!text.trim() || !account} className={filledBtn}>
           Next
         </button>
       </div>
@@ -331,9 +431,24 @@ export function AddFriendBox({ autoFocus = false }: { autoFocus?: boolean }) {
   )
 }
 
-function Tabs({ tab }: { tab: FriendsTab }) {
+function Tabs({ tab, entries }: { tab: FriendsTab; entries: FriendAccount[] }) {
   const setTab = useStore(s => s.setFriendsTab)
-  const incoming = useIncomingCount()
+  const own = useIncomingCount()
+  const incoming = useSyncExternalStore(
+    fn => {
+      const stops = entries.map(e =>
+        e.account.store.subscribe((s, p) => {
+          if (s.friendCounts !== p.friendCounts) fn()
+        })
+      )
+      return () => stops.forEach(off => off())
+    },
+    () =>
+      entries.length
+        ? entries.reduce((n, e) => n + e.account.store.getState().friendCounts.incoming, 0)
+        : own,
+    () => own
+  )
   return (
     <div
       role="tablist"
@@ -368,30 +483,86 @@ function Tabs({ tab }: { tab: FriendsTab }) {
 export default function FriendsPanel() {
   const tab = useStore(s => (s.panel?.kind === 'friends' ? s.panel.tab : 'online'))
   const closePanel = useStore(s => s.closePanel)
-  const markFriendsSeen = useStore(s => s.markFriendsSeen)
-  const unseen = useFriendPings()
+  const actor = useAccount()
+  const entries = useFriendAccounts()
+  const [filter, setFilter] = useState<number | null>(null)
+  const [addFrom, setAddFrom] = useState<FriendAccount>()
+  const multi = entries.length > 1
+  const activeFilter = entries.some(e => e.account.renderKey === filter) ? filter : null
+  const visible =
+    multi && activeFilter !== null
+      ? entries.filter(e => e.account.renderKey === activeFilter)
+      : entries
+  const add = (entry?: FriendAccount) => {
+    setAddFrom(entry)
+    actor.store.getState().setFriendsTab('add')
+  }
   useEscape(closePanel, 'panel')
-  useEffect(() => {
-    if (unseen > 0 && document.visibilityState !== 'hidden') markFriendsSeen()
-  }, [unseen, markFriendsSeen])
   return (
     <div className="flex h-full flex-col">
       <PanelHeader icon={Users} title="Friends" closeTitle="Close friends" onClose={closePanel} />
-      <Tabs tab={tab} />
+      <Tabs tab={tab} entries={visible} />
+      {multi && tab !== 'add' && (
+        <div
+          role="group"
+          aria-label="Filter by account"
+          className="flex shrink-0 flex-wrap gap-1 px-2 pb-2"
+        >
+          <button
+            className={textBtn + ' aria-pressed:bg-secondary-container'}
+            aria-pressed={activeFilter === null}
+            onClick={() => setFilter(null)}
+          >
+            All
+          </button>
+          {entries.map(e => (
+            <button
+              key={e.account.renderKey}
+              className={textBtn + ' aria-pressed:bg-secondary-container'}
+              aria-pressed={activeFilter === e.account.renderKey}
+              aria-label={e.row.username + ' on ' + e.name}
+              onClick={() => setFilter(e.account.renderKey)}
+            >
+              <AccountTag row={e.row} name={e.name} />
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-4">
-        {tab === 'online' ? (
-          <FriendList key="online" online />
-        ) : tab === 'all' ? (
-          <FriendList key="all" online={false} />
-        ) : tab === 'pending' ? (
-          <Pending />
+        {tab === 'add' ? (
+          <AddFriendBox
+            autoFocus
+            entries={entries}
+            initial={addFrom ?? visible.find(e => e.account.renderKey === activeFilter)}
+          />
+        ) : multi ? (
+          <FriendGroups entries={visible}>
+            {e => <PanelList tab={tab} add={() => add(e)} />}
+          </FriendGroups>
         ) : (
-          <div className="pt-2">
-            <AddFriendBox autoFocus />
-          </div>
+          <PanelList tab={tab} add={() => add()} />
         )}
+        {(tab === 'all' || tab === 'online') &&
+          visible.map(e => (
+            <PeerFriendGroups key={e.account.renderKey} entry={e} online={tab === 'online'} />
+          ))}
       </div>
     </div>
+  )
+}
+
+function PanelList({ tab, add }: { tab: FriendsTab; add: () => void }) {
+  const observe = useStore(s => s.observeFriendsPanel)
+  useEffect(observe, [observe])
+  const unseen = useFriendPings()
+  const mark = useStore(s => s.markFriendsSeen)
+  useEffect(() => {
+    if (unseen > 0 && document.visibilityState !== 'hidden') mark()
+  }, [unseen, mark])
+  return tab === 'pending' ? (
+    <Pending />
+  ) : (
+    <FriendList key={tab} online={tab === 'online'} add={add} />
   )
 }
 
@@ -425,6 +596,15 @@ export function FriendsEntry({ incomingTotal }: { incomingTotal?: number } = {})
 
 // For the home page: online friends and pending requests, compact.
 export function FriendsSection({ max = 5 }: { max?: number }) {
+  const entries = useFriendAccounts()
+  return entries.length > 1 ? (
+    <FriendGroups entries={entries}>{() => <AccountFriendsSection max={max} />}</FriendGroups>
+  ) : (
+    <AccountFriendsSection max={max} />
+  )
+}
+function AccountFriendsSection({ max }: { max: number }) {
+  const account = useAccount()
   const online = useStore(s => s.onlineFriends)
   const incoming = useStore(s => s.incomingRequests)
   const loadOnline = useStore(s => s.loadOnlineFriends)
@@ -458,10 +638,22 @@ export function FriendsSection({ max = 5 }: { max?: number }) {
         friends.map(f => <FriendRow key={f.user.username} friend={f} />)
       )}
       <div className="flex flex-wrap gap-1">
-        <button onClick={() => openFriends()} className={textBtn}>
+        <button
+          onClick={() => {
+            if (client.shown() !== account) client.show(account)
+            openFriends()
+          }}
+          className={textBtn}
+        >
           All friends
         </button>
-        <button onClick={() => openFriends('add')} className={textBtn}>
+        <button
+          onClick={() => {
+            if (client.shown() !== account) client.show(account)
+            openFriends('add')
+          }}
+          className={textBtn}
+        >
           Add friend
         </button>
       </div>
@@ -496,7 +688,7 @@ export function useFriendPreviews(names: string[]) {
     return () => {
       live = false
     }
-  }, [key])
+  }, [key, api])
   return previews
 }
 
@@ -569,17 +761,15 @@ export function FriendPreview({
 
 // The preview list and one confirm for one or several names.
 export function AddFriendsDialog() {
-  const names = useStore(s =>
-    s.activeDialog?.kind === 'add_friends' ? s.activeDialog.names : null
-  )
-  if (!names) return null
-  return <AddFriends key={names.join(' ')} names={names} />
+  const account = useAccount()
+  const dialog = useStore(s => (s.activeDialog?.kind === 'add_friends' ? s.activeDialog : null))
+  if (!dialog) return null
+  return <AddFriends key={account.renderKey + '/' + dialog.id} dialog={dialog} />
 }
 
-function AddFriends({ names }: { names: string[] }) {
-  const {
-    lifetime: { inSession },
-  } = useAccount()
+function AddFriends({ dialog }: { dialog: Extract<ActiveDialog, { kind: 'add_friends' }> }) {
+  const { names } = dialog
+  const { store, lifetime } = useAccount()
   const closeDialog = useStore(s => s.closeDialog)
   const sendFriendRequests = useStore(s => s.sendFriendRequests)
   const previews = useFriendPreviews(names)
@@ -591,10 +781,11 @@ function AddFriends({ names }: { names: string[] }) {
   const send = async () => {
     if (!targets.length || busy) return
     setBusy(true)
-    const close = inSession(closeDialog)
+    const at = lifetime.sessionMark()
     const out = await sendFriendRequests(targets)
+    if (at !== lifetime.sessionMark() || store.getState().activeDialog !== dialog) return
     setBusy(false)
-    if (single && out[targets[0]]?.ok) close()
+    if (single && out[targets[0]]?.ok) closeDialog()
     else setResults(out)
   }
   const confirm = !single

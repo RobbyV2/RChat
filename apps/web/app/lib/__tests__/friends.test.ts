@@ -139,6 +139,7 @@ describe('friend helpers', () => {
     expect(friendOrder(user('x', { display_name: 'b' }), user('y', { display_name: 'B' }))).toBe(-1)
     const b = friend('b', true, 'bea')
     expect(placeFriend(list, b, false).map(f => f.user.username)).toEqual(['a', 'b', 'c'])
+    expect(placeFriend(list, list[1], true)).toEqual(list)
     const z = friend('z', false, 'Zed')
     expect(placeFriend(list, z, true).map(f => f.user.username)).toEqual(['a', 'c'])
     expect(placeFriend(list, z, false).map(f => f.user.username)).toEqual(['a', 'c', 'z'])
@@ -233,7 +234,9 @@ describe('friends in the store', () => {
   test('sending several requests reports each one', async () => {
     routes = [[/requests$/, { status: 'sent', user: user('bob', { display_name: 'Bob' }) }]]
     const out = await st().sendFriendRequests(['bob', 'carol'])
-    expect(calls.map(c => `${c.method} ${c.url} ${c.body}`)).toEqual([
+    expect(
+      calls.filter(c => c.method === 'POST').map(c => `${c.method} ${c.url} ${c.body}`)
+    ).toEqual([
       'POST /api/friends/requests {"username":"bob"}',
       'POST /api/friends/requests {"username":"carol"}',
     ])
@@ -245,7 +248,7 @@ describe('friends in the store', () => {
       error: 'Could not send a friend request to that user.',
     })
     st().askAddFriends(['bob', 'carol'])
-    expect(st().activeDialog).toEqual({ kind: 'add_friends', names: ['bob', 'carol'] })
+    expect(st().activeDialog).toMatchObject({ kind: 'add_friends', names: ['bob', 'carol'] })
   })
 
   test('privacy changes are sent and rolled back on failure', async () => {

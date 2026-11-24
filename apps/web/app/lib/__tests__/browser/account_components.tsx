@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { useConfigSync, useConfigStore } from '../../../components/admin/config_state'
 import { ServersSection } from '../../../components/admin/servers'
+import { AddFriendBox, AddFriendsDialog } from '../../../components/friends'
+import { useStore } from '../../store'
 import { ChannelSidebar } from '../../../components/channel_sidebar'
 import { ForwardCard } from '../../../components/forwards'
 import { ViewingPrompt } from '../../../components/viewing_prompt'
@@ -110,12 +112,21 @@ for (const account of [shown, owner]) {
 }
 
 function Pane({ account }: { account: AccountSession }) {
+  const toast = useStore(s => s.toast)
   const [adminVisible, setAdminVisible] = useState(true)
   useConfigSync(true)
   const config = useConfigStore(s => s.config)
   return (
     <section data-account={account.renderKey} aria-label={account === shown ? 'Shown' : 'Owner'}>
       <output>{config?.controls[0]?.env ?? 'Loading'}</output>
+      <button
+        onClick={() => {
+          client.show(account, 'none')
+          document.body.dataset.shownAccount = client.shown().conn.host
+        }}
+      >
+        Show this account
+      </button>
       <MessageLink href="https://owner.test/dm/1/7/">Open message</MessageLink>
       {config && (
         <>
@@ -125,6 +136,12 @@ function Pane({ account }: { account: AccountSession }) {
       )}
       {account === owner && (
         <>
+          <AddFriendBox />
+          <AddFriendsDialog />
+          <button onClick={() => account.store.getState().askAddFriends(['bob'])}>
+            Preview Bob
+          </button>
+          <span data-owner-toast>{toast?.text}</span>
           {adminVisible && <ServersSection />}
           <button onClick={() => setAdminVisible(!adminVisible)}>Toggle admin form</button>
           <button onClick={() => account.lifetime.endSession()}>End owner lifetime</button>

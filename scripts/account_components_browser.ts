@@ -31,6 +31,9 @@ try {
       const errors: string[] = []
       page.on('pageerror', error => errors.push(error.message))
       const pending = Promise.withResolvers<void>()
+      const sent = Promise.withResolvers<void>()
+      const sending = Promise.withResolvers<void>()
+      const bob = { username: 'bob', display_name: 'Bob', avatar_kind: 'color', avatar_color: null }
       await page.route('**/*', async route => {
         const url = new URL(route.request().url())
         if (url.pathname === '/')
@@ -40,6 +43,20 @@ try {
           })
         if (url.pathname === '/bundle.js')
           return route.fulfill({ contentType: 'application/javascript', body: js })
+        if (url.pathname.endsWith('/users/bob/profile'))
+          return route.fulfill({ json: { user: bob, bio: null, banner_color: null } })
+        if (url.pathname.endsWith('/users/bob/friendship'))
+          return route.fulfill({ json: { status: 'none' } })
+        if (url.pathname.endsWith('/friends/requests')) {
+          if (route.request().method() === 'POST') {
+            sending.resolve()
+            await sent.promise
+            return route.fulfill({ json: { user: bob, status: 'sent' } })
+          }
+          return route.fulfill({ json: { items: [], next: null } })
+        }
+        if (url.pathname.endsWith('/friends/summary'))
+          return route.fulfill({ json: { incoming: 0, outgoing: 1, pings: 0, pings_until: 0 } })
         if (url.pathname.endsWith('/admin/servers'))
           return route.fulfill({ json: { items: [], next: null } })
         if (!url.pathname.endsWith('/admin/config')) return route.abort()
@@ -103,6 +120,30 @@ try {
       await page.locator(`body[${memberAttribute}="singer"]`).waitFor()
 
       const button = (name: string) => owner.getByRole('button', { name, exact: true })
+      const draft = owner.getByLabel('Usernames to add')
+      const preview = owner.getByRole('dialog', { name: 'Add friend', exact: true })
+      if (touch) await activate(button('Show this account'))
+      await draft.fill('bob')
+      await draft.press('Enter')
+      await activate(preview.getByRole('button', { name: 'Send friend request' }))
+      await sending.promise
+      await activate(preview.getByRole('button', { name: 'Cancel' }))
+      if (touch) {
+        await activate(shown.getByRole('button', { name: 'Show this account' }))
+        assert.equal(await page.locator('body').getAttribute('data-shown-account'), 'shown.test')
+        await activate(button('Show this account'))
+        assert.equal(await page.locator('body').getAttribute('data-shown-account'), 'owner.test')
+      }
+      await draft.fill('carol')
+      await activate(button('Preview Bob'))
+      await preview.locator('[data-preview=bob]').waitFor()
+      sent.resolve()
+      await owner.locator('[data-owner-toast]').getByText('Friend request sent to').waitFor()
+      assert(await preview.isVisible())
+      assert(await preview.getByRole('button', { name: 'Send friend request' }).isEnabled())
+      await activate(preview.getByRole('button', { name: 'Cancel' }))
+      assert.equal(await draft.inputValue(), 'carol')
+
       const submit = async () => {
         const field = owner.getByRole('textbox', { name: 'Add a default server' })
         await field.fill('studio')

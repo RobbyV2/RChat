@@ -118,7 +118,10 @@ describe('blocking in the store', () => {
     } as WsEvent)
     expect(Object.keys(st().typing.c1 ?? {})).toEqual(['bob'])
     expect(await st().blockUser(' bob ')).toBeNull()
-    expect(calls).toEqual([{ method: 'POST', url: '/api/blocks', body: '{"username":"bob"}' }])
+    expect(calls).toEqual([
+      { method: 'POST', url: '/api/blocks', body: '{"username":"bob"}' },
+      { method: 'GET', url: '/api/friends/summary', body: undefined },
+    ])
     expect(st().blocked).toEqual({ bob: true })
     expect(st().typing).toEqual({})
     expect(typerNames({ bob: { name: 'Bob', until: 1 } })).toEqual([])

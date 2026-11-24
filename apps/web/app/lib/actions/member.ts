@@ -93,6 +93,7 @@ const blockable = (ctx: ActionCtx): boolean | null => {
 
 // Opens the DM; on narrow screens the full screen panel closes so the DM shows.
 export const messageFriend = (user: UserRef, acct = client.shown()) => {
+  if (acct !== client.shown() && !client.show(acct)) return
   const s = acct.store.getState()
   if (window.matchMedia('(max-width: 767px)').matches) s.closePanel()
   void s.startDm(user.username)

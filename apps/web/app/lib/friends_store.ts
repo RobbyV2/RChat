@@ -1,3 +1,4 @@
+import { client } from './client/client'
 import type { AccountSession } from './client/session'
 // The store's friends actions and events, kept apart from store.ts. `friendsSlice` gets the
 // store's helpers and returns the actions plus the hooks the store calls on sign-in, resync,
@@ -65,6 +66,54 @@ export const friendsSlice = (d: FriendsDeps) => {
   const signedIn = () => !!get().me && !get().guest
   const mine = (username: string) => get().me?.username === username
 
+  type Field = 'friend' | 'incoming' | 'outgoing' | 'block'
+  let dialogSeq = 0
+  let nextWrite = 0
+  type Updates = { user?: UserRef; online?: boolean }
+  const pending = new Set<{
+    name: string
+    order: number
+    superseded: Set<Field>
+    latest: Updates
+  }>()
+  // A parked account may receive profile or presence before it has a friend row to update.
+  // Retain these fields only for replies already in flight for this account and username.
+  const observe = (name: string, fields: Updates) => {
+    for (const write of pending) if (write.name === name) Object.assign(write.latest, fields)
+  }
+  const changed = (name: string, field: Field, order = Infinity) => {
+    for (const write of pending)
+      if (write.name === name && write.order < order) write.superseded.add(field)
+  }
+
+  // Only successful writes supersede older replies. Track each part separately because,
+  // for example, removing an accepted friend does not reconcile the incoming request.
+  const mutate = async <T, R>(
+    username: string,
+    request: () => Promise<T>,
+    apply: (result: T, claim: (field: Field) => boolean, latest: Updates) => R
+  ) => {
+    const name = username.trim().toLowerCase()
+    const write = { name, order: ++nextWrite, superseded: new Set<Field>(), latest: {} }
+    const at = sessionMark()
+    pending.add(write)
+    try {
+      const result = await request()
+      if (at !== sessionMark()) throw new Ended('The session ended')
+      return apply(
+        result,
+        field => {
+          if (write.superseded.has(field)) return false
+          changed(name, field, write.order)
+          return true
+        },
+        write.latest
+      )
+    } finally {
+      pending.delete(write)
+    }
+  }
+
   let summaryAsked = 0
   const loadSummary = async () => {
     if (!get().me || get().guest) return
@@ -87,9 +136,15 @@ export const friendsSlice = (d: FriendsDeps) => {
     }))
   }
 
+  let observed = 0
+  const visiblePanel = () =>
+    observed > 0 ||
+    (get().panel?.kind === 'friends' &&
+      client.shown() === acct &&
+      client.live().filter(a => a.store.getState().me).length < 2)
   const reloadOpenLists = () => {
     const s = get()
-    if (s.panel?.kind !== 'friends') {
+    if (!visiblePanel()) {
       set({
         friends: empty<Friend>(),
         onlineFriends: empty<Friend>(),
@@ -104,7 +159,7 @@ export const friendsSlice = (d: FriendsDeps) => {
     void actions.loadFriendRequests(false, true)
   }
 
-  const panelOpen = () => get().panel?.kind === 'friends' && pageVisible()
+  const panelOpen = () => visiblePanel() && pageVisible()
 
   const pageVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
 
@@ -137,17 +192,46 @@ export const friendsSlice = (d: FriendsDeps) => {
       onlineFriends: { ...s.onlineFriends, list: withoutUser(s.onlineFriends.list, name) },
     }))
 
-  const dropRequest = (name: string) =>
-    set(s => ({
-      incomingRequests: { ...s.incomingRequests, list: withoutUser(s.incomingRequests.list, name) },
-      outgoingRequests: { ...s.outgoingRequests, list: withoutUser(s.outgoingRequests.list, name) },
-    }))
+  const noteFriend = (name: string, friend: Friend | null) => {
+    if (friend) putFriend(friend)
+    else dropFriend(name)
+    set(s => ({ dms: setDmFriend(s.dms, name, !!friend) }))
+    // A page already in flight may have been read before this change.
+    if (get().friends.loading) void actions.loadFriends(get().friends.q, true)
+    if (get().onlineFriends.loading) void actions.loadOnlineFriends(get().onlineFriends.q, true)
+  }
+
+  const dropRequest = (name: string, incoming: boolean) => {
+    const field = incoming ? 'incomingRequests' : 'outgoingRequests'
+    set(s => {
+      const page = s[field]
+      const list = withoutUser(page.list, name)
+      if (list === page.list) return {}
+      const direction = incoming ? 'incoming' : 'outgoing'
+      // Complete pages already contain the exact remaining count. Partial pages use the summary.
+      return {
+        [field]: { ...page, list },
+        friendCounts:
+          page.hasMore || page.loading
+            ? s.friendCounts
+            : { ...s.friendCounts, [direction]: list.length },
+      }
+    })
+    if (get()[field].loading) void actions.loadFriendRequests(incoming, true)
+  }
+
+  const reconcileBlock = (name: string, claim: (field: Field) => boolean) => {
+    if (claim('friend')) noteFriend(name, null)
+    if (claim('incoming')) dropRequest(name, true)
+    if (claim('outgoing')) dropRequest(name, false)
+    void loadSummary()
+  }
 
   const actions = {
     openFriends: (tab: FriendsTab = 'online') => {
       if (!signedIn()) return
       set({ panel: { kind: 'friends', tab } })
-      markSeen()
+      if (panelOpen()) markSeen()
     },
 
     setFriendsTab: (tab: FriendsTab) => {
@@ -196,8 +280,27 @@ export const friendsSlice = (d: FriendsDeps) => {
     sendFriendRequest: async (username: string): Promise<SendResult> => {
       if (!signedIn()) return { ok: false, error: 'Sign in to add friends' }
       try {
-        const res = await api.sendFriendRequest(username.trim())
-        return { ok: true, status: res.status, user: res.user }
+        const res = await mutate(
+          username,
+          () => api.sendFriendRequest(username.trim()),
+          (r, claim, latest) => {
+            // Send returns a status and profile, without the canonical timestamp or presence.
+            if (r.status === 'sent') {
+              if (claim('outgoing')) void actions.loadFriendRequests(false, true)
+            } else {
+              if (claim('friend')) {
+                set(s => ({ dms: setDmFriend(s.dms, r.user.username, true) }))
+                void actions.loadFriends(get().friends.q, true)
+                void actions.loadOnlineFriends(get().onlineFriends.q, true)
+              }
+              if (claim('incoming')) dropRequest(r.user.username, true)
+              if (claim('outgoing')) dropRequest(r.user.username, false)
+            }
+            void loadSummary()
+            return { status: r.status, user: latest.user ?? r.user }
+          }
+        )
+        return { ok: true, ...res }
       } catch (e) {
         return { ok: false, error: d.errorText(e) }
       }
@@ -222,29 +325,59 @@ export const friendsSlice = (d: FriendsDeps) => {
     // palette.
     askAddFriends: (names: string[]) => {
       if (!signedIn() || !names.length) return
-      set({ activeDialog: { kind: 'add_friends', names } })
+      set({ activeDialog: { kind: 'add_friends', names, id: ++dialogSeq } })
     },
 
     acceptFriend: (user: UserRef) =>
       act(async () => {
-        await live(api.acceptFriend(user.username))
-        d.toast('Now friends with', user.display_name)
+        await mutate(
+          user.username,
+          () => api.acceptFriend(user.username),
+          (reply, claim, latest) => {
+            const friend = { ...reply, ...latest }
+            if (claim('incoming')) dropRequest(friend.user.username, true)
+            if (claim('friend')) noteFriend(friend.user.username, friend)
+            void loadSummary()
+            d.toast('Now friends with', friend.user.display_name)
+          }
+        )
       }),
 
     denyFriend: (username: string) =>
       act(async () => {
-        await api.denyFriend(username)
+        await mutate(
+          username,
+          () => api.denyFriend(username),
+          (_, claim) => {
+            if (claim('incoming')) dropRequest(username.trim().toLowerCase(), true)
+            void loadSummary()
+          }
+        )
       }),
 
     cancelFriendRequest: (username: string) =>
       act(async () => {
-        await api.cancelFriendRequest(username)
+        await mutate(
+          username,
+          () => api.cancelFriendRequest(username),
+          (_, claim) => {
+            if (claim('outgoing')) dropRequest(username.trim().toLowerCase(), false)
+            void loadSummary()
+          }
+        )
       }),
 
     removeFriend: (user: UserRef) =>
       act(async () => {
-        await live(api.removeFriend(user.username))
-        d.toast('Removed friend', user.display_name)
+        await mutate(
+          user.username,
+          () => api.removeFriend(user.username),
+          (_, claim) => {
+            if (claim('friend')) noteFriend(user.username, null)
+            void loadSummary()
+            d.toast('Removed friend', user.display_name)
+          }
+        )
       }),
 
     askRemoveFriend: (user: UserRef) => {
@@ -253,7 +386,7 @@ export const friendsSlice = (d: FriendsDeps) => {
         title: 'Remove friend',
         body: `Remove ${user.display_name} from your friends?`,
         confirm: 'Remove',
-        action: () => void actions.removeFriend(user),
+        action: acct.lifetime.inSession(() => void actions.removeFriend(user)),
       })
     },
 
@@ -282,6 +415,19 @@ export const friendsSlice = (d: FriendsDeps) => {
         }
       }),
 
+    observeFriendsPanel: () => {
+      observed++
+      const reveal = () => {
+        if (pageVisible()) markSeen()
+      }
+      reveal()
+      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', reveal)
+      return () => {
+        observed--
+        if (typeof document !== 'undefined')
+          document.removeEventListener('visibilitychange', reveal)
+      }
+    },
     markFriendsSeen: markSeen,
   }
 
@@ -304,9 +450,16 @@ export const friendsSlice = (d: FriendsDeps) => {
   // Returns true when the event was a friends event and nothing else handles it.
   const onEvent = (ev: WsEvent): boolean => {
     switch (ev.type) {
+      case 'user_blocked':
+        if (mine(ev.username)) changed(ev.blocked.user.username, 'block')
+        return false
+      case 'user_unblocked':
+        if (mine(ev.username)) changed(ev.blocked, 'block')
+        return false
       case 'friend_request_added': {
         if (!mine(ev.username)) return true
         const r = ev.request
+        changed(r.user.username, r.incoming ? 'incoming' : 'outgoing')
         set(s =>
           r.incoming
             ? {
@@ -322,29 +475,35 @@ export const friendsSlice = (d: FriendsDeps) => {
                 },
               }
         )
+        if ((r.incoming ? get().incomingRequests : get().outgoingRequests).loading)
+          void actions.loadFriendRequests(r.incoming, true)
         void loadSummary()
         return true
       }
       case 'friend_request_removed': {
         if (!mine(ev.username)) return true
-        dropRequest(ev.other)
+        changed(ev.other, 'incoming')
+        changed(ev.other, 'outgoing')
+        dropRequest(ev.other, true)
+        dropRequest(ev.other, false)
         void loadSummary()
         return true
       }
       case 'friend_added': {
         if (!mine(ev.username)) return true
-        putFriend(ev.friend)
-        set(s => ({ dms: setDmFriend(s.dms, ev.friend.user.username, true) }))
+        changed(ev.friend.user.username, 'friend')
+        noteFriend(ev.friend.user.username, ev.friend)
         return true
       }
       case 'friend_removed': {
         if (!mine(ev.username)) return true
-        dropFriend(ev.friend)
-        set(s => ({ dms: setDmFriend(s.dms, ev.friend, false) }))
+        changed(ev.friend, 'friend')
+        noteFriend(ev.friend, null)
         return true
       }
       case 'friend_presence': {
         if (!mine(ev.username)) return true
+        observe(ev.friend, { online: ev.online })
         const known = get().friends.list.find(f => f.user.username === ev.friend)
         set(s => ({
           friends: { ...s.friends, list: setOnline(s.friends.list, ev.friend, ev.online) },
@@ -357,8 +516,7 @@ export const friendsSlice = (d: FriendsDeps) => {
               list: withoutUser(s.onlineFriends.list, ev.friend),
             },
           }))
-        else if (get().panel?.kind === 'friends')
-          void actions.loadOnlineFriends(get().onlineFriends.q, true)
+        else if (visiblePanel()) void actions.loadOnlineFriends(get().onlineFriends.q, true)
         return true
       }
       case 'privacy_changed': {
@@ -367,6 +525,7 @@ export const friendsSlice = (d: FriendsDeps) => {
       }
       case 'user_updated': {
         const u = ev.user
+        observe(u.username, { user: u })
         const same = (x: { user: UserRef }) => x.user.username === u.username
         const fresh = <T extends { user: UserRef }, P extends { list: T[] }>(page: P): P => {
           const list = mapWhere(page.list, same, x => ({ ...x, user: u }))
@@ -387,6 +546,8 @@ export const friendsSlice = (d: FriendsDeps) => {
 
   return {
     actions,
+    mutate,
+    reconcileBlock,
     loadSummary,
     reloadOpenLists,
     onPing,

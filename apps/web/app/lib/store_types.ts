@@ -148,7 +148,7 @@ export type ActiveDialog =
     }
   | { kind: 'rename_folder'; id: string; focus?: 'color' }
   | { kind: 'category'; server: string; id?: number }
-  | { kind: 'add_friends'; names: string[] }
+  | { kind: 'add_friends'; names: string[]; id: number }
   | { kind: 'poll_voters'; message: Message }
 
 export type Panel =
@@ -470,6 +470,7 @@ export interface RChatState {
   askRemoveFriend: (user: UserRef) => void
   loadPrivacy: () => Promise<void>
   setPrivacy: (patch: Partial<Privacy>) => Promise<void>
+  observeFriendsPanel: () => () => void
   markFriendsSeen: () => void
   // Posts a poll; the error text, or null once it is sent.
   createPoll: (target: PollTarget, req: PollReq) => Promise<string | null>

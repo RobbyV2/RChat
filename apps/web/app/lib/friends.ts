@@ -103,7 +103,7 @@ export const friendOrder = (a: UserRef, b: UserRef) => {
 export const placeFriend = (list: Friend[], f: Friend, hasMore: boolean): Friend[] => {
   const rest = list.filter(x => x.user.username !== f.user.username)
   const at = rest.findIndex(x => friendOrder(f.user, x.user) < 0)
-  if (at === -1) return hasMore ? rest : [...rest, f]
+  if (at === -1) return hasMore && rest.length === list.length ? rest : [...rest, f]
   return [...rest.slice(0, at), f, ...rest.slice(at)]
 }
 
