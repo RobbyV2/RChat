@@ -211,7 +211,7 @@ function FilesSettings() {
   const usage = useP2p(s => s.fileUsage)
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
   const ask = useStore(s => s.askConfirm)
-  const toast = useStore(s => s.showToast)
+  const { toast } = identity.p2pHost
   const info = useStore(s => s.instance)
   const [auto, setAuto] = useState(p2pFiles.readAuto)
   const choices = autoChoices(instanceLocal(info))

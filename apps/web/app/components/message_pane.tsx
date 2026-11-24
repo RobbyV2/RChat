@@ -1,4 +1,5 @@
 'use client'
+import { ViewActorTag } from './view_actor'
 import { useP2pApp } from '../lib/client/p2p_react'
 
 import { useAccount, useStoreApi } from '../lib/client/react'
@@ -968,7 +969,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         if (file) uploadFile(viewKey(view), file)
       }}
     >
-      <header className="@container flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4">
+      <header className="@container flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4 max-md:has-[[data-view-actor]]:gap-1 max-md:has-[[data-view-actor]]:px-2">
         <button
           title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
           aria-label="Menu"
@@ -1025,7 +1026,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </div>
         )}
         {dm && (
-          <span className="flex min-w-20 items-center gap-2 font-medium">
+          <span className="flex min-w-20 items-center gap-2 font-medium max-md:[&:has(+[data-view-actor])]:min-w-0">
             <DmPeer other={dm.other} />
             {dm.is_self && (
               <span className="shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
@@ -1034,6 +1035,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             )}
           </span>
         )}
+        <ViewActorTag header />
         <div className="ml-auto flex shrink-0 items-center gap-2 @max-sm:gap-1">
           {dm && !dm.is_self && !guest && !otherBlocked && <CallButtons dm={dm} />}
           <StatusClock timeCls="@max-lg:hidden" />

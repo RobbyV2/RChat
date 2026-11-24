@@ -25,7 +25,9 @@ export function bindP2pHost(app: P2pApp, account: AccountSession, live: () => bo
     return !settings.asset_uploads && !settings.p2p_attachments
   }
   host.toast = (text, name) => {
-    if (live()) state().showToast(text, name)
+    if (!live()) return
+    const peer = app.useP2p.getState()
+    state().showToast(text, name, { local: localId, name: peer.name, ik: peer.ik })
   }
   host.alert = alert => {
     if (live())

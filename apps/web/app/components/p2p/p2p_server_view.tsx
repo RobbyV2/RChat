@@ -1,4 +1,5 @@
 'use client'
+import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -656,6 +657,7 @@ function P2pMemberListBody() {
       aria-label="Members"
       className="flex h-full w-60 shrink-0 flex-col overflow-y-auto bg-surface-container-low pb-3"
     >
+      <PeerActorTag header />
       {paged.groups.map(g => (
         <section key={g.key} data-p2p-member-group={g.label}>
           <p className="flex items-center gap-1.5 px-3 pt-4 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
@@ -826,6 +828,7 @@ function P2pChannelPaneBody({
           className="absolute -top-1 -right-1.5 border-2 border-surface"
         />
       </button>
+      <PeerActorTag header />
       {voiceCh ? (
         <Volume2 size={20} className="shrink-0 text-on-surface-variant" />
       ) : (

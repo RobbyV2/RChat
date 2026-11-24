@@ -1,4 +1,5 @@
 'use client'
+import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -152,6 +153,7 @@ export default function MemberSidebar() {
   if (!listed)
     return (
       <aside className="h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low p-2">
+        <ViewActorTag header />
         <p className="px-2 py-3 text-sm text-on-surface-variant">{MEMBERS_HIDDEN_LINE}</p>
       </aside>
     )
@@ -239,6 +241,7 @@ export default function MemberSidebar() {
 
   return (
     <aside ref={ref} className="h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low p-2">
+      <ViewActorTag header />
       <div style={{ height: range.before }} />
       {items.slice(range.start, range.end).map(render)}
       <div style={{ height: range.after }} />

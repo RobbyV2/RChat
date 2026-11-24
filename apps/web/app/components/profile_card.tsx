@@ -1,5 +1,6 @@
 'use client'
 
+import { ActorLabel, useActorSuffix, useViewActor } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
@@ -215,6 +216,8 @@ function Card({ target }: { target: ProfileTarget }) {
   const messageMax = useStore(s => limitsOf(s.instance).message_chars)
   const guest = useStore(s => s.guest)
   const streamer = useStore(s => s.streamer)
+  const actor = useViewActor()
+  const suffix = useActorSuffix(actor)
   const homeHost = useStore(s => s.instanceHost)
   const isBlocked = useStore(s => s.blocked[username] === true)
   const hook = isWebhookAuthor(username)
@@ -523,7 +526,11 @@ function Card({ target }: { target: ProfileTarget }) {
           >
             <Masked text={user.display_name} own={self} />
           </p>
-          <ProfileHandle user={user} remote={remote} />
+          <ProfileHandle
+            user={user}
+            remote={remote ?? (actor ? new URL(actor.row.origin).host : null)}
+          />
+          <ActorLabel actor={actor} seen />
           {remote && <InstanceChip host={remote} className="mt-1" />}
           {bio && !hidden && (
             <p className="streamer mt-2 text-sm break-words whitespace-pre-wrap text-on-surface">
@@ -724,7 +731,7 @@ function Card({ target }: { target: ProfileTarget }) {
                   }
                 }}
                 aria-label="Send a direct message"
-                placeholder={dmPlaceholder(user, streamer)}
+                placeholder={dmPlaceholder(user, streamer) + suffix}
                 className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2 text-base text-on-surface outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm"
               />
             )}

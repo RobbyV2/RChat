@@ -1,4 +1,5 @@
 import { openAccountNotice } from '../client/notice_owner'
+import { resolveNoticeActor } from '../client/view_actor'
 import { accountNoticeLabel } from '../instance_label'
 import { accountNoticeTag } from '../client/tab_lock'
 import { client, shownMenu } from '../client/client'
@@ -369,10 +370,10 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   }
 
   let toastSeq = 0
-  const toast = (text: string, name?: string) => {
+  const toast: RChatState['showToast'] = (text, name, peer) => {
     toastSeq += 1
     const id = toastSeq
-    set({ toast: { id, text, name } })
+    set({ toast: { id, text, name, peer } })
     clearTimeout(toastTimer)
     toastTimer = setTimeout(() => {
       if (get().toast?.id === id) set({ toast: null })
@@ -458,14 +459,20 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
         if (!get().notifyPrefs.desktop || system.permission() !== 'granted') return
         if (document.visibilityState === 'visible' && document.hasFocus()) return
         const { title, body } = desktopText(notice, get().streamer)
+        const recipient = resolveNoticeActor(client.book.getState(), acct, notice.key)
+        let label = ''
+        if (!get().streamer && !('recipient' in notice && notice.recipient)) {
+          if (recipient) {
+            const { row, name } = recipient
+            label = row.local
+              ? row.display + ' · P2P · ' + row.username + '@' + acct.conn.host
+              : (row.username ?? 'Guest') + ' · ' + name
+          } else if (client.live().length > 1) {
+            label = accountNoticeLabel(username, get().instance ?? acct.conn.info, acct.conn.host)
+          }
+        }
         system.show({
-          title: maskProfanity(
-            client.live().length > 1 && !get().streamer
-              ? accountNoticeLabel(username, get().instance ?? acct.conn.info, acct.conn.host) +
-                  ' · ' +
-                  title
-              : title
-          ),
+          title: maskProfanity(label ? label + ' · ' + title : title),
           body: notice.file ? maskFileName(body) : maskOutsideCode(body, maskProfanity),
           tag: accountNoticeTag(acct, notice.key),
           renotify: true,
@@ -550,7 +557,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     | 'setShowSpoilers'
     | 'reloadTyping'
   > = {
-    showToast: (text, name) => toast(text, name),
+    showToast: toast,
 
     openSearch: q =>
       set({

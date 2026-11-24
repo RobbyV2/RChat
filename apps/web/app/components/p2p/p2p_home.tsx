@@ -1,4 +1,5 @@
 'use client'
+import { ActorLabel, PeerActorTag, usePeerActor } from '../view_actor'
 import { IdentityEnrollment } from './identity_enrollment'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -9,7 +10,16 @@ import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 
 import { useLayoutEffect, useRef, useSyncExternalStore, useState } from 'react'
-import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
+import {
+  Ban,
+  Check,
+  Menu,
+  Fingerprint,
+  QrCode as QrIcon,
+  UserPlus,
+  Waypoints,
+  X,
+} from 'lucide-react'
 import { useStore, type RChatState } from '../../lib/store'
 
 import { p2pTileCount } from '../../lib/p2p/alerts'
@@ -604,6 +614,7 @@ function P2pHomeBody({ onMenu }: { onMenu: () => void }) {
 }
 
 function P2pContacts({ onMenu }: { onMenu: () => void }) {
+  const actor = usePeerActor()
   const identity = useP2pApp()!
   const { p2p } = identity
 
@@ -626,7 +637,12 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-surface">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4">
+      <header
+        className={
+          'flex h-14 shrink-0 items-center border-b border-outline-variant ' +
+          (actor ? 'gap-1 px-2 sm:gap-3 sm:px-4' : 'gap-3 px-4')
+        }
+      >
         <button
           title="Menu"
           aria-label="Menu"
@@ -635,6 +651,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
         >
           <Menu size={20} />
         </button>
+        <ActorLabel actor={actor} header />
         <span className="font-medium">Contacts</span>
         <P2pBadge />
         {enabled && !elsewhere && (
@@ -647,8 +664,13 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
         )}
         <span className="flex-1" />
         {enabled && (
-          <button className={textBtn} onClick={() => p2p.openDialog({ kind: 'enable' })}>
-            Add a P2P identity
+          <button
+            className={textBtn + (actor ? ' shrink-0 max-sm:p-2' : '')}
+            title="Add a P2P identity"
+            onClick={() => p2p.openDialog({ kind: 'enable' })}
+          >
+            {actor && <Fingerprint size={20} className="sm:hidden" aria-hidden />}
+            <span className={actor ? 'max-sm:sr-only' : undefined}>Add a P2P identity</span>
           </button>
         )}
         {adds && (
@@ -772,6 +794,7 @@ function ContactDialog({ ik }: { ik: string }) {
   const notice = noticeText(c)
   return (
     <Dialog title="P2P contact" onClose={p2p.closeDialog} full>
+      <PeerActorTag seen />
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-3">
           <span className="relative">

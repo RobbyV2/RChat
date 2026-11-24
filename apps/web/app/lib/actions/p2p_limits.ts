@@ -48,7 +48,7 @@ export const peerLimits = identityActions(identity => {
         const account = p2pAccount(ctx)
         if (!account) return
         writeUserLimits(account, { v: 1 }, ctx.acct.conn, identity().localId)
-        ctx.acct.store.getState().showToast(LIMITS_RESET_TEXT)
+        identity().p2pHost.toast(LIMITS_RESET_TEXT)
       },
     },
   ]

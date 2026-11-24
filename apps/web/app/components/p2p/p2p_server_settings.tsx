@@ -1,4 +1,5 @@
 'use client'
+import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -606,7 +607,7 @@ function ServerSettingsDialogBody({ room, tab: first }: { room: string; tab?: Se
   const [tab, setTab] = useState<ServerTab>(first ?? 'overview')
   if (!v) return null
   return (
-    <Dialog title="Server settings" onClose={p2p.closeDialog} full>
+    <Dialog actor={<PeerActorTag header />} title="Server settings" onClose={p2p.closeDialog} full>
       <div
         role="tablist"
         aria-label="Server settings"

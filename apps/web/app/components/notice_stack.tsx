@@ -6,7 +6,9 @@ import { openAccountNotice } from '../lib/client/notice_owner'
 import { client } from '../lib/client/client'
 import { AccountProvider, useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
-import { AccountLabel } from './instance_badge'
+import { useStore as useBoundStore } from 'zustand'
+import { resolveNoticeActor } from '../lib/client/view_actor'
+import { ActorLabel } from './view_actor'
 import { useStore } from '../lib/store'
 import {
   alertBody,
@@ -45,19 +47,14 @@ function TimeBar({ notice, paused }: { notice: Notice; paused: boolean }) {
   )
 }
 
-function NoticeCard({
-  notice,
-  paused,
-  labelled,
-}: {
-  notice: Notice
-  paused: boolean
-  labelled: boolean
-}) {
+function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
   const owner = useAccount()
   const streamer = useStore(s => s.streamer)
   const dismiss = useStore(s => s.dismissNotice)
-  const where = context(notice)
+  const book = useBoundStore(client.book, b => b)
+  const recipient = resolveNoticeActor(book, owner, notice.key)
+  const conversation = { ...notice, recipient: undefined }
+  const where = context(recipient ? conversation : notice)
   const body = alertBody(notice.body, streamer)
   const { actor } = notice
   const card = useRef<HTMLDivElement>(null)
@@ -101,7 +98,7 @@ function NoticeCard({
           </span>
         )}
         <span className="min-w-0 flex-1">
-          {labelled && <AccountLabel notice />}
+          <ActorLabel actor={recipient} />
           <span className="block truncate text-sm font-medium">
             <Pieces pieces={headline(notice)} />
           </span>
@@ -144,11 +141,11 @@ const keyboardFocus = (region: HTMLElement | null) => {
   return !!region && !!el && region.contains(el) && matches(el, ':focus-visible')
 }
 
-function AccountNotices({ labelled, onChange }: { labelled: boolean; onChange: () => void }) {
+function AccountNotices({ onChange }: { onChange: () => void }) {
   const notices = useStore(s => s.notices)
   const paused = useStore(s => s.noticesPaused)
   useEffect(onChange, [notices, onChange])
-  return notices.map(n => <NoticeCard key={n.id} notice={n} paused={paused} labelled={labelled} />)
+  return notices.map(n => <NoticeCard key={n.id} notice={n} paused={paused} />)
 }
 
 export function NoticeStack({ sessions }: { sessions: readonly AccountSession[] }) {
@@ -188,7 +185,7 @@ export function NoticeStack({ sessions }: { sessions: readonly AccountSession[] 
     >
       {sessions.map(session => (
         <AccountProvider key={session.renderKey} session={session}>
-          <AccountNotices labelled={sessions.length > 1} onChange={onChange} />
+          <AccountNotices onChange={onChange} />
         </AccountProvider>
       ))}
     </section>

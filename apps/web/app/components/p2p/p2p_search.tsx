@@ -72,6 +72,7 @@ function P2pSearchPanelBody() {
   return (
     <div data-p2p-search className="contents">
       <SearchView
+        peer
         channels={channels}
         hits={hits}
         loading={search.loading}

@@ -129,7 +129,7 @@ export const peerChat = identityActions(identity => {
         .useP2p.getState()
         .contacts.find(x => x.ik === ik)
       const s = acct.store.getState()
-      s.showToast('Forwarded to', c ? maskOf(s)(displayName(c)) : 'contact')
+      identity().p2pHost.toast('Forwarded to', c ? maskOf(s)(displayName(c)) : 'contact')
     }
   }
 

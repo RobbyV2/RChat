@@ -773,7 +773,7 @@ describe("a P2P message's menu", () => {
     expect(await run(forward[0])).toEqual([
       ['dm.ensureRoom', BOB],
       ['dm.forward', 'room-x', { name: 'Bob Own', ts: TS, body: 'hello there' }],
-      ['toast', 'Forwarded to', 'Bob'],
+      ['toast', 'Forwarded to', 'Bob', { local: 'main', name: '', ik: null }],
     ])
     expect(await run(forward[1])).toEqual([['clip', 'hello there', 'Bob Own']])
   })

@@ -1,4 +1,5 @@
 'use client'
+import { useActorSuffix, usePeerActor } from '../view_actor'
 import { identityScopeKey } from '../../lib/p2p/app/host'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -588,6 +589,7 @@ function P2pComposerBody({
   const replying = useP2p(s => (s.replying?.room === key ? s.replying.id : null))
   const replyTo = useP2p(s => shownRow(s, replying))
   const forwardClip = useForwardClip()
+  const suffix = useActorSuffix(usePeerActor())
   const streamer = useStore(s => s.streamer)
   const sheet = useMedia(SHEET_QUERY)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -670,7 +672,7 @@ function P2pComposerBody({
             identity.inIdentity(ok => {
               if (!ok) return
               if (store.getState().forwardClip === clip) store.getState().clearForward()
-              store.getState().showToast('Forwarded to', title)
+              identity.p2pHost.toast('Forwarded to', title)
             })
           )
       }}
@@ -785,7 +787,7 @@ function P2pComposerBody({
               pasted.map(f => (f.name && f.name !== 'image.png' ? f : namePasted(f)))
             )
           }}
-          placeholder={streamer ? 'Send a P2P message' : placeholder}
+          placeholder={streamer ? 'Send a P2P message' : placeholder + suffix}
           className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
         />
         {(count > counterFrom(BODY_MAX) || tooLong) && (

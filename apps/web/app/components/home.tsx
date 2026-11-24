@@ -1,4 +1,5 @@
 'use client'
+import { ViewActorTag } from './view_actor'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 import type { P2pApp } from '../lib/p2p/app/runtime'
 
@@ -1679,7 +1680,7 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
   const menuPings = useStore(allPings)
   return (
     <main data-home className="relative flex h-full min-w-0 flex-1 flex-col bg-surface">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4 max-[360px]:has-[[data-view-actor]]:gap-1 max-[360px]:has-[[data-view-actor]]:px-2">
         <button
           title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
           aria-label="Menu"
@@ -1696,6 +1697,7 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
           <House size={18} className="text-on-surface-variant" />
           Home
         </span>
+        <ViewActorTag header />
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <StatusClock />
           {signedIn && !guest && <InboxButton />}

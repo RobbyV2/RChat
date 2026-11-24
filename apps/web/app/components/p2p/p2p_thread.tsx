@@ -180,6 +180,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
     <ChatSourceProvider value={source}>
       <div data-p2p-thread className="contents">
         <ThreadPanelView
+          peer
           onClose={p2pThread.close}
           overlays={
             scroll.positioned && fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />

@@ -1,5 +1,6 @@
 'use client'
 
+import { useActorSuffix, useViewActor } from './view_actor'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
@@ -260,6 +261,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const view = useStore(s => s.view)
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
+  const suffix = useActorSuffix(useViewActor())
   const streamer = useStore(s => s.streamer)
   const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
   const uploadHint = useUploadHint(view?.kind === 'channel' ? view.server : null)
@@ -697,7 +699,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               attach(namePasted(file))
             }
           }}
-          placeholder={placeholder}
+          placeholder={placeholder + suffix}
           className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
         />
         {count > counterFrom(max) && (

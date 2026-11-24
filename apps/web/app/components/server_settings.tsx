@@ -1,5 +1,6 @@
 'use client'
 
+import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
@@ -1359,7 +1360,7 @@ function Settings({ server }: { server: string }) {
   )
 
   return (
-    <Dialog full title="Server Settings" onClose={closeDialog}>
+    <Dialog actor={<ViewActorTag header />} full title="Server Settings" onClose={closeDialog}>
       {!sharedByCode(detail.join_mode) && (
         <InviteLinkField server={server} hasPassword={detail.has_password} />
       )}

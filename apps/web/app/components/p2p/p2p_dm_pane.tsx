@@ -1,4 +1,5 @@
 'use client'
+import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -156,6 +157,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
           className="absolute -top-1 -right-1.5 border-2 border-surface"
         />
       </button>
+      <PeerActorTag header />
       {onBack && (
         <button
           title="Back to contacts"

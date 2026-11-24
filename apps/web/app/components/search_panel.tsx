@@ -1,5 +1,6 @@
 'use client'
 
+import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { FileText, Hash, Search } from 'lucide-react'
@@ -92,6 +93,7 @@ export interface SearchFilters {
 }
 
 export function SearchView({
+  peer = false,
   channels,
   hits,
   loading,
@@ -103,6 +105,7 @@ export function SearchView({
   onRun,
   onClose,
 }: {
+  peer?: boolean
   // The "in:" choices (the current server's channels), or none.
   channels: { id: string; name: string }[] | undefined
   hits: SearchHitView[]
@@ -201,7 +204,13 @@ export function SearchView({
 
   return (
     <div className="flex h-full w-full flex-col bg-surface-container-low">
-      <PanelHeader icon={Search} title="Search" closeTitle="Close search" onClose={onClose} />
+      <PanelHeader
+        actor={peer ? <PeerActorTag header /> : <ViewActorTag header />}
+        icon={Search}
+        title="Search"
+        closeTitle="Close search"
+        onClose={onClose}
+      />
       <div className="flex shrink-0 flex-col gap-2 border-b border-outline-variant p-3">
         <input
           value={q}

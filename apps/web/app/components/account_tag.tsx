@@ -1,6 +1,6 @@
 'use client'
 
-import type { SwitcherRow } from '../lib/client/switcher_rows'
+import type { ActorTagRow } from '../lib/client/view_actor'
 import { UserAvatar } from './user_avatar'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { useMask, useStore } from '../lib/store'
@@ -23,7 +23,7 @@ export function InstanceTag({ origin, name }: { origin: string; name: string }) 
     </span>
   )
 }
-export function ActorAvatar({ row, size = 32 }: { row: SwitcherRow; size?: number }) {
+export function ActorAvatar({ row, size = 32 }: { row: ActorTagRow; size?: number }) {
   return (
     <span
       aria-hidden="true"
@@ -45,7 +45,15 @@ export function ActorAvatar({ row, size = 32 }: { row: SwitcherRow; size?: numbe
     </span>
   )
 }
-export function AccountTag({ row, name }: { row: SwitcherRow; name: string }) {
+export function AccountTag({
+  row,
+  name,
+  compactOnPhone = false,
+}: {
+  row: ActorTagRow
+  name: string
+  compactOnPhone?: boolean
+}) {
   const streamer = useStore(s => s.streamer)
   const mask = useMask()
   return (
@@ -53,17 +61,29 @@ export function AccountTag({ row, name }: { row: SwitcherRow; name: string }) {
       title={
         streamer
           ? 'Account'
-          : mask((row.username ?? 'Guest') + '@' + new URL(row.origin).host + ' · ' + name)
+          : mask(
+              (row.local ? row.display + ' · P2P · ' : '') +
+                (row.username ?? 'Guest') +
+                '@' +
+                new URL(row.origin).host +
+                ' · ' +
+                name
+            )
       }
       className="streamer inline-flex min-w-0 items-center gap-1.5 text-xs"
     >
       <ActorAvatar row={row} size={16} />
-      <span className="truncate">
+      <span className={compactOnPhone ? 'max-md:sr-only truncate' : 'truncate'}>
         <Masked
           text={row.local ? row.display + ' · P2P · ' + row.username : (row.username ?? 'Guest')}
         />
+        {compactOnPhone && (
+          <span className="ml-1.5 hidden md:inline-flex">
+            <InstanceTag origin={row.origin} name={name} />
+          </span>
+        )}
       </span>
-      <InstanceTag origin={row.origin} name={name} />
+      {!compactOnPhone && <InstanceTag origin={row.origin} name={name} />}
     </span>
   )
 }

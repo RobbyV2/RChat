@@ -1,4 +1,5 @@
 'use client'
+import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
 import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
@@ -62,6 +63,7 @@ const ALONE: GroupPlace = { first: true, last: true }
 // composer below.
 export function ThreadPanelView({
   onClose,
+  peer = false,
   bars,
   overlays,
   listRef,
@@ -74,6 +76,7 @@ export function ThreadPanelView({
   tail,
   footer,
 }: {
+  peer?: boolean
   onClose: () => void
   bars?: ReactNode
   overlays?: ReactNode
@@ -90,6 +93,7 @@ export function ThreadPanelView({
   return (
     <div data-thread-panel className="flex h-full w-full flex-col bg-surface-container-low">
       <PanelHeader
+        actor={peer ? <PeerActorTag header /> : <ViewActorTag header />}
         icon={MessageSquareText}
         title="Thread"
         closeTitle="Close thread"

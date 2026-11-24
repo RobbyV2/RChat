@@ -1,5 +1,4 @@
 'use client'
-import { useAccount } from '../../lib/client/react'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -78,8 +77,6 @@ function Preview({ card }: { card: Card }) {
 }
 
 function AddContactDialogBody({ initial = 'paste' }: { initial?: Tab }) {
-  const ownerAccount = useAccount()
-
   const identity = useP2pApp()!
   const { p2p } = identity
 
@@ -125,9 +122,9 @@ function AddContactDialogBody({ initial = 'paste' }: { initial?: Tab }) {
     setBusy(false)
     if (!res) return setError(identity.useP2p.getState().error ?? "Couldn't add that contact")
     if (!res.ok) return setError(res.error)
-    ownerAccount.store
-      .getState()
-      .showToast(res.contact.state === 'mutual' ? 'Contact added' : 'Contact request sent')
+    identity.p2pHost.toast(
+      res.contact.state === 'mutual' ? 'Contact added' : 'Contact request sent'
+    )
     p2p.openDialog({ kind: 'contact', ik: res.contact.ik })
   }
 

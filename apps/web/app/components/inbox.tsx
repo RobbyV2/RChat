@@ -1,5 +1,6 @@
 'use client'
 
+import { ViewActorTag } from './view_actor'
 import {
   useCallback,
   useEffect,
@@ -440,6 +441,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
         <Bell size={18} className="text-on-surface-variant" />
         <span className="font-medium">Inbox</span>
+        <ViewActorTag header />
         <button
           type="button"
           title="Mark all as read"

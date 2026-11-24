@@ -190,6 +190,7 @@ export interface Outgoing {
 
 // A short neutral message at the top; `name` is shown after `text` with the streamer blur.
 export interface Toast {
+  peer?: { local: string; name: string | null; ik: string | null }
   id: number
   text: string
   name?: string
@@ -423,7 +424,7 @@ export interface RChatState {
     keys: SectionKey[],
     identity?: P2pApp | null
   ) => Promise<string | null>
-  showToast: (text: string, name?: string) => void
+  showToast: (text: string, name?: string, peer?: Toast['peer']) => void
   consumeInviteJoin: () => void
   startDm: (username: string, nav?: Nav) => Promise<void>
   messageUser: (username: string, content: string) => Promise<void>

@@ -1,5 +1,6 @@
 'use client'
 
+import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 import { client } from '../lib/client/client'
 import { friendNames } from '../lib/client/friend_names'
@@ -500,7 +501,13 @@ export default function FriendsPanel() {
   useEscape(closePanel, 'panel')
   return (
     <div className="flex h-full flex-col">
-      <PanelHeader icon={Users} title="Friends" closeTitle="Close friends" onClose={closePanel} />
+      <PanelHeader
+        actor={<ViewActorTag header />}
+        icon={Users}
+        title="Friends"
+        closeTitle="Close friends"
+        onClose={closePanel}
+      />
       <Tabs tab={tab} entries={visible} />
       {multi && tab !== 'add' && (
         <div

@@ -206,17 +206,20 @@ export function PanelHeader({
   icon: Icon,
   title,
   closeTitle,
+  actor,
   onClose,
 }: {
   icon: LucideIcon
   title: string
   closeTitle: string
+  actor?: ReactNode
   onClose: () => void
 }) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
       <Icon size={18} className="shrink-0 text-on-surface-variant" />
       <span className="min-w-0 truncate font-medium">{title}</span>
+      {actor}
       <button
         title={closeTitle}
         onClick={onClose}
@@ -235,6 +238,7 @@ export function Dialog({
   children,
   full = false,
   compact = false,
+  actor,
   layer = 'dialog',
 }: {
   title: string
@@ -242,6 +246,7 @@ export function Dialog({
   children: ReactNode
   full?: boolean
   compact?: boolean
+  actor?: ReactNode
   layer?: EscapeLayer
 }) {
   const titleId = useId()
@@ -274,6 +279,7 @@ export function Dialog({
           <h2 id={titleId} className="text-lg font-medium text-on-surface">
             {title}
           </h2>
+          {actor}
           <CloseButton onClick={onClose} compact={compact} />
         </div>
         {children}

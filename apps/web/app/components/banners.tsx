@@ -3,7 +3,8 @@
 import { AccountProvider, useLiveSessions } from '../lib/client/react'
 import { useStore } from '../lib/store'
 import { temporaryNotice } from '../lib/temp_password'
-import { AccountLabel, LabelText } from './instance_badge'
+import { ViewActorTag } from './view_actor'
+import { LabelText } from './instance_badge'
 import { NoticeStack } from './notice_stack'
 
 const bannerCls =
@@ -11,7 +12,7 @@ const bannerCls =
 
 // Shown while the account signed in with a temporary password it has not replaced, in the
 // place of the error and the toast, which take it while they show. A dialog hides it.
-function TemporaryPassword({ labelled }: { labelled: boolean }) {
+function TemporaryPassword() {
   const temporary = useStore(s => s.me?.password_temporary ?? null)
   const openDialog = useStore(s => s.openDialog)
   const covered = useStore(s => s.activeDialog !== null)
@@ -22,7 +23,7 @@ function TemporaryPassword({ labelled }: { labelled: boolean }) {
       data-temporary-password
       className={`${bannerCls} flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-tertiary-container text-on-tertiary-container`}
     >
-      {labelled && <AccountLabel />}
+      <ViewActorTag />
       <span className="min-w-0">{temporaryNotice(temporary, Math.floor(Date.now() / 1000))}</span>
       <button
         onClick={() => openDialog({ kind: 'settings', section: 'profile' })}
@@ -35,21 +36,24 @@ function TemporaryPassword({ labelled }: { labelled: boolean }) {
 }
 
 // The error or toast at the top, and the notices.
-function AccountBanners({ labelled }: { labelled: boolean }) {
+function AccountBanners() {
   const toast = useStore(s => s.toast)
   const error = useStore(s => s.error)
   return (
     <>
-      {!error && !toast && <TemporaryPassword labelled={labelled} />}
+      {!error && !toast && <TemporaryPassword />}
       {error && (
         <div role="alert" className={`${bannerCls} bg-error-container text-on-error-container`}>
-          {labelled && <AccountLabel />}
+          <ViewActorTag />
           <LabelText text={error} />
         </div>
       )}
       {toast && !error && (
-        <div role="status" className={`${bannerCls} bg-inverse-surface text-inverse-on-surface`}>
-          {labelled && <AccountLabel />}
+        <div
+          role="status"
+          className={`${bannerCls} bg-inverse-surface text-inverse-on-surface [&_[data-view-actor]]:me-1.5 [&_[data-view-actor]]:text-inherit`}
+        >
+          <ViewActorTag peer={toast.peer} />
           <LabelText text={toast.text} />
           {toast.name && (
             <>
@@ -70,7 +74,7 @@ export function Banners() {
       <div className="contents sm:pointer-events-none sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:flex sm:-translate-x-1/2 sm:flex-col sm:gap-2">
         {sessions.map(session => (
           <AccountProvider key={session.renderKey} session={session}>
-            <AccountBanners labelled={sessions.length > 1} />
+            <AccountBanners />
           </AccountProvider>
         ))}
       </div>
