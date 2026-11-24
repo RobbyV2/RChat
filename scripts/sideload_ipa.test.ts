@@ -171,6 +171,22 @@ describe('sideload IPA', () => {
     ])
   })
 
+  test('the incoming share extension and its containing app keep matching app-group entitlements', () => {
+    const { status, signed } = run([
+      ...app(),
+      {
+        name: 'Payload/RChat.app/PlugIns/RChatShare.appex/RChatShare',
+        data: 'extension',
+        mode: 0o755,
+      },
+    ])
+    expect(status).toBe(0)
+    expect(signed).toHaveLength(2)
+    for (const line of signed) expect(line).toContain('ShareGroup.entitlements')
+    expect(signed[0]).toEndWith('RChat.app/PlugIns/RChatShare.appex')
+    expect(signed[1]).toEndWith('RChat.app')
+  })
+
   test('the output keeps Payload at the root, the file modes and the signatures', () => {
     const { status, output } = run([...app(), ...nested])
     expect(status).toBe(0)

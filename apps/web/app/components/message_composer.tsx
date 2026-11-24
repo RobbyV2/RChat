@@ -1,5 +1,6 @@
 'use client'
 
+import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, useViewActor } from './view_actor'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -544,6 +545,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   return (
     <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
+      <PeerCodeButton text={text} />
       {pollOpen && pollTarget && (
         <CreatePollDialog target={pollTarget} onClose={() => setPollOpen(false)} />
       )}

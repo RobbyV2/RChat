@@ -1,3 +1,4 @@
+import { client } from '../client/client'
 import type { AccountSession } from '../client/session'
 // Messages and DMs: the loaded windows with their tails and heads, live appends, quotes and
 // edits, pins, link cards, the outbox, embeds, P2P availability and the DM list.
@@ -1195,13 +1196,27 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     }
   }
 
-  const openMessageAt = async (id: number, nav: Nav, current: () => boolean) => {
+  const openMessageAt = async (
+    id: number,
+    nav: Nav,
+    current: () => boolean,
+    place?: View,
+    thread?: number | null
+  ) => {
     const loc = await locateMessage(id)
     if (!current()) return true
-    if (!loc) return false
+    if (!loc || (thread !== undefined && thread !== loc.thread_root_id)) return false
+    if (place?.kind === 'dm' && loc.dm_id !== place.dmId) return false
+    if (
+      place?.kind === 'channel' &&
+      (loc.channel_id !== place.channelId || loc.server !== place.server)
+    )
+      return false
+    const switching = client.noticePending(acct)
     if (loc.dm_id !== null) {
       const v = shownView(acct, get().view)
-      if (v?.kind === 'dm' && v.dmId === loc.dm_id) await get().jumpTo(`d${loc.dm_id}`, id)
+      if (!switching && v?.kind === 'dm' && v.dmId === loc.dm_id)
+        await get().jumpTo(`d${loc.dm_id}`, id)
       else await get().openDm(loc.dm_id, nav, id)
       return true
     }
@@ -1212,7 +1227,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       persistGuestServers([...guestServers, server])
       home.ws.subscribe([server])
     }
-    await openChannelAt(server, channel_id, loc.thread_root_id, id, nav)
+    await openChannelAt(server, channel_id, loc.thread_root_id, id, nav, switching)
     return true
   }
 
@@ -1795,7 +1810,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       return fwd ? get().openMessage(fwd.source_id) : Promise.resolve()
     },
 
-    openMessage: (id, nav = 'push', place) =>
+    openMessage: (id, nav = 'push', place, thread) =>
       act(async () => {
         const current = navigationIntent()
         if (place?.kind === 'channel') {
@@ -1804,7 +1819,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           const target = instanceTarget(get(), place.server, place.channelId)
           if (!target || (!canView(target) && !(await requestViewing(target)))) return
         }
-        if (current() && !(await openMessageAt(id, nav, current)))
+        if (current() && !(await openMessageAt(id, nav, current, place, thread)))
           toast("You can't open this message")
       }),
 

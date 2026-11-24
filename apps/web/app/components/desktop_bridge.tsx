@@ -1,12 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { accountHistoryState, routeOwnerFor } from '../lib/client/account_paths'
-import { accountPath } from '../lib/view'
+import { knownLinkOrigin, routeInstanceLink } from '../lib/client/instance_links'
 import { client } from '../lib/client/client'
 import type { AccountSession } from '../lib/client/session'
 import { confirmGate, openDeepLink, type LinkEnv } from '../lib/deep_links'
-import { keptSession } from '../lib/start'
 import { inShell, mobileOs } from '../lib/platform'
 import { listen, shell } from '../lib/platform/desktop'
 import { Dialog, filledBtn, textBtn } from './ui'
@@ -21,28 +19,23 @@ const env = (
   confirmSwitch: LinkEnv['confirmSwitch'],
   active: () => boolean
 ): LinkEnv => {
-  const { me, guest, switchInstance, setError } = owner.store.getState()
+  const { setError } = owner.store.getState()
   const mark = owner.lifetime.sessionMark()
-  const current = () => active() && client.shown() === owner && client.live().includes(owner)
+  const nav = owner.store.navigationMark()
+  const shown = client.shownVersion()
+  const current = () =>
+    active() &&
+    shown === client.shownVersion() &&
+    client.shown() === owner &&
+    client.live().includes(owner)
   return {
     homeOrigin: owner.conn.origin,
-    canSwitch: () => current() && owner.lifetime.sessionMark() === mark,
-    canLoad: origin => current() && owner.conn.origin === origin,
     appLinks: mobileOs() !== null,
-    signedIn: me !== null || guest || keptSession(owner.conn, owner.credentialTarget),
-    live: (me !== null || guest) && !window.location.pathname.startsWith('/login'),
-    push: path => {
-      window.history.pushState(
-        accountHistoryState(owner, null),
-        '',
-        accountPath(path, routeOwnerFor(owner))
-      )
-      window.dispatchEvent(new PopStateEvent('popstate'))
-    },
-    load: path => window.location.assign(accountPath(path, routeOwnerFor(owner))),
+    current: () =>
+      current() && owner.lifetime.sessionMark() === mark && owner.store.navigationMark() === nav,
+    known: knownLinkOrigin,
+    route: (origin, path) => routeInstanceLink(owner, { origin, path }),
     confirmSwitch,
-    switchTo: switchInstance,
-    openOutside: url => void shell.openExternal(url).catch(() => {}),
     fail: message => {
       if (current() && owner.lifetime.sessionMark() === mark) setError(message)
     },
@@ -133,10 +126,9 @@ export default function DesktopBridge() {
   }, [])
   if (!ask) return null
   return (
-    <Dialog title="Switch instance?" onClose={() => ask.answer(false)} layer="confirm" compact>
+    <Dialog title="Open instance link?" onClose={() => ask.answer(false)} layer="confirm" compact>
       <p className="text-sm text-on-surface-variant">
-        Open <span className="font-medium break-all text-on-surface">{ask.host}</span>? This changes
-        your instance.
+        Open <span className="font-medium break-all text-on-surface">{ask.host}</span>?
       </p>
       <div className="mt-6 flex justify-end gap-2">
         <button type="button" autoFocus onClick={() => ask.answer(false)} className={textBtn}>

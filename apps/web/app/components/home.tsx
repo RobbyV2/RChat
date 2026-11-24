@@ -1,4 +1,5 @@
 'use client'
+import { openPeerLink } from '../lib/client/peer_links'
 import { ViewActorTag } from './view_actor'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 import type { P2pApp } from '../lib/p2p/app/runtime'
@@ -263,7 +264,11 @@ const p2pAct = (identity: P2pApp) => (state: CardState, dialog: P2pDialog) => {
   else p2p.openDialog(entry === 'enable' ? { kind: 'enable' } : dialog)
 }
 
-function QuickActions({ as, accounts }: { as?: ReactNode; accounts?: HomeActor[] } = {}) {
+function QuickActions({
+  as,
+  accounts,
+  actor,
+}: { as?: ReactNode; accounts?: HomeActor[]; actor?: P2pApp | null } = {}) {
   const identity = useP2pApp()
 
   const acct = useAccount()
@@ -275,6 +280,19 @@ function QuickActions({ as, accounts }: { as?: ReactNode; accounts?: HomeActor[]
   const [asking, setAsking] = useState(false)
   const [name, setName] = useState('')
   const [problem, setProblem] = useState<{ error: string; host?: string } | null>(null)
+  const openCode = (kind: 'invite' | 'contact') => {
+    const anyEnabled = [acct, ...client.live()].some(account =>
+      account.identities.list().some(app => app.useP2p.getState().enabled)
+    )
+    if (anyEnabled) openPeerLink(acct, { kind }, actor ?? null, client.shown())
+    else if (identity) {
+      showOwner(acct, identity)
+      p2pAct(identity)(
+        p2pState,
+        kind === 'invite' ? { kind: 'server_new', tab: 'join' } : { kind: 'add' }
+      )
+    }
+  }
   const submit = () => {
     const target = name.trim().replace(/^@/, '')
     if (!target) return
@@ -356,12 +374,7 @@ function QuickActions({ as, accounts }: { as?: ReactNode; accounts?: HomeActor[]
             <button
               type="button"
               data-p2p-action="contact"
-              onClick={() => {
-                if (identity) {
-                  showOwner(acct, identity)
-                  p2pAct(identity)(p2pState, { kind: 'add' })
-                }
-              }}
+              onClick={() => openCode('contact')}
               className={p2pActionCls}
             >
               <UserPlus size={18} className="shrink-0 text-tertiary" />
@@ -370,12 +383,7 @@ function QuickActions({ as, accounts }: { as?: ReactNode; accounts?: HomeActor[]
             <button
               type="button"
               data-p2p-action="join"
-              onClick={() => {
-                if (identity) {
-                  showOwner(acct, identity)
-                  p2pAct(identity)(p2pState, { kind: 'server_new', tab: 'join' })
-                }
-              }}
+              onClick={() => openCode('invite')}
               className={p2pActionCls}
             >
               <Waypoints size={18} className="shrink-0 text-tertiary" />
@@ -1138,7 +1146,9 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
       onClickCapture={
         actor
           ? e => {
-              if ((e.target as HTMLElement).closest('button')) showOwner(actor.account, actor.peer)
+              const button = (e.target as HTMLElement).closest('button')
+              if (button && !button.hasAttribute('data-peer-code'))
+                showOwner(actor.account, actor.peer)
             }
           : undefined
       }
@@ -1242,7 +1252,10 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
             <div className="flex flex-wrap gap-2 px-2 pt-2">
               <button
                 type="button"
-                onClick={() => p2p?.openDialog({ kind: 'add' })}
+                data-peer-code
+                onClick={() =>
+                  identity && openPeerLink(acct, { kind: 'contact' }, identity, client.shown())
+                }
                 className={`${textBtn} flex items-center gap-1.5`}
               >
                 <UserPlus size={16} />
@@ -1258,7 +1271,10 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
               </button>
               <button
                 type="button"
-                onClick={() => p2p?.openDialog({ kind: 'server_new', tab: 'join' })}
+                data-peer-code
+                onClick={() =>
+                  identity && openPeerLink(acct, { kind: 'invite' }, identity, client.shown())
+                }
                 className={`${textBtn} flex items-center gap-1.5`}
               >
                 <Waypoints size={16} />
@@ -1547,7 +1563,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
       <AccountProvider session={actor.account} key={actor.key}>
         {actor.row.username ? (
           <P2pProvider identity={identity}>
-            <QuickActions as={picker} accounts={accounts} />
+            <QuickActions as={picker} accounts={accounts} actor={actor.peer} />
           </P2pProvider>
         ) : (
           <>

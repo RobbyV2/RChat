@@ -21,6 +21,7 @@
     "allow-open-text",
     "allow-open-external",
     "allow-take-deep-links",
-    "allow-share-text"
+    "allow-share-text",
+    "allow-take-incoming-share"
   ]
 }

@@ -1,3 +1,6 @@
+import { MarkdownMessage } from '../../../components/markdown_message'
+import { ChatSourceProvider } from '../../../components/chat_source'
+import { ServerDialogs } from '../../../components/server_dialogs'
 import { IdentityEnrollment } from '../../../components/p2p/identity_enrollment'
 import { addAccount, addIdentity, addInstance } from '../../client/book'
 import { useState } from 'react'
@@ -12,6 +15,7 @@ import { P2pStore } from '../../p2p/db'
 import type { ServerView } from '../../p2p/server'
 import { CallBanner } from '../../../components/voice_grid'
 import { client } from '../../client/client'
+import { selectPageAccount } from '../../client/account_paths'
 import { ContextMenu } from '../../../components/context_menu'
 import { registerAppActions } from '../../actions'
 import { AccountProvider } from '../../client/react'
@@ -358,9 +362,112 @@ if (calls) {
     },
   })
 }
+function peerCodeFixture() {
+  account.credentialTarget = me.username
+  client.show(account, 'replace')
+  let release: (() => void) | undefined
+  let delay = false
+  window.addEventListener('popstate', () => selectPageAccount(location.pathname, history.state))
+  account.api.searchServers = async () => {
+    document.body.dataset.searched = 'yes'
+    return []
+  }
+  for (const app of [main, sibling]) {
+    app.useP2p.setState({ account: 'sam', name: app.localId, status: 'online' })
+    app.put.servers({
+      voice: { back() {}, goodbye() {} },
+      stop() {},
+      async redeem() {
+        if (delay)
+          await new Promise<void>(resolve => {
+            release = resolve
+          })
+        document.body.dataset.joined = app.localId
+        return room
+      },
+      serverRooms: () => [],
+      coOwnerAsks: () => [],
+      transferAsks: () => [],
+      invites: () => [],
+    } as unknown as NonNullable<typeof app.servers>)
+    app.p2pServer.peek = () =>
+      ({ name: 'Test room' }) as NonNullable<ReturnType<typeof app.p2pServer.peek>>
+    app.p2p.readCard = async () => {
+      document.body.dataset.read = app.localId
+      return null
+    }
+  }
+  account.identities.show(main)
+  Object.assign(window, {
+    delayJoin: () => {
+      delay = true
+      delete document.body.dataset.joined
+    },
+    pendingJoin: () => !!release,
+    finishJoin: () => {
+      release?.()
+      release = undefined
+      delay = false
+    },
+    selectMain: () => account.identities.show(main),
+    joinedRoom: () => sibling.useP2p.getState().server?.room,
+    replaceWork: () => {
+      account.identities.unregister('work')
+      account.identities
+        .add('work')
+        .useP2p.setState({ account: 'sam', enabled: true, name: 'Replacement' })
+    },
+    viewedPeer: () => account.identities.viewed()?.localId,
+  })
+  return (
+    <AccountProvider session={account}>
+      <button
+        onClick={() => account.store.getState().openDialog({ kind: 'add_server', tab: 'join' })}
+      >
+        Join a server
+      </button>
+      <P2pProvider identity={sibling}>
+        <ChatSourceProvider
+          value={{
+            known: () => '',
+            self,
+            mine: () => false,
+            user: () => me,
+            people: () => [],
+            toggleReaction: () => {},
+            loadReactors: async () => [],
+            openReactPicker: () => {},
+          }}
+        >
+          {['rcp1.fixture', 'rci1.fixture'].map((content, i) => (
+            <MarkdownMessage
+              key={i}
+              message={{
+                id: 12,
+                channel_id: null,
+                dm_id: 1,
+                thread_root_id: null,
+                author: me,
+                content,
+                created_at: 1,
+                reply_count: 0,
+                media: null,
+                embeds: [],
+                kind: 'user',
+                call: null,
+              }}
+            />
+          ))}
+        </ChatSourceProvider>
+      </P2pProvider>
+      <ServerDialogs />
+    </AccountProvider>
+  )
+}
 const root = createRoot(document.body.appendChild(document.createElement('main')))
 const query = new URLSearchParams(location.search)
-if (query.has('enroll')) void enrollmentFixture().then(view => root.render(view))
+if (query.has('codes')) root.render(peerCodeFixture())
+else if (query.has('enroll')) void enrollmentFixture().then(view => root.render(view))
 else if (query.has('exports')) root.render(exportFixture())
 else if (query.has('dock')) {
   void dockFixture(query.get('dock') === 'voice', query.has('background')).then(view =>

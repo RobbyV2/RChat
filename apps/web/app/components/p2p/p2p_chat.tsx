@@ -1,4 +1,5 @@
 'use client'
+import { PeerCodeButton } from './peer_code_button'
 import { useActorSuffix, usePeerActor } from '../view_actor'
 import { identityScopeKey } from '../../lib/p2p/app/host'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -681,6 +682,7 @@ function P2pComposerBody({
 
   return (
     <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
+      <PeerCodeButton text={text} peer />
       {pickerOpen && (
         <EmojiPicker
           anchor={emojiRef.current}
@@ -1198,6 +1200,7 @@ function IdentityChatBody(props: ChatBodyProps) {
       <main
         {...props.dataAttr}
         className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
+        data-share-drop-pane
         onDragEnter={e => {
           e.preventDefault()
           if (!canDrop || !e.dataTransfer.types.includes('Files')) return

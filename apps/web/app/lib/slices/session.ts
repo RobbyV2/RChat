@@ -59,6 +59,7 @@ import {
   sameInvite,
   takeStashedInvite,
   targetPath,
+  publicInvitePath,
 } from '../invite'
 import { deniedAccess } from '../join_flow'
 import { keyed, mergeHead, refreshTail, samePrefix } from '../lists'
@@ -1144,16 +1145,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (!shown || !sameInvite(shown, entry)) return
       const clean = new URL(currentUrl)
       clean.pathname = accountPath(targetPath(entry), routeOwnerFor(acct))
-      clean.searchParams.delete('password')
-      const fragment = new URLSearchParams(clean.hash.slice(1))
-      if (fragment.has('password')) {
-        fragment.delete('password')
-        clean.hash = fragment.toString()
-      }
       window.history.replaceState(
         accountHistoryState(acct, entryState(entry, owner)),
         '',
-        clean.pathname + clean.search + clean.hash
+        publicInvitePath(clean)
       )
     })
   }
@@ -1226,6 +1221,16 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   // `retrying`: a boot that tries again after a 429, so it must not fall back yet.
+  const canOpenDm = async (id: number) => {
+    if (get().guest || !get().me) return false
+    const known = () => get().dms.some(dm => dm.id === id) || closedDms.has(id)
+    if (!known())
+      await get()
+        .ensureDms([id])
+        .catch(() => {})
+    return known()
+  }
+
   const resolveUrl = async (nav: 'replace' | 'none', retrying = false) => {
     if (!client.ownsHistoryEntry(acct)) return
     const intent = beginNavigation()
@@ -1262,12 +1267,16 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         }
         return
       }
-      const opened = await openMessageAt(target.id, 'replace', () => !ended()).catch(
-        (e: unknown) => {
-          if (!ended()) fail(e)
-          return true
-        }
-      )
+      const opened = await openMessageAt(
+        target.id,
+        'replace',
+        () => !ended(),
+        target.place,
+        target.thread
+      ).catch((e: unknown) => {
+        if (!ended()) fail(e)
+        return true
+      })
       if (ended()) return
       if (!opened) toast("You can't open this message")
       const now = get().view
@@ -1278,13 +1287,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (!target && atHome()) return cur ? clearView() : set({ home: true })
     if (!target) return fallback()
     if (target.kind === 'dm') {
-      if (get().guest) return fallback()
-      const known = () => get().dms.some(d => d.id === target.dmId)
-      if (!known())
-        await get()
-          .ensureDms([target.dmId])
-          .catch(() => {})
-      if (!known() && !closedDms.has(target.dmId)) return fallback()
+      if (!(await canOpenDm(target.dmId))) return fallback()
       await readsHub.ready()
       if (ended()) return
       return get().openDm(target.dmId, nav)
@@ -1427,7 +1430,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     const here = v?.kind === 'channel' && v.channelId === channelId
     const at = threadRootId ?? id
     const mark = sessionMark()
-    if (switching) await get().openChannel(server, channelId, nav, at)
+    if (switching) await get().openChannel(server, channelId, nav, at, navigation)
     else if (here) {
       set({ panel: null })
       await get().jumpTo(viewKey({ kind: 'channel', server, channelId }), at)
@@ -1697,9 +1700,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
     },
 
-    bootstrap: async () => {
+    bootstrap: async (restorePage = true) => {
       if (get().me || get().guest) {
-        await bootUrl()
+        if (restorePage) await bootUrl()
         return
       }
       const mark = sessionMark()
@@ -1741,7 +1744,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         applyMe(me, false)
         set({ token, guest: false, bootError: null })
         startWs()
-        await bootUrl()
+        if (restorePage) await bootUrl()
       } else if (guest) {
         recordGuest(true)
         persistGrants(readJson<Record<string, string>>(LS.guestGrants, {}))
@@ -1753,7 +1756,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         loadGuestLayout()
         armIce(null, false)
         startWs()
-        await bootUrl()
+        if (restorePage) await bootUrl()
       }
     },
 
@@ -1993,12 +1996,17 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         void pruneScopes()
         const target = detail.channels.find(c => c.id === channelId) ?? detail.channels[0]
         if (!target) throw new Error(`No channels you can view in ${detail.display_name}`)
-        await get().openChannel(name, target.id, nav, target.id === channelId ? at : undefined)
+        await get().openChannel(
+          name,
+          target.id,
+          nav,
+          target.id === channelId ? at : undefined,
+          intent
+        )
       }),
 
-    openChannel: (server, channelId, nav = 'push', at) =>
+    openChannel: (server, channelId, nav = 'push', at, intent = beginNavigation(), current) =>
       act(async () => {
-        const intent = beginNavigation()
         const target = instanceTarget(get(), server, channelId)
         if (
           (labelsOffline() || !target || !canView(target)) &&
@@ -2010,7 +2018,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           }
           return
         }
-        if (intent !== navigation) return
+        if (intent !== navigation || (current && !current())) return
         const view: View = { kind: 'channel', server, channelId }
         const key = viewKey(view)
         const before = get().view
@@ -2059,15 +2067,22 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         askP2p(msgs)
       }),
 
-    openInvite: (server, password = null, code = null) => {
+    openInvite: (server, password = null, code = null, requested) => {
       beginNavigation()
       const target = code ? { server: '', password: null, code } : { server, password }
       const invite: OpenInvite = { ...target, join: false }
       set({ invite, contextMenu: null, profile: null, activeDialog: null })
       if (!ownsPage()) return
-      const path = accountPath(targetPath(target), routeOwnerFor(acct))
+      const path = accountPath(
+        requested ? publicInvitePath(new URL(requested, home.origin)) : targetPath(target),
+        routeOwnerFor(acct)
+      )
       const owner = inviteHistoryOwner()
-      if (window.location.pathname !== path)
+      if (
+        client.noticePending(acct) ||
+        window.location.pathname + (window.location.search ?? '') + (window.location.hash ?? '') !==
+          path
+      )
         window.history.pushState(
           accountHistoryState(acct, entryState({ ...target, pushed: true }, owner)),
           '',
@@ -2247,6 +2262,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     handlers,
     actions,
     atHome,
+    canOpenDm,
     clearView,
     dropGrant,
     expireSession,

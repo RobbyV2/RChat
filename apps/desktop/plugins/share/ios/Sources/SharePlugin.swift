@@ -18,6 +18,28 @@ class SharePlugin: Plugin {
 
   public override func load(webview: WKWebView) {
     self.webview = webview
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+      Unmanaged.passUnretained(self).toOpaque(), { _, observer, _, _, _ in
+        guard let observer = observer else { return }
+        let plugin = Unmanaged<SharePlugin>.fromOpaque(observer).takeUnretainedValue()
+        DispatchQueue.main.async {
+          plugin.webview?.evaluateJavaScript("window.dispatchEvent(new Event('rchat-incoming-share'))")
+        }
+      }, "io.github.robbyv2.rchat.incoming" as CFString, nil, .deliverImmediately)
+  }
+
+  deinit {
+    CFNotificationCenterRemoveEveryObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+      Unmanaged.passUnretained(self).toOpaque())
+  }
+
+  private let inboxQueue = DispatchQueue(label: "rchat.share.inbox")
+
+  @objc public func takeIncoming(_ invoke: Invoke) {
+    inboxQueue.async {
+      do { invoke.resolve(try IncomingShare.take()) }
+      catch { invoke.reject("Could not read the shared content.") }
+    }
   }
 
   @objc public func shareText(_ invoke: Invoke) throws {

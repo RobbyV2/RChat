@@ -312,18 +312,18 @@ export function createDmsPart(
   const p2pDm = {
     // Opens the conversation with a contact in the P2P home, or beside the instance's DM list
     // (`dms`), which a reload doesn't bring back.
-    async openDm(ik: string, where: 'home' | 'dms' = 'home') {
+    async openDm(ik: string, where: 'home' | 'dms' = 'home', selected = () => true) {
       const current = currentSession()
       const me = meNow()
       if (!me) return
       const room = dmRoomId(me, ik)
-      writeHome(where === 'home' ? useP2p.getState().account : null)
       if (state.dms) await state.dms.open(ik).catch(() => null)
       if (!current()) return
       const r = await dbNow()
         ?.room(room)
         .catch(() => undefined)
-      if (!current()) return
+      if (!current() || !selected()) return
+      writeHome(where === 'home' ? useP2p.getState().account : null)
       useP2p.setState(st => ({
         home: true,
         dmList: where === 'dms',

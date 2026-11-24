@@ -521,10 +521,19 @@ export function createChatStore(acct: AccountSession) {
 
   const bootstrap = chatStore.getState().bootstrap
   let boot: Promise<void> | undefined
+  let restoresPage = false
   chatStore.setState({
-    bootstrap() {
-      if (!boot) {
-        const pending = bootstrap().finally(() => {
+    bootstrap(restorePage = true) {
+      if (!boot || (restorePage && !restoresPage)) {
+        const epoch = acct.lifetime.sessionMark()
+        const work = boot
+          ? boot.then(() => {
+              const { me, guest } = chatStore.getState()
+              if (acct.lifetime.sessionMark() === epoch && (me || guest)) return bootstrap(true)
+            })
+          : bootstrap(restorePage)
+        restoresPage = restorePage
+        const pending = work.finally(() => {
           if (boot === pending) boot = undefined
         })
         boot = pending
@@ -645,6 +654,7 @@ export function createChatStore(acct: AccountSession) {
   })
   return Object.assign(chatStore, {
     setSocket: (on: boolean) => sessionHub.setSocket(on),
+    canOpenDm: (id: number) => sessionHub.canOpenDm(id),
     navigationMark: () => sessionHub.navigationMark(),
     cancelNavigation: () => sessionHub.cancelNavigation(),
     resumeView: () => sessionHub.resumeView(),

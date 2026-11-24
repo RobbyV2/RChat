@@ -22,6 +22,7 @@ import { notifications } from '../lib/platform'
 import { useGuestPostingCheck } from '../components/use_guest_posting_check'
 import { pollAccountCounts, startAccountCounts } from '../lib/client/account_counts'
 import { startApp } from '../lib/start'
+import { shareLoginHref } from '../lib/client/share_target'
 import { ContextMenu } from '../components/context_menu'
 import { ReactionPickerHost } from '../components/reactions'
 import { ProfileCard } from '../components/profile_card'
@@ -103,7 +104,9 @@ export default function AppShell() {
       void startApp(() => {
         if (!client.ownsHistoryEntry(account)) return
         const { pathname, search, hash } = window.location
-        router.replace(loginHref(pathname + search + hash, routeOwnerFor(account)))
+        router.replace(
+          shareLoginHref(loginHref(pathname + search + hash, routeOwnerFor(account)), search)
+        )
       }, account)
     },
     [router]
@@ -118,7 +121,7 @@ export default function AppShell() {
       }
       if (awaitingInstance(account.conn)) {
         setRoute('login')
-        router.replace('/login/')
+        router.replace(shareLoginHref('/login/', window.location.search))
         return
       }
       if (clientOnly() && !parseAccountPath(window.location.pathname)?.owner) {

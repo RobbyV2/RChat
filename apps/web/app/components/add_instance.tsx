@@ -89,12 +89,14 @@ export function TrustNotice({
 export function AddInstanceFlow({
   initialOrigin,
   initialUsername,
+  linkTarget = false,
   stay = false,
   onCancel,
   onDone,
 }: {
   initialOrigin?: string
   initialUsername?: string
+  linkTarget?: boolean
   stay?: boolean
   onCancel?: () => void
   onDone: (a: AccountSession) => void
@@ -176,7 +178,8 @@ export function AddInstanceFlow({
       if (token !== generation.current) return
       const t = { origin, info, conn, settings }
       setTarget(t)
-      if (result.step === 'signin') authenticate(t)
+      if (linkTarget && (shellInfo() || origin !== window.location.origin)) setStep('trust')
+      else if (result.step === 'signin') authenticate(t)
       else setStep(result.step)
     } catch (e) {
       if (token === generation.current) setError(e instanceof Error ? e.message : String(e))
@@ -230,7 +233,7 @@ export function AddInstanceFlow({
             <input
               autoFocus
               required
-              disabled={busy}
+              disabled={busy || linkTarget}
               value={address}
               onChange={e => setAddress(e.target.value)}
               placeholder="chat.example.com"
@@ -241,7 +244,7 @@ export function AddInstanceFlow({
               className="streamer rounded-lg border border-outline bg-transparent px-3 py-2"
             />
           </label>
-          {!streamer && (
+          {!streamer && !linkTarget && (
             <div className="flex flex-wrap gap-2">
               {knownInstances()
                 .filter(i => allowed || i.origin === ownInstance()?.origin)
@@ -377,7 +380,7 @@ export function AddInstanceFlow({
             />
           </AccountProvider>
         ))}
-      {(step === 'known' || step === 'signin') && (
+      {!linkTarget && (step === 'known' || step === 'signin') && (
         <button className={secondary} onClick={back}>
           Change instance
         </button>

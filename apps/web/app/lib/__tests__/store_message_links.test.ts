@@ -140,6 +140,16 @@ describe('opening a message link', () => {
     expect(st().toast).toBeNull()
   })
 
+  test('a message id in another room or thread leaves the current view in place', async () => {
+    readable[40] = card()
+    const before = st().view
+    await st().openMessage(40, 'push', { kind: 'dm', dmId: 77 }, null)
+    expect(st().view).toBe(before)
+    await st().openMessage(40, 'push', { kind: 'channel', server: 's', channelId: 77 }, 39)
+    expect(st().view).toBe(before)
+    expect(st().focus.c77 ?? null).toBeNull()
+  })
+
   test('an unreadable message toasts and stays put', async () => {
     await st().openMessage(41)
     expect(st().toast?.text).toBe("You can't open this message")

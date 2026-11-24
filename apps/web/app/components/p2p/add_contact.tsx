@@ -76,17 +76,25 @@ function Preview({ card }: { card: Card }) {
   )
 }
 
-function AddContactDialogBody({ initial = 'paste' }: { initial?: Tab }) {
+function AddContactDialogBody({
+  initial = 'paste',
+  code: given = '',
+  routed,
+}: {
+  initial?: Tab
+  code?: string
+  routed?: { close(): void; valid(): boolean; finish(): void }
+}) {
   const identity = useP2pApp()!
   const { p2p } = identity
 
   const [tab, setTab] = useState<Tab>(initial)
-  const [code, setCode] = useState('')
+  const [code, setCode] = useState(given)
   const [intro, setIntro] = useState('')
   const [card, setCard] = useState<Card | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const close = p2p.closeDialog
+  const close = routed?.close ?? p2p.closeDialog
 
   useEffect(() => {
     let live = true
@@ -117,11 +125,14 @@ function AddContactDialogBody({ initial = 'paste' }: { initial?: Tab }) {
   }, [code])
 
   const add = async () => {
+    if (routed && !routed.valid()) return close()
     setBusy(true)
     const res = await p2p.addContact(code, intro)
     setBusy(false)
+    if (routed && !routed.valid()) return
     if (!res) return setError(identity.useP2p.getState().error ?? "Couldn't add that contact")
     if (!res.ok) return setError(res.error)
+    routed?.finish()
     identity.p2pHost.toast(
       res.contact.state === 'mutual' ? 'Contact added' : 'Contact request sent'
     )

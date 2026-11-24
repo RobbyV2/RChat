@@ -1,4 +1,5 @@
 'use client'
+import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -308,9 +309,11 @@ type NewTab = 'create' | 'join'
 function ServerNewDialogBody({
   tab: first = 'create',
   code: given = '',
+  routed,
 }: {
   tab?: NewTab
   code?: string
+  routed?: { close(): void; valid(): boolean; finish(): void }
 }) {
   const ownerAccount = useAccount()
 
@@ -335,14 +338,31 @@ function ServerNewDialogBody({
     if (!room) setError(ownerAccount.store.getState().toast?.text ?? "Couldn't create the server")
   }
   const join = async () => {
+    if (routed && !routed.valid()) return routed.close()
     setBusy(true)
     setError(null)
+    const shown = client.shown()
+    const navigation = shown.store.navigationMark()
+    const selection = client.actorSelectionMark()
+    const dialog = identity.useP2p.getState().dialog
     const room = await p2pServer.join(code)
     setBusy(false)
+    if (
+      !identity.isCurrent() ||
+      client.shown() !== shown ||
+      client.actorSelectionMark() !== selection ||
+      shown.store.navigationMark() !== navigation ||
+      (routed ? !routed.valid() : identity.useP2p.getState().dialog !== dialog)
+    )
+      return
     if (!room) setError(ownerAccount.store.getState().toast?.text ?? "Couldn't join")
+    else {
+      routed?.finish()
+      void p2pServer.open(room)
+    }
   }
   return (
-    <Dialog title="P2P server" onClose={p2p.closeDialog} full>
+    <Dialog title="P2P server" onClose={routed?.close ?? p2p.closeDialog} full>
       {!enabled ? (
         <div className="flex flex-col items-start gap-3">
           <p className="text-sm text-on-surface-variant">
@@ -360,24 +380,26 @@ function ServerNewDialogBody({
                 ['create', 'Create'],
                 ['join', 'Join with a code'],
               ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                role="tab"
-                aria-selected={tab === key}
-                onClick={() => {
-                  setTab(key)
-                  setError(null)
-                }}
-                className={`rounded-full px-3 py-1.5 text-sm ${
-                  tab === key
-                    ? 'bg-secondary-container text-on-secondary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container-highest'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            )
+              .filter(([key]) => !routed || key === 'join')
+              .map(([key, label]) => (
+                <button
+                  key={key}
+                  role="tab"
+                  aria-selected={tab === key}
+                  onClick={() => {
+                    setTab(key)
+                    setError(null)
+                  }}
+                  className={`rounded-full px-3 py-1.5 text-sm ${
+                    tab === key
+                      ? 'bg-secondary-container text-on-secondary-container'
+                      : 'text-on-surface-variant hover:bg-surface-container-highest'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
           </div>
           <CoOwnerAsks />
           {tab === 'create' ? (
@@ -412,7 +434,7 @@ function ServerNewDialogBody({
               )}
               <FieldError message={error} />
               <div className="flex justify-end gap-2">
-                <button onClick={p2p.closeDialog} className={textBtn}>
+                <button onClick={routed?.close ?? p2p.closeDialog} className={textBtn}>
                   Cancel
                 </button>
                 <button
@@ -475,7 +497,7 @@ function ServerNewDialogBody({
               <p className="text-xs text-on-surface-variant">{IP_NOTE}</p>
               <FieldError message={error} />
               <div className="flex justify-end gap-2">
-                <button onClick={p2p.closeDialog} className={textBtn}>
+                <button onClick={routed?.close ?? p2p.closeDialog} className={textBtn}>
                   Cancel
                 </button>
                 <button

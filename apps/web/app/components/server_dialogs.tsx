@@ -1,7 +1,10 @@
 'use client'
 
+import { PeerCodeDialog } from './p2p/peer_code_dialog'
+import { openPeerLink, peerCode } from '../lib/client/peer_links'
 import { SwitcherDialog } from './account_switcher'
 import { AddInstanceDialog, AddInstanceFlow, useAddingAllowed } from './add_instance'
+import { submittedLinkTarget, routeInstanceLink } from '../lib/client/instance_links'
 import { client } from '../lib/client/client'
 import type { AccountSession } from '../lib/client/session'
 import { accountStorage } from '../lib/client/keys'
@@ -13,7 +16,7 @@ import { Activity, useRef, useEffect, useState } from 'react'
 import { errorText, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
-import { JOIN_NOTE, joinByCode, joinInput, runJoinStep, type JoinStep } from '../lib/join_flow'
+import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { Dialog, FieldError, Masked } from './ui'
 
@@ -22,27 +25,30 @@ function AddServerDialog({
   locked,
   initial,
   owner,
-  acting,
   selecting,
+  selectedAs,
   selection,
   picker,
 }: {
   owner: AccountSession
-  acting: AccountSession
   selection: React.RefObject<number>
   selecting: boolean
+  selectedAs: AccountSession | null
   picker: ReactNode
   join?: string
   locked?: boolean
   initial?: 'create' | 'join'
 }) {
+  const acting = selectedAs ?? owner
   const {
     api,
-    shareOrigin,
     lifetime: { inSession },
   } = acting
   const { guest, createServer, joinServer, guestJoinServer } = acting.store.getState()
   const closeDialog = owner.store.getState().closeDialog
+  const [initiatingIdentity] = useState(() =>
+    acting === owner && owner.identities.coversView() ? (owner.identities.viewed() ?? null) : null
+  )
   const [tab, setTab] = useState<'create' | 'join'>(guest || join ? 'join' : (initial ?? 'create'))
   const [name, setName] = useState(join ?? '')
   const [password, setPassword] = useState('')
@@ -55,10 +61,9 @@ function AddServerDialog({
   const joining = !creating
   const id = name.trim().toLowerCase()
   const nameTaken = creating && taken?.id === id && taken.taken
-  const link = joining ? joinInput(name, shareOrigin) : null
 
   useEffect(() => {
-    if (!joining || !id || id.includes('/')) {
+    if (!joining || !id || id.includes('/') || /^(?:rci1|rcp1)\./i.test(id)) {
       setSuggestions([])
       return
     }
@@ -72,7 +77,7 @@ function AddServerDialog({
   }, [id, joining])
 
   useEffect(() => {
-    if (!creating || !id) return
+    if (!creating || !id || /^(?:rci1|rcp1)\./i.test(id)) return
     const t = setTimeout(() => {
       api
         .serverAvailable(id)
@@ -92,6 +97,21 @@ function AddServerDialog({
   const submit = async () => {
     const trimmed = name.trim()
     if (!trimmed || busy || selecting) return
+    if (/^(?:rci1|rcp1)\./i.test(trimmed)) {
+      const peer = peerCode(trimmed)
+      if (joining && peer) {
+        openPeerLink(acting, peer, acting === owner ? initiatingIdentity : null, owner)
+      } else setError('Enter a valid P2P code in the Join tab.')
+      return
+    }
+    if (joining && trimmed.includes('/')) {
+      const target = submittedLinkTarget(acting, trimmed)
+      if (target) {
+        closeDialog()
+        await routeInstanceLink(owner, target, selectedAs)
+        return
+      }
+    }
     setBusy(true)
     setError(null)
     const dialog = owner.store.getState().activeDialog
@@ -124,31 +144,7 @@ function AddServerDialog({
     }
     const join = (server: string, pw?: string) =>
       guest ? guestJoinServer(server, pw) : joinServer(server, pw)
-    if (link?.code) {
-      const failed = await joinByCode(
-        link.code,
-        code => api.inviteByCode(code).then(card => card.server.name),
-        join,
-        errorText
-      )
-      if (failed === null) close()
-      else {
-        setError(failed)
-        setBusy(false)
-      }
-      return
-    }
-    const target = link?.server ?? trimmed
-    if (link) {
-      setName(link.server)
-      if (link.password) setPassword(link.password)
-    }
-    const out = await runJoinStep(
-      link?.password ? 'password' : step,
-      link?.password ?? password,
-      pw => join(target, pw),
-      errorText
-    )
+    const out = await runJoinStep(step, password, pw => join(trimmed, pw), errorText)
     if (out.done) {
       close()
       return
@@ -273,7 +269,8 @@ function AccountServerDialog({
   const owner = useAccount()
   const sessions = useLiveSessions()
   const allowed = useAddingAllowed()
-  const [acting, setActing] = useState(owner)
+  const [selectedAs, setSelectedAs] = useState<AccountSession | null>(null)
+  const acting = selectedAs ?? owner
   const selection = useRef(0)
   const [switching, setSwitching] = useState<AccountSession | null>(null)
   const [switchError, setSwitchError] = useState('')
@@ -327,7 +324,7 @@ function AccountServerDialog({
               client.live().includes(next) &&
               (next.store.getState().me || next.store.getState().guest)
             )
-              setActing(next)
+              setSelectedAs(next)
             else setSwitchError('Sign in again to use that account.')
           }}
         >
@@ -352,7 +349,7 @@ function AccountServerDialog({
         <AddServerDialog
           key={acting.renderKey}
           owner={owner}
-          acting={acting}
+          selectedAs={selectedAs}
           selecting={!!switching}
           selection={selection}
           picker={picker}
@@ -366,6 +363,8 @@ function AccountServerDialog({
 }
 export function ServerDialogs() {
   const dialog = useStore(s => s.activeDialog)
+  if (dialog?.kind === 'peer_code')
+    return <PeerCodeDialog key={dialog.request.id} request={dialog.request} />
   if (dialog?.kind === 'account_switcher') return <SwitcherDialog initialManage={!!dialog.manage} />
   if (dialog?.kind === 'add_instance')
     return <AddInstanceDialog initialOrigin={dialog.origin} initialUsername={dialog.username} />

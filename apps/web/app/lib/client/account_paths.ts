@@ -48,7 +48,7 @@ function firstSavedLogin(book: Book) {
 
 // A prefix can represent multiple origins with the same authority. Only this
 // entry's recorded origin can disambiguate those for Back and Forward.
-function resolvePageAccount(pathname: string, historyState: unknown): AccountSession | null {
+export function resolvePageAccount(pathname: string, historyState: unknown): AccountSession | null {
   const route = parseAccountPath(pathname)
   if (!route) return null
   const shown = client.shown()

@@ -43,6 +43,13 @@ pub(crate) fn manifest(brand: &Stored) -> serde_json::Value {
     let mut manifest = serde_json::json!({
         "name": brand.app(),
         "short_name": brand.short(),
+        "share_target": {
+            "action": "/share-target/",
+            "method": "POST",
+            "enctype": "multipart/form-data",
+            "params": {"title": "title", "text": "text", "url": "url",
+                       "files": [{"name": "files", "accept": ["*/*"]}]}
+        },
         "start_url": "/",
         "display": "standalone",
         "theme_color": THEME_COLOR,

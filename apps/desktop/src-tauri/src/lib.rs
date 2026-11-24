@@ -362,6 +362,23 @@ fn take_deep_links(shell: State<'_, Shell>, batch: Option<u64>) -> Vec<String> {
     lock(&shell.links).take(batch)
 }
 
+#[tauri::command]
+async fn take_incoming_share(app: AppHandle) -> Result<serde_json::Value, String> {
+    #[cfg(mobile)]
+    {
+        use tauri_plugin_rchat_share::ShareExt;
+        let incoming = tauri::async_runtime::spawn_blocking(move || app.share().take_incoming())
+            .await
+            .map_err(|_| "Could not receive share")??;
+        serde_json::to_value(incoming).map_err(|_| "Could not receive share".into())
+    }
+    #[cfg(desktop)]
+    {
+        let _ = app;
+        Ok(serde_json::Value::Null)
+    }
+}
+
 // The system share sheet; true when shared, false when the user closed it. Phones only.
 #[tauri::command]
 async fn share_text(app: AppHandle, title: Option<String>, text: String) -> Result<bool, String> {
@@ -754,6 +771,7 @@ pub fn run() {
             open_external,
             take_deep_links,
             share_text,
+            take_incoming_share,
             #[cfg(desktop)]
             desktop::autostart,
             #[cfg(desktop)]

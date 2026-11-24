@@ -83,6 +83,17 @@ export const inviteUrl = (server: string, password: string | null | undefined, o
   return `${base}${invitePath(server)}${pw ? `#password=${queryEncode(pw)}` : ''}`
 }
 
+// Keep routing fragments and query parameters when moving an invite password into history state.
+export function publicInvitePath(url: URL) {
+  if (url.searchParams.has('password')) url.searchParams.delete('password')
+  const fragment = new URLSearchParams(url.hash.slice(1))
+  if (fragment.has('password')) {
+    fragment.delete('password')
+    url.hash = fragment.toString()
+  }
+  return url.pathname + url.search + url.hash
+}
+
 const linkPassword = (url: URL) => {
   const fragment = new URLSearchParams(url.hash.replace(/^#/, '')).get('password')?.trim()
   return fragment || url.searchParams.get('password')?.trim() || null

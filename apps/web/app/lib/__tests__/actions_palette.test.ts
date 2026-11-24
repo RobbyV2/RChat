@@ -842,6 +842,23 @@ test('arguments: choices, checks and typed forms', () => {
   expect(byId.poll.slash).toBe('poll')
 })
 
+test('the Join command preserves private codes and canonicalizes server names', async () => {
+  selectionState()
+  const join = rows().find(row => row.id === 'join_server')!
+  for (const [input, expected] of [
+    ['rci1.AbC-_9', 'rci1.AbC-_9'],
+    ['rcp1.ZxY-123_', 'rcp1.ZxY-123_'],
+    ['Garden', 'garden'],
+  ]) {
+    await join.run(join.parse!('join ' + input)!)
+    expect(useStore.getState().activeDialog).toEqual({
+      kind: 'add_server',
+      tab: 'join',
+      join: expected,
+    })
+  }
+})
+
 test('each row makes the pinned store calls, confirms included', async () => {
   for (const [name, want] of Object.entries(RUNS))
     expect([name, await runAll(STATES[name], Object.keys(want))]).toEqual([name, want])

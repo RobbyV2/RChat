@@ -91,7 +91,11 @@ app=${apps[0]}
 ipa check "$app/Info.plist" "$min_ios" "$scheme"
 
 sign() {
-  codesign --force --sign - --timestamp=none "$1"
+  if [[ -d "$app/PlugIns/RChatShare.appex" && ( "$1" == "$app" || "$1" == "$app/PlugIns/RChatShare.appex" ) ]]; then
+    codesign --force --sign - --timestamp=none --entitlements "$(dirname "$0")/../mobile/ios/ShareGroup.entitlements" "$1"
+  else
+    codesign --force --sign - --timestamp=none "$1"
+  fi
 }
 # Nested code first: the app's signature seals what is inside it.
 for nested in "$app"/Frameworks/* "$app"/PlugIns/*.appex; do sign "$nested"; done

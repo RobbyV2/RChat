@@ -4,6 +4,7 @@ import { expect, test } from 'bun:test'
 import { listenForLinks } from '../../components/desktop_bridge'
 import { handleAndroidBack } from '../../components/mobile_bridge'
 import { client } from '../client/client'
+import { user } from './fixtures'
 import { testAccount } from './test_account'
 
 function replaceGlobal(key: string, value: unknown) {
@@ -61,6 +62,13 @@ for (const switched of [false, true]) {
     const b = testAccount('reader')
     const previous = client.shown
     const paths: string[] = []
+    for (const owner of [a, b])
+      owner.store.setState({
+        dms: [1, 2].map(id => ({ id, other: user('friend'), is_self: false })),
+        openDm: async id => {
+          paths.push('/dm/' + id + '/')
+        },
+      })
     const restore = replaceGlobal('window', {
       location: { pathname: '/' },
       history: { pushState: (_: unknown, __: string, path: string) => paths.push(path) },
@@ -97,10 +105,7 @@ for (const switched of [false, true]) {
       ready.resolve(() => {})
       await listener
       await new Promise(resolve => setTimeout(resolve, 0))
-      const prefix = '/@reader@instance.test'
-      expect(paths).toEqual(
-        (switched ? ['/dm/2/'] : ['/dm/1/', '/dm/2/']).map(path => prefix + path)
-      )
+      expect(paths).toEqual(switched ? ['/dm/2/'] : ['/dm/1/', '/dm/2/'])
       expect(queue.size).toBe(0)
     } finally {
       client.shown = previous

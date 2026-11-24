@@ -316,76 +316,35 @@ describe('deep links', () => {
     const env: LinkEnv = {
       homeOrigin: home,
       appLinks: false,
-      signedIn: true,
-      live: true,
-      push: p => void log.push(`push ${p}`),
-      load: p => void log.push(`load ${p}`),
+      known: () => false,
+      current: () => true,
+      route: async (origin, path) => {
+        log.push(origin + path)
+      },
       confirmSwitch: async h => {
         log.push(`confirm ${h}`)
         return true
       },
-      switchTo: async o => {
-        log.push(`switch ${o}`)
-        return null
-      },
-      openOutside: u => void log.push(`outside ${u}`),
       fail: m => void log.push(`fail ${m}`),
       ...over,
     }
     return { env, log }
   }
 
-  test('routes by instance and sign-in state', async () => {
+  test('opens known instances directly and confirms a new instance before routing', async () => {
     const live = fakeEnv()
     await openDeepLink('rchat://chat.example.com/s/main/1/', live.env)
-    expect(live.log).toEqual(['push /s/main/1/'])
-
-    const booting = fakeEnv({ live: false })
-    await openDeepLink('rchat://chat.example.com/invite/x/', booting.env)
-    expect(booting.log).toEqual(['load /invite/x/'])
-
-    const elsewhere = fakeEnv()
-    await openDeepLink('rchat://other.example/invite/x/', elsewhere.env)
-    expect(elsewhere.log).toEqual(['outside https://other.example/invite/x/'])
-
-    const fresh = fakeEnv({ signedIn: false, live: false })
-    await openDeepLink('rchat://other.example/invite/x/', fresh.env)
-    expect(fresh.log).toEqual([
-      'confirm other.example',
-      'switch https://other.example',
-      'load /invite/x/',
-    ])
-
-    const down = fakeEnv({ signedIn: false, live: false, switchTo: async () => "Can't reach it" })
-    await openDeepLink('rchat://other.example/invite/x/', down.env)
-    expect(down.log).toEqual(['confirm other.example', "fail Can't reach it"])
-
-    const bad = fakeEnv()
-    await openDeepLink('rchat://', bad.env)
-    expect(bad.log).toEqual(["fail That link can't be opened here"])
-  })
-
-  test('another instance never takes over without a yes', async () => {
-    const asked: string[] = []
-    const declined = fakeEnv({
-      signedIn: false,
-      live: false,
-      confirmSwitch: async h => {
-        asked.push(h)
-        return false
-      },
-    })
-    await openDeepLink('rchat://evil.example:8443/login/', declined.env)
-    expect(asked).toEqual(['evil.example:8443'])
+    expect(live.log).toEqual([home + '/s/main/1/'])
+    await openDeepLink('rchat://other.example/invite/x/', live.env)
+    expect(live.log.slice(1)).toEqual(['confirm other.example', 'https://other.example/invite/x/'])
+    const known = fakeEnv({ known: () => true })
+    await openDeepLink('rchat://other.example/i/abc234/', known.env)
+    expect(known.log).toEqual(['https://other.example/i/abc234/'])
+    const declined = fakeEnv({ confirmSwitch: async () => false })
+    await openDeepLink('rchat://other.example/', declined.env)
     expect(declined.log).toEqual([])
-
-    const signedIn = fakeEnv()
-    await openDeepLink('rchat://evil.example/', signedIn.env)
-    expect(signedIn.log).toEqual(['outside https://evil.example/'])
-
-    const local = fakeEnv({ signedIn: false })
-    await openDeepLink('rchat://chat.example.com/s/main/1/', local.env)
-    expect(local.log).toEqual(['push /s/main/1/'])
+    await openDeepLink('invalid', declined.env)
+    expect(declined.log).toEqual(["fail That link can't be opened here"])
   })
 })
 

@@ -84,6 +84,76 @@ async function identityExports(page: Page) {
   )
 }
 
+async function peerCodes(page: Page) {
+  await page.goto('https://shown.test/?codes')
+  const button = (name: string) => page.getByRole('button', { name, exact: true })
+  const viewed = () =>
+    page.evaluate(() => (window as unknown as { viewedPeer(): string }).viewedPeer())
+  await button('Open P2P contact code').click()
+  await page.waitForFunction(() => document.body.dataset.read === 'work')
+  await page.keyboard.press('Escape')
+  assert.equal(await viewed(), 'main')
+  await button('Open P2P invite').click()
+  assert.equal(await page.getByLabel('Invite code').inputValue(), 'rci1.fixture')
+  await button('Cancel').click()
+  assert.equal(await viewed(), 'main')
+  const open = async (checkPrivacy = false) => {
+    await button('Join a server').click()
+    await page.getByLabel('Server name or invite link').fill('rci1.fixture')
+    if (checkPrivacy) {
+      // Instance name suggestions debounce for 400ms.
+      await page.waitForTimeout(500)
+      assert.equal(await page.locator('body').getAttribute('data-searched'), null)
+    }
+    await button('Join').click()
+    await button('work').click()
+    assert.equal(await page.getByLabel('Invite code').inputValue(), 'rci1.fixture')
+  }
+  interface JoinFixture {
+    delayJoin(): void
+    pendingJoin(): boolean
+    finishJoin(): void
+    selectMain(): void
+    joinedRoom(): string | undefined
+  }
+  for (const supersede of ['back', 'selection']) {
+    await page.evaluate(() => {
+      history.pushState(history.state, '', '?codes&pending')
+      ;(window as unknown as JoinFixture).delayJoin()
+    })
+    await open()
+    await button('Join').click()
+    await page.waitForFunction(() => (window as unknown as JoinFixture).pendingJoin())
+    if (supersede === 'back') await page.goBack()
+    else await page.evaluate(() => (window as unknown as JoinFixture).selectMain())
+    const expectedUrl = page.url()
+    await page.evaluate(() => (window as unknown as JoinFixture).finishJoin())
+    await page.waitForFunction(() => document.body.dataset.joined === 'work')
+    assert.equal(await viewed(), 'main')
+    assert.equal(
+      await page.evaluate(() => (window as unknown as JoinFixture).joinedRoom()),
+      undefined
+    )
+    assert.equal(page.url(), expectedUrl)
+    await button('Cancel').click()
+  }
+  await open(true)
+  await button('Cancel').click()
+  assert.equal(await viewed(), 'main')
+  await open()
+  await button('Join').click()
+  await page.waitForFunction(() => document.body.dataset.joined === 'work')
+  assert.equal(await viewed(), 'work')
+  assert.equal(
+    await page.evaluate(() => (window as unknown as JoinFixture).joinedRoom()),
+    'overlapping-room'
+  )
+  await page.evaluate(() => (window as unknown as JoinFixture).selectMain())
+  await open()
+  await page.evaluate(() => (window as unknown as { replaceWork(): void }).replaceWork())
+  await page.getByText('This P2P identity is no longer available.').waitFor()
+  assert.equal(await button('Join').count(), 0)
+}
 const browser = await chromium.launch()
 try {
   for (const viewport of [
@@ -106,6 +176,12 @@ try {
           return route.fulfill({ contentType: 'application/javascript', body: js })
         return route.abort()
       })
+      await peerCodes(page)
+      if (process.argv.includes('--codes')) {
+        assert.deepEqual(errors, [])
+        await page.close()
+        continue
+      }
       await page.goto('https://shown.test')
       const selected = page.getByRole('region', { name: 'Selected identity' })
       const main = page.getByRole('region', { name: 'Main identity' })

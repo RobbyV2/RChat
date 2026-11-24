@@ -622,7 +622,7 @@ export function createServersPart(
 
   const p2pServer = {
     // Opens a server (its last channel, or the first one); the P2P home closes.
-    open(room: string, ch?: string | null) {
+    open(room: string, ch?: string | null, current?: () => boolean) {
       const v = useP2p.getState().servers[room]
       const pick =
         ch ?? lastChannel.get(room) ?? v?.channels.find(c => c.kind === 'text')?.id ?? null
@@ -637,11 +637,11 @@ export function createServersPart(
         thread: null,
         dialog: null,
       })
-      return p2pServer.openChannel(pick)
+      return p2pServer.openChannel(pick, current)
     },
 
     // A voice channel opens its stage, without a conversation.
-    async openChannel(ch: string | null): Promise<boolean> {
+    async openChannel(ch: string | null, current?: () => boolean): Promise<boolean> {
       cancelViewing()
       const cur = useP2p.getState().server
       if (!cur) return false
@@ -651,6 +651,7 @@ export function createServersPart(
       if (ch && !target) return false
       if (target && !canView(target) && !(await requestViewing(target))) return false
       if (
+        (current && !current()) ||
         useP2p.getState().server !== cur ||
         (ch && !parts.viewing.peerVisible(useP2p.getState(), cur.room, ch))
       )
@@ -708,10 +709,7 @@ export function createServersPart(
 
     async join(code: string) {
       const room = await withServers(s => s.redeem(code))
-      if (room) {
-        refreshServers()
-        p2pServer.open(room)
-      }
+      if (room) refreshServers()
       return room
     },
 

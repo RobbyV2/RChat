@@ -161,6 +161,25 @@ test('a new login retires the previous history nonce after bootstrap expires bef
   }
 })
 
+test('an instance invite keeps its query and anchor and scopes the ticket to its account', () => {
+  const { a, location, restore } = historyFixture()
+  try {
+    a.store
+      .getState()
+      .openInvite(
+        'club',
+        'CaseSensitive',
+        null,
+        '/invite/club/?ref=dm&password=CaseSensitive#section'
+      )
+    expect(location.search + location.hash).toBe('?ref=dm#section')
+    expect(a.store.getState().syncInvite()).toBe(true)
+    expect(a.store.getState().invite?.password).toBe('CaseSensitive')
+  } finally {
+    restore()
+  }
+})
+
 test('a later invite stays open when an older message lookup finishes on the same account', async () => {
   const { a, location, restore } = historyFixture()
   try {
@@ -299,6 +318,19 @@ test('denied, expired and superseded channel notices preserve the current histor
     expect(location.pathname).toBe(current)
     history.back()
     expect(location.pathname).toBe(source)
+  } finally {
+    restore()
+  }
+})
+
+test('only the page bootstrap restores the route when a picker also loads the account', async () => {
+  const { a, location, restore } = historyFixture()
+  try {
+    location.pathname = '/invite/club/'
+    await a.store.getState().bootstrap(false)
+    expect(a.store.getState().invite).toBeNull()
+    await Promise.all([a.store.getState().bootstrap(false), a.store.getState().bootstrap()])
+    expect(a.store.getState().invite?.server).toBe('club')
   } finally {
     restore()
   }

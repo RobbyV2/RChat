@@ -126,6 +126,8 @@ export interface AdminPlace {
 }
 
 export type ActiveDialog =
+  | { kind: 'peer_code'; request: import('./client/peer_links').PeerLinkRequest }
+  | import('./client/instance_links').InstanceLinkDialog
   | { kind: 'add_instance'; origin?: string; username?: string }
   | { kind: 'account_switcher'; manage?: boolean }
   | { kind: 'add_server'; join?: string; locked?: boolean; tab?: 'create' | 'join' }
@@ -378,7 +380,7 @@ export interface RChatState {
   instanceHost: string
   loadInstance: () => Promise<boolean | null>
   switchInstance: (address: string) => Promise<string | null>
-  bootstrap: () => Promise<void>
+  bootstrap: (restorePage?: boolean) => Promise<void>
   // `background`: the app polls on its own (see `BACKGROUND` in api.ts).
   loadSettings: (background?: boolean) => Promise<void>
   loadBrand: () => Promise<void>
@@ -410,11 +412,23 @@ export interface RChatState {
   enterGuest: () => Promise<void>
   guestJoinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
   openServer: (name: string, channelId?: number, nav?: Nav, at?: number) => Promise<void>
-  openChannel: (server: string, channelId: number, nav?: Nav, at?: number) => Promise<void>
+  openChannel: (
+    server: string,
+    channelId: number,
+    nav?: Nav,
+    at?: number,
+    intent?: number,
+    current?: () => boolean
+  ) => Promise<void>
   openDm: (dmId: number, nav?: Nav, at?: number) => Promise<void>
   openLastDm: () => void
   goHome: () => void
-  openInvite: (server: string, password?: string | null, code?: string | null) => void
+  openInvite: (
+    server: string,
+    password?: string | null,
+    code?: string | null,
+    requested?: string
+  ) => void
   closeInvite: () => void
   syncInvite: () => boolean
   syncConfigLink: () => boolean
@@ -536,7 +550,7 @@ export interface RChatState {
   noteTyping: (scope: string, active: boolean) => void
   sendForward: (key: string) => void
   openForward: (m: Message) => Promise<void>
-  openMessage: (id: number, nav?: Nav, place?: View) => Promise<void>
+  openMessage: (id: number, nav?: Nav, place?: View, thread?: number | null) => Promise<void>
   resolveLinkCard: (id: number, place?: View) => void
   startEdit: (key: string, m: Message) => void
   setEditText: (text: string) => void

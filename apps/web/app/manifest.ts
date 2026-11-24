@@ -8,6 +8,17 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: 'RChat',
     description: 'Anonymous Material chat',
     start_url: '/',
+    share_target: {
+      action: '/share-target/',
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: {
+        title: 'title',
+        text: 'text',
+        url: 'url',
+        files: [{ name: 'files', accept: ['*/*'] }],
+      },
+    },
     display: 'standalone',
     theme_color: '#141218',
     background_color: '#141218',

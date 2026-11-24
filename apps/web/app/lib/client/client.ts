@@ -28,6 +28,7 @@ function loadHome(): AccountSession {
 function createClient() {
   let foreground: AccountSession | null = null
   let noticeOwner: AccountSession | null = null
+  let shownVersion = 0
   let pageBlocked = false
   let actorSelection = 0
   let nextKey = 0
@@ -101,6 +102,7 @@ function createClient() {
     palette: createPaletteControls(),
     device,
     shown: loadHome,
+    shownVersion: () => shownVersion,
     bindHome(home: () => AccountSession) {
       this.shown = () => foreground ?? home()
     },
@@ -134,6 +136,7 @@ function createClient() {
       noticeOwner = nav === 'notice' ? account : null
       const changed = this.shown() !== account
       pageBlocked = false
+      if (changed) shownVersion++
       foreground = account
       if (nav !== 'notice' && nav !== 'none' && typeof window !== 'undefined') {
         const path = viewPath(account.store.getState().view, routeOwnerFor(account))

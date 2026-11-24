@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { iosShareProject } from './ios_share'
 import { insertBlock } from './mobile'
 
 const manifest = `<manifest>
@@ -34,5 +35,52 @@ describe('mobile project patches', () => {
 
   test('a missing anchor is an error', () => {
     expect(() => insertBlock(manifest, 'x', '<nothing', [])).toThrow()
+  })
+})
+
+test('iOS share target embeds once, preserves host entitlements and provisions both containers', () => {
+  const spec = JSON.stringify({
+    targets: {
+      RChat_iOS: {
+        type: 'application',
+        platform: 'iOS',
+        dependencies: [{ sdk: 'UIKit.framework' }],
+        entitlements: { path: 'RChat.entitlements' },
+        info: {
+          path: 'RChat/Info.plist',
+          properties: { CFBundleVersion: '12', CFBundleShortVersionString: '1.2.0' },
+        },
+      },
+    },
+    settingGroups: { app: { base: {} } },
+  })
+  const first = iosShareProject(spec, () => ({
+    'com.apple.developer.associated-domains': ['applinks:rchat.example'],
+  }))
+  const twice = Bun.YAML.parse(iosShareProject(first))
+  expect(twice).toEqual(Bun.YAML.parse(first))
+  expect(twice).toMatchObject({
+    targets: {
+      RChat_iOS: {
+        dependencies: [{ sdk: 'UIKit.framework' }, { target: 'RChatShare', embed: true }],
+        entitlements: {
+          properties: {
+            'com.apple.security.application-groups': ['group.io.github.robbyv2.rchat'],
+            'com.apple.developer.associated-domains': ['applinks:rchat.example'],
+          },
+        },
+      },
+      RChatShare: {
+        type: 'app-extension',
+        entitlements: {
+          properties: {
+            'com.apple.security.application-groups': ['group.io.github.robbyv2.rchat'],
+          },
+        },
+        info: {
+          properties: { NSExtension: { NSExtensionPointIdentifier: 'com.apple.share-services' } },
+        },
+      },
+    },
   })
 })

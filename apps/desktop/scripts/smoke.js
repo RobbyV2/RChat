@@ -21,10 +21,6 @@
     [...document.querySelectorAll(sel)].find(e => e.textContent.includes(text))
   const exact = (sel, text) =>
     [...document.querySelectorAll(sel)].find(e => e.textContent.trim() === text)
-  const type = (input, value) => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value)
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-  }
   const invoke = (cmd, args, options) => window.__TAURI_INTERNALS__.invoke(cmd, args, options)
   const bytes = text => new TextEncoder().encode(text)
   const chunk = (id, text) => invoke('save_chunk', bytes(text), { headers: { 'x-save': `${id}` } })
@@ -36,7 +32,7 @@
     const host = SMOKE_INSTANCE.replace(/^https?:\/\//, '').replace(/\/$/, '')
     const dialog = await wait('switch dialog', () =>
       [...document.querySelectorAll('[role="dialog"]')].find(d =>
-        d.textContent.includes('Switch instance?')
+        d.textContent.includes('Open instance link?')
       )
     )
     const shown = [...dialog.querySelectorAll('*')].find(e => e.textContent === host)
@@ -46,7 +42,6 @@
     if (!find('button', 'Connect')) throw new Error('instance changed without a click')
     const leaked = await invoke('save_begin', { name: 'leaked.txt' })
     await chunk(leaked, 'never finished')
-    sessionStorage.setItem(PHASE, 'opened')
     exact('button', 'Open').click()
   }
 
@@ -90,7 +85,36 @@
   }
 
   const run = async () => {
-    if (!sessionStorage.getItem(PHASE)) return confirmLink()
+    if (!sessionStorage.getItem(PHASE)) {
+      await confirmLink()
+      const dialog = await wait('instance link preview', () =>
+        [...document.querySelectorAll('[role="dialog"]')].find(
+          d => d.querySelector('h2')?.textContent === 'Open instance link'
+        )
+      )
+      const button = label =>
+        [...dialog.querySelectorAll('button')].find(b => b.textContent.trim() === label)
+      const trust = await wait('instance trust notice', () => button('I trust this app'))
+      if (
+        trust.closest('section')?.querySelector('p strong')?.textContent !==
+        new window.URL(SMOKE_INSTANCE).host
+      )
+        throw new Error('unexpected host in trust notice')
+      if (!dialog.textContent.includes('Guests allowed'))
+        throw new Error('guest access missing from instance preview')
+      trust.click()
+      const guest = await wait('guest sign-in', () => button('Browse as a guest'))
+      // A full navigation starts the next smoke phase in the new document.
+      sessionStorage.setItem(PHASE, 'guest')
+      guest.click()
+      await wait(
+        'guest chat',
+        () => !dialog.isConnected && document.querySelector('button[title="Settings"]')
+      )
+      // In-page navigation also needs to exercise disposal of the unfinished save.
+      location.reload()
+      return
+    }
     const info = window.__RCHAT_DESKTOP__
     if (!info) throw new Error('no desktop info')
     if (document.documentElement.dataset.chrome !== info.os) throw new Error('no window chrome')
@@ -98,22 +122,6 @@
     if (info.os !== 'macos')
       await wait('window buttons', () => document.querySelector('button[aria-label="Close"]'))
 
-    if (sessionStorage.getItem(PHASE) === 'opened') {
-      const connect = await wait('instance address', () => exact('button', 'Connect'))
-      type(connect.closest('form').querySelector('input'), SMOKE_INSTANCE)
-      await wait('enabled Connect button', () => !connect.disabled)
-      connect.click()
-      const trust = await wait('instance trust notice', () => exact('button', 'I trust this app'))
-      const host = new window.URL(SMOKE_INSTANCE).host
-      if (trust.closest('section')?.querySelector('p strong')?.textContent !== host)
-        throw new Error('unexpected host in trust notice')
-      if (!find('p', 'Guests allowed'))
-        throw new Error('guest access missing from instance preview')
-      trust.click()
-      const guest = await wait('guest sign-in', () => exact('button', 'Browse as a guest'))
-      sessionStorage.setItem(PHASE, 'guest')
-      guest.click()
-    }
     const settings = await wait('chat settings button', () =>
       document.querySelector('button[title="Settings"]')
     )

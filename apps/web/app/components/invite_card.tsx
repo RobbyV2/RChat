@@ -18,6 +18,7 @@ import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-rea
 import { ApiError } from '../lib/api'
 import type { InviteAccess } from '../lib/remote_invite'
 import { accountPath } from '../lib/view'
+import { knownLinkOrigin, routeInstanceLink, linkChoice } from '../lib/client/instance_links'
 import { client } from '../lib/client/client'
 import { routeOwnerFor } from '../lib/client/account_paths'
 import { useAccount, useStoreApi } from '../lib/client/react'
@@ -37,6 +38,7 @@ import {
   sharedByCode,
   stashInvite,
   targetPath,
+  inviteUrl,
   type RemoteInvite,
 } from '../lib/invite'
 import { channelTarget } from '../lib/viewing'
@@ -1003,6 +1005,25 @@ export function InviteCard({
   }
 
   const view = body()
+  if (!big && view && !invalid) {
+    const { choice } = linkChoice(owner, owner.conn.origin)
+    if (choice.kind !== 'open' || choice.owner !== me?.username)
+      view.actions = (
+        <button
+          className={filledBtn}
+          onClick={() =>
+            void routeInstanceLink(owner, {
+              origin: owner.conn.origin,
+              path: code
+                ? targetPath({ server: named, password, code })
+                : inviteUrl(named, password, ''),
+            })
+          }
+        >
+          Open invite
+        </button>
+      )
+  }
   return (
     <>
       <Frame ref={root} big={big} invalid={invalid}>
@@ -1105,7 +1126,8 @@ export function RemoteInviteCard({
   const previews = useStore(s => s.settings.asset_previews)
   const streamer = useStore(s => s.streamer)
   const key = remoteKey(invite)
-  const cache = useAccount().invites
+  const owner = useAccount()
+  const cache = owner.invites
   const [, refreshRequest] = useState(0)
   const wanted = previews && cache.previewRequested(key)
   const { access, ready, connection, instance, data, error, reload } = useRemoteInvite(
@@ -1125,17 +1147,28 @@ export function RemoteInviteCard({
     cache.requestPreview(key)
     refreshRequest(n => n + 1)
   }
-  const open = () => window.open(remoteInviteUrl(invite), '_blank', 'noopener,noreferrer')
+  const internal = knownLinkOrigin(invite.origin) || rchat
+  const path = invite.url.slice(invite.origin.length)
+  const open = () =>
+    internal
+      ? void routeInstanceLink(owner, { origin: invite.origin, path })
+      : window.open(remoteInviteUrl(invite), '_blank', 'noopener,noreferrer')
   const openBtn = (
     <button
       onClick={open}
-      title={streamer ? 'Opens the invite in a new tab' : `Opens ${host} in a new tab`}
+      title={
+        internal
+          ? 'Open invite'
+          : streamer
+            ? 'Opens the invite in a new tab'
+            : `Opens ${host} in a new tab`
+      }
       className={`${filledBtn} inline-flex max-w-full min-w-0 items-center gap-1.5`}
     >
       <span className="min-w-0 truncate">
         Open on <span className="streamer">{host}</span>
       </span>
-      <ExternalLink size={14} className="shrink-0" />
+      {!internal && <ExternalLink size={14} className="shrink-0" />}
     </button>
   )
   const hidden = needsPassword(error) || deniedAccess(error)
@@ -1160,13 +1193,18 @@ export function RemoteInviteCard({
           </p>
         ),
         actions: (
-          <button
-            onClick={load}
-            title={streamer ? 'Fetch this invite from its site' : `Fetch this invite from ${host}`}
-            className={`${filledBtn} shrink-0`}
-          >
-            Load preview
-          </button>
+          <>
+            {internal && openBtn}
+            <button
+              onClick={load}
+              title={
+                streamer ? 'Fetch this invite from its site' : `Fetch this invite from ${host}`
+              }
+              className={`${filledBtn} shrink-0`}
+            >
+              Load preview
+            </button>
+          </>
         ),
       }
     if (!ready) return null

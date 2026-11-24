@@ -45,29 +45,16 @@ test('invite and config handoffs distinguish accounts at the same origin', () =>
 
 test('a deep link drops a deferred switch or page load when its owner changes', async () => {
   const confirm = Promise.withResolvers<boolean>()
-  const selected = Promise.withResolvers<string | null>()
   const calls: string[] = []
   let current = true
   const env: LinkEnv = {
     homeOrigin: 'https://one.test',
     appLinks: false,
-    signedIn: false,
-    live: false,
+    current: () => current,
+    known: () => false,
     confirmSwitch: () => confirm.promise,
-    switchTo: origin => {
-      calls.push(origin)
-      return selected.promise
-    },
-    canSwitch: () => current,
-    canLoad: () => current,
-    push: path => {
-      calls.push(path)
-    },
-    load: path => {
-      calls.push(path)
-    },
-    openOutside: url => {
-      calls.push(url)
+    route: async (origin, path) => {
+      calls.push(origin + path)
     },
     fail: msg => {
       calls.push(msg)
@@ -80,12 +67,8 @@ test('a deep link drops a deferred switch or page load when its owner changes', 
   await first
   expect(calls).toEqual([])
   current = true
-  const second = openDeepLink(link, env)
-  await Promise.resolve()
-  current = false
-  selected.resolve(null)
-  await second
-  expect(calls).toEqual(['https://two.test'])
+  await openDeepLink(link, env)
+  expect(calls).toEqual(['https://two.test/invite/club/'])
 })
 
 test('P2P inbox preferences and palette registration follow the supplied account', () => {

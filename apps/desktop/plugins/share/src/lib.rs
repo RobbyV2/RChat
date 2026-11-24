@@ -23,9 +23,29 @@ mod mobile {
         shared: bool,
     }
 
+    #[derive(Deserialize, Serialize)]
+    pub struct ReceivedFile {
+        name: String,
+        mime: String,
+        data: String,
+    }
+
+    #[derive(Deserialize, Serialize)]
+    pub struct Incoming {
+        text: String,
+        files: Vec<ReceivedFile>,
+        error: Option<String>,
+    }
+
     pub struct Share<R: Runtime>(PluginHandle<R>);
 
     impl<R: Runtime> Share<R> {
+        pub fn take_incoming(&self) -> Result<Incoming, String> {
+            self.0
+                .run_mobile_plugin("takeIncoming", ())
+                .map_err(|e| e.to_string())
+        }
+
         // Opens the share sheet with `text`; false when the user closed it without sharing.
         pub fn text(&self, title: Option<&str>, text: &str) -> Result<bool, String> {
             self.0
@@ -59,7 +79,7 @@ mod mobile {
 }
 
 #[cfg(mobile)]
-pub use mobile::{Share, ShareExt};
+pub use mobile::{Incoming, Share, ShareExt};
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     let builder = Builder::new("rchat-share");

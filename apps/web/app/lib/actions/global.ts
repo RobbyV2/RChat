@@ -1,3 +1,4 @@
+import { submittedLinkTarget, routeInstanceLink } from '../client/instance_links'
 import { liveSwitcherRows } from '../client/switcher_rows'
 import { switchActor } from '../client/switch_actor'
 import { canAddInstance } from '../client/adding'
@@ -197,7 +198,12 @@ export const globalActions: Action[] = [
     parse: t => /^\s*join\s+(\S+)\s*$/i.exec(t)?.[1] ?? null,
     available: () => true,
     run: (_ctx, { value }) => {
-      const name = value.trim().toLowerCase()
+      const raw = value.trim()
+      if (raw.includes('/')) {
+        const target = submittedLinkTarget(_ctx.acct, raw)
+        if (target) return routeInstanceLink(_ctx.acct, target)
+      }
+      const name = /^(?:rci1|rcp1)\./i.test(raw) ? raw : raw.toLowerCase()
       _ctx.acct.store
         .getState()
         .openDialog({ kind: 'add_server', tab: 'join', ...(name ? { join: name } : {}) })

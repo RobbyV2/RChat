@@ -1,3 +1,5 @@
+import { addInstance, parseBook } from '../client/book'
+import { client } from '../client/client'
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
@@ -138,6 +140,13 @@ describe('inline images follow the account rendering the message', () => {
 
 test('inline links classify and dispatch for the rendering account', async () => {
   const owner = testAccount('reader', 'https://secondary.test')
+  const previous = client.shown
+  const previousBook = client.book.getState()
+  client.book.setState(
+    addInstance(parseBook(null), { origin: ORIGIN, id: ORIGIN, name: 'Home' }),
+    true
+  )
+  client.shown = () => owner
   try {
     const calls: unknown[] = []
     owner.store.setState({
@@ -157,18 +166,21 @@ test('inline links classify and dispatch for the rendering account', async () =>
         )
       const local = owner.shareOrigin + path
       expect(renderLink(local)).not.toContain('target="_blank"')
-      expect(renderLink(ORIGIN + path)).toContain('target="_blank"')
+      expect(renderLink(ORIGIN + path)).not.toContain('target="_blank"')
+      expect(renderLink('https://unbooked.invalid' + path)).toContain('target="_blank"')
       await messageLinkAction(owner, local)!()
     }
     expect(calls).toEqual([
-      ['club', null, undefined],
-      [91, 'push', { kind: 'dm', dmId: 3 }],
+      ['club', null, undefined, '/invite/club/'],
+      [91, 'push', { kind: 'dm', dmId: 3 }, null],
     ])
     const stale = messageLinkAction(owner, '/invite/club/')
     owner.lifetime.endSession()
     stale!()
     expect(calls).toHaveLength(2)
   } finally {
+    client.book.setState(previousBook, true)
+    client.shown = previous
     owner.store.dispose()
   }
 })

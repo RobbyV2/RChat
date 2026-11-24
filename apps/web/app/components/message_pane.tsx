@@ -941,6 +941,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   return (
     <main
       className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
+      data-share-drop-pane
       onDragEnter={e => {
         e.preventDefault()
         if (

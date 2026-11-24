@@ -312,6 +312,13 @@ async fn a_brand_names_the_pages_and_serves_its_manifest_and_mark() {
         json!({
             "name": "Tom & <Jerry> \"chat\"",
             "short_name": "Tom & <Jerry> \"c",
+            "share_target": {
+                "action": "/share-target/",
+                "method": "POST",
+                "enctype": "multipart/form-data",
+                "params": {"title": "title", "text": "text", "url": "url",
+                           "files": [{"name": "files", "accept": ["*/*"]}]}
+            },
             "start_url": "/",
             "display": "standalone",
             "theme_color": "#141218",

@@ -1,9 +1,11 @@
+import { ShareTarget } from './components/share_target'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import PwaRegister from './components/pwa_register'
 import ViewportHeight from './components/viewport_height'
 import TitleBar from './components/title_bar'
 import DesktopBridge from './components/desktop_bridge'
+import InstanceLinkPresenter from './components/instance_link_dialog'
 import MobileBridge from './components/mobile_bridge'
 
 export const metadata: Metadata = {
@@ -39,8 +41,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <TitleBar />
         <PwaRegister />
+        <ShareTarget />
         <ViewportHeight />
         <DesktopBridge />
+        <InstanceLinkPresenter />
         <MobileBridge />
         {children}
       </body>

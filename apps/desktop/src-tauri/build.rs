@@ -14,6 +14,7 @@ fn main() {
         "open_external",
         "take_deep_links",
         "share_text",
+        "take_incoming_share",
         "autostart",
         "set_autostart",
         "update_check",

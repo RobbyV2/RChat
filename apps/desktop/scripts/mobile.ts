@@ -6,6 +6,7 @@
 // The generated projects are never committed; everything that differs from Tauri's template lives
 // in `apps/desktop/mobile` and is applied here, so a fresh `init` always gives the same app.
 
+import { iosShareProject } from './ios_share'
 import { spawnSync } from 'node:child_process'
 import {
   copyFileSync,
@@ -102,6 +103,18 @@ const android = () => {
     ])
   )
 
+  writeFileSync(
+    manifest,
+    insertBlock(read(manifest), 'receive-share', '</activity>', [
+      '<intent-filter>',
+      '    <action android:name="android.intent.action.SEND" />',
+      '    <action android:name="android.intent.action.SEND_MULTIPLE" />',
+      '    <category android:name="android.intent.category.DEFAULT" />',
+      '    <data android:mimeType="*/*" />',
+      '</intent-filter>',
+    ])
+  )
+
   const values = join(app, 'res', 'values')
   writeFileSync(
     join(values, 'rchat_colors.xml'),
@@ -126,6 +139,34 @@ const ios = () => {
     join(overlay, 'ios', 'LaunchScreen.storyboard'),
     join(apple, 'LaunchScreen.storyboard')
   )
+  const share = join(apple, 'ShareExtension')
+  mkdirSync(share, { recursive: true })
+  copyFileSync(
+    join(overlay, 'ios', 'ShareExtension', 'ShareViewController.swift'),
+    join(share, 'ShareViewController.swift')
+  )
+  copyFileSync(
+    join(desktop, 'plugins/share/ios/Sources/IncomingShare.swift'),
+    join(share, 'IncomingShare.swift')
+  )
+  const spec = join(apple, 'project.yml')
+  writeFileSync(
+    spec,
+    iosShareProject(read(spec), file => {
+      const source = join(apple, file)
+      if (!existsSync(source)) return {}
+      const plist = spawnSync('plutil', ['-convert', 'json', '-o', '-', source], {
+        encoding: 'utf8',
+      })
+      if (plist.status !== 0) throw Error('Could not read the generated app entitlements')
+      return JSON.parse(plist.stdout)
+    })
+  )
+  const generated = spawnSync('xcodegen', ['generate', '--spec', spec], {
+    cwd: apple,
+    stdio: 'inherit',
+  })
+  if (generated.status !== 0) throw Error('Could not generate the iOS share extension target')
   const set = join(apple, 'Assets.xcassets', 'LaunchLogo.imageset')
   mkdirSync(set, { recursive: true })
   copyFileSync(join(overlay, 'ios', 'LaunchLogo.json'), join(set, 'Contents.json'))

@@ -1,4 +1,5 @@
 'use client'
+import { routeInstanceLink } from '../lib/client/instance_links'
 import { useAccount } from '../lib/client/react'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { type ViewingTarget } from '../lib/viewing'
@@ -76,7 +77,6 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
     active: allowed && sourceVisible,
   })
   const resolveLinkCard = useStore(s => s.resolveLinkCard)
-  const openMessage = useStore(s => s.openMessage)
   useEffect(() => {
     if (target.kind === 'channel' && access === 'unknown')
       void ownerSession.store
@@ -99,7 +99,12 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
       card={card}
       gated={forward.access !== 'open'}
       reveal={forward.target}
-      jump={() => void openMessage(id, 'push', link.place)}
+      jump={() =>
+        void routeInstanceLink(ownerSession, {
+          origin: ownerSession.conn.origin,
+          path: messagePath(link),
+        })
+      }
     />
   ) : null
 }

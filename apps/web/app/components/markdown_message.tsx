@@ -1,5 +1,6 @@
 'use client'
 
+import { PeerCodeButton } from './p2p/peer_code_button'
 import {
   createContext,
   Fragment,
@@ -12,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Ban,
@@ -28,6 +29,7 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react'
+import { messageInstanceTarget, routeInstanceLink } from '../lib/client/instance_links'
 import { useAccount, useStoreApi } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 import { fmtSize } from '../lib/bytes'
@@ -196,6 +198,8 @@ const markStamps = (node: MdNode) => {
 
 const remarkStamps = () => (tree: unknown) => markStamps(tree as MdNode)
 
+const messageUrl = (url: string, key: string) =>
+  key === 'href' && url.startsWith('rchat://') ? url : defaultUrlTransform(url)
 const InLink = createContext(false)
 const PlainLinks = createContext(false)
 
@@ -370,20 +374,11 @@ function GroupPill({ group, text }: { group: string; text: string }) {
 }
 
 export function messageLinkAction(account: AccountSession, href: string) {
-  const invite = parseInvite(href, account.shareOrigin)
-  if (invite)
-    return account.lifetime.inSession(() =>
-      account.store.getState().openInvite(invite.server, invite.password, invite.code)
-    )
-  const target = parseMessageLink(href, localOrigins(account.conn))
-  if (target)
-    return account.lifetime.inSession(() =>
-      account.store.getState().openMessage(target.id, 'push', target.place)
-    )
-  return null
+  const target = messageInstanceTarget(account, href)
+  return target && account.lifetime.inSession(() => routeInstanceLink(account, target))
 }
 
-export function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
+export function MessageLink({ href, children, className, ...props }: React.ComponentProps<'a'>) {
   const acct = useAccount()
   const widget = useContext(WidgetLinkCards) !== null
   const open = !widget && href ? messageLinkAction(acct, href) : null
@@ -391,16 +386,18 @@ export function MessageLink({ href, children, ...props }: React.ComponentProps<'
     <a
       {...props}
       href={href}
-      {...(open
-        ? {
-            onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
-              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-              e.preventDefault()
-              void open()
-            },
-          }
-        : { target: '_blank', rel: 'noreferrer' })}
-      className="text-primary underline"
+      target={open ? undefined : '_blank'}
+      rel={open ? undefined : 'noreferrer'}
+      onClick={e => {
+        if (widget || !href || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+          return
+        const action = open ?? messageLinkAction(acct, href)
+        if (action) {
+          e.preventDefault()
+          void action()
+        }
+      }}
+      className={className ?? 'text-primary underline'}
     >
       <InLink.Provider value>
         <MaskControl>{children}</MaskControl>
@@ -1038,14 +1035,13 @@ function EmbedCard({
           <Masked text={site_name} />
         </div>
       )}
-      <a
+      <MessageLink
         href={url}
-        target="_blank"
-        rel="noreferrer"
+
         className="block text-sm font-medium break-words text-primary hover:underline"
       >
         {title === null ? url : <Masked text={title} />}
-      </a>
+      </MessageLink>
       {description !== null && (
         <p className="mt-0.5 line-clamp-3 text-xs break-words text-on-surface-variant">
           <Masked text={description} />
@@ -1086,14 +1082,13 @@ function SpoilerLinkCard({ url }: { url: string }) {
     return (
       <div data-spoiler-link="shown" className={box}>
         <EyeOff size={14} className="shrink-0 text-on-surface-variant" />
-        <a
+        <MessageLink
           href={url}
-          target="_blank"
-          rel="noreferrer"
+
           className="min-w-0 break-all text-primary hover:underline"
         >
           {url}
-        </a>
+        </MessageLink>
       </div>
     )
   return (
@@ -1125,7 +1120,11 @@ function useCardText() {
         <MaskPlain>
           <MaskedWords>
             <SpoilerPieces>
-              <ReactMarkdown remarkPlugins={plugins} components={components}>
+              <ReactMarkdown
+                urlTransform={messageUrl}
+                remarkPlugins={plugins}
+                components={components}
+              >
                 {markSpoilers(text)}
               </ReactMarkdown>
             </SpoilerPieces>
@@ -1231,13 +1230,18 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   )
   return (
     <div className="min-w-0 text-sm leading-relaxed break-words">
+      {!editor && !widget && <PeerCodeButton text={content} peer={!!src} />}
       {editor ??
         (content.trim() !== '' ? (
           <MaskPlain>
             <MaskedWords>
               <SpoilerPieces>
                 <PlainLinks.Provider value={!!message.no_previews}>
-                  <ReactMarkdown remarkPlugins={plugins} components={components}>
+                  <ReactMarkdown
+                    urlTransform={messageUrl}
+                    remarkPlugins={plugins}
+                    components={components}
+                  >
                     {source}
                   </ReactMarkdown>
                 </PlainLinks.Provider>
