@@ -289,6 +289,16 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
     let mut state = AppState::new(db, hub, config.s3()?, bus, instance)
         .with_limits(Arc::new(config.limits.clone()))
         .with_sso(Arc::new(crate::sso::Sso::new(config.sso.clone())?));
+    if roles.api {
+        for provider in state.sso.providers().cloned() {
+            let http = state.sso.http().clone();
+            held.spawn(async move {
+                if let Err(reason) = provider.metadata(&http).await {
+                    tracing::warn!(provider = %provider.config.id, %reason, "OIDC discovery failed");
+                }
+            });
+        }
+    }
     let policy = crate::api::Settings::cached(&state.db).await;
     for warning in state
         .sso

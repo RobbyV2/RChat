@@ -1,5 +1,12 @@
 pub mod accounts;
 pub mod config;
+#[cfg(test)]
+pub(crate) mod fake_idp;
+pub mod jwt;
+pub mod provider;
+
+use provider::Provider;
+use std::sync::{Arc, OnceLock};
 
 use crate::api::features::Registration;
 use config::SsoConfig;
@@ -8,6 +15,8 @@ use utoipa::ToSchema;
 
 pub struct Sso {
     pub config: SsoConfig,
+    providers: Vec<Arc<Provider>>,
+    http: OnceLock<reqwest::Client>,
 }
 
 /// Available registration and sign-in methods for this instance.
@@ -34,10 +43,45 @@ impl Sso {
     pub fn off() -> Self {
         Self {
             config: SsoConfig::default(),
+            providers: Vec::new(),
+            http: OnceLock::new(),
         }
     }
+    fn client() -> reqwest::Result<reqwest::Client> {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(provider::FETCH_TIMEOUT)
+            .no_proxy()
+            .build()
+    }
     pub fn new(config: SsoConfig) -> anyhow::Result<Self> {
-        Ok(Self { config })
+        let providers = config
+            .providers
+            .iter()
+            .cloned()
+            .map(Provider::new)
+            .map(Arc::new)
+            .collect();
+        let http = if config.providers.is_empty() {
+            OnceLock::new()
+        } else {
+            OnceLock::from(Self::client()?)
+        };
+        Ok(Self {
+            config,
+            providers,
+            http,
+        })
+    }
+    pub fn providers(&self) -> impl Iterator<Item = &Arc<Provider>> {
+        self.providers.iter()
+    }
+    pub fn provider(&self, id: &str) -> Option<Arc<Provider>> {
+        self.providers().find(|p| p.config.id == id).cloned()
+    }
+    pub fn http(&self) -> &reqwest::Client {
+        self.http
+            .get_or_init(|| Self::client().expect("SSO client"))
     }
     pub fn auth_info(&self, password_login: bool, registration: Registration) -> AuthInfo {
         AuthInfo {
