@@ -21,6 +21,10 @@ on:
         description: Linux bundles; deb only for pre-release versions (RPM refuses the hyphen)
         type: string
         default: deb,rpm
+      client-archive:
+        description: Package the static export for web hosting
+        type: boolean
+        default: false
       retention-days:
         type: number
         default: 7
@@ -165,6 +169,22 @@ jobs:
           args=(build --ci --config "$RUNNER_TEMP/tauri.ci.json" --bundles "$BUNDLES")
           if [ -n "$TARGET" ]; then args+=(--target "$TARGET"); fi
           cargo tauri "${args[@]}"
+
+      # Tauri's required build has already produced the portable, instance-neutral web client.
+      - name: Package static client
+        if: matrix.os == 'linux' && inputs.client-archive
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          cp apps/web/out/index.html apps/web/out/404.html
+          bun scripts/release.ts client apps/web/out client-dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.os == 'linux' && inputs.client-archive
+        with:
+          name: client-web
+          path: client-dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
 
       # The built app puts up its tray, changes it once and exits (`--tray-smoke`).
       - name: Tray smoke

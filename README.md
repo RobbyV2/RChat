@@ -126,6 +126,7 @@ Stable releases and weekly pre-releases (`weekly-YYYY-MM-DD`, every Monday) are 
 - Linux (glibc 2.35 or newer): `.deb` and `.AppImage`, plus `.rpm` in stable releases.
 - Android 7.0 or newer: `RChat_<version>_android.apk`.
 - iOS 16.4 or newer: an unsigned developer build, `RChat_<version>_ios_sideload.ipa`.
+- The web client alone: `rchat-client_<version>.tar.gz`, served as in [Run only the app](#run-only-the-app).
 - The server: `rchat-server_<version>_<platform>` archives (the API alone, for `APP_MODE=api-only`) for Linux x86_64 and aarch64 (glibc 2.35 or newer), macOS and Windows x86_64, and the Docker image `ghcr.io/robbyv2/rchat`.
 - `SHA256SUMS`.
 

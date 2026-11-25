@@ -2,6 +2,7 @@
 //
 //   bun scripts/release.ts meta                 release channel, version and tags (key=value lines)
 //   bun scripts/release.ts tauri-config <out>   per-build Tauri config overrides (JSON file)
+//   bun scripts/release.ts client <out> <dist>  archive the client-only static export
 //   bun scripts/release.ts updater <dist>       Tauri updater manifest dist/latest.json
 //   bun scripts/release.ts packaging <dist> <out>  winget, scoop, Homebrew and AUR files
 //   bun scripts/release.ts altstore <dist>      AltStore and SideStore source dist/altstore.json
@@ -11,7 +12,7 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -381,6 +382,18 @@ const main = (args: string[]) => {
         : 'Updater files: off (needs TAURI_SIGNING_PRIVATE_KEY and the TAURI_UPDATER_PUBKEY variable)'
     )
     writeFileSync(rest[0], JSON.stringify(config, null, 2))
+  } else if (command === 'client') {
+    const [out, dist] = rest
+    const version = env('VERSION')
+    if (!SEMVER.test(version)) throw new Error(`Bad version: ${version}`)
+    const source = resolve(out)
+    if (basename(source) !== 'out' || !statSync(join(source, 'index.html')).isFile())
+      throw new Error('Missing exported index.html')
+    mkdirSync(dist, { recursive: true })
+    const file = join(dist, `rchat-client_${version}.tar.gz`)
+    const tar = spawnSync('tar', ['-czf', file, '-C', dirname(source), 'out'], { stdio: 'inherit' })
+    if (tar.error || tar.status !== 0)
+      throw tar.error ?? new Error('Could not archive static export')
   } else if (command === 'updater') {
     const dist = rest[0]
     const files = readdirSync(dist)
@@ -449,7 +462,7 @@ const main = (args: string[]) => {
     console.log(`altstore.json: ${file}, version ${version} (${buildVersion})`)
   } else {
     throw new Error(
-      'usage: release.ts meta | tauri-config <out> | updater <dist> | packaging <dist> <out> | altstore <dist>'
+      'usage: release.ts meta | tauri-config <out> | client <out> <dist> | updater <dist> | packaging <dist> <out> | altstore <dist>'
     )
   }
 }

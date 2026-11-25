@@ -126,6 +126,7 @@ jobs:
     with:
       version: ${{ needs.meta.outputs.version }}
       channel: ${{ needs.meta.outputs.channel }}
+      client-archive: true
       wix-version: ${{ needs.meta.outputs.wix_version }}
       linux-bundles: ${{ needs.meta.outputs.linux_bundles }}
     secrets: inherit
@@ -167,7 +168,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
-          pattern: '{desktop,mobile,server}-*'
+          pattern: '{client,desktop,mobile,server}-*'
           merge-multiple: true
       - name: Updater manifest
         run: bun scripts/release.ts updater dist
@@ -185,6 +186,7 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
+          test -s "rchat-client_${VERSION}.tar.gz"
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
       - name: Stable release

@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -79,6 +87,51 @@ describe('release meta', () => {
 // The profanity filter's wasm is git-ignored, so every app build makes it before the web build.
 describe('app builds', () => {
   const read = (path: string) => readFileSync(join(import.meta.dir, '..', path), 'utf8')
+
+  test('publishes the versioned static export with its checksum on both release channels', () => {
+    const desktop = read('.github/workflows/desktop.yml')
+    const release = read('.github/workflows/release.yml')
+    expect(desktop).toContain('cp apps/web/out/index.html apps/web/out/404.html')
+    expect(desktop).toContain('bun scripts/release.ts client apps/web/out client-dist')
+    expect(release).toContain('client-archive: true')
+    expect(release).toContain("pattern: '{client,desktop,mobile,server}-*'")
+    const sums = release.match(/^ +sha256sum -- \* > SHA256SUMS$/m)?.[0].trim()
+    expect(sums).toBeDefined()
+
+    const dir = mkdtempSync(join(tmpdir(), 'rchat-release-client-'))
+    try {
+      const out = join(dir, 'out')
+      mkdirSync(out)
+      writeFileSync(join(out, 'index.html'), 'Welcome')
+      writeFileSync(join(out, '.nojekyll'), '')
+      writeFileSync(join(dir, 'outside.txt'), 'exclude')
+      for (const version of ['0.3.0', '0.3.1-weekly.20261123']) {
+        const dist = join(dir, version)
+        const name = `rchat-client_${version}.tar.gz`
+        const run = spawnSync(
+          process.execPath,
+          [join(import.meta.dir, 'release.ts'), 'client', out, dist],
+          {
+            env: { ...process.env, VERSION: version },
+          }
+        )
+        expect(run.status).toBe(0)
+        const entries = spawnSync('tar', ['-tzf', join(dist, name)], { encoding: 'utf8' })
+        expect(entries.stdout.trim().split('\n').sort()).toEqual([
+          'out/',
+          'out/.nojekyll',
+          'out/index.html',
+        ])
+        expect(spawnSync('sh', ['-c', sums!], { cwd: dist }).status).toBe(0)
+        const hash = createHash('sha256')
+          .update(readFileSync(join(dist, name)))
+          .digest('hex')
+        expect(readFileSync(join(dist, 'SHA256SUMS'), 'utf8')).toBe(`${hash}  ${name}\n`)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   test('the Tauri build command builds the wasm before the static export', () => {
     const scripts = JSON.parse(read('package.json')).scripts as Record<string, string>
