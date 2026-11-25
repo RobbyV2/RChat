@@ -83,6 +83,7 @@ impl Modify for Bearer {
         super::auth::register,
         super::auth::login,
         super::oidc::start,
+        super::oidc::ticket,
         super::oidc::callback,
         super::oidc::exchange,
         super::oidc::client_consent,

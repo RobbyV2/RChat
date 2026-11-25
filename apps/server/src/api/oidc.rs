@@ -2,6 +2,7 @@ use super::{
     ApiError, NAME_MAX,
     auth::{Me, me_payload},
     bad,
+    reauth::{AuthedSession, ReAuthBody},
 };
 use crate::{
     sso::{
@@ -64,10 +65,61 @@ fn callback_error(
     back(state, ret, error.query())
 }
 
+/// Which operation the ticket authorizes.
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TicketPurpose {
+    Link,
+    Reauth,
+}
+
+/// Request a one-time ticket for a provider flow.
+#[derive(Deserialize, ToSchema)]
+pub struct TicketReq {
+    /// Configured provider ID.
+    pub provider: String,
+    /// Operation to authorize.
+    pub purpose: TicketPurpose,
+    /// Confirmation for linking a new identity.
+    pub reauth: Option<ReAuthBody>,
+}
+
+/// Single-use ticket to pass to the start endpoint.
+#[derive(Serialize, ToSchema)]
+pub struct TicketResp {
+    /// Opaque ticket valid for five minutes.
+    pub ticket: String,
+}
+
+/// Obtain a ticket for a signed-in account.
+///
+/// Pass the ticket to the configured provider's start URL to request fresh authentication.
+#[utoipa::path(post, path="/api/v1/me/sso/ticket", tag="Account", request_body=TicketReq, responses((status=200,description="Single-use provider ticket",body=TicketResp),(status=400,description="Not linked"),(status=401,description="Missing or invalid session")),security(("bearer"=[])))]
+pub(crate) async fn ticket(
+    State(state): State<AppState>,
+    AuthedSession(session): AuthedSession,
+    Json(q): Json<TicketReq>,
+) -> Result<impl IntoResponse, ApiError> {
+    let provider = state
+        .sso
+        .provider(&q.provider)
+        .ok_or_else(|| bad("Not linked"))?;
+    match q.purpose {
+        TicketPurpose::Link => Err(bad("Not linked")),
+        TicketPurpose::Reauth => {
+            let ticket = flow::reauth_ticket(&state, &session, &provider).await?;
+            Ok((
+                [(header::CACHE_CONTROL, "no-store")],
+                Json(TicketResp { ticket }),
+            ))
+        }
+    }
+}
+
 /// Begin sign-in with a client-generated S256 challenge.
 ///
 /// Returns are limited to the hosted page and the instance's shell deep link.
-#[utoipa::path(get, path = "/api/v1/auth/oidc/{provider}/start", tag = "Auth", params(("provider"=String,Path,description="Configured provider ID"),("return"=String,Query,description="web, app, or client"),("origin"=Option<String>,Query,description="Exact requesting origin for client returns"),("challenge"=String,Query,description="Unpadded base64url SHA-256 digest of the client verifier")), responses((status=302,description="Provider authorization or fixed sign-in return URL"),(status=400,description="Invalid parameters"),(status=404,description="Unknown provider")), security(()))]
+#[utoipa::path(get, path = "/api/v1/auth/oidc/{provider}/start", tag = "Auth", params(("provider"=String,Path,description="Configured provider ID"),("return"=String,Query,description="web, app, or client"),("origin"=Option<String>,Query,description="Exact requesting origin for client returns"),("ticket"=Option<String>,Query,description="Single-use account ticket for web or app returns"),("challenge"=String,Query,description="Unpadded base64url SHA-256 digest of the client verifier")), responses((status=302,description="Provider authorization or fixed sign-in return URL"),(status=400,description="Invalid parameters"),(status=404,description="Unknown provider")), security(()))]
 pub(crate) async fn start(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -87,17 +139,26 @@ pub(crate) async fn start(
         .challenge
         .filter(|challenge| flow::valid_challenge(challenge))
         .ok_or_else(|| bad("Invalid challenge"))?;
-    if q.ticket.is_some() {
-        return Err(flow::expired());
+    if matches!(ret, Return::Client { .. }) && q.ticket.is_some() {
+        return Err(bad("Account tickets require a web or app return"));
     }
+    let (kind, user, session_key) = if let Some(value) = q.ticket {
+        let Some(ticket) = flow::take_ticket(&state.db, &value, &id).await? else {
+            return callback_error(&state, &id, ret, CallbackError::Expired);
+        };
+        (ticket.kind, Some(ticket.user), Some(ticket.session_key))
+    } else {
+        (FlowKind::Login, None, None)
+    };
     match flow::begin(
         &state,
         &provider,
         NewFlow {
-            kind: FlowKind::Login,
+            kind,
             ret: ret.clone(),
             challenge,
-            user: None,
+            user,
+            session_key,
         },
     )
     .await

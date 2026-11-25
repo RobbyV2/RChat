@@ -104,6 +104,9 @@ pub fn user_name_key(raw: &str) -> String {
 pub fn has_password(user: &User) -> bool {
     !user.password_hash.starts_with('!')
 }
+pub async fn may_set_password(state: &AppState, user: &User) -> bool {
+    has_password(user) || Settings::cached(&state.db).await.password_login
+}
 fn forbidden(message: &str) -> ApiError {
     ApiError(StatusCode::FORBIDDEN, message.into(), None)
 }

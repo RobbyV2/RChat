@@ -165,6 +165,9 @@ pub(crate) async fn recover_at(
         (true, Some(user)) => user,
         (_, _) => return Err(wrong_phrase()),
     };
+    if !crate::sso::accounts::may_set_password(state, &user).await {
+        return Err(bad("Sign in with your provider instead"));
+    }
     if password_kind == "words" && !in_word_set(&user.username, &secret) {
         return Err(bad(PICK_WORDS));
     }
@@ -216,8 +219,8 @@ pub struct RecoveryStatus {
     pub set: bool,
     /// When it was set; null when none is set.
     pub set_at: Option<i64>,
-    /// Whether this session may set a phrase with `fresh_session` alone. Always false: setting
-    /// a phrase, the first one included, needs the password or words.
+    /// Whether this session may set a phrase with `fresh_session` alone. Always false.
+    /// A first phrase requires the account password or words, or fresh confirmation from a linked provider.
     pub fresh_session: bool,
 }
 
@@ -228,7 +231,7 @@ pub struct RecoverySet {
     /// (43 characters).
     #[schema(example = "IOGfm4VeaU9qsds79702OGowi43niF7E3YP1w8Qi4qM")]
     pub key: String,
-    /// How you confirm it: the password or words, or a `phrase` proof by the current phrase with
+    /// The account password or words, fresh confirmation from a linked provider, or a `phrase` proof with
     /// purpose `set` and the new `key` as context. `fresh_session` is refused.
     pub reauth: ReAuthBody,
 }
@@ -236,7 +239,7 @@ pub struct RecoverySet {
 /// Removing the account's backup phrase.
 #[derive(Deserialize, ToSchema)]
 pub struct RecoveryRemove {
-    /// How you confirm it: the password or words, or a `phrase` proof with purpose `remove` and
+    /// The account password or words, fresh confirmation from a linked provider, or a `phrase` proof with purpose `remove` and
     /// an empty context.
     pub reauth: ReAuthBody,
 }
@@ -280,7 +283,7 @@ pub(crate) async fn status(AuthedSession(session): AuthedSession) -> Json<Recove
 /// Set or reset the backup phrase
 ///
 /// Stores the account key of a new backup phrase, replacing any earlier one. The phrase itself
-/// never reaches the server. Confirm with the password or words, the first phrase included, or with
+/// never reaches the server. Confirm with the account password or words, fresh confirmation from a linked provider, or
 /// a `phrase` proof by the current phrase (purpose `set`, context the new `key`) over a challenge
 /// from `POST /api/v1/auth/recovery/challenge`; `fresh_session` is refused. Every other session of
 /// the account is revoked and its WebSocket connections close; this one stays. Password and phrase
@@ -289,7 +292,7 @@ pub(crate) async fn status(AuthedSession(session): AuthedSession) -> Json<Recove
 /// a bearer token. Strict and general rate-limit buckets.
 /// Setting and removing the backup phrase are rare requests of one kind: at most
 /// `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account by
-/// default. Only changes confirmed with the password or phrase count; past the limit every try
+/// default. Successful changes count toward the limit. After the limit every try
 /// is refused.
 #[utoipa::path(put, path = "/api/v1/me/recovery", tag = "Account", request_body = RecoverySet, responses((status = 200, description = "The new phrase is set. Every other session of the account is revoked and its live connections close", body = RecoveryStatus), (status = 400, description = "`key must be a base64url Ed25519 public key`, or not exactly one way to confirm in `reauth`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing, unknown or just revoked bearer token (`Unauthorized`), `Wrong password`, `Wrong backup phrase` (no phrase set, a used, expired or foreign nonce, or a wrong signature), or `Confirm with your password` (`fresh_session`)", body = ApiErrorBody), (status = 404, description = "`Not found`: the `backup_phrase` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Changes from this session locked for the day (UTC) after 50 wrong passwords or phrases", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last try (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket", body = ApiErrorBody), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn set_phrase(
@@ -354,14 +357,14 @@ pub(crate) async fn set_phrase_at(
 /// Remove the backup phrase
 ///
 /// Clears the account's backup phrase, so it no longer signs in or confirms anything. Confirm
-/// with the password or words, or a `phrase` proof by the current phrase (purpose `remove`,
+/// with the account password or words, fresh confirmation from a linked provider, or a `phrase` proof (purpose `remove`,
 /// empty context) over a challenge from `POST /api/v1/auth/recovery/challenge`; `fresh_session` is
 /// refused. Other sessions stay signed in. Password and phrase tries share the pace of password
 /// changes. Works while the `backup_phrase` switch of `GET /api/v1/settings` is off. Requires a
 /// bearer token. Strict and general rate-limit buckets.
 /// Setting and removing the backup phrase are rare requests of one kind: at most
 /// `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account by
-/// default. Only changes confirmed with the password or phrase count; past the limit every try
+/// default. Successful changes count toward the limit. After the limit every try
 /// is refused.
 #[utoipa::path(delete, path = "/api/v1/me/recovery", tag = "Account", request_body = RecoveryRemove, responses((status = 200, description = "No backup phrase is set now", body = RecoveryStatus), (status = 400, description = "Not exactly one way to confirm in `reauth`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing, unknown or just revoked bearer token (`Unauthorized`), `Wrong password`, `Wrong backup phrase`, or `Confirm with your password` (`fresh_session`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Changes from this session locked for the day (UTC) after 50 wrong passwords or phrases", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last try (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket", body = ApiErrorBody), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn remove_phrase(
@@ -661,6 +664,58 @@ mod tests {
             }
         }
         names
+    }
+
+    #[tokio::test]
+    async fn recovery_respects_password_login() {
+        use crate::api::test_util::{each_db, site_sets};
+        for (state, db) in each_db("recovery_password_login").await {
+            add_user(&state, "alice", "initial", Some(KEY)).await;
+            sqlx::query("UPDATE users SET password_hash=$1 WHERE username='alice'")
+                .bind(crate::db::NO_PASSWORD_HASH)
+                .execute(&state.db)
+                .await
+                .unwrap();
+            add_token(&state, "alice", "original").await;
+            for (i, enabled) in [false, true, false].into_iter().enumerate() {
+                site_sets(&state, json!({"password_login":enabled})).await;
+                let t = T + 3 * i as i64;
+                let nonce = nonce_for(&state, "alice", t).await;
+                let res = recover_at(
+                    &state,
+                    recovery(
+                        "alice",
+                        &nonce,
+                        &sign(RECOVER, "alice", &nonce),
+                        text("replacement"),
+                    ),
+                    t,
+                )
+                .await;
+                let user = crate::db::get_user(&state.db, "alice")
+                    .await
+                    .unwrap()
+                    .unwrap();
+                if i == 0 {
+                    assert_eq!(
+                        refusal(res),
+                        (
+                            StatusCode::BAD_REQUEST,
+                            "Sign in with your provider instead".to_owned()
+                        )
+                    );
+                    assert_eq!(user.password_hash, crate::db::NO_PASSWORD_HASH);
+                    assert_eq!(
+                        tokens_of(&state, "alice").await,
+                        vec![secret_key("original")]
+                    );
+                } else {
+                    let _ = res.unwrap();
+                    assert!(verify_password("replacement", &user.password_hash).await);
+                }
+            }
+            db.done(state).await;
+        }
     }
 
     #[tokio::test]
@@ -1688,7 +1743,7 @@ mod tests {
             denied(set_phrase_at(&state, a, set_to(KEY, json!({})), T).await),
             says(
                 StatusCode::BAD_REQUEST,
-                "Confirm with exactly one of password, words, phrase or fresh_session"
+                "Confirm with exactly one of password, words, phrase, fresh_session or idp"
             )
         );
         done(state, path).await;

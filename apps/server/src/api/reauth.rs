@@ -20,7 +20,7 @@ const FRESH_SESSION_SKEW_SECS: i64 = 60;
 
 const PHRASE_TAG: &[u8] = b"rchat-recovery1";
 
-const ONE_WAY: &str = "Confirm with exactly one of password, words, phrase or fresh_session";
+const ONE_WAY: &str = "Confirm with exactly one of password, words, phrase, fresh_session or idp";
 
 /// A signed-in request: the account, the request's bearer token and when that session was
 /// created.
@@ -77,7 +77,7 @@ pub struct PhraseProof {
 pub struct IdpCode {
     /// The provider's id.
     pub provider: String,
-    /// The code the provider returned.
+    /// The one-time RChat code delivered to `/sso` after the provider confirms the user.
     pub code: String,
 }
 
@@ -94,8 +94,7 @@ pub struct ReAuthBody {
     /// `true` to confirm with this session alone. No change accepts it: it answers 401
     /// `Confirm with your password`.
     fresh_session: Option<bool>,
-    /// A fresh sign-in with an identity provider. No provider is available yet, so this answers
-    /// 400 `Unknown sign-in provider`.
+    /// A single-use code from a fresh sign-in with the linked provider.
     idp: Option<IdpCode>,
 }
 
@@ -248,7 +247,9 @@ pub(crate) async fn check_at(
             true => Ok(()),
             false => Err(refused("Confirm with your password")),
         },
-        ReAuth::FreshIdp { .. } => Err(bad("Unknown sign-in provider")),
+        ReAuth::FreshIdp { provider, code } => {
+            crate::sso::flow::verify_fresh(state, session, &provider, &code).await
+        }
     }
 }
 
@@ -735,7 +736,7 @@ mod tests {
     async fn reauth_body_needs_exactly_one_way() {
         let one = refusal(
             StatusCode::BAD_REQUEST,
-            "Confirm with exactly one of password, words, phrase or fresh_session",
+            "Confirm with exactly one of password, words, phrase, fresh_session or idp",
         );
         for value in [
             json!({}),
@@ -773,7 +774,7 @@ mod tests {
         let alice = session(&state, "alice", "tok-alice", T).await;
         assert_eq!(
             denied(check_at(&state, &alice, idp, Purpose::RemovePhrase, T).await),
-            refusal(StatusCode::BAD_REQUEST, "Unknown sign-in provider")
+            refusal(StatusCode::UNAUTHORIZED, "Sign in again to continue")
         );
         done(state, path).await;
     }

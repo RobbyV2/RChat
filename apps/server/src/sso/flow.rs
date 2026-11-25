@@ -5,7 +5,7 @@ use super::{
     provider::{Provider, bounded_json},
 };
 use crate::{
-    api::{ApiError, auth::new_token, bad},
+    api::{ApiError, auth::new_token, bad, reauth::Session},
     db::{Db, now, secret_key},
     state::AppState,
 };
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::{Position, Url};
 
+pub const FRESH_SECS: i64 = 300;
 pub const FLOW_TTL: i64 = 600;
 pub const CODE_TTL: i64 = 600;
 pub const TICKET_TTL: i64 = 300;
@@ -40,6 +41,7 @@ pub struct NewFlow {
     pub ret: Return,
     pub challenge: String,
     pub user: Option<String>,
+    pub session_key: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -60,6 +62,7 @@ pub struct AppCode {
     #[serde(default)]
     admission_policy: Option<String>,
     pub user: Option<String>,
+    pub session_key: Option<String>,
     pub auth_time: Option<i64>,
     pub challenge: String,
     #[serde(skip)]
@@ -178,6 +181,101 @@ async fn store<T: Serialize>(
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct Ticket {
+    pub kind: FlowKind,
+    pub user: String,
+    pub session_key: String,
+}
+
+pub async fn reauth_ticket(
+    state: &AppState,
+    session: &Session,
+    provider: &Provider,
+) -> Result<String, ApiError> {
+    let cfg = &provider.config;
+    let linked: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM sso_links WHERE username=$1 AND provider=$2 AND issuer=$3 LIMIT 1",
+    )
+    .bind(&session.user.username)
+    .bind(&cfg.id)
+    .bind(&cfg.issuer)
+    .fetch_optional(&state.db)
+    .await?;
+    if linked.is_none() {
+        return Err(bad("Not linked"));
+    }
+    let value = random();
+    let ticket = Ticket {
+        kind: FlowKind::Reauth,
+        user: session.user.username.clone(),
+        session_key: secret_key(&session.token),
+    };
+    store(
+        &state.db,
+        &value,
+        "ticket",
+        &cfg.id,
+        &ticket,
+        now() + TICKET_TTL,
+    )
+    .await?;
+    Ok(value)
+}
+
+pub async fn take_ticket(db: &Db, value: &str, provider: &str) -> Result<Option<Ticket>, ApiError> {
+    let data: Option<String> = sqlx::query_scalar("DELETE FROM sso_pending WHERE id=$1 AND kind='ticket' AND provider=$2 AND expires_at>$3 RETURNING data")
+        .bind(secret_key(value)).bind(provider).bind(now()).fetch_optional(db).await?;
+    data.map(|s| serde_json::from_str(&s).map_err(ApiError::internal))
+        .transpose()
+}
+
+fn fresh(auth_time: Option<i64>) -> bool {
+    auth_time.is_some_and(|t| t >= now().saturating_sub(FRESH_SECS))
+}
+
+async fn linked(db: &Db, id: &Identity, user: Option<&str>) -> sqlx::Result<bool> {
+    let found: Option<String> = sqlx::query_scalar("SELECT username FROM sso_links WHERE issuer=$1 AND subject=$2 AND provider=$3 AND username=$4")
+        .bind(&id.issuer).bind(id.subject.as_str()).bind(&id.provider).bind(user).fetch_optional(db).await?;
+    Ok(found.is_some())
+}
+
+pub async fn verify_fresh(
+    state: &AppState,
+    session: &Session,
+    provider: &str,
+    code: &str,
+) -> Result<(), ApiError> {
+    let denied = || {
+        ApiError(
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Sign in again to continue".into(),
+            None,
+        )
+    };
+    let app = take_code(&state.db, code).await.map_err(|e| {
+        if e.0 == axum::http::StatusCode::BAD_REQUEST {
+            denied()
+        } else {
+            e
+        }
+    })?;
+    if app.kind != FlowKind::Reauth
+        || app.identity.provider != provider
+        || app.user.as_deref() != Some(&session.user.username)
+        || app.session_key.as_deref() != Some(&secret_key(&session.token))
+        || !fresh(app.auth_time)
+        || !state
+            .sso
+            .provider(provider)
+            .is_some_and(|p| app.matches_provider(&p.config))
+        || !linked(&state.db, &app.identity, app.user.as_deref()).await?
+    {
+        return Err(denied());
+    }
+    Ok(())
+}
+
 pub async fn begin(
     state: &AppState,
     provider: &Provider,
@@ -217,6 +315,10 @@ pub async fn begin(
         ("code_challenge", &digest(&pending.verifier)),
         ("code_challenge_method", "S256"),
     ]);
+    if pending.flow.kind == FlowKind::Reauth {
+        url.query_pairs_mut()
+            .extend_pairs([("prompt", "login"), ("max_age", "0")]);
+    }
     store(
         &state.db,
         &value,
@@ -380,7 +482,16 @@ async fn complete(
             .collect(),
         sid: claims.sid.as_deref().map(accounts::oidc_key),
     };
+    if p.flow.kind == FlowKind::Reauth
+        && (!fresh(claims.auth_time)
+            || !linked(&state.db, &identity, p.flow.user.as_deref())
+                .await
+                .map_err(|_| CallbackError::Failed)?)
+    {
+        return Err(CallbackError::Failed);
+    }
     let app = AppCode {
+        session_key: p.flow.session_key,
         kind: p.flow.kind,
         identity,
         client_id: p.client_id,
