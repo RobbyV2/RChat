@@ -567,6 +567,7 @@ mod tests {
             serde_json::json!({
                 "password_login": true,
                 "registration": "open",
+                "client_return": true,
                 "providers": [{"id": "authentik", "name": "Authentik"}]
             })
         );

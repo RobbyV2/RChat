@@ -183,9 +183,11 @@ export function SignInStep({
         <ProviderButtons
           account={account}
           providers={auth.providers}
+          clientReturn={auth.client_return === true}
           back={back}
           username={owner?.username ?? null}
           divider={passwordEnabled}
+          onSuccess={onSuccess}
         />
       )}
       {passwordEnabled && (!owner || owner.username !== null) && (

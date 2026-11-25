@@ -130,7 +130,17 @@ function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) 
                 Use another instance
               </button>
             )}
-            <SignInStep back={next} owner={owner} missing={missing} onSuccess={() => {}} />
+            <SignInStep
+              back={next}
+              owner={owner}
+              missing={missing}
+              onSuccess={signedIn => {
+                if (!client.canWritePage(account) || adding) return
+                if (signedIn.conn.origin !== account.conn.origin || !client.show(signedIn, 'none'))
+                  return
+                router.replace(accountPath(next, routeOwnerFor(signedIn)))
+              }}
+            />
           </>
         )}
         <div className="flex flex-col items-center gap-1">

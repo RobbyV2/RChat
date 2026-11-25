@@ -36,11 +36,12 @@ impl Drop for Fixture {
 }
 impl Fixture {
     async fn new(configure: impl FnOnce(&FakeIdp, &mut ProviderConfig)) -> Self {
-        Self::with_policy(configure, |_| {}).await
+        Self::configured(configure, |_| {}, None).await
     }
-    async fn with_policy(
+    async fn configured(
         configure: impl FnOnce(&FakeIdp, &mut ProviderConfig),
         policy: impl FnOnce(&mut SsoConfig),
+        web: Option<&std::path::Path>,
     ) -> Self {
         let idp = FakeIdp::start(Alg::EdDsa).await;
         let name = format!("u{}", &new_token()[..14]);
@@ -67,7 +68,34 @@ impl Fixture {
         let state = state
             .with_instance(instance)
             .with_sso(Arc::new(Sso::new(config).unwrap()));
-        let (_, task) = serve_on(state.clone(), listener);
+        let task = if let Some(web) = web {
+            use crate::{
+                config::Roles,
+                server::client_ip::{ClientIp, ProxyTrust},
+            };
+            let api = crate::api::routes(
+                state.clone(),
+                &Roles::ALL,
+                ClientIp(ProxyTrust::from_config(false, Some("127.0.0.1")).unwrap()),
+                None,
+            )
+            .with_state(state.clone());
+            let router = axum::Router::new()
+                .nest("/api/v1", api.clone())
+                .nest("/api", api)
+                .fallback_service(tower_http::services::ServeDir::new(web))
+                .layer(crate::server::cors_layer());
+            tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await
+                .unwrap()
+            })
+        } else {
+            serve_on(state.clone(), listener).1
+        };
         let client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -196,7 +224,7 @@ async fn pending_identity_retains_only_the_fields_used_at_exchange() {
         config::{GroupGrant, ScimConfig, ScimDelete},
     };
 
-    let f = Fixture::with_policy(
+    let f = Fixture::configured(
         |_, provider| {
             provider.sync_profile = true;
             provider.allowed_groups = vec!["admitted".into()];
@@ -215,6 +243,7 @@ async fn pending_identity_retains_only_the_fields_used_at_exchange() {
                 }],
             );
         },
+        None,
     )
     .await;
     let _registered = crate::api::auth::register(
@@ -493,6 +522,132 @@ async fn exchange_rejects_codes_for_other_purposes_and_actors() {
         assert_eq!(response.status(), 400);
         assert_eq!(body(response).await["error"], "Sign-in expired. Try again");
     }
+}
+
+#[tokio::test]
+async fn client_login_requires_instance_consent_and_bound_verifier() {
+    let f = Fixture::new(|_, _| {}).await;
+    let client_origin = "https://app.example";
+    let endpoint = format!("{}/api/auth/oidc/client-consent", f.origin);
+    for (allow, valid_verifier) in [(false, false), (true, false), (true, true)] {
+        let ret = f.returned("client&origin=https%3A%2F%2Fapp.example").await;
+        assert_eq!(ret.origin().ascii_serialization(), f.origin);
+        assert!(ret.query().is_none());
+        let receipt = ret.fragment().unwrap().strip_prefix("consent=").unwrap();
+        let decision = |origin: &str, action: &str| {
+            f.client
+                .post(&endpoint)
+                .header(header::ORIGIN, origin)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json!({"receipt":receipt,"action":action}).to_string())
+                .send()
+        };
+        assert_eq!(f.exchange(receipt, &f.verifier, None).await.status(), 400);
+        assert_eq!(
+            decision(client_origin, "allow").await.unwrap().status(),
+            403
+        );
+        let description = body(decision(&f.origin, "describe").await.unwrap()).await;
+        assert_eq!(description["origin"], client_origin);
+        assert!(description.get("code").is_none());
+        let deadline = crate::db::now() + 20;
+        sqlx::query("UPDATE sso_pending SET expires_at=$1 WHERE id=$2")
+            .bind(deadline)
+            .bind(crate::db::secret_key(receipt))
+            .execute(&f.state.db)
+            .await
+            .unwrap();
+        let accepted = body(
+            decision(&f.origin, if allow { "allow" } else { "cancel" })
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(decision(&f.origin, "allow").await.unwrap().status(), 400);
+        if allow {
+            let code = accepted["code"].as_str().unwrap();
+            assert_ne!(code, receipt);
+            let expires_at: i64 =
+                sqlx::query_scalar("SELECT expires_at FROM sso_pending WHERE id=$1")
+                    .bind(crate::db::secret_key(code))
+                    .fetch_one(&f.state.db)
+                    .await
+                    .unwrap();
+            assert_eq!(expires_at, deadline);
+            assert_eq!(
+                f.exchange(
+                    code,
+                    if valid_verifier {
+                        &f.verifier
+                    } else {
+                        "incorrect-verifier-for-this-disposable-test-flow"
+                    },
+                    None
+                )
+                .await
+                .status(),
+                if valid_verifier { 200 } else { 400 }
+            );
+            assert_eq!(f.exchange(code, &f.verifier, None).await.status(), 400);
+        } else {
+            assert!(accepted.get("code").is_none())
+        }
+    }
+    for origin in [
+        "http://other.test",
+        "https://app.example/path",
+        "https://user@app.example",
+        "null",
+    ] {
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(&f.verifier));
+        assert_eq!(
+            f.client
+                .get(
+                    Url::parse_with_params(
+                        &format!("{}/api/auth/oidc/fake/start", f.origin),
+                        [
+                            ("return", "client"),
+                            ("origin", origin),
+                            ("challenge", challenge.as_str())
+                        ]
+                    )
+                    .unwrap()
+                )
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        )
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an exported web client and Chromium"]
+async fn client_login_chromium() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let web = std::path::PathBuf::from(
+        std::env::var_os("RCHAT_SSO_WEB_EXPORT")
+            .expect("set RCHAT_SSO_WEB_EXPORT to the built static web directory"),
+    );
+    assert!(web.join("sso/index.html").is_file());
+    let f = Fixture::configured(|_, _| {}, |_| {}, Some(&web)).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client_origin = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    // The exported client has one app shell for all account-prefixed routes.
+    let router = axum::Router::new().fallback_service(
+        tower_http::services::ServeDir::new(&web)
+            .fallback(tower_http::services::ServeFile::new(web.join("index.html"))),
+    );
+    let static_server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let status = tokio::process::Command::new("node")
+        .arg(root.join("scripts/sso/client_return_browser.mjs"))
+        .args([&client_origin, &f.origin, &f.name])
+        .status()
+        .await
+        .unwrap();
+    static_server.abort();
+    assert!(status.success())
 }
 
 #[tokio::test]

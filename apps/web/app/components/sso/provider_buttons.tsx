@@ -2,18 +2,24 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AccountSession } from '../../lib/client/session'
 import type { AuthInfo } from '../../lib/types'
+import { ClientLogin } from './client_login'
+import { allowsAccountOrigin } from '../../lib/client/hosted_policy'
 import { beginLogin, canBegin, clearIntent, type SsoIntent } from '../../lib/sso'
 export function ProviderButtons({
   account,
   providers,
+  clientReturn,
   back,
   username,
   divider,
+  onSuccess,
 }: {
   account: AccountSession
+  clientReturn: boolean
   providers: AuthInfo['providers']
   back: string
   username: string | null
+  onSuccess: (account: AccountSession) => void
   divider: boolean
 }) {
   const [error, setError] = useState(''),
@@ -28,11 +34,22 @@ export function ProviderButtons({
     }
   }, [account])
   if (!providers.length) return null
-  if (!canBegin(account.conn.origin))
+  if (!allowsAccountOrigin(account.conn.origin)) return null
+  if (!canBegin(account.conn.origin) && !clientReturn)
     return (
       <p>
         Single sign-on for {account.conn.host} works on {account.conn.host} and in the RChat apps.
       </p>
+    )
+  if (!canBegin(account.conn.origin))
+    return (
+      <ClientLogin
+        account={account}
+        username={username}
+        providers={providers}
+        onSuccess={onSuccess}
+        divider={divider}
+      />
     )
   return (
     <>

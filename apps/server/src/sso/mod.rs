@@ -28,6 +28,9 @@ pub struct AuthInfo {
     pub registration: Registration,
     /// Whether the sign-in page offers the password form by default.
     pub password_login: bool,
+    /// This instance can ask for consent before returning a login to another web origin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_return: Option<bool>,
     /// Configured identity providers in display order.
     pub providers: Vec<ProviderInfo>,
 }
@@ -89,6 +92,7 @@ impl Sso {
         AuthInfo {
             registration,
             password_login,
+            client_return: (!self.config.providers.is_empty()).then_some(true),
             providers: self
                 .config
                 .providers
@@ -147,6 +151,7 @@ mod tests {
             serde_json::json!({
                 "password_login": false,
                 "registration": "sso",
+                "client_return": true,
                 "providers": [{"id": "authentik", "name": "Authentik"}, {"id": "okta", "name": "okta"}]
             })
         );

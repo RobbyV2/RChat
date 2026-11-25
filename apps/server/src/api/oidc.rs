@@ -22,7 +22,8 @@ use utoipa::ToSchema;
 #[derive(Deserialize)]
 pub(crate) struct StartParams {
     #[serde(rename = "return")]
-    ret: Option<Return>,
+    ret: Option<String>,
+    origin: Option<String>,
     challenge: Option<String>,
     ticket: Option<String>,
 }
@@ -66,7 +67,7 @@ fn callback_error(
 /// Begin sign-in with a client-generated S256 challenge.
 ///
 /// Returns are limited to the hosted page and the instance's shell deep link.
-#[utoipa::path(get, path = "/api/v1/auth/oidc/{provider}/start", tag = "Auth", params(("provider"=String,Path,description="Configured provider ID"),("return"=String,Query,description="web or app"),("challenge"=String,Query,description="Unpadded base64url SHA-256 digest of the client verifier")), responses((status=302,description="Provider authorization or fixed sign-in return URL"),(status=400,description="Invalid parameters"),(status=404,description="Unknown provider")), security(()))]
+#[utoipa::path(get, path = "/api/v1/auth/oidc/{provider}/start", tag = "Auth", params(("provider"=String,Path,description="Configured provider ID"),("return"=String,Query,description="web, app, or client"),("origin"=Option<String>,Query,description="Exact requesting origin for client returns"),("challenge"=String,Query,description="Unpadded base64url SHA-256 digest of the client verifier")), responses((status=302,description="Provider authorization or fixed sign-in return URL"),(status=400,description="Invalid parameters"),(status=404,description="Unknown provider")), security(()))]
 pub(crate) async fn start(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -76,7 +77,12 @@ pub(crate) async fn start(
         .sso
         .provider(&id)
         .ok_or_else(super::access::not_found)?;
-    let ret = q.ret.ok_or_else(|| bad("Missing return"))?;
+    let ret = match (q.ret.as_deref(), q.origin) {
+        (Some("web"), None) => Return::Web,
+        (Some("app"), None) => Return::App,
+        (Some("client"), Some(origin)) if valid_client_origin(&origin) => Return::Client { origin },
+        _ => return Err(bad("Invalid return origin")),
+    };
     let challenge = q
         .challenge
         .filter(|challenge| flow::valid_challenge(challenge))
@@ -89,7 +95,7 @@ pub(crate) async fn start(
         &provider,
         NewFlow {
             kind: FlowKind::Login,
-            ret,
+            ret: ret.clone(),
             challenge,
             user: None,
         },
@@ -133,7 +139,14 @@ pub(crate) async fn callback(
         Err(e) => flow::finish_response(&state, &provider, state_param, Err(e)).await,
     };
     match result {
-        Ok((ret, code)) => back(&state, ret, &format!("code={code}")),
+        Ok((ret, value)) => {
+            let key = if matches!(ret, Return::Client { .. }) {
+                "consent"
+            } else {
+                "code"
+            };
+            back(&state, ret, &format!("{key}={value}"))
+        }
         Err((ret, e)) => callback_error(&state, &id, ret, e),
     }
 }
@@ -258,3 +271,53 @@ pub(crate) async fn exchange(
 
 #[cfg(test)]
 mod tests;
+
+fn valid_client_origin(origin: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    url.origin().ascii_serialization() == origin
+        && (url.scheme() == "https"
+            || (url.scheme() == "http"
+                && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))))
+}
+
+/// A client login receipt and the decision on it.
+#[derive(Deserialize, ToSchema)]
+pub struct ConsentRequest {
+    /// Receipt from the consent return of the sign-in.
+    receipt: String,
+    /// Describe the login, allow it, or cancel it.
+    action: flow::ConsentAction,
+}
+/// Describe or decide an outstanding client login from the instance's own consent page.
+///
+/// No authentication. The `Origin` header must be this instance's public origin. Allow and
+/// cancel use up the receipt.
+#[utoipa::path(post,path="/api/v1/auth/oidc/client-consent",tag="Auth",request_body=ConsentRequest,
+ responses((status=200,description="Recorded destination and approved code, if any",body=flow::ConsentResult),(status=400,description="Invalid or expired receipt"),(status=403,description="Consent must come from this instance")),security(()))]
+pub(crate) async fn client_consent(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(q): Json<ConsentRequest>,
+) -> Result<Response, ApiError> {
+    let public = state
+        .instance
+        .public_url
+        .as_ref()
+        .ok_or_else(|| bad("Missing public URL"))?
+        .origin()
+        .ascii_serialization();
+    if headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) != Some(public.as_str()) {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "Consent must come from this instance".into(),
+            None,
+        ));
+    }
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(flow::client_consent(&state.db, &q.receipt, q.action).await?),
+    )
+        .into_response())
+}

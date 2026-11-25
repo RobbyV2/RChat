@@ -1206,6 +1206,7 @@ export interface InstanceLimits {
 }
 
 export interface AuthInfo {
+  client_return?: boolean
   password_login: boolean
   registration: 'open' | 'sso' | 'closed'
   providers: { id: string; name: string }[]

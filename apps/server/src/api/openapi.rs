@@ -85,6 +85,7 @@ impl Modify for Bearer {
         super::oidc::start,
         super::oidc::callback,
         super::oidc::exchange,
+        super::oidc::client_consent,
         super::auth::words,
         super::recovery::challenge,
         super::recovery::recover,

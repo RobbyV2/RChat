@@ -2119,6 +2119,7 @@ pub fn routes(
             .route("/auth/login", post(auth::login))
             .route("/auth/oidc/{provider}/start", get(oidc::start))
             .route("/auth/oidc/{provider}/callback", get(oidc::callback))
+            .route("/auth/oidc/client-consent", post(oidc::client_consent))
             .route("/auth/oidc/exchange", post(oidc::exchange))
             .route("/auth/words/{username}", get(auth::words))
             .route("/auth/recovery/challenge", post(recovery::challenge))

@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
+import { ClientConsent } from '../components/sso/client_consent'
 import { authBrowser } from '../lib/platform'
 import {
   beginLogin,
@@ -22,6 +23,17 @@ import { ApiError } from '../lib/api'
 import { NAME_MAX } from '../lib/rules'
 import type { ExchangeResponse } from '../lib/types'
 export default function SsoPage() {
+  const [fragment, setFragment] = useState<string | null>(null)
+  useEffect(() => {
+    setFragment(location.hash.slice(1))
+  }, [])
+  if (fragment === null) return null
+  const params = new URLSearchParams(fragment)
+  if (params.has('consent') || params.has('client_error'))
+    return <ClientConsent fragment={fragment} />
+  return <LocalReturn />
+}
+function LocalReturn() {
   const router = useRouter(),
     [error, setError] = useState(''),
     [picker, setPicker] = useState<Extract<ExchangeResponse, { kind: 'pick_username' }> | null>(

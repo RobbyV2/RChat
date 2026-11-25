@@ -26,11 +26,12 @@ pub enum FlowKind {
     Reauth,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Return {
     Web,
     App,
+    Client { origin: String },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -134,6 +135,22 @@ pub fn verifier_ok(verifier: &str, challenge: &str) -> bool {
 pub fn return_url(ret: Return, public_url: &Url, query: &str) -> String {
     match ret {
         Return::Web => format!("{}/sso?{query}", public_url.as_str().trim_end_matches('/')),
+        Return::Client { origin } => {
+            let mut url = public_url.clone();
+            url.set_path(&format!("{}/sso", url.path().trim_end_matches('/')));
+            let mut fragment = url::form_urlencoded::Serializer::new(String::new());
+            if let Some(receipt) = query.strip_prefix("consent=") {
+                fragment.append_pair("consent", receipt);
+            } else {
+                fragment.append_pair(
+                    "client_error",
+                    query.strip_prefix("error=").unwrap_or("failed"),
+                );
+                fragment.append_pair("origin", &origin);
+            }
+            url.set_fragment(Some(&fragment.finish()));
+            url.into()
+        }
         Return::App => format!(
             "rchat://{}/sso?{query}",
             &public_url[Position::BeforeHost..Position::AfterPort]
@@ -243,14 +260,14 @@ pub async fn finish_response(
     let (data,) = row.ok_or((Return::Web, CallbackError::Expired))?;
     let p: Pending =
         serde_json::from_str(&data).map_err(|_| (Return::Web, CallbackError::Failed))?;
-    let ret = p.flow.ret;
+    let ret = p.flow.ret.clone();
     if p.issuer != provider.config.issuer || p.client_id != provider.config.client_id {
         return Err((ret, CallbackError::Failed));
     }
-    let code = response.map_err(|e| (ret, e))?;
+    let code = response.map_err(|e| (ret.clone(), e))?;
     complete(state, provider, p, code)
         .await
-        .map(|c| (ret, c))
+        .map(|c| (ret.clone(), c))
         .map_err(|e| (ret, e))
 }
 
@@ -374,6 +391,20 @@ async fn complete(
         expires_at: now() + CODE_TTL,
     };
     let value = new_token();
+    if let Return::Client { origin } = p.flow.ret {
+        let expires_at = app.expires_at;
+        store(
+            &state.db,
+            &value,
+            "client_consent",
+            &cfg.id,
+            &Consent { origin, app },
+            expires_at,
+        )
+        .await
+        .map_err(|_| CallbackError::Failed)?;
+        return Ok(value);
+    }
     put_back(&state.db, &value, &app, app.expires_at)
         .await
         .map_err(|_| CallbackError::Failed)?;
@@ -403,4 +434,76 @@ pub async fn put_back(db: &Db, code: &str, c: &AppCode, expires_at: i64) -> Resu
         c.expires_at.min(expires_at),
     )
     .await
+}
+
+#[derive(Serialize, Deserialize)]
+struct Consent {
+    origin: String,
+    app: AppCode,
+}
+/// What to do with an outstanding client login.
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ConsentAction {
+    Describe,
+    Allow,
+    Cancel,
+}
+/// An outstanding client login, with its sign-in code once allowed.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct ConsentResult {
+    /// Web origin that asked for the login.
+    pub origin: String,
+    /// S256 challenge the client started the sign-in with.
+    pub challenge: String,
+    /// Single-use sign-in code, present only after allow.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+pub async fn client_consent(
+    db: &Db,
+    receipt: &str,
+    action: ConsentAction,
+) -> Result<ConsentResult, ApiError> {
+    if receipt.len() != 64 || !receipt.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err(expired());
+    }
+    let mut tx = db.begin().await?;
+    let sql = match action {
+        ConsentAction::Describe => {
+            "SELECT data,expires_at FROM sso_pending WHERE id=$1 AND kind='client_consent' AND expires_at>$2"
+        }
+        _ => {
+            "DELETE FROM sso_pending WHERE id=$1 AND kind='client_consent' AND expires_at>$2 RETURNING data,expires_at"
+        }
+    };
+    let (raw, expires): (String, i64) = sqlx::query_as(sql)
+        .bind(secret_key(receipt))
+        .bind(now())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(expired)?;
+    let consent: Consent = serde_json::from_str(&raw).map_err(ApiError::internal)?;
+    let code = if matches!(action, ConsentAction::Allow) {
+        let code = new_token();
+        let data = serde_json::to_string(&consent.app).map_err(ApiError::internal)?;
+        sqlx::query(
+            "INSERT INTO sso_pending(id,kind,provider,data,expires_at) VALUES($1,'code',$2,$3,$4)",
+        )
+        .bind(secret_key(&code))
+        .bind(&consent.app.identity.provider)
+        .bind(data)
+        .bind(expires)
+        .execute(&mut *tx)
+        .await?;
+        Some(code)
+    } else {
+        None
+    };
+    tx.commit().await?;
+    Ok(ConsentResult {
+        origin: consent.origin,
+        challenge: consent.app.challenge,
+        code,
+    })
 }
