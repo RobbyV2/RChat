@@ -20,7 +20,8 @@ const FRESH_SESSION_SKEW_SECS: i64 = 60;
 
 const PHRASE_TAG: &[u8] = b"rchat-recovery1";
 
-const ONE_WAY: &str = "Confirm with exactly one of password, words, phrase, fresh_session or idp";
+pub(super) const ONE_WAY: &str =
+    "Confirm with exactly one of password, words, phrase, fresh_session or idp";
 
 /// A signed-in request: the account, the request's bearer token and when that session was
 /// created.
@@ -135,6 +136,8 @@ impl TryFrom<ReAuthBody> for ReAuth {
 pub enum Purpose {
     SetPhrase { key: String },
     RemovePhrase,
+    LinkIdp { provider: String },
+    SetPassword,
     P2pData { ik: String },
 }
 
@@ -143,6 +146,8 @@ impl Purpose {
         match self {
             Purpose::SetPhrase { .. } => "set",
             Purpose::RemovePhrase => "remove",
+            Purpose::LinkIdp { .. } => "link_idp",
+            Purpose::SetPassword => "set_password",
             Purpose::P2pData { .. } => "p2p-data",
         }
     }
@@ -150,14 +155,19 @@ impl Purpose {
     pub fn context(&self) -> &str {
         match self {
             Purpose::SetPhrase { key } => key,
-            Purpose::RemovePhrase => "",
+            Purpose::RemovePhrase | Purpose::SetPassword => "",
+            Purpose::LinkIdp { provider } => provider,
             Purpose::P2pData { ik } => ik,
         }
     }
 
     pub fn fresh_session_ok(&self, _user: &User) -> bool {
         match self {
-            Purpose::SetPhrase { .. } | Purpose::RemovePhrase | Purpose::P2pData { .. } => false,
+            Purpose::SetPhrase { .. }
+            | Purpose::RemovePhrase
+            | Purpose::P2pData { .. }
+            | Purpose::LinkIdp { .. }
+            | Purpose::SetPassword => false,
         }
     }
 }
@@ -196,6 +206,11 @@ pub(crate) async fn check_at(
         token,
         created_at,
     } = session;
+    if purpose == Purpose::SetPassword
+        && matches!(reauth, ReAuth::Password(_) | ReAuth::FreshSession)
+    {
+        return Err(refused("Confirm with your provider or backup phrase"));
+    }
     let known_to_others = match reauth {
         ReAuth::Password(_) | ReAuth::FreshSession => user.temp.is_some(),
         ReAuth::Phrase { nonce: _, sig: _ }

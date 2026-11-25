@@ -18,6 +18,7 @@ use crate::api::access::not_found;
 use crate::api::dms::{DmOrder, dm_page};
 use crate::api::names::Refusal;
 use crate::api::rare::{self, Rare};
+use crate::api::reauth::{self, Purpose, ReAuthBody, Session};
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::temp_passwords::TempView;
@@ -36,6 +37,8 @@ use crate::ws::WsEvent;
 /// The signed-in user's own account, with the first page of their servers and DMs.
 #[derive(Serialize, ToSchema)]
 pub struct Me {
+    /// Whether the account has a local password or sign-in words.
+    pub has_password: bool,
     /// Lowercase username, the account's unique key.
     #[schema(example = "alice")]
     pub username: String,
@@ -160,7 +163,9 @@ pub struct Secret {
 #[derive(Deserialize, ToSchema)]
 pub struct PasswordChange {
     /// The account's current password or words.
-    current: Secret,
+    current: Option<Secret>,
+    /// Fresh provider code or signed backup phrase when setting the first password.
+    reauth: Option<ReAuthBody>,
     /// The new password or words. Either kind is allowed, regardless of the current one.
     new: Secret,
     /// `false` also removes the account's backup phrase. Omit or `true` to keep it.
@@ -562,6 +567,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         next: dms_cursor,
     } = dm_page(db, &user.username, DmOrder::default(), 0, None, LIST_PAGE).await?;
     Ok(Me {
+        has_password: crate::sso::accounts::has_password(user),
         username: user.username.clone(),
         display_name: user.display_name.clone(),
         avatar_kind: user.avatar_kind,
@@ -1048,7 +1054,10 @@ pub(crate) async fn me(
 
 /// Change the password
 ///
-/// Replaces the account's password or words after checking the current one. Every other session
+/// Replaces the account's password or words after checking the current one. Setting the first
+/// password requires a fresh provider code or backup phrase and enabled password login. For phrase
+/// confirmation, sign the recovery challenge with purpose `set_password` and empty context
+/// (a trailing zero byte). Every other session
 /// token of the account is revoked and its WebSocket connections close; the token used for this
 /// request stays valid. The backup phrase stays unless `keep_recovery` is `false`. Each session
 /// admits one attempt every 3 seconds, and after 50 wrong current passwords in a UTC day it may not
@@ -1056,7 +1065,7 @@ pub(crate) async fn me(
 /// Requires a bearer token. Strict and general rate-limit buckets.
 /// Password changes are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
 /// `RARE_REQUESTS_PER_DAY` (100) a day per account by default. Only changes confirmed with the
-/// current password count; past the limit every try is refused.
+/// current password or a first-password proof count toward the limit.
 /// An account that signed in with a temporary password (`password_temporary` in
 /// `GET /api/v1/me`) gives it as `current`, also after it expired, and must choose a different
 /// one. Until it does, and while `password_change` in `GET /api/v1/settings` is `required` or
@@ -1064,7 +1073,7 @@ pub(crate) async fn me(
 /// `GET /api/v1/me` and `POST /api/v1/auth/logout` answers 403 `Change your password first`
 /// (reason `off_account`, control `password_change`), and its WebSocket connections close with
 /// code 4403.
-#[utoipa::path(post, path = "/api/v1/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid. With `keep_recovery: false` the backup phrase is removed too", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, not exactly one of `password` and `words` in `current` or `new`, or a new password equal to the temporary one the account signed in with (`Choose a password different from the temporary one`, reason `invalid`, field `new`). Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or wrong current password (`Wrong password`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). For a first password omit `current` and provide `reauth` with a fresh provider code or backup phrase signature. Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid. With `keep_recovery: false` the backup phrase is removed too", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, not exactly one of `password` and `words` in `current` or `new`, or a new password equal to the temporary one the account signed in with (`Choose a password different from the temporary one`, reason `invalid`, field `new`). Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or invalid password or confirmation", body = ApiErrorBody), (status = 403, description = "First password disabled by instance policy", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn change_password(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1083,6 +1092,7 @@ async fn change_password_at(
 ) -> Result<Json<OkResp>, ApiError> {
     let PasswordChange {
         current,
+        reauth,
         new,
         keep_recovery,
     } = req;
@@ -1094,29 +1104,62 @@ async fn change_password_at(
         return Err(bad("Password required"));
     }
     let (new_secret, new_kind) = secret_from(&user.username, new_password, new_words, true)?;
-    let Secret { password, words } = current;
-    let (secret, _) = secret_from(&user.username, password, words, false)?;
     let token = request_token(headers).unwrap_or_default();
-    let session = session_key(&token);
     rare::check(state, Rare::Password, Some(&user))?;
-    throttle_change(&state.db, &session, t).await?;
-    if !verify_password(&secret, &user.password_hash).await {
-        note_change_failure(&state.db, &session).await?;
-        return Err(wrong_password());
-    }
-    if user.temp.is_some() && new_secret == secret {
-        return Err(ApiError::invalid(SAME_AS_TEMPORARY, "new"));
+    if crate::sso::accounts::has_password(&user) {
+        let Secret { password, words } = current.ok_or_else(|| bad("Current password required"))?;
+        let (secret, _) = secret_from(&user.username, password, words, false)?;
+        let session = session_key(&token);
+        throttle_change(&state.db, &session, t).await?;
+        if !verify_password(&secret, &user.password_hash).await {
+            note_change_failure(&state.db, &session).await?;
+            return Err(wrong_password());
+        }
+        if user.temp.is_some() && new_secret == secret {
+            return Err(ApiError::invalid(SAME_AS_TEMPORARY, "new"));
+        }
+    } else {
+        if current.is_some() {
+            return Err(bad("Omit current when setting a first password"));
+        }
+        if !crate::sso::accounts::may_set_password(state, &user).await {
+            return Err(ApiError(
+                StatusCode::FORBIDDEN,
+                "Password sign-in is off".into(),
+                None,
+            ));
+        }
+        let proof = reauth
+            .ok_or_else(|| {
+                ApiError(
+                    StatusCode::UNAUTHORIZED,
+                    "Confirm with your provider or backup phrase".into(),
+                    None,
+                )
+            })?
+            .try_into()?;
+        let (actor, created_at) = super::session_for_token(state, &token)
+            .await?
+            .ok_or_else(super::unauthorized)?;
+        let session = Session {
+            user: actor,
+            created_at,
+            token: token.clone(),
+        };
+        reauth::check_at(state, &session, proof, Purpose::SetPassword, t).await?;
     }
     rare::take(state, Rare::Password, Some(&user))?;
     let hash = hash_password(&new_secret).await?;
     let mut tx = state.db.begin().await?;
     let changed = sqlx::query(
-        "UPDATE users SET password_hash = $1, password_kind = $2 WHERE username = $3 AND password_hash = $4",
+        "UPDATE users SET password_hash = $1, password_kind = $2 WHERE username = $3 AND password_hash = $4 AND created_at = $5 AND suspended_at IS NULL AND EXISTS (SELECT 1 FROM tokens WHERE username = $3 AND token = $6)",
     )
     .bind(&hash)
     .bind(new_kind)
     .bind(&user.username)
     .bind(&user.password_hash)
+    .bind(user.created_at)
+    .bind(secret_key(&token))
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -2328,7 +2371,8 @@ mod tests {
             user,
             &headers,
             PasswordChange {
-                current,
+                current: Some(current),
+                reauth: None,
                 new,
                 keep_recovery: None,
             },
@@ -2354,7 +2398,8 @@ mod tests {
             Authed(user),
             headers,
             Json(PasswordChange {
-                current,
+                current: Some(current),
+                reauth: None,
                 new,
                 keep_recovery: None,
             }),
@@ -2448,7 +2493,8 @@ mod tests {
                     user,
                     &headers,
                     PasswordChange {
-                        current: text(current),
+                        current: Some(text(current)),
+                        reauth: None,
                         new: text(new),
                         keep_recovery: keep,
                     },

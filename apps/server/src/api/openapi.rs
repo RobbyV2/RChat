@@ -84,6 +84,9 @@ impl Modify for Bearer {
         super::auth::login,
         super::oidc::start,
         super::oidc::ticket,
+        super::oidc::list,
+        super::oidc::unlink,
+        super::oidc::unlink_ticket_provider,
         super::oidc::callback,
         super::oidc::exchange,
         super::oidc::client_consent,
@@ -894,6 +897,7 @@ pub(crate) mod tests {
     #[test]
     fn me_serializes_is_site_admin() {
         let me = Me {
+            has_password: true,
             username: "alice".to_string(),
             display_name: "Alice".to_string(),
             avatar_kind: AvatarKind::Identicon,

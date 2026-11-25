@@ -911,6 +911,7 @@ async fn only_confirmed_password_and_phrase_changes_count_and_wrong_tries_use_up
         .enumerate()
     {
         let token = format!("own-{n}");
+        signed_in(db, "owen", &token).await;
         assert_eq!(
             new_password(&state, &token, current, new).await,
             ok,

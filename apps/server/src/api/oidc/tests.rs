@@ -20,6 +20,7 @@ use url::Url;
 
 struct Fixture {
     idp: FakeIdp,
+    second: FakeIdp,
     state: AppState,
     client: Client,
     origin: String,
@@ -71,12 +72,13 @@ impl Fixture {
         )
         .await
         .unwrap();
+        let second = FakeIdp::start(Alg::EdDsa).await;
         let mut config = SsoConfig {
             providers: vec![
                 provider,
                 ProviderConfig {
                     name: "Second fixture provider".into(),
-                    ..idp.provider_config("second")
+                    ..second.provider_config("second")
                 },
             ],
             ..Default::default()
@@ -120,6 +122,7 @@ impl Fixture {
             .unwrap();
         Self {
             idp,
+            second,
             client,
             state,
             origin,
@@ -720,6 +723,209 @@ async fn tickets_are_bound_to_provider_and_expiry() {
     );
 }
 
+impl Fixture {
+    async fn post_account(&self, token: &str, path: &str, value: Value) -> Response {
+        self.client
+            .post(format!("{}/api/me/{path}", self.origin))
+            .bearer_auth(token)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(value.to_string())
+            .send()
+            .await
+            .unwrap()
+    }
+
+    async fn password_account(&self, name: &str) -> String {
+        crate::api::auth::register(
+            axum::extract::State(self.state.clone()),
+            axum::Json(
+                serde_json::from_value(
+                    json!({"username":name,"password":"test","avatar_kind":"identicon"}),
+                )
+                .unwrap(),
+            ),
+        )
+        .await
+        .unwrap()
+        .0
+        .token
+    }
+
+    async fn link_exchange(&self, token: &str, provider: &str, proof: Value) -> Response {
+        let ticket = body(
+            self.post_account(
+                token,
+                "sso/ticket",
+                json!({"purpose":"link","provider":provider,"reauth":proof}),
+            )
+            .await,
+        )
+        .await;
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(&self.verifier));
+        let start = format!(
+            "{}/api/auth/oidc/{provider}/start?return=web&challenge={challenge}&ticket={}",
+            self.origin,
+            ticket["ticket"].as_str().unwrap()
+        );
+        let authorize = location(self.get(&start).await);
+        let callback = location(self.get(authorize.as_str()).await);
+        let ret = location(self.get(callback.as_str()).await);
+        self.exchange(&param(&ret, "code"), &self.verifier, None)
+            .await
+    }
+    async fn remove(&self, token: &str, provider: &str) -> Response {
+        self.client
+            .delete(format!("{}/api/me/sso/{provider}", self.origin))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn linking_needs_reauth_and_a_free_subject() {
+    let f = Fixture::new(|_, p| p.name = "Example".into()).await;
+    let token = f.password_account("alice").await;
+    assert_eq!(f.ticket(&token, "link", "fake").await.status(), 400);
+    let wrong = f.password_account("bob").await;
+    let response = f
+        .post_account(
+            &wrong,
+            "sso/ticket",
+            json!({"purpose":"link","provider":"fake","reauth":{"password":"other"}}),
+        )
+        .await;
+    assert_eq!(response.status(), 401);
+    assert_eq!(body(response).await["error"], "Wrong password");
+    assert_eq!(
+        body(
+            f.link_exchange(&token, "fake", json!({"password":"test"}))
+                .await
+        )
+        .await,
+        json!({"kind":"linked","provider":"fake"})
+    );
+    let list = body(
+        f.client
+            .get(format!("{}/api/me/sso", f.origin))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(list[0]["name"], "Example");
+    assert_eq!(list[0]["provider"], "fake");
+    assert!(list[0]["linked_at"].is_i64());
+    let other = f.password_account("carol").await;
+    let response = f
+        .link_exchange(&other, "fake", json!({"password":"test"}))
+        .await;
+    assert_eq!(response.status(), 400);
+    assert_eq!(
+        body(response).await["error"],
+        "That sign-in belongs to another account"
+    );
+    let code = param(&f.returned("web").await, "code");
+    let login = body(f.exchange(&code, &f.verifier, None).await).await;
+    assert_eq!(login["user"]["username"], "alice");
+    assert_eq!(login["user"]["has_password"], true);
+    assert_eq!(f.remove(&token, "fake").await.status(), 200);
+    assert_eq!(f.remove(&token, "fake").await.status(), 404);
+    let actions: Vec<String> = sqlx::query_scalar("SELECT action FROM instance_audit WHERE actor='alice' AND action IN ('sso.link','sso.unlink') ORDER BY action")
+        .fetch_all(&f.state.db).await.unwrap();
+    assert_eq!(actions, ["sso.link", "sso.unlink"]);
+    assert!(
+        crate::api::user_for_token(&f.state, login["token"].as_str().unwrap())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    crate::api::test_util::site_sets(&f.state, json!({"password_login":false})).await;
+    let changed = f
+        .post_account(
+            login["token"].as_str().unwrap(),
+            "password",
+            json!({"current":{"password":"test"},"new":{"password":"changed"}}),
+        )
+        .await;
+    assert_eq!(changed.status(), 200);
+}
+
+#[tokio::test]
+async fn passwordless_accounts_set_a_first_password() {
+    let f = Fixture::new(|_, _| {}).await;
+    let session = f.session().await;
+    let other = f.session().await;
+    let token = &session.token;
+    let me = |token: &str| {
+        f.client
+            .get(format!("{}/api/me", f.origin))
+            .bearer_auth(token)
+            .send()
+    };
+    assert_eq!(body(me(token).await.unwrap()).await["has_password"], false);
+    assert_eq!(
+        body(f.remove(token, "fake").await).await["error"],
+        "Add a password or another sign-in first"
+    );
+    let change = |proof: Value| {
+        f.post_account(
+            token,
+            "password",
+            json!({"new":{"password":"pw-new-123"},"reauth":proof}),
+        )
+    };
+    assert_eq!(
+        f.post_account(
+            token,
+            "password",
+            json!({"new":{"password":"new"},"current":{"password":"test"}})
+        )
+        .await
+        .status(),
+        400
+    );
+    assert_eq!(change(json!({"fresh_session":true})).await.status(), 401);
+    crate::api::test_util::site_sets(&f.state, json!({"password_login":false})).await;
+    let disabled = change(json!({"fresh_session":true})).await;
+    assert_eq!(disabled.status(), 403);
+    assert_eq!(body(disabled).await["error"], "Password sign-in is off");
+    crate::api::test_util::site_sets(&f.state, json!({"password_login":true})).await;
+    let code = param(&f.fresh_return(token).await, "code");
+    assert_eq!(
+        change(json!({"idp":{"provider":"fake","code":code}}))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(me(&other.token).await.unwrap().status(), 401);
+    assert_eq!(body(me(token).await.unwrap()).await["has_password"], true);
+}
+
+#[tokio::test]
+async fn concurrent_unlinks_keep_one_method_and_sessions() {
+    let f = Fixture::new(|_, _| {}).await;
+    let session = f.session().await;
+    f.second.set_claims(json!({"sub":"second-subject"}));
+    sqlx::query("INSERT INTO sso_links(issuer,subject,provider,username,linked_at,last_login_at) VALUES($2,'second-subject','second',$1,1,1)")
+        .bind(&f.name).bind(f.second.provider_config("second").issuer).execute(&f.state.db).await.unwrap();
+    let (a, b) = tokio::join!(
+        f.remove(&session.token, "fake"),
+        f.remove(&session.token, "second")
+    );
+    let mut statuses = [a.status().as_u16(), b.status().as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [200, 400]);
+    assert!(
+        crate::api::user_for_token(&f.state, &session.token)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
 #[tokio::test]
 async fn client_login_requires_instance_consent_and_bound_verifier() {
     for (state, db) in crate::api::test_util::each_db("oidc_client_consent").await {
@@ -904,6 +1110,79 @@ async fn start_accepts_only_canonical_sha256_challenges() {
         f.get(&url(&challenge)).await.status(),
         StatusCode::BAD_REQUEST
     );
+}
+
+#[tokio::test]
+async fn obsolete_links_cannot_replace_a_configured_sign_in() {
+    let f = Fixture::new(|_, _| {}).await;
+    let session = f.session().await;
+    for (provider, issuer) in [
+        ("ticket", f.second.provider_config("second").issuer),
+        ("second", "old-issuer".into()),
+    ] {
+        sqlx::query("INSERT INTO sso_links(issuer,subject,provider,username,linked_at,last_login_at) VALUES($1,'old-subject',$2,$3,1,1)")
+            .bind(issuer).bind(provider).bind(&f.name).execute(&f.state.db).await.unwrap();
+        if provider == "ticket" {
+            let list = body(
+                f.client
+                    .get(format!("{}/api/me/sso", f.origin))
+                    .bearer_auth(&session.token)
+                    .send()
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(list[1]["name"], "ticket");
+        }
+        assert_eq!(f.remove(&session.token, "fake").await.status(), 400);
+        assert_eq!(f.remove(&session.token, provider).await.status(), 200);
+    }
+}
+
+#[tokio::test]
+async fn phrase_authorizes_link_ticket_and_first_password() {
+    let f = Fixture::new(|_, _| {}).await;
+    let link_session = f.session().await;
+    let password_session = f.session().await;
+    sqlx::query("UPDATE users SET recovery_pub=$1 WHERE username=$2")
+        .bind(crate::api::test_util::PHRASE_KEY)
+        .bind(&f.name)
+        .execute(&f.state.db)
+        .await
+        .unwrap();
+    let phrase = async |purpose: &str, context: &str| {
+        let response = f
+            .client
+            .post(format!("{}/api/auth/recovery/challenge", f.origin))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(json!({"username": f.name}).to_string())
+            .send()
+            .await
+            .unwrap();
+        let challenge = body(response).await;
+        let nonce = challenge["nonce"].as_str().unwrap();
+        let sig = crate::api::test_util::phrase_sign(purpose, &f.name, nonce, context);
+        json!({"phrase":{"nonce":nonce,"sig":sig}})
+    };
+    let linked = f
+        .link_exchange(
+            &link_session.token,
+            "second",
+            phrase("link_idp", "second").await,
+        )
+        .await;
+    assert_eq!(
+        body(linked).await,
+        json!({"kind":"linked","provider":"second"})
+    );
+    let changed = f
+        .post_account(
+            &password_session.token,
+            "password",
+            json!({"new":{"password":"new-password"},"reauth":phrase("set_password", "").await}),
+        )
+        .await;
+    assert_eq!(changed.status(), 200);
 }
 
 #[tokio::test]

@@ -2246,6 +2246,10 @@ fn api_routes(
 ) -> Router<AppState> {
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
+        .route("/me/sso", get(oidc::list))
+        .route("/me/sso/{provider}", delete(oidc::unlink))
+        // The static ticket path also matches DELETE for a provider named "ticket".
+        .route("/me/sso/ticket", delete(oidc::unlink_ticket_provider))
         .route("/me/recovery", get(recovery::status))
         .route("/me/p2p_backup", get(p2p_backup::list_backups))
         .route("/me/p2p_backup/{ik}", get(p2p_backup::get_backup))

@@ -1,5 +1,5 @@
 use super::{
-    ApiError, NAME_MAX,
+    ApiError, Authed, NAME_MAX, OkResp,
     auth::{Me, me_payload},
     bad,
     reauth::{AuthedSession, ReAuthBody},
@@ -93,8 +93,9 @@ pub struct TicketResp {
 
 /// Obtain a ticket for a signed-in account.
 ///
-/// Pass the ticket to the configured provider's start URL to request fresh authentication.
-#[utoipa::path(post, path="/api/v1/me/sso/ticket", tag="Account", request_body=TicketReq, responses((status=200,description="Single-use provider ticket",body=TicketResp),(status=400,description="Not linked"),(status=401,description="Missing or invalid session")),security(("bearer"=[])))]
+/// Pass the ticket to the configured provider's start URL. Linking requires a password, backup phrase or fresh code from an existing link.
+/// For a backup phrase, sign the recovery challenge with purpose `link_idp` and the target provider ID as context.
+#[utoipa::path(post, path="/api/v1/me/sso/ticket", tag="Account", request_body=TicketReq, responses((status=200,description="Single-use provider ticket",body=TicketResp),(status=400,description="Missing confirmation or unsuitable provider"),(status=401,description="Missing or invalid session")),security(("bearer"=[])))]
 pub(crate) async fn ticket(
     State(state): State<AppState>,
     AuthedSession(session): AuthedSession,
@@ -104,16 +105,106 @@ pub(crate) async fn ticket(
         .sso
         .provider(&q.provider)
         .ok_or_else(|| bad("Not linked"))?;
-    match q.purpose {
-        TicketPurpose::Link => Err(bad("Not linked")),
-        TicketPurpose::Reauth => {
-            let ticket = flow::reauth_ticket(&state, &session, &provider).await?;
-            Ok((
-                [(header::CACHE_CONTROL, "no-store")],
-                Json(TicketResp { ticket }),
-            ))
+    let ticket = match q.purpose {
+        TicketPurpose::Link => {
+            let exists: Option<i32> = sqlx::query_scalar(
+                "SELECT 1 FROM sso_links WHERE username=$1 AND (provider=$2 OR issuer=$3) LIMIT 1",
+            )
+            .bind(&session.user.username)
+            .bind(&q.provider)
+            .bind(&provider.config.issuer)
+            .fetch_optional(&state.db)
+            .await?;
+            if exists.is_some() {
+                return Err(bad("Already linked"));
+            }
+            let proof = q
+                .reauth
+                .ok_or_else(|| bad(super::reauth::ONE_WAY))?
+                .try_into()?;
+            super::reauth::check(
+                &state,
+                &session,
+                proof,
+                super::reauth::Purpose::LinkIdp {
+                    provider: q.provider.clone(),
+                },
+            )
+            .await?;
+            flow::issue_ticket(&state, &session, &q.provider, FlowKind::Link).await?
         }
-    }
+        TicketPurpose::Reauth => flow::reauth_ticket(&state, &session, &provider).await?,
+    };
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(TicketResp { ticket }),
+    ))
+}
+
+/// An external sign-in method attached to this account.
+#[derive(Serialize, ToSchema)]
+pub struct LinkedProvider {
+    /// Provider identifier.
+    pub provider: String,
+    /// Configured display name, falling back to the identifier.
+    pub name: String,
+    /// Unix time in seconds when this sign-in was linked.
+    pub linked_at: i64,
+}
+
+/// List this account's linked sign-in methods.
+///
+/// Returns each provider ID, display name and link creation time.
+#[utoipa::path(get,path="/api/v1/me/sso", tag="Account", responses((status=200,description="Linked providers",body=Vec<LinkedProvider>),(status=401,description="Missing or invalid session")),security(("bearer"=[])))]
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+) -> Result<Json<Vec<LinkedProvider>>, ApiError> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT provider,linked_at FROM sso_links WHERE username=$1 ORDER BY provider",
+    )
+    .bind(user.username)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(provider, linked_at)| {
+                let name = state
+                    .sso
+                    .provider(&provider)
+                    .map_or_else(|| provider.clone(), |p| p.config.name.clone());
+                LinkedProvider {
+                    provider,
+                    name,
+                    linked_at,
+                }
+            })
+            .collect(),
+    ))
+}
+
+/// Remove a linked sign-in method.
+///
+/// Removing a configured sign-in requires a local password or another link matching a configured provider ID and issuer. Existing sessions stay signed in.
+#[utoipa::path(delete,path="/api/v1/me/sso/{provider}",tag="Account",params(("provider"=String,Path,description="Linked provider ID")),responses((status=200,description="Provider removed",body=OkResp),(status=400,description="Another sign-in method is required"),(status=404,description="Provider link missing")),security(("bearer"=[])))]
+pub(crate) async fn unlink(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(provider): Path<String>,
+) -> Result<Json<OkResp>, ApiError> {
+    crate::sso::accounts::unlink(&state, &user, &provider).await?;
+    Ok(super::ok())
+}
+
+/// Remove the provider with ID `ticket`.
+///
+/// This is the literal `ticket` case of the provider removal endpoint.
+#[utoipa::path(delete,path="/api/v1/me/sso/ticket",tag="Account",responses((status=200,description="Provider removed",body=OkResp),(status=400,description="Another sign-in method is required"),(status=404,description="Provider link missing")),security(("bearer"=[])))]
+pub(crate) async fn unlink_ticket_provider(
+    state: State<AppState>,
+    user: Authed,
+) -> Result<Json<OkResp>, ApiError> {
+    unlink(state, user, Path("ticket".into())).await
 }
 
 /// Begin sign-in with a client-generated S256 challenge.
@@ -275,7 +366,7 @@ impl utoipa::Modify for ExchangeDiscriminator {
 /// Exchange the single-use code with the original verifier.
 ///
 /// Unknown, expired, consumed, and mismatched codes give the same error. Session tokens appear only in the JSON response.
-#[utoipa::path(post, path = "/api/v1/auth/oidc/exchange", tag = "Auth",request_body=ExchangeReq, responses((status=200,description="Session or username selection",body=ExchangeResp),(status=400,description="Sign-in expired. Try again, or invalid username"),(status=403,description="Account or registration policy denied sign-in")), security(()))]
+#[utoipa::path(post, path = "/api/v1/auth/oidc/exchange", tag = "Auth",request_body=ExchangeReq, responses((status=200,description="Session, linked provider or username selection",body=ExchangeResp),(status=400,description="Sign-in expired. Try again, or invalid username"),(status=403,description="Account or registration policy denied sign-in")), security(()))]
 pub(crate) async fn exchange(
     State(state): State<AppState>,
     Json(q): Json<ExchangeReq>,
@@ -284,10 +375,7 @@ pub(crate) async fn exchange(
         return Err(flow::expired());
     }
     let app = flow::take_code(&state.db, &q.code).await?;
-    if !flow::verifier_ok(&q.verifier, &app.challenge)
-        || app.kind != FlowKind::Login
-        || app.user.is_some()
-    {
+    if !flow::verifier_ok(&q.verifier, &app.challenge) {
         return Err(flow::expired());
     }
     let provider = state
@@ -295,6 +383,20 @@ pub(crate) async fn exchange(
         .provider(&app.identity.provider)
         .filter(|provider| app.matches_provider(&provider.config))
         .ok_or_else(flow::expired)?;
+    match (app.kind, app.user.as_deref(), app.session_key.as_deref()) {
+        (FlowKind::Link, Some(user), Some(key)) => {
+            crate::sso::accounts::link(&state, user, key, &app.identity).await?;
+            return Ok((
+                [(header::CACHE_CONTROL, "no-store")],
+                Json(ExchangeResp::Linked {
+                    provider: app.identity.provider,
+                }),
+            )
+                .into_response());
+        }
+        (FlowKind::Login, None, None) => (),
+        _ => return Err(flow::expired()),
+    }
     let result = async {
         if let Some(name) = &q.username {
             super::check_len(name, NAME_MAX, "Username")?;

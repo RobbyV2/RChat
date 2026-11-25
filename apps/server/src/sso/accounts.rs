@@ -322,6 +322,104 @@ async fn sign_in_once(
     }))
 }
 
+/// Attach the verified identity while the ticket's originating session is still valid.
+pub async fn link(
+    state: &AppState,
+    username: &str,
+    session_key: &str,
+    id: &Identity,
+) -> Result<(), ApiError> {
+    let mut tx = auth::begin_account_write(&state.db).await?;
+    let locked = sqlx::query("UPDATE users SET suspended_at=suspended_at WHERE username=$1 AND suspended_at IS NULL AND password_hash <> '!purging'")
+        .bind(username).execute(&mut *tx).await?;
+    let t = now();
+    let (born, used) = state.limits.session_cutoffs(t);
+    let active: Option<i32> = sqlx::query_scalar("SELECT 1 FROM tokens WHERE username=$1 AND token=$2 AND created_at >= $3 AND (last_used_at >= $4 OR created_at >= $4)")
+        .bind(username).bind(session_key).bind(born).bind(used).fetch_optional(&mut *tx).await?;
+    if locked.rows_affected() != 1 || active.is_none() {
+        return Err(super::flow::expired());
+    }
+    let inserted = sqlx::query("INSERT INTO sso_links(issuer,subject,provider,username,linked_at,last_login_at)
+        SELECT $1,$2,$3,$4,$5,$5 WHERE NOT EXISTS (SELECT 1 FROM sso_links WHERE username=$4 AND provider=$3)
+        ON CONFLICT DO NOTHING")
+        .bind(&id.issuer).bind(id.subject.as_str()).bind(&id.provider).bind(username).bind(t)
+        .execute(&mut *tx).await?;
+    if inserted.rows_affected() == 0 {
+        let owner: Option<(String, String)> = sqlx::query_as(
+            "SELECT username,provider FROM sso_links WHERE issuer=$1 AND subject=$2",
+        )
+        .bind(&id.issuer)
+        .bind(id.subject.as_str())
+        .fetch_optional(&mut *tx)
+        .await?;
+        match owner {
+            Some((actor, _)) if actor != username => {
+                return Err(crate::api::bad("That sign-in belongs to another account"));
+            }
+            Some((_, provider)) if provider == id.provider => (),
+            _ => return Err(crate::api::bad("Already linked")),
+        }
+    } else {
+        crate::api::instance_audit::record_in(
+            &mut tx,
+            username,
+            "sso.link",
+            None,
+            serde_json::json!({"provider":id.provider}),
+            t,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Serialize removals on the account so concurrent requests preserve a sign-in method.
+pub async fn unlink(state: &AppState, user: &User, provider: &str) -> Result<(), ApiError> {
+    let mut tx = auth::begin_account_write(&state.db).await?;
+    let row = sqlx::query("UPDATE users SET suspended_at=suspended_at WHERE username=$1 AND created_at=$2 AND suspended_at IS NULL AND password_hash <> '!purging' RETURNING *")
+        .bind(&user.username).bind(user.created_at).fetch_optional(&mut *tx).await?.ok_or_else(suspended)?;
+    let removed: Vec<String> = sqlx::query_scalar(
+        "DELETE FROM sso_links WHERE username=$1 AND provider=$2 RETURNING issuer",
+    )
+    .bind(&user.username)
+    .bind(provider)
+    .fetch_all(&mut *tx)
+    .await?;
+    if removed.is_empty() {
+        return Err(crate::api::access::not_found());
+    }
+    let configured = |id: &str, issuer: &str| {
+        state
+            .sso
+            .provider(id)
+            .is_some_and(|p| p.config.issuer == issuer)
+    };
+    if !has_password(&User::from_row(&row)?)
+        && removed.iter().any(|issuer| configured(provider, issuer))
+    {
+        let remaining: Vec<(String, String)> =
+            sqlx::query_as("SELECT provider, issuer FROM sso_links WHERE username=$1")
+                .bind(&user.username)
+                .fetch_all(&mut *tx)
+                .await?;
+        if !remaining.iter().any(|(id, issuer)| configured(id, issuer)) {
+            return Err(crate::api::bad("Add a password or another sign-in first"));
+        }
+    }
+    crate::api::instance_audit::record_in(
+        &mut tx,
+        &user.username,
+        "sso.unlink",
+        None,
+        serde_json::json!({"provider":provider}),
+        now(),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn suspend(state: &AppState, username: &str) -> Result<bool, ApiError> {
     let mut tx = state.db.begin().await?;
     let changed = sqlx::query(

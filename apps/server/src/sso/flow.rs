@@ -205,9 +205,18 @@ pub async fn reauth_ticket(
     if linked.is_none() {
         return Err(bad("Not linked"));
     }
+    issue_ticket(state, session, &cfg.id, FlowKind::Reauth).await
+}
+
+pub(crate) async fn issue_ticket(
+    state: &AppState,
+    session: &Session,
+    provider: &str,
+    kind: FlowKind,
+) -> Result<String, ApiError> {
     let value = random();
     let ticket = Ticket {
-        kind: FlowKind::Reauth,
+        kind,
         user: session.user.username.clone(),
         session_key: secret_key(&session.token),
     };
@@ -215,7 +224,7 @@ pub async fn reauth_ticket(
         &state.db,
         &value,
         "ticket",
-        &cfg.id,
+        provider,
         &ticket,
         now() + TICKET_TTL,
     )
