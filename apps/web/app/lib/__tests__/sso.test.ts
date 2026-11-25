@@ -373,65 +373,69 @@ import { ssoActions } from '../sso_actions'
 import { paletteCtx } from '../actions/ctx'
 test('sign-in commands target their account and require a member and configured provider', () => {
   const owner = testAccount('alice')
-  const state = owner.store.getState()
-  const instance = {
-    ...state.instance!,
-    auth: {
-      registration: 'open' as const,
-      password_login: true,
-      providers: [{ id: 'work', name: 'Work' }],
-    },
-  }
-  owner.store.setState({
-    instance,
-    me: { ...state.me!, has_password: false },
-    signInChoices: {
-      mark: owner.lifetime.sessionMark(),
-      username: 'alice',
-      links: [{ provider: 'kc', name: 'Keycloak', linked_at: 0 }],
-    },
-  })
-  for (const action of ssoActions) {
-    const ctx = paletteCtx(owner.store.getState(), owner)
-    expect(action.available(ctx)).toBe(true)
-    expect(action.available({ ...ctx, s: { ...ctx.s, guest: true } })).toBe(false)
-    expect(action.available({ ...ctx, s: { ...ctx.s, instance: null } })).toBe(false)
-    expect(action.available({ ...ctx, s: { ...ctx.s, me: null } })).toBe(false)
-    expect(
-      action.available({
-        ...ctx,
-        s: {
-          ...ctx.s,
-          me: { ...ctx.s.me!, password_temporary: { expires_at: null, change: 'required' } },
-        },
-      })
-    ).toBe(false)
-    const step = action.args![0]
-    if (step.kind !== 'choice') throw Error('expected provider picker')
-    if (action.danger) {
-      expect(step.choices(ctx, '')).toEqual([])
-      owner.store.setState({
-        signInChoices: {
-          ...ctx.s.signInChoices!,
-          links: [
-            { provider: 'work', name: 'Work', linked_at: 0, can_unlink: false },
-            { provider: 'kc', name: 'Keycloak', linked_at: 0, can_unlink: true },
-          ],
-        },
-      })
-      expect(step.choices(paletteCtx(owner.store.getState(), owner), '')).toEqual([
-        { value: 'kc', label: 'Keycloak' },
-      ])
+  try {
+    const state = owner.store.getState()
+    const instance = {
+      ...state.instance!,
+      auth: {
+        registration: 'open' as const,
+        password_login: true,
+        providers: [{ id: 'work', name: 'Work' }],
+      },
     }
-    const fresh = paletteCtx(owner.store.getState(), owner)
-    const pick = step.choices(fresh, '')[0]
-    expect(pick.value).toBe(action.danger ? 'kc' : 'work')
-    action.run(fresh, { provider: pick.value })
-    expect(owner.store.getState().activeDialog).toEqual({
-      kind: 'settings',
-      section: 'profile',
-      sso: { type: action.danger ? 'unlink' : 'link', p: { id: pick.value, name: pick.label } },
+    owner.store.setState({
+      instance,
+      me: { ...state.me!, has_password: false },
+      signInChoices: {
+        mark: owner.lifetime.sessionMark(),
+        username: 'alice',
+        links: [{ provider: 'kc', name: 'Keycloak', linked_at: 0 }],
+      },
     })
+    for (const action of ssoActions) {
+      const ctx = paletteCtx(owner.store.getState(), owner)
+      expect(action.available(ctx)).toBe(true)
+      expect(action.available({ ...ctx, s: { ...ctx.s, guest: true } })).toBe(false)
+      expect(action.available({ ...ctx, s: { ...ctx.s, instance: null } })).toBe(false)
+      expect(action.available({ ...ctx, s: { ...ctx.s, me: null } })).toBe(false)
+      expect(
+        action.available({
+          ...ctx,
+          s: {
+            ...ctx.s,
+            me: { ...ctx.s.me!, password_temporary: { expires_at: null, change: 'required' } },
+          },
+        })
+      ).toBe(false)
+      const step = action.args![0]
+      if (step.kind !== 'choice') throw Error('expected provider picker')
+      if (action.danger) {
+        expect(step.choices(ctx, '')).toEqual([])
+        owner.store.setState({
+          signInChoices: {
+            ...ctx.s.signInChoices!,
+            links: [
+              { provider: 'work', name: 'Work', linked_at: 0, can_unlink: false },
+              { provider: 'kc', name: 'Keycloak', linked_at: 0, can_unlink: true },
+            ],
+          },
+        })
+        expect(step.choices(paletteCtx(owner.store.getState(), owner), '')).toEqual([
+          { value: 'kc', label: 'Keycloak' },
+        ])
+      }
+      const fresh = paletteCtx(owner.store.getState(), owner)
+      const pick = step.choices(fresh, '')[0]
+      expect(pick.value).toBe(action.danger ? 'kc' : 'work')
+      action.run(fresh, { provider: pick.value })
+      expect(owner.store.getState().activeDialog).toEqual({
+        kind: 'settings',
+        section: 'profile',
+        sso: { type: action.danger ? 'unlink' : 'link', p: { id: pick.value, name: pick.label } },
+      })
+    }
+  } finally {
+    owner.store.dispose()
   }
 })
 
@@ -451,13 +455,17 @@ test('a linked sign-in row menu unlinks it only while another sign-in stays', as
         owner
       )
     )
-  const [row] = rows(true)
-  expect(rows(true)).toHaveLength(1)
-  expect(row).toMatchObject({ label: 'Unlink Work', danger: true, disabled: false })
-  row.action!()
-  await Promise.resolve()
-  expect(asked).toBe(1)
-  expect(rows(false)).toMatchObject([{ label: 'Unlink Work', danger: true, disabled: true }])
-  owner.store.setState({ me: null, guest: true })
-  expect(rows(true)).toEqual([])
+  try {
+    const [row] = rows(true)
+    expect(rows(true)).toHaveLength(1)
+    expect(row).toMatchObject({ label: 'Unlink Work', danger: true, disabled: false })
+    row.action!()
+    await Promise.resolve()
+    expect(asked).toBe(1)
+    expect(rows(false)).toMatchObject([{ label: 'Unlink Work', danger: true, disabled: true }])
+    owner.store.setState({ me: null, guest: true })
+    expect(rows(true)).toEqual([])
+  } finally {
+    owner.store.dispose()
+  }
 })
