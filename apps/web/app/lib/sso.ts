@@ -21,6 +21,15 @@ export const linkable = (auth: AuthInfo, links: LinkedProvider[]) =>
   auth.providers.filter(p => !links.some(link => link.provider === p.id))
 
 export const SSO_KEY = 'rchat_sso'
+export const SSO_LOGOUT_KEY = 'rchat_sso_logout'
+export function parseLogoutFlag(raw: string | null): boolean {
+  try {
+    const flag = JSON.parse(raw ?? 'null')
+    return flag?.v === 1 && flag.on === true
+  } catch {
+    return false
+  }
+}
 export const INTENT_TTL_MS = 600_000
 export const DEFAULT_AUTH: AuthInfo = { password_login: true, registration: 'open', providers: [] }
 export type SsoPurpose = 'login' | 'link' | 'reauth'

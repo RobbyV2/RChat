@@ -1197,29 +1197,50 @@ async fn change_password_at(
     Ok(ok())
 }
 
+/// Result of ending the current local session.
+#[derive(Serialize, ToSchema)]
+pub struct LogoutResp {
+    /// The local sign-out completed.
+    pub ok: bool,
+    /// Configured identity provider's sign-out URL, if enabled for this session.
+    pub end_session_url: Option<String>,
+}
+
 /// Log out
 ///
 /// Revokes the session token used for this request and closes its WebSocket connections. The
 /// account's other sessions stay signed in. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/auth/logout", tag = "Auth", responses((status = 200, description = "Signed out: the login token used for this request is revoked and its live connections close; the account's other sessions stay signed in", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/auth/logout", tag = "Auth", responses((status = 200, description = "Signed out: the login token used for this request is revoked and its live connections close; the account's other sessions stay signed in", body = LogoutResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn logout(
     State(state): State<AppState>,
     Authed(user): Authed,
     headers: HeaderMap,
-) -> Result<Json<OkResp>, ApiError> {
+) -> Result<impl axum::response::IntoResponse, ApiError> {
     let token = request_token(&headers).unwrap_or_default();
-    let revoked = sqlx::query("DELETE FROM tokens WHERE token = $1 AND username = $2")
+    let revoked = sqlx::query_scalar::<_, String>("DELETE FROM tokens WHERE token = $1 AND username = $2 RETURNING COALESCE(sso_provider, '')")
         .bind(secret_key(&token))
         .bind(&user.username)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
-    if revoked > 0 {
+        .fetch_optional(&state.db).await?;
+    if revoked.is_some() {
         state.hub.broadcast(WsEvent::TokensRevoked {
             username: user.username.clone(),
         });
     }
-    Ok(ok())
+    let mut end_session_url = None;
+    if let Some(provider) = revoked.and_then(|id| state.sso.provider(&id))
+        && provider.config.end_session
+        && let Some(public) = &state.instance.public_url
+        && let Ok(meta) = provider.metadata(state.sso.http()).await
+    {
+        end_session_url = crate::sso::flow::end_session_url(&provider, &meta, public);
+    }
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(LogoutResp {
+            ok: true,
+            end_session_url,
+        }),
+    ))
 }
 
 pub(crate) fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
@@ -1575,6 +1596,21 @@ mod tests {
             !request(&short, "tok", false).await,
             "a 401 like an unknown token"
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn sso_tokens_follow_session_limits() {
+        let (state, path) = temp_state("sso_session_limits").await;
+        session(&state, "tok", now() - 7200).await;
+        sqlx::query("UPDATE tokens SET sso_provider='fixture' WHERE token=$1")
+            .bind(secret_key("tok"))
+            .execute(&state.db)
+            .await
+            .unwrap();
+        assert!(request(&with_sessions(&state, 0, 0), "tok", true).await);
+        assert!(!request(&with_sessions(&state, 3600, 0), "tok", true).await);
+        assert!(!request(&with_sessions(&state, 0, 600), "tok", true).await);
         done(state, path).await;
     }
 
@@ -2876,9 +2912,17 @@ mod tests {
             axum::http::header::AUTHORIZATION,
             format!("Bearer {mine}").parse().expect("header"),
         );
-        let _ = logout(State(state.clone()), Authed(user), headers)
+        let response = logout(State(state.clone()), Authed(user), headers)
             .await
             .expect("logout");
+        let response = axum::response::IntoResponse::into_response(response);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            serde_json::json!({"ok":true,"end_session_url":null})
+        );
         assert_eq!(tokens_of(&state, "lea").await, vec![secret_key("phone")]);
         assert!(
             crate::api::user_for_token(&state, &mine)

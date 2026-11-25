@@ -2,6 +2,7 @@ import { clientOnly, localKeys, readLocal, writeLocal, type InstanceConnection }
 import { accountUsername } from '../qualified'
 import { accountStorage, peerStorage } from './keys'
 import { addInstance, addAccount, addIdentity, type Book, type BookAccount } from './book'
+import { SSO_LOGOUT_KEY } from '../sso'
 import type { Me } from '../types'
 
 export function storedCredential(conn: InstanceConnection, book: Book, target?: string | null) {
@@ -43,7 +44,8 @@ export function confirmCredential(
   conn: InstanceConnection,
   me: Me,
   token: string,
-  restoring: boolean
+  restoring: boolean,
+  endSession = false
 ) {
   const keys = accountStorage(conn)
   const alias = keys.key('rchat_token')
@@ -51,6 +53,11 @@ export function confirmCredential(
   const qualified = keys.token(me.username)
   const previous = readLocal(qualified)
   if (restoring && previous && previous !== token && old !== token) return
+  if (!restoring || previous !== token)
+    writeLocal(
+      keys.key(SSO_LOGOUT_KEY + ':' + me.username),
+      endSession ? JSON.stringify({ v: 1, on: true }) : null
+    )
   writeLocal(qualified, token)
   if (old === token || (!restoring && (!old || previous === old))) writeLocal(alias, token)
   const dm = keys.lastDm(me.username)
@@ -84,7 +91,10 @@ export function forgetCredential(
 ) {
   const keys = accountStorage(conn)
   if (!token) return false
-  if (username && readLocal(keys.token(username)) === token) writeLocal(keys.token(username), null)
+  if (username && readLocal(keys.token(username)) === token) {
+    writeLocal(keys.key(SSO_LOGOUT_KEY + ':' + username), null)
+    writeLocal(keys.token(username), null)
+  }
   const alias = keys.key('rchat_token')
   if (readLocal(alias) !== token) return false
   writeLocal(alias, null)

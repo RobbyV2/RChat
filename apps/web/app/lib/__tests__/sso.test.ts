@@ -5,6 +5,8 @@ import {
   newVerifier,
   parseReturn,
   parseIntent,
+  parseLogoutFlag,
+  SSO_LOGOUT_KEY,
   startUrl,
   showRegister,
   showPasswordForm,
@@ -279,6 +281,77 @@ test('a native login survives a fresh window, expires by issuer/account, and an 
     else Reflect.deleteProperty(globalThis, 'localStorage')
     owner.store.dispose()
     other.store.dispose()
+  }
+})
+
+test('logout preference is versioned and belongs to the admitted credential', async () => {
+  for (const raw of [null, 'bad', '{"v":2,"on":true}', '{"v":1,"on":"true"}'])
+    expect(parseLogoutFlag(raw)).toBe(false)
+  const { confirmCredential, forgetCredential } = await import('../client/credentials')
+  const { accountStorage } = await import('../client/keys')
+  const actor = testAccount('alice', 'https://logout.example')
+  const conn = actor.conn
+  const flag = (name: string) =>
+    parseLogoutFlag(localStorage.getItem(accountStorage(conn).key(SSO_LOGOUT_KEY + ':' + name)))
+  try {
+    confirmCredential(conn, me('alice'), 'old', false, true)
+    confirmCredential(conn, me('bob'), 'neighbor', false, true)
+    confirmCredential(conn, me('alice'), 'old', true)
+    expect(flag('alice')).toBe(true)
+    confirmCredential(conn, me('alice'), 'new', false, true)
+    forgetCredential(conn, 'alice', 'old')
+    expect(flag('alice')).toBe(true)
+    confirmCredential(conn, me('alice'), 'password', false)
+    expect(flag('alice')).toBe(false)
+    expect(flag('bob')).toBe(true)
+    forgetCredential(conn, 'bob', 'neighbor')
+    expect(flag('bob')).toBe(false)
+  } finally {
+    actor.store.dispose()
+  }
+})
+
+test('only the originating foreground session follows its logout response', async () => {
+  const { client } = await import('../client/client')
+  const { confirmCredential } = await import('../client/credentials')
+  const { drain } = await import('./fixtures')
+  const original = client.shown
+  const owner = testAccount('alice', 'https://endsession.example')
+  const neighbor = testAccount('bob', owner.conn.origin)
+  const visited: string[] = []
+  const url = 'https://idp.example/end_session'
+  setAuthBrowser({
+    returnTo: 'web',
+    navigate: dest => {
+      visited.push(dest)
+    },
+    popup: () => false,
+  })
+  try {
+    for (const mode of ['background', 'switched', 'replaced', 'foreground']) {
+      client.shown = () => (mode === 'background' ? neighbor : owner)
+      const token = 'fixture-' + mode
+      confirmCredential(owner.conn, me('alice'), token, false, true)
+      owner.store.setState({ me: me('alice'), token })
+      const response = Promise.withResolvers<{ ok: boolean; end_session_url: string }>()
+      owner.api.logout = received => {
+        expect(received).toBe(token)
+        return response.promise
+      }
+      const done = owner.store.getState().logout()
+      expect(owner.store.getState().token).toBeNull()
+      if (mode === 'switched') client.shown = () => neighbor
+      if (mode === 'replaced') owner.lifetime.endSession()
+      response.resolve({ ok: true, end_session_url: url })
+      await done
+      await drain()
+      expect(visited).toEqual(mode === 'foreground' ? [url] : [])
+    }
+  } finally {
+    client.shown = original
+    setAuthBrowser()
+    owner.store.dispose()
+    neighbor.store.dispose()
   }
 })
 

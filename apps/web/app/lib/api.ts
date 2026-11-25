@@ -510,7 +510,7 @@ export const endpoints = (c: ApiClient) => ({
     c.req<AuthResponse>('POST', '/auth/register', body).then(localAuth),
   login: (body: LoginRequest) => c.req<AuthResponse>('POST', '/auth/login', body).then(localAuth),
   logout: (token: string) =>
-    c.req<{ ok: boolean }>(
+    c.req<{ ok: boolean; end_session_url?: string | null }>(
       'POST',
       '/auth/logout',
       undefined,

@@ -135,6 +135,25 @@ pub fn verifier_ok(verifier: &str, challenge: &str) -> bool {
     )
     .is_ok()
 }
+pub fn end_session_url(
+    provider: &Provider,
+    meta: &super::provider::Metadata,
+    public_url: &Url,
+) -> Option<String> {
+    if !provider.config.end_session {
+        return None;
+    }
+    let mut endpoint = meta.end_session_endpoint.clone()?;
+    endpoint
+        .query_pairs_mut()
+        .append_pair("client_id", &provider.config.client_id)
+        .append_pair(
+            "post_logout_redirect_uri",
+            public_url.join("/login").ok()?.as_str(),
+        );
+    Some(endpoint.into())
+}
+
 pub fn return_url(ret: Return, public_url: &Url, query: &str) -> String {
     match ret {
         Return::Web => format!("{}/sso?{query}", public_url.as_str().trim_end_matches('/')),

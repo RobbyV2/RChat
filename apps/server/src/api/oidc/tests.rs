@@ -135,11 +135,11 @@ impl Fixture {
     async fn get(&self, url: &str) -> Response {
         self.client.get(url).send().await.unwrap()
     }
-    async fn start(&self, ret: &str) -> Url {
+    async fn start(&self, provider: &str, ret: &str) -> Url {
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(&self.verifier));
         let res = self
             .get(&format!(
-                "{}/api/auth/oidc/fake/start?return={ret}&challenge={challenge}",
+                "{}/api/auth/oidc/{provider}/start?return={ret}&challenge={challenge}",
                 self.origin
             ))
             .await;
@@ -147,8 +147,8 @@ impl Fixture {
         assert_eq!(res.headers()[header::CACHE_CONTROL], "no-store");
         location(res)
     }
-    async fn callback(&self, ret: &str) -> Url {
-        let authorize = self.start(ret).await;
+    async fn callback(&self, provider: &str, ret: &str) -> Url {
+        let authorize = self.start(provider, ret).await;
         assert_eq!(
             authorize.as_str().split('?').next().unwrap(),
             format!("{}/authorize", self.idp.issuer)
@@ -158,12 +158,12 @@ impl Fixture {
         assert!(!param(&authorize, "state").is_empty());
         assert_eq!(
             param(&authorize, "redirect_uri"),
-            format!("{}/api/auth/oidc/fake/callback", self.origin)
+            format!("{}/api/auth/oidc/{provider}/callback", self.origin)
         );
         location(self.get(authorize.as_str()).await)
     }
     async fn returned(&self, ret: &str) -> Url {
-        let cb = self.callback(ret).await;
+        let cb = self.callback("fake", ret).await;
         location(self.get(cb.as_str()).await)
     }
     async fn exchange(&self, code: &str, verifier: &str, name: Option<&str>) -> Response {
@@ -194,7 +194,7 @@ fn param(url: &Url, key: &str) -> String {
 #[tokio::test]
 async fn sign_in_round_trip_web_and_replays() {
     let f = Fixture::new(|_, p| p.end_session = true).await;
-    let cb = f.callback("web").await;
+    let cb = f.callback("fake", "web").await;
     let ret = location(f.get(cb.as_str()).await);
     let code = param(&ret, "code");
     assert_eq!(code.len(), 64);
@@ -388,7 +388,10 @@ async fn idp_errors_redirect_plainly() {
         );
     }
     let down = Fixture::new(|_, p| p.issuer = "http://127.0.0.1:0".into()).await;
-    assert_eq!(down.start("web").await.query(), Some("error=unavailable"));
+    assert_eq!(
+        down.start("fake", "web").await.query(),
+        Some("error=unavailable")
+    );
 }
 
 #[tokio::test]
@@ -489,7 +492,7 @@ async fn pick_username_keeps_code_and_suspension_blocks_session() {
 #[tokio::test]
 async fn expiry_and_issuer_checks_consume_no_identity() {
     let f = Fixture::new(|_, _| {}).await;
-    let mut cb = f.callback("app").await;
+    let mut cb = f.callback("fake", "app").await;
     cb.query_pairs_mut()
         .append_pair("iss", "https://unexpected.invalid");
     assert_eq!(
@@ -500,7 +503,7 @@ async fn expiry_and_issuer_checks_consume_no_identity() {
         location(f.get(cb.as_str()).await).query(),
         Some("error=expired")
     );
-    let cb = f.callback("app").await;
+    let cb = f.callback("fake", "app").await;
     let state = param(&cb, "state");
     sqlx::query("UPDATE sso_pending SET expires_at=$1 WHERE id=$2")
         .bind(crate::db::now())
@@ -1218,4 +1221,207 @@ async fn a_correctable_picker_error_keeps_the_original_expiration() {
     let expired = f.exchange(&code, &f.verifier, Some(&name)).await;
     assert_eq!(expired.status(), StatusCode::BAD_REQUEST);
     assert_eq!(body(expired).await["error"], "Sign-in expired. Try again");
+}
+
+impl Fixture {
+    async fn login_session(&self, provider: &str, sid: &str) -> String {
+        self.idp
+            .set_claims(json!({"sub":"Subject:A","sid":sid,"preferred_username":self.name}));
+        let callback = self.callback(provider, "web").await;
+        let code = param(&location(self.get(callback.as_str()).await), "code");
+        let session = body(self.exchange(&code, &self.verifier, None).await).await;
+        assert_eq!(session["user"]["username"], self.name);
+        session["token"].as_str().unwrap().to_owned()
+    }
+
+    async fn backchannel(&self, provider: &str, claim: &str, value: &str) -> Response {
+        let now = crate::db::now();
+        let token = self.idp.sign(json!({
+            "iss":self.idp.issuer,"aud":self.idp.client_id,"iat":now,"exp":now+60,"jti":new_token(),
+            "events":{(crate::sso::jwt::LOGOUT_EVENT):{}}, (claim):value
+        }));
+        self.client
+            .post(format!(
+                "{}/api/auth/oidc/{provider}/backchannel_logout",
+                self.origin
+            ))
+            .form(&[("logout_token", token)])
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn backchannel_logout_by_sid_and_sub_revokes_matching_sessions() {
+    let f = Fixture::new(|_, _| {}).await;
+    let one = f.login_session("fake", "Session:One").await;
+    let two = f.login_session("fake", "Session:Two").await;
+    for (token, provider) in [("password", None), ("other", Some("other-provider"))] {
+        sqlx::query("INSERT INTO tokens (token, username, created_at, sso_provider, sso_sid) VALUES ($1,$2,$3,$4,$5)")
+            .bind(crate::db::secret_key(token)).bind(&f.name).bind(crate::db::now())
+            .bind(provider).bind(crate::sso::accounts::oidc_key("Session:One").as_str()).execute(&f.state.db).await.unwrap();
+    }
+    let mut rx = f.state.hub.subscribe();
+    for (claim, value, survivor) in [("sid", "Session:One", true), ("sub", "Subject:A", false)] {
+        let response = f.backchannel("fake", claim, value).await;
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert!(response.bytes().await.unwrap().is_empty());
+        assert!(
+            matches!(rx.try_recv(), Ok(crate::ws::WsEvent::TokensRevoked{username}) if username == f.name)
+        );
+        for (token, expected) in [
+            (one.as_str(), false),
+            (two.as_str(), survivor),
+            ("password", true),
+            ("other", true),
+        ] {
+            assert_eq!(
+                crate::api::user_for_token(&f.state, token)
+                    .await
+                    .unwrap()
+                    .is_some(),
+                expected
+            );
+        }
+    }
+    let audit_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM instance_audit WHERE actor='sso' AND action='sso.backchannel_logout' AND target='fake'")
+        .fetch_one(&f.state.db).await.unwrap();
+    assert_eq!(audit_count, 2);
+}
+
+#[tokio::test]
+async fn subject_logout_scopes_shared_identity_to_the_session_provider() {
+    for (state, db) in crate::api::test_util::each_db("oidc_shared_issuer").await {
+        let f = Fixture::with_state(
+            state.clone(),
+            None,
+            |_, provider| provider.id = "first".into(),
+            |config| {
+                config.providers[1] = ProviderConfig {
+                    id: "second".into(),
+                    ..config.providers[0].clone()
+                };
+            },
+            None,
+        )
+        .await;
+        let first = f.login_session("first", "Session:One").await;
+        let second_one = f.login_session("second", "Session:One").await;
+        let second_two = f.login_session("second", "Session:Two").await;
+
+        let password = "test-password";
+        sqlx::query("UPDATE users SET password_hash=$1 WHERE username=$2")
+            .bind(crate::api::auth::hash_password(password).await.unwrap())
+            .bind(&f.name)
+            .execute(&f.state.db)
+            .await
+            .unwrap();
+        let login = f
+            .client
+            .post(format!("{}/api/auth/login", f.origin))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(json!({"username":f.name,"password":password}).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(login.status(), 200);
+        let password_session = body(login).await;
+        let password_token = password_session["token"].as_str().unwrap();
+
+        assert_eq!(
+            f.backchannel("second", "sub", "Subject:A").await.status(),
+            200
+        );
+        for (token, status) in [
+            (password_token, 200),
+            (first.as_str(), 200),
+            (second_one.as_str(), 401),
+            (second_two.as_str(), 401),
+        ] {
+            let me = f
+                .client
+                .get(format!("{}/api/me", f.origin))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(me.status(), status);
+            if status == 200 {
+                assert_eq!(body(me).await["username"], f.name);
+            }
+        }
+        drop(f);
+        db.done(state).await;
+    }
+}
+
+#[tokio::test]
+async fn logout_returns_end_session_url_only_when_allowed() {
+    for enabled in [false, true] {
+        let f = Fixture::new(|_, p| p.end_session = enabled).await;
+        let token = f.login_session("fake", "Session").await;
+        let response = f
+            .client
+            .post(format!("{}/api/auth/logout", f.origin))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let payload = body(response).await;
+        assert_eq!(payload["ok"], true);
+        if enabled {
+            let url = Url::parse(payload["end_session_url"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                url.as_str().split('?').next().unwrap(),
+                format!("{}/end_session", f.idp.issuer)
+            );
+            assert_eq!(param(&url, "client_id"), f.idp.client_id);
+            assert_eq!(
+                param(&url, "post_logout_redirect_uri"),
+                format!("{}/login", f.origin)
+            );
+            assert_eq!(url.query_pairs().count(), 2);
+        } else {
+            assert!(payload["end_session_url"].is_null());
+        }
+    }
+}
+
+#[tokio::test]
+async fn backchannel_logout_requires_a_valid_form_and_known_provider() {
+    let f = Fixture::new(|_, _| {}).await;
+    let token = f.login_session("fake", "Session").await;
+    let endpoint = format!("{}/api/auth/oidc", f.origin);
+    for form in [
+        "missing=field".to_owned(),
+        "logout_token=".to_owned() + &"x".repeat(17 * 1024),
+    ] {
+        let res = f
+            .client
+            .post(format!("{endpoint}/fake/backchannel_logout"))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(form)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 400);
+        assert_eq!(body(res).await, json!({"error":"invalid_request"}));
+    }
+    let res = f
+        .client
+        .post(format!("{endpoint}/unknown/backchannel_logout"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 404);
+    assert!(
+        crate::api::user_for_token(&f.state, &token)
+            .await
+            .unwrap()
+            .is_some()
+    );
 }

@@ -431,6 +431,83 @@ pub(crate) async fn exchange(
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(response)).into_response())
 }
 
+/// Signed notification from the configured identity provider.
+#[derive(Deserialize, ToSchema)]
+pub struct LogoutForm {
+    /// Provider-signed back-channel logout JWT.
+    logout_token: String,
+}
+
+/// End the provider sessions identified by a verified logout notification.
+///
+/// Accepts a signed logout token as form data. A session ID selects matching sessions from this
+/// provider. A subject alone selects this provider's sessions for the linked account.
+#[utoipa::path(post, path = "/api/v1/auth/oidc/{provider}/backchannel_logout", tag = "Auth", params(("provider"=String,Path,description="Configured provider ID")), request_body(content=LogoutForm,content_type="application/x-www-form-urlencoded"), responses((status=200,description="Matching sessions ended"),(status=400,description="Invalid logout request"),(status=404,description="Unknown provider")), security(()))]
+pub(crate) async fn backchannel_logout(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    form: Result<axum::Form<LogoutForm>, axum::extract::rejection::FormRejection>,
+) -> Result<Response, ApiError> {
+    use crate::sso::{accounts::oidc_key, audit, jwt};
+    let provider = state
+        .sso
+        .provider(&id)
+        .ok_or_else(super::access::not_found)?;
+    let invalid = |_| bad("invalid_request");
+    let token = form.map_err(|_| bad("invalid_request"))?.0.logout_token;
+    let (alg, kid) = jwt::header(&token).map_err(invalid)?;
+    let key = provider
+        .key(state.sso.http(), alg, kid.as_deref())
+        .await
+        .map_err(invalid)?;
+    let cfg = &provider.config;
+    let claims = jwt::verify_logout_token(
+        &token,
+        &key,
+        alg,
+        &cfg.issuer,
+        &cfg.client_id,
+        crate::db::now(),
+    )
+    .map_err(invalid)?;
+    let users: Vec<String> = if let Some(sid) = claims.sid {
+        sqlx::query_scalar(
+            "DELETE FROM tokens WHERE sso_provider=$1 AND sso_sid=$2 RETURNING username",
+        )
+        .bind(&id)
+        .bind(oidc_key(&sid).as_str())
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        let sub = claims.sub.ok_or_else(|| bad("invalid_request"))?;
+        sqlx::query_scalar(
+            "DELETE FROM tokens WHERE sso_provider=$1 AND username IN
+             (SELECT username FROM sso_links WHERE issuer=$2 AND subject=$3)
+             RETURNING username",
+        )
+        .bind(&id)
+        .bind(&cfg.issuer)
+        .bind(oidc_key(&sub).as_str())
+        .fetch_all(&state.db)
+        .await?
+    };
+    let count = users.len();
+    for username in users.into_iter().collect::<std::collections::BTreeSet<_>>() {
+        state
+            .hub
+            .broadcast(crate::ws::WsEvent::TokensRevoked { username });
+    }
+    audit::note(
+        &state.db,
+        "sso",
+        "sso.backchannel_logout",
+        Some(&id),
+        serde_json::json!({"sessions": count}),
+    )
+    .await;
+    Ok(([(header::CACHE_CONTROL, "no-store")], ()).into_response())
+}
+
 #[cfg(test)]
 mod tests;
 

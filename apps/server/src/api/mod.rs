@@ -2263,6 +2263,10 @@ fn api_routes(
         )
         .route("/me/p2p_identity", get(p2p_identity::list_identities))
         .route("/me/p2p_identity/{ik}", get(p2p_identity::get_identity))
+        .route(
+            "/auth/oidc/{provider}/backchannel_logout",
+            post(oidc::backchannel_logout).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+        )
         .route("/auth/logout", post(auth::logout))
         .route("/me/servers", get(servers::list_my_servers))
         .route("/users/search", get(users::search))

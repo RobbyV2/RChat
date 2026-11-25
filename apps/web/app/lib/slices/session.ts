@@ -1,3 +1,5 @@
+import { parseLogoutFlag, SSO_LOGOUT_KEY } from '../sso'
+import { authBrowser } from '../platform'
 import {
   acceptHostedPolicy,
   allowsAccountOrigin,
@@ -1367,11 +1369,15 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     return (token: string) => {
       const issuer = api.base === base ? api : createApi(base, 'omit')
       if (issuer !== api) issuer.prefix = prefix
-      void issuer.logout(token).catch(() => {})
+      return issuer.logout(token).catch(() => undefined)
     }
   }
 
-  const enter = async (res: AuthResponse, currentIntent = () => true) => {
+  const enter = async (
+    res: AuthResponse,
+    currentIntent = () => true,
+    endSessionEnabled = false
+  ) => {
     const mark = sessionMark()
     dropLinkCards()
     const revoke = issuedTokenCleanup()
@@ -1388,7 +1394,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       revoke(res.token)
       throw error
     }
-    confirmCredential(home, res.user, res.token, false)
+    confirmCredential(home, res.user, res.token, false, endSessionEnabled)
     if (readLocal(accountStorage(home).key('rchat_token')) === res.token)
       setMediaCookie(home, res.token)
     if (get().guest) {
@@ -1900,7 +1906,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         revoke(res.token)
         throw error
       }
-      await enter(res, pending)
+      await enter(res, pending, res.end_session)
       if (get().token !== res.token)
         throw new Error(get().error || 'That sign-in expired. Try again.')
     },
@@ -1935,7 +1941,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     },
     login: body => act(() => authenticate('/auth/login', body)),
 
-    logout: () => {
+    logout: async () => {
       const token = get().authExpired ? null : get().token
       const username = get().me?.username ?? restoring?.username
       const localToken = get().token ?? restoring?.token ?? null
@@ -1954,12 +1960,26 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         writeLocal(LS.guestServers, null)
         writeLocal(LS.guestNames, null)
       }
+      const keys = accountStorage(home)
+      const credentialKey = username && keys.token(username)
+      const redirect =
+        ownsPage() &&
+        token &&
+        credentialKey &&
+        readLocal(credentialKey) === token &&
+        parseLogoutFlag(readLocal(keys.key(SSO_LOGOUT_KEY + ':' + username)))
+      const shown = client.shownVersion()
+      const deadline = Date.now() + 3000
+      const revoke = issuedTokenCleanup()
       const flushed = readQueue.flush()
       forgetSession()
-      if (token)
-        void Promise.race([flushed, new Promise(r => setTimeout(r, 3000))])
-          .then(() => api.logout(token))
-          .catch(() => {})
+      const origin = home.origin
+      const timeout = token ? new Promise<void>(resolve => setTimeout(resolve, 3000)) : undefined
+      const completed =
+        token &&
+        Promise.race([flushed, timeout])
+          .then(() => revoke(token))
+          .catch(() => undefined)
       home.ws.stop()
       forgetTyping(false)
       useProfanity(false)
@@ -2063,6 +2083,31 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         adminOverview: null,
         adminPage: null,
       })
+      if (redirect && completed) {
+        // Retiring this just-removed credential also ends its account-manager lifetime.
+        client.accounts.reconcile()
+        const mark = sessionMark()
+        const result = await Promise.race([completed, timeout])
+        if (
+          !result?.end_session_url ||
+          Date.now() > deadline ||
+          !ownsPage() ||
+          client.shownVersion() !== shown ||
+          sessionMark() !== mark ||
+          home.origin !== origin ||
+          get().token ||
+          get().guest ||
+          readLocal(credentialKey)
+        )
+          return
+        try {
+          const url = new URL(result.end_session_url)
+          if (url.protocol === 'https:' || url.protocol === 'http:')
+            await authBrowser().navigate(url.href)
+        } catch {
+          // Local sign-out is complete even if the provider page cannot open.
+        }
+      }
     },
 
     enterGuest: () =>

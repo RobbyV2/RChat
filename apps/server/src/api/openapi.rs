@@ -89,6 +89,7 @@ impl Modify for Bearer {
         super::oidc::unlink_ticket_provider,
         super::oidc::callback,
         super::oidc::exchange,
+        super::oidc::backchannel_logout,
         super::oidc::client_consent,
         super::auth::words,
         super::recovery::challenge,
