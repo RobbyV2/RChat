@@ -357,6 +357,8 @@ pub struct ServerSummary {
     /// device clock that is off does not matter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timed_out_remaining: Option<i64>,
+    /// What members may set in their server profile: `all`, `no_names` or `off`.
+    pub profiles_mode: profiles::ProfilesMode,
 }
 
 /// Public facts about a server, without membership details.

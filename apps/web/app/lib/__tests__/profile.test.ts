@@ -173,6 +173,20 @@ describe('roles and actions', () => {
     ])
   })
 
+  test('profile resets need the permission, strictly more perms, a member who is not you and a server that shows profiles', () => {
+    const mod = { ...base, perms: Perm.ManageProfiles, targetPerms: 0, profiles: true }
+    expect(profileActions(mod)).toEqual(['profile_reset'])
+    expect(profileActions({ ...mod, profileLocked: true })).toEqual([
+      'profile_reset',
+      'profile_unlock',
+    ])
+    expect(profileActions({ ...mod, profiles: false, profileLocked: true })).toEqual([])
+    expect(profileActions({ ...mod, self: true })).toEqual([])
+    expect(profileActions({ ...mod, member: null })).toEqual([])
+    expect(profileActions({ ...mod, targetPerms: Perm.ManageProfiles })).toEqual([])
+    expect(profileActions({ ...mod, perms: Perm.Kick })).toEqual(['kick', 'server_ban'])
+  })
+
   test('timeouts need the permission, strictly more perms, and a member who is not you', () => {
     const mod = { ...base, perms: Perm.TimeoutMembers, targetPerms: 0 }
     expect(profileActions(mod)).toEqual(['timeout'])

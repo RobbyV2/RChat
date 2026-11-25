@@ -15,6 +15,7 @@ import type { friendsSlice } from '../friends_store'
 import type { ReadMark } from '../lists'
 import { mentionsUser } from '../mentions'
 import { nameWithUsername } from '../display_name'
+import { shownActor } from '../server_profile'
 import type { AlertInput } from '../notices'
 import { groupKindsShown, scopeOfKey } from '../notify'
 import {
@@ -442,16 +443,17 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
       if (!alert.toast) return
       const host = ping.server !== null ? s.servers[ping.server] : undefined
       const channel = host?.channels.find(c => `c${c.id}` === ping.scope)?.name ?? null
+      const actor = shownActor(get, ping.scope[0] === 'd' ? null : ping.server, ping.actor)
       alertUser({
         key: pingKey(ping),
-        actor: ping.actor,
+        actor,
         action: pingAction(ping, null),
         body: ping.excerpt,
         server: ping.server !== null ? (host?.display_name ?? null) : null,
         channel,
         dm: ping.scope[0] === 'd',
         message: ping.kind !== 'reaction',
-        name: ping.actor.display_name,
+        name: actor.display_name,
         generic: 'New notification',
         go: switching => get().openPing(ping, switching),
       })

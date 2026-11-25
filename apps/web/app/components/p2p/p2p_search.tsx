@@ -8,7 +8,7 @@ import { useCallback, useMemo } from 'react'
 import { SearchView, type SearchFilters, type SearchHitView } from '../search_panel'
 import { Masked } from '../ui'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
-import { KeyAvatar } from './p2p_badge'
+import { MemberAvatar } from './p2p_badge'
 
 // Search over the P2P servers stored on this device, in the instance's search panel.
 
@@ -35,7 +35,7 @@ function P2pSearchPanelBody() {
           server: <Masked text={v?.name ?? 'P2P server'} own={owner} />,
           avatar: (
             <span className="shrink-0">
-              <KeyAvatar ik={h.m.sender} size={20} />
+              <MemberAvatar members={v?.members} ik={h.m.sender} size={20} />
             </span>
           ),
           name: (

@@ -311,7 +311,7 @@ test('the voice dock, poll voters, invite previews and staff tools name the acco
     render(<PreviewLine message={msg(1, { author: impostor, content: 'hi' })} big={false} />)
   ).toContain(shown)
   expect(
-    render(<ActorHit m={member('bob', { display_name: 'alice' })} onPick={() => {}} />)
+    render(<ActorHit m={member('bob', { display_name: 'alice' })} server="s" onPick={() => {}} />)
   ).toContain(shown)
   const note = render(<CreatorNote creator={impostor} />)
   expect(

@@ -2,6 +2,7 @@
 
 import { IDENTICON_DEFAULT_BG, IDENTICON_PRESETS } from '../lib/identicon'
 import { useStore } from '../lib/store'
+import type { ReactNode } from 'react'
 import type { AvatarKind } from '../lib/types'
 import { ColorField } from './color_field'
 import { UserAvatar } from './user_avatar'
@@ -14,6 +15,9 @@ interface Props {
   onColor: (color: string) => void
   background?: string | null
   onBackground?: (color: string | null) => void
+  // Draws a choice in place of the account avatar (a P2P identity's picture comes from its key).
+  avatar?: (kind: AvatarKind, color: string | null) => ReactNode
+  disabled?: boolean
 }
 
 export function AvatarPicker({
@@ -24,12 +28,16 @@ export function AvatarPicker({
   onColor,
   background = null,
   onBackground,
+  avatar,
+  disabled = false,
 }: Props) {
   const theme = useStore(s => s.theme)
   const option = (value: AvatarKind, label: string) => (
     <button
       type="button"
       title={`${label} avatar`}
+      aria-pressed={kind === value}
+      disabled={disabled}
       onClick={() => onKind(value)}
       className={`flex flex-1 flex-col items-center gap-2 rounded-2xl border p-3 transition-colors ${
         kind === value
@@ -37,12 +45,16 @@ export function AvatarPicker({
           : 'border-outline-variant hover:bg-surface-container-high'
       }`}
     >
-      <UserAvatar
-        username={username.trim().toLowerCase() || 'preview'}
-        avatarKind={value}
-        avatarColor={value === 'color' ? color : background}
-        size={48}
-      />
+      {avatar ? (
+        avatar(value, value === 'color' ? color : background)
+      ) : (
+        <UserAvatar
+          username={username.trim().toLowerCase() || 'preview'}
+          avatarKind={value}
+          avatarColor={value === 'color' ? color : background}
+          size={48}
+        />
+      )}
       <span className="text-xs text-on-surface-variant">{label}</span>
     </button>
   )
@@ -59,6 +71,7 @@ export function AvatarPicker({
           <input
             type="color"
             value={color}
+            disabled={disabled}
             onChange={e => onColor(e.target.value)}
             className="h-8 w-12 cursor-pointer rounded bg-transparent"
           />

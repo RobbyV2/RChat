@@ -12,7 +12,7 @@ import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { profileTrigger } from './profile_card'
 import { fieldCls, FieldError, sectionCls, textBtn } from './ui'
-import { NameWithUsername } from './display_name'
+import { ShownName } from './shown_user'
 
 // "alice joined the party." with a green arrow, "alice left the server." with a red one.
 export function SystemNotice({
@@ -49,7 +49,7 @@ export function SystemNotice({
             {...profileTrigger(store, m.author, server)}
             className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
           >
-            <NameWithUsername user={m.author} />
+            <ShownName user={m.author} server={server} />
           </span>
           {after}
           <MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />

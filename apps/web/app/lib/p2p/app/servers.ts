@@ -1,5 +1,9 @@
 import { resolve as resolveNotify } from '../../notify'
+import type { RoomExtras } from '../../profile_fields'
+import type { LockSecs, LockState, ResetField } from '../../profile_reset'
+import { lookOf, roomLookOf, shownUser } from '../../server_profile'
 import type { ConfirmRequest } from '../../store_types'
+import type { ProfilesMode, UserRef } from '../../types'
 import type { P2pStore, RoomRecord, ServerCache } from '../db'
 import { cacheKey } from '../dag'
 import { knownRules } from '../acl/rules'
@@ -80,6 +84,9 @@ export function createServersPart(
       perms: 0,
       rank: [-Infinity, ''],
       history: 'shared',
+      profiles: sum?.profiles ?? 'all',
+      profile: r.profile ?? {},
+      profileLock: { locked: false },
       system: { ch: null, join: true, leave: true },
       channels: sum && me === 'join' ? channelViews(sum, ik, me, state.limits.display) : [],
       roles: [],
@@ -478,6 +485,20 @@ export function createServersPart(
     useP2p.getState().servers[room]?.members.find(m => m.ik === ik)?.name ??
     'Member'
 
+  // A member as a server shows them: their name there, and the avatar they set for it.
+  const memberUser = (room: string, ik: string): UserRef =>
+    shownUser(
+      parts.dms.p2pUser(ik, memberName(room, ik)),
+      lookOf(
+        {
+          roomLook: (id, who) =>
+            roomLookOf(useP2p.getState().servers[id]?.members.find(m => m.ik === who)),
+        },
+        { room },
+        ik
+      )
+    )
+
   // The name an author gives themselves (never our petname, never masked): a forward carries it.
   const profileName = (ik: string, room?: string) => {
     if (state.servers) return state.servers.profileName(ik, room)
@@ -524,7 +545,7 @@ export function createServersPart(
     const c = a.rec.wire.c as { body?: string; key?: string } | null
     p2pHost.alert({
       key: `p2p:${a.room}/${a.ch}`,
-      actor: parts.dms.p2pUser(a.rec.sender, memberName(a.room, a.rec.sender)),
+      actor: memberUser(a.room, a.rec.sender),
       action: a.ping
         ? a.ping === 'reaction' && c?.key
           ? `reacted ${c.key} to your message`
@@ -546,6 +567,19 @@ export function createServersPart(
             )
           : p2pServer.open(a.room, a.ch),
     })
+  }
+
+  // Runs `fn` and answers why it failed (null when it worked), for a dialog that shows the
+  // reason itself.
+  const tryServers = async (fn: (s: Servers) => Promise<unknown>): Promise<string | null> => {
+    const sv = state.servers
+    if (!sv) return parts.calls.ELSEWHERE_TEXT
+    try {
+      await fn(sv)
+      return null
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    }
   }
 
   const withServers = async <T>(fn: (s: Servers) => Promise<T>): Promise<T | null> => {
@@ -770,6 +804,27 @@ export function createServersPart(
               s.revokeRole(room, ik, role)
             )
       ),
+    // Our own profile in a server, and what members may set in theirs.
+    setRoomProfile: (room: string, intent: RoomExtras) =>
+      tryServers(s => s.setRoomProfile(room, intent)),
+    profileLock: (room: string, ik: string): LockState =>
+      state.servers?.roomLockOf(room, ik) ?? { locked: false },
+    // Both answer why they failed (null when they worked or were cancelled), for the dialog
+    // that shows it.
+    setProfileMode: (room: string, mode: ProfilesMode) =>
+      tryServers(s => s.setProfileMode(room, mode)),
+    resetProfile: (room: string, ik: string, fields: readonly ResetField[], secs: LockSecs) =>
+      tryServers(s =>
+        s.moderate(room, { act: 'Reset the server profile of', who: ik }, () =>
+          s.resetRoomProfile(room, ik, fields, secs)
+        )
+      ),
+    unlockProfile: (room: string, ik: string) =>
+      withServers(s =>
+        s.moderate(room, { act: 'Unlock the server profile of', who: ik }, () =>
+          s.unlockRoomProfile(room, ik)
+        )
+      ),
     removeChannel: (room: string, id: string) =>
       withServers(s => s.editChannel(room, id, { gone: true })),
     // Moderation waits for sync: signed after a fresh heads exchange with a member, or
@@ -930,6 +985,7 @@ export function createServersPart(
     p2pSearch,
     readSlow,
     memberName,
+    memberUser,
     profileName,
     serverScope,
     channelScope,

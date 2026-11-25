@@ -3,7 +3,19 @@
 
 import { viewingActions } from './viewing'
 
-import { Bell, BellOff, CheckCheck, Crown, LogOut, Settings, UserPlus, Volume2 } from 'lucide-react'
+import {
+  Bell,
+  BellOff,
+  CheckCheck,
+  Crown,
+  Eraser,
+  IdCard,
+  LockOpen,
+  LogOut,
+  Settings,
+  UserPlus,
+  Volume2,
+} from 'lucide-react'
 import { muteEnd, mutedText, parentScope, untilText, type NotifyScope } from '../notify'
 import { serverPings, serverUnread } from '../p2p/alerts'
 
@@ -11,6 +23,7 @@ import { ROLE_DOWN_TEXT, TRANSFER_CO_OWNERS_TEXT, transferText, WITHDRAW_TEXT } 
 import { mayTakeRole, movesWarn, placeRole, type Move } from '../p2p/roles'
 import { ownsP2pServer, type MemberView, type RoleView, type ServerView } from '../p2p/server/types'
 import { P } from '../p2p/state'
+import { editsRoomProfile } from '../server_profile_editor'
 import { sharing } from '../platform'
 import { maskOf } from '../store'
 import type { ConfirmRequest } from '../store_types'
@@ -198,6 +211,18 @@ export const peerServer = identityActions(identity => {
       : null
   }
 
+  // The server whose profile of ours a tile, a header or our own member row opens: one we are
+  // in, that still takes writes and shows profiles.
+  const profileRoom = ({ target }: ActionCtx) => {
+    const v =
+      target.kind === 'p2p_server'
+        ? target.v
+        : target.kind === 'p2p_member' && target.m.ik === me()
+          ? target.v
+          : null
+    return v && editsRoomProfile(v) ? v.id : null
+  }
+
   const onServer = { scope: 'p2p', targets: ['p2p_server'] } as const
   const onFolder = { scope: 'p2p', targets: ['folder'] } as const
   const onChannel = { scope: 'p2p', targets: ['p2p_channel'] } as const
@@ -249,6 +274,19 @@ export const peerServer = identityActions(identity => {
       run: ctx => {
         const t = serverOf(ctx)
         if (t) identity().p2p.openDialog({ kind: 'server_settings', room: t.v.id })
+      },
+    },
+    {
+      id: 'p2p_server_profile',
+      title: 'Edit Server Profile',
+      icon: IdCard,
+      scope: 'p2p',
+      targets: ['p2p_server', 'p2p_member'],
+      order: 215,
+      available: ctx => profileRoom(ctx) !== null,
+      run: ctx => {
+        const room = profileRoom(ctx)
+        if (room) identity().p2p.openDialog({ kind: 'server_profile', room })
       },
     },
     {
@@ -474,6 +512,12 @@ export const peerServer = identityActions(identity => {
     return t && can(t.v, bit) && t.m.below && t.m.ik !== me() ? t : null
   }
 
+  // A member whose profile here we may reset, while the server shows profiles.
+  const resetsProfile = (ctx: ActionCtx) => {
+    const t = memberOf(ctx)
+    return t && t.m.resetProfile && t.v.profiles !== 'off' && !t.v.upgraded ? t : null
+  }
+
   const named = (ctx: ActionCtx, verb: string, alone: string) => {
     const t = memberOf(ctx)
     return ctx.s.streamer || !t ? alone : `${verb} ${maskOf(ctx.s)(t.m.name)}`
@@ -531,6 +575,31 @@ export const peerServer = identityActions(identity => {
       run: ctx => {
         const t = memberOf(ctx)
         if (t) ctx.acct.store.getState().askConfirm(kickRequest(t.v, t.m, ctx.acct))
+      },
+    },
+    {
+      id: 'p2p_member_profile_reset',
+      title: 'Reset Server Profile',
+      icon: Eraser,
+      danger: true,
+      ...onMember,
+      order: 402,
+      available: ctx => resetsProfile(ctx) !== null,
+      run: ctx => {
+        const t = resetsProfile(ctx)
+        if (t) identity().p2p.openDialog({ kind: 'profile_reset', room: t.v.id, ik: t.m.ik })
+      },
+    },
+    {
+      id: 'p2p_member_profile_unlock',
+      title: 'Unlock Server Profile',
+      icon: LockOpen,
+      ...onMember,
+      order: 404,
+      available: ctx => resetsProfile(ctx)?.m.profileLocked === true,
+      run: ctx => {
+        const t = resetsProfile(ctx)
+        if (t) void identity().p2pServer.unlockProfile(t.v.id, t.m.ik)
       },
     },
     {

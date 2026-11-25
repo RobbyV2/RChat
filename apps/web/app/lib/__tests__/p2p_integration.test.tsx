@@ -168,6 +168,9 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   roles: [],
   everyone: 0,
   history: 'shared',
+  profiles: 'all',
+  profile: {},
+  profileLock: { locked: false },
   system: { ch: CH, join: true, leave: true },
   channels: [
     { id: CH, name: 'general', kind: 'text', pos: 0, send: true, exempt: false, over: {} },
@@ -1408,6 +1411,22 @@ describe('a tab that only reads', () => {
       p2pDm.markAllRead()
       p2pServer.markAllRead(SRV)
       expect(toasts).toEqual(['P2P is open in another tab.', 'P2P is open in another tab.'])
+    } finally {
+      p2pHost.toast = was
+    }
+  })
+
+  test('a profile reset and a profile mode change answer why they failed, for their dialogs', async () => {
+    p2pState({ enabled: true, reader: true, elsewhere: true, me: BOB })
+    const toasts: string[] = []
+    const was = p2pHost.toast
+    p2pHost.toast = text => toasts.push(text)
+    try {
+      expect(await p2pServer.resetProfile(SRV, ALICE, ['name'], null)).toBe(
+        'P2P is open in another tab.'
+      )
+      expect(await p2pServer.setProfileMode(SRV, 'off')).toBe('P2P is open in another tab.')
+      expect(toasts).toEqual([])
     } finally {
       p2pHost.toast = was
     }

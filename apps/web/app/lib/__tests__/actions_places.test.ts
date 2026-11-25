@@ -674,3 +674,16 @@ test('menu-only rows stay out of the palette', () => {
   expect(ids.filter(id => menuOnly.some(m => id === m || id.startsWith(`${m}_`)))).toEqual([])
   for (const id of menuOnly) expect([id, actionById(id)?.id]).toEqual([id, id])
 })
+
+test('your server profile opens from the server icon while the server shows profiles', async () => {
+  railState()
+  expect(labels(serverAt('s'))).not.toContain('Edit server profile')
+  useStore.setState(s => ({ settings: { ...s.settings, server_profiles: true } }))
+  expect(await effects([row(serverAt('s'), 'Edit server profile')!])).toEqual([
+    ['Edit server profile', [['openDialog', { kind: 'server_profile', server: 's' }]]],
+  ])
+  expect(labels(serverAt('b'))).toContain('Edit server profile')
+  expect(labels(serverAt('nowhere'))).toEqual([])
+  useStore.setState(s => ({ servers: { s: { ...s.servers.s, profiles_mode: 'off' } } }))
+  expect(labels(serverAt('s'))).not.toContain('Edit server profile')
+})

@@ -8,15 +8,15 @@ import { prefixHeights, visibleRange } from '../lib/window'
 import { onlineSection } from '../lib/presence'
 import { MEMBERS_HIDDEN_LINE, seesMembers } from '../lib/profile_choice'
 import { openActionMenu } from '../lib/actions/menu'
+import { byShownName } from '../lib/server_profile'
 import { roleColor, useStore } from '../lib/store'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Badge, profileTrigger } from './profile_card'
 import { Sentinel } from './ui'
 import { FitName } from './display_name'
+import { useShownMembers } from './shown_user'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
-
-const byName = (a: Member, b: Member) => a.display_name.localeCompare(b.display_name)
 
 const rowFocus = 'outline-offset-[-2px] focus-visible:outline-2 focus-visible:outline-primary'
 
@@ -27,7 +27,7 @@ const OVERSCAN = 400
 
 type Item =
   | { kind: 'head'; key: string; label: string }
-  | { kind: 'member'; key: string; m: Member }
+  | { kind: 'member'; key: string; m: Member; shown: Member }
   | { kind: 'user'; key: string; u: UserRef }
   | { kind: 'more'; key: string; onVisible: () => void }
 
@@ -115,8 +115,12 @@ export default function MemberSidebar() {
   const moreInteracted = useCallback(() => {
     if (server) void loadInteracted(server)
   }, [server, loadInteracted])
+  const shownOf = useShownMembers(server)
   const items = useMemo(() => {
     if (!detail) return []
+    // Each section in the order of the names the server shows.
+    const byName = (list: Member[]) =>
+      list.map(m => ({ m, shown: shownOf(m) })).sort((a, b) => byShownName(a.shown, b.shown))
     const loaded = cache?.list ?? []
     const {
       online,
@@ -124,16 +128,16 @@ export default function MemberSidebar() {
       totals,
       more: omore,
     } = onlineSection(detail.online_count, detail.member_count, cache, info)
-    const offline = away.sort(byName)
     const out: Item[] = []
     const section = (id: string, label: string, count: number, list: Member[]) => {
       if (count <= 0 && !list.length) return
       out.push({ kind: 'head', key: `h${id}`, label: `${label} (${count})` })
-      for (const m of list) out.push({ kind: 'member', key: `m${m.username}`, m })
+      for (const { m, shown } of byName(list))
+        out.push({ kind: 'member', key: `m${m.username}`, m, shown })
     }
     section('on', 'Online', totals.online, online)
     if (omore) out.push({ kind: 'more', key: omore, onVisible: moreOnline })
-    section('off', 'Offline', totals.offline, offline)
+    section('off', 'Offline', totals.offline, away)
     if (cache?.hasMore) out.push({ kind: 'more', key: `more${loaded.length}`, onVisible: more })
     const users = inter?.list ?? []
     if (users.length) {
@@ -147,7 +151,7 @@ export default function MemberSidebar() {
         out.push({ kind: 'more', key: `imore${users.length}`, onVisible: moreInteracted })
     }
     return out
-  }, [detail, cache, info, inter, more, moreOnline, moreInteracted])
+  }, [detail, cache, info, inter, more, moreOnline, moreInteracted, shownOf])
   const { ref, range } = useWindowed(items)
   if (!detail) return null
   if (!listed)
@@ -158,7 +162,7 @@ export default function MemberSidebar() {
       </aside>
     )
 
-  const row = (m: Member) => {
+  const row = (m: Member, shown: Member) => {
     return (
       <div
         key={m.username}
@@ -179,12 +183,12 @@ export default function MemberSidebar() {
         }`}
       >
         <UserAvatar
-          username={m.username}
-          avatarKind={m.avatar_kind}
-          avatarColor={m.avatar_color}
+          username={shown.username}
+          avatarKind={shown.avatar_kind}
+          avatarColor={shown.avatar_color}
           size={28}
         />
-        <MemberName user={m} color={roleColor(detail.roles, m.role_ids)} />
+        <MemberName user={shown} color={roleColor(detail.roles, m.role_ids)} />
         <MemberTimeout server={detail.name} username={m.username} />
         {m.is_creator && <Badge tone="tertiary">Creator</Badge>}
         {m.is_admin && <Badge tone="primary">Admin</Badge>}
@@ -231,7 +235,7 @@ export default function MemberSidebar() {
           </p>
         )
       case 'member':
-        return row(item.m)
+        return row(item.m, item.shown)
       case 'user':
         return interactedRow(item.u)
       case 'more':

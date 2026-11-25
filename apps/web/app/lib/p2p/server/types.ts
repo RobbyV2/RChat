@@ -3,6 +3,8 @@ import { isRecord } from '../../bytes'
 import type { Rank } from '../acl/rules'
 import type { OverSum } from '../acl/summary'
 import type { RoomExtras } from '../../profile_fields'
+import type { LockState } from '../../profile_reset'
+import type { ProfilesMode } from '../../types'
 import type { Disowned, Reapply } from '../acl_room'
 import { b64u, bytesOf, canonical, fromB64u, randomBytes, utf8 } from '../canonical'
 import { storedSize } from '../dag'
@@ -185,8 +187,13 @@ export interface MemberView {
   // The nickname and avatar they set for this server, when its mode shows them.
   nick?: string
   av?: RoomExtras['av']
+  // The description and banner color of their profile in this server.
+  bio?: string
+  bn?: string
   // A moderator locked their profile in this server and the lock runs.
   profileLocked?: true
+  // We may reset their profile here, and lift its lock.
+  resetProfile?: true
   owner: boolean
   online: boolean
   contact: boolean
@@ -257,6 +264,11 @@ export interface ServerView {
   perms: number
   rank: Rank
   history: HistoryVis
+  // What members may set in their profile here, what we set for ourselves, and whether a
+  // moderator's lock on it runs.
+  profiles: ProfilesMode
+  profile: RoomExtras
+  profileLock: LockState
   system: SystemContent
   channels: ChannelView[]
   roles: RoleView[]

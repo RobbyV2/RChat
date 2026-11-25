@@ -3,6 +3,7 @@
 import type { CSSProperties } from 'react'
 import { Settings } from 'lucide-react'
 import { GEAR_CHIP_CSS, headerColors } from '../lib/server_colors'
+import { longPress } from './context_menu'
 import { Masked, useOwnServer } from './ui'
 
 const gearCls =
@@ -14,6 +15,7 @@ export function ServerHeader({
   bannerColor,
   nameColor,
   onSettings,
+  onMenu,
   preview = false,
   showGear = true,
 }: {
@@ -22,6 +24,8 @@ export function ServerHeader({
   bannerColor: string | null | undefined
   nameColor: string | null | undefined
   onSettings?: () => void
+  // Opens the server's menu at a point: a right-click or a long press on the name.
+  onMenu?: (x: number, y: number) => void
   preview?: boolean
   showGear?: boolean
 }) {
@@ -49,6 +53,7 @@ export function ServerHeader({
         <img src="/rchat_logo.png" alt="RChat" className="h-8 w-auto" />
       ) : (
         <span
+          {...(onMenu ? longPress(onMenu) : {})}
           style={colors?.fg ? { color: colors.fg } : undefined}
           className="streamer truncate font-medium"
         >

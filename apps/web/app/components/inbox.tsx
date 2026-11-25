@@ -55,6 +55,8 @@ import {
   useOwnServer,
 } from './ui'
 import { NameWithUsername } from './display_name'
+import { useShown } from './shown_user'
+import { INSTANCE_INBOX } from '../lib/inbox_source'
 import { longPress, useMedia } from './context_menu'
 
 const chipCls = (on: boolean) =>
@@ -208,6 +210,7 @@ function useInbox(view: InboxView) {
   }, [fetchPage, isCurrent])
 
   const entries = useMemo(() => mergeEntries(sources), [sources])
+  useEntryLooks(entries)
   const more = hasMore(sources)
   const loading = Object.values(sources).some(s => s.loading)
   const failed = Object.values(sources).some(s => s.failed)
@@ -300,6 +303,28 @@ export function InboxAction({ entry }: { entry: Pick<InboxEntry, 'kind' | 'emoji
   return <span className="text-on-surface-variant">{inboxAction(entry)}</span>
 }
 
+// The hosted server an entry's actor acted in; null for DMs, friends and P2P entries.
+const entryServer = (entry: InboxEntry) =>
+  entry.adapter === INSTANCE_INBOX && entry.where.kind === 'channel' ? entry.where.server : null
+
+// Asks once per server for the member rows of the actors listed, so rows show server names.
+function useEntryLooks(entries: readonly InboxEntry[]) {
+  const ensureMembers = useStore(s => s.ensureMembers)
+  const key = useMemo(() => {
+    const by = new Map<string, Set<string>>()
+    for (const e of entries) {
+      const server = entryServer(e)
+      if (server === null || isWebhookAuthor(e.actor.username)) continue
+      by.set(server, (by.get(server) ?? new Set()).add(e.actor.username))
+    }
+    return JSON.stringify([...by].map(([server, names]) => [server, [...names].sort()]))
+  }, [entries])
+  useEffect(() => {
+    for (const [server, names] of JSON.parse(key) as [string, string[]][])
+      void ensureMembers(server, names)
+  }, [key, ensureMembers])
+}
+
 function Row({
   adapter,
   entry,
@@ -316,6 +341,7 @@ function Row({
   const streamer = useStore(s => s.streamer)
   acct.viewing.useViewing(s => s.revision)
   useStore(s => s.servers)
+  const actor = useShown(entry.actor, entryServer(entry))
   if (!adapter) return null
   if (adapter.canPreview?.(entry) === false) {
     const target = adapter.previewTarget?.(entry)
@@ -358,9 +384,9 @@ function Row({
       >
         <span className="relative mt-0.5 shrink-0">
           <UserAvatar
-            username={entry.actor.username}
-            avatarKind={entry.actor.avatar_kind}
-            avatarColor={entry.actor.avatar_color}
+            username={actor.username}
+            avatarKind={actor.avatar_kind}
+            avatarColor={actor.avatar_color}
             size={32}
           />
           {entry.unread && (
@@ -374,7 +400,7 @@ function Row({
           <span className="flex min-w-0 items-baseline gap-1.5 text-sm">
             <span className="min-w-0 truncate">
               <span className={`streamer ${entry.unread ? 'font-semibold' : 'font-medium'}`}>
-                <NameWithUsername user={entry.actor} />
+                <NameWithUsername user={actor} />
               </span>{' '}
               {isWebhookAuthor(entry.actor.username) && (
                 <>

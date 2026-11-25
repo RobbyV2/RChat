@@ -6,9 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { FileText, Hash, Search } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, endOfList, shortSearch, type SearchArgs } from '../lib/search'
-import { UserAvatar } from './user_avatar'
 import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
-import { NameWithUsername } from './display_name'
+import { ShownAvatar, ShownName } from './shown_user'
 import { avatarTriggerCls, nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { plainStamps } from '../lib/timestamps'
@@ -330,12 +329,7 @@ const instanceHit = (
       title="View profile"
       className={`shrink-0 ${avatarTriggerCls}`}
     >
-      <UserAvatar
-        username={r.message.author.username}
-        avatarKind={r.message.author.avatar_kind}
-        avatarColor={r.message.author.avatar_color}
-        size={20}
-      />
+      <ShownAvatar user={r.message.author} server={r.server} size={20} />
     </span>
   ),
   name: (
@@ -343,7 +337,7 @@ const instanceHit = (
       {...profileTrigger(store, r.message.author, r.server)}
       className={`streamer truncate text-sm font-medium ${nameTriggerCls}`}
     >
-      <NameWithUsername user={r.message.author} />
+      <ShownName user={r.message.author} server={r.server} />
     </span>
   ),
   createdAt: r.message.created_at,

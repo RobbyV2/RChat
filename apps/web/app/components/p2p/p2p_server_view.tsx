@@ -9,6 +9,7 @@ import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { roomLooksKey } from '../../lib/server_profile'
 import {
   Clock,
   Crown,
@@ -49,7 +50,14 @@ import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { iconBtn, Masked, Sentinel } from '../ui'
 import { PAGE, pageGroups } from '../../lib/paging'
-import { AccountChip, ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
+import {
+  AccountChip,
+  ContactShield,
+  KeyAvatar,
+  MemberAvatar,
+  P2pBadge,
+  PresenceDot,
+} from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
 import { SYNCING_TEXT, TRANSFERRED_TEXT, VOUCH_INVITER_TEXT } from '../../lib/p2p/flows'
@@ -605,7 +613,7 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
         className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface-container ${m.online || m.ik === me ? '' : 'opacity-60'}`}
       >
         <span className="relative shrink-0">
-          <KeyAvatar ik={m.ik} size={32} />
+          <MemberAvatar members={v.members} ik={m.ik} size={32} />
           {m.m === 'join' && (
             <PresenceDot presence={m.online || m.ik === me ? 'online' : 'offline'} />
           )}
@@ -777,7 +785,7 @@ function P2pChannelPaneBody({
   membersOpen: boolean
 }) {
   const identity = useP2pApp()!
-  const { memberName, p2pDm, p2pSearch } = identity
+  const { memberName, memberUser, p2pDm, p2pSearch } = identity
 
   const acct = useAccount()
 
@@ -801,6 +809,10 @@ function P2pChannelPaneBody({
   const mask = useMask(own)
   const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const members = v?.members
+  // Built again only when a member's name or avatar here changes: rows show the new look, and
+  // typing or presence redraws none of them.
+  const looks = useMemo(() => roomLooksKey(members), [members])
+  const userOf = useCallback((ik: string) => memberUser(room, ik), [room, looks])
   const people = useMemo<Mentionable[]>(
     () =>
       (members ?? [])
@@ -975,6 +987,7 @@ function P2pChannelPaneBody({
       disabled={disabled}
       canAct={!disabled}
       nameOf={nameOf}
+      userOf={userOf}
       people={people}
       title={`#${mask(channel.name)}`}
       placeholder={`Message #${mask(channel.name)}`}

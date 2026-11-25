@@ -60,6 +60,7 @@ import {
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
+import { ProfileResetDialog, ServerProfileDialog } from './p2p_server_profile'
 import { ServerSettingsDialog } from './p2p_server_settings'
 import { ServerInviteRows } from './p2p_server_view'
 import { CoOwnerAsks, LostDeviceDialog, RecoverDialog, TransferAsks } from './p2p_server_flows'
@@ -955,6 +956,16 @@ function P2pDialogsBody() {
       return <ServerInviteDialog key={dialog.room} room={dialog.room} />
     case 'server_settings':
       return <ServerSettingsDialog key={dialog.room} room={dialog.room} tab={dialog.tab} />
+    case 'server_profile':
+      return <ServerProfileDialog key={dialog.room} room={dialog.room} />
+    case 'profile_reset':
+      return (
+        <ProfileResetDialog
+          key={`${dialog.room}\n${dialog.ik}`}
+          room={dialog.room}
+          ik={dialog.ik}
+        />
+      )
     case 'p2p_folder':
       return (
         <P2pFolderDialog key={dialog.id} id={dialog.id} colorFirst={dialog.focus === 'color'} />

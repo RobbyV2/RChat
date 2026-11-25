@@ -101,6 +101,7 @@ import {
 } from './code_block'
 import { Stamp } from './timestamp'
 import { splitStamps, type StampStyle } from '../lib/timestamps'
+import { useLook } from './shown_user'
 import { MaskControl, Masked, MaskedWord, MaskedWords, MaskPlain, useOwn } from './ui'
 import { mentionHandle } from '../lib/display_name'
 import { removedLifetime, removedTail } from '../lib/upload_expiry'
@@ -314,17 +315,23 @@ function Mention({ username }: { username: string }) {
   const storeMine = useStore(s => s.me?.username === username)
   const user = src ? src.user(username) : (stored as UserRef)
   const mine = src ? src.mine(username) : storeMine
+  // The pill keeps the handle that resolves; the name the server shows is its tooltip. A P2P
+  // identity carries its key where an account carries its username: its handle is its name.
+  const named = useLook(src ? null : server, username)?.name ?? null
+  const streamer = useStore(s => s.streamer)
+  const mask = useMask(mine)
   return (
     <span
       {...(src ? {} : profileTrigger(store, user, server))}
       data-mention={username}
+      title={named === null || streamer ? undefined : mask(named)}
       className={`streamer cursor-pointer rounded px-0.5 font-medium hover:underline ${
         mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'
       }`}
     >
       @
       <MaskControl>
-        <Masked text={mentionHandle(user)} own={mine} />
+        <Masked text={src ? user.display_name : mentionHandle(user)} own={mine} />
       </MaskControl>
     </span>
   )

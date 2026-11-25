@@ -21,7 +21,9 @@ import {
   onlineForHere,
   type GroupPings,
 } from './group_pings'
+import { lockState } from './profile_reset'
 import { canChangeRole, memberPerms, rolePerms } from './rules'
+import { shownParts } from './server_profile'
 import type { ConfigSource } from './config_transfer'
 import { running, type Timeout } from './timeouts'
 import type { RChatState } from './store_types'
@@ -459,3 +461,24 @@ export const voiceHushedIn = (s: Pick<RChatState, 'voiceHushed'>, channelId: num
   channelId === null ? EMPTY_NAMES : (s.voiceHushed[channelId] ?? EMPTY_NAMES)
 
 const EMPTY_NAMES: string[] = []
+
+// Whether you may open your own profile of `server`: a signed-in member who is not timed out,
+// while the site and the server show server profiles.
+export const mayEditProfile = (s: RChatState, server: string) =>
+  !!s.me &&
+  !s.guest &&
+  s.me.servers.some(x => x.name === server) &&
+  shownParts(s, server).rest &&
+  myTimeoutEnds(s, server) === null
+
+// Whether a moderator with the right may reset server profiles in `server` at all.
+export const profilesShown = (s: RChatState, server: string) => shownParts(s, server).rest
+
+// Whether a moderator's lock on a member's server profile runs, as far as this client has
+// learned (their card, or a lock set from here).
+export const profileLockedFor = (
+  s: Pick<RChatState, 'profileLocks'>,
+  server: string,
+  username: string,
+  now = Date.now()
+) => lockState(s.profileLocks[server]?.[username], Math.floor(now / 1000)).locked

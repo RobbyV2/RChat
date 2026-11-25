@@ -1,7 +1,9 @@
+import { nameWithUsername } from './display_name'
 import { bannerColor } from './profile'
 import type { Paged } from './store_types'
+import { isWebhookAuthor } from './webhooks'
 import type { Place } from './profile_fields'
-import type { Member, MemberLook, ProfilesMode, UserRef } from './types'
+import type { AvatarKind, Member, MemberLook, ProfilesMode, UserRef } from './types'
 
 export {
   PROFILE_FIELDS,
@@ -20,6 +22,8 @@ export interface LookSource {
   members?: Record<string, Paged<Member> | undefined>
   memberInfo?: Record<string, Record<string, Member | null> | undefined>
   servers?: Record<string, { profiles_mode?: ProfilesMode } | undefined>
+  // Your servers: the mode of one whose detail isn't loaded.
+  me?: { servers: readonly { name: string; profiles_mode?: ProfilesMode }[] } | null
   settings?: { server_profiles?: boolean; display_names?: boolean }
   roomLook?: (room: string, who: string) => MemberLook | null
 }
@@ -32,10 +36,13 @@ export interface ShownParts {
 }
 
 export function shownParts(
-  s: Pick<LookSource, 'servers' | 'settings'>,
+  s: Pick<LookSource, 'servers' | 'me' | 'settings'>,
   server: string
 ): ShownParts {
-  const mode = s.servers?.[server]?.profiles_mode ?? 'all'
+  const detail = s.servers?.[server]
+  const mode =
+    (detail ? detail.profiles_mode : s.me?.servers.find(x => x.name === server)?.profiles_mode) ??
+    'all'
   if (s.settings?.server_profiles === false || mode === 'off') return { names: false, rest: false }
   return { names: mode === 'all' && s.settings?.display_names !== false, rest: true }
 }
@@ -44,13 +51,31 @@ export function shownParts(
 export const showsMore = (before: ShownParts, after: ShownParts) =>
   (after.names && !before.names) || (after.rest && !before.rest)
 
-const partsOf = (look: MemberLook, shown: ShownParts): MemberLook | null => {
+// `look` cut down to the parts that show.
+export const lookIn = (look: MemberLook, shown: ShownParts): MemberLook | null => {
   const name = shown.names ? look.name : null
   const kind = shown.rest ? look.avatar_kind : null
   if (name === look.name && kind === look.avatar_kind) return look
   if (name === null && kind === null) return null
   return { name, avatar_kind: kind, avatar_color: kind === null ? null : look.avatar_color }
 }
+
+const indexes = new WeakMap<readonly Member[], Map<string, Member>>()
+
+const listed = (list: readonly Member[] | undefined, who: string) => {
+  if (!list) return undefined
+  let index = indexes.get(list)
+  if (!index) {
+    index = new Map(list.map(m => [m.username, m]))
+    indexes.set(list, index)
+  }
+  return index.get(who)
+}
+
+// Whether a hosted server's row of `who` is loaded here, a row that says they left included.
+export const lookKnown = (s: LookSource, server: string, who: string) =>
+  Object.hasOwn(s.memberInfo?.[server] ?? {}, who) ||
+  listed(s.members?.[server]?.list, who) !== undefined
 
 // The look `who` (a username, or an identity key in a room) set for `place`, when it is known
 // here. A hosted look that isn't loaded yet reads as none: callers show the account name and
@@ -62,8 +87,8 @@ export function lookOf(s: LookSource, place: Place, who: string): MemberLook | n
   const look =
     known && Object.hasOwn(known, who)
       ? known[who]?.profile
-      : s.members?.[place.server]?.list.find(m => m.username === who)?.profile
-  return look ? partsOf(look, shownParts(s, place.server)) : null
+      : listed(s.members?.[place.server]?.list, who)?.profile
+  return look ? lookIn(look, shownParts(s, place.server)) : null
 }
 
 // `ref` as a place shows it: the name and avatar of the look over the account's. An explicit
@@ -107,3 +132,73 @@ export interface BioFacts {
 // The description a card opened in a place shows: the place's, else the account's.
 export const shownBio = (_ref: Pick<UserRef, 'username'>, facts: BioFacts) =>
   facts.server_bio || facts.bio || null
+
+// Sorts people by the name a place shows for them.
+export const byShownName = (a: Pick<UserRef, 'display_name'>, b: Pick<UserRef, 'display_name'>) =>
+  a.display_name.localeCompare(b.display_name)
+
+// Someone as a hosted server shows them in a notification or a typing line, and whether to ask
+// for their member row: until it is loaded the account name shows, and what was already shown
+// keeps the name it was shown with.
+export function shownIn<T extends UserRef>(
+  s: LookSource,
+  server: string | null | undefined,
+  ref: T
+): { user: T; ask: boolean } {
+  if (!server) return { user: ref, ask: false }
+  return {
+    user: shownUser(ref, lookOf(s, { server }, ref.username)),
+    ask: !lookKnown(s, server, ref.username),
+  }
+}
+
+// Who is typing in a channel of a hosted server, in the order they started, under the names the
+// server shows, and the typers whose member rows are not loaded yet. `here` holds each typer's
+// account name as plain text.
+export function shownTypers(
+  s: LookSource,
+  server: string | null | undefined,
+  here: Record<string, { name: string }> | undefined,
+  blocked: Record<string, unknown>
+): { names: string[]; ask: string[] } {
+  const names: string[] = []
+  const ask: string[] = []
+  for (const [username, t] of Object.entries(here ?? {})) {
+    if (blocked[username]) continue
+    const name = server ? lookOf(s, { server }, username)?.name : null
+    names.push(name ? nameWithUsername({ username, display_name: name }) : t.name)
+    if (server && !lookKnown(s, server, username)) ask.push(username)
+  }
+  return { names, ask }
+}
+
+type RoomMember = { name: string; nick?: string; av?: { kind: AvatarKind; bg?: string } }
+
+// What a P2P room's rows draw of its members, as one string: it changes only when someone's
+// shown name or avatar there does, not when presence or anything else in the room moves.
+export const roomLooksKey = (members: readonly (RoomMember & { ik: string })[] | undefined) =>
+  (members ?? [])
+    .map(m => [m.ik, m.name, m.nick ?? '', m.av?.kind ?? '', m.av?.bg ?? ''].join('\u0000'))
+    .join('\n')
+
+// The look of a member of a P2P room as this device shows them: the nickname only when no name
+// of ours for them (our own name, a contact's) comes first.
+export const roomLookOf = (m: RoomMember | undefined): MemberLook | null => {
+  if (!m) return null
+  const name = m.nick !== undefined && m.nick === m.name ? m.nick : null
+  if (name === null && !m.av) return null
+  return { name, avatar_kind: m.av?.kind ?? null, avatar_color: m.av?.bg ?? null }
+}
+
+// Whoever a notification of a hosted server is about, under the name the server shows now. Their
+// member row is asked for when it isn't loaded, so the next notification has it.
+export function shownActor<T extends UserRef>(
+  get: () => LookSource & { ensureMembers: (server: string, usernames: string[]) => unknown },
+  server: string | null | undefined,
+  ref: T
+): T {
+  const s = get()
+  const { user, ask } = shownIn(s, server, ref)
+  if (ask && server && !isWebhookAuthor(ref.username)) void s.ensureMembers(server, [ref.username])
+  return user
+}

@@ -25,6 +25,7 @@ import type { PassKind, Secret } from './password'
 import type { Pings } from './pings'
 import type { GroupPings } from './group_pings'
 import type { Replying } from './replies'
+import type { LockSecs, ResetField } from './profile_reset'
 import type { SearchArgs } from './search'
 import type { Sed } from './sed'
 import type { SettingsAsk, SettingsFocus } from './settings_sections'
@@ -56,6 +57,8 @@ import type {
   SearchResult,
   ServerBan,
   ServerDetail,
+  ServerProfile,
+  ServerProfilePatch,
   ServerSummaryLite,
   SiteSettings,
   SiteSettingsPatch,
@@ -138,6 +141,8 @@ export type ActiveDialog =
   | { kind: 'audit_log'; server: string }
   | { kind: 'webhooks'; server: string }
   | { kind: 'timeout'; server: string; user: UserRef }
+  | { kind: 'server_profile'; server: string }
+  | { kind: 'profile_reset'; server: string; user: UserRef }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
   | { kind: 'remove_phrase_confirm'; username: string }
@@ -313,6 +318,9 @@ export interface RChatState {
   voiceHushed: Record<number, string[]>
   // running timeouts by server and username, as moderators see them
   timeouts: Record<string, Record<string, Timeout>>
+  // the ends (unix seconds) of the server profile locks a moderator here has learned of, by
+  // server and username
+  profileLocks: Record<string, Record<string, number>>
   p2pAvailability: Record<string, P2pAvailability>
   rtcTick: number
   selfAudio: SelfAudio
@@ -662,6 +670,20 @@ export interface RChatState {
     reason: string
   ) => Promise<boolean>
   removeTimeout: (server: string, username: string) => Promise<void>
+  // Your own server profile. Loading answers it (null when it can't be read); saving and
+  // clearing answer the error text, or null when they worked.
+  loadMyProfile: (server: string) => Promise<ServerProfile | null>
+  saveMyProfile: (server: string, patch: ServerProfilePatch) => Promise<string | null>
+  clearMyProfile: (server: string) => Promise<string | null>
+  resetMemberProfile: (
+    server: string,
+    username: string,
+    fields: readonly ResetField[],
+    secs: LockSecs,
+    reason: string
+  ) => Promise<string | null>
+  unlockMemberProfile: (server: string, username: string) => Promise<void>
+  noteProfileLock: (server: string, username: string, until: number | null | undefined) => void
   disconnectGuest: (server: string, name: string) => Promise<void>
   muteGuest: (server: string, name: string, muted: boolean) => Promise<void>
   unbanMember: (server: string, username: string) => Promise<void>

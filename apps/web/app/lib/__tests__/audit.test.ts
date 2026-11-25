@@ -7,6 +7,7 @@ import {
   fieldLabel,
   groupOf,
   isNameValue,
+  peopleIn,
   permNames,
   sentence,
   sentenceText,
@@ -52,9 +53,9 @@ const channelTarget = (name: string | null) => ({
 describe('audit sentences', () => {
   test('member actions name both sides with the streamer flag', () => {
     expect(sentence(entry({}))).toEqual([
-      { text: 'Alice', name: true, by: 'alice' },
+      { text: 'Alice', name: true, by: 'alice', person: true },
       { text: ' banned ' },
-      { text: 'Bob', name: true, by: 'bob' },
+      { text: 'Bob', name: true, by: 'bob', person: true },
     ])
     expect(sentenceText(entry({ action: 'member.kick' }))).toBe('Alice kicked Bob')
     expect(sentenceText(entry({ action: 'member.admin_grant' }))).toBe('Alice made Bob an admin')
@@ -69,8 +70,8 @@ describe('audit sentences', () => {
       })
     )
     expect(rule.filter(p => p.name)).toEqual([
-      { text: 'Alice', name: true, by: 'alice' },
-      { text: 'carol', name: true, by: 'carol' },
+      { text: 'Alice', name: true, by: 'alice', person: true },
+      { text: 'carol', name: true, by: 'carol', person: true },
     ])
     const renamed = sentence(
       entry({
@@ -80,9 +81,29 @@ describe('audit sentences', () => {
       })
     )
     expect(renamed.filter(p => p.name)).toEqual([
-      { text: 'Alice', name: true, by: 'alice' },
+      { text: 'Alice', name: true, by: 'alice', person: true },
       { text: 'new', name: true },
     ])
+  })
+
+  test('the people entries name are looked up once each, never a name someone had', () => {
+    const entries = [
+      entry({}),
+      entry({ action: 'member.kick' }),
+      entry({
+        action: 'channel.perm_set',
+        target: channelTarget('general'),
+        details: { subject: { kind: 'user', name: 'carol' } },
+      }),
+      entry({ action: 'member.profile_reset', details: { fields: ['name'], old_name: 'Robert' } }),
+      entry({
+        staff: true,
+        actor: null,
+        target: { kind: 'user', id: null, name: 'dave', user: null, staff: false, deleted: false },
+      }),
+    ]
+    expect(peopleIn(entries)).toEqual(['alice', 'bob', 'carol'])
+    expect(peopleIn([entry({ hidden: true, actor: null })])).toEqual([])
   })
 
   test('instance staff are never named', () => {
@@ -485,7 +506,7 @@ describe('the member privacy option', () => {
         details: { old, new: next },
       })
     expect(sentence(named('Ali', 'Al'))).toEqual([
-      { text: 'Alice', name: true, by: 'alice' },
+      { text: 'Alice', name: true, by: 'alice', person: true },
       { text: ' changed their server name from ' },
       { text: 'Ali', name: true, by: 'alice' },
       { text: ' to ' },
@@ -513,9 +534,9 @@ describe('the member privacy option', () => {
     expect(
       sentence(reset({ fields: ['name', 'avatar'], old_name: 'Robert', lock_until: null }))
     ).toEqual([
-      { text: 'Alice', name: true, by: 'alice' },
+      { text: 'Alice', name: true, by: 'alice', person: true },
       { text: ' reset the server name and avatar of ' },
-      { text: 'Bob', name: true, by: 'bob' },
+      { text: 'Bob', name: true, by: 'bob', person: true },
       { text: ', who was named ' },
       { text: 'Robert', name: true, by: 'bob' },
     ])

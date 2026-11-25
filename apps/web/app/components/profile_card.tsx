@@ -14,7 +14,9 @@ import {
   Ban,
   Check,
   Copy,
+  Eraser,
   Gavel,
+  LockOpen,
   Pencil,
   Plus,
   ShieldMinus,
@@ -35,12 +37,13 @@ import {
   myRolePerms,
   type ProfileTarget,
   useMask,
+  mayEditProfile,
+  profilesShown,
   useStore,
 } from '../lib/store'
 import {
   HIDDEN_PROFILE,
   SHEET_QUERY,
-  bannerColor,
   cachedProfile,
   canEditRoles,
   forgetProfile,
@@ -57,10 +60,13 @@ import {
   type Point,
   type ProfileAction,
 } from '../lib/profile'
+import { lockState } from '../lib/profile_reset'
 import { memberPerms, rolePerms } from '../lib/rules'
+import { shownBanner, shownBio, shownUser } from '../lib/server_profile'
 import { limitsOf } from '../lib/instance_limits'
 import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
+import { useLook } from './shown_user'
 import { UserAvatar } from './user_avatar'
 import { Masked, useCopied, useOwnServer } from './ui'
 import { dmPlaceholder } from '../lib/display_name'
@@ -148,6 +154,7 @@ const asMember = (p: Profile): Member | null =>
     online: p.member.online,
     perms: p.member.perms,
     role_ids: p.member.role_ids,
+    ...(p.member.profile ? { profile: p.member.profile } : {}),
   }
 
 const fmtDate = (ts: number) =>
@@ -162,6 +169,8 @@ const ACTIONS: Record<ProfileAction, { label: string; icon: ReactNode; danger?: 
   server_ban: { label: 'Ban from server', icon: <Ban size={16} />, danger: true },
   timeout: { label: 'Time out', icon: <Timer size={16} />, danger: true },
   untimeout: { label: 'Remove timeout', icon: <TimerOff size={16} /> },
+  profile_reset: { label: 'Reset server profile', icon: <Eraser size={16} />, danger: true },
+  profile_unlock: { label: 'Unlock server profile', icon: <LockOpen size={16} /> },
   promote: { label: 'Promote to Admin', icon: <ShieldPlus size={16} /> },
   revoke: { label: 'Revoke Admin', icon: <ShieldMinus size={16} />, danger: true },
   transfer: { label: 'Transfer Admin', icon: <ArrowRightLeft size={16} />, danger: true },
@@ -274,6 +283,7 @@ function Card({ target }: { target: ProfileTarget }) {
         const s = store.getState()
         if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
         if (server && p.member) noteTimeout(server, username, p.member.timeout)
+        if (server && p.member) s.noteProfileLock(server, username, p.member.profile_locked_until)
         if (server && p.member) s.notePresence(server, username, p.member.online)
         store.setState(st =>
           st.profile?.user.username === username ? { profile: { ...st.profile, user: p.user } } : {}
@@ -375,8 +385,21 @@ function Card({ target }: { target: ProfileTarget }) {
 
   const self = me?.username === username
   const user: UserRef = self && me ? me : (live ?? target.user)
-  const banner = bannerColor(user, self ? me?.banner_color : profile?.banner_color)
-  const bio = self ? (me?.bio ?? null) : (profile?.bio ?? null)
+  // In a server the card leads with the name and avatar the member set there.
+  const look = useLook(server, username)
+  const placed = shownUser(user, look)
+  const named = look?.name != null
+  const banner = shownBanner(placed, {
+    banner_color: self ? me?.banner_color : profile?.banner_color,
+    server_banner: profile?.server_banner,
+  })
+  const bio = shownBio(user, {
+    bio: self ? me?.bio : profile?.bio,
+    server_bio: profile?.server_bio,
+  })
+  const profiles = useStore(s => (server ? profilesShown(s, server) : false))
+  const editsProfile = useStore(s => (server ? mayEditProfile(s, server) : false))
+  const lockedUntil = profile?.member?.profile_locked_until
   const ownServer = useOwnServer(server)
   const mask = useMask(ownServer)
   const fetched = profile?.member ?? null
@@ -406,6 +429,8 @@ function Card({ target }: { target: ProfileTarget }) {
     targetRolePerms: rolePerms(member, serverRoles ?? fetched?.roles ?? []),
     myRolePerms: mine,
     timedOut: timeout !== null,
+    profiles,
+    profileLocked: lockState(lockedUntil, Math.floor(Date.now() / 1000)).locked,
   }
   const actions = known ? profileActions(input) : []
   const editRoles = known && canEditRoles(input) && serverRoles !== undefined
@@ -447,6 +472,22 @@ function Card({ target }: { target: ProfileTarget }) {
         return
       case 'untimeout':
         void s.removeTimeout(server, username)
+        return
+      case 'profile_reset':
+        close()
+        s.openDialog({
+          kind: 'profile_reset',
+          server,
+          user: {
+            username: user.username,
+            display_name: user.display_name,
+            avatar_kind: user.avatar_kind,
+            avatar_color: user.avatar_color,
+          },
+        })
+        return
+      case 'profile_unlock':
+        void s.unlockMemberProfile(server, username)
         return
       case 'promote':
         void s.grantAdmin(server, username)
@@ -498,9 +539,9 @@ function Card({ target }: { target: ProfileTarget }) {
         <div className="-mt-12 flex items-end justify-between gap-2">
           <span className="relative block shrink-0 rounded-full bg-surface-container-high p-1.5">
             <UserAvatar
-              username={user.username}
-              avatarKind={user.avatar_kind}
-              avatarColor={user.avatar_color}
+              username={placed.username}
+              avatarKind={placed.avatar_kind}
+              avatarColor={placed.avatar_color}
               size={80}
             />
             {member && (
@@ -524,8 +565,13 @@ function Card({ target }: { target: ProfileTarget }) {
             id={titleId}
             className="streamer line-clamp-2 text-xl leading-7 font-semibold break-words text-on-surface"
           >
-            <Masked text={user.display_name} own={self} />
+            <Masked text={placed.display_name} own={self} />
           </p>
+          {named && (
+            <p data-account-name className="streamer truncate text-sm text-on-surface">
+              <Masked text={user.display_name} own={self} />
+            </p>
+          )}
           <ProfileHandle
             user={user}
             remote={remote ?? (actor ? new URL(actor.row.origin).host : null)}
@@ -546,6 +592,17 @@ function Card({ target }: { target: ProfileTarget }) {
               className="mt-1 text-xs font-medium text-primary hover:underline"
             >
               {bio ? 'Edit description' : 'Add a description'}
+            </button>
+          )}
+          {self && server && editsProfile && (
+            <button
+              onClick={() => {
+                close()
+                store.getState().openDialog({ kind: 'server_profile', server })
+              }}
+              className="mt-1 ml-3 text-xs font-medium text-primary hover:underline"
+            >
+              Edit server profile
             </button>
           )}
         </div>

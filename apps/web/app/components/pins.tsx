@@ -14,9 +14,8 @@ import { longPress, useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
-import { UserAvatar } from './user_avatar'
 import { CloseButton, Masked, SheetGrip, useOwn } from './ui'
-import { NameWithUsername } from './display_name'
+import { ShownAvatar, ShownName } from './shown_user'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
@@ -159,7 +158,7 @@ export function PinNotice({
           {...profileTrigger(store, m.author, server)}
           className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
         >
-          <NameWithUsername user={m.author} />
+          <ShownName user={m.author} server={server} />
         </span>
       }
       place={m.dm_id !== null ? 'conversation' : 'channel'}
@@ -240,17 +239,12 @@ function PinEntry({
       className="group/pin relative cursor-pointer rounded-xl border border-outline-variant bg-surface-container px-3 py-2.5 hover:bg-surface-container-highest"
     >
       <div className="flex min-w-0 items-center gap-2 pr-20">
-        <UserAvatar
-          username={m.author.username}
-          avatarKind={m.author.avatar_kind}
-          avatarColor={m.author.avatar_color}
-          size={24}
-        />
+        <ShownAvatar user={m.author} server={server} size={24} />
         <span
           {...(profiles ? profileTrigger(store, m.author, server) : {})}
           className={`streamer min-w-0 truncate text-sm font-medium text-on-surface ${profiles ? nameTriggerCls : ''}`}
         >
-          <NameWithUsername user={m.author} />
+          <ShownName user={m.author} server={server} />
         </span>
         <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
       </div>

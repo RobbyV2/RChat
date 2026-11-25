@@ -9,8 +9,11 @@ import {
   Copy,
   Crown,
   Download,
+  Eraser,
   Forward,
   Hash,
+  IdCard,
+  LockOpen,
   LogOut,
   MessageSquareText,
   Pencil,
@@ -237,6 +240,7 @@ const recorder = () => {
     'revokeRole',
     'moveRoles',
     'deleteRole',
+    'unlockProfile',
   ])
   spy('rail', p2pRail, ['move', 'ungroup'])
   spy('voice', p2pVoice, ['join', 'leave'])
@@ -291,6 +295,7 @@ describe("a P2P server's menu (rail tile and header)", () => {
       ['Mute Server', false, BellOff],
       ['Notification settings', false, null],
       ['Server Settings', false, Settings],
+      ['Edit Server Profile', false, IdCard],
       ['Copy Server ID', false, null],
       ['Leave Server', true, LogOut],
     ])
@@ -308,6 +313,7 @@ describe("a P2P server's menu (rail tile and header)", () => {
       'Notification settings',
       'Invite People',
       'Server Settings',
+      'Edit Server Profile',
       'Copy Server ID',
       'Leave Server',
     ])
@@ -323,6 +329,7 @@ describe("a P2P server's menu (rail tile and header)", () => {
       'Unmute Server',
       'Notification settings',
       'Server Settings',
+      'Edit Server Profile',
       'Copy Server ID',
       'Remove from folder',
       'Leave Server',
@@ -487,7 +494,7 @@ describe("a P2P member's menu", () => {
   test('as a member: message and contact details for a contact, the key for everyone', async () => {
     state()
     const v = server()
-    expect(labels(onMember(v, MEMBERS.me))).toEqual(['Copy Identity Key'])
+    expect(labels(onMember(v, MEMBERS.me))).toEqual(['Edit Server Profile', 'Copy Identity Key'])
     expect(labels(onMember(v, MEMBERS.bob))).toEqual([
       'Message',
       'Contact details',
@@ -501,6 +508,61 @@ describe("a P2P member's menu", () => {
     expect(await run(row(onMember(v, MEMBERS.carol), 'Copy Identity Key'))).toEqual([
       ['copy', CAROL],
     ])
+  })
+
+  test('your own server profile opens from the server and from your own row while profiles are on', async () => {
+    state()
+    const v = server()
+    const open = [['p2p.openDialog', { kind: 'server_profile', room: SRV }]]
+    expect(await run(row(onServer(v), 'Edit Server Profile'))).toEqual(open)
+    expect(await run(row(onMember(v, MEMBERS.me), 'Edit Server Profile'))).toEqual(open)
+    expect(labels(onMember(v, MEMBERS.carol))).not.toContain('Edit Server Profile')
+    for (const off of [
+      { profiles: 'off' as const },
+      { upgraded: true },
+      { readOnly: 'Read only' },
+      { me: 'invite' as const },
+    ]) {
+      expect(labels(onServer(server(off)))).not.toContain('Edit Server Profile')
+      expect(labels(onMember(server(off), MEMBERS.me))).not.toContain('Edit Server Profile')
+    }
+    expect(labels(onServer(server({ profiles: 'no_names' })))).toContain('Edit Server Profile')
+  })
+
+  test('a profile we may reset: reset opens its dialog, unlock shows only while a lock runs', async () => {
+    state()
+    const v = server({ perms: P.Kick })
+    const plain = onMember(v, { ...MEMBERS.carol, resetProfile: true })
+    expect(items(plain).map(i => [i.label, !!i.danger, i.icon ?? null])).toEqual([
+      ['Contact details', false, null],
+      ['Kick Carol', true, null],
+      ['Reset Server Profile', true, Eraser],
+      ['Copy Identity Key', false, null],
+    ])
+    expect(await run(row(plain, 'Reset Server Profile'))).toEqual([
+      ['p2p.openDialog', { kind: 'profile_reset', room: SRV, ik: CAROL }],
+    ])
+    const locked = onMember(v, { ...MEMBERS.carol, resetProfile: true, profileLocked: true })
+    expect(labels(locked)).toEqual([
+      'Contact details',
+      'Kick Carol',
+      'Reset Server Profile',
+      'Unlock Server Profile',
+      'Copy Identity Key',
+    ])
+    expect(row(locked, 'Unlock Server Profile')?.icon).toBe(LockOpen)
+    expect(await run(row(locked, 'Unlock Server Profile'))).toEqual([
+      ['server.unlockProfile', SRV, CAROL],
+    ])
+    // A lock we may not lift, and a server that shows no profiles, offer neither.
+    const theirs = onMember(v, { ...MEMBERS.carol, profileLocked: true })
+    expect(labels(theirs)).toEqual(['Contact details', 'Kick Carol', 'Copy Identity Key'])
+    const off = onMember(server({ perms: P.Kick, profiles: 'off' }), {
+      ...MEMBERS.carol,
+      resetProfile: true,
+      profileLocked: true,
+    })
+    expect(labels(off)).toEqual(['Contact details', 'Kick Carol', 'Copy Identity Key'])
   })
 
   test('as a moderator owner: roles, kick, transfer and ban; transfer is danger', () => {

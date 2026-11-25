@@ -18,7 +18,7 @@ import {
 } from '../lib/reactions'
 import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
-import { UserAvatar } from './user_avatar'
+import { ShownAvatar, useShown, useViewServer } from './shown_user'
 import { CloseButton, Masked, SheetGrip, useOwnCheck } from './ui'
 import { centerEmoji } from '../lib/emoji_center'
 import { useReactionActions } from './chat_source'
@@ -261,7 +261,14 @@ export function ReactionBar({
   )
 }
 
+// A reactor under the name the open server shows.
+function ReactorName({ user, server }: { user: UserRef; server: string | null }) {
+  const shown = useShown(user, server)
+  return <Masked text={shown.display_name} by={shown.username} />
+}
+
 function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClose: () => void }) {
+  const server = useViewServer()
   const coarse = useMedia(COARSE_QUERY)
   const list = m.reactions ?? EMPTY
   const [picked, setPicked] = useState(start)
@@ -357,15 +364,10 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
           )}
           {users?.map(u => (
             <li key={u.username} className="flex items-center gap-3 rounded-xl px-2 py-2">
-              <UserAvatar
-                username={u.username}
-                avatarKind={u.avatar_kind}
-                avatarColor={u.avatar_color}
-                size={32}
-              />
+              <ShownAvatar user={u} server={server} size={32} />
               <span className="min-w-0 flex-1">
                 <span className="streamer block truncate text-sm font-medium text-on-surface">
-                  <Masked text={u.display_name} by={u.username} />
+                  <ReactorName user={u} server={server} />
                 </span>
                 <span className="streamer block truncate text-xs text-on-surface-variant">
                   {u.username}

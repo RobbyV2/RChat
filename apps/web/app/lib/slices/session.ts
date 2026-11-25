@@ -2041,6 +2041,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         voiceMuted: {},
         voiceHushed: {},
         timeouts: {},
+        profileLocks: {},
         channelLabelEpoch: 0,
         channelLabelEpochs: {},
         servers: {},

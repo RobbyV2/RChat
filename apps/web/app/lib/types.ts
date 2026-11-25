@@ -43,6 +43,8 @@ export interface ServerSummary {
   // your timeout's end in unix seconds; on this device's clock once loaded (see api.ts)
   timed_out_until?: number
   timed_out_remaining?: number
+  // What members may set in their server profile. Absent on older servers: nothing.
+  profiles_mode?: ProfilesMode
 }
 
 export interface ServerSummaryLite {

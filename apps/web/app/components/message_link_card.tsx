@@ -12,10 +12,9 @@ import { messagePath, type MessageTarget } from '../lib/view'
 import { MessageTime } from './timestamp'
 import { Snippet } from './replies'
 import { PreviewRow, RevealChannelPreview } from './preview_reveal'
-import { UserAvatar } from './user_avatar'
 import { BlockedQuote } from './blocking'
 import { Masked } from './ui'
-import { NameWithUsername } from './display_name'
+import { ShownAvatar, ShownName } from './shown_user'
 
 export const WidgetLinkCards = createContext<ReadonlyMap<number, MessageLocation> | null>(null)
 // Whether a frame may show a forwarded copy from this source, and the room to ask about.
@@ -145,14 +144,9 @@ function LinkCard({
     >
       <PreviewRow tabIndex={-1} onOpen={jump} className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
-          <UserAvatar
-            username={author.username}
-            avatarKind={author.avatar_kind}
-            avatarColor={author.avatar_color}
-            size={20}
-          />
+          <ShownAvatar user={author} server={card.server} size={20} />
           <span className="streamer min-w-0 truncate text-sm font-medium">
-            <NameWithUsername user={author} />
+            <ShownName user={author} server={card.server} />
           </span>
           <MessageTime ts={created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>

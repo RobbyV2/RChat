@@ -411,6 +411,7 @@ export function createChatStore(acct: AccountSession) {
       voiceMuted: {},
       voiceHushed: {},
       timeouts: {},
+      profileLocks: {},
       p2pAvailability: {},
       rtcTick: 0,
       selfAudio: SELF_AUDIO_IDLE,

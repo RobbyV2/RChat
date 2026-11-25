@@ -10,6 +10,7 @@ import {
   Check,
   CheckCheck,
   FileClock,
+  IdCard,
   Link,
   LogOut,
   Phone,
@@ -41,6 +42,7 @@ import { Ended } from '../slices/ctx'
 import {
   myPerms,
   scopeMarkTargets,
+  mayEditProfile,
   serverAdminPerms,
   serverNames,
   serversMarkTargets,
@@ -381,6 +383,23 @@ export const placeActions: Action[] = [
       signedIn(s) && server !== null && serverAdminPerms(s, server) !== 0,
     run: ({ acct, server }) => {
       if (server) acct.store.getState().openDialog({ kind: 'server_settings', server })
+    },
+  },
+  {
+    id: 'server_profile',
+    title: 'Edit server profile',
+    scope: 'server',
+    group: 'settings',
+    icon: IdCard,
+    targets: ['server'],
+    order: 205,
+    available: ctx => {
+      const server = ctx.target.kind === 'server' ? railServer(ctx) : ctx.server
+      return server !== null && signedIn(ctx.s) && mayEditProfile(ctx.s, server)
+    },
+    run: ctx => {
+      const server = ctx.target.kind === 'server' ? railServer(ctx) : ctx.server
+      if (server) ctx.acct.store.getState().openDialog({ kind: 'server_profile', server })
     },
   },
   {

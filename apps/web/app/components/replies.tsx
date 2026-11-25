@@ -11,6 +11,7 @@ import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { NameWithUsername } from './display_name'
+import { useShownOrNull, useViewServer } from './shown_user'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { Masked, useOwn } from './ui'
 import { WebhookBadge } from './webhooks'
@@ -89,6 +90,8 @@ export function ReplyPreview({
   onJump: (id: number) => void
 }) {
   const blocked = useStore(s => (quote.author ? s.blocked[quote.author.username] === true : false))
+  const server = useStore(s => (!local && s.view?.kind === 'channel' ? s.view.server : null))
+  const author = useShownOrNull(quote.author, server)
   const [shown, setShown] = useState<string | null>(null)
   const viewer = useStore(s => s.me?.username)
   const authorKey = JSON.stringify([viewer, quote.id, quote.author?.username])
@@ -120,7 +123,7 @@ export function ReplyPreview({
         <span className="h-2 w-32 rounded-full bg-surface-container-highest" />
       </div>
     )
-  if (quote.deleted || !quote.author)
+  if (quote.deleted || !author)
     return (
       <div
         data-reply-to={quote.id}
@@ -131,7 +134,6 @@ export function ReplyPreview({
         <span className="truncate italic">Original message was deleted</span>
       </div>
     )
-  const { author } = quote
   if (blocked && shown !== authorKey)
     return (
       <div
@@ -157,7 +159,12 @@ export function ReplyPreview({
         contentClassName="flex min-w-0 items-center gap-1.5"
       >
         {local ? (
-          <KeyAvatar ik={author.username} size={16} />
+          <KeyAvatar
+            ik={author.username}
+            size={16}
+            kind={author.avatar_kind}
+            bg={author.avatar_color}
+          />
         ) : (
           <UserAvatar
             username={author.username}
@@ -233,8 +240,9 @@ export function ReplyBar({ draftKey, onClose }: { draftKey: string; onClose: () 
   const reply = useStore(s => s.replying[draftKey])
   const toggle = useStore(s => s.toggleReplyMention)
   const me = useStore(s => s.me?.username)
-  if (!reply) return null
-  const { author } = reply.message
+  const server = useViewServer()
+  const author = useShownOrNull(reply?.message.author, server)
+  if (!reply || !author) return null
   const mention = reply.mention
   return (
     <ComposerBar

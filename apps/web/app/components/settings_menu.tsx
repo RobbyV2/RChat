@@ -13,6 +13,7 @@ import { useAccount } from '../lib/client/react'
 
 import { AnnouncementSetting } from './announcements'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import Link from 'next/link'
 import { Globe, UserRound, X } from 'lucide-react'
 import { errorText, useStore } from '../lib/store'
@@ -35,8 +36,10 @@ import { capabilities } from '../lib/platform'
 import { filterSwitch } from '../lib/profanity'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
 import { SHORTCUTS, shortcutLabel, type Shortcut } from '../lib/shortcuts'
-import type { AvatarKind } from '../lib/types'
+import { shownParts } from '../lib/server_profile'
+import type { AvatarKind, ServerSummary } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
+import { ServerProfileList, ServerProfileRow } from './server_profile_list'
 import { DisplayNameField } from './display_name'
 import { canEditDisplayName } from '../lib/display_name'
 import { ColorField } from './color_field'
@@ -50,7 +53,17 @@ import { BlockedUsersSection } from './blocking'
 import { PaletteSettingsSection } from './palette_settings'
 import { Choice, PrivacyChoices } from './friends'
 import { PassSwitch, WordGrid } from './word_grid'
-import { dangerBtn, FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
+import {
+  dangerBtn,
+  FieldError,
+  fieldCls,
+  filledBtn,
+  Masked,
+  sectionCls,
+  textBtn,
+  useEscape,
+  useOwnServer,
+} from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -59,13 +72,20 @@ export default function SettingsMenu() {
   return open ? <Menu /> : null
 }
 
-function BannerPicker({
+// `fallback` is the banner that shows while none is chosen here, when that is not the default of
+// the avatar (a server profile falls back to the account's banner). `avatar` draws the preview's
+// picture in place of the account avatar.
+export function BannerPicker({
   username,
   displayName,
   kind,
   avatarColor,
   banner,
   onBanner,
+  fallback = null,
+  avatar,
+  defaultNote = 'Default, follows your avatar',
+  resetLabel = 'Use default',
 }: {
   username: string
   displayName: string
@@ -73,8 +93,13 @@ function BannerPicker({
   avatarColor: string | null
   banner: string | null
   onBanner: (color: string | null) => void
+  fallback?: string | null
+  avatar?: React.ReactNode
+  defaultNote?: string
+  resetLabel?: string
 }) {
-  const shown = banner ?? defaultBanner({ username, avatar_kind: kind, avatar_color: avatarColor })
+  const shown =
+    banner ?? fallback ?? defaultBanner({ username, avatar_kind: kind, avatar_color: avatarColor })
   return (
     <div className="flex flex-col gap-2">
       <span className="text-sm text-on-surface-variant">Banner</span>
@@ -82,7 +107,14 @@ function BannerPicker({
         <div style={{ background: shown }} className="h-14" />
         <div className="-mt-8 flex min-w-0 items-end gap-3 px-3 pb-3">
           <span className="shrink-0 rounded-full bg-surface-container-high p-1">
-            <UserAvatar username={username} avatarKind={kind} avatarColor={avatarColor} size={56} />
+            {avatar ?? (
+              <UserAvatar
+                username={username}
+                avatarKind={kind}
+                avatarColor={avatarColor}
+                size={56}
+              />
+            )}
           </span>
           <span className="streamer truncate pb-1 font-medium text-on-surface">{displayName}</span>
         </div>
@@ -92,9 +124,40 @@ function BannerPicker({
         value={banner}
         shown={shown}
         onChange={onBanner}
-        defaultNote="Default, follows your avatar"
-        resetLabel="Use default"
+        defaultNote={defaultNote}
+        resetLabel={resetLabel}
       />
+    </div>
+  )
+}
+
+function HostedProfileRow({ server }: { server: ServerSummary }) {
+  const openDialog = useStore(s => s.openDialog)
+  const own = useOwnServer(server.name)
+  return (
+    <ServerProfileRow
+      name={<Masked text={server.display_name} own={own} />}
+      onEdit={() => openDialog({ kind: 'server_profile', server: server.name })}
+    />
+  )
+}
+
+// Your servers that show server profiles, each opening the profile you show only there.
+function ServerProfiles() {
+  const servers = useStore(
+    useShallow(s => s.me?.servers.filter(x => shownParts(s, x.name).rest) ?? [])
+  )
+  const more = useStore(s => s.serversMore)
+  const loadMore = useStore(s => s.loadMoreServers)
+  const on = useStore(s => s.settings.server_profiles !== false)
+  if (!on || (!servers.length && !more)) return null
+  return (
+    <div className="mt-6">
+      <ServerProfileList more={more ? () => void loadMore() : null}>
+        {servers.map(s => (
+          <HostedProfileRow key={s.name} server={s} />
+        ))}
+      </ServerProfileList>
     </div>
   )
 }
@@ -340,6 +403,7 @@ function ProfileFields() {
       <div className="mt-6">
         <AboutMe focus={focusBio} />
       </div>
+      <ServerProfiles />
     </section>
   )
 }

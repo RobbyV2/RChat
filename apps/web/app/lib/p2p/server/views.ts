@@ -15,6 +15,7 @@ import {
   channelPermsOf,
   channelsOf,
   historyOf,
+  mayResetProfile,
   memberOf,
   membershipOf,
   membersOf,
@@ -80,22 +81,23 @@ export function view(cx: ServerCtx, room: string): ServerView | null {
   })
 }
 
-// The nickname and avatar a member set for this server, as its mode and the resets of their
-// profile show them at `at`, and whether a moderator's lock on their profile runs.
+// The profile a member set for this server, as its mode and the resets of their profile show it
+// at `at`, and whether a moderator's lock on their profile runs.
 const nickOf = (
   s: Summary,
   m: MemberSum,
   at: number
-): Pick<MemberView, 'nick' | 'av' | 'profileLocked'> => {
-  const look = shownRoomProfile(m, s.profiles, at, cleanName).look
+): Pick<MemberView, 'nick' | 'av' | 'bio' | 'bn' | 'profileLocked'> => {
+  const { look, bio, banner } = shownRoomProfile(m, s.profiles, at, cleanName)
   const locked = roomLock(m.reset, Math.floor(at / 1000)).locked
-  if (!look) return locked ? { profileLocked: true } : {}
   return {
     ...(locked ? { profileLocked: true as const } : {}),
-    ...(look.name ? { nick: look.name } : {}),
-    ...(look.avatar_kind
+    ...(look?.name ? { nick: look.name } : {}),
+    ...(look?.avatar_kind
       ? { av: { kind: look.avatar_kind, ...(look.avatar_color ? { bg: look.avatar_color } : {}) } }
       : {}),
+    ...(bio ? { bio } : {}),
+    ...(banner ? { bn: banner } : {}),
   }
 }
 
@@ -121,6 +123,7 @@ export function serverView(
       m: m.m,
       name: env.name(m.ik),
       ...nickOf(s, m, clock),
+      ...(mayResetProfile(s, env.me, m.ik) ? { resetProfile: true as const } : {}),
       owner: owners.includes(m.ik),
       online: m.m === 'join' && online.has(m.ik),
       contact: env.contact(m.ik),
@@ -149,6 +152,9 @@ export function serverView(
     perms: me === 'join' ? permsOf(s, env.me) : 0,
     rank: meRank ?? [-Infinity, ''],
     history: historyOf(s),
+    profiles: s.profiles ?? 'all',
+    profile: r.profile ?? {},
+    profileLock: roomLock(memberOf(s, env.me)?.reset, Math.floor(clock / 1000)),
     system: systemOf(s, env.lim.display),
     channels: readOnly ? [] : channelViews(s, env.me, me, env.lim.display),
     roles: readOnly

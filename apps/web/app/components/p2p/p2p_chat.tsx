@@ -350,7 +350,12 @@ export const P2pRow = memo(function P2pRow({
         {first ? (
           <div className="flex gap-3">
             <div className="shrink-0 pt-0.5">
-              <KeyAvatar ik={p.sender} size={36} />
+              <KeyAvatar
+                ik={p.sender}
+                size={36}
+                kind={m.author.avatar_kind}
+                bg={m.author.avatar_color}
+              />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
@@ -852,6 +857,8 @@ function P2pComposerBody({
 export interface ListOpts {
   messages: P2pMessage[]
   nameOf: (ik: string) => string
+  // Who a sender is here, when the place shows more than a name (a server's own looks).
+  userOf?: (ik: string) => UserRef
   // The sender's own profile name, for forwards (never a petname or a masked name).
   ownName: (ik: string) => string
   people: Mentionable[]
@@ -868,6 +875,7 @@ export interface ListOpts {
 export function useP2pList({
   messages,
   nameOf,
+  userOf,
   ownName,
   people,
   draftKey,
@@ -887,7 +895,10 @@ export function useP2pList({
   const me = useP2p(s => s.me)
   const editingState = useP2p(s => (s.editing?.room === draftKey ? s.editing : null))
   const [picker, setPicker] = useState<{ m: Message; anchor: HTMLElement | null } | null>(null)
-  const user = useCallback((ik: string) => p2pUser(ik, nameOf(ik)), [nameOf])
+  const user = useCallback(
+    (ik: string) => userOf?.(ik) ?? p2pUser(ik, nameOf(ik)),
+    [nameOf, userOf]
+  )
   // Names the markdown recognizes as mentions, lowercased.
   const names = useMemo(() => {
     const out = new Map<string, string>()
@@ -1059,6 +1070,7 @@ export interface ChatBodyProps {
   canAct: boolean
   // Display names, and who a message may mention.
   nameOf: (ik: string) => string
+  userOf?: (ik: string) => UserRef
   people: Mentionable[]
   // "Forwarded to {title}", and the composer placeholder.
   title: string
@@ -1124,6 +1136,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   } = useP2pList({
     messages,
     nameOf,
+    userOf: props.userOf,
     ownName,
     people,
     draftKey: key,

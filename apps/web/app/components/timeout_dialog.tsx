@@ -16,6 +16,7 @@ import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { Dialog, dangerBtn, fieldCls, filledDangerBtn, textBtn } from './ui'
 import { NameWithUsername } from './display_name'
+import { useShown } from './shown_user'
 
 // The current time, ticking every `ms` while `on`.
 export function useNow(on: boolean, ms = 1000): number {
@@ -84,7 +85,8 @@ const chip = (on: boolean) =>
       : 'border-outline text-on-surface hover:bg-surface-container-highest'
   }`
 
-function TimeoutDialog({ server, user }: { server: string; user: UserRef }) {
+function TimeoutDialog({ server, user: account }: { server: string; user: UserRef }) {
+  const user = useShown(account, server)
   const close = useStore(s => s.closeDialog)
   const timeoutMember = useStore(s => s.timeoutMember)
   const removeTimeout = useStore(s => s.removeTimeout)

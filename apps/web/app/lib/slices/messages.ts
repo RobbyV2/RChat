@@ -70,6 +70,7 @@ import {
 } from '../replies'
 import { charCount } from '../rules'
 import { nameWithUsername } from '../display_name'
+import { shownActor } from '../server_profile'
 import {
   SEARCH_PAGE,
   addSearchPage,
@@ -2352,9 +2353,10 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         ) !== 'open'
       const file =
         !closedCopy && m.kind !== 'pin' && !isSystem(m) && !m.content && !m.media?.spoiler
+      const actor = shownActor(get, dm_id === null ? ev.server : null, m.author)
       alertUser({
         key: scope,
-        actor: m.author,
+        actor,
         action: '',
         body:
           m.kind === 'pin'
@@ -2369,7 +2371,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         channel,
         dm: dm_id !== null,
         message: true,
-        name: nameWithUsername(m.author),
+        name: nameWithUsername(actor),
         generic: 'New message',
         go: () => {
           if (dm_id !== null) return get().openDm(dm_id, 'push', m.id)

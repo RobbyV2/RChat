@@ -11,7 +11,7 @@ import type { VoiceUser } from '../../lib/p2p/voice'
 import { longPress } from '../context_menu'
 import { Masked } from '../ui'
 import { LiveBadge } from '../voice_grid'
-import { KeyAvatar } from './p2p_badge'
+import { MemberAvatar } from './p2p_badge'
 
 import { useAccount } from '../../lib/client/react'
 
@@ -64,7 +64,7 @@ function VoiceMember({
           speaking ? 'ring-2 ring-status-green ring-offset-1 ring-offset-surface-container-low' : ''
         }`}
       >
-        <KeyAvatar ik={u.ik} size={22} />
+        <MemberAvatar members={v.members} ik={u.ik} size={22} />
       </span>
       <span className={`streamer min-w-0 flex-1 truncate ${speaking ? 'text-on-surface' : ''}`}>
         <Masked text={name} own={self} />

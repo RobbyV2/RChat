@@ -54,6 +54,7 @@ import type {
   ServerPasswords,
   SystemMessages,
   Profile,
+  ProfilesMode,
   Role,
   SearchResult,
   ServerBan,
@@ -654,6 +655,7 @@ export const endpoints = (c: ApiClient) => ({
       guest_voice_opt_in?: boolean
       guest_chat_opt_in?: boolean
       members_visible?: boolean
+      profiles_mode?: ProfilesMode
     }
   ) => c.req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch),
   deleteServer: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}`),

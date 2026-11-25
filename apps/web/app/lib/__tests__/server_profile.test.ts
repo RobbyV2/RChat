@@ -1,13 +1,21 @@
 import { expect, test } from 'bun:test'
 import { defaultBanner } from '../profile'
 import {
+  byShownName,
+  lookIn,
+  lookKnown,
   lookOf,
   roomExtras,
+  roomLookOf,
+  roomLooksKey,
   roomMode,
   roomProfile,
   shownBanner,
+  shownActor,
   shownBio,
+  shownIn,
   shownParts,
+  shownTypers,
   shownUser,
   showsMore,
   withLook,
@@ -139,6 +147,34 @@ test('a part that shows again means the looks fetched without it are fetched aga
   expect(showsMore(parts('off'), parts('all', false))).toBe(false)
 })
 
+test('a server whose detail is not loaded shows what its summary says', () => {
+  const me = { servers: [{ name: 'club', profiles_mode: 'off' as const }, { name: 'old' }] }
+  expect(shownParts({ me }, 'club')).toEqual({ names: false, rest: false })
+  expect(shownParts({ me }, 'old')).toEqual({ names: true, rest: true })
+  expect(shownParts({ me, servers: { club: { profiles_mode: 'no_names' } } }, 'club')).toEqual({
+    names: false,
+    rest: true,
+  })
+  expect(shownParts({ me, servers: { club: {} } }, 'club')).toEqual({ names: true, rest: true })
+})
+
+test('the looks of a room change only with what its rows draw of a member', () => {
+  const rows = [
+    { ik: 'k1', name: 'Skipper', nick: 'Skipper', av: { kind: 'color' as const, bg: '#112233' } },
+    { ik: 'k2', name: 'Carol', online: true },
+  ]
+  const key = roomLooksKey(rows)
+  expect(roomLooksKey(rows.map(m => ({ ...m, online: false })))).toBe(key)
+  expect(roomLooksKey([rows[0], { ...rows[1], name: 'Caroline' }])).not.toBe(key)
+  expect(roomLooksKey([{ ...rows[0], nick: undefined }, rows[1]])).not.toBe(key)
+  expect(roomLooksKey([{ ...rows[0], av: { kind: 'color', bg: '#445566' } }, rows[1]])).not.toBe(
+    key
+  )
+  expect(roomLooksKey([{ ...rows[0], av: { kind: 'identicon' } }, rows[1]])).not.toBe(key)
+  expect(roomLooksKey([rows[1], rows[0]])).not.toBe(key)
+  expect(roomLooksKey(undefined)).toBe('')
+})
+
 test('a name that is not loaded reads as no look, so the account name shows', () => {
   const typer = { ...bob }
   expect(shownUser(typer, lookOf({}, { server: 'club' }, 'bob')).display_name).toBe('Bob')
@@ -220,4 +256,88 @@ test('a room mode write is one of the three modes or nothing', () => {
   expect(roomMode({ mode: 'off', later: true })).toBe('off')
   for (const odd of [{ mode: 'some' }, { mode: 1 }, {}, null, 'off'])
     expect(roomMode(odd)).toBeUndefined()
+})
+
+const robert = look({ name: 'Robert' })
+const loaded: LookSource = { memberInfo: { s: { bob: member(robert), gone: null } } }
+
+test('a member row counts as loaded from the lookup or the list, a row of someone gone included', () => {
+  expect(lookKnown(loaded, 's', 'bob')).toBe(true)
+  expect(lookKnown(loaded, 's', 'gone')).toBe(true)
+  expect(lookKnown(loaded, 's', 'carol')).toBe(false)
+  expect(lookKnown(loaded, 'other', 'bob')).toBe(false)
+  const listed: LookSource = { members: { s: { list: [member()] } as never } }
+  expect(lookKnown(listed, 's', 'bob')).toBe(true)
+})
+
+test('a look is cut down to the parts that show', () => {
+  const full = look({ name: 'Robert', avatar_kind: 'color', avatar_color: '#112233' })
+  expect(lookIn(full, { names: true, rest: true })).toBe(full)
+  expect(lookIn(full, { names: false, rest: true })).toEqual({ ...full, name: null })
+  expect(lookIn(full, { names: false, rest: false })).toBeNull()
+})
+
+test('someone in a notification shows under the server name, and is asked for when not loaded', () => {
+  expect(shownIn(loaded, 's', bob)).toEqual({
+    user: { ...bob, display_name: 'Robert' },
+    ask: false,
+  })
+  const carol = { ...bob, username: 'carol', display_name: 'Carol' }
+  expect(shownIn(loaded, 's', carol)).toEqual({ user: carol, ask: true })
+  expect(shownIn(loaded, null, bob)).toEqual({ user: bob, ask: false })
+})
+
+test('a notification asks once for a member row it lacks, never for a webhook or a DM', () => {
+  const asked: [string, string[]][] = []
+  const source = () => ({
+    ...loaded,
+    ensureMembers: (server: string, names: string[]) => void asked.push([server, names]),
+  })
+  const carol = { ...bob, username: 'carol', display_name: 'Carol' }
+  expect(shownActor(source, 's', bob).display_name).toBe('Robert')
+  expect(shownActor(source, 's', carol)).toBe(carol)
+  expect(shownActor(source, null, carol)).toBe(carol)
+  expect(asked).toEqual([['s', ['carol']]])
+})
+
+test('the typing line shows server names, and the account name until the row is loaded', () => {
+  const here = {
+    bob: { name: 'Bob', until: 1 },
+    carol: { name: 'Carol (carol)', until: 1 },
+    dave: { name: 'Dave', until: 1 },
+  }
+  expect(shownTypers(loaded, 's', here, { dave: true })).toEqual({
+    names: ['Robert (bob)', 'Carol (carol)'],
+    ask: ['carol'],
+  })
+  const later: LookSource = {
+    memberInfo: { s: { ...loaded.memberInfo!.s, carol: member(look({ name: 'Caz' })) } },
+  }
+  expect(shownTypers(later, 's', here, {})).toEqual({
+    names: ['Robert (bob)', 'Caz (carol)', 'Dave'],
+    ask: ['dave'],
+  })
+  expect(shownTypers(loaded, null, here, {})).toEqual({
+    names: ['Bob', 'Carol (carol)', 'Dave'],
+    ask: [],
+  })
+  expect(shownTypers(loaded, 's', undefined, {})).toEqual({ names: [], ask: [] })
+})
+
+test('people sort by the name the place shows', () => {
+  const zed = shownUser({ ...bob, username: 'amy', display_name: 'Amy' }, look({ name: 'Zed' }))
+  expect([zed, bob].sort(byShownName).map(u => u.username)).toEqual(['bob', 'amy'])
+})
+
+test('a room member shows the nickname only when no name of ours for them comes first', () => {
+  expect(roomLookOf(undefined)).toBeNull()
+  expect(roomLookOf({ name: 'Bob' })).toBeNull()
+  expect(roomLookOf({ name: 'Bobby', nick: 'Bobby' })).toEqual(look({ name: 'Bobby' }))
+  expect(roomLookOf({ name: 'My friend', nick: 'Bobby' })).toBeNull()
+  expect(
+    roomLookOf({ name: 'My friend', nick: 'Bobby', av: { kind: 'color', bg: '#112233' } })
+  ).toEqual(look({ avatar_kind: 'color', avatar_color: '#112233' }))
+  expect(roomLookOf({ name: 'Bob', av: { kind: 'identicon' } })).toEqual(
+    look({ avatar_kind: 'identicon' })
+  )
 })

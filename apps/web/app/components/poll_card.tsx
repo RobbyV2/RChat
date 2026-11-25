@@ -43,8 +43,7 @@ import { useStore } from '../lib/store'
 import type { Message, Poll, PollVoter } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
 import { Dialog, fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
-import { NameWithUsername } from './display_name'
-import { UserAvatar } from './user_avatar'
+import { ShownAvatar, ShownName, useViewServer } from './shown_user'
 import { MessageTime } from './timestamp'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
@@ -457,16 +456,12 @@ export function PollVotersDialog() {
 }
 
 export function VoterRow({ v }: { v: PollVoter }) {
+  const server = useViewServer()
   return (
     <li className="flex items-center gap-3 py-1.5">
-      <UserAvatar
-        username={v.user.username}
-        avatarKind={v.user.avatar_kind}
-        avatarColor={v.user.avatar_color}
-        size={28}
-      />
+      <ShownAvatar user={v.user} server={server} size={28} />
       <span className="streamer min-w-0 flex-1 truncate text-sm">
-        <NameWithUsername user={v.user} />
+        <ShownName user={v.user} server={server} />
       </span>
       <MessageTime ts={v.voted_at} className="shrink-0 text-xs text-on-surface-variant" />
     </li>

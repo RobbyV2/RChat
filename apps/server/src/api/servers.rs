@@ -838,7 +838,7 @@ async fn role_ids_of(
     Ok(map)
 }
 
-const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color, t.until FROM members m JOIN servers s ON s.name = m.server LEFT JOIN member_timeouts t ON t.server = m.server AND t.username = m.username WHERE m.username = $1";
+const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color, t.until, s.profiles_mode FROM members m JOIN servers s ON s.name = m.server LEFT JOIN member_timeouts t ON t.server = m.server AND t.username = m.username WHERE m.username = $1";
 
 fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiError> {
     let t = now();
@@ -854,6 +854,7 @@ fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiErr
             name_color: r.try_get(6)?,
             timed_out_until,
             timed_out_remaining: timed_out_until.map(|u| u - t),
+            profiles_mode: crate::api::profiles::ProfilesMode::parse(&r.try_get::<String, _>(8)?),
         });
     }
     Ok(servers)
@@ -8629,6 +8630,13 @@ mod tests {
         assert_eq!(sent, [ProfilesMode::NoNames]);
         let detail = detail_as(&state, "club", None).await.expect("detail");
         assert_eq!(detail.profiles_mode, ProfilesMode::NoNames);
+        let mine = my_servers_page(db, "bob", 0, None, 50).await.expect("mine");
+        let club = mine.items.iter().find(|s| s.name == "club").expect("club");
+        assert_eq!(club.profiles_mode, ProfilesMode::NoNames);
+        let named = my_servers_by_names(db, "bob", &["club".to_string()])
+            .await
+            .expect("named");
+        assert_eq!(named[0].profiles_mode, ProfilesMode::NoNames);
         let logged: String = sqlx::query(
             "SELECT details FROM audit_log WHERE action = 'server.update' ORDER BY id DESC LIMIT 1",
         )

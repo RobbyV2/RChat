@@ -11,6 +11,7 @@ import { useMemo } from 'react'
 import { minidenticon } from 'minidenticons'
 import { identiconInk } from '../../lib/identicon'
 import { validColor } from '../../lib/profile'
+import { roomLookOf } from '../../lib/server_profile'
 import type { AvatarKind } from '../../lib/types'
 import {
   BadgeAlert,
@@ -81,6 +82,23 @@ const DOT = {
 } as const
 
 export const presenceText = (p: Presence) => DOT[p].text
+
+// A member's avatar as a server shows it: the avatar they set there, over their key's picture.
+export function MemberAvatar({
+  members,
+  ik,
+  size,
+}: {
+  members:
+    readonly { ik: string; name: string; av?: { kind: AvatarKind; bg?: string } }[] | undefined
+  ik: string
+  size?: number
+}) {
+  const look = roomLookOf(members?.find(m => m.ik === ik))
+  return (
+    <KeyAvatar ik={ik} size={size} kind={look?.avatar_kind ?? undefined} bg={look?.avatar_color} />
+  )
+}
 
 export function PresenceDot({ presence }: { presence: Presence }) {
   const { cls, text } = DOT[presence]

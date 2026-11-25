@@ -62,6 +62,9 @@ import { WidgetSettings } from './widget_settings'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
 import { ServerSystemMessages } from './system_messages'
+import { ProfilesModeField } from './server_profile_dialog'
+import { NameWithUsername } from './display_name'
+import { useShownMembers } from './shown_user'
 import { ServerUploadExpiry } from './upload_expiry'
 import { TopicEditor } from './channel_topic'
 import {
@@ -1253,6 +1256,24 @@ export default function ServerSettings() {
   return dialog?.kind === 'server_settings' ? <Settings server={dialog.server} /> : null
 }
 
+// What members may set in their own profile of the server. For people with Manage server, while
+// the site has server profiles on.
+function ServerProfilesSetting({ server }: { server: string }) {
+  const { api } = useAccount()
+  const mode = useStore(s => s.servers[server]?.profiles_mode ?? 'all')
+  const on = useStore(s => s.settings.server_profiles !== false)
+  if (!on) return null
+  return (
+    <>
+      <p className={sectionCls}>Server profiles</p>
+      <ProfilesModeField
+        mode={mode}
+        onChange={next => api.updateServer(server, { profiles_mode: next })}
+      />
+    </>
+  )
+}
+
 function Settings({ server }: { server: string }) {
   const acct = useAccount()
 
@@ -1277,6 +1298,8 @@ function Settings({ server }: { server: string }) {
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const canSettings = hasPerm(perms, Perm.ManageServer)
+  // Member rows lead with the name the server shows, the username after it.
+  const shownOf = useShownMembers(server)
   const canInvites = hasPerm(perms, Perm.ManageInvites)
   const canAssign = hasPerm(perms, Perm.AssignRoles)
   const canAdmin = hasPerm(perms, Perm.ManageAdmins)
@@ -1338,13 +1361,13 @@ function Settings({ server }: { server: string }) {
       <div className="flex items-center gap-2">
         <UserAvatar
           username={m.username}
-          avatarKind={m.avatar_kind}
-          avatarColor={m.avatar_color}
+          avatarKind={shownOf(m).avatar_kind}
+          avatarColor={shownOf(m).avatar_color}
           size={28}
         />
         <span className="min-w-0 flex-1">
           <span className="streamer block truncate text-sm">
-            <Masked text={m.display_name} by={m.username} />
+            <NameWithUsername user={shownOf(m)} />
           </span>
           {m.joined_via && (
             <span className="block truncate text-xs text-on-surface-variant">
@@ -1395,6 +1418,7 @@ function Settings({ server }: { server: string }) {
           <ServerAppearance server={server} />
           <ServerSystemMessages server={server} />
           <ServerUploadExpiry server={server} />
+          <ServerProfilesSetting server={server} />
         </>
       )}
       {server !== 'rchat' && (canSettings || canInvites) && (
@@ -1440,6 +1464,7 @@ function Settings({ server }: { server: string }) {
           <ServerAppearance server={server} />
           <ServerSystemMessages server={server} />
           <ServerUploadExpiry server={server} />
+          <ServerProfilesSetting server={server} />
           <p className={sectionCls}>Access</p>
           <GuestParticipation server={server} />
         </>

@@ -63,12 +63,13 @@ describe('server views', () => {
         name: 'Bob',
         owner: false,
         below: true,
+        resetProfile: true,
         roles: ['Moderator'],
         top: 'Moderator',
       },
-      { ...plain, ik: 'Carol', name: 'Carol', owner: false, below: true },
-      { ...plain, ik: 'Dave', name: 'Dave', owner: false, below: true },
-      { ...plain, ik: 'Erin', name: 'Erin', owner: false, below: true },
+      { ...plain, ik: 'Carol', name: 'Carol', owner: false, below: true, resetProfile: true },
+      { ...plain, ik: 'Dave', name: 'Dave', owner: false, below: true, resetProfile: true },
+      { ...plain, ik: 'Erin', name: 'Erin', owner: false, below: true, resetProfile: true },
     ])
     expect(rows(b, members, room, roles)).toEqual([
       { ...plain, ik: 'Alice', name: 'Alice', owner: true, below: false },
@@ -81,9 +82,9 @@ describe('server views', () => {
         roles: ['Moderator'],
         top: 'Moderator',
       },
-      { ...plain, ik: 'Carol', name: 'Carol', owner: false, below: true },
-      { ...plain, ik: 'Dave', name: 'Dave', owner: false, below: true },
-      { ...plain, ik: 'Erin', name: 'Erin', owner: false, below: true },
+      { ...plain, ik: 'Carol', name: 'Carol', owner: false, below: true, resetProfile: true },
+      { ...plain, ik: 'Dave', name: 'Dave', owner: false, below: true, resetProfile: true },
+      { ...plain, ik: 'Erin', name: 'Erin', owner: false, below: true, resetProfile: true },
     ])
   }, 120_000)
 })

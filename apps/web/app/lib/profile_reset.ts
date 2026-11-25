@@ -193,6 +193,20 @@ export function shownRoomProfile(
 export const roomLock = (reset: ResetFact | null | undefined, now: number): LockState =>
   lockState(reset?.lock?.until, now)
 
+// When the first of the locks that run at `now` ends (unix seconds); null when none does.
+export const nextLockEnd = (
+  resets: Iterable<ResetFact | null | undefined>,
+  now: number
+): number | null => {
+  let next: number | null = null
+  for (const r of resets) {
+    const state = roomLock(r, now)
+    if (state.locked && state.until !== null && (next === null || state.until < next))
+      next = state.until
+  }
+  return next
+}
+
 // The content of the `profile_reset` a moderator signs at `now` (unix seconds).
 export const resetContent = (
   to: string,

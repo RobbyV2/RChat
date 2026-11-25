@@ -29,6 +29,7 @@ import { AutocompletePopup, useAutocomplete } from './autocomplete'
 import { useChatSource } from './chat_source'
 import { useEmojiData } from './emoji_picker'
 import { UserAvatar } from './user_avatar'
+import { useShownMembers } from './shown_user'
 import { Masked } from './ui'
 import {
   STYLE_LABELS,
@@ -61,6 +62,7 @@ function useMentionSearch(listKey: string | null, query: string | null) {
   const info = useStore(s => (server ? s.memberInfo[server] : undefined))
   const cache = useMemo(() => new Map<string, UserRef[]>(), [api])
   const [tick, setTick] = useState(0)
+  const shownOf = useShownMembers(server)
 
   useEffect(() => {
     if (!server || !query) return
@@ -92,13 +94,18 @@ function useMentionSearch(listKey: string | null, query: string | null) {
           break
         }
       }
+      // People match and show under the names the server shows; `remote` carries them already.
+      const looks = new Map(
+        [...list, ...Object.values(info ?? {})].flatMap(m => (m ? [[m.username, shownOf(m)]] : []))
+      )
+      const shown = (group: readonly UserRef[]) => group.map(u => looks.get(u.username) ?? u)
       return suggestPeople(
         q,
-        [recentAuthors(own), recentAuthors(parent), remote, list],
+        [shown(recentAuthors(own)), shown(recentAuthors(parent)), remote, shown(list)],
         name => name === me || info?.[name] === null
       )
     },
-    [cache, tick, dmOther, server, own, parent, list, info, me]
+    [cache, tick, dmOther, server, own, parent, list, info, me, shownOf]
   )
 }
 

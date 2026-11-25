@@ -142,7 +142,16 @@ export const freeRoles = (roles: Role[], roleIds: number[]) =>
   roles.filter(r => !roleIds.includes(r.id))
 
 export type ProfileAction =
-  'kick' | 'server_ban' | 'timeout' | 'untimeout' | 'promote' | 'revoke' | 'transfer' | 'site_ban'
+  | 'kick'
+  | 'server_ban'
+  | 'timeout'
+  | 'untimeout'
+  | 'profile_reset'
+  | 'profile_unlock'
+  | 'promote'
+  | 'revoke'
+  | 'transfer'
+  | 'site_ban'
 
 export interface ActionInput {
   signedIn: boolean
@@ -157,6 +166,9 @@ export interface ActionInput {
   targetRolePerms?: number
   myRolePerms?: number
   timedOut?: boolean
+  // The server shows server profiles, and a moderator's lock on this member's runs.
+  profiles?: boolean
+  profileLocked?: boolean
 }
 
 export const profileActions = ({
@@ -170,6 +182,8 @@ export const profileActions = ({
   targetRolePerms = 0,
   myRolePerms = 0,
   timedOut = false,
+  profiles = false,
+  profileLocked = false,
 }: ActionInput): ProfileAction[] => {
   if (!signedIn) return []
   const out: ProfileAction[] = []
@@ -185,6 +199,18 @@ export const profileActions = ({
       canModerate(perms, siteAdmin, targetPerms)
     )
       out.push(...(timedOut ? (['timeout', 'untimeout'] as const) : (['timeout'] as const)))
+    if (
+      profiles &&
+      member &&
+      !self &&
+      hasPerm(perms, Perm.ManageProfiles) &&
+      canModerate(perms, siteAdmin, targetPerms)
+    )
+      out.push(
+        ...(profileLocked
+          ? (['profile_reset', 'profile_unlock'] as const)
+          : (['profile_reset'] as const))
+      )
     if (admins && member?.is_admin && canRevoke(perms, siteAdmin, member.perms, targetRolePerms))
       out.push('revoke')
     if (admins && member && !member.is_admin && canPromote(perms, siteAdmin)) out.push('promote')

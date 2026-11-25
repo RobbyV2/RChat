@@ -72,6 +72,7 @@ import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
 import { Masked, Sentinel, useOwnServer } from './ui'
 import { NameWithUsername } from './display_name'
+import { useShown } from './shown_user'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
@@ -240,6 +241,7 @@ function VoiceMemberRow({
   const selfAudio = useStore(s => s.selfAudio)
   useStore(s => s.rtcTick)
   const user = useStore(s => userRefFor(s, username))
+  const shown = useShown(user, server)
   const self = mine === username
   const silenced = useStore(s => Object.values(s.voiceMuted).some(l => l.includes(username)))
   const hushed = useStore(s => Object.values(s.voiceHushed).some(l => l.includes(username)))
@@ -270,14 +272,14 @@ function VoiceMemberRow({
         }`}
       >
         <UserAvatar
-          username={user.username}
-          avatarKind={user.avatar_kind}
-          avatarColor={user.avatar_color}
+          username={shown.username}
+          avatarKind={shown.avatar_kind}
+          avatarColor={shown.avatar_color}
           size={22}
         />
       </span>
       <span className={`streamer min-w-0 flex-1 truncate ${speaking ? 'text-on-surface' : ''}`}>
-        <NameWithUsername user={user} />
+        <NameWithUsername user={shown} />
       </span>
       {live && (
         <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />
@@ -1169,6 +1171,9 @@ export function ChannelSidebar() {
         nameColor={detail.name_color}
         onSettings={
           panelPerms !== 0 ? () => openDialog({ kind: 'server_settings', server }) : undefined
+        }
+        onMenu={(x, y) =>
+          openActionMenu(x, y, { kind: 'server', server, folder: null, at: 0 }, undefined, acct)
         }
       />
       <div className="flex items-center justify-between px-4 pt-3 pb-1">

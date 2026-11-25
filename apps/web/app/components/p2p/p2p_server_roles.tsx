@@ -32,6 +32,7 @@ import {
   placeRole,
 } from '../../lib/p2p/roles'
 import { EVERYONE, P } from '../../lib/p2p/state'
+import { shownBanner, shownBio } from '../../lib/server_profile'
 import type { ChannelView, MemberView, RoleView, ServerView } from '../../lib/p2p/server'
 import { allowListTitle, emptyAllowText, type RestrictKey } from '../../lib/channel_access'
 import { matching, nextPage, page, PAGE } from '../../lib/paging'
@@ -46,7 +47,7 @@ import {
   SlowmodeField,
 } from '../settings_fields'
 import { dangerBtn, fieldCls, Masked, textBtn } from '../ui'
-import { KeyAvatar } from './p2p_badge'
+import { MemberAvatar } from './p2p_badge'
 
 // Roles and channel permissions of a P2P server: the role editor (drag order,
 // names, colors, permission toggles), a member's roles (menu and card), and a channel's
@@ -262,17 +263,43 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
   const m = v?.members.find(x => x.ik === ik)
   if (!v || !m) return null
   const roles = m.roles.flatMap(id => v.roles.find(r => r.id === id) ?? [])
+  const self = m.ik === me
+  const bio = shownBio({ username: m.ik }, { server_bio: m.bio })
+  // Under a server name, the name they give themselves everywhere.
+  const global = m.nick !== undefined && m.nick === m.name ? identity.profileName(m.ik, room) : null
   return (
     <div data-p2p-member-card className="flex flex-col gap-2 py-1">
+      {m.bn && (
+        <div
+          aria-hidden
+          data-p2p-member-banner
+          className="h-8 rounded-lg"
+          style={{
+            background: shownBanner(
+              {
+                username: m.ik,
+                avatar_kind: m.av?.kind ?? 'identicon',
+                avatar_color: m.av?.bg ?? null,
+              },
+              { server_banner: m.bn }
+            ),
+          }}
+        />
+      )}
       <div className="flex items-center gap-2.5">
-        <KeyAvatar ik={m.ik} size={40} />
+        <MemberAvatar members={v.members} ik={m.ik} size={40} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span
             className="streamer truncate text-sm font-semibold"
             style={{ color: hex(nameColor(m, v.roles)) }}
           >
-            <Masked text={m.name} own={m.ik === me} />
+            <Masked text={m.name} own={self} />
           </span>
+          {global && global !== m.name && (
+            <span data-p2p-member-global className="streamer truncate text-xs">
+              <Masked text={global} own={self} />
+            </span>
+          )}
           <span className="text-xs text-on-surface-variant">
             {m.owner ? 'Owner' : m.m === 'join' ? 'Member' : 'Invited'}
           </span>
@@ -283,6 +310,19 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
           </span>
         )}
       </div>
+      {bio && (
+        <p
+          data-p2p-member-bio
+          className="streamer text-xs break-words whitespace-pre-wrap text-on-surface"
+        >
+          <Masked text={bio} own={self} />
+        </p>
+      )}
+      {m.profileLocked && m.resetProfile && (
+        <p data-p2p-member-locked className="text-xs text-on-surface-variant">
+          Server profile locked
+        </p>
+      )}
       {roles.length > 0 && (
         <ul aria-label="Roles" className="flex flex-wrap gap-1">
           {roles.map(r => (
@@ -370,7 +410,7 @@ function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
   const ik = subj.slice(2)
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
-      <KeyAvatar ik={ik} size={20} />
+      <MemberAvatar members={v.members} ik={ik} size={20} />
       <span className="streamer truncate">
         <Masked text={memberName(v.id, ik)} own={ik === me} />
       </span>
@@ -410,7 +450,7 @@ function MemberPickerBody({
               onClick={() => onPick(m)}
               className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-surface-container-highest"
             >
-              <KeyAvatar ik={m.ik} size={24} />
+              <MemberAvatar members={items} ik={m.ik} size={24} />
               <span className="streamer min-w-0 truncate">
                 <Masked text={m.name} own={m.ik === me} />
               </span>

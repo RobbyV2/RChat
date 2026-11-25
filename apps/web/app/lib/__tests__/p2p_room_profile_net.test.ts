@@ -241,4 +241,56 @@ describe('a room profile over the global one', () => {
     await b.servers.setRoomProfile(room, { nick: 'Bobby' })
     await pump(clock, () => a.servers.nameOf(b.node.ik, room) === 'Bobby', 'after the lock')
   }, 60_000)
+  test('a server view carries the mode, our own profile and each member card part', async () => {
+    const { clock, a, b, room } = await pair()
+    expect(a.servers.view(room)).toMatchObject({
+      profiles: 'all',
+      profile: {},
+      profileLock: { locked: false },
+    })
+    const mine = { nick: 'Robert', bio: 'here', av: { kind: 'identicon' as const }, bn: '#001122' }
+    await b.servers.setRoomProfile(room, mine)
+    expect(b.servers.view(room)?.profile).toEqual(mine)
+    expect(b.servers.myRoomProfile(room)).toEqual(mine)
+    const row = (m: Member, ik: string) => m.servers.view(room)?.members.find(x => x.ik === ik)
+    await pump(clock, () => row(a, b.node.ik)?.nick === 'Robert', 'nickname')
+    expect(row(a, b.node.ik)).toMatchObject({
+      name: 'Robert',
+      nick: 'Robert',
+      av: { kind: 'identicon' },
+      bio: 'here',
+      bn: '#001122',
+      resetProfile: true,
+    })
+    expect(row(a, a.node.ik)?.resetProfile).toBeUndefined()
+    expect(row(b, a.node.ik)?.resetProfile).toBeUndefined()
+    await a.servers.setProfileMode(room, 'no_names')
+    expect(a.servers.view(room)?.profiles).toBe('no_names')
+    expect(row(a, b.node.ik)).toMatchObject({ name: 'Bob', bio: 'here' })
+    expect(row(a, b.node.ik)?.nick).toBeUndefined()
+    const at = Math.floor(clock.t / 1000)
+    await a.servers.resetRoomProfile(room, b.node.ik, ['bio'], 86400)
+    expect(row(a, b.node.ik)?.bio).toBeUndefined()
+    await pump(clock, () => b.servers.view(room)?.profileLock.locked === true, 'own lock')
+    expect(b.servers.view(room)?.profileLock).toEqual({ locked: true, until: at + 86400 })
+  }, 60_000)
+
+  test('a lock that runs out builds the views again without any event', async () => {
+    const { clock, a, b, room } = await pair()
+    const until = Math.floor(clock.t / 1000) + 300
+    await inner(a).emit(room, 'profile_reset', () => ({ to: b.node.ik, fields: [], until }))
+    const locked = (m: Member) =>
+      m.servers.view(room)?.members.find(x => x.ik === b.node.ik)?.profileLocked === true
+    await pump(clock, () => locked(b), 'bob sees the lock')
+    expect(locked(a)).toBe(true)
+    let changes = 0
+    const off = a.servers.onChange(id => {
+      if (id === room && !locked(a)) changes += 1
+    })
+    await clock.advance(until * 1000 - clock.t + 2000)
+    off()
+    expect(changes).toBeGreaterThan(0)
+    expect(locked(a)).toBe(false)
+    expect(b.servers.view(room)?.profileLock).toEqual({ locked: false })
+  }, 60_000)
 })

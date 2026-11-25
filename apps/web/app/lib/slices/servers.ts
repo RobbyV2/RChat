@@ -30,6 +30,7 @@ import {
 import { type Layout, forgetServer, keepCollapsed, renameServer, setCollapsed } from '../nav_layout'
 import { type NotifyPrefs, renameServerRule, resetScope } from '../notify'
 import { forgetProfile, forgetProfiles, profileKey } from '../profile'
+import { lockUntil } from '../profile_reset'
 import { shownParts, showsMore, withLook } from '../server_profile'
 import { myPerms, previewServer } from '../selectors'
 import type { Paged, RChatState } from '../store_types'
@@ -41,6 +42,7 @@ import {
   Perm,
   type ServerBan,
   type ServerDetail,
+  type ServerProfile,
   type ServerSummary,
   type UserRef,
   type WsEvent,
@@ -188,6 +190,7 @@ export const applyServerChange = (
                   display_name: server.display_name,
                   banner_color: server.banner_color ?? null,
                   name_color: server.name_color ?? null,
+                  profiles_mode: server.profiles_mode ?? x.profiles_mode,
                 }
               : x
           ),
@@ -515,6 +518,13 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     })
   }
 
+  const profileLocked = (e: unknown) =>
+    e instanceof ApiError &&
+    (e.data as { reason?: { kind?: unknown } } | undefined)?.reason?.kind === 'locked'
+
+  const keepMyProfile = (server: string, mine: ServerProfile) =>
+    patchServer(server, d => ({ ...d, my_profile: mine, profiles_mode: mine.mode }))
+
   const patchMembers = (server: string, fn: (list: Member[]) => Member[]) => {
     set(s => {
       const cache = s.members[server]
@@ -795,6 +805,12 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'kickMember'
     | 'timeoutMember'
     | 'removeTimeout'
+    | 'loadMyProfile'
+    | 'saveMyProfile'
+    | 'clearMyProfile'
+    | 'resetMemberProfile'
+    | 'unlockMemberProfile'
+    | 'noteProfileLock'
     | 'disconnectGuest'
     | 'muteGuest'
     | 'banMember'
@@ -967,6 +983,60 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       act(async () => {
         await live(api.removeTimeout(server, username))
         noteTimeout(server, username, undefined)
+      }),
+    loadMyProfile: async server => {
+      try {
+        const mine = await live(api.serverProfile(server))
+        keepMyProfile(server, mine)
+        return mine
+      } catch {
+        return null
+      }
+    },
+    saveMyProfile: async (server, patch) => {
+      try {
+        keepMyProfile(server, await live(api.setServerProfile(server, patch)))
+        return null
+      } catch (e) {
+        if (profileLocked(e)) void get().loadMyProfile(server)
+        return errorText(e)
+      }
+    },
+    clearMyProfile: async server => {
+      try {
+        keepMyProfile(server, await live(api.resetServerProfile(server)))
+        return null
+      } catch (e) {
+        if (profileLocked(e)) void get().loadMyProfile(server)
+        return errorText(e)
+      }
+    },
+    noteProfileLock: (server, username, until) =>
+      set(s => {
+        const { [username]: had, ...rest } = s.profileLocks[server] ?? {}
+        if (typeof until !== 'number') {
+          return had === undefined ? {} : { profileLocks: { ...s.profileLocks, [server]: rest } }
+        }
+        return had === until
+          ? {}
+          : { profileLocks: { ...s.profileLocks, [server]: { ...rest, [username]: until } } }
+      }),
+    resetMemberProfile: async (server, username, fields, secs, reason) => {
+      try {
+        await live(api.resetMemberProfile(server, username, fields, secs, reason))
+        forgetProfile(profileKey(username, server), sessionMark())
+        if (secs !== null)
+          get().noteProfileLock(server, username, lockUntil(secs, Math.floor(Date.now() / 1000)))
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
+    unlockMemberProfile: (server, username) =>
+      act(async () => {
+        await live(api.unlockMemberProfile(server, username))
+        forgetProfile(profileKey(username, server), sessionMark())
+        get().noteProfileLock(server, username, null)
       }),
     disconnectGuest: (server, name) =>
       act(async () => void (await api.disconnectGuest(server, name))),
@@ -1381,6 +1451,14 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       })
       patchMemberInfo(ev.server, ev.username, m => withLook(m, ev.profile))
       if (ev.bio) forgetProfile(profileKey(ev.username, ev.server), sessionMark())
+      // An open card of theirs in that server reads the profile again.
+      set(s =>
+        s.profile?.user.username === ev.username && s.profile.server === ev.server
+          ? { profile: { ...s.profile, rev: (s.profile.rev ?? 0) + 1 } }
+          : {}
+      )
+      if (ev.username === get().me?.username && get().servers[ev.server])
+        void get().loadMyProfile(ev.server)
     },
     user_updated: ev => {
       const u = ev.user

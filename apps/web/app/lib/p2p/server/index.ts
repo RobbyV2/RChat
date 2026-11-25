@@ -13,6 +13,7 @@ import { Gossip, type LinkKind } from '../gossip'
 import { cleanName, keyId, verifyProfile, liveCerts, type Cert, type Profile } from '../keys'
 import type { PlaceProfile, RoomExtras } from '../../profile_fields'
 import {
+  nextLockEnd,
   roomLock,
   shownRoomProfile,
   type LockSecs,
@@ -384,6 +385,8 @@ export class Servers {
     ++this.generation
     this.started = false
     this.stopped = true
+    for (const t of this.lockTimers.values()) this.clock.clear(t)
+    this.lockTimers.clear()
     this.voice.leave()
     this.voice.stop()
     this.gossip.stop()
@@ -429,7 +432,35 @@ export class Servers {
   }
 
   private changed(room: string) {
+    this.watchLocks(room)
     for (const fn of this.changeFns) fn(room)
+  }
+
+  private lockTimers = new Map<string, unknown>()
+
+  // A profile lock that runs out changes what the server shows without any event: its views are
+  // built again then.
+  private watchLocks(room: string) {
+    const had = this.lockTimers.get(room)
+    if (had !== undefined) this.clock.clear(had)
+    this.lockTimers.delete(room)
+    if (this.stopped || !this.rooms.has(room)) return
+    const now = this.clock.now()
+    const next = nextLockEnd(
+      membersOf(this.sumOf(room)).map(m => m.reset),
+      Math.floor(now / 1000)
+    )
+    if (next === null) return
+    this.lockTimers.set(
+      room,
+      this.clock.set(
+        () => {
+          this.lockTimers.delete(room)
+          this.changed(room)
+        },
+        Math.min(next * 1000 - now + 1000, 2 ** 31 - 1)
+      )
+    )
   }
 
   private typingChanged(room: string) {
@@ -1011,6 +1042,11 @@ export class Servers {
   roomProfileOf(room: string, ik: string): PlaceProfile {
     const s = this.sumOf(room)
     return shownRoomProfile(memberOf(s, ik), s.profiles, this.clock.now(), cleanName)
+  }
+
+  // What this device set for us in a server.
+  myRoomProfile(room: string): RoomExtras {
+    return this.rooms.get(room)?.profile ?? {}
   }
 
   // Whether a moderator's lock on a member's room profile runs now.

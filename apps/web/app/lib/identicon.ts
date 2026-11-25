@@ -5,7 +5,7 @@ import type { AvatarKind, UserRef } from './types'
 
 const SATURATION = 95
 const LIGHTNESS = 45
-const DEFAULT_COLOR = '#6750a4'
+export const DEFAULT_COLOR = '#6750a4'
 export const IDENTICON_MIN_CONTRAST = 3
 export const IDENTICON_PRESETS = BANNER_PRESETS
 export const IDENTICON_DEFAULT_BG = { dark: '#36343b', light: '#e6e0e9' } as const

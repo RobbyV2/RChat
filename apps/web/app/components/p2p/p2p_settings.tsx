@@ -7,6 +7,7 @@ import { P2pProvider, withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useStore } from '../../lib/store'
 import { autoChoices } from '../../lib/p2p/app'
 import { cleanName } from '../../lib/p2p/keys'
@@ -24,7 +25,10 @@ import {
 import { iceOffer } from '../../lib/ice'
 import { fmtSize } from '../../lib/bytes'
 import { SettingSwitch } from '../settings_fields'
-import { dangerBtn, fieldCls, filledBtn, sectionCls, textBtn } from '../ui'
+import { dangerBtn, fieldCls, filledBtn, Masked, sectionCls, textBtn } from '../ui'
+import { ServerProfileList, ServerProfileRow } from '../server_profile_list'
+import { editsRoomProfile } from '../../lib/server_profile_editor'
+import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { DevicesSection } from './p2p_server_flows'
 import { MyCode } from './add_contact'
 import { badgeDate, P2pBadge } from './p2p_badge'
@@ -61,6 +65,46 @@ function NameField() {
       >
         Save
       </button>
+    </div>
+  )
+}
+
+function P2pProfileRow({ room }: { room: string }) {
+  const identity = useP2pApp()!
+  const account = useAccount()
+  const closeSettings = useStore(s => s.closeDialog)
+  const v = useP2p(s => s.servers[room])
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  if (!v) return null
+  return (
+    <ServerProfileRow
+      name={<Masked text={v.name} own={own} />}
+      onEdit={() => {
+        closeSettings()
+        account.identities.show(identity)
+        identity.p2p.openDialog({ kind: 'server_profile', room })
+      }}
+    />
+  )
+}
+
+// Your P2P servers that show server profiles, each opening the profile you show only there.
+function P2pServerProfiles() {
+  const rooms = useP2p(
+    useShallow(s =>
+      Object.values(s.servers)
+        .filter(editsRoomProfile)
+        .map(v => v.id)
+    )
+  )
+  if (!rooms.length) return null
+  return (
+    <div className="px-2">
+      <ServerProfileList>
+        {rooms.map(room => (
+          <P2pProfileRow key={room} room={room} />
+        ))}
+      </ServerProfileList>
     </div>
   )
 }
@@ -502,6 +546,7 @@ function P2pSectionBody() {
             <NameField />
             <p className="streamer font-mono text-[11px] text-on-surface-variant">Key {fp}</p>
           </div>
+          <P2pServerProfiles />
           <BadgeSetting />
           <div>
             <SettingSwitch

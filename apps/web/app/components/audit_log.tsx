@@ -27,10 +27,12 @@ import {
   isNameFact,
   fieldLabel,
   groupOf,
+  peopleIn,
   sentence,
   valueText,
   type AuditFilters,
   type AuditGroup,
+  type Part,
 } from '../lib/audit'
 import { fullTimeOf, relativeTime } from '../lib/timestamps'
 import type { AuditEntry, UserRef } from '../lib/types'
@@ -39,6 +41,7 @@ import { useMemberSearch } from './server_settings'
 import { UserAvatar } from './user_avatar'
 import { Dialog, Masked, Sentinel, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
+import { useLooksFor, useShown, useShownMembers } from './shown_user'
 
 const TEXT_DEBOUNCE = 300
 const SUGGESTIONS = 5
@@ -95,6 +98,7 @@ function AuditLog({ server }: { server: string }) {
   const key = JSON.stringify(auditQuery(filters))
   const [log, setLog] = useState<LogState>(EMPTY)
   const epoch = useRef(0)
+  useLooksFor(server, peopleIn(log.list))
 
   const fetchFrom = useCallback(
     async (cursor: string | null, mine: number) => {
@@ -188,7 +192,7 @@ function AuditLog({ server }: { server: string }) {
       </div>
       <ul className="space-y-0.5">
         {log.list.map(e => (
-          <AuditRow key={e.id} entry={e} />
+          <AuditRow key={e.id} entry={e} server={server} />
         ))}
       </ul>
       {log.loaded && !log.loading && log.list.length === 0 && (
@@ -207,12 +211,21 @@ function AuditLog({ server }: { server: string }) {
   )
 }
 
-export function ActorHit({ m, onPick }: { m: UserRef; onPick: () => void }) {
+export function ActorHit({
+  m: account,
+  server,
+  onPick,
+}: {
+  m: UserRef
+  server: string
+  onPick: (shown: UserRef) => void
+}) {
+  const m = useShownMembers(server)(account)
   return (
     <button
       type="button"
       onMouseDown={e => e.preventDefault()}
-      onClick={onPick}
+      onClick={() => onPick(m)}
       className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left hover:bg-surface-container-high"
     >
       <UserAvatar
@@ -279,7 +292,12 @@ function ActorField({
       {open && found.active && hits.length > 0 && (
         <div className="absolute inset-x-0 top-full z-10 mt-1 rounded-xl bg-surface-container-highest p-1 shadow-elevation-2">
           {hits.map(m => (
-            <ActorHit key={m.username} m={m} onPick={() => pick(m.username, nameWithUsername(m))} />
+            <ActorHit
+              key={m.username}
+              m={m}
+              server={server}
+              onPick={shown => pick(shown.username, nameWithUsername(shown))}
+            />
           ))}
         </div>
       )}
@@ -297,7 +315,21 @@ function Swatch({ field, value }: { field: string; value: unknown }) {
   )
 }
 
-export function AuditRow({ entry }: { entry: AuditEntry }) {
+// Someone an entry names, as the server shows them now, the username after the name.
+function AuditPerson({ part, server }: { part: Part; server: string | null | undefined }) {
+  const user = useShown(
+    {
+      username: part.by ?? '',
+      display_name: part.text,
+      avatar_kind: 'identicon',
+      avatar_color: null,
+    },
+    server
+  )
+  return <NameWithUsername user={user} />
+}
+
+export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?: string | null }) {
   const [open, setOpen] = useState(false)
   const group = groupOf(entry.action)
   const Icon = group ? ICONS[group] : ScrollText
@@ -315,7 +347,11 @@ export function AuditRow({ entry }: { entry: AuditEntry }) {
           {sentence(entry).map((p, i) =>
             p.name ? (
               <span key={i} className="streamer font-medium">
-                <Masked text={p.text} by={p.by} />
+                {p.person ? (
+                  <AuditPerson part={p} server={server} />
+                ) : (
+                  <Masked text={p.text} by={p.by} />
+                )}
               </span>
             ) : (
               <span key={i}>{p.text}</span>

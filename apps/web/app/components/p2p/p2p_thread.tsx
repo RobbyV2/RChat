@@ -7,6 +7,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { roomLooksKey } from '../../lib/server_profile'
 import { useStore } from '../../lib/store'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
@@ -49,7 +50,7 @@ function P2pThreadPanelBody() {
 
 function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const identity = useP2pApp()!
-  const { memberName, profileName, p2pThread, p2pDm } = identity
+  const { memberName, memberUser, profileName, p2pThread, p2pDm } = identity
 
   const acct = useAccount()
   const me = useP2p(s => s.me)
@@ -69,6 +70,8 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const room = v.id
   const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const members = v.members
+  const looks = useMemo(() => roomLooksKey(members), [members])
+  const userOf = useCallback((ik: string) => memberUser(room, ik), [room, looks])
   const people = useMemo<Mentionable[]>(
     () =>
       members.filter(m => m.m === 'join').map(m => ({ ik: m.ik, name: m.name, handle: m.name })),
@@ -91,6 +94,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
     useP2pList({
       messages: all,
       nameOf,
+      userOf,
       ownName,
       people,
       draftKey: key,

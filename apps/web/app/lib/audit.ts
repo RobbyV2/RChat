@@ -24,8 +24,9 @@ export const groupOf = (action: string): AuditGroup | null => {
 }
 
 // A sentence as text runs; `name` runs are usernames or server names (streamer blur), `by` the
-// account a person's name belongs to (your own is never masked).
-export type Part = { text: string; name?: boolean; by?: string }
+// account a person's name belongs to (your own is never masked). A `person` run names `by` as
+// they are now: drawn under the server's name for them, with the username after it.
+export type Part = { text: string; name?: boolean; by?: string; person?: boolean }
 
 export interface AuditChange {
   field: string
@@ -186,7 +187,8 @@ export const isNameFact = (label: string) => label === FIELD_LABELS.authors
 
 const actorParts = (entry: AuditEntry): Part[] => {
   if (entry.staff) return [{ text: 'Instance staff' }]
-  if (entry.actor) return [{ text: entry.actor.display_name, name: true, by: entry.actor.username }]
+  if (entry.actor)
+    return [{ text: entry.actor.display_name, name: true, by: entry.actor.username, person: true }]
   return [{ text: 'Deleted user' }]
 }
 
@@ -196,8 +198,8 @@ const userParts = (entry: AuditEntry): Part[] => {
   if (t.kind === 'guest') return [{ text: t.name ? guestLabel(t.name) : 'a guest' }]
   if (t.staff) return [{ text: 'Instance staff' }]
   if (t.deleted) return [{ text: 'Deleted user' }]
-  const name = t.user?.display_name ?? t.name
-  return name ? [{ text: name, name: true, by: t.user?.username }] : [{ text: 'someone' }]
+  if (t.user) return [{ text: t.user.display_name, name: true, by: t.user.username, person: true }]
+  return t.name ? [{ text: t.name, name: true }] : [{ text: 'someone' }]
 }
 
 const channelText = (entry: AuditEntry): string => {
@@ -217,7 +219,7 @@ const subjectParts = (entry: AuditEntry): Part[] => {
   if (s.staff === true) return [{ text: 'Instance staff' }]
   if (s.deleted === true) return [{ text: 'Deleted user' }]
   const name = str(s.name)
-  return name ? [{ text: name, name: true, by: name }] : [{ text: 'someone' }]
+  return name ? [{ text: name, name: true, by: name, person: true }] : [{ text: 'someone' }]
 }
 
 const roleText = (entry: AuditEntry) => {
@@ -520,6 +522,11 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(` did ${entry.action}`)]
   }
 }
+
+// The accounts entries name as people, for the lookup of how the server shows them.
+export const peopleIn = (entries: readonly AuditEntry[]): string[] => [
+  ...new Set(entries.flatMap(e => sentence(e).flatMap(p => (p.person && p.by ? [p.by] : [])))),
+]
 
 export const sentenceText = (entry: AuditEntry) =>
   sentence(entry)

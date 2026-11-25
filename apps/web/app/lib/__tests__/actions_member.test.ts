@@ -435,6 +435,7 @@ const recorder = () => {
     'kickMember',
     'banMember',
     'removeTimeout',
+    'unlockMemberProfile',
     'assignRole',
     'unassignRole',
     'askAddFriends',
@@ -809,4 +810,75 @@ test("a message author's rows are the member rows", () => {
   state({ guest: true })
   expect(person(said())).toEqual([])
   expect(row(said(), 'Ban from server') ?? null).toBeNull()
+})
+
+// The site and the server show server profiles.
+const profilesOn = (mode: 'all' | 'no_names' | 'off' = 'all') =>
+  useStore.setState(s => ({
+    settings: { ...s.settings, server_profiles: true },
+    servers: { s: { ...s.servers.s, profiles_mode: mode } },
+  }))
+
+const EDIT = 'Edit server profile'
+const RESET = 'Reset server profile'
+const UNLOCK = 'Unlock server profile'
+
+test('your own row and your own name open your server profile while the server shows profiles', async () => {
+  state()
+  expect(labels(at('alice'))).not.toContain(EDIT)
+  profilesOn()
+  const open: [string, unknown[][]][] = [
+    [EDIT, [['openDialog', { kind: 'server_profile', server: 's' }]]],
+  ]
+  expect(await effects([row(at('alice'), EDIT)!])).toEqual(open)
+  expect(await effects([row(said(user('alice')), EDIT)!])).toEqual(open)
+  expect(labels(at('bob'))).not.toContain(EDIT)
+  expect(labels(at('alice', 'interacted', null))).not.toContain(EDIT)
+  profilesOn('no_names')
+  expect(labels(at('alice'))).toContain(EDIT)
+  profilesOn('off')
+  expect(labels(at('alice'))).not.toContain(EDIT)
+  state({ guest: true })
+  profilesOn()
+  expect(labels(at('alice'))).not.toContain(EDIT)
+})
+
+test('a moderator who can reset profiles gets the reset, and the unlock once a lock is known', async () => {
+  state({ perms: Perm.ManageProfiles })
+  expect(labels(at('bob'))).not.toContain(RESET)
+  profilesOn()
+  expect(items(at('bob')).map(i => [i.label, !!i.danger])).toEqual([
+    [DM, false],
+    [RESET, true],
+    ['Add friend', false],
+    ['Block', true],
+    [COPY, false],
+  ])
+  expect(await effects([row(at('bob'), RESET)!, row(said(), RESET)!])).toEqual([
+    [RESET, [['openDialog', { kind: 'profile_reset', server: 's', user: bobby }]]],
+    [RESET, [['openDialog', { kind: 'profile_reset', server: 's', user: bobby }]]],
+  ])
+  expect(labels(at('alice'))).not.toContain(RESET)
+  useStore.getState().noteProfileLock('s', 'bob', Math.floor(Date.now() / 1000) + 600)
+  expect(labels(at('bob'))).toEqual([DM, RESET, UNLOCK, 'Add friend', 'Block', COPY])
+  expect(await effects([row(at('bob'), UNLOCK)!])).toEqual([
+    [UNLOCK, [['unlockMemberProfile', 's', 'bob']]],
+  ])
+  useStore.getState().noteProfileLock('s', 'bob', Math.floor(Date.now() / 1000) - 5)
+  expect(labels(at('bob'))).not.toContain(UNLOCK)
+})
+
+test('profile resets need the permission and a member ranked below, in a server that shows profiles', () => {
+  state({ perms: Perm.Kick })
+  profilesOn()
+  expect(labels(at('bob'))).not.toContain(RESET)
+  state({ perms: Perm.ManageProfiles, bob: { role_ids: [1] } })
+  profilesOn()
+  expect(labels(at('bob'))).not.toContain(RESET)
+  state({ perms: Perm.ManageProfiles })
+  profilesOn('off')
+  expect(labels(at('bob'))).not.toContain(RESET)
+  state({ owner: true })
+  profilesOn('no_names')
+  expect(labels(at('bob'))).toContain(RESET)
 })

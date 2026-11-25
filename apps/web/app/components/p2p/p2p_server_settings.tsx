@@ -25,12 +25,13 @@ import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { Dialog, fieldCls, filledBtn, Masked, sectionCls, Sentinel, textBtn } from '../ui'
 import { page, PAGE } from '../../lib/paging'
-import { KeyAvatar } from './p2p_badge'
+import { MemberAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
 import { openChoiceMenu } from '../../lib/actions/menu'
 import { peerServer } from '../../lib/actions/p2p_server'
 import { SettingSwitch } from '../settings_fields'
+import { ServerProfilesMode } from './p2p_server_profile'
 import { ChannelAccess, MemberCard, roleMenuItems, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
 import { hex, nameColor } from '../../lib/p2p/roles'
@@ -90,6 +91,11 @@ function Overview({ v }: { v: ServerView }) {
       ) : (
         <Note>Only members with Manage server can rename the server.</Note>
       )}
+      <div className="flex flex-col gap-1">
+        <p className="text-sm">Server profiles</p>
+        <ServerProfilesMode v={v} />
+        {!edit && <Note>Only members with Manage server can change this.</Note>}
+      </div>
       <Note>
         This server is stored on its members&apos; devices. {v.joined}{' '}
         {v.joined === 1 ? 'member' : 'members'}, {v.online} online now.
@@ -99,7 +105,7 @@ function Overview({ v }: { v: ServerView }) {
         <ul className="flex flex-col">
           {v.owners.map(ik => (
             <li key={ik} className="flex items-center gap-2 py-1">
-              <KeyAvatar ik={ik} size={24} />
+              <MemberAvatar members={v.members} ik={ik} size={24} />
               <span className="streamer min-w-0 truncate text-sm">
                 <Masked text={memberName(v.id, ik)} own={ik === me} />
               </span>
@@ -403,7 +409,7 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
       data-p2p-member-line={m.name}
       className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-2 py-1.5"
     >
-      <KeyAvatar ik={m.ik} size={32} />
+      <MemberAvatar members={v.members} ik={m.ik} size={32} />
       <span
         className="streamer min-w-0 flex-1 truncate text-sm"
         style={{ color: hex(nameColor(m, v.roles)) }}

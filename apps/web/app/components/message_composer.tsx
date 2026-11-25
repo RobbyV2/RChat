@@ -27,6 +27,7 @@ import { useAccount } from '../lib/client/react'
 import { TextComposer } from './text_composer'
 import { accountPrompt } from '../lib/features'
 import { charCount, counterFrom, messageFilterOn } from '../lib/rules'
+import { useShownOrNull, useViewServer } from './shown_user'
 import { dmPlaceholder } from '../lib/display_name'
 import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
@@ -316,6 +317,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     guestPostingStatus(s, view?.kind === 'channel' ? view.server : null, channelId)
   )
   const quote = useStore(s => (draftKey ? s.replying[draftKey]?.message : undefined))
+  const shownQuote = useShownOrNull(quote?.author, useViewServer())
   const slowLeft = useSlowLeft(channelId)
   const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
 
@@ -401,7 +403,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             key={draftKey}
             inputRef={inputRef}
             label={thread ? 'Reply in thread' : 'Message as a guest'}
-            reply={quote?.author.display_name}
+            reply={shownQuote?.display_name}
             cancelReply={() => cancelReply(draftKey)}
             send={async content => {
               const message = await account.lifetime.live(

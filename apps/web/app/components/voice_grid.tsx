@@ -41,6 +41,7 @@ import { AccountLabel } from './instance_badge'
 import { KeyAvatar, P2pBadge } from './p2p/p2p_badge'
 import { useMask, userRefFor, useStore, voiceMutedIn } from '../lib/store'
 import { voiceHushedIn } from '../lib/selectors'
+import { shownIn } from '../lib/server_profile'
 import { accountPrompt } from '../lib/features'
 import {
   STAFF_MUTED,
@@ -438,7 +439,12 @@ export function Tile({
           {streamer ? (
             <AvatarHidden size={avatar} />
           ) : tile.local ? (
-            <KeyAvatar ik={user.username} size={avatar} />
+            <KeyAvatar
+              ik={user.username}
+              size={avatar}
+              kind={user.avatar_kind}
+              bg={user.avatar_color}
+            />
           ) : (
             <UserAvatar
               username={user.username}
@@ -1002,7 +1008,7 @@ export function VoiceGrid({
   const identity = useP2pApp()
   const callRtc = identity?.callRtc
   const p2pUser = identity?.p2pUser
-  const memberName = identity?.memberName
+  const memberUser = identity?.memberUser
   const p2pVoice = identity?.p2pVoice
 
   const { rtc, files: p2p, store, lifetime } = useAccount()
@@ -1089,11 +1095,13 @@ export function VoiceGrid({
       : undefined
   const state = store.getState()
   const refFor = (u: string): UserRef =>
-    forVoice && p2pUser && memberName
-      ? p2pUser(u, u === self ? myP2pName || 'You' : memberName(forVoice.room, u))
+    forVoice && memberUser
+      ? u === self
+        ? { ...memberUser(forVoice.room, u), display_name: myP2pName || 'You' }
+        : memberUser(forVoice.room, u)
       : forRoom && p2pUser
         ? p2pUser(u, u === self ? myP2pName || 'You' : peerName)
-        : userRefFor(state, u)
+        : shownIn(state, server, userRefFor(state, u)).user
 
   const tint = (user: UserRef) =>
     bannerColor(

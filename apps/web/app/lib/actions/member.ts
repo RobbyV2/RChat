@@ -5,6 +5,9 @@ import { client } from '../client/client'
 import {
   AtSign,
   Check,
+  Eraser,
+  IdCard,
+  LockOpen,
   MessageCircle,
   UserCheck,
   UserMinus,
@@ -18,8 +21,11 @@ import {
   changeableRoles,
   memberOf,
   memberState,
+  mayEditProfile,
   memberTimeout,
   myPerms,
+  profileLockedFor,
+  profilesShown,
   myRolePerms,
   type ContextMenuItem,
 } from '../store'
@@ -162,6 +168,16 @@ const openTimeout = onSeat(({ server, user }, ctx) =>
   ctx.acct.store.getState().openDialog({ kind: 'timeout', server, user: userRef(user) })
 )
 
+const openProfileReset = onSeat(({ server, user }, ctx) =>
+  ctx.acct.store.getState().openDialog({ kind: 'profile_reset', server, user: userRef(user) })
+)
+
+// Someone else's server profile, for a moderator who can reset it while the server shows them.
+const resetsProfiles = (ctx: ActionCtx) => {
+  const seat = seatOf(ctx)
+  return !!seat && moderates(Perm.ManageProfiles)(ctx) && profilesShown(ctx.s, seat.server)
+}
+
 const timedOut = (ctx: ActionCtx) => {
   const seat = seatOf(ctx)
   return !!seat && memberTimeout(ctx.s, seat.server, seat.user.username) !== null
@@ -227,6 +243,20 @@ export const memberActions: Action[] = [
     },
   },
   {
+    id: 'member_profile_self',
+    title: 'Edit server profile',
+    icon: IdCard,
+    ...onMemberOrAuthor,
+    order: 210,
+    available: ctx => {
+      const seat = seatOf(ctx)
+      return !!seat && seat.self && mayEditProfile(ctx.s, seat.server)
+    },
+    run: onSeat(({ server }, ctx) =>
+      ctx.acct.store.getState().openDialog({ kind: 'server_profile', server })
+    ),
+  },
+  {
     id: 'member_kick',
     title: 'Kick',
     danger: true,
@@ -264,6 +294,34 @@ export const memberActions: Action[] = [
     available: ctx => moderates(Perm.TimeoutMembers)(ctx) && timedOut(ctx),
     run: onSeat(
       ({ server, user }, ctx) => void ctx.acct.store.getState().removeTimeout(server, user.username)
+    ),
+  },
+  {
+    id: 'member_profile_reset',
+    title: 'Reset server profile',
+    icon: Eraser,
+    danger: true,
+    ...onMemberOrAuthor,
+    order: 432,
+    available: resetsProfiles,
+    menuRun: openProfileReset,
+    run: openProfileReset,
+  },
+  {
+    id: 'member_profile_unlock',
+    title: 'Unlock server profile',
+    icon: LockOpen,
+    ...onMemberOrAuthor,
+    order: 434,
+    available: ctx => {
+      const seat = seatOf(ctx)
+      return (
+        !!seat && resetsProfiles(ctx) && profileLockedFor(ctx.s, seat.server, seat.user.username)
+      )
+    },
+    run: onSeat(
+      ({ server, user }, ctx) =>
+        void ctx.acct.store.getState().unlockMemberProfile(server, user.username)
     ),
   },
   {

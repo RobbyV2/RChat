@@ -675,7 +675,7 @@ describe('in messages', () => {
       />
     )
     const shown = row.replace(/<span class="sr-only">masked<\/span>/g, '').replace(/<[^>]+>/g, '')
-    expect(shown).toContain('fuck head kicked **** face')
+    expect(shown).toContain('fuck head(shit) kicked **** face(****)')
   })
 
   test('an account that never chose has it on, one that turned it off keeps it off', async () => {

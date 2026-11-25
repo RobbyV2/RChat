@@ -58,6 +58,7 @@ import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MarkdownMessage } from './markdown_message'
+import { ShownName, useShown } from './shown_user'
 import { TypingIndicator } from './typing_indicator'
 import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
@@ -286,6 +287,7 @@ export function AuthorRow({
   children: ReactNode
 }) {
   const store = useStoreApi()
+  const shown = useShown(author, server)
   return (
     <div className="flex gap-3">
       <div className="shrink-0 pt-0.5">
@@ -295,9 +297,9 @@ export function AuthorRow({
           className={avatarTriggerCls}
         >
           <UserAvatar
-            username={author.username}
-            avatarKind={author.avatar_kind}
-            avatarColor={author.avatar_color}
+            username={shown.username}
+            avatarKind={shown.avatar_kind}
+            avatarColor={shown.avatar_color}
             size={size}
           />
         </span>
@@ -305,7 +307,7 @@ export function AuthorRow({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <FitName
-            user={author}
+            user={shown}
             {...profileTrigger(store, author, server)}
             style={{ color }}
             className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
@@ -567,7 +569,11 @@ const MessageRow = memo(function MessageRow({
             {body}
           </AuthorRow>
         ) : (
-          <GroupedRow name={<NameWithUsername user={m.author} />} ts={m.created_at} size={36}>
+          <GroupedRow
+            name={<ShownName user={m.author} server={server} />}
+            ts={m.created_at}
+            size={36}
+          >
             {body}
           </GroupedRow>
         )}
@@ -652,7 +658,11 @@ export function OutgoingRow({
           {body}
         </AuthorRow>
       ) : (
-        <GroupedRow name={<NameWithUsername user={author} />} ts={o.msg.created_at} size={size}>
+        <GroupedRow
+          name={<ShownName user={author} server={server} />}
+          ts={o.msg.created_at}
+          size={size}
+        >
           <span className="sr-only">{label}</span>
           {body}
         </GroupedRow>
@@ -1182,7 +1192,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             </div>
           </div>
           <div className="relative shrink-0">
-            <TypingIndicator scope={view ? viewKey(view) : null} bg="bg-surface" />
+            <TypingIndicator
+              scope={view ? viewKey(view) : null}
+              server={memberServer}
+              bg="bg-surface"
+            />
             {selecting && !wide ? (
               <SelectionBar scope={scope} sheet />
             ) : dm && otherBlocked ? (

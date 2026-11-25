@@ -17,6 +17,7 @@ import { newSince } from '../lib/lists'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
 import { TypingIndicator } from './typing_indicator'
+import { ShownName } from './shown_user'
 import {
   AuthorRow,
   GroupedRow,
@@ -51,7 +52,6 @@ import { canEdit as ownEditable } from '../lib/sed'
 import { MessageEditor, editAction } from './message_editor'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
-import { NameWithUsername } from './display_name'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 
 const EMPTY: Message[] = []
@@ -332,7 +332,11 @@ export default function ThreadPanel() {
             {body}
           </AuthorRow>
         ) : (
-          <GroupedRow name={<NameWithUsername user={m.author} />} ts={m.created_at} size={30}>
+          <GroupedRow
+            name={<ShownName user={m.author} server={server} />}
+            ts={m.created_at}
+            size={30}
+          >
             {body}
           </GroupedRow>
         )}
@@ -412,7 +416,7 @@ export default function ThreadPanel() {
       }
       footer={
         <>
-          <TypingIndicator scope={key} bg="bg-surface-container-low" />
+          <TypingIndicator scope={key} server={server} bg="bg-surface-container-low" />
           {selecting && !wide ? <SelectionBar scope={key} sheet /> : <MessageComposer thread />}
         </>
       }
