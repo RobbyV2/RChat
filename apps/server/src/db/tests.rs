@@ -1263,12 +1263,41 @@ async fn sso_ids_require_a_value() {
 }
 
 #[tokio::test]
+async fn scim_alias_upgrade_preserves_v45_directory_and_claims() {
+    on_each_database("scim_alias_upgrade", |url| async move {
+        let db = open(Some(&url)).await.unwrap();
+        for sql in [
+            "DROP TABLE scim_owned_aliases",
+            "DROP INDEX idx_sso_user_groups_key",
+            "ALTER TABLE sso_user_groups DROP COLUMN alias_key",
+            "ALTER TABLE scim_groups DROP COLUMN alias_source",
+            "INSERT INTO sso_user_groups(username,source,grp) VALUES('alice','one','staff')",
+            "UPDATE settings SET value='45' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let external: String = (0..128).map(|i| crate::sso::accounts::oidc_key(&format!("directory-{i}")).as_str().to_owned()).collect();
+        sqlx::query("INSERT INTO scim_groups(id,display_name,external_id,created_at,updated_at) VALUES('group','staff',$1,1,1)").bind(&external).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO scim_group_members(group_id,username) VALUES('group','alice')").execute(&db).await.unwrap();
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db,STORED_SCHEMA).await,SCHEMA_VERSION);
+            assert_eq!(count(&db,"SELECT COUNT(*) FROM sso_user_groups WHERE alias_key IS NULL AND grp='staff'").await,1);
+            assert_eq!(crate::sso::groups::effective_groups(&db,"alice").await.unwrap(), std::collections::BTreeSet::from(["staff".to_owned(),external.clone()]));
+            close(&db).await;
+        }
+    }).await;
+}
+
+#[tokio::test]
 async fn sso_tables_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("sso_schema_upgrade");
     let tables = [
         "sso_links",
         "sso_pending",
         "scim_group_members",
+        "scim_owned_aliases",
         "scim_groups",
         "scim_users",
         "sso_user_groups",

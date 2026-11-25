@@ -290,6 +290,7 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
         .with_limits(Arc::new(config.limits.clone()))
         .with_sso(Arc::new(crate::sso::Sso::new(config.sso.clone())?));
     if roles.api {
+        crate::api::scim::initialize_group_ownership(&state).await?;
         for provider in state.sso.providers().cloned() {
             let http = state.sso.http().clone();
             held.spawn(async move {

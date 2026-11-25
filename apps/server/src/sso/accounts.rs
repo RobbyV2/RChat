@@ -159,19 +159,22 @@ async fn sign_in_once(
     let defaults = &Policy::cached(&state.db).await.default_servers;
     let mut tx = auth::begin_account_write(&state.db).await?;
     let mut linked = linked_username(&mut tx, id).await?;
+    let directory_login =
+        config.scim.as_ref().and_then(|s| s.provider.as_ref()) == Some(&id.provider);
     if linked.is_none() {
         // A concurrent first login may have committed while this transaction
         // waited for registration's server and username locks.
         auth::lock_account_creation(&mut tx, defaults).await?;
         linked = linked_username(&mut tx, id).await?;
-    } else if display.is_some() {
+    } else if display.is_some() || directory_login {
+        // Group writes enumerate cached claimants under this same lock.
         crate::db::lock_new_usernames(&mut tx).await?;
     }
     let t = now();
     let already_linked = linked.is_some();
     let mut username = linked;
     if username.is_none()
-        && config.scim.as_ref().and_then(|s| s.provider.as_ref()) == Some(&id.provider)
+        && directory_login
         && let Some(key) = id.scim_key.as_deref()
     {
         username = sqlx::query_scalar(

@@ -342,3 +342,68 @@ async fn concurrent_unban_keeps_the_desired_grants() {
         temp.done(state).await;
     }
 }
+
+#[tokio::test]
+async fn membership_limit_commits_withdrawals_and_announces_them() {
+    for (mut state, temp) in each_db("sso_group_cap_withdrawal").await {
+        let mut id = configure(&mut state);
+        seed(&state).await;
+        Arc::get_mut(&mut state.sso)
+            .unwrap()
+            .config
+            .group_map
+            .0
+            .insert(
+                "other".into(),
+                vec![crate::sso::config::GroupGrant {
+                    server: "other".into(),
+                    role: None,
+                }],
+            );
+        sqlx::query("INSERT INTO servers(name,display_name,password_hash,created_at) VALUES('other','Other','protected',1)").execute(&state.db).await.unwrap();
+        id.groups = vec!["eng".into()];
+        sign_in(&state, &id, None).await.unwrap();
+        assert_eq!(
+            count(&state, "SELECT COUNT(*) FROM sso_grants WHERE server='eng'").await,
+            2
+        );
+        Arc::make_mut(&mut state.limits).servers_per_account = 1;
+        id.groups = vec!["other".into()];
+        let mut events = state.hub.subscribe();
+        let Err(error) = sign_in(&state, &id, None).await else {
+            panic!("expected account limit")
+        };
+        assert!(is_membership_limit(&error));
+        assert_eq!(
+            count(
+                &state,
+                "SELECT COUNT(*) FROM members WHERE server IN ('eng','other') AND username='alice'"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            count(
+                &state,
+                "SELECT COUNT(*) FROM user_roles WHERE server='eng' AND username='alice'"
+            )
+            .await,
+            0
+        );
+        assert_eq!(count(&state,"SELECT COUNT(*) FROM instance_audit WHERE target='alice' AND action IN ('sso.group_leave','sso.role_revoke')").await,2);
+        let (mut left, mut roles) = (false, false);
+        while let Ok(event) = events.try_recv() {
+            match event {
+                WsEvent::MemberLeft { server, username }
+                    if server == "eng" && username == "alice" =>
+                {
+                    left = true
+                }
+                WsEvent::RolesChanged { server } if server == "eng" => roles = true,
+                _ => {}
+            }
+        }
+        assert!(left && roles);
+        temp.done(state).await;
+    }
+}

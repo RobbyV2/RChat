@@ -218,6 +218,116 @@ pub fn user_patch(body: &Value) -> Result<UserPatch, ScimError> {
     }
     Ok(a.finish())
 }
+#[derive(Debug)]
+pub enum GroupChange {
+    Display(String),
+    External(Option<String>),
+    Add(Vec<String>),
+    Remove(Vec<String>),
+    Replace(Vec<String>),
+}
+
+fn group_attribute(
+    changes: &mut Vec<GroupChange>,
+    op: &str,
+    path: &str,
+    value: Option<&Value>,
+) -> Result<(), ScimError> {
+    let remove = op == "remove";
+    let string = || value.and_then(Value::as_str).ok_or_else(ScimError::invalid);
+    let change = match path.to_ascii_lowercase().as_str() {
+        "displayname" if !remove => GroupChange::Display(string()?.to_owned()),
+        "displayname" => return Err(ScimError::invalid()),
+        "externalid" if remove || value == Some(&Value::Null) => GroupChange::External(None),
+        "externalid" => GroupChange::External(Some(string()?.to_owned())),
+        "members" if remove && value.is_none() => GroupChange::Replace(vec![]),
+        "members" => {
+            let ids = value
+                .and_then(Value::as_array)
+                .ok_or_else(ScimError::invalid)?
+                .iter()
+                .map(|m| {
+                    attribute(m, "value")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .ok_or_else(ScimError::invalid)
+                })
+                .collect::<Result<_, _>>()?;
+            match op {
+                "add" => GroupChange::Add(ids),
+                "remove" => GroupChange::Remove(ids),
+                _ => GroupChange::Replace(ids),
+            }
+        }
+        p if p.starts_with("members[") => {
+            let bad = || ScimError::bad("invalidPath", "Unsupported members filter");
+            let filter = path[8..].strip_suffix(']').ok_or_else(bad)?.trim();
+            let (field, rest) = filter.split_once(char::is_whitespace).ok_or_else(bad)?;
+            let (eq, lit) = rest
+                .trim_start()
+                .split_once(char::is_whitespace)
+                .ok_or_else(bad)?;
+            if !remove || !field.eq_ignore_ascii_case("value") || !eq.eq_ignore_ascii_case("eq") {
+                return Err(bad());
+            }
+            GroupChange::Remove(vec![serde_json::from_str(lit.trim()).map_err(|_| bad())?])
+        }
+        _ => return Ok(()),
+    };
+    if matches!(&change,GroupChange::Display(name) if name.trim().is_empty()) {
+        return Err(ScimError::invalid());
+    }
+    changes.push(change);
+    Ok(())
+}
+
+pub fn group_patch(body: &Value) -> Result<Vec<GroupChange>, ScimError> {
+    let syntax = || ScimError::bad("invalidSyntax", "Invalid patch operation");
+    let mut changes = Vec::new();
+    let ops = body["Operations"]
+        .as_array()
+        .filter(|ops| !ops.is_empty())
+        .ok_or_else(syntax)?;
+    for operation in ops {
+        let op = operation["op"]
+            .as_str()
+            .ok_or_else(syntax)?
+            .to_ascii_lowercase();
+        if !matches!(op.as_str(), "add" | "remove" | "replace") {
+            return Err(syntax());
+        }
+        if let Some(path) = operation.get("path") {
+            group_attribute(
+                &mut changes,
+                &op,
+                path.as_str().ok_or_else(syntax)?,
+                operation.get("value"),
+            )?;
+        } else {
+            for (key, v) in operation["value"].as_object().ok_or_else(syntax)? {
+                group_attribute(&mut changes, &op, key, Some(v))?;
+            }
+        }
+    }
+    Ok(changes)
+}
+
+pub fn group_replacement(body: &Value) -> Result<Vec<GroupChange>, ScimError> {
+    let mut changes = vec![GroupChange::External(None), GroupChange::Replace(vec![])];
+    group_attribute(
+        &mut changes,
+        "replace",
+        "displayName",
+        attribute(body, "displayName"),
+    )?;
+    for key in ["externalId", "members"] {
+        if let Some(v) = attribute(body, key) {
+            group_attribute(&mut changes, "replace", key, Some(v))?;
+        }
+    }
+    Ok(changes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

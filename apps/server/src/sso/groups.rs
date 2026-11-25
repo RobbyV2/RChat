@@ -33,7 +33,7 @@ pub(crate) async fn set_claim_groups(
         .filter(|g| map.0.contains_key(*g))
         .collect::<BTreeSet<_>>()
     {
-        sqlx::query("INSERT INTO sso_user_groups(username,source,grp) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind(username).bind(provider).bind(group).execute(&mut *conn).await?;
+        sqlx::query("INSERT INTO sso_user_groups(username,source,grp,alias_key) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING").bind(username).bind(provider).bind(group).bind(super::accounts::oidc_key(group).as_str()).execute(&mut *conn).await?;
     }
     Ok(())
 }
@@ -46,7 +46,9 @@ pub async fn effective_groups<'e>(
         "WITH scim AS (
             SELECT g.display_name, g.external_id FROM scim_groups g
             JOIN scim_group_members m ON m.group_id=g.id WHERE m.username=$1
-        ) SELECT grp FROM sso_user_groups WHERE username=$1
+        ) SELECT c.grp FROM sso_user_groups c WHERE c.username=$1
+          AND NOT EXISTS (SELECT 1 FROM scim_owned_aliases a WHERE a.source=c.source
+              AND (c.alias_key IS NULL OR a.alias_key=c.alias_key) AND a.grp=c.grp)
         UNION SELECT display_name FROM scim
         UNION SELECT external_id FROM scim WHERE external_id IS NOT NULL",
     )
@@ -131,6 +133,21 @@ async fn desired_grants<'a>(
         desired.insert(0, group);
     }
     Ok(desired)
+}
+
+// These two refusals are returned by insert_member_locked before any writes.
+pub(crate) fn is_membership_limit(error: &ApiError) -> bool {
+    use crate::api::ReasonKind;
+    matches!(
+        error
+            .2
+            .as_ref()
+            .map(|reason| (reason.kind, reason.control.as_deref())),
+        Some(
+            (ReasonKind::Limit, Some("servers_per_account"))
+                | (ReasonKind::Capacity, Some("server_members_max"))
+        )
+    )
 }
 
 pub async fn reconcile(state: &AppState, username: &str) -> Result<Reconciled, ApiError> {
@@ -230,6 +247,7 @@ async fn reconcile_after_lookup(
         tx.rollback().await?;
     };
     let mut result = Reconciled::default();
+    let mut admission_error = None;
     let mut joins = Vec::new();
     let mut leaves = Vec::new();
     let (removed, retained): (Vec<_>, Vec<_>) = servers
@@ -249,9 +267,19 @@ async fn reconcile_after_lookup(
         if let Some(access) = accesses.get(&server) {
             desired = desired_grants(&mut tx, &server, &targets[&server]).await?;
             if let Some(&group) = desired.get(&0) {
-                if let Some(member) =
-                    servers::insert_member_locked(&mut tx, &state.limits, access, username).await?
-                {
+                let member =
+                    match servers::insert_member_locked(&mut tx, &state.limits, access, username)
+                        .await
+                    {
+                        Ok(member) => member,
+                        Err(error) if is_membership_limit(&error) => {
+                            admission_error.get_or_insert(error);
+                            desired.clear();
+                            None
+                        }
+                        Err(error) => return Err(error),
+                    };
+                if let Some(member) = member {
                     remember(&mut tx, username, &server, 0, group).await?;
                     audit(
                         &mut tx,
@@ -360,7 +388,7 @@ async fn reconcile_after_lookup(
     {
         servers::announce_roles_changed(state, server).await;
     }
-    Ok(result)
+    admission_error.map_or(Ok(result), Err)
 }
 
 pub async fn reconcile_all(state: &AppState) -> Result<u64, ApiError> {
@@ -391,6 +419,20 @@ pub async fn reconcile_all(state: &AppState) -> Result<u64, ApiError> {
             after = name;
         }
     }
+}
+
+pub fn spawn_reconcile(state: &AppState, usernames: Vec<String>) -> tokio::task::JoinHandle<()> {
+    let state = state.clone();
+    tokio::spawn(async move {
+        for batch in usernames.chunks(100) {
+            for username in batch {
+                if let Err(error) = reconcile(&state, username).await {
+                    tracing::warn!(?error, "SCIM group reconciliation failed");
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
 }
 
 #[cfg(test)]
