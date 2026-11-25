@@ -42,6 +42,8 @@ sqlx = { version = "0.9", features = [
 ] }
 rchat-profanity = { path = "../../crates/profanity" }
 sha2 = "0.11.1"
+subtle = "2"
+time = { version = "0.3", features = ["formatting"] }
 hmac = "0.13"
 hex = "0.4.3"
 rand = "0.10.3"

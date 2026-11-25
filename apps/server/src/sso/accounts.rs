@@ -447,22 +447,28 @@ pub async fn unlink(state: &AppState, user: &User, provider: &str) -> Result<(),
     Ok(())
 }
 
-pub async fn suspend(state: &AppState, username: &str) -> Result<bool, ApiError> {
-    let mut tx = state.db.begin().await?;
-    let changed = sqlx::query(
-        "UPDATE users SET suspended_at = $1 WHERE username = $2 AND suspended_at IS NULL AND password_hash <> '!purging'",
-    )
-    .bind(now())
-    .bind(username)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected() != 0;
-    if changed {
-        sqlx::query("DELETE FROM tokens WHERE username = $1")
+pub(crate) async fn set_active_in(
+    tx: &mut sqlx::AnyConnection,
+    username: &str,
+    active: bool,
+) -> sqlx::Result<bool> {
+    let changed = if active {
+        sqlx::query("UPDATE users SET suspended_at=NULL WHERE username=$1 AND suspended_at IS NOT NULL AND password_hash <> '!purging'").bind(username).execute(&mut *tx).await?
+    } else {
+        sqlx::query("UPDATE users SET suspended_at=$2 WHERE username=$1 AND suspended_at IS NULL AND password_hash <> '!purging'").bind(username).bind(now()).execute(&mut *tx).await?
+    }.rows_affected() != 0;
+    if changed && !active {
+        sqlx::query("DELETE FROM tokens WHERE username=$1")
             .bind(username)
-            .execute(&mut *tx)
+            .execute(tx)
             .await?;
     }
+    Ok(changed)
+}
+
+pub async fn suspend(state: &AppState, username: &str) -> Result<bool, ApiError> {
+    let mut tx = state.db.begin().await?;
+    let changed = set_active_in(&mut tx, username, false).await?;
     tx.commit().await?;
     if changed {
         state.hub.broadcast(WsEvent::TokensRevoked {
@@ -473,13 +479,10 @@ pub async fn suspend(state: &AppState, username: &str) -> Result<bool, ApiError>
 }
 
 pub async fn unsuspend(state: &AppState, username: &str) -> Result<bool, ApiError> {
-    let changed = sqlx::query(
-        "UPDATE users SET suspended_at = NULL WHERE username = $1 AND suspended_at IS NOT NULL AND password_hash <> '!purging'",
-    ).bind(username)
-    .execute(&state.db)
-    .await?
-    .rows_affected();
-    Ok(changed != 0)
+    let mut tx = state.db.begin().await?;
+    let changed = set_active_in(&mut tx, username, true).await?;
+    tx.commit().await?;
+    Ok(changed)
 }
 
 #[cfg(test)]

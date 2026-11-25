@@ -161,6 +161,7 @@ describe('one public address', () => {
     ['/api/v1/ws', 'gateway'],
     ['/api/media/abc', 'media'],
     ['/api/instance', 'api'],
+    ['/scim/v2/Users', 'api'],
     ['/peerjs', 'peerjs'],
     ['/peerjs/peerjs', 'peerjs'],
     ['/peerjs/peerjs/id', 'peerjs'],

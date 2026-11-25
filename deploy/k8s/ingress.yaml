@@ -90,6 +90,13 @@ spec:
                 name: rchat-api
                 port:
                   name: http
+          - path: /scim
+            pathType: Prefix
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
           - path: /.well-known/rchat
             pathType: Exact
             backend:

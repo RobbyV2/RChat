@@ -108,6 +108,7 @@ pub(crate) fn api_router(config: &AppConfig, state: AppState) -> Router {
     )
     .with_state(state.clone());
     let api_routes = limited(api_routes, key.clone(), &state.limits);
+    let scim = crate::api::scim::routes(state.clone(), key.clone(), config.roles.api);
     let well_known = match config.roles.api {
         true => limited(
             crate::api::instance::well_known_routes()
@@ -126,6 +127,7 @@ pub(crate) fn api_router(config: &AppConfig, state: AppState) -> Router {
                 .merge(api_routes),
         )
         .merge(well_known)
+        .merge(scim)
         .layer(axum::middleware::map_response(
             |mut res: Response| async move {
                 res.headers_mut().insert(

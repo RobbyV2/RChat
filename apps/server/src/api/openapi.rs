@@ -15,7 +15,13 @@ struct Bearer;
 struct Busy;
 
 /// Paths that never wait for the database, or answer for it themselves.
-const NEVER_BUSY: [&str; 2] = ["/api/v1/health", "/api/v1/ready"];
+const NEVER_BUSY: [&str; 5] = [
+    "/api/v1/health",
+    "/api/v1/ready",
+    "/scim/v2/ServiceProviderConfig",
+    "/scim/v2/ResourceTypes",
+    "/scim/v2/Schemas",
+];
 
 const BUSY: &str = "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header";
 
@@ -39,14 +45,19 @@ impl Modify for Busy {
                     }
                     Some(RefOr::Ref(_)) => {}
                     None => {
-                        let busy = ResponseBuilder::new()
-                            .description(BUSY)
-                            .content(
+                        let content = if path.starts_with("/scim/") {
+                            ("application/scim+json", ContentBuilder::new().build())
+                        } else {
+                            (
                                 "application/json",
                                 ContentBuilder::new()
                                     .schema(Some(Ref::from_schema_name("ApiErrorBody")))
                                     .build(),
                             )
+                        };
+                        let busy = ResponseBuilder::new()
+                            .description(BUSY)
+                            .content(content.0, content.1)
                             .build();
                         operation
                             .responses
@@ -61,6 +72,17 @@ impl Modify for Busy {
 
 impl Modify for Bearer {
     fn modify(&self, doc: &mut utoipa::openapi::OpenApi) {
+        doc.components
+            .get_or_insert_with(Default::default)
+            .add_security_scheme(
+                "scim",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .description(Some("Configured SCIM provisioning token"))
+                        .build(),
+                ),
+            );
         doc.components
             .get_or_insert_with(Default::default)
             .add_security_scheme(
@@ -80,6 +102,15 @@ impl Modify for Bearer {
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        super::scim::config,
+        super::scim::types,
+        super::scim::schemas,
+        super::scim::list,
+        super::scim::one,
+        super::scim::create,
+        super::scim::put,
+        super::scim::patch,
+        super::scim::delete,
         super::auth::register,
         super::auth::login,
         super::oidc::start,
@@ -334,6 +365,7 @@ impl Modify for Bearer {
 **Realtime.** `GET /api/v1/ws` upgrades to a WebSocket. Clients send JSON frames tagged by `type` (`auth` first, with the token or without one for a guest, then `viewing`, `subscribe`, voice, call and `rtc_signal` frames) and receive JSON events tagged by `type` in snake_case (`message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`, `read_updated`, `ping`, `ping_count`, `voice_state`, `call_state` and more; see `WsEvent` in `apps/server/src/ws/event.rs`). `ping` (`{username, ping: Ping}`) reaches only the pinged user's connections when someone mentions them; `ping_count` (`{username, scope, pings, pings_until, thread_pings}`, same fields as a `GET /api/v1/unreads` item) gives a scope's unseen pings after some were removed. `@everyone`, `@here` and role mentions send no per-user event: the `message` event carries `group_mentions`, each client decides whether the message addresses it (member, online, holds the role). `group_pings_seen` (`{username, scope, message_ids}`) tells the user's connections that `POST /api/v1/inbox/read` or `POST /api/v1/inbox/read_all` marked those group mentions seen. A signed-in user is online while any of their connections is open, whatever server or page it shows (unless they appear offline), and goes offline about 10 seconds after the last one closes. Switching to appear offline hides them at once; coming back online is allowed a few times in a row, then about once per 10 seconds, and the last setting wins. An account keeps at most `WS_CONNECTIONS_PER_USER` connections (default 20; opening another closes the oldest with close code 4008), and opening them faster than `WS_CONNECT_BURST` / `WS_CONNECTS_PER_MINUTE` (counted per instance and across the cluster) closes the new one with code 4029. One client address keeps at most `WS_SOCKETS_PER_IP` connections per instance (default 200; past it the upgrade answers 429) and `WS_GUEST_SOCKETS_PER_IP` of them as guests (default 50; past it the guest connection closes with code 4029); an IPv6 /64 counts as one address. All guest connections of one instance together are capped at `WS_GUEST_SOCKETS_MAX` (default 2000, 0 turns guest connections off; past it the guest connection closes with code 4029). All connections of one copy together are capped at `WS_SOCKETS_MAX` (default no cap; past it the upgrade answers 503 with reason `capacity`, and `/api/v1/ready` answers 503 with `sockets: false`). A connection that sends no `auth` frame within 10 seconds closes with code 4001. `subscribe` frames are paced per connection by the number of servers they newly check (at most 100 servers per frame, 50 for guests); one past the pace waits and a later one replaces it. `voice_join` and `voice_leave` are paced per account (a few per second; the latest waits and wins), `call_start` and `call_accept` too (each on its own), and `rtc_signal` payloads are at most 20 KiB with a per-account byte budget (enough to negotiate with a full voice room twice at once); past these the server answers an `error` frame (`{message}`, plus the `reason` object of REST errors when the error has one). These paces count per server process. `presence_changed` (`{server, username, online, online_count}`) reaches the connections viewing that server when a member's first connection opens or last one closes, and when members join, leave, are kicked or banned, and `GET /api/v1/unreads` lists the unread ones as `group_pings`. `layout_changed` (`{server, layout}`, a `ChannelLayout`) carries the new channel order, with only the channels each connection can see and only the categories holding one of them (all categories for people who manage channels); a connection that doesn't manage channels gets it only when the part it sees changed. A connection without read history of a channel gets no events about a thread whose root was sent before it joined: no replies, edits, reactions, deletions, link previews or typing there. In a server that keeps its members to itself, connections from outside get no `message_deleted` or `messages_deleted` ids of `join` and `leave` messages. Every `position` a client gets (channels and categories, in REST answers and events) counts only what that client can see, so it runs 0, 1, 2 and so on without gaps. `read_updated` (`{username, scope, last_read, pings_until}`) tells the reader's other connections that `POST /api/v1/read` (or, once per scope, `POST /api/v1/read/batch`) stored a position or marked pings seen; clients clear only pings with an id up to `pings_until` (0: none), so newer pings keep their badge. The REST operations below name the events they emit."
     ),
     tags(
+        (name="scim",description="Directory provisioning and discovery"),
         (name = "Widgets", description = "Embeddable chat and voice channels"),
         (name = "Auth", description = "Create accounts, sign in and out, recover with a backup phrase, and look up word-password hints."),
         (name = "Account", description = "The signed-in user's own account: profile, preferences and password."),
@@ -469,8 +501,9 @@ pub(crate) mod tests {
     const ADMIN_REASON: &str =
         "site-admin only; site admins must stay hidden, so the public document leaves these out";
 
-    const ROUTE_SOURCES: [(&str, &str); 6] = [
+    const ROUTE_SOURCES: [(&str, &str); 7] = [
         ("", include_str!("brand.rs")),
+        ("/scim", include_str!("scim.rs")),
         ("/api/v1", include_str!("mod.rs")),
         ("/api/v1", include_str!("health.rs")),
         ("/api/v1", include_str!("openapi.rs")),

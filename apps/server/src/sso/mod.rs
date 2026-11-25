@@ -6,6 +6,7 @@ pub(crate) mod fake_idp;
 pub mod flow;
 pub mod jwt;
 pub mod provider;
+pub mod scim;
 
 use provider::Provider;
 use std::sync::{Arc, OnceLock};

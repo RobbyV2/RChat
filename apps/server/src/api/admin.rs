@@ -1252,7 +1252,7 @@ pub(crate) async fn hide_user_rows(
 }
 
 /// Hides the account `key` in `tx`, for a deletion or a ban.
-async fn hide_user_in(
+pub(crate) async fn hide_user_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,
     key: &str,
     kind: PurgeKind,
