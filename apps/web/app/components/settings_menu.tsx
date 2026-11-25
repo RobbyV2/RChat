@@ -1,11 +1,18 @@
 'use client'
 import { useP2p } from '../lib/client/p2p_react'
 
+import { SignInMethods, useSignInLinks } from './sso/sign_in_methods'
+import { useConfirmation } from './sso/use_confirmation'
+import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
+import { PhraseSettings } from './backup_phrase/phrase_settings'
+import type { LinkedProvider, ReAuthBody } from '../lib/types'
+import { Dialog } from './ui'
 import { ManageAccounts, SettingsAccountPicker } from './account_switcher'
+import { client } from '../lib/client/client'
 import { useAccount } from '../lib/client/react'
 
 import { AnnouncementSetting } from './announcements'
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import Link from 'next/link'
 import { Globe, UserRound, X } from 'lucide-react'
 import { errorText, useStore } from '../lib/store'
@@ -380,7 +387,14 @@ function SecretField({
   )
 }
 
-function PasswordSection() {
+function PasswordSection({ links }: { links: LinkedProvider[] }) {
+  const currentDialog = useConfirmation()
+  const first = useStore(s => s.me?.has_password === false)
+  const allowed = useStore(
+    s => s.instance?.auth?.password_login === true && s.settings.password_login
+  )
+  const [confirming, setConfirming] = useState(false)
+  const title = first ? 'Set a password' : 'Change password'
   const { api } = useAccount()
   const username = useStore(s => s.me?.username)
   const savedKind = useStore(s => s.me?.password_kind ?? 'text')
@@ -423,7 +437,7 @@ function PasswordSection() {
     }
   }, [needWords, words.length, username, wordsTry])
 
-  if (!username) return null
+  if (!username || (first && !allowed)) return null
 
   const retryWords = () => {
     setWordsError(null)
@@ -440,26 +454,40 @@ function PasswordSection() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    const invalid = passwordChangeError({
-      currentKind,
-      current,
-      currentWords,
-      newKind,
-      next,
-      confirm,
-      newWords,
-    })
+    const invalid = passwordChangeError(
+      {
+        currentKind,
+        current,
+        currentWords,
+        newKind,
+        next,
+        confirm,
+        newWords,
+      },
+      first
+    )
     if (invalid) {
       setError(invalid)
       return
     }
+    if (first) {
+      setConfirming(true)
+      return
+    }
+    await save()
+  }
+  const save = async (reauth?: ReAuthBody) => {
+    if (!currentDialog()) return
     setBusy(true)
     const err = await changePassword(
-      secretOf(currentKind, current, currentWords),
+      first ? undefined : secretOf(currentKind, current, currentWords),
       secretOf(newKind, next, newWords),
-      newKind
+      newKind,
+      reauth
     )
+    if (!currentDialog()) return
     setBusy(false)
+    setConfirming(false)
     setError(err)
     if (err) return
     setDone(true)
@@ -473,7 +501,7 @@ function PasswordSection() {
 
   return (
     <div>
-      <p className="mb-3 text-sm font-medium text-on-surface">Change password</p>
+      <p className="mb-3 text-sm font-medium text-on-surface">{title}</p>
       <form onSubmit={submit} className="flex flex-col gap-5">
         <input
           type="text"
@@ -484,26 +512,28 @@ function PasswordSection() {
           aria-hidden
           tabIndex={-1}
         />
-        <SecretField
-          label="Current password"
-          kind={currentKind}
-          onKind={edit(setCurrentKind)}
-          words={words}
-          selected={currentWords}
-          onSelected={edit(setCurrentWords)}
-          wordsError={wordsError}
-          onRetry={retryWords}
-        >
-          <input
-            type="password"
-            value={current}
-            onChange={e => edit(setCurrent)(e.target.value)}
-            autoComplete="current-password"
-            placeholder="Current password"
-            aria-label="Current password"
-            className={fieldCls}
-          />
-        </SecretField>
+        {!first && (
+          <SecretField
+            label="Current password"
+            kind={currentKind}
+            onKind={edit(setCurrentKind)}
+            words={words}
+            selected={currentWords}
+            onSelected={edit(setCurrentWords)}
+            wordsError={wordsError}
+            onRetry={retryWords}
+          >
+            <input
+              type="password"
+              value={current}
+              onChange={e => edit(setCurrent)(e.target.value)}
+              autoComplete="current-password"
+              placeholder="Current password"
+              aria-label="Current password"
+              className={fieldCls}
+            />
+          </SecretField>
+        )}
         <SecretField
           label="New password"
           kind={newKind}
@@ -544,15 +574,64 @@ function PasswordSection() {
             </p>
           )}
           <button type="submit" disabled={busy} className={`mt-3 ${filledBtn}`}>
-            Change password
+            {title}
           </button>
         </div>
       </form>
+      {confirming && first && (
+        <Dialog
+          title="Set a password"
+          compact
+          layer="confirm"
+          onClose={() => {
+            if (!busy) setConfirming(false)
+          }}
+        >
+          <ReAuthPrompt
+            purpose="set_password"
+            links={links}
+            ways={['idp', 'phrase']}
+            onBody={save}
+          />
+        </Dialog>
+      )}
     </div>
   )
 }
 
+function AccountMethods() {
+  const list = useSignInLinks()
+  const phrase = useStore(
+    s => s.settings.backup_phrase && s.me?.password_temporary?.change !== 'required'
+  )
+  return (
+    <>
+      <PasswordSection links={list.links ?? []} />
+      <SignInMethods list={list} />
+      {phrase && <PhraseSettings links={list.links ?? []} />}
+    </>
+  )
+}
+
 function SignInSection() {
+  const shownVersion = useSyncExternalStore(
+    client.subscribe,
+    client.shownVersion,
+    client.shownVersion
+  )
+  const acct = useAccount()
+  const dialog = useStore(s => s.activeDialog)
+  const username = useStore(s => s.me?.username)
+  const mark = acct.lifetime.sessionMark()
+  const [seenMark, setSeenMark] = useState(mark)
+  const [seen, setSeen] = useState(dialog)
+  const [generation, setGeneration] = useState(0)
+  if (seen !== dialog || seenMark !== mark) {
+    setSeenMark(mark)
+    setSeen(dialog)
+    setGeneration(generation + 1)
+  }
+  const accountKey = JSON.stringify([acct.conn.origin, username, generation, shownVersion])
   const signedIn = useStore(s => s.me !== null && !s.guest)
   const logout = useStore(s => s.logout)
   const closeDialog = useStore(s => s.closeDialog)
@@ -560,7 +639,7 @@ function SignInSection() {
     <section>
       <p className={sectionCls}>Sign-in</p>
       <div className="flex flex-col items-start gap-6">
-        {signedIn && <PasswordSection />}
+        {signedIn && <AccountMethods key={accountKey} />}
         <Link
           href="/login"
           replace
@@ -961,7 +1040,8 @@ function Menu() {
     s.activeDialog?.kind === 'settings' ? (s.activeDialog.focus ?? null) : null
   )
   const [picked, setPicked] = useState<SettingsSection>(() => sectionFor(asked, focus, shown))
-  const askKey = `${asked}|${focus}`
+  const sso = useStore(s => s.activeDialog?.kind === 'settings' && s.activeDialog.sso)
+  const askKey = sso || `${asked}|${focus}`
   const [seenAsk, setSeenAsk] = useState(askKey)
   if (seenAsk !== askKey) {
     setSeenAsk(askKey)

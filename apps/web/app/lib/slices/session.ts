@@ -680,6 +680,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           ? BOOK_COORDINATION_ERROR
           : (accountAdmission(current, home.origin, me.username) ??
             'Could not add the saved account.')
+      if (!restore && get().token) throw new Error(message)
       home.ws.stop()
       api.setToken(null)
       set({ token: null, bootError: message, error: message })
@@ -688,7 +689,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
       return false
     }
-    confirmCredential(home, me, token, restore)
+    if (restore) confirmCredential(home, me, token, true)
     return true
   }
   const applyMe = (fresh: Me, keep: boolean) => {
@@ -1377,7 +1378,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     try {
       if (
         !(await authenticated(res.user, res.token, false, currentIntent)) ||
-        mark !== sessionMark()
+        mark !== sessionMark() ||
+        !currentIntent()
       ) {
         revoke(res.token)
         return
@@ -1386,6 +1388,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       revoke(res.token)
       throw error
     }
+    confirmCredential(home, res.user, res.token, false)
     if (readLocal(accountStorage(home).key('rchat_token')) === res.token)
       setMediaCookie(home, res.token)
     if (get().guest) {
@@ -1571,12 +1574,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'openThread'
     | 'setViewing'
   > = {
-    loadInstance: async () => {
+    loadInstance: async (current = () => true) => {
       const mark = sessionMark()
       set({ instance: home.info, instanceHost: home.host })
       try {
         const info = await api.instance()
-        if (mark !== sessionMark()) return null
+        if (!current() || mark !== sessionMark()) return null
         if (!fitsHome(info, home)) throw new Error('instance endpoints moved to another site')
         accountStorage(home)
         noteHomeInfo(info, home)
@@ -1584,11 +1587,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         void ice.refresh()
         return true
       } catch {
-        if (mark !== sessionMark()) return null
+        if (!current() || mark !== sessionMark()) return null
         set({ instanceHost: home.host })
         return false
       } finally {
-        if (mark === sessionMark()) acct.discovery.done()
+        if (current() && mark === sessionMark()) acct.discovery.done()
       }
     },
 
@@ -1616,19 +1619,19 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
     },
 
-    loadSettings: async (background = false) => {
+    loadSettings: async (background = false, current = () => true) => {
       const revision = hostedPolicyRevision()
       const mark = sessionMark()
       try {
         const settings = await api.getSettings(background)
-        if (mark === sessionMark()) {
+        if (current() && mark === sessionMark()) {
           set({ settings: siteSettings(settings) })
           acceptHostedPolicy(acct.conn.origin, settings.client_other_instances, revision)
         }
       } catch (e) {
-        if (mark === sessionMark()) fail(e)
+        if (current() && mark === sessionMark()) fail(e)
       }
-      if (mark === sessionMark()) void get().loadBrand()
+      if (current() && mark === sessionMark()) void get().loadBrand()
     },
 
     // An instance that sends no brand, or can't be reached, leaves the one the app has.
@@ -1713,25 +1716,43 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     refreshAccount: async () => {
       if (!get().token || !get().me) return
+      const before = get().me
       const mark = sessionMark()
       const fresh = await api.me().catch(() => null)
       if (mark === sessionMark() && fresh)
         set(s =>
-          s.me?.username === fresh.username
+          s.me?.username === fresh.username &&
+          s.me.has_password === before?.has_password &&
+          s.me.password_kind === before?.password_kind
             ? {
-                me: { ...s.me, password_kind: fresh.password_kind },
+                me: {
+                  ...s.me,
+                  has_password: fresh.has_password,
+                  password_kind: fresh.password_kind,
+                },
               }
             : {}
         )
     },
 
-    changePassword: async (current, next, kind) => {
+    changePassword: async (current, next, kind, reauth) => {
       const at = sessionMark()
       try {
-        await api.changePassword(current, next)
+        await api.changePassword(current, next, reauth)
         if (at !== sessionMark()) return null
         const temporary = get().me?.password_temporary ?? null
-        set(s => (s.me ? { me: { ...s.me, password_kind: kind, password_temporary: null } } : {}))
+        set(s =>
+          s.me
+            ? {
+                me: {
+                  ...s.me,
+                  ...(current === undefined ? { has_password: true } : {}),
+                  password_kind: kind,
+                  password_temporary: null,
+                },
+              }
+            : {}
+        )
         // What the session could not load while it was held to the change loads now.
         if (temporary !== null && typeof window !== 'undefined') window.location.reload()
         return null
@@ -1863,10 +1884,23 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
     },
     enterSsoSession: async (res, current) => {
-      const pin = acct.credentialTarget ?? get().me?.username
-      if (pin && pin !== res.user.username)
-        throw new Error('Sign in with the saved username for this link.')
-      await enter(res, current)
+      const mark = sessionMark()
+      const previousToken = get().token
+      const pending = () => current() && mark === sessionMark() && get().token === previousToken
+      const revoke = issuedTokenCleanup()
+      try {
+        const pin = acct.credentialTarget ?? get().me?.username
+        if (pin && pin !== res.user.username)
+          throw new Error('Sign in with the saved username for this link.')
+        // A callback can target a cold account that never ran the login page's bootstrap.
+        if (pending()) await get().loadInstance(pending)
+        if (pending()) await get().loadSettings(false, pending)
+        if (!pending()) throw new Error('That sign-in expired. Try again.')
+      } catch (error) {
+        revoke(res.token)
+        throw error
+      }
+      await enter(res, pending)
       if (get().token !== res.token)
         throw new Error(get().error || 'That sign-in expired. Try again.')
     },

@@ -33,6 +33,8 @@ import type {
   DmSummary,
   IceServers,
   InstanceInfo,
+  LinkedProvider,
+  ReAuthBody,
   ExchangeRequest,
   ExchangeResponse,
   Invite,
@@ -538,8 +540,17 @@ export const endpoints = (c: ApiClient) => ({
   configShares: () => c.req<ConfigShare[]>('GET', '/config_shares'),
   configShare: (id: string) => c.req<SharedConfig>('GET', `/config_shares/${seg(id)}`),
   deleteConfigShare: (id: string) => c.req<{ ok: boolean }>('DELETE', `/config_shares/${seg(id)}`),
-  changePassword: (current: Secret, next: Secret) =>
-    c.req<{ ok: boolean }>('POST', '/me/password', { current, new: next }),
+  ssoLinks: () => c.req<LinkedProvider[]>('GET', '/me/sso'),
+  ssoUnlink: (provider: string) => c.req<{ ok: boolean }>('DELETE', '/me/sso/' + seg(provider)),
+  ssoTicket: (body: { provider: string; purpose: 'reauth' | 'link'; reauth?: ReAuthBody }) =>
+    c.req<{ ticket: string }>('POST', '/me/sso/ticket', body),
+  recoveryStatus: () => c.req<{ set: boolean }>('GET', '/me/recovery'),
+  recoveryChallenge: (username: string) =>
+    c.req<{ username: string; nonce: string }>('POST', '/auth/recovery/challenge', { username }),
+  setRecovery: (key: string, reauth: ReAuthBody) =>
+    c.req<{ set: boolean }>('PUT', '/me/recovery', { key, reauth }),
+  changePassword: (current: Secret | undefined, next: Secret, reauth?: ReAuthBody) =>
+    c.req<{ ok: boolean }>('POST', '/me/password', { current, new: next, reauth }),
   userProfile: (username: string, server?: string | null) =>
     c.req<Profile>(
       'GET',

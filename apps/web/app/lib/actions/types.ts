@@ -101,6 +101,9 @@ export type Target =
   // A guest in the voice of `server`, by its connection's name: staff's menu on the guest's tile
   // and sidebar row.
   | { kind: 'voice_guest'; server: string; name: string }
+  // A linked sign-in in the account settings, with its unlink prompt; `allowed`: another way to
+  // sign in stays.
+  | { kind: 'sign_in'; name: string; allowed: boolean; unlink(): void }
 
 export interface ActionCtx {
   acct: AccountSession

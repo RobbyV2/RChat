@@ -1,6 +1,8 @@
+import assert from 'node:assert/strict'
 import { expect, test } from 'bun:test'
 import { endpointsFrom, setMediaCookie } from '../instances'
 import { me, memoryStorage } from './fixtures'
+import { client } from '../client/client'
 import { accountStorage } from '../client/keys'
 import { testAccount } from './test_account'
 import type { MeUpdated } from '../api'
@@ -232,3 +234,82 @@ test('an interrupted initial discovery leaves the picker without a failure resul
     }
   }
 })
+
+for (const stage of ['discovery', 'settings'] as const) {
+  test(`canceling a sibling SSO exchange during ${stage} preserves the saved login`, async () => {
+    const shown = client.shown()
+    const origin = `https://pending-${stage}.test`
+    const callback = testAccount('alice', origin)
+    const sibling = testAccount('alice', origin)
+    const keys = accountStorage(sibling.conn)
+    const qualified = keys.token('alice')
+    const alias = keys.key('rchat_token')
+    const book = client.book.getState()
+    const held = Promise.withResolvers<void>()
+    const started = Promise.withResolvers<void>()
+    const revoked: string[] = []
+    const pause = async () => {
+      started.resolve()
+      await held.promise
+    }
+    const before = sibling.store.getState()
+    let current = true
+    let settingsReads = 0
+    try {
+      callback.store.setState({ me: null })
+      sibling.credentialTarget = 'alice'
+      sibling.store.setState({ token: 'prior' })
+      sibling.api.setToken('prior')
+      memoryStorage.setItem(qualified, 'prior')
+      memoryStorage.setItem(alias, 'prior')
+      callback.api.ssoExchange = async () => ({
+        kind: 'session',
+        user: me('alice'),
+        token: 'issued',
+        end_session: false,
+      })
+      sibling.api.logout = async token => {
+        revoked.push(token)
+        return { ok: true }
+      }
+      sibling.api.instance = async () => {
+        if (stage === 'discovery') await pause()
+        return {
+          host: sibling.conn.host,
+          public_url: origin,
+          api_url: origin + '/api',
+          ws_url: 'wss://' + sibling.conn.host + '/api/ws',
+        } as InstanceInfo
+      }
+      sibling.api.getSettings = async () => {
+        settingsReads++
+        if (stage === 'settings') await pause()
+        return { ...before.settings, backup_phrase: !before.settings.backup_phrase }
+      }
+      const login = callback.store
+        .getState()
+        .ssoExchange({ code: 'fixture', verifier: 'fixture' }, () => current)
+      await started.promise
+      expect(sibling.store.getState().token).toBe('prior')
+      if (stage === 'discovery') callback.store.dispose()
+      else current = false
+      held.resolve()
+      await assert.rejects(login, /expired/)
+      expect(revoked).toEqual(['issued'])
+      expect(settingsReads).toBe(stage === 'discovery' ? 0 : 1)
+      if (stage === 'discovery') expect(sibling.store.getState().instance).toBe(before.instance)
+      expect(sibling.store.getState().settings).toBe(before.settings)
+      expect(sibling.store.getState().token).toBe('prior')
+      expect(memoryStorage.getItem(qualified)).toBe('prior')
+      expect(memoryStorage.getItem(alias)).toBe('prior')
+      expect(client.book.getState()).toBe(book)
+      expect(client.shown()).toBe(shown)
+    } finally {
+      held.resolve()
+      callback.store.dispose()
+      sibling.store.dispose()
+      memoryStorage.removeItem(qualified)
+      memoryStorage.removeItem(alias)
+    }
+  })
+}

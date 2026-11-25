@@ -5,6 +5,8 @@ import { CallBanner } from '../../../components/voice_grid'
 import { ConfirmDialog } from '../../../components/server_settings'
 import { ContextMenu } from '../../../components/context_menu'
 import { ServerRail } from '../../../components/server_rail'
+import { ssoActions } from '../../sso_actions'
+import { paletteCtx } from '../../actions/ctx'
 import { registerAppActions } from '../../actions'
 import { createRoot } from 'react-dom/client'
 import { AppPreview } from '../../../components/app_preview'
@@ -125,7 +127,39 @@ function EnrollmentFixture() {
   )
 }
 const root = createRoot(document.body.appendChild(document.createElement('main')))
-if (location.search === '?enrollment') {
+if (location.search.startsWith('?first-password')) {
+  const sibling = location.search.includes('sibling')
+  const target = sibling ? owner : shown
+  const callback = sibling
+    ? new AccountSession(new InstanceConnection(endpointsFrom(target.conn.origin, null)))
+    : target
+  target.store.setState({ me: null })
+  target.credentialTarget = sibling ? me.username : undefined
+  target.socketAllowed = false
+  const exchange = callback.api.ssoExchange
+  callback.api.ssoExchange = async () => ({
+    kind: 'session',
+    user: { ...me, has_password: false },
+    token: 'fixture-token',
+    end_session: false,
+  })
+  void callback.store
+    .getState()
+    .ssoExchange({ code: 'fixture', verifier: 'fixture' }, () => true)
+    .then(() => {
+      callback.api.ssoExchange = exchange
+      if (sibling) callback.store.dispose()
+      client.show(target, 'none')
+      const ctx = paletteCtx(target.store.getState(), target)
+      document.body.dataset.paletteLink = String(ssoActions[0].available(ctx))
+      target.store.getState().openDialog({ kind: 'settings', section: 'profile' })
+      root.render(
+        <AccountProvider session={target}>
+          <SettingsMenu />
+        </AccountProvider>
+      )
+    })
+} else if (location.search === '?enrollment') {
   shown.store.setState({ token: 'fixture-token' })
   const origin = shown.conn.origin
   void Promise.resolve(

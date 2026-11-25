@@ -79,6 +79,8 @@ test('the actions marked as danger', () => {
     'rail_sign_out',
     'block',
     'unfriend',
+    'sso.unlink',
+    'sign_in_unlink',
     'member_kick',
     'member_ban',
     'member_timeout',

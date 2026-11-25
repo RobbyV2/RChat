@@ -374,39 +374,66 @@ pub async fn link(
     Ok(())
 }
 
+pub(crate) struct AccountLink {
+    pub provider: String,
+    pub linked_at: i64,
+    pub can_unlink: bool,
+}
+
+pub(crate) async fn account_links<'e>(
+    db: impl sqlx::Executor<'e, Database = sqlx::Any>,
+    state: &AppState,
+    user: &User,
+) -> Result<Vec<AccountLink>, ApiError> {
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT provider,issuer,linked_at FROM sso_links WHERE username=$1 ORDER BY provider",
+    )
+    .bind(&user.username)
+    .fetch_all(db)
+    .await?;
+    let usable: std::collections::HashSet<&str> = rows
+        .iter()
+        .filter(|(id, issuer, _)| {
+            state
+                .sso
+                .provider(id)
+                .is_some_and(|p| p.config.issuer == *issuer)
+        })
+        .map(|(id, _, _)| id.as_str())
+        .collect();
+    let protected = if !has_password(user) && usable.len() == 1 {
+        usable.into_iter().next().map(str::to_owned)
+    } else {
+        None
+    };
+    Ok(rows
+        .into_iter()
+        .map(|(provider, _, linked_at)| AccountLink {
+            can_unlink: protected.as_ref() != Some(&provider),
+            provider,
+            linked_at,
+        })
+        .collect())
+}
+
 /// Serialize removals on the account so concurrent requests preserve a sign-in method.
 pub async fn unlink(state: &AppState, user: &User, provider: &str) -> Result<(), ApiError> {
     let mut tx = auth::begin_account_write(&state.db).await?;
     let row = sqlx::query("UPDATE users SET suspended_at=suspended_at WHERE username=$1 AND created_at=$2 AND suspended_at IS NULL AND password_hash <> '!purging' RETURNING *")
         .bind(&user.username).bind(user.created_at).fetch_optional(&mut *tx).await?.ok_or_else(suspended)?;
-    let removed: Vec<String> = sqlx::query_scalar(
-        "DELETE FROM sso_links WHERE username=$1 AND provider=$2 RETURNING issuer",
-    )
-    .bind(&user.username)
-    .bind(provider)
-    .fetch_all(&mut *tx)
-    .await?;
-    if removed.is_empty() {
-        return Err(crate::api::access::not_found());
+    let links = account_links(&mut *tx, state, &User::from_row(&row)?).await?;
+    let link = links
+        .iter()
+        .find(|link| link.provider == provider)
+        .ok_or_else(crate::api::access::not_found)?;
+    if !link.can_unlink {
+        return Err(crate::api::bad("Add a password or another sign-in first"));
     }
-    let configured = |id: &str, issuer: &str| {
-        state
-            .sso
-            .provider(id)
-            .is_some_and(|p| p.config.issuer == issuer)
-    };
-    if !has_password(&User::from_row(&row)?)
-        && removed.iter().any(|issuer| configured(provider, issuer))
-    {
-        let remaining: Vec<(String, String)> =
-            sqlx::query_as("SELECT provider, issuer FROM sso_links WHERE username=$1")
-                .bind(&user.username)
-                .fetch_all(&mut *tx)
-                .await?;
-        if !remaining.iter().any(|(id, issuer)| configured(id, issuer)) {
-            return Err(crate::api::bad("Add a password or another sign-in first"));
-        }
-    }
+    sqlx::query("DELETE FROM sso_links WHERE username=$1 AND provider=$2")
+        .bind(&user.username)
+        .bind(provider)
+        .execute(&mut *tx)
+        .await?;
     crate::api::instance_audit::record_in(
         &mut tx,
         &user.username,

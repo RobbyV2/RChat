@@ -23,6 +23,7 @@ import { canEditDisplayName } from '../display_name'
 import type { AccountSession } from '../client/session'
 import type { P2pApp } from '../p2p/app/runtime'
 import { settingsSections, type SettingsSection } from '../settings_sections'
+import { signInRowActions, ssoActions } from '../sso_actions'
 import { signedIn } from './global'
 import { p2pLimitActions } from './p2p_limits'
 import type { Action } from './types'
@@ -149,6 +150,8 @@ export const settingsActions: Action[] = [
       void acct.store.getState().setAppearOffline(!acct.store.getState().me?.appear_offline),
   },
   ...p2pLimitActions,
+  ...ssoActions,
+  ...signInRowActions,
   {
     id: 'settings_settings',
     title: 'Open settings',

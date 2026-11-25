@@ -556,6 +556,7 @@ export interface Profile {
 }
 
 export interface Me extends UserRef {
+  has_password?: boolean
   banner_color: string | null
   bio: string | null
   is_site_admin: boolean
@@ -1204,6 +1205,18 @@ export interface InstanceLimits {
   resync_jitter_ms?: number
   catch_up_delay_ms?: number
 }
+
+export interface LinkedProvider {
+  can_unlink?: boolean
+  provider: string
+  name: string
+  linked_at: number
+}
+export type ReAuthBody =
+  | { password: string }
+  | { words: string[] }
+  | { phrase: { nonce: string; sig: string } }
+  | { idp: { provider: string; code: string } }
 
 export interface AuthInfo {
   client_return?: boolean

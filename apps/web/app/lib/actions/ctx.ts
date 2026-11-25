@@ -91,6 +91,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'p2p_badge':
     case 'p2p_home':
     case 'header':
+    case 'sign_in':
       return openPlace(s)
   }
 }
@@ -131,6 +132,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'p2p_call':
     case 'p2p_badge':
     case 'p2p_home':
+    case 'sign_in':
       return null
   }
 }
@@ -172,6 +174,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'p2p_badge':
     case 'p2p_home':
     case 'voice_guest':
+    case 'sign_in':
       return currentList(s)
   }
 }
@@ -281,6 +284,7 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'p2p_home':
     case 'header':
     case 'voice_guest':
+    case 'sign_in':
       return t
   }
 }

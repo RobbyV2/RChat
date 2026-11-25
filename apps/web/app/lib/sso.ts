@@ -4,7 +4,21 @@ import { authBrowser } from './platform'
 import { readLocal, writeLocal, sessionStore } from './instances'
 import { apiRoot } from './api_version'
 import { safeNext } from './invite'
-import type { AuthInfo } from './types'
+import type { AuthInfo, LinkedProvider, Me } from './types'
+
+export const canUnlink = (
+  me: Pick<Me, 'has_password'>,
+  links: LinkedProvider[],
+  provider: string
+) => {
+  const link = links.find(p => p.provider === provider)
+  return (
+    !!link &&
+    (link.can_unlink ?? (me.has_password === true || links.some(p => p.provider !== provider)))
+  )
+}
+export const linkable = (auth: AuthInfo, links: LinkedProvider[]) =>
+  auth.providers.filter(p => !links.some(link => link.provider === p.id))
 
 export const SSO_KEY = 'rchat_sso'
 export const INTENT_TTL_MS = 600_000
@@ -213,8 +227,10 @@ export async function beginPopup(
   owner: AccountSession,
   provider: string,
   purpose: 'link' | 'reauth',
-  ticket: string
+  ticket: string,
+  current: () => boolean = () => true
 ) {
+  if (!current()) throw 'expired'
   const mark = owner.lifetime.sessionMark()
   const { intent, url } = await begin(
     owner,
@@ -224,6 +240,10 @@ export async function beginPopup(
     purpose,
     ticket
   )
+  if (!current()) {
+    clearIntent(intent)
+    throw 'expired'
+  }
   return new Promise<{ code: string; verifier: string }>((resolve, reject) => {
     const done = (error?: SsoErrorCode, code?: string) => {
       clearTimeout(timer)
@@ -236,6 +256,7 @@ export async function beginPopup(
     const check = () => {
       const i = readIntent()
       if (
+        !current() ||
         i?.verifier !== intent.verifier ||
         !allowsAccountOrigin(i.origin) ||
         owner.lifetime.sessionMark() !== mark

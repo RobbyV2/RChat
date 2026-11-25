@@ -147,6 +147,7 @@ export type ActiveDialog =
   | { kind: 'admin_add_to_server'; username: string }
   | {
       kind: 'settings'
+      sso?: { type: 'link' | 'unlink'; p: { id: string; name: string } }
       focus?: SettingsFocus
       section?: SettingsAsk
     }
@@ -245,6 +246,7 @@ export interface Paged<T> {
 }
 
 export interface RChatState {
+  signInChoices?: { mark: object; username: string; links: import('./types').LinkedProvider[] }
   token: string | null
   me: Me | null
   guest: boolean
@@ -380,11 +382,11 @@ export interface RChatState {
   brand: Brand | null
   instance: InstanceInfo | null
   instanceHost: string
-  loadInstance: () => Promise<boolean | null>
+  loadInstance: (current?: () => boolean) => Promise<boolean | null>
   switchInstance: (address: string) => Promise<string | null>
   bootstrap: (restorePage?: boolean) => Promise<void>
   // `background`: the app polls on its own (see `BACKGROUND` in api.ts).
-  loadSettings: (background?: boolean) => Promise<void>
+  loadSettings: (background?: boolean, current?: () => boolean) => Promise<void>
   loadBrand: () => Promise<void>
   setBrand: (raw: unknown) => void
   setTheme: (theme: Theme) => void
@@ -401,7 +403,12 @@ export interface RChatState {
   setAppearOffline: (appearOffline: boolean) => Promise<void>
   setBio: (bio: string) => Promise<string | null>
   setDisplayName: (name: string) => Promise<string | null>
-  changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
+  changePassword: (
+    current: Secret | undefined,
+    next: Secret,
+    kind: PassKind,
+    reauth?: import('./types').ReAuthBody
+  ) => Promise<string | null>
   refreshAccount: () => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
   // Opens the site administration page at a section, one of its accounts or servers, or a row.

@@ -773,6 +773,18 @@ impl Fixture {
         self.exchange(&param(&ret, "code"), &self.verifier, None)
             .await
     }
+    async fn links(&self, token: &str) -> Value {
+        body(
+            self.client
+                .get(format!("{}/api/me/sso", self.origin))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await
+    }
+
     async fn remove(&self, token: &str, provider: &str) -> Response {
         self.client
             .delete(format!("{}/api/me/sso/{provider}", self.origin))
@@ -806,15 +818,8 @@ async fn linking_needs_reauth_and_a_free_subject() {
         .await,
         json!({"kind":"linked","provider":"fake"})
     );
-    let list = body(
-        f.client
-            .get(format!("{}/api/me/sso", f.origin))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .unwrap(),
-    )
-    .await;
+    let list = f.links(&token).await;
+    assert_eq!(list[0]["can_unlink"], true);
     assert_eq!(list[0]["name"], "Example");
     assert_eq!(list[0]["provider"], "fake");
     assert!(list[0]["linked_at"].is_i64());
@@ -911,6 +916,9 @@ async fn concurrent_unlinks_keep_one_method_and_sessions() {
     f.second.set_claims(json!({"sub":"second-subject"}));
     sqlx::query("INSERT INTO sso_links(issuer,subject,provider,username,linked_at,last_login_at) VALUES($2,'second-subject','second',$1,1,1)")
         .bind(&f.name).bind(f.second.provider_config("second").issuer).execute(&f.state.db).await.unwrap();
+    let list = f.links(&session.token).await;
+    assert_eq!(list[0]["can_unlink"], true);
+    assert_eq!(list[1]["can_unlink"], true);
     let (a, b) = tokio::join!(
         f.remove(&session.token, "fake"),
         f.remove(&session.token, "second")
@@ -1122,16 +1130,12 @@ async fn obsolete_links_cannot_replace_a_configured_sign_in() {
     ] {
         sqlx::query("INSERT INTO sso_links(issuer,subject,provider,username,linked_at,last_login_at) VALUES($1,'old-subject',$2,$3,1,1)")
             .bind(issuer).bind(provider).bind(&f.name).execute(&f.state.db).await.unwrap();
+        let list = f.links(&session.token).await;
+        assert_eq!(list[0]["provider"], "fake");
+        assert_eq!(list[0]["can_unlink"], false);
+        assert_eq!(list[1]["provider"], provider);
+        assert_eq!(list[1]["can_unlink"], true);
         if provider == "ticket" {
-            let list = body(
-                f.client
-                    .get(format!("{}/api/me/sso", f.origin))
-                    .bearer_auth(&session.token)
-                    .send()
-                    .await
-                    .unwrap(),
-            )
-            .await;
             assert_eq!(list[1]["name"], "ticket");
         }
         assert_eq!(f.remove(&session.token, "fake").await.status(), 400);

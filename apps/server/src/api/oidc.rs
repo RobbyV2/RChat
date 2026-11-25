@@ -150,25 +150,23 @@ pub struct LinkedProvider {
     pub name: String,
     /// Unix time in seconds when this sign-in was linked.
     pub linked_at: i64,
+    /// Whether this provider can currently be removed while preserving usable sign-in methods.
+    pub can_unlink: bool,
 }
 
 /// List this account's linked sign-in methods.
 ///
-/// Returns each provider ID, display name and link creation time.
+/// Returns each provider ID, display name, link creation time and current unlink eligibility. DELETE checks eligibility again.
 #[utoipa::path(get,path="/api/v1/me/sso", tag="Account", responses((status=200,description="Linked providers",body=Vec<LinkedProvider>),(status=401,description="Missing or invalid session")),security(("bearer"=[])))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Authed(user): Authed,
 ) -> Result<Json<Vec<LinkedProvider>>, ApiError> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT provider,linked_at FROM sso_links WHERE username=$1 ORDER BY provider",
-    )
-    .bind(user.username)
-    .fetch_all(&state.db)
-    .await?;
+    let rows = crate::sso::accounts::account_links(&state.db, &state, &user).await?;
     Ok(Json(
         rows.into_iter()
-            .map(|(provider, linked_at)| {
+            .map(|link| {
+                let provider = link.provider;
                 let name = state
                     .sso
                     .provider(&provider)
@@ -176,7 +174,8 @@ pub(crate) async fn list(
                 LinkedProvider {
                     provider,
                     name,
-                    linked_at,
+                    linked_at: link.linked_at,
+                    can_unlink: link.can_unlink,
                 }
             })
             .collect(),

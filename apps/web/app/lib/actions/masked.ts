@@ -47,6 +47,7 @@ const ROWS: Record<Target['kind'], boolean> = {
   p2p_home: false,
   header: false,
   voice_guest: false,
+  sign_in: false,
 }
 
 export const maskedActions: Action[] = [

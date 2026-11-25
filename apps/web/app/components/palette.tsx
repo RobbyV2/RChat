@@ -14,6 +14,7 @@ import {
 import { ArrowLeft, Command, CornerDownLeft, Search } from 'lucide-react'
 import { fuzzyParts } from '../lib/fuzzy'
 import { useHome } from '../lib/home_store'
+import { loadSignInChoices } from '../lib/sso_actions'
 import { registerAppActions } from '../lib/actions'
 import { revealMasked } from '../lib/actions/masked'
 import { actionsVersion, subscribeActions } from '../lib/actions/registry'
@@ -603,6 +604,7 @@ function Palette() {
   const view =
     revoked || (stored.kind === 'api' && noConsole) ? ({ kind: 'list' } as const) : stored
   useEffect(() => loadLists(acct), [acct])
+  useEffect(() => loadSignInChoices(acct), [acct])
   const sheet = useMedia(SHEET)
   const pressed = useRef(false)
   const box = useRef<HTMLDivElement>(null)
