@@ -45,6 +45,8 @@ import type {
   Friend,
   FriendRequest,
   InstanceInfo,
+  ExchangeRequest,
+  ExchangeResponse,
   Me,
   Member,
   Message,
@@ -407,6 +409,11 @@ export interface RChatState {
   // Goes back to where the page was opened from, or home.
   closeAdmin: () => void
   register: (body: RegisterRequest) => Promise<SignupFailure | null>
+  enterSsoSession: (
+    res: Extract<ExchangeResponse, { kind: 'session' }>,
+    current: () => boolean
+  ) => Promise<void>
+  ssoExchange: (body: ExchangeRequest, current: () => boolean) => Promise<ExchangeResponse>
   login: (body: LoginRequest) => Promise<void>
   logout: () => void
   enterGuest: () => Promise<void>

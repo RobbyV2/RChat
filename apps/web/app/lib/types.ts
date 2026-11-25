@@ -1205,7 +1205,23 @@ export interface InstanceLimits {
   catch_up_delay_ms?: number
 }
 
+export interface AuthInfo {
+  password_login: boolean
+  registration: 'open' | 'sso' | 'closed'
+  providers: { id: string; name: string }[]
+}
+export interface ExchangeRequest {
+  code: string
+  verifier: string
+  username?: string
+}
+export type ExchangeResponse =
+  | ({ kind: 'session'; end_session: boolean } & AuthResponse)
+  | { kind: 'pick_username'; suggestion: string | null; reason: 'taken' | 'invalid' }
+  | { kind: 'linked'; provider: string }
+
 export interface InstanceInfo {
+  auth?: AuthInfo
   software: 'rchat'
   id: string
   name: string

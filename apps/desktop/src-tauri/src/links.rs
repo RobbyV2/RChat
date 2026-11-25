@@ -85,6 +85,8 @@ mod tests {
 
     #[test]
     fn deep_links_keep_host_and_path() {
+        let sso = "rchat://chat.example.com/sso?code=ab12";
+        assert_eq!(deep_link(sso).as_deref(), Some(sso));
         assert_eq!(
             deep_link("rchat://chat.example.com/invite/lobby/#password=x").as_deref(),
             Some("rchat://chat.example.com/invite/lobby/#password=x")

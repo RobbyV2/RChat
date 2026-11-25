@@ -92,6 +92,7 @@ export function TrustNotice({
 export function AddInstanceFlow({
   initialOrigin,
   initialUsername,
+  providerBack,
   linkTarget = false,
   stay = false,
   onCancel,
@@ -99,6 +100,7 @@ export function AddInstanceFlow({
 }: {
   initialOrigin?: string
   initialUsername?: string
+  providerBack?: string
   linkTarget?: boolean
   stay?: boolean
   onCancel?: () => void
@@ -356,6 +358,7 @@ export function AddInstanceFlow({
             <SignInStep
               key={session.renderKey}
               adding
+              back={providerBack}
               owner={initialUsername ? { username: initialUsername, host: target.conn.host } : null}
               selectAccount={(name, mode) => {
                 if (!allowsAccountOrigin(target.origin)) return null

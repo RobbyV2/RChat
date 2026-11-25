@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { knownLinkOrigin, routeInstanceLink } from '../lib/client/instance_links'
 import { client } from '../lib/client/client'
 import type { AccountSession } from '../lib/client/session'
-import { confirmGate, openDeepLink, type LinkEnv } from '../lib/deep_links'
+import { readIntent, deliverReturn } from '../lib/sso'
+import { deepLinkTarget, confirmGate, openDeepLink, type LinkEnv } from '../lib/deep_links'
 import { inShell, mobileOs } from '../lib/platform'
 import { listen, shell } from '../lib/platform/desktop'
 import { Dialog, filledBtn, textBtn } from './ui'
@@ -51,6 +52,18 @@ export function listenForLinks(
   const deliver = async (owner: AccountSession, mark: object, links: string[]) => {
     for (const link of links) {
       if (!active() || client.shown() !== owner || owner.lifetime.sessionMark() !== mark) return
+      const intent = readIntent()
+      const target = deepLinkTarget(link, intent?.origin ?? owner.conn.origin)
+      if (target && /^\/sso\/?(?:\?|$)/.test(target.path)) {
+        // The custom scheme carries only host and port. The saved intent supplies
+        // the exact http(s) origin, including non-default loopback configurations.
+        if (intent && new URL(link).host.toLowerCase() === new URL(intent.origin).host) {
+          const search = new URL(target.path, intent.origin).search
+          if (!deliverReturn(search, intent.origin) && intent.purpose === 'login')
+            window.location.assign('/sso/' + search)
+        }
+        continue
+      }
       await openDeepLink(link, env(owner, confirmSwitch, active))
     }
   }

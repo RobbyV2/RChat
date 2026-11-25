@@ -1,3 +1,6 @@
+import type { AuthBrowser } from './auth_browser'
+import { webAuthBrowser } from './web_auth_browser'
+import { shellAuthBrowser } from './shell_auth_browser'
 import type { AccountSession } from '../client/session'
 import { probe, type Capabilities } from '../capabilities'
 import type { BlobStore } from './blobs'
@@ -96,4 +99,10 @@ export const capabilities = (): Capabilities => (caps ??= probe())
 
 export const setCapabilities = (next: Capabilities | null) => {
   caps = next
+}
+
+let browser: AuthBrowser | undefined
+export const authBrowser = () => browser ?? (inShell() ? shellAuthBrowser : webAuthBrowser)
+export const setAuthBrowser = (next?: AuthBrowser) => {
+  browser = next
 }

@@ -1,0 +1,89 @@
+{
+  "realm": "rchat",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "rchat",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "secret": "rchat-dev-secret",
+      "redirectUris": ["http://localhost:*/api/auth/oidc/keycloak/callback"],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:*/login",
+        "backchannel.logout.url": "http://host.docker.internal:<SERVER_PORT>/api/auth/oidc/keycloak/backchannel_logout"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "name": "staff"
+    },
+    {
+      "name": "eng"
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "firstName": "Alice",
+      "lastName": "Fixture",
+      "email": "alice@example.test",
+      "emailVerified": true,
+      "groups": ["staff", "eng"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "rchat-dev",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "firstName": "Bob",
+      "lastName": "Fixture",
+      "email": "bob@example.test",
+      "emailVerified": true,
+      "groups": ["eng"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "rchat-dev",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "firstName": "Admin",
+      "lastName": "Fixture",
+      "email": "admin@example.test",
+      "emailVerified": true,
+      "groups": ["staff"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "rchat-dev",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

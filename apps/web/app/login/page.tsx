@@ -130,7 +130,7 @@ function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) 
                 Use another instance
               </button>
             )}
-            <SignInStep owner={owner} missing={missing} onSuccess={() => {}} />
+            <SignInStep back={next} owner={owner} missing={missing} onSuccess={() => {}} />
           </>
         )}
         <div className="flex flex-col items-center gap-1">

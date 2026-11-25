@@ -33,6 +33,8 @@ import type {
   DmSummary,
   IceServers,
   InstanceInfo,
+  ExchangeRequest,
+  ExchangeResponse,
   Invite,
   InviteLinkInfo,
   Me,
@@ -165,6 +167,19 @@ export class ApiClient {
   // The instance's discovery document, on the unversioned path every version serves. Only a JSON
   // answer counts; a redirect (into the web app on older instances) is not followed. The boot
   // waits for it, so it gives up after 3 s.
+  async ssoExchange(body: ExchangeRequest): Promise<ExchangeResponse> {
+    return handleResponse<ExchangeResponse>(
+      await fetch(this.root + '/auth/oidc/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        credentials: 'omit',
+        redirect: 'error',
+        cache: 'no-store',
+      })
+    )
+  }
+
   async discovery(timeoutMs = 3000): Promise<InstanceInfo> {
     let res: Response
     try {

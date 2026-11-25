@@ -9,6 +9,8 @@ import type { RouteOwner } from '../lib/view'
 import type { AvatarKind } from '../lib/types'
 import type { AccountSession } from '../lib/client/session'
 import type { PassKind } from '../lib/password'
+import { showPasswordForm, showRegister } from '../lib/sso'
+import { ProviderButtons } from './sso/provider_buttons'
 import { AvatarPicker } from './avatar_picker'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError } from './ui'
@@ -21,11 +23,13 @@ export function SignInStep({
   selectAccount,
   onSuccess,
   adding = false,
+  back = '/',
 }: {
   owner?: RouteOwner | null
   missing?: boolean
   selectAccount?: (user: string | null, mode: Mode | 'guest') => AccountSession | null
   onSuccess: (account: AccountSession) => void
+  back?: string
   adding?: boolean
 }) {
   const account = useAccount()
@@ -40,11 +44,16 @@ export function SignInStep({
       mounted.current = false
     }
   }, [])
-  const passwordEnabled = useStore(s => s.settings.password_login)
+  const auth = useStore(s => s.instance?.auth)
+  const passwordEnabled = showPasswordForm(
+    auth,
+    typeof window === 'undefined' ? '' : window.location.search
+  )
+
   const guestsEnabled = useStore(s => s.settings.guests_enabled)
 
   const [picked, setMode] = useState<Mode>('login')
-  const signup = useStore(s => passwordSignup(s.settings))
+  const signup = useStore(s => passwordSignup(s.settings)) && showRegister(auth)
   const mode: Mode = signup ? picked : 'login'
   const [username, setUsername] = useState(owner?.username ?? '')
   const [passKind, setPassKind] = useState<PassKind>('text')
@@ -169,6 +178,15 @@ export function SignInStep({
           {tab('login', 'Log in')}
           {tab('register', 'Create account')}
         </div>
+      )}
+      {!missing && auth && mode === 'login' && (!owner || owner.username !== null) && (
+        <ProviderButtons
+          account={account}
+          providers={auth.providers}
+          back={back}
+          username={owner?.username ?? null}
+          divider={passwordEnabled}
+        />
       )}
       {passwordEnabled && (!owner || owner.username !== null) && (
         <form onSubmit={submit} className="flex flex-col gap-4">

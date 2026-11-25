@@ -58,6 +58,7 @@ function Present() {
       <AddInstanceFlow
         key={dialog.target.origin}
         initialOrigin={dialog.target.origin}
+        providerBack={dialog.target.path}
         initialUsername={dialog.username}
         linkTarget
         onDone={a => dialog.accept(a)}

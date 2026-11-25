@@ -23,7 +23,7 @@ import type { AccountSession } from '../client/session'
 // is open, guests, invites, the socket and catch-up after outages.
 
 import { eventRoom, cleanupRemoval } from '../viewing'
-import { ApiError, type LoginRequest, type RegisterRequest } from '../api'
+import { ApiError, createApi, type LoginRequest, type RegisterRequest } from '../api'
 import { catchUpDelay, due } from '../backoff'
 import { type Blocked, blockedSet, matchesBlockQuery, withoutTypers } from '../blocks'
 import { DEFAULT_ROUTE } from '../call_choice'
@@ -650,7 +650,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     client.updateBook(book => setGuest(addInstance(book, instance), instance.origin, guest))
   }
   let restoring: ReturnType<typeof storedCredential> = null
-  const authenticated = async (me: Me, token: string, restore: boolean) => {
+  const authenticated = async (
+    me: Me,
+    token: string,
+    restore: boolean,
+    currentIntent = () => true
+  ) => {
     const expected = acct.credentialTarget ?? (restore ? restoring?.username : undefined)
     const mark = sessionMark()
     const changed = () =>
@@ -659,12 +664,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     const save = accountUpdate(home, me)
     let readOnly = false
     const current = await client.updateBook(
-      book => (mark === sessionMark() && !changed() ? save(book) : book),
+      book => (currentIntent() && mark === sessionMark() && !changed() ? save(book) : book),
       () => {
         readOnly = true
       }
     )
-    if (mark !== sessionMark()) return false
+    if (!currentIntent() || mark !== sessionMark()) return false
     const admitted = current.instances
       .find(i => i.origin === home.origin)
       ?.accounts.some(a => a.username === me.username)
@@ -679,7 +684,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       api.setToken(null)
       set({ token: null, bootError: message, error: message })
       if (!restore) {
-        void api.logout(token).catch(() => {})
         throw new Error(message)
       }
       return false
@@ -1354,10 +1358,34 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     }, BOOT_RETRY_MS[attempt])
   }
 
-  const enter = async (res: AuthResponse) => {
+  // A session can be retargeted while its issued token waits for admission. Logout must use
+  // that token explicitly and must still go to its issuer.
+  const issuedTokenCleanup = () => {
+    const base = api.base,
+      prefix = api.prefix
+    return (token: string) => {
+      const issuer = api.base === base ? api : createApi(base, 'omit')
+      if (issuer !== api) issuer.prefix = prefix
+      void issuer.logout(token).catch(() => {})
+    }
+  }
+
+  const enter = async (res: AuthResponse, currentIntent = () => true) => {
     const mark = sessionMark()
     dropLinkCards()
-    if (!(await authenticated(res.user, res.token, false)) || mark !== sessionMark()) return
+    const revoke = issuedTokenCleanup()
+    try {
+      if (
+        !(await authenticated(res.user, res.token, false, currentIntent)) ||
+        mark !== sessionMark()
+      ) {
+        revoke(res.token)
+        return
+      }
+    } catch (error) {
+      revoke(res.token)
+      throw error
+    }
     if (readLocal(accountStorage(home).key('rchat_token')) === res.token)
       setMediaCookie(home, res.token)
     if (get().guest) {
@@ -1519,6 +1547,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'closeAdmin'
     | 'register'
     | 'login'
+    | 'ssoExchange'
+    | 'enterSsoSession'
     | 'logout'
     | 'enterGuest'
     | 'guestJoinServer'
@@ -1831,6 +1861,43 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       } catch (e) {
         return signupFailure(e)
       }
+    },
+    enterSsoSession: async (res, current) => {
+      const pin = acct.credentialTarget ?? get().me?.username
+      if (pin && pin !== res.user.username)
+        throw new Error('Sign in with the saved username for this link.')
+      await enter(res, current)
+      if (get().token !== res.token)
+        throw new Error(get().error || 'That sign-in expired. Try again.')
+    },
+    ssoExchange: async (body, current) => {
+      const mark = sessionMark()
+      const valid = () => current() && mark === sessionMark() && allowsAccountOrigin(home.origin)
+      if (!valid()) throw new Error('That sign-in expired. Try again.')
+      const revoke = issuedTokenCleanup()
+      const response = await api.ssoExchange(body)
+      if (!valid()) {
+        if (response.kind === 'session') revoke(response.token)
+        throw new Error('That sign-in expired. Try again.')
+      }
+      if (response.kind === 'session') {
+        const pin = acct.credentialTarget ?? get().me?.username
+        if (pin && pin !== response.user.username) {
+          revoke(response.token)
+          throw new Error('Sign in with the saved username for this link.')
+        }
+        const target =
+          client
+            .live()
+            .find(
+              a =>
+                a !== acct &&
+                a.conn.origin === home.origin &&
+                (a.store.getState().me?.username ?? a.credentialTarget) === response.user.username
+            ) ?? acct
+        await target.store.getState().enterSsoSession(response, valid)
+      }
+      return response
     },
     login: body => act(() => authenticate('/auth/login', body)),
 
