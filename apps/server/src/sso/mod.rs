@@ -4,6 +4,7 @@ pub mod config;
 #[cfg(test)]
 pub(crate) mod fake_idp;
 pub mod flow;
+pub mod groups;
 pub mod jwt;
 pub mod provider;
 pub mod scim;

@@ -1322,6 +1322,36 @@ async fn sso_tables_migrate_onto_an_old_database() {
 }
 
 #[tokio::test]
+async fn sso_grant_groups_migrate_onto_an_old_database() {
+    on_each_database("sso_grant_group_upgrade", |url| async move {
+        let db = open(Some(&url)).await.unwrap();
+        for sql in [
+            "ALTER TABLE sso_grants DROP COLUMN grp",
+            "UPDATE settings SET value = '44' WHERE key = 'schema_version'",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)",
+            "INSERT INTO sso_grants(username, server, role_id, created_at) VALUES('alice', 'club', 0, 7)",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM sso_grants WHERE username = 'alice' AND server = 'club' AND role_id = 0 AND created_at = 7 AND grp IS NULL"
+                )
+                .await,
+                1
+            );
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn guest_grant_networks_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("grant_network_upgrade");
     let wipe = || {

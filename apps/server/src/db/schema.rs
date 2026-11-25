@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS scim_users(id TEXT NOT NULL PRIMARY KEY, username TEX
 CREATE TABLE IF NOT EXISTS scim_groups(id TEXT NOT NULL PRIMARY KEY, display_name TEXT NOT NULL UNIQUE, external_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS scim_group_members(group_id TEXT NOT NULL REFERENCES scim_groups(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(group_id, username));
 CREATE TABLE IF NOT EXISTS sso_user_groups(username TEXT NOT NULL, source TEXT NOT NULL, grp TEXT NOT NULL, PRIMARY KEY(username,source,grp));
-CREATE TABLE IF NOT EXISTS sso_grants(username TEXT NOT NULL, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, role_id INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, PRIMARY KEY(username,server,role_id));
+CREATE TABLE IF NOT EXISTS sso_grants(username TEXT NOT NULL, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, role_id INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, grp TEXT, PRIMARY KEY(username,server,role_id));
 CREATE INDEX IF NOT EXISTS idx_sso_pending_expires ON sso_pending(expires_at);
 CREATE INDEX IF NOT EXISTS idx_scim_group_members_username ON scim_group_members(username);
 CREATE INDEX IF NOT EXISTS idx_sso_grants_server ON sso_grants(server);
@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS scim_users(id TEXT NOT NULL PRIMARY KEY, username TEX
 CREATE TABLE IF NOT EXISTS scim_groups(id TEXT NOT NULL PRIMARY KEY, display_name TEXT NOT NULL UNIQUE, external_id TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS scim_group_members(group_id TEXT NOT NULL REFERENCES scim_groups(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(group_id, username));
 CREATE TABLE IF NOT EXISTS sso_user_groups(username TEXT NOT NULL, source TEXT NOT NULL, grp TEXT NOT NULL, PRIMARY KEY(username,source,grp));
-CREATE TABLE IF NOT EXISTS sso_grants(username TEXT NOT NULL, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, role_id BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, PRIMARY KEY(username,server,role_id));
+CREATE TABLE IF NOT EXISTS sso_grants(username TEXT NOT NULL, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, role_id BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, grp TEXT, PRIMARY KEY(username,server,role_id));
 CREATE INDEX IF NOT EXISTS idx_sso_pending_expires ON sso_pending(expires_at);
 CREATE INDEX IF NOT EXISTS idx_scim_group_members_username ON scim_group_members(username);
 CREATE INDEX IF NOT EXISTS idx_sso_grants_server ON sso_grants(server);

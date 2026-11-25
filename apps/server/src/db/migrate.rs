@@ -114,6 +114,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("users", "recovery_set_at {INT}"),
     ("users", "suspended_at {INT}"),
     ("tokens", "sso_provider TEXT"),
+    ("sso_grants", "grp TEXT"),
     ("tokens", "sso_sid TEXT"),
     ("servers", "upload_expiry {INT}"),
     ("media", "ttl {INT}"),
@@ -248,7 +249,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 42: text-only channels.
 /// 43: independent server management permissions.
 /// 44: account suspension, sign-in providers and provisioning.
-pub const SCHEMA_VERSION: i64 = 44;
+/// 45: configured group responsible for each managed membership or role.
+pub const SCHEMA_VERSION: i64 = 45;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 18] {

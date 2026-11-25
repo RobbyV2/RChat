@@ -969,7 +969,7 @@ pub(crate) async fn list_my_servers(
     }
 }
 
-async fn build_member(
+pub(crate) async fn build_member(
     db: &Db,
     hub: &Hub,
     server: &str,
@@ -2714,7 +2714,7 @@ async fn card_of(
             };
             let (lite, ticket) = (access.lite().clone(), access.ticket());
             let preview = match access.via() {
-                Via::Joinable => InvitePreview::default(),
+                Via::Joinable | Via::Managed => InvitePreview::default(),
                 Via::Public | Via::Member | Via::Password | Via::Grant | Via::Staff => {
                     invite_preview(db, *access, contents, revision).await?
                 }
@@ -2826,8 +2826,8 @@ async fn room_in_server(
 }
 
 /// A membership `insert_member` created, with its join message when one was posted.
-struct NewMember {
-    notice: Option<i64>,
+pub(crate) struct NewMember {
+    pub(crate) notice: Option<i64>,
 }
 
 async fn insert_member(
@@ -2840,8 +2840,19 @@ async fn insert_member(
     let mut tx = db.begin().await?;
     lock_account(&mut tx, username).await?;
     lock_server(&mut tx, server).await?;
+    let result = insert_member_locked(&mut tx, limits, access, username).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub(crate) async fn insert_member_locked(
+    tx: &mut AnyConnection,
+    limits: &Limits,
+    access: &ServerAccess,
+    username: &str,
+) -> Result<Option<NewMember>, ApiError> {
+    let server = access.name();
     if is_member(&mut *tx, server, username).await? {
-        tx.commit().await?;
         return Ok(None);
     }
     let banned = sqlx::query("SELECT 1 FROM server_bans WHERE server = $1 AND username = $2")
@@ -2853,8 +2864,8 @@ async fn insert_member(
     if banned {
         return Err(forbidden(BANNED));
     }
-    room_in_server(&mut tx, limits, server).await?;
-    room_for_account(&mut tx, limits, username).await?;
+    room_in_server(tx, limits, server).await?;
+    room_for_account(tx, limits, username).await?;
     let inserted = sqlx::query(
         "INSERT INTO members(server, username, is_admin, joined_at, joined_via) SELECT $1, $2, 0, $3, $4 WHERE NOT EXISTS(SELECT 1 FROM server_bans WHERE server = $1 AND username = $2) ON CONFLICT(server, username) DO NOTHING",
     )
@@ -2866,13 +2877,13 @@ async fn insert_member(
     .await?
     .rows_affected();
     if inserted > 0 {
-        shift_member_count(&mut tx, server, 1).await?;
-        access.spend_ticket(&mut tx).await?;
+        shift_member_count(tx, server, 1).await?;
+        access.spend_ticket(tx).await?;
         if let Some(id) = access.password_id()
-            && let Some((kind, label)) = crate::api::passwords::joined_with(&mut tx, id).await?
+            && let Some((kind, label)) = crate::api::passwords::joined_with(tx, id).await?
         {
             audit::record(
-                &mut tx,
+                tx,
                 Entry::new(
                     server,
                     &audit::Actor::User(username.to_string()),
@@ -2883,12 +2894,10 @@ async fn insert_member(
             )
             .await?;
         }
-        let notice = post_system(&mut tx, server, username, SystemKind::Join).await?;
-        tx.commit().await?;
+        let notice = post_system(tx, server, username, SystemKind::Join).await?;
         return Ok(Some(NewMember { notice }));
     }
     let member = is_member(&mut *tx, server, username).await?;
-    tx.commit().await?;
     match member {
         true => Ok(None),
         false => Err(forbidden(BANNED)),
@@ -2995,42 +3004,55 @@ pub(crate) async fn join_server(
     let inserted = insert_member(&state.db, &state.limits, &access, &user.username).await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     let detail = server_detail(&state.db, &state.hub, &access).await?;
-    let member = build_member(
-        &state.db,
-        &state.hub,
-        &key,
-        access.lite().creator.as_deref(),
-        &user.username,
-        false,
-        0,
-    )
-    .await?;
     if let Some(NewMember { notice }) = inserted {
-        state.hub.broadcast(WsEvent::MemberJoined {
-            server: key.clone(),
-            member,
-        });
-        let running =
-            running_timeouts(&state.db, &key, std::slice::from_ref(&user.username)).await?;
-        if let Some(timeout) = running.into_values().next() {
-            state
-                .hub
-                .broadcast(timeout_event(&key, &user.username, Some(timeout)));
-        }
-        announce_system(&state, &key, notice).await;
+        announce_join(
+            &state,
+            &key,
+            access.lite().creator.as_deref(),
+            &user.username,
+            notice,
+        )
+        .await?;
     }
     Ok(Json(detail))
 }
 
-/// A membership `end_membership` removed, with its leave message when one was posted.
-struct Ended {
+pub(crate) async fn announce_join(
+    state: &AppState,
+    key: &str,
+    creator: Option<&str>,
+    username: &str,
     notice: Option<i64>,
+) -> Result<(), ApiError> {
+    let member = build_member(&state.db, &state.hub, key, creator, username, false, 0).await;
+    let joined = member.map(|member| {
+        state.hub.broadcast(WsEvent::MemberJoined {
+            server: key.to_owned(),
+            member,
+        });
+    });
+    let timeout = running_timeouts(&state.db, key, &[username.to_owned()])
+        .await
+        .map(|running| {
+            if let Some(timeout) = running.into_values().next() {
+                state
+                    .hub
+                    .broadcast(timeout_event(key, username, Some(timeout)));
+            }
+        });
+    announce_system(state, key, notice).await;
+    joined.and(timeout)
+}
+
+/// A membership `end_membership` removed, with its leave message when one was posted.
+pub(crate) struct Ended {
+    pub(crate) notice: Option<i64>,
 }
 
 /// Ends `username`'s membership of `server` (leave, kick, ban): drops the member row, their
 /// roles there and their pings in the server, lowers the member count and posts a leave message.
 /// The caller took `lock_server` first. Returns `None` when they were not a member.
-async fn end_membership(
+pub(crate) async fn end_membership(
     conn: &mut sqlx::AnyConnection,
     server: &str,
     username: &str,
@@ -3042,6 +3064,11 @@ async fn end_membership(
         .await?
         .rows_affected();
     sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2")
+        .bind(server)
+        .bind(username)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM sso_grants WHERE server = $1 AND username = $2")
         .bind(server)
         .bind(username)
         .execute(&mut *conn)
@@ -3721,7 +3748,7 @@ async fn purge_members(
     }
     let mut gone = 0;
     for chunk in removed.chunks(500) {
-        for table in ["members", "user_roles"] {
+        for table in ["members", "user_roles", "sso_grants"] {
             let sql = format!(
                 "DELETE FROM {table} WHERE server = $1 AND username IN ({})",
                 placeholders(2, chunk.len())
@@ -4453,6 +4480,7 @@ pub(crate) async fn unban_member(
     access.require_perm(&state.db, Perm::Kick).await?;
     let actor = access.audit_actor(&state.db, Perm::Kick).await?;
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, access.name()).await?;
     let removed = sqlx::query("DELETE FROM server_bans WHERE server = $1 AND username = $2")
         .bind(access.name())
         .bind(&target)
@@ -5358,6 +5386,7 @@ pub(crate) async fn update_role(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
     let (was_name, was_color, was_mentionable) =
         lock_role_version(&mut tx, &key, id, current, Some(was_on)).await?;
     let needed = current | perms.unwrap_or(0) | if on { Perm::MentionEveryone as i64 } else { 0 };
@@ -5500,6 +5529,7 @@ pub(crate) async fn delete_role(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
     let gone = sqlx::query("DELETE FROM roles WHERE id = $1 RETURNING name, color, perms")
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -5608,6 +5638,7 @@ pub(crate) async fn assign_role(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
     lock_role_version(&mut tx, &key, id, role_perms, None).await?;
     let (mine, own) = access.role_authority_in(&mut tx, Perm::AssignRoles).await?;
     let theirs = access
@@ -5625,15 +5656,7 @@ pub(crate) async fn assign_role(
                 || !can_grant(own, false, role_perms)
                 || target != user.username && !can_moderate(own, false, theirs)),
     );
-    let added = sqlx::query(
-        "INSERT INTO user_roles(server, username, role_id) VALUES($1, $2, $3) ON CONFLICT(server, username, role_id) DO NOTHING",
-    )
-    .bind(&key)
-    .bind(&target)
-    .bind(id)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    let added = grant_role(&mut tx, &key, &target, id).await?;
     if added > 0 {
         record_role_member(
             &mut tx,
@@ -5646,10 +5669,7 @@ pub(crate) async fn assign_role(
         .await?;
     }
     tx.commit().await?;
-    state.hub.broadcast(WsEvent::RolesChanged {
-        server: key.clone(),
-    });
-    evict_unviewable(&state, &key, None).await;
+    announce_roles_changed(&state, &key).await;
     Ok(ok())
 }
 
@@ -5721,14 +5741,8 @@ pub(crate) async fn unassign_role(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
-    let removed =
-        sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2 AND role_id = $3")
-            .bind(&key)
-            .bind(&target)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
+    lock_server(&mut tx, &key).await?;
+    let removed = revoke_role(&mut tx, &key, &target, id).await?;
     if removed > 0 {
         record_role_member(
             &mut tx,
@@ -5744,13 +5758,57 @@ pub(crate) async fn unassign_role(
     match removed {
         0 => Err(not_found("Not assigned")),
         _ => {
-            state.hub.broadcast(WsEvent::RolesChanged {
-                server: key.clone(),
-            });
-            evict_unviewable(&state, &key, None).await;
+            announce_roles_changed(&state, &key).await;
             Ok(ok())
         }
     }
+}
+
+pub(crate) async fn grant_role(
+    tx: &mut AnyConnection,
+    server: &str,
+    username: &str,
+    id: i64,
+) -> sqlx::Result<u64> {
+    Ok(sqlx::query(
+        "INSERT INTO user_roles(server, username, role_id) VALUES($1, $2, $3) ON CONFLICT(server, username, role_id) DO NOTHING",
+    )
+    .bind(server)
+    .bind(username)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected())
+}
+
+pub(crate) async fn revoke_role(
+    tx: &mut AnyConnection,
+    server: &str,
+    username: &str,
+    id: i64,
+) -> sqlx::Result<u64> {
+    sqlx::query("DELETE FROM sso_grants WHERE server = $1 AND username = $2 AND role_id = $3")
+        .bind(server)
+        .bind(username)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    Ok(
+        sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2 AND role_id = $3")
+            .bind(server)
+            .bind(username)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected(),
+    )
+}
+
+pub(crate) async fn announce_roles_changed(state: &AppState, server: &str) {
+    state.hub.broadcast(WsEvent::RolesChanged {
+        server: server.to_owned(),
+    });
+    evict_unviewable(state, server, None).await;
 }
 
 /// A channel rule subject for the audit log: `{kind: "user", name}` or `{kind: "role", id,

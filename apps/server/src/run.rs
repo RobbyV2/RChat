@@ -418,6 +418,14 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
 }
 
 fn spawn_jobs(state: &AppState, held: &mut Held) {
+    let sso = state.clone();
+    held.spawn(async move {
+        if holds(&sso, "sso-reconcile", Duration::from_secs(300)).await
+            && crate::sso::groups::reconcile_all(&sso).await.is_err()
+        {
+            tracing::warn!("Startup SSO group reconciliation failed");
+        }
+    });
     let sweeper = state.clone();
     held.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));

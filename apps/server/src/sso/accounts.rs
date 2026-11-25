@@ -288,6 +288,14 @@ async fn sign_in_once(
     }
     // The active user row and its verified link are locked until this bearer
     // commits. A subsequent purge removes the link and bearer together.
+    super::groups::set_claim_groups(
+        &mut tx,
+        &config.group_map,
+        &username,
+        &id.provider,
+        &id.groups,
+    )
+    .await?;
     let token = auth::new_token();
     sqlx::query("INSERT INTO tokens(token, username, created_at, sso_provider, sso_sid) VALUES($1,$2,$3,$4,$5)")
         .bind(secret_key(&token))
@@ -315,6 +323,14 @@ async fn sign_in_once(
         serde_json::json!({"provider":id.provider,"created":created}),
     )
     .await;
+    if let Err(error) = super::groups::reconcile(state, &username).await {
+        sqlx::query("DELETE FROM tokens WHERE token=$1 AND username=$2")
+            .bind(secret_key(&token))
+            .bind(&username)
+            .execute(&state.db)
+            .await?;
+        return Err(error);
+    }
     Ok(Some(SignIn::Session {
         user,
         created,

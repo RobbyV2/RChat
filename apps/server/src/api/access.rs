@@ -123,6 +123,7 @@ pub enum Via {
     /// An account at the join step of a server anyone may join by its name but only members
     /// read: it may join, and sees nothing of the server before it has.
     Joinable,
+    Managed,
 }
 
 #[derive(Clone, Copy)]
@@ -134,6 +135,7 @@ enum Slot<'a> {
 /// What a request shows to get into a server: a password, and guest grants that live as long as
 /// the `GUEST_GRANT_DAYS` of the state that checks them.
 pub struct Proof<'a> {
+    managed: bool,
     password: Slot<'a>,
     grants: Vec<String>,
     grant_ttl: i64,
@@ -142,9 +144,17 @@ pub struct Proof<'a> {
 impl<'a> Proof<'a> {
     pub fn none() -> Proof<'static> {
         Proof {
+            managed: false,
             password: Slot::Closed,
             grants: Vec::new(),
             grant_ttl: 0,
+        }
+    }
+
+    pub(crate) fn managed() -> Proof<'static> {
+        Proof {
+            managed: true,
+            ..Self::none()
         }
     }
 
@@ -740,6 +750,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
     };
     let via = match (member, open) {
         (true, _) => Via::Member,
+        (false, _) if proof.managed && who.username.is_some() => Via::Managed,
         (false, Some(via)) => via,
         (false, None) => match (granted, who.site_admin, proof.password, checked) {
             (true, _, _, _) => Via::Grant,
@@ -860,7 +871,10 @@ pub async fn resolve_reading(
             user: viewer.cloned(),
             ticket,
         })))),
-        (Via::Member | Via::Password | Via::Grant | Via::Staff | Via::Joinable, _) => Ok(None),
+        (
+            Via::Member | Via::Password | Via::Grant | Via::Staff | Via::Joinable | Via::Managed,
+            _,
+        ) => Ok(None),
     }
 }
 
@@ -2904,7 +2918,7 @@ mod tests {
 
     /// Calls outside `ws/` that run after the gate decided: (file, function, call).
     const AFTER_THE_GATE: [(&str, &str, &str); 6] = [
-        ("api/servers.rs", "insert_member", "is_member("),
+        ("api/servers.rs", "insert_member_locked", "is_member("),
         ("api/servers.rs", "ban_member", "is_member("),
         ("api/servers.rs", "set_admin", "member_role("),
         ("api/servers.rs", "assign_role", "is_member("),
@@ -3055,7 +3069,7 @@ mod tests {
             ("ws/filter.rs", "match is_member(db, server, user)"),
             (
                 "api/servers.rs",
-                "async fn insert_member() { is_member(&mut *tx, s, u) }",
+                "async fn insert_member_locked() { is_member(&mut *tx, s, u) }",
             ),
             (
                 "api/servers.rs",
