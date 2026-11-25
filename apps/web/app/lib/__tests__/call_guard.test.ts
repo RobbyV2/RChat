@@ -2,13 +2,16 @@ import { shownPeer } from './shown_peer'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CallBanner, VoiceDock } from '../../components/voice_grid'
-import { expect, test } from 'bun:test'
+import { afterAll, expect, test } from 'bun:test'
 
 import { client } from '../client/client'
+import { resetSessionCaches } from '../store'
 import type { CallSource } from '../client/calls'
 import type { AccountSession } from '../client/session'
 import { until, user, textChannel, serverDetail } from './fixtures'
 import { testAccount } from './test_account'
+
+afterAll(resetSessionCaches)
 
 function accept(account: AccountSession) {
   const confirm = account.store.getState().confirm!
