@@ -1,4 +1,5 @@
 'use client'
+import { confirmationHint } from '../lib/provider_confirmation'
 import { watchPagePolicy } from '../lib/client/hosted_policy'
 import { useP2pApp, useP2p } from '../lib/client/p2p_react'
 
@@ -370,7 +371,13 @@ function Chat() {
     store.getState().setError('Your session has ended. Please sign in again.')
     if (client.ownsHistoryEntry(account)) {
       const { pathname, search, hash } = window.location
-      router.replace(loginHref(pathname + search + hash, routeOwnerFor(account)))
+      const hint = confirmationHint(account)
+      router.replace(
+        loginHref(
+          pathname + search + hash,
+          hint ? { username: hint.username, host: account.conn.host } : routeOwnerFor(account)
+        )
+      )
     }
   }, [account, authExpired, router, store])
 

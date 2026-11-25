@@ -37,6 +37,8 @@ pub enum Return {
 
 #[derive(Serialize, Deserialize)]
 pub struct NewFlow {
+    #[serde(default)]
+    pub confirm: bool,
     pub kind: FlowKind,
     pub ret: Return,
     pub challenge: String,
@@ -54,8 +56,10 @@ struct Pending {
     redirect_uri: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AppCode {
+    #[serde(default)]
+    pub confirm: bool,
     pub kind: FlowKind,
     pub identity: Identity,
     pub client_id: String,
@@ -343,7 +347,7 @@ pub async fn begin(
         ("code_challenge", &digest(&pending.verifier)),
         ("code_challenge_method", "S256"),
     ]);
-    if pending.flow.kind == FlowKind::Reauth {
+    if pending.flow.confirm || pending.flow.kind == FlowKind::Reauth {
         url.query_pairs_mut()
             .extend_pairs([("prompt", "login"), ("max_age", "0")]);
     }
@@ -510,6 +514,9 @@ async fn complete(
             .collect(),
         sid: claims.sid.as_deref().map(accounts::oidc_key),
     };
+    if p.flow.confirm && !fresh(claims.auth_time) {
+        return Err(CallbackError::Failed);
+    }
     if p.flow.kind == FlowKind::Reauth
         && (!fresh(claims.auth_time)
             || !linked(&state.db, &identity, p.flow.user.as_deref())
@@ -519,6 +526,7 @@ async fn complete(
         return Err(CallbackError::Failed);
     }
     let app = AppCode {
+        confirm: p.flow.confirm,
         session_key: p.flow.session_key,
         kind: p.flow.kind,
         identity,
@@ -548,6 +556,56 @@ async fn complete(
         .await
         .map_err(|_| CallbackError::Failed)?;
     Ok(value)
+}
+
+/// One-use Settings confirmation bound to the session returned by this exchange.
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct Confirmation {
+    /// Linked provider ID.
+    pub provider: String,
+    /// One-use fresh IdP proof for the newly issued bearer.
+    pub code: String,
+    /// Proof deadline in Unix seconds.
+    pub expires_at: i64,
+}
+
+pub(super) async fn issue_confirmation(
+    conn: &mut sqlx::AnyConnection,
+    app: &AppCode,
+    username: &str,
+    token: &str,
+    session_deadline: i64,
+) -> Result<Confirmation, ApiError> {
+    let auth_time = app.auth_time.ok_or_else(expired)?;
+    let expires_at = app
+        .expires_at
+        .min(auth_time.saturating_add(FRESH_SECS))
+        .min(session_deadline);
+    if expires_at <= now() {
+        return Err(expired());
+    }
+    let proof = AppCode {
+        kind: FlowKind::Reauth,
+        confirm: false,
+        user: Some(username.to_owned()),
+        session_key: Some(secret_key(token)),
+        ..app.clone()
+    };
+    let code = new_token();
+    sqlx::query(
+        "INSERT INTO sso_pending(id,kind,provider,data,expires_at) VALUES($1,'code',$2,$3,$4)",
+    )
+    .bind(secret_key(&code))
+    .bind(&app.identity.provider)
+    .bind(serde_json::to_string(&proof).map_err(ApiError::internal)?)
+    .bind(expires_at)
+    .execute(conn)
+    .await?;
+    Ok(Confirmation {
+        provider: app.identity.provider.clone(),
+        code,
+        expires_at,
+    })
 }
 
 pub async fn take_code(db: &Db, code: &str) -> Result<AppCode, ApiError> {

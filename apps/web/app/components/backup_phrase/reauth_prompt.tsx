@@ -1,4 +1,10 @@
 'use client'
+import { ApiError } from '../../lib/api'
+import {
+  recentConfirmation,
+  takeRecentConfirmation,
+  watchProviderConfirmation,
+} from '../../lib/provider_confirmation'
 import { useEffect, useRef, useState } from 'react'
 import { useAccount, useStore } from '../../lib/client/react'
 import { seed, derive } from '../../lib/backup_phrase'
@@ -31,6 +37,7 @@ export function ReAuthPrompt({
     current = useConfirmation()
   const me = useStore(s => s.me),
     auth = useStore(s => s.instance?.auth)
+  const proof = useStore(s => s.providerConfirmation)
   const checkPhrase = ways.includes('phrase')
   const [hasPhrase, setHasPhrase] = useState(false)
   const [phraseOpen, setPhraseOpen] = useState(false)
@@ -54,17 +61,30 @@ export function ReAuthPrompt({
       live = false
     }
   }, [acct, checkPhrase, current])
-  const confirm = async (get: () => Promise<ReAuthBody>) => {
+  const confirm = async (get: () => Promise<ReAuthBody>, freshProvider?: string) => {
     if (!current() || pending.current) return
     pending.current = true
     setBusy(true)
     setError(null)
+    let unwatch: (() => void) | undefined
     try {
       const body = await get()
-      if (current()) await onBody(body)
+      if (!current()) return
+      if (freshProvider) unwatch = watchProviderConfirmation(acct, freshProvider, current)
+      await onBody(body)
     } catch (e) {
+      if (freshProvider && current()) {
+        if (unwatch && e instanceof ApiError && e.status === 401 && e.message === 'Unauthorized') {
+          acct.store.getState().expireSession()
+        } else if (e === 'expired' || (unwatch && e instanceof ApiError && e.status === 401)) {
+          // The callback and the socket's revocation check can arrive in either order.
+          unwatch ??= watchProviderConfirmation(acct, freshProvider, current)
+          await acct.store.getState().checkSession()
+        }
+      }
       if (current()) setError(confirmationError(e))
     } finally {
+      unwatch?.()
       pending.current = false
       if (current()) setBusy(false)
     }
@@ -101,6 +121,28 @@ export function ReAuthPrompt({
       )}
       {ways.includes('idp') &&
         links
+          .filter(
+            l =>
+              proof &&
+              recentConfirmation(acct, l.provider) &&
+              auth?.providers.some(p => p.id === l.provider)
+          )
+          .map(({ provider, name }) => (
+            <button
+              key={provider}
+              type="button"
+              className={textBtn}
+              onClick={() =>
+                void confirm(async () => ({
+                  idp: { provider, code: takeRecentConfirmation(acct, provider).code },
+                }))
+              }
+            >
+              Confirm with recent {name} sign-in
+            </button>
+          ))}
+      {ways.includes('idp') &&
+        links
           .filter(l => auth?.providers.some(p => p.id === l.provider))
           .map(({ provider, name }) => (
             <button
@@ -113,7 +155,7 @@ export function ReAuthPrompt({
                   if (!current()) throw new Error('Sign-in expired')
                   const { code } = await beginPopup(acct, provider, 'reauth', ticket, current)
                   return { idp: { provider, code } }
-                })
+                }, provider)
               }
             >
               Sign in with {name}

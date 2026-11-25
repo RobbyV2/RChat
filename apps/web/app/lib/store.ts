@@ -434,6 +434,7 @@ export function createChatStore(acct: AccountSession) {
       atBottom: {},
       signedOut: false,
       authExpired: false,
+      providerConfirmation: undefined,
       bootError: null,
       wsStatus: 'red',
       theme: client.device.theme,

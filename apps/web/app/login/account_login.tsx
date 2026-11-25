@@ -1,3 +1,5 @@
+import Link from 'next/link'
+import { confirmationHint } from '../lib/provider_confirmation'
 import { canAddInstance, hostedLockMessage } from '../lib/client/hosted_policy'
 import { ownInstance } from '../lib/instances'
 import { routeOwnerFor } from '../lib/client/account_paths'
@@ -18,15 +20,20 @@ export function loginHref(next = '/', owner?: RouteOwner | null) {
 
 export function SignedOutAccount({ account }: { account: AccountSession }) {
   const { pathname, search, hash } = window.location
+  const hint = confirmationHint(account)
+  const SignInLink = hint ? Link : 'a'
   return (
     <main className="flex h-app flex-col items-center justify-center gap-3 px-6 text-center">
       <p>You’re signed out of this account.</p>
-      <a
+      <SignInLink
         className="text-primary underline"
-        href={loginHref(pathname + search + hash, routeOwnerFor(account))}
+        href={loginHref(
+          pathname + search + hash,
+          hint ? { username: hint.username, host: account.conn.host } : routeOwnerFor(account)
+        )}
       >
         Sign in again
-      </a>
+      </SignInLink>
     </main>
   )
 }

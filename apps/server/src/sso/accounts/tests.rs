@@ -71,6 +71,7 @@ async fn first_sign_in_creates_an_account_without_a_password() {
             user: u,
             token,
             created: true,
+            ..
         } = sign_in(&state, &id, None).await.unwrap()
         else {
             panic!("expected first session")

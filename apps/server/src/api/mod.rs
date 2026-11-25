@@ -2123,6 +2123,10 @@ pub fn routes(
             .route("/me/sso/ticket", post(oidc::ticket))
             .route("/auth/oidc/client-consent", post(oidc::client_consent))
             .route("/auth/oidc/exchange", post(oidc::exchange))
+            .route(
+                "/auth/oidc/exchange/confirmation",
+                post(oidc::exchange_confirmation),
+            )
             .route("/auth/words/{username}", get(auth::words))
             .route("/auth/recovery/challenge", post(recovery::challenge))
             .route("/auth/recovery", post(recovery::recover))

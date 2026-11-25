@@ -126,6 +126,7 @@ impl Modify for Bearer {
         super::oidc::unlink_ticket_provider,
         super::oidc::callback,
         super::oidc::exchange,
+        super::oidc::exchange_confirmation,
         super::oidc::backchannel_logout,
         super::oidc::client_consent,
         super::auth::words,
@@ -721,6 +722,7 @@ pub(crate) mod tests {
             );
         }
         assert!(doc["paths"]["/api/v1/settings"]["patch"].is_null());
+        assert!(doc["paths"]["/api/v1/auth/oidc/exchange/confirmation"]["post"].is_object());
         for (name, schema) in doc["components"]["schemas"].as_object().expect("schemas") {
             assert!(
                 schema["properties"]["is_site_admin"].is_null(),

@@ -568,6 +568,7 @@ mod tests {
                 "password_login": true,
                 "registration": "open",
                 "client_return": true,
+                "confirm_login": true,
                 "providers": [{"id": "authentik", "name": "Authentik"}]
             })
         );

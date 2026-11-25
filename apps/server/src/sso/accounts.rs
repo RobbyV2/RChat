@@ -1,3 +1,4 @@
+use super::flow::{self, AppCode, Confirmation};
 use crate::api::ApiError;
 use crate::db::now;
 use crate::state::AppState;
@@ -59,6 +60,7 @@ pub enum SignIn {
     Session {
         user: User,
         created: bool,
+        confirmation: Option<Confirmation>,
         token: String,
     },
     NeedsUsername {
@@ -119,8 +121,25 @@ pub async fn sign_in(
     id: &Identity,
     picked: Option<&str>,
 ) -> Result<SignIn, ApiError> {
+    login(state, id, picked, None).await
+}
+
+pub async fn confirm_sign_in(
+    state: &AppState,
+    app: &AppCode,
+    username: &str,
+) -> Result<SignIn, ApiError> {
+    login(state, &app.identity, None, Some((username, app))).await
+}
+
+async fn login(
+    state: &AppState,
+    id: &Identity,
+    picked: Option<&str>,
+    confirmation: Option<(&str, &AppCode)>,
+) -> Result<SignIn, ApiError> {
     for _ in 0..2 {
-        if let Some(result) = sign_in_once(state, id, picked).await? {
+        if let Some(result) = sign_in_once(state, id, picked, confirmation).await? {
             return Ok(result);
         }
     }
@@ -144,6 +163,7 @@ async fn sign_in_once(
     state: &AppState,
     id: &Identity,
     picked: Option<&str>,
+    confirmation: Option<(&str, &AppCode)>,
 ) -> Result<Option<SignIn>, ApiError> {
     let config = &state.sso.config;
     let provider = config
@@ -159,6 +179,11 @@ async fn sign_in_once(
     let defaults = &Policy::cached(&state.db).await.default_servers;
     let mut tx = auth::begin_account_write(&state.db).await?;
     let mut linked = linked_username(&mut tx, id).await?;
+    if let Some((username, _)) = confirmation
+        && linked.as_deref() != Some(username)
+    {
+        return Err(forbidden("Account does not match linked sign-in"));
+    }
     let directory_login =
         config.scim.as_ref().and_then(|s| s.provider.as_ref()) == Some(&id.provider);
     if linked.is_none() {
@@ -259,12 +284,13 @@ async fn sign_in_once(
         .await?
     } else {
         sqlx::query(
-            "UPDATE sso_links SET last_login_at=$3 WHERE issuer=$1 AND subject=$2 AND username=$4",
+            "UPDATE sso_links SET last_login_at=$3 WHERE issuer=$1 AND subject=$2 AND username=$4 AND (CAST($5 AS TEXT) IS NULL OR provider=$5)",
         )
         .bind(&id.issuer)
         .bind(id.subject.as_str())
         .bind(t)
         .bind(&username)
+        .bind(confirmation.map(|_| id.provider.as_str()))
         .execute(&mut *tx)
         .await?
     };
@@ -308,6 +334,20 @@ async fn sign_in_once(
         .bind(id.sid.as_ref().map(OidcKey::as_str))
         .execute(&mut *tx)
         .await?;
+    let confirmation = if let Some((_, app)) = confirmation {
+        let session_deadline = [
+            state.limits.session_max_age_secs,
+            state.limits.session_idle_secs,
+        ]
+        .into_iter()
+        .filter(|limit| *limit > 0)
+        .map(|limit| t.saturating_add(limit))
+        .min()
+        .unwrap_or(i64::MAX);
+        Some(flow::issue_confirmation(&mut tx, app, &username, &token, session_deadline).await?)
+    } else {
+        None
+    };
     tx.commit().await?;
     let created = joined.is_some();
     if let Some(joined) = joined {
@@ -337,6 +377,7 @@ async fn sign_in_once(
     Ok(Some(SignIn::Session {
         user,
         created,
+        confirmation,
         token,
     }))
 }

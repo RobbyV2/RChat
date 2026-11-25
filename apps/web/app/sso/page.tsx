@@ -1,10 +1,12 @@
 'use client'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
+import { acceptRecentConfirmation, confirmationLoginGuard } from '../lib/provider_confirmation'
 import { ClientConsent } from '../components/sso/client_consent'
 import { authBrowser } from '../lib/platform'
 import {
   beginLogin,
+  INTENT_TTL_MS,
   challengeOf,
   readIntent,
   clearIntent,
@@ -39,7 +41,10 @@ function LocalReturn() {
     [picker, setPicker] = useState<Extract<ExchangeResponse, { kind: 'pick_username' }> | null>(
       null
     ),
-    [retry, setRetry] = useState<SsoIntent | null>(null),
+    [retry, setRetry] = useState<Pick<
+      SsoIntent,
+      'origin' | 'provider' | 'username' | 'back' | 'confirm' | 'at'
+    > | null>(null),
     [name, setName] = useState(''),
     [busy, setBusy] = useState(false)
   const pending = useRef<{ intent: SsoIntent; account: AccountSession; code: string } | null>(null)
@@ -56,18 +61,30 @@ function LocalReturn() {
     const p = pending.current
     if (!p) return
     const { intent: i, account, code } = p
+    const { origin, provider, username: savedName, back, confirm, at } = i
+    const retryTarget = { origin, provider, username: savedName, back, confirm, at }
+    const shownVersion = client.shownVersion()
     const valid = () =>
-      mounted.current && readIntent()?.verifier === i.verifier && allowsAccountOrigin(i.origin)
+      (!i.confirm || client.shownVersion() === shownVersion) &&
+      mounted.current &&
+      readIntent()?.verifier === i.verifier &&
+      allowsAccountOrigin(i.origin)
     setBusy(true)
     setError('')
     try {
-      const result = await account.store
-        .getState()
-        .ssoExchange({ code, verifier: i.verifier, username }, valid)
+      const result = await account.store.getState().ssoExchange(
+        {
+          code,
+          verifier: i.verifier,
+          username,
+          ...(i.confirm && i.username ? { confirm_as: i.username } : {}),
+        },
+        valid
+      )
       if (!valid()) return
       if (result.kind === 'pick_username') {
         if (i.username) {
-          setRetry(i)
+          setRetry(retryTarget)
           throw new Error(
             `This provider account is not linked to ${i.username} on ${account.conn.host}. Restart sign-in with the provider account linked to that username.`
           )
@@ -83,12 +100,29 @@ function LocalReturn() {
       const signedIn = client
         .live()
         .find(a => a.conn.origin === i.origin && a.store.getState().token === result.token)
-      if (signedIn && client.show(signedIn, 'none'))
+      if (signedIn && client.show(signedIn, 'none')) {
+        if (i.confirm && i.username && i.username === signedIn.store.getState().me?.username) {
+          acceptRecentConfirmation(
+            signedIn,
+            i.username,
+            result.token,
+            i.provider,
+            result.confirmation
+          )
+          signedIn.store.getState().openDialog({ kind: 'settings', section: 'profile' })
+        }
         router.replace(accountPath(i.back, routeOwnerFor(signedIn)))
+      }
     } catch (e) {
       if (!mounted.current) return
       const message = e instanceof Error ? e.message : errorText('failed')
-      if (i.username && /saved username/.test(message)) setRetry(i)
+      const mismatch =
+        i.confirm &&
+        e instanceof ApiError &&
+        e.status === 403 &&
+        message === 'Account does not match linked sign-in'
+      if (valid() && i.username && (/saved username/.test(message) || mismatch))
+        setRetry(retryTarget)
       if (username && e instanceof ApiError && e.status === 400 && !/expired/i.test(message)) {
         setError(message)
         return
@@ -98,15 +132,17 @@ function LocalReturn() {
       releaseTemporary()
       setPicker(null)
       setError(
-        e instanceof ApiError && e.status === 403
-          ? errorText(
-              /suspend/i.test(message)
-                ? 'suspended'
-                : /closed/i.test(message)
-                  ? 'closed'
-                  : 'not_allowed'
-            )
-          : message
+        mismatch
+          ? `Sign in with the provider account linked to ${i.username} on ${account.conn.host}.`
+          : e instanceof ApiError && e.status === 403
+            ? errorText(
+                /suspend/i.test(message)
+                  ? 'suspended'
+                  : /closed/i.test(message)
+                    ? 'closed'
+                    : 'not_allowed'
+              )
+            : message
       )
     } finally {
       if (mounted.current) setBusy(false)
@@ -209,10 +245,30 @@ function LocalReturn() {
             const owner = createSavedSession(retry.origin, retry.username ?? undefined)
             setBusy(true)
             try {
-              await beginLogin(owner, retry.provider, retry.back, retry.username, intent => {
-                restarted.current = intent
-                return mounted.current
-              })
+              const signedOut =
+                retry.confirm && retry.username
+                  ? confirmationLoginGuard(owner, retry.username)
+                  : undefined
+              const current = () =>
+                mounted.current &&
+                (!signedOut || (signedOut() && Date.now() - retry.at < INTENT_TTL_MS))
+              if (
+                !current() ||
+                (retry.confirm && !(await owner.store.getState().loadInstance(current, 'no-store')))
+              )
+                throw Error(errorText('expired'))
+              await beginLogin(
+                owner,
+                retry.provider,
+                retry.back,
+                retry.username,
+                intent => {
+                  if (!current()) return false
+                  restarted.current = intent
+                  return true
+                },
+                retry.confirm
+              )
             } catch (e) {
               setError(e instanceof Error ? e.message : errorText('failed'))
             } finally {

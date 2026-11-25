@@ -1,3 +1,4 @@
+import { watchProviderConfirmation } from './provider_confirmation'
 import type { AccountSession } from './client/session'
 import { allowsAccountOrigin } from './client/hosted_policy'
 import { authBrowser } from './platform'
@@ -48,6 +49,7 @@ export const errorText = (e: SsoErrorCode) => messages[e]
 export interface SsoIntent {
   v: 1
   purpose: SsoPurpose
+  confirm?: true
   origin: string
   username: string | null
   provider: string
@@ -70,9 +72,11 @@ export function startUrl(
   id: string,
   ret: 'web' | 'app',
   challenge: string,
-  ticket?: string
+  ticket?: string,
+  confirm = false
 ) {
   const params = new URLSearchParams({ return: ret, challenge })
+  if (confirm) params.set('confirm', '1')
   if (ticket) params.set('ticket', ticket)
   return apiRoot(api) + '/auth/oidc/' + encodeURIComponent(id) + '/start?' + params
 }
@@ -90,6 +94,7 @@ export function parseIntent(raw: string | null, now: number): SsoIntent | null {
       !i ||
       i.v !== 1 ||
       !['login', 'link', 'reauth'].includes(i.purpose) ||
+      (i.confirm !== undefined && (i.confirm !== true || i.purpose !== 'login' || !i.username)) ||
       !Number.isFinite(i.at) ||
       i.at > now ||
       now - i.at >= INTENT_TTL_MS ||
@@ -174,7 +179,8 @@ async function begin(
   back: string,
   username: string | null,
   purpose: SsoPurpose,
-  ticket?: string
+  ticket?: string,
+  confirm = false
 ) {
   const origin = owner.conn.origin,
     mark = owner.lifetime.sessionMark()
@@ -185,6 +191,7 @@ async function begin(
     provider,
     username,
     purpose,
+    ...(confirm ? { confirm: true as const } : {}),
     back: safeNext(back) ?? '/',
     verifier: newVerifier(),
     at: Date.now(),
@@ -201,7 +208,7 @@ async function begin(
   }
   return {
     intent,
-    url: startUrl(owner.api.base, provider, authBrowser().returnTo, challenge, ticket),
+    url: startUrl(owner.api.base, provider, authBrowser().returnTo, challenge, ticket, confirm),
   }
 }
 export async function beginLogin(
@@ -209,9 +216,12 @@ export async function beginLogin(
   provider: string,
   back: string,
   username: string | null = null,
-  accept: (intent: SsoIntent) => boolean = () => true
+  accept: (intent: SsoIntent) => boolean = () => true,
+  confirm = false
 ) {
-  const { intent, url } = await begin(owner, provider, back, username, 'login')
+  if (confirm && (!username || owner.store.getState().instance?.auth?.confirm_login !== true))
+    throw Error(errorText('unavailable'))
+  const { intent, url } = await begin(owner, provider, back, username, 'login', undefined, confirm)
   if (!accept(intent)) {
     clearIntent(intent)
     return
@@ -255,6 +265,8 @@ export async function beginPopup(
   }
   return new Promise<{ code: string; verifier: string }>((resolve, reject) => {
     const done = (error?: SsoErrorCode, code?: string) => {
+      unwatch?.()
+      clearInterval(poll)
       clearTimeout(timer)
       window.removeEventListener('message', message)
       window.removeEventListener('rchat-sso-return', check)
@@ -276,6 +288,8 @@ export async function beginPopup(
     }
     const message = (e: MessageEvent) => {
       if (
+        current() &&
+        readIntent()?.verifier === intent.verifier &&
         e.origin === location.origin &&
         e.data?.type === 'rchat-sso-return' &&
         e.data.challenge === new URL(url, intent.origin).searchParams.get('challenge') &&
@@ -283,12 +297,27 @@ export async function beginPopup(
       )
         deliverReturn(e.data.search, intent.origin)
     }
+    let popup: { closed: boolean } | undefined
+    const unwatch =
+      purpose === 'reauth'
+        ? watchProviderConfirmation(
+            owner,
+            provider,
+            () => current() && !popup?.closed && readIntent()?.verifier === intent.verifier,
+            () => done('expired')
+          )
+        : undefined
+    const poll = setInterval(() => {
+      if (!current()) done('expired')
+      else if (popup?.closed) done('denied')
+    }, 300)
     const timer = setTimeout(() => done('expired'), INTENT_TTL_MS)
     window.addEventListener('message', message)
     window.addEventListener('rchat-sso-return', check)
     Promise.resolve(authBrowser().popup(url)).then(
       ok => {
         if (!ok) done('popup')
+        else if (typeof ok === 'object') popup = ok
       },
       () => done('unavailable')
     )

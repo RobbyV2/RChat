@@ -469,3 +469,130 @@ test('a linked sign-in row menu unlinks it only while another sign-in stays', as
     owner.store.dispose()
   }
 })
+
+test('an interrupted foreground confirmation pins a new login and discards the old operation', async () => {
+  const { client } = await import('../client/client')
+  const { watchProviderConfirmation, confirmationHint } = await import('../provider_confirmation')
+  const account = testAccount('alice', 'https://rotation.example')
+  const neighbor = testAccount('bob', account.conn.origin)
+  const original = client.shown
+  try {
+    client.shown = () => account
+    account.store.setState({
+      token: 'old',
+      instance: { auth: { confirm_login: true } } as import('../types').InstanceInfo,
+    })
+    let discarded = false
+    const stop = watchProviderConfirmation(
+      account,
+      'work',
+      () => true,
+      () => {
+        discarded = true
+      }
+    )
+    account.store.getState().expireSession()
+    expect(discarded).toBe(true)
+    expect(account.store.getState().token).toBeNull()
+    expect(confirmationHint(account)?.username).toBe('alice')
+    expect(confirmationHint(account)?.provider).toBe('work')
+    expect(confirmationHint(neighbor)).toBeUndefined()
+    stop()
+    client.show(neighbor, 'none')
+    expect(confirmationHint(account)).toBeUndefined()
+    expect(startUrl('/api', 'work', 'web', 'new', undefined, true)).toEndWith(
+      'challenge=new&confirm=1'
+    )
+  } finally {
+    client.shown = original
+    account.store.dispose()
+    neighbor.store.dispose()
+  }
+})
+
+test('recent provider proof belongs to the admitted actor, token and session and is consumed once', async () => {
+  const { client } = await import('../client/client')
+  const { acceptRecentConfirmation, recentConfirmation, takeRecentConfirmation } =
+    await import('../provider_confirmation')
+  const account = testAccount('alice')
+  const original = client.shown
+  const proof = {
+    provider: 'work',
+    code: 'confirmation',
+    expires_at: Math.floor(Date.now() / 1000) + 60,
+  }
+  try {
+    client.shown = () => account
+    account.store.setState({ token: 'new' })
+    acceptRecentConfirmation(account, 'bob', 'new', 'work', proof)
+    acceptRecentConfirmation(account, 'alice', 'old', 'work', proof)
+    acceptRecentConfirmation(account, 'alice', 'new', 'work', { ...proof, expires_at: 1 })
+    expect(recentConfirmation(account, 'work')).toBeUndefined()
+    acceptRecentConfirmation(account, 'alice', 'new', 'work', proof)
+    expect(recentConfirmation(account, 'other')).toBeUndefined()
+    expect(takeRecentConfirmation(account, 'work')).toEqual(proof)
+    expect(() => takeRecentConfirmation(account, 'work')).toThrow()
+    acceptRecentConfirmation(account, 'alice', 'new', 'work', proof)
+    account.lifetime.endSession()
+    expect(recentConfirmation(account, 'work')).toBeUndefined()
+  } finally {
+    client.shown = original
+    account.store.dispose()
+  }
+})
+
+for (const sibling of [false, true])
+  test(
+    'delayed confirmation exchange preserves a newer login on the ' +
+      (sibling ? 'sibling' : 'owner'),
+    async () => {
+      const origin = 'https://' + (sibling ? 'sibling' : 'owner') + '.late.example'
+      const owner = testAccount('alice', origin)
+      const target = sibling ? testAccount('alice', origin) : owner
+      const response = (token: string) => ({
+        kind: 'session' as const,
+        user: me('alice'),
+        token,
+        end_session: false,
+      })
+      const entered = Promise.withResolvers<void>()
+      const reply = Promise.withResolvers<ReturnType<typeof response>>()
+      const revoked: string[] = []
+      try {
+        for (const a of [owner, target]) {
+          a.socketAllowed = false
+          a.credentialTarget = 'alice'
+          a.store.setState({
+            me: null,
+            token: null,
+            instance: { auth: { confirm_login: true } } as import('../types').InstanceInfo,
+            loadInstance: async () => true,
+            loadSettings: async () => {},
+          })
+        }
+        owner.api.ssoExchange = () => {
+          entered.resolve()
+          return reply.promise
+        }
+        owner.api.logout = async token => {
+          revoked.push(token)
+          return { ok: true }
+        }
+        const pending = owner.store
+          .getState()
+          .ssoExchange({ code: 'old', verifier: newVerifier(), confirm_as: 'alice' }, () => true)
+        await entered.promise
+        await target.store.getState().enterSsoSession(response('newer'), () => true)
+        reply.resolve(response('late'))
+        await assert.rejects(pending, /expired/)
+        expect(target.store.getState().token).toBe('newer')
+        expect(target.store.getState().activeDialog).toBeNull()
+        expect(target.store.getState().providerConfirmation).toBeUndefined()
+        expect(revoked).toEqual(['late'])
+      } finally {
+        reply.resolve(response('late'))
+        owner.store.dispose()
+        if (sibling) target.store.dispose()
+      }
+    }
+  )

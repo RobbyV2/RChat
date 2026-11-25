@@ -1219,18 +1219,25 @@ export type ReAuthBody =
   | { idp: { provider: string; code: string } }
 
 export interface AuthInfo {
+  confirm_login?: boolean
   client_return?: boolean
   password_login: boolean
   registration: 'open' | 'sso' | 'closed'
   providers: { id: string; name: string }[]
 }
+export interface ProviderConfirmation {
+  provider: string
+  code: string
+  expires_at: number
+}
 export interface ExchangeRequest {
+  confirm_as?: string
   code: string
   verifier: string
   username?: string
 }
 export type ExchangeResponse =
-  | ({ kind: 'session'; end_session: boolean } & AuthResponse)
+  | ({ kind: 'session'; end_session: boolean; confirmation?: ProviderConfirmation } & AuthResponse)
   | { kind: 'pick_username'; suggestion: string | null; reason: 'taken' | 'invalid' }
   | { kind: 'linked'; provider: string }
 

@@ -166,23 +166,32 @@ export class ApiClient {
     this.root = apiRoot(base)
   }
 
+  async ssoExchange(body: ExchangeRequest): Promise<ExchangeResponse> {
+    const confirmation = body.confirm_as !== undefined
+    const path = confirmation ? '/auth/oidc/exchange/confirmation' : '/auth/oidc/exchange'
+    const response = await fetch(this.root + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      credentials: 'omit',
+      redirect: 'error',
+      cache: 'no-store',
+    })
+    if (
+      confirmation &&
+      (response.status === 404 || response.status === 405 || (response.ok && !isJson(response)))
+    )
+      throw new ApiError(
+        'Confirmation sign-in is unavailable. Go back to sign in with a normal login method.',
+        response.status
+      )
+    return handleResponse<ExchangeResponse>(response)
+  }
+
   // The instance's discovery document, on the unversioned path every version serves. Only a JSON
   // answer counts; a redirect (into the web app on older instances) is not followed. The boot
   // waits for it, so it gives up after 3 s.
-  async ssoExchange(body: ExchangeRequest): Promise<ExchangeResponse> {
-    return handleResponse<ExchangeResponse>(
-      await fetch(this.root + '/auth/oidc/exchange', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        credentials: 'omit',
-        redirect: 'error',
-        cache: 'no-store',
-      })
-    )
-  }
-
-  async discovery(timeoutMs = 3000): Promise<InstanceInfo> {
+  async discovery(timeoutMs = 3000, cache?: RequestCache): Promise<InstanceInfo> {
     let res: Response
     try {
       res = await fetch(`${this.root}/instance`, {
@@ -190,6 +199,7 @@ export class ApiClient {
         credentials: this.cookieMode,
         redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
+        cache,
       })
     } catch {
       throw new ApiError("Can't reach the server", 0)
@@ -933,7 +943,7 @@ export const endpoints = (c: ApiClient) => ({
     c.page<ServerSummaryLite>(withCursor(`/admin/users/${seg(username)}/servers`, cursor)),
   adminDeleteMessage: (id: number) => c.req<unknown>('DELETE', `/admin/messages/${id}`),
   banUser: (username: string) => c.req<unknown>('POST', '/admin/ban', { username }),
-  instance: () => c.discovery(),
+  instance: (cache?: RequestCache) => c.discovery(undefined, cache),
   identityAssertion: (aud: string, nonce?: string) =>
     c.req<Assertion>('POST', '/identity/assertion', { aud, nonce }),
   p2pIce: () => c.req<IceServers>('GET', '/p2p/ice'),

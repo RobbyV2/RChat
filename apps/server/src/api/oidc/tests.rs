@@ -217,6 +217,7 @@ async fn sign_in_round_trip_web_and_replays() {
     let session = body(ok).await;
     assert_eq!(session["kind"], "session");
     assert_eq!(session["end_session"], true);
+    assert!(session.get("confirmation").is_none());
     let token = session["token"].as_str().unwrap();
     assert!(!ret.as_str().contains(token) && !cb.as_str().contains(token));
     let (username,provider,sid,subject):(String,String,String,String)=sqlx::query_as(
@@ -1087,6 +1088,7 @@ async fn changed_provider_membership_policy_requires_fresh_sign_in() {
         code,
         verifier: f.verifier.clone(),
         username: None,
+        confirm_as: None,
     };
     let err = exchange(State(restarted), Json(request)).await.unwrap_err();
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
@@ -1249,6 +1251,107 @@ impl Fixture {
             .send()
             .await
             .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn ordinary_and_confirmation_login_codes_require_their_own_exchange_route() {
+    let f = Fixture::new(|_, _| {}).await;
+    let _session = f.session().await;
+    for (ret, path) in [
+        ("web", "exchange/confirmation"),
+        ("web&confirm=1", "exchange"),
+    ] {
+        let code = param(&f.returned(ret).await, "code");
+        let response = f
+            .client
+            .post(format!("{}/api/auth/oidc/{path}", f.origin))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(json!({"code":code,"verifier":f.verifier,"confirm_as":f.name}).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn saved_account_confirmation_survives_session_rotation() {
+    use crate::api::reauth::{Purpose, ReAuth, Session, check};
+    for (state, db) in crate::api::test_util::each_db("oidc_confirm").await {
+        let f = Fixture::with_state(state.clone(), None, |_, _| {}, |_| {}, None).await;
+        let old = f.login_session("fake", "first").await;
+        let auth_time = crate::db::now() - 30;
+        f.idp
+            .set_claims(json!({"sub":"Subject:A","sid":"second","auth_time":auth_time}));
+        let auth = f.start("fake", "web&confirm=1").await;
+        assert_eq!(param(&auth, "prompt"), "login");
+        assert_eq!(param(&auth, "max_age"), "0");
+        let callback = location(f.get(auth.as_str()).await);
+        assert_eq!(f.backchannel("fake", "sid", "first").await.status(), 200);
+        let code = param(&location(f.get(callback.as_str()).await), "code");
+        let response = f
+            .client
+            .post(format!("{}/api/auth/oidc/exchange/confirmation", f.origin))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(json!({"code":code,"verifier":f.verifier,"confirm_as":f.name}).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let result = body(response).await;
+        let token = result["token"].as_str().unwrap();
+        assert_ne!(token, old);
+        assert!(
+            crate::api::user_for_token(&f.state, &old)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let user = crate::api::user_for_token(&f.state, token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.username, f.name);
+        let session = Session {
+            user,
+            token: token.to_owned(),
+            created_at: crate::db::now(),
+        };
+        let confirmation = &result["confirmation"];
+        assert_eq!(
+            confirmation["expires_at"],
+            auth_time + crate::sso::flow::FRESH_SECS
+        );
+        let proof = || ReAuth::FreshIdp {
+            provider: confirmation["provider"].as_str().unwrap().into(),
+            code: confirmation["code"].as_str().unwrap().into(),
+        };
+        check(&f.state, &session, proof(), Purpose::RemovePhrase)
+            .await
+            .unwrap();
+        assert_eq!(
+            check(&f.state, &session, proof(), Purpose::RemovePhrase)
+                .await
+                .unwrap_err()
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert!(
+            crate::api::user_for_token(&f.state, token)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(f.backchannel("fake", "sid", "second").await.status(), 200);
+        assert!(
+            crate::api::user_for_token(&f.state, token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drop(f);
+        db.done(state).await;
     }
 }
 

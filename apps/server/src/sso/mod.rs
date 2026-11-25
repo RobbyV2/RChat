@@ -33,6 +33,9 @@ pub struct AuthInfo {
     /// This instance can ask for consent before returning a login to another web origin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_return: Option<bool>,
+    /// Fresh ordinary OIDC login can confirm an existing linked account for Settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirm_login: Option<bool>,
     /// Configured identity providers in display order.
     pub providers: Vec<ProviderInfo>,
 }
@@ -91,10 +94,12 @@ impl Sso {
             .get_or_init(|| Self::client().expect("SSO client"))
     }
     pub fn auth_info(&self, password_login: bool, registration: Registration) -> AuthInfo {
+        let oidc = (!self.config.providers.is_empty()).then_some(true);
         AuthInfo {
             registration,
             password_login,
-            client_return: (!self.config.providers.is_empty()).then_some(true),
+            client_return: oidc,
+            confirm_login: oidc,
             providers: self
                 .config
                 .providers
@@ -154,6 +159,7 @@ mod tests {
                 "password_login": false,
                 "registration": "sso",
                 "client_return": true,
+                "confirm_login": true,
                 "providers": [{"id": "authentik", "name": "Authentik"}, {"id": "okta", "name": "okta"}]
             })
         );

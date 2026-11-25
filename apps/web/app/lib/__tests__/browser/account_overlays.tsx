@@ -1,3 +1,4 @@
+import SsoPage from '../../../sso/page'
 import { setupCallControls } from './call_controls'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { RelayPrompt } from '../../../components/relay_settings'
@@ -11,6 +12,7 @@ import { registerAppActions } from '../../actions'
 import { createRoot } from 'react-dom/client'
 import { AppPreview } from '../../../components/app_preview'
 import { P2pHome, P2pDialogs } from '../../../components/p2p/p2p_home'
+import { ProviderButtons } from '../../../components/sso/provider_buttons'
 import SettingsMenu from '../../../components/settings_menu'
 import { ViewingPrompt } from '../../../components/viewing_prompt'
 import { SwitcherDialog, AccountSwitcherTile } from '../../../components/account_switcher'
@@ -109,6 +111,28 @@ const router = {
   prefetch() {},
   bfcacheId: 'test',
 }
+function RotationFixture({ account }: { account: AccountSession }) {
+  const token = useStore(s => s.token)
+  if (!token)
+    return (
+      <ProviderButtons
+        account={account}
+        providers={[{ id: 'work', name: 'Work' }]}
+        clientReturn={false}
+        back="/"
+        username={account.credentialTarget ?? null}
+        divider={false}
+        onSuccess={() => {}}
+      />
+    )
+  return (
+    <>
+      <button onClick={() => void account.store.getState().checkSession()}>Check session</button>
+      <SettingsMenu />
+    </>
+  )
+}
+
 function EnrollmentFixture() {
   const switcher = useStore(s => s.activeDialog?.kind === 'account_switcher')
   return (
@@ -127,7 +151,34 @@ function EnrollmentFixture() {
   )
 }
 const root = createRoot(document.body.appendChild(document.createElement('main')))
-if (location.search.startsWith('?first-password')) {
+if (location.pathname === '/sso/') {
+  shown.credentialTarget = me.username
+  shown.store.setState({ me: null })
+  shown.api.setToken(null)
+  const sibling = new AccountSession(
+    new InstanceConnection(endpointsFrom(shown.conn.origin, null)),
+    undefined,
+    undefined,
+    me.username
+  )
+  sibling.socketAllowed = false
+  root.render(
+    <AppRouterContext.Provider
+      value={{
+        ...router,
+        replace: () => {
+          root.render(
+            <AccountProvider session={client.shown()}>
+              <SettingsMenu />
+            </AccountProvider>
+          )
+        },
+      }}
+    >
+      <SsoPage />
+    </AppRouterContext.Provider>
+  )
+} else if (location.search.startsWith('?first-password')) {
   const sibling = location.search.includes('sibling')
   const target = sibling ? owner : shown
   const callback = sibling
@@ -155,7 +206,11 @@ if (location.search.startsWith('?first-password')) {
       target.store.getState().openDialog({ kind: 'settings', section: 'profile' })
       root.render(
         <AccountProvider session={target}>
-          <SettingsMenu />
+          {location.search.includes('rotation') ? (
+            <RotationFixture account={target} />
+          ) : (
+            <SettingsMenu />
+          )}
         </AccountProvider>
       )
     })

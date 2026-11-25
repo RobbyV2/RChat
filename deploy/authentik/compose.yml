@@ -1,0 +1,49 @@
+x-authentik: &authentik
+  image: ghcr.io/goauthentik/server:2026.8.6
+  depends_on:
+    postgresql:
+      condition: service_healthy
+  shm_size: 512mb
+  environment:
+    AUTHENTIK_POSTGRESQL__HOST: postgresql
+    AUTHENTIK_POSTGRESQL__USER: authentik
+    AUTHENTIK_POSTGRESQL__NAME: authentik
+    AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?Generate a database password}
+    AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?Generate an Authentik secret key}
+    OIDC_AUTHENTIK_CLIENT_SECRET: ${OIDC_AUTHENTIK_CLIENT_SECRET:?Set the shared OIDC client secret}
+    SCIM_TOKEN: ${SCIM_TOKEN:?Set the shared SCIM token}
+    DEMO_ALICE_PASSWORD: ${DEMO_ALICE_PASSWORD:?Set a local Alice password}
+    DEMO_BOB_PASSWORD: ${DEMO_BOB_PASSWORD:?Set a local Bob password}
+  extra_hosts:
+    - host.docker.internal:host-gateway
+  volumes:
+    - data:/data
+    - ./rchat.yaml:/blueprints/custom/rchat.yaml:ro
+
+services:
+  postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_DB: authentik
+      POSTGRES_PASSWORD: ${PG_PASS:?Generate a database password}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U authentik -d authentik']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - database:/var/lib/postgresql/data
+  server:
+    <<: *authentik
+    command: server
+    ports:
+      - '127.0.0.1:19000:9000'
+      - '127.0.0.1:19443:9443'
+  worker:
+    <<: *authentik
+    command: worker
+
+volumes:
+  database:
+  data:

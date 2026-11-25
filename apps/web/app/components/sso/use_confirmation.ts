@@ -8,6 +8,7 @@ export function useConfirmation() {
   const shownVersion = client.shownVersion()
   const mark = acct.lifetime.sessionMark()
   const dialog = useStore(s => s.activeDialog)
+  const token = useStore(s => s.token)
   const username = useStore(s => s.me?.username)
   const mounted = useRef(false)
   useLayoutEffect(() => {
@@ -24,9 +25,10 @@ export function useConfirmation() {
       client.shownVersion() === shownVersion &&
       !!username &&
       !s.guest &&
+      s.token === token &&
       s.me?.username === username &&
       mark === acct.lifetime.sessionMark() &&
       dialog === s.activeDialog
     )
-  }, [acct, shownVersion, mark, dialog, username])
+  }, [acct, shownVersion, mark, dialog, username, token])
 }

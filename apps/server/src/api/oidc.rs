@@ -27,6 +27,7 @@ pub(crate) struct StartParams {
     origin: Option<String>,
     challenge: Option<String>,
     ticket: Option<String>,
+    confirm: Option<String>,
 }
 #[derive(Deserialize)]
 pub(crate) struct CallbackParams {
@@ -209,7 +210,7 @@ pub(crate) async fn unlink_ticket_provider(
 /// Begin sign-in with a client-generated S256 challenge.
 ///
 /// Returns are limited to the hosted page and the instance's shell deep link.
-#[utoipa::path(get, path = "/api/v1/auth/oidc/{provider}/start", tag = "Auth", params(("provider"=String,Path,description="Configured provider ID"),("return"=String,Query,description="web, app, or client"),("origin"=Option<String>,Query,description="Exact requesting origin for client returns"),("ticket"=Option<String>,Query,description="Single-use account ticket for web or app returns"),("challenge"=String,Query,description="Unpadded base64url SHA-256 digest of the client verifier")), responses((status=302,description="Provider authorization or fixed sign-in return URL"),(status=400,description="Invalid parameters"),(status=404,description="Unknown provider")), security(()))]
+#[utoipa::path(get, path = "/api/v1/auth/oidc/{provider}/start", tag = "Auth", params(("provider"=String,Path,description="Configured provider ID"),("return"=String,Query,description="web, app, or client"),("origin"=Option<String>,Query,description="Exact requesting origin for client returns"),("ticket"=Option<String>,Query,description="Single-use account ticket for web or app returns"),("confirm"=Option<String>,Query,description="1 requests fresh ordinary login for an existing linked account. Incompatible with ticket."),("challenge"=String,Query,description="Unpadded base64url SHA-256 digest of the client verifier")), responses((status=302,description="Provider authorization or fixed sign-in return URL"),(status=400,description="Invalid parameters"),(status=404,description="Unknown provider")), security(()))]
 pub(crate) async fn start(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -232,6 +233,11 @@ pub(crate) async fn start(
     if matches!(ret, Return::Client { .. }) && q.ticket.is_some() {
         return Err(bad("Account tickets require a web or app return"));
     }
+    let confirm = match q.confirm.as_deref() {
+        Some("1") if q.ticket.is_none() => true,
+        None => false,
+        _ => return Err(bad("Invalid confirmation mode")),
+    };
     let (kind, user, session_key) = if let Some(value) = q.ticket {
         let Some(ticket) = flow::take_ticket(&state.db, &value, &id).await? else {
             return callback_error(&state, &id, ret, CallbackError::Expired);
@@ -244,6 +250,7 @@ pub(crate) async fn start(
         &state,
         &provider,
         NewFlow {
+            confirm,
             kind,
             ret: ret.clone(),
             challenge,
@@ -311,6 +318,8 @@ pub struct ExchangeReq {
     pub verifier: String,
     /// Chosen local username when retrying a username selection.
     pub username: Option<String>,
+    /// Saved local username, required only when start requested confirmation.
+    pub confirm_as: Option<String>,
 }
 /// Result of exchanging a verifier-bound sign-in code.
 #[derive(Serialize, ToSchema)]
@@ -324,6 +333,9 @@ pub enum ExchangeResp {
         user: Box<Me>,
         /// Whether this provider supports configured sign-out.
         end_session: bool,
+        /// Fresh Settings proof when explicitly requested at sign-in.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        confirmation: Option<flow::Confirmation>,
     },
     /// A local account name is required to finish this exchange.
     PickUsername {
@@ -370,6 +382,25 @@ pub(crate) async fn exchange(
     State(state): State<AppState>,
     Json(q): Json<ExchangeReq>,
 ) -> Result<Response, ApiError> {
+    exchange_code(state, q, false).await
+}
+
+/// Exchange a fresh saved-account login code for a session and Settings proof.
+///
+/// Requires the original verifier and saved username in `confirm_as`. Only codes from an ordinary login started with `confirm=1` are accepted.
+#[utoipa::path(post, path = "/api/v1/auth/oidc/exchange/confirmation", tag = "Auth", request_body=ExchangeReq, responses((status=200,description="Session and one-use proof for the saved account",body=ExchangeResp),(status=400,description="Invalid, expired or incompatible exchange"),(status=403,description="Account or provider link does not permit sign-in")), security(()))]
+pub(crate) async fn exchange_confirmation(
+    State(state): State<AppState>,
+    Json(q): Json<ExchangeReq>,
+) -> Result<Response, ApiError> {
+    exchange_code(state, q, true).await
+}
+
+async fn exchange_code(
+    state: AppState,
+    q: ExchangeReq,
+    confirm: bool,
+) -> Result<Response, ApiError> {
     if q.code.len() > 64 || !(43..=128).contains(&q.verifier.len()) {
         return Err(flow::expired());
     }
@@ -382,6 +413,12 @@ pub(crate) async fn exchange(
         .provider(&app.identity.provider)
         .filter(|provider| app.matches_provider(&provider.config))
         .ok_or_else(flow::expired)?;
+    if app.confirm != confirm
+        || confirm != q.confirm_as.is_some()
+        || (confirm && (app.kind != FlowKind::Login || q.username.is_some()))
+    {
+        return Err(flow::expired());
+    }
     match (app.kind, app.user.as_deref(), app.session_key.as_deref()) {
         (FlowKind::Link, Some(user), Some(key)) => {
             crate::sso::accounts::link(&state, user, key, &app.identity).await?;
@@ -400,11 +437,20 @@ pub(crate) async fn exchange(
         if let Some(name) = &q.username {
             super::check_len(name, NAME_MAX, "Username")?;
         }
+        if let Some(name) = &q.confirm_as {
+            super::check_len(name, NAME_MAX, "Username")?;
+            return crate::sso::accounts::confirm_sign_in(&state, &app, name).await;
+        }
         sign_in(&state, &app.identity, q.username.as_deref()).await
     }
     .await;
     let response = match result {
-        Ok(SignIn::Session { user, token, .. }) => {
+        Ok(SignIn::Session {
+            user,
+            token,
+            confirmation,
+            ..
+        }) => {
             let me = me_payload(&state.db, &user).await?;
             let end_session = provider.config.end_session
                 && provider
@@ -415,6 +461,7 @@ pub(crate) async fn exchange(
                 token,
                 user: Box::new(me),
                 end_session,
+                confirmation,
             }
         }
         Ok(SignIn::NeedsUsername { suggestion, reason }) => {

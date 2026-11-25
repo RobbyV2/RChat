@@ -7,6 +7,7 @@ import { client } from '../lib/client/client'
 import { routeOwnerFor, selectPageAccount } from '../lib/client/account_paths'
 import type { AccountSession } from '../lib/client/session'
 import { accountPath, parseAccountPath, type RouteOwner } from '../lib/view'
+import { confirmationHint } from '../lib/provider_confirmation'
 import { safeNext } from '../lib/invite'
 import { awaitingInstance } from '../lib/instances'
 import { shellInfo } from '../lib/platform'
@@ -35,7 +36,8 @@ export default function LoginPage() {
         : client.shown()
       if (account && !requested) client.show(account, 'none')
       const pin =
-        requested && typeof account?.credentialTarget === 'string'
+        (requested || (account && confirmationHint(account))) &&
+        typeof account?.credentialTarget === 'string'
           ? { username: account.credentialTarget, host: account.conn.host }
           : null
       setDestination(account && route ? { account, next, owner: route.owner ?? pin } : null)

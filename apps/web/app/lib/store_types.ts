@@ -382,7 +382,7 @@ export interface RChatState {
   brand: Brand | null
   instance: InstanceInfo | null
   instanceHost: string
-  loadInstance: (current?: () => boolean) => Promise<boolean | null>
+  loadInstance: (current?: () => boolean, cache?: RequestCache) => Promise<boolean | null>
   switchInstance: (address: string) => Promise<string | null>
   bootstrap: (restorePage?: boolean) => Promise<void>
   // `background`: the app polls on its own (see `BACKGROUND` in api.ts).
@@ -409,6 +409,8 @@ export interface RChatState {
     kind: PassKind,
     reauth?: import('./types').ReAuthBody
   ) => Promise<string | null>
+  expireSession: () => void
+  checkSession: () => Promise<void>
   refreshAccount: () => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
   // Opens the site administration page at a section, one of its accounts or servers, or a row.
@@ -416,6 +418,13 @@ export interface RChatState {
   // Goes back to where the page was opened from, or home.
   closeAdmin: () => void
   register: (body: RegisterRequest) => Promise<SignupFailure | null>
+  providerConfirmation?: {
+    proof: import('./types').ProviderConfirmation
+    mark: object
+    token: string
+    username: string
+    foreground: number
+  }
   enterSsoSession: (
     res: Extract<ExchangeResponse, { kind: 'session' }>,
     current: () => boolean

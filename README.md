@@ -75,6 +75,10 @@ For indexed channel search on Postgres, install `btree_gist` and `intarray` or a
 
 Never run an older release on a database that a newer release upgraded.
 
+### Sign-in (SSO)
+
+On a fresh database, create the local site admin with `server user create <name>` before enabling SSO or provisioning users. OIDC sign-in and SCIM provisioning are set in [.env.local.example](.env.local.example), and [deploy/authentik](deploy/authentik/README.md) is a local Authentik example.
+
 ### Run only the app
 
 ```bash

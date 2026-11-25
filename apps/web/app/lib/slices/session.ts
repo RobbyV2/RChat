@@ -1,3 +1,8 @@
+import {
+  clearConfirmationHint,
+  confirmationLoginGuard,
+  interruptProviderPopup,
+} from '../provider_confirmation'
 import { parseLogoutFlag, SSO_LOGOUT_KEY } from '../sso'
 import { authBrowser } from '../platform'
 import {
@@ -404,6 +409,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const expireSession = () => {
     if (get().authExpired) return
+    interruptProviderPopup(acct)
     set({ authExpired: true })
     get().logout()
   }
@@ -750,16 +756,18 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const refetchMe = (background = false) => {
     const at = sessionMark()
+    const token = get().token
+    const current = () => at === sessionMark() && token === get().token
     return api
       .me(background)
       .then(me => {
-        if (at !== sessionMark()) return
+        if (!current()) return
         const wasRestricted = get().me?.password_temporary?.change === 'required'
         applyMe(me, true)
         if (wasRestricted && me.password_temporary?.change !== 'required') startWs()
       })
       .catch(e => {
-        if (at !== sessionMark()) return
+        if (!current()) return
         if (endsSession(e)) expireSession()
         else fail(e)
       })
@@ -1401,6 +1409,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       writeLocal(LS.guest, null)
       recordGuest(false)
     }
+    clearConfirmationHint(acct)
     api.setToken(res.token)
     applyMe(res.user, false)
     // A fresh login gets fresh history even when the expired session ended
@@ -1409,6 +1418,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     inviteHistory = null
     set({
       token: res.token,
+      providerConfirmation: undefined,
       guest: false,
       signedOut: false,
       authExpired: false,
@@ -1549,6 +1559,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'setDisplayName'
     | 'setAppearOffline'
     | 'refreshAccount'
+    | 'expireSession'
+    | 'checkSession'
     | 'changePassword'
     | 'bootstrap'
     | 'syncFromUrl'
@@ -1580,11 +1592,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'openThread'
     | 'setViewing'
   > = {
-    loadInstance: async (current = () => true) => {
+    loadInstance: async (current = () => true, cache) => {
       const mark = sessionMark()
       set({ instance: home.info, instanceHost: home.host })
       try {
-        const info = await api.instance()
+        const info = await api.instance(cache)
         if (!current() || mark !== sessionMark()) return null
         if (!fitsHome(info, home)) throw new Error('instance endpoints moved to another site')
         accountStorage(home)
@@ -1720,6 +1732,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         set(s => (s.me ? { me: { ...s.me, appear_offline: appearOffline } } : {}))
       }),
 
+    expireSession,
+    checkSession: refetchMe,
     refreshAccount: async () => {
       if (!get().token || !get().me) return
       const before = get().me
@@ -1912,9 +1926,21 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     },
     ssoExchange: async (body, current) => {
       const mark = sessionMark()
-      const valid = () => current() && mark === sessionMark() && allowsAccountOrigin(home.origin)
+      const signedOut = body.confirm_as ? confirmationLoginGuard(acct, body.confirm_as) : undefined
+      const valid = () =>
+        current() &&
+        mark === sessionMark() &&
+        allowsAccountOrigin(home.origin) &&
+        (!signedOut || signedOut())
       if (!valid()) throw new Error('That sign-in expired. Try again.')
       const revoke = issuedTokenCleanup()
+      if (
+        body.confirm_as &&
+        (!(await get().loadInstance(valid, 'no-store')) ||
+          !valid() ||
+          get().instance?.auth?.confirm_login !== true)
+      )
+        throw new Error('Confirmation sign-in is unavailable. Sign in again.')
       const response = await api.ssoExchange(body)
       if (!valid()) {
         if (response.kind === 'session') revoke(response.token)
@@ -1942,6 +1968,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     login: body => act(() => authenticate('/auth/login', body)),
 
     logout: async () => {
+      if (!get().authExpired) clearConfirmationHint(acct)
       const token = get().authExpired ? null : get().token
       const username = get().me?.username ?? restoring?.username
       const localToken = get().token ?? restoring?.token ?? null
@@ -2001,6 +2028,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       set({
         token: null,
         me: null,
+        providerConfirmation: undefined,
         guest: false,
         guestGrants: {},
         guestPosting: {},
