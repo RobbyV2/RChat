@@ -125,14 +125,44 @@ export const rosterClosed = (
   return !!target && !viewing.canView(target)
 }
 
+const without = <T>(map: Record<number, T>, gone: (channelId: number) => boolean) => {
+  const ids = Object.keys(map).filter(id => gone(Number(id)))
+  if (!ids.length) return null
+  const next = { ...map }
+  for (const id of ids) delete next[Number(id)]
+  return next
+}
+
+// The voice rosters, their servers and marks without the rooms `gone` picks: only the maps that
+// change.
+export const withoutVoiceRooms = (
+  s: Pick<RChatState, 'voiceUsers' | 'voiceServers' | 'voiceMuted' | 'voiceHushed' | 'voiceAudio'>,
+  gone: (channelId: number) => boolean
+): Partial<RChatState> => {
+  const maps = {
+    voiceUsers: without(s.voiceUsers, gone),
+    voiceServers: without(s.voiceServers, gone),
+    voiceMuted: without(s.voiceMuted, gone),
+    voiceHushed: without(s.voiceHushed, gone),
+    voiceAudio: without(s.voiceAudio, gone),
+  }
+  return Object.fromEntries(Object.entries(maps).filter(([, map]) => map !== null))
+}
+
 // A channel's voice members, replaced by the server's list; muted marks go with members who left.
 export const applyVoiceState = (
   s: RChatState,
   ev: Extract<WsEvent, { type: 'voice_state' }>
 ): Partial<RChatState> => {
   const voiceUsers = { ...s.voiceUsers }
-  if (ev.users.length) voiceUsers[ev.channel_id] = ev.users
-  else delete voiceUsers[ev.channel_id]
+  const voiceServers = { ...s.voiceServers }
+  if (ev.users.length) {
+    voiceUsers[ev.channel_id] = ev.users
+    voiceServers[ev.channel_id] = ev.server
+  } else {
+    delete voiceUsers[ev.channel_id]
+    delete voiceServers[ev.channel_id]
+  }
   const voiceMuted = keptFor(s.voiceMuted, ev.channel_id, ev.users)
   const voiceHushed = keptFor(s.voiceHushed, ev.channel_id, ev.users)
   const seats = seatsOf(ev)
@@ -141,6 +171,7 @@ export const applyVoiceState = (
     : audioFor(s.voiceAudio, ev.channel_id, ev.users)
   return {
     voiceUsers,
+    voiceServers,
     ...(voiceMuted ? { voiceMuted } : {}),
     ...(voiceHushed ? { voiceHushed } : {}),
     ...(voiceAudio ? { voiceAudio } : {}),

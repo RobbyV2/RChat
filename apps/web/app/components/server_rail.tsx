@@ -1,6 +1,8 @@
 'use client'
 import { useAddingAllowed } from './add_instance'
 import { Globe } from 'lucide-react'
+import { voiceLabel } from '../lib/voice_rail'
+import { RailVoiceBadge, useHostedVoice, useVoiceLists } from './rail_voice_badge'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import type { CSSProperties } from 'react'
@@ -123,6 +125,7 @@ function ServerTile({
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
   const unread = useStore(s => serverUnread(s, name))
   const pings = useStore(s => serverPingCount(s, name))
+  const voice = useHostedVoice([name])
   const openServer = useStore(s => s.openServer)
   const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
@@ -132,7 +135,7 @@ function ServerTile({
   const parent = folder === null ? null : folderKey(folder)
   return (
     <button
-      title={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
+      title={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
       onClick={() => {
         if (client.shown() !== account) client.show(account)
         account.identities.viewed()?.p2p.closeHome()
@@ -171,6 +174,7 @@ function ServerTile({
         </span>
       )}
       {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
+      <RailVoiceBadge count={voice} />
     </button>
   )
 }
@@ -250,12 +254,13 @@ export function FolderEntry({
   const pings = useStore(s =>
     folder.open ? 0 : servers.reduce((n, x) => n + serverPingCount(s, x.name), 0)
   )
+  const voice = useHostedVoice(folder.open ? [] : servers.map(x => x.name))
   const key = folderKey(folder.id)
   const label = useStore(s => (s.streamer ? folder.name || 'Folder' : folderLabel(s, folder)))
   const theme = useStore(s => s.theme)
   const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
-    title: label,
+    title: `${label}${voiceLabel(voice)}`,
     'aria-expanded': folder.open,
     'data-drop-onto': 'Add to folder',
     onClick: () => toggleFolder(folder.id),
@@ -294,6 +299,7 @@ export function FolderEntry({
           <FolderIcon size={9} strokeWidth={2.5} />
         </span>
         {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
+        <RailVoiceBadge count={voice} />
       </button>
     )
   }
@@ -366,6 +372,7 @@ function AccountServers({ row }: { row?: SwitcherRow }) {
   const servers = useStore(s => (s.me ? NO_DETAILS : s.servers))
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
+  useVoiceLists()
   if (row?.username && !me) return <ResumeAccount row={row} />
   const items = railItems(
     railServers({ me, guest, guestServers, guestNames, servers }),

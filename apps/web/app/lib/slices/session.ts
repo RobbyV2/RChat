@@ -923,6 +923,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         set({
           p2pAvailability: {},
           voiceUsers: {},
+          voiceServers: {},
           voiceMuted: {},
           voiceHushed: {},
           voiceAudio: {},
@@ -1067,7 +1068,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
       const outage = downSince === null ? 0 : Date.now() - downSince
       downSince = null
-      set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {}, voiceHushed: {}, voiceAudio: {} })
+      set({
+        p2pAvailability: {},
+        voiceUsers: {},
+        voiceServers: {},
+        voiceMuted: {},
+        voiceHushed: {},
+        voiceAudio: {},
+      })
       if (get().me) p2p.announce()
       else if (get().token) void recoverMe()
       const { view } = get()
@@ -2056,6 +2064,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         call: null,
         selfAudio: SELF_AUDIO_IDLE,
         voiceUsers: {},
+        voiceServers: {},
         voiceMuted: {},
         voiceHushed: {},
         voiceAudio: {},
@@ -2506,7 +2515,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         clearTimeout(resyncTimer ?? undefined)
         resyncTimer = null
         home.ws.stop()
-        set({ wsStatus: 'red' })
+        set({
+          wsStatus: 'red',
+          voiceUsers: {},
+          voiceServers: {},
+          voiceMuted: {},
+          voiceHushed: {},
+          voiceAudio: {},
+        })
       }
     },
     resumeView() {

@@ -316,6 +316,8 @@ export interface RChatState {
   // DMs where a P2P call could not connect because the other side can't do P2P, with the time (ms).
   p2pCallFailed: Record<number, number>
   voiceUsers: Record<number, string[]>
+  // The server of each voice channel with people in it.
+  voiceServers: Record<number, string>
   // users muted by a timeout in each voice channel
   voiceMuted: Record<number, string[]>
   // guests staff muted for everyone in each voice channel

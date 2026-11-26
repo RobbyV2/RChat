@@ -64,6 +64,7 @@ import {
   type SetState,
 } from './ctx'
 import type { presenceSlice } from './presence'
+import { withoutVoiceRooms } from './rtc'
 
 export interface ServersDeps {
   acct: AccountSession
@@ -167,8 +168,20 @@ export const applyServerChange = (
       g.server === old_name ? { ...g, server: server.name } : g,
     ])
   )
+  const renamed = old_name !== server.name
+  const voiceServers = renamed
+    ? Object.fromEntries(
+        Object.entries(s.voiceServers).map(([id, name]) => [
+          id,
+          name === old_name ? server.name : name,
+        ])
+      )
+    : s.voiceServers
   return {
     servers,
+    channelLabelEpochs: renamed
+      ? renameKey(s.channelLabelEpochs, old_name, server.name)
+      : s.channelLabelEpochs,
     members,
     memberInfo,
     interacted,
@@ -179,6 +192,7 @@ export const applyServerChange = (
       s.voice?.server === old_name && old_name !== server.name
         ? { ...s.voice, server: server.name }
         : s.voice,
+    voiceServers,
     me: s.me
       ? {
           ...s.me,
@@ -460,6 +474,10 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       members: keyed(s.members, name, null),
       interacted: keyed(s.interacted, name, null),
       me: s.me ? { ...s.me, servers: s.me.servers.filter(x => x.name !== name) } : s.me,
+      ...withoutVoiceRooms(
+        s,
+        id => s.voiceServers[id] === name || !!s.servers[name]?.channels.some(c => c.id === id)
+      ),
     }))
     if (reload) void get().loadMoreServers()
     if (get().guest) {
@@ -1279,11 +1297,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         channels: d.channels.filter(c => c.id !== ev.channel_id),
       }))
       if (get().voice?.channelId === ev.channel_id) endVoiceMedia()
-      set(s => {
-        const voiceUsers = { ...s.voiceUsers }
-        delete voiceUsers[ev.channel_id]
-        return { voiceUsers }
-      })
+      set(s => withoutVoiceRooms(s, id => id === ev.channel_id))
       forgetReads(scope => scope !== `c${ev.channel_id}`)
       forgetPending((_, upload) => upload.scope !== `c${ev.channel_id}`)
       tails.delete(`c${ev.channel_id}`)

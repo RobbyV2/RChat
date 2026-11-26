@@ -47,7 +47,9 @@ import { serverInitial } from '../../lib/rules'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge, pingLabel } from '../ping_badge'
 import { ChannelEnd } from '../typing_indicator'
+import { RailVoiceBadge, useP2pVoice } from '../rail_voice_badge'
 import { p2pRowTypers } from '../../lib/typing_rows'
+import { voiceLabel } from '../../lib/voice_rail'
 import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { iconBtn, Masked, Sentinel } from '../ui'
@@ -155,6 +157,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   const prefs = useStore(s => s.notifyPrefs)
   const pings = serverPings(v, prefs)
   const unread = serverUnread(v, prefs)
+  const voice = useP2pVoice([v.id])
   const muted = mutedOf(prefs, serverScope(v.id), Date.now())
   const parent = folder === null ? null : zoneOfFolder(folder)
   const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
@@ -162,8 +165,8 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
     <button
       data-p2p-tile
       data-p2p-server={v.id}
-      title={`${mask(v.name)}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
-      aria-label={`${mask(v.name)}, peer-to-peer`}
+      title={`${mask(v.name)}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
+      aria-label={`${mask(v.name)}, peer-to-peer${voiceLabel(voice)}`}
       aria-current={active ? 'page' : undefined}
       onClick={() => p2pServer.open(v.id)}
       {...longPress(
@@ -209,6 +212,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
           />
         )
       )}
+      <RailVoiceBadge count={voice} />
     </button>
   )
 }
@@ -230,6 +234,7 @@ function P2pFolderEntryBody({
   const prefs = useStore(s => s.notifyPrefs)
   const unread = !folder.open && list.some(v => serverUnread(v, prefs))
   const pings = folder.open ? 0 : list.reduce((n, v) => n + serverPings(v, prefs), 0)
+  const voice = useP2pVoice(folder.open ? [] : list.map(v => v.id))
   const streamer = useStore(s => s.streamer)
   const mask = useMask()
   const label =
@@ -237,7 +242,7 @@ function P2pFolderEntryBody({
   const theme = useStore(s => s.theme)
   const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
-    title: streamer ? folder.name || 'Folder' : label,
+    title: `${streamer ? folder.name || 'Folder' : label}${voiceLabel(voice)}`,
     'aria-expanded': folder.open,
     'data-drop-onto': 'Add to folder',
     'data-p2p-tile': '',
@@ -287,6 +292,7 @@ function P2pFolderEntryBody({
             />
           )
         )}
+        <RailVoiceBadge count={voice} />
       </button>
     )
   return (

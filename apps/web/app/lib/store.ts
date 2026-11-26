@@ -32,7 +32,7 @@ import { presenceSlice } from './slices/presence'
 import { readsSlice } from './slices/reads'
 import { messagesSlice } from './slices/messages'
 import { serversSlice } from './slices/servers'
-import { rtcSlice } from './slices/rtc'
+import { rtcSlice, withoutVoiceRooms } from './slices/rtc'
 import { BOOT_RETRY_MS, sessionSlice } from './slices/session'
 import { menuActions, uiSlice } from './slices/ui'
 
@@ -414,6 +414,7 @@ export function createChatStore(acct: AccountSession) {
       callRoute: DEFAULT_ROUTE,
       p2pCallFailed: {},
       voiceUsers: {},
+      voiceServers: {},
       voiceMuted: {},
       voiceHushed: {},
       voiceAudio: {},
@@ -558,11 +559,6 @@ export function createChatStore(acct: AccountSession) {
     chatStore.setState({ ...pristine }, true)
   }
 
-  // Without each other's people: rosters drop out while their room is closed here.
-  const withoutRooms = <T>(marks: Record<number, T>, hidden: Set<number>) => {
-    const kept = Object.entries(marks).filter(([id]) => !hidden.has(Number(id)))
-    return kept.length === Object.keys(marks).length ? null : Object.fromEntries(kept)
-  }
   let closedVoice = new Set<number>()
   const hideClosedRoom = (s: RChatState) => {
     clearHiddenForward(acct, s)
@@ -580,13 +576,8 @@ export function createChatStore(acct: AccountSession) {
     closedVoice = new Set([...voiceRooms].filter(id => hidden.has(id)))
     if (reopened) home.ws.resubscribe()
     if (!hidden.size) return
-    const rosters = {
-      voiceUsers: withoutRooms(s.voiceUsers, hidden),
-      voiceMuted: withoutRooms(s.voiceMuted, hidden),
-      voiceHushed: withoutRooms(s.voiceHushed, hidden),
-      voiceAudio: withoutRooms(s.voiceAudio, hidden),
-    }
-    const pruned = Object.fromEntries(Object.entries(rosters).filter(([, v]) => v !== null))
+    // Without each other's people: rosters drop out while their room is closed here.
+    const pruned = withoutVoiceRooms(s, id => hidden.has(id))
     if (Object.keys(pruned).length) chatStore.setState(pruned)
     const keys = new Set<string>()
     for (const [key, list] of Object.entries(s.messages)) {
