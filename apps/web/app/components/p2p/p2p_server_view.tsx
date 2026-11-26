@@ -46,6 +46,8 @@ import type { DropTarget } from '../../lib/drag'
 import { serverInitial } from '../../lib/rules'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge, pingLabel } from '../ping_badge'
+import { ChannelEnd } from '../typing_indicator'
+import { p2pRowTypers } from '../../lib/typing_rows'
 import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { iconBtn, Masked, Sentinel } from '../ui'
@@ -111,6 +113,35 @@ const dropServer =
     else if (into !== null) p2pRail.moveIntoFolder(room, into, index)
     else p2pRail.move(room, index)
   }
+
+// A P2P channel row's end, with who is typing in the channel (while typing indicators are on),
+// leaving out blocked contacts.
+function P2pChannelEnd({
+  room,
+  ch,
+  pings,
+  unread,
+}: {
+  room: string
+  ch: string
+  pings: number
+  unread: boolean
+}) {
+  const { useP2p, memberName } = useP2pApp()!
+  const on = useStore(s => s.typingOn)
+  const iks = useP2p(s => (on ? (s.serverTyping[`${room}/${ch}`] ?? NO_TYPERS) : NO_TYPERS))
+  const contacts = useP2p(s => s.contacts)
+  const blocked = useMemo(
+    () => new Set(contacts.filter(c => c.state === 'blocked').map(c => c.ik)),
+    [contacts]
+  )
+  const names = useMemo(
+    () => p2pRowTypers(iks, blocked, ik => memberName(room, ik)),
+    [iks, blocked, memberName, room]
+  )
+  return <ChannelEnd typers={names} pings={pings} unread={unread} />
+}
+const NO_TYPERS: string[] = []
 
 // The tile's ring is dashed and a Waypoints badge sits on it: this server lives on its members'
 // devices.
@@ -515,17 +546,7 @@ function P2pServerSidebarBody() {
                 </span>
               )}
               <MutedIcon scope={scope} />
-              {pings > 0 ? (
-                <PingBadge count={pings} className="ml-auto" />
-              ) : (
-                unread && (
-                  <span
-                    title="Unread"
-                    aria-hidden
-                    className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
-                  />
-                )
-              )}
+              <P2pChannelEnd room={v.id} ch={c.id} pings={pings} unread={unread} />
             </button>
           )
         })}

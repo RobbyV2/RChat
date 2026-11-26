@@ -126,3 +126,15 @@ export const typingText = (names: string[]) =>
   typingParts(names)
     .map(p => p.text)
     .join('')
+
+// The label of a row's typing dots: who types there, or only how many in streamer mode.
+export const typingTitle = (names: readonly string[], streamer: boolean) => {
+  if (!names.length) return ''
+  if (streamer)
+    return names.length === 1
+      ? 'Someone is typing'
+      : names.length > 3
+        ? 'Several people are typing'
+        : `${names.length} people are typing`
+  return typingText([...names]).replace(/…$/, '')
+}

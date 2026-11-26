@@ -44,6 +44,7 @@ import { addsContacts, conversations } from '../../lib/p2p/conversations'
 import { enterKey } from '../../lib/keys'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge } from '../ping_badge'
+import { TypingEllipsis } from '../typing_indicator'
 import { MutedIcon } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
@@ -401,6 +402,8 @@ function ContactRowBody({
   const me = useP2p(s => s.me)
   const room = me && c.state === 'mutual' ? dmRoomId(me, c.ik) : null
   const summary = useP2p(s => (room ? s.rooms[room] : undefined))
+  const typingOn = useStore(s => s.typingOn)
+  const typing = useP2p(s => typingOn && !!room && (s.typing[room] ?? []).includes(c.ik))
   const prefs = useStore(s => s.notifyPrefs)
   const scope = room ? ({ kind: 'p2p', room } as const) : null
   const pings = summary && scope && levelOf(prefs, scope) !== 'nothing' ? summary.pings : 0
@@ -467,8 +470,9 @@ function ContactRowBody({
                     : presenceText(presence)))}
           </span>
         </span>
+        {typing && <TypingEllipsis names={[displayName(c)]} />}
         <PingBadge count={pings} />
-        {!pings && unread && (
+        {!pings && unread && !typing && (
           <span
             aria-label="Unread"
             role="img"

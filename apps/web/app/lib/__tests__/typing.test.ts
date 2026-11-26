@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  typingTitle,
   IDLE,
   TYPING_EVERY_MS,
   nextExpiry,
@@ -88,5 +89,17 @@ describe('incoming', () => {
         .map(p => p.text)
     ).toEqual(['Alice', 'Bob'])
     expect(typingParts(['A', 'B', 'C', 'D']).some(p => p.name)).toBe(false)
+  })
+})
+
+describe("the label of a row's typing dots", () => {
+  test('names who types, or only how many in streamer mode', () => {
+    expect(typingTitle([], false)).toBe('')
+    expect(typingTitle(['Alice'], false)).toBe('Alice is typing')
+    expect(typingTitle(['Alice', 'Bob'], false)).toBe('Alice and Bob are typing')
+    expect(typingTitle(['A', 'B', 'C', 'D'], false)).toBe('Several people are typing')
+    expect(typingTitle(['Alice'], true)).toBe('Someone is typing')
+    expect(typingTitle(['Alice', 'Bob'], true)).toBe('2 people are typing')
+    expect(typingTitle(['A', 'B', 'C', 'D'], true)).toBe('Several people are typing')
   })
 })

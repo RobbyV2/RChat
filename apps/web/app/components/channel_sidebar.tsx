@@ -75,6 +75,7 @@ import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
+import { ChannelEnd, useHostedTypers } from './typing_indicator'
 import { scopePings } from '../lib/pings'
 import { MutedIcon } from './notify_menu'
 import { shownMedia } from '../lib/timeouts'
@@ -141,17 +142,49 @@ export function DmRow({
         <NameWithUsername user={other} />
       </span>
       <MutedIcon scope={{ kind: 'dm', id }} />
+      {is_self ? (
+        <>
+          <span className="ml-auto shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
+            you
+          </span>
+          <PingBadge count={pings} />
+        </>
+      ) : (
+        <DmRowEnd id={id} unread={unread} pings={pings} />
+      )}
+    </button>
+  )
+}
+
+// The end of a DM row: typing dots in place of the unread dot (just before a ping count), else
+// the unread dot after the name and the ping count at the end.
+function DmRowEnd({ id, unread, pings }: { id: number; unread: boolean; pings: number }) {
+  const typers = useHostedTypers([`d${id}`], null)
+  if (typers.length) return <ChannelEnd typers={typers} pings={pings} unread={unread} />
+  return (
+    <>
       {unread && !pings && (
         <span title="Unread" aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-error" />
       )}
-      {is_self && (
-        <span className="ml-auto shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
-          you
-        </span>
-      )}
-      <PingBadge count={pings} className={is_self ? '' : 'ml-auto'} />
-    </button>
+      <PingBadge count={pings} className="ml-auto" />
+    </>
   )
+}
+
+// A channel row's (or a folded category's) end, with who types in `scopes`.
+function HostedChannelEnd({
+  scopes,
+  server,
+  pings,
+  unread,
+}: {
+  scopes: readonly string[]
+  server: string
+  pings: number
+  unread: boolean
+}) {
+  const typers = useHostedTypers(scopes, server)
+  return <ChannelEnd typers={typers} pings={pings} unread={unread} />
 }
 
 function PrivateIcon() {
@@ -1050,17 +1083,12 @@ export function ChannelSidebar() {
       </span>
       {c.restrict_view && <PrivateIcon />}
       <MutedIcon scope={{ kind: 'channel', id: c.id, server }} />
-      {pingsOf(`c${c.id}`) > 0 ? (
-        <PingBadge count={pingsOf(`c${c.id}`)} className="ml-auto" />
-      ) : (
-        unread(`c${c.id}`) && (
-          <span
-            title="Unread"
-            aria-hidden
-            className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
-          />
-        )
-      )}
+      <HostedChannelEnd
+        scopes={[`c${c.id}`]}
+        server={server}
+        pings={pingsOf(`c${c.id}`)}
+        unread={unread(`c${c.id}`)}
+      />
     </button>
   )
 
@@ -1110,6 +1138,9 @@ export function ChannelSidebar() {
       : channels.reduce((n, c) => n + (keepShown(c) ? 0 : pingsOf(`c${c.id}`)), 0)
     const hiddenUnread =
       !open && channels.some(c => c.kind === 'text' && !keepShown(c) && unread(`c${c.id}`))
+    const hiddenScopes = open
+      ? []
+      : channels.filter(c => c.kind === 'text' && !keepShown(c)).map(c => `c${c.id}`)
     return (
       <div key={category.id} data-drag-box className="group/cat flex flex-col rounded-lg pt-3">
         <div className="flex items-center pr-2">
@@ -1130,13 +1161,12 @@ export function ChannelSidebar() {
             {hiddenPings > 0 ? (
               <PingBadge count={hiddenPings} className="ml-auto" />
             ) : (
-              hiddenUnread && (
-                <span
-                  title="Unread"
-                  aria-hidden
-                  className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
-                />
-              )
+              <HostedChannelEnd
+                scopes={hiddenScopes}
+                server={server}
+                pings={0}
+                unread={hiddenUnread}
+              />
             )}
           </button>
           {canManage && (

@@ -65,6 +65,7 @@ import { InboxButton, InboxPreview, useInboxCount } from './inbox'
 import { PaletteButton } from './palette'
 import { FriendsSection } from './friends'
 import { PingBadge, pingLabel } from './ping_badge'
+import { TypingEllipsis, useHostedTypers } from './typing_indicator'
 import { ServerGlyph } from './server_rail'
 import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
@@ -132,6 +133,18 @@ function Card({
 
 function Empty({ children }: { children: ReactNode }) {
   return <p className="px-2 py-3 text-sm text-on-surface-variant">{children}</p>
+}
+
+// A pinned DM's end: typing dots before its ping count, else its unread mark.
+function DmEnd({ id, unread, pings }: { id: number; unread: boolean; pings: number }) {
+  const typers = useHostedTypers([`d${id}`], null)
+  if (!typers.length) return <UnreadMark unread={unread} pings={pings} />
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-1.5">
+      <TypingEllipsis names={typers} />
+      <PingBadge count={pings} />
+    </span>
+  )
 }
 
 function UnreadMark({ unread, pings }: { unread: boolean; pings: number }) {
@@ -1093,7 +1106,7 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
           {dm.is_self ? 'Notes to yourself' : `@${dm.other.username}`}
         </span>
       </span>
-      <UnreadMark unread={unread} pings={pings} />
+      <DmEnd id={dm.id} unread={unread} pings={pings} />
     </button>
   )
 }

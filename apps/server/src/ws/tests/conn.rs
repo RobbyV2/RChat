@@ -1013,3 +1013,57 @@ async fn sockets_past_the_copy_cap_are_refused_and_others_stay() {
     );
     crate::api::test_util::done(state, path).await;
 }
+
+#[tokio::test]
+async fn typing_reaches_viewers_of_other_channels_only_where_they_can_see() {
+    let (state, path, addr) = live("ws_typing_reach").await;
+    let db = &state.db;
+    for name in ["alice", "bob", "carol"] {
+        socket_account(&state, name, 0).await;
+    }
+    let channel = |name: &'static str| {
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', $1, 'text', 0) RETURNING id",
+        )
+        .bind(name)
+        .fetch_one(db)
+    };
+    let random = channel("random").await.expect("random");
+    let private = channel("private").await.expect("private");
+    for (subject, view) in [("u:alice", 1), ("u:carol", 1), ("u:bob", 0)] {
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, $3, $3, $3)")
+            .bind(private)
+            .bind(subject)
+            .bind(view)
+            .execute(db)
+            .await
+            .expect("private rule");
+    }
+    crate::api::test_util::restrict_ruled(db).await;
+    let mut bob = viewing_socket(addr, "bob").await;
+    let mut carol = viewing_socket(addr, "carol").await;
+    let mut alice = viewing_socket(addr, "alice").await;
+    let typing = |scope: String| {
+        tokio_tungstenite::tungstenite::Message::text(format!(
+            r#"{{"type":"typing","scope":"{scope}"}}"#
+        ))
+    };
+    alice.send(typing(format!("c{private}"))).await.unwrap();
+    let seen = next_of_type(&mut carol, "typing", Duration::from_secs(10))
+        .await
+        .expect("typing in the private channel reaches carol");
+    assert_eq!(seen["scope"], format!("c{private}"));
+    assert!(
+        next_of_type(&mut bob, "typing", Duration::from_secs(2))
+            .await
+            .is_none()
+    );
+    alice.send(typing(format!("c{random}"))).await.unwrap();
+    let got = next_of_type(&mut bob, "typing", Duration::from_secs(10))
+        .await
+        .expect("typing in a channel bob can see");
+    assert_eq!(got["scope"], format!("c{random}"));
+    assert_eq!(got["username"], "alice");
+    end_events(&state);
+    crate::api::test_util::done(state, path).await;
+}
