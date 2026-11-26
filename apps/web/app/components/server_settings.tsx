@@ -4,7 +4,27 @@ import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Hash, Lock, Trash2, TriangleAlert, Volume2, X } from 'lucide-react'
+import {
+  Ban,
+  Hash,
+  IdCard,
+  KeyRound,
+  LayoutDashboard,
+  Lock,
+  MessageSquare,
+  Paperclip,
+  Puzzle,
+  ScrollText,
+  Shield,
+  Ticket,
+  Trash2,
+  TriangleAlert,
+  Users,
+  Volume2,
+  Webhook,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import type { Page } from '../lib/lists'
 import { openChoiceMenu } from '../lib/actions/menu'
 import {
@@ -94,6 +114,13 @@ import {
 import { LabelText } from './instance_badge'
 import { endsText } from '../lib/durations'
 import { staffChange, staffViewChannel } from '../lib/staff_view'
+import { SettingsPage, type PageSection } from './settings_page'
+import {
+  SERVER_SECTION_LABELS,
+  serverSettingsRows,
+  serverSettingsSections,
+  type ServerSettingsSection,
+} from '../lib/server_settings_sections'
 
 const SEARCH_DEBOUNCE = 250
 const PICKER_HITS = 8
@@ -1321,9 +1348,28 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
   )
 }
 
+const SERVER_SECTION_ICONS: Record<ServerSettingsSection, LucideIcon> = {
+  invites: Ticket,
+  overview: LayoutDashboard,
+  widgets: Puzzle,
+  messages: MessageSquare,
+  uploads: Paperclip,
+  profiles: IdCard,
+  access: KeyRound,
+  roles: Shield,
+  channels: Hash,
+  members: Users,
+  bans: Ban,
+  integrations: Webhook,
+  audit: ScrollText,
+  delete: Trash2,
+}
+
 export default function ServerSettings() {
   const dialog = useStore(s => s.activeDialog)
-  return dialog?.kind === 'server_settings' ? <Settings server={dialog.server} /> : null
+  return dialog?.kind === 'server_settings' ? (
+    <Settings key={dialog.server} server={dialog.server} section={dialog.section ?? null} />
+  ) : null
 }
 
 // What members may set in their own profile of the server. For people with Manage server, while
@@ -1334,17 +1380,16 @@ function ServerProfilesSetting({ server }: { server: string }) {
   const on = useStore(s => s.settings.server_profiles !== false)
   if (!on) return null
   return (
-    <>
-      <p className={sectionCls}>Server profiles</p>
-      <ProfilesModeField
-        mode={mode}
-        onChange={next => api.updateServer(server, { profiles_mode: next })}
-      />
-    </>
+    <ProfilesModeField
+      mode={mode}
+      onChange={next => api.updateServer(server, { profiles_mode: next })}
+    />
   )
 }
 
-function Settings({ server }: { server: string }) {
+// `section`: the section to open, as the overlay asks; null opens the list on phones and the first
+// section on wide screens.
+function Settings({ server, section }: { server: string; section: ServerSettingsSection | null }) {
   const acct = useAccount()
 
   const {
@@ -1367,6 +1412,14 @@ function Settings({ server }: { server: string }) {
   const [renameError, setRenameError] = useState<string | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  const [picked, setPicked] = useState<string | null>(section)
+  const [seenSection, setSeenSection] = useState(section)
+  if (seenSection !== section) {
+    setSeenSection(section)
+    if (section !== null) setPicked(section)
+  }
+  const [row, setRow] = useState<string | null>(null)
+  const profilesOn = useStore(s => s.settings.server_profiles !== false)
   const canSettings = hasPerm(perms, Perm.ManageServer)
   // Member rows lead with the name the server shows, the username after it.
   const shownOf = useShownMembers(server)
@@ -1453,47 +1506,63 @@ function Settings({ server }: { server: string }) {
     </div>
   )
 
-  return (
-    <Dialog actor={<ViewActorTag header />} full title="Server Settings" onClose={closeDialog}>
-      {!sharedByCode(detail.join_mode) && (
-        <InviteLinkField server={server} hasPassword={detail.has_password} />
-      )}
-      {(sharedByCode(detail.join_mode) || (canInvites && detail.has_password)) && (
-        <StandingInvite key={server} server={server} manage={canInvites} />
-      )}
-      {detail && canSettings && <WidgetSettings server={server} channels={detail.channels} />}
-      {server !== 'rchat' && canSettings && (
-        <>
-          <p className={sectionCls}>Rename Server</p>
-          <form
-            onSubmit={e => {
-              e.preventDefault()
-              const trimmed = name.trim()
-              if (!trimmed) return
-              setRenameError(null)
-              renameServer(server, trimmed).then(closeDialog, (err: unknown) =>
-                setRenameError(errorText(err))
-              )
-            }}
-            className="flex gap-2"
-          >
-            <input
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="Server name"
-              className={`${fieldCls} streamer`}
-            />
-            <button className={filledBtn}>Rename</button>
-          </form>
-          <FieldError message={renameError} />
-          <HostedAbout server={server} />
-          <ServerAppearance server={server} />
-          <ServerSystemMessages server={server} />
-          <ServerUploadExpiry server={server} />
-          <ServerProfilesSetting server={server} />
-        </>
-      )}
-      {server !== 'rchat' && (canSettings || canInvites) && (
+  const rename = (
+    <>
+      <p className={sectionCls}>Rename Server</p>
+      <form
+        onSubmit={e => {
+          e.preventDefault()
+          const trimmed = name.trim()
+          if (!trimmed) return
+          setRenameError(null)
+          renameServer(server, trimmed).then(closeDialog, (err: unknown) =>
+            setRenameError(errorText(err))
+          )
+        }}
+        className="flex gap-2"
+      >
+        <input
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="Server name"
+          className={`${fieldCls} streamer`}
+        />
+        <button className={filledBtn}>Rename</button>
+      </form>
+      <FieldError message={renameError} />
+    </>
+  )
+
+  const body: Record<ServerSettingsSection, () => ReactNode> = {
+    invites: () => (
+      <>
+        {!sharedByCode(detail.join_mode) && (
+          <InviteLinkField server={server} hasPassword={detail.has_password} />
+        )}
+        {(sharedByCode(detail.join_mode) || (canInvites && detail.has_password)) && (
+          <StandingInvite key={server} server={server} manage={canInvites} />
+        )}
+      </>
+    ),
+    overview: () => (
+      <>
+        {server !== 'rchat' && (
+          <>
+            {rename}
+            <HostedAbout server={server} />
+          </>
+        )}
+        <ServerAppearance server={server} />
+      </>
+    ),
+    widgets: () => <WidgetSettings server={server} channels={detail.channels} />,
+    messages: () => <ServerSystemMessages server={server} />,
+    uploads: () => <ServerUploadExpiry server={server} />,
+    profiles: () => <ServerProfilesSetting server={server} />,
+    access: () =>
+      server === 'rchat' ? (
+        <GuestParticipation server={server} />
+      ) : (
         <ServerAccessSection
           canSettings={canSettings}
           canInvites={canInvites}
@@ -1503,190 +1572,190 @@ function Settings({ server }: { server: string }) {
           publicRead={detail.public_read ?? null}
           membersVisible={parseMembersVisible(detail.members_visible)}
         />
-      )}
-      {server !== 'rchat' && hasPerm(perms, Perm.DeleteServer) && (
-        <>
-          <p className={sectionCls}>Delete Server</p>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
-              Deletes the server with all of its channels and messages for everyone. This cannot be
-              undone.
-            </p>
-            <button
-              onClick={() =>
-                askConfirm({
-                  title: 'Delete Server',
-                  body: 'Delete this server for everyone? All of its channels and messages are deleted. This cannot be undone.',
-                  confirm: 'Delete',
-                  action: () => {
-                    closeDialog()
-                    void deleteServer(server)
-                  },
-                })
-              }
-              className="rounded-full border border-error px-4 py-2 text-sm font-medium text-error hover:bg-error-container hover:text-on-error-container"
-            >
-              Delete server
-            </button>
-          </div>
-        </>
-      )}
-      {server === 'rchat' && canSettings && (
-        <>
-          <ServerAppearance server={server} />
-          <ServerSystemMessages server={server} />
-          <ServerUploadExpiry server={server} />
-          <ServerProfilesSetting server={server} />
-          <p className={sectionCls}>Access</p>
-          <GuestParticipation server={server} />
-        </>
-      )}
-      {hasPerm(perms, Perm.ManageRoles) && (
-        <>
-          <p className={sectionCls}>Roles</p>
-          <RolesEditor
-            server={server}
-            roles={detail.roles}
-            limit={limit}
-            limits={detail.role_limits}
-          />
-        </>
-      )}
-      {hasPerm(perms, Perm.ManageChannels) && (
-        <>
-          <p className={sectionCls}>Channels</p>
-          <CategoryCreator server={server} />
-          {detail.channels.map(c => (
-            <ChannelControls key={c.id} server={server} channel={c} roles={detail.roles} />
-          ))}
-        </>
-      )}
-      {hasPerm(perms, Perm.Kick) && (
-        <>
-          <p className={sectionCls}>Bans</p>
-          <BanList server={server} />
-        </>
-      )}
-      {(hasPerm(perms, Perm.ManageWebhooks) || hasPerm(perms, Perm.ManageChannels)) && (
-        <>
-          <p className={sectionCls}>Integrations</p>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
-              Webhooks post into channels from scripts and services, or send this server&apos;s
-              events to a URL.
-            </p>
-            <button onClick={() => openDialog({ kind: 'webhooks', server })} className={textBtn}>
-              Webhooks
-            </button>
-          </div>
-        </>
-      )}
-      {hasPerm(perms, Perm.ViewAuditLog) && (
-        <>
-          <p className={sectionCls}>Audit Log</p>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
-              See who changed what in this server over the last 90 days.
-            </p>
-            <button onClick={() => openDialog({ kind: 'audit_log', server })} className={textBtn}>
-              Open audit log
-            </button>
-          </div>
-        </>
-      )}
-      {canAdmin && (
-        <>
-          <p className={sectionCls}>Admins</p>
-          <MemberSearchField
-            value={q}
-            onChange={setQ}
-            placeholder={canSearch ? 'Search admins' : undefined}
-          />
-          {admins.map(m =>
-            memberRow(
-              m,
-              <>
-                <button
-                  onClick={() => setEditingAdmin(editingAdmin === m.username ? null : m.username)}
-                  className={textBtn}
-                >
-                  Perms
-                </button>
-                <span
-                  title={
-                    limit !== undefined &&
-                    !canRevoke(limit, false, m.perms, rolePerms(m, detail.roles))
-                      ? REVOKE_RAISES
-                      : undefined
-                  }
-                >
+      ),
+    roles: () => (
+      <RolesEditor server={server} roles={detail.roles} limit={limit} limits={detail.role_limits} />
+    ),
+    channels: () => (
+      <>
+        <CategoryCreator server={server} />
+        {detail.channels.map(c => (
+          <ChannelControls key={c.id} server={server} channel={c} roles={detail.roles} />
+        ))}
+      </>
+    ),
+    members: () => (
+      <>
+        {canAdmin && (
+          <>
+            <p className={sectionCls}>Admins</p>
+            <MemberSearchField
+              value={q}
+              onChange={setQ}
+              placeholder={canSearch ? 'Search admins' : undefined}
+            />
+            {admins.map(m =>
+              memberRow(
+                m,
+                <>
                   <button
-                    onClick={() => revokeAdminFor(server, m.username, reloadBoth)}
-                    disabled={
+                    onClick={() => setEditingAdmin(editingAdmin === m.username ? null : m.username)}
+                    className={textBtn}
+                  >
+                    Perms
+                  </button>
+                  <span
+                    title={
                       limit !== undefined &&
                       !canRevoke(limit, false, m.perms, rolePerms(m, detail.roles))
+                        ? REVOKE_RAISES
+                        : undefined
                     }
-                    className={`${dangerBtn} disabled:pointer-events-none`}
                   >
-                    Remove
-                  </button>
-                </span>
-              </>,
-              editingAdmin === m.username && (
-                <div className="mt-1.5 pl-9">
-                  <AdminPermsEditor
-                    server={server}
-                    username={m.username}
-                    perms={m.perms}
-                    limit={limit}
-                  />
-                </div>
-              )
-            )
-          )}
-          {adminList.hasMore && <Sentinel key={`a${admins.length}`} onVisible={adminList.more} />}
-        </>
-      )}
-      {canSearch ? (
-        <>
-          <p className={sectionCls}>Members</p>
-          <HostedMembers server={server} roles={detail.roles} perms={perms} />
-        </>
-      ) : (
-        canAdmin && (
-          <>
-            <p className={sectionCls}>Members</p>
-            {others.length ? (
-              others.map(m =>
-                memberRow(
-                  m,
-                  promote && (
                     <button
-                      onClick={() =>
-                        void grantAdmin(server, m.username).then(inSession(reloadBoth))
+                      onClick={() => revokeAdminFor(server, m.username, reloadBoth)}
+                      disabled={
+                        limit !== undefined &&
+                        !canRevoke(limit, false, m.perms, rolePerms(m, detail.roles))
                       }
-                      className={textBtn}
+                      className={`${dangerBtn} disabled:pointer-events-none`}
                     >
-                      Make Admin
+                      Remove
                     </button>
-                  )
+                  </span>
+                </>,
+                editingAdmin === m.username && (
+                  <div className="mt-1.5 pl-9">
+                    <AdminPermsEditor
+                      server={server}
+                      username={m.username}
+                      perms={m.perms}
+                      limit={limit}
+                    />
+                  </div>
                 )
               )
-            ) : (
-              <p className="px-2 text-sm text-on-surface-variant">
-                {found.active
-                  ? found.loading
-                    ? 'Searching…'
-                    : 'No matching members.'
-                  : 'Everyone here is an admin.'}
-              </p>
             )}
-            {found.active
-              ? found.hasMore && <Sentinel key={`q${found.list.length}`} onVisible={found.more} />
-              : (cache?.hasMore ?? false) && <Sentinel key={loaded.length} onVisible={more} />}
+            {adminList.hasMore && <Sentinel key={`a${admins.length}`} onVisible={adminList.more} />}
           </>
-        )
-      )}
-    </Dialog>
+        )}
+        {canSearch ? (
+          <>
+            <p className={sectionCls}>Members</p>
+            <HostedMembers server={server} roles={detail.roles} perms={perms} />
+          </>
+        ) : (
+          canAdmin && (
+            <>
+              <p className={sectionCls}>Members</p>
+              {others.length ? (
+                others.map(m =>
+                  memberRow(
+                    m,
+                    promote && (
+                      <button
+                        onClick={() =>
+                          void grantAdmin(server, m.username).then(inSession(reloadBoth))
+                        }
+                        className={textBtn}
+                      >
+                        Make Admin
+                      </button>
+                    )
+                  )
+                )
+              ) : (
+                <p className="px-2 text-sm text-on-surface-variant">
+                  {found.active
+                    ? found.loading
+                      ? 'Searching…'
+                      : 'No matching members.'
+                    : 'Everyone here is an admin.'}
+                </p>
+              )}
+              {found.active
+                ? found.hasMore && <Sentinel key={`q${found.list.length}`} onVisible={found.more} />
+                : (cache?.hasMore ?? false) && <Sentinel key={loaded.length} onVisible={more} />}
+            </>
+          )
+        )}
+      </>
+    ),
+    bans: () => <BanList server={server} />,
+    integrations: () => (
+      <>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
+            Webhooks post into channels from scripts and services, or send this server&apos;s events
+            to a URL.
+          </p>
+          <button onClick={() => openDialog({ kind: 'webhooks', server })} className={textBtn}>
+            Webhooks
+          </button>
+        </div>
+      </>
+    ),
+    audit: () => (
+      <>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
+            See who changed what in this server over the last 90 days.
+          </p>
+          <button onClick={() => openDialog({ kind: 'audit_log', server })} className={textBtn}>
+            Open audit log
+          </button>
+        </div>
+      </>
+    ),
+    delete: () => (
+      <>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
+            Deletes the server with all of its channels and messages for everyone. This cannot be
+            undone.
+          </p>
+          <button
+            onClick={() =>
+              askConfirm({
+                title: 'Delete Server',
+                body: 'Delete this server for everyone? All of its channels and messages are deleted. This cannot be undone.',
+                confirm: 'Delete',
+                action: () => {
+                  closeDialog()
+                  void deleteServer(server)
+                },
+              })
+            }
+            className="rounded-full border border-error px-4 py-2 text-sm font-medium text-error hover:bg-error-container hover:text-on-error-container"
+          >
+            Delete server
+          </button>
+        </div>
+      </>
+    ),
+  }
+  const viewer = { perms, builtin: server === 'rchat', profiles: profilesOn }
+  const sections: PageSection[] = serverSettingsSections(viewer).map(id => ({
+    id,
+    label: SERVER_SECTION_LABELS[id],
+    icon: SERVER_SECTION_ICONS[id],
+    rows: serverSettingsRows(id, viewer),
+    render: body[id],
+  }))
+
+  return (
+    <SettingsPage
+      title="Server Settings"
+      sections={sections}
+      active={picked}
+      row={row}
+      onSection={(id, at) => {
+        setPicked(id)
+        setRow(at ?? null)
+      }}
+      onClose={closeDialog}
+      actor={<ViewActorTag header />}
+      layer="dialog"
+    />
   )
 }

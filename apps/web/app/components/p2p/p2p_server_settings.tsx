@@ -7,7 +7,23 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
+import {
+  Ban,
+  Clock,
+  Crown,
+  Hash,
+  History as HistoryIcon,
+  LayoutDashboard,
+  Lock,
+  LogOut,
+  MessageSquare,
+  Shield,
+  Ticket,
+  Trash2,
+  Users,
+  Volume2,
+  type LucideIcon,
+} from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { type ServerTab } from '../../lib/p2p/app'
 import {
@@ -23,7 +39,8 @@ import { fieldMax } from '../../lib/p2p/event_v2'
 import { voiceNotice } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
-import { Dialog, fieldCls, filledBtn, Masked, sectionCls, Sentinel, textBtn } from '../ui'
+import { fieldCls, filledBtn, Masked, Sentinel, textBtn } from '../ui'
+import { SettingsPage, type PageSection } from '../settings_page'
 import { page, PAGE } from '../../lib/paging'
 import { MemberAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
@@ -49,16 +66,41 @@ import { AboutEditor } from '../server_about'
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
 
-const TABS: { tab: ServerTab; label: string }[] = [
-  { tab: 'overview', label: 'Overview' },
-  { tab: 'roles', label: 'Roles' },
-  { tab: 'channels', label: 'Channels' },
-  { tab: 'invites', label: 'Invites' },
-  { tab: 'system', label: 'System messages' },
-  { tab: 'history', label: 'History' },
-  { tab: 'members', label: 'Members' },
-  { tab: 'bans', label: 'Bans' },
-  { tab: 'leave', label: 'Leave' },
+const TABS: { tab: ServerTab; label: string; icon: LucideIcon; keywords: string[] }[] = [
+  {
+    tab: 'overview',
+    label: 'Overview',
+    icon: LayoutDashboard,
+    keywords: ['rename', 'server name', 'server profiles'],
+  },
+  { tab: 'roles', label: 'Roles', icon: Shield, keywords: ['permissions', 'role'] },
+  {
+    tab: 'channels',
+    label: 'Channels',
+    icon: Hash,
+    keywords: ['category', 'topic', 'slowmode', 'voice'],
+  },
+  { tab: 'invites', label: 'Invites', icon: Ticket, keywords: ['invite', 'code', 'link'] },
+  {
+    tab: 'system',
+    label: 'System messages',
+    icon: MessageSquare,
+    keywords: ['welcome', 'join', 'leave'],
+  },
+  {
+    tab: 'history',
+    label: 'History',
+    icon: HistoryIcon,
+    keywords: ['earlier messages', 'new members'],
+  },
+  { tab: 'members', label: 'Members', icon: Users, keywords: ['member', 'kick', 'roles'] },
+  { tab: 'bans', label: 'Bans', icon: Ban, keywords: ['banned', 'unban'] },
+  {
+    tab: 'leave',
+    label: 'Leave',
+    icon: LogOut,
+    keywords: ['leave server', 'remove from this device'],
+  },
 ]
 
 const can = (v: ServerView, bit: number) => v.me === 'join' && (v.perms & bit) !== 0
@@ -660,52 +702,53 @@ function Leave({ v }: { v: ServerView }) {
   )
 }
 
+function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: ServerTab }) {
+  return (
+    <div className="px-1">
+      {tab === 'overview' && <Overview key={v.name} v={v} />}
+      {tab === 'roles' && <RolesTab v={v} />}
+      {tab === 'channels' && <Channels v={v} />}
+      {tab === 'invites' && <CodeList room={room} version={0} />}
+      {tab === 'system' && <System v={v} />}
+      {tab === 'history' && <History v={v} />}
+      {tab === 'members' && <Members v={v} />}
+      {tab === 'bans' && <Bans v={v} />}
+      {tab === 'leave' && <Leave v={v} />}
+    </div>
+  )
+}
+
+const isTab = (id: string | null): id is ServerTab => TABS.some(t => t.tab === id)
+
 function ServerSettingsDialogBody({ room, tab: first }: { room: string; tab?: ServerTab }) {
   const identity = useP2pApp()!
   const { p2p } = identity
 
   const v = useP2p(s => s.servers[room])
-  const [tab, setTab] = useState<ServerTab>(first ?? 'overview')
+  const [tab, setTab] = useState<ServerTab | null>(first ?? null)
   if (!v) return null
+  const sections: PageSection[] = TABS.map(t => ({
+    id: t.tab,
+    label: t.label,
+    icon: t.icon,
+    rows: [{ section: t.tab, id: `p2p_${t.tab}`, label: t.label, keywords: t.keywords }],
+    render: () => <TabBody v={v} room={room} tab={t.tab} />,
+  }))
   return (
-    <Dialog actor={<PeerActorTag header />} title="Server settings" onClose={p2p.closeDialog} full>
-      <div
-        role="tablist"
-        aria-label="Server settings"
-        className="-mx-1 mb-4 flex gap-1 overflow-x-auto px-1 pb-1"
-      >
-        {TABS.map(t => (
-          <button
-            key={t.tab}
-            role="tab"
-            aria-selected={tab === t.tab}
-            onClick={() => setTab(t.tab)}
-            className={`shrink-0 rounded-full px-3 py-1.5 text-sm ${
-              tab === t.tab
-                ? 'bg-secondary-container text-on-secondary-container'
-                : 'text-on-surface-variant hover:bg-surface-container-highest'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="-mx-3 mb-3 empty:hidden">
-        <ServerNotices v={v} />
-      </div>
-      <p className={sectionCls}>{TABS.find(t => t.tab === tab)?.label}</p>
-      <div className="px-1">
-        {tab === 'overview' && <Overview key={v.name} v={v} />}
-        {tab === 'roles' && <RolesTab v={v} />}
-        {tab === 'channels' && <Channels v={v} />}
-        {tab === 'invites' && <CodeList room={room} version={0} />}
-        {tab === 'system' && <System v={v} />}
-        {tab === 'history' && <History v={v} />}
-        {tab === 'members' && <Members v={v} />}
-        {tab === 'bans' && <Bans v={v} />}
-        {tab === 'leave' && <Leave v={v} />}
-      </div>
-    </Dialog>
+    <SettingsPage
+      title="Server settings"
+      sections={sections}
+      active={tab}
+      onSection={id => setTab(isTab(id) ? id : null)}
+      onClose={p2p.closeDialog}
+      actor={<PeerActorTag header />}
+      lead={
+        <div className="-mx-3 mb-3 empty:hidden">
+          <ServerNotices v={v} />
+        </div>
+      }
+      layer="dialog"
+    />
   )
 }
 

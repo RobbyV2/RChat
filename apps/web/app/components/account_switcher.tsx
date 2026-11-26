@@ -96,7 +96,8 @@ export function AccountSwitcherTile() {
   )
 }
 
-export function SettingsAccountPicker({ section }: { section: SettingsSection }) {
+// `section` is the open section; null opens the other account's settings on the list of sections.
+export function SettingsAccountPicker({ section }: { section: SettingsSection | null }) {
   const owner = useAccount()
   const model = useRows()
   const mask = useMask()
@@ -117,7 +118,9 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection })
           const next = rows.find(({ row }) => keyOf(row) === e.target.value)?.row
           if (!next) return
           void switchActor(next, owner, target => {
-            target.store.getState().openDialog({ kind: 'settings', section })
+            target.store
+              .getState()
+              .openDialog(section === null ? { kind: 'settings' } : { kind: 'settings', section })
           }).catch(e => owner.store.getState().setError(String(e)))
         }}
       >

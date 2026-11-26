@@ -31,9 +31,7 @@ import { Sentinel, textBtn } from './ui'
 
 const SEARCH_DEBOUNCE = 250
 
-// Any of these opens the member search.
-export const MEMBER_SEARCH_PERMS =
-  Perm.Kick | Perm.TimeoutMembers | Perm.ManageRoles | Perm.AssignRoles
+export { MEMBER_SEARCH_PERMS } from '../lib/member_filters'
 
 function useHostedSearch(server: string, query: string) {
   const {

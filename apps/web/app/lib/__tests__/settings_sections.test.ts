@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { sectionFor, settingsSections } from '../settings_sections'
+import { searchRows } from '../settings_search'
+import {
+  SECTION_GROUPS,
+  sectionFor,
+  settingsRows,
+  settingsSections,
+  type SettingsSection,
+} from '../settings_sections'
 
 const SIGNED_IN = { signedIn: true, p2p: true }
 const GUEST = { signedIn: false, p2p: false }
@@ -9,12 +16,12 @@ describe('settingsSections', () => {
   test('a signed-in account with P2P lists every entry, Profile first', () => {
     expect(settingsSections(SIGNED_IN)).toEqual([
       'profile',
+      'privacy',
       'general',
       'notifications',
-      'privacy',
-      'p2p',
-      'sync',
       'palette',
+      'sync',
+      'p2p',
       'information',
     ])
   })
@@ -24,8 +31,8 @@ describe('settingsSections', () => {
       'profile',
       'general',
       'notifications',
-      'sync',
       'palette',
+      'sync',
       'information',
     ])
   })
@@ -33,11 +40,11 @@ describe('settingsSections', () => {
   test('without P2P the P2P entry is gone and Privacy stays', () => {
     expect(settingsSections(P2P_OFF)).toEqual([
       'profile',
+      'privacy',
       'general',
       'notifications',
-      'privacy',
-      'sync',
       'palette',
+      'sync',
       'information',
     ])
   })
@@ -84,5 +91,83 @@ describe('sectionFor', () => {
 
   test('the P2P limits field without P2P falls back to the first entry', () => {
     expect(sectionFor(undefined, 'p2p_limits', settingsSections(P2P_OFF))).toBe('profile')
+  })
+})
+
+describe('nav groups', () => {
+  test('each group of entries sits together in the nav', () => {
+    const groups = settingsSections(SIGNED_IN).map(s => SECTION_GROUPS[s])
+    expect(groups).toEqual([
+      'Your account',
+      'Your account',
+      'App settings',
+      'App settings',
+      'App settings',
+      'App settings',
+      'Peer-to-peer',
+      'About',
+    ])
+  })
+})
+
+describe('settingsRows', () => {
+  const ALL: SettingsSection[] = settingsSections(SIGNED_IN)
+  const everywhere = { signedIn: true, desktop: true }
+
+  test('every row belongs to its section and has an id unique across the settings', () => {
+    const ids = ALL.flatMap(s => settingsRows(s, everywhere).map(r => r.id))
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const section of ALL) {
+      expect(settingsRows(section, everywhere).length).toBeGreaterThan(0)
+      for (const row of settingsRows(section, everywhere)) {
+        expect(row.section).toBe(section)
+        expect(row.id.startsWith('user_')).toBe(true)
+      }
+    }
+  })
+
+  test('rows of an account leave out guests, and desktop rows leave out the browser', () => {
+    const ids = (section: SettingsSection, at: { signedIn: boolean; desktop: boolean }) =>
+      settingsRows(section, at).map(r => r.id)
+    expect(ids('profile', { signedIn: false, desktop: false })).not.toContain('user_profile')
+    expect(ids('profile', { signedIn: true, desktop: false })).toContain('user_profile')
+    expect(ids('general', { signedIn: false, desktop: false })).not.toContain('user_status')
+    expect(ids('general', { signedIn: true, desktop: false })).not.toContain('user_desktop')
+    expect(ids('general', { signedIn: true, desktop: true })).toContain('user_desktop')
+    for (const row of settingsRows('general', everywhere)) {
+      expect('account' in row).toBe(false)
+      expect('desktop' in row).toBe(false)
+    }
+  })
+})
+
+describe('search over the settings', () => {
+  const found = (signedIn: boolean, query: string) => {
+    const at = { signedIn, desktop: false }
+    const sections = settingsSections({ signedIn, p2p: true }).map(id => ({
+      id,
+      label: id,
+      rows: settingsRows(id, at),
+    }))
+    return searchRows(sections, query).map(hit => hit.row.id)
+  }
+
+  test('finds the P2P storage limits and background sync', () => {
+    expect(found(true, 'limits')).toContain('user_p2p')
+    expect(found(true, 'background sync')).toContain('user_p2p')
+    expect(found(true, 'storage')).toContain('user_p2p')
+  })
+
+  test('password finds sign-in for an account and not for a guest', () => {
+    expect(found(true, 'password')).toContain('user_sign_in')
+    expect(found(false, 'password')).not.toContain('user_sign_in')
+    expect(found(false, 'exit guest')).toEqual(['user_sign_in'])
+  })
+
+  test('a guest sees the sign-in row as leaving guest mode', () => {
+    const guest = settingsRows('profile', { signedIn: false, desktop: false })
+    const row = guest.find(r => r.id === 'user_sign_in')
+    expect(row?.label).toBe('Exit guest mode')
+    expect('guest' in (row ?? {})).toBe(false)
   })
 })

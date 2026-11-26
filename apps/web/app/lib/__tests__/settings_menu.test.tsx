@@ -12,6 +12,7 @@ import { p2pKey } from '../p2p/app'
 import { resetSessionCaches, useStore } from '../store'
 import type { ActiveDialog, RChatState } from '../store_types'
 import type { P2pState } from '../p2p/app/store'
+import { settingsRows, settingsSections, type SettingsSection } from '../settings_sections'
 import { me } from './fixtures'
 
 const alicePeerFlag = () => peerStorage(home, 'alice').scoped(p2pKey('alice'))
@@ -80,12 +81,12 @@ describe('settings nav', () => {
   test('a signed-in account with P2P on lists every entry, Profile first', () => {
     expect(entries(signedIn({ kind: 'settings' }))).toEqual([
       'profile',
+      'privacy',
       'general',
       'notifications',
-      'privacy',
-      'p2p',
-      'sync',
       'palette',
+      'sync',
+      'p2p',
       'information',
     ])
   })
@@ -95,8 +96,8 @@ describe('settings nav', () => {
       'profile',
       'general',
       'notifications',
-      'sync',
       'palette',
+      'sync',
       'information',
     ])
   })
@@ -188,7 +189,8 @@ describe('Settings: P2P in the palette', () => {
 describe('Profile', () => {
   test('shows the account card, the profile fields, sign-in and the instance', () => {
     const html = signedIn({ kind: 'settings' })
-    const card = html.slice(html.indexOf('data-account-card'), html.indexOf('Your profile'))
+    const at = html.indexOf('data-account-card')
+    const card = html.slice(at, html.indexOf('Your profile', at))
     expect(card).toContain('Alice A')
     expect(card).toContain('@alice')
     expect(card).toContain('Alpha')
@@ -225,5 +227,95 @@ describe('Profile', () => {
     expect(html).toContain('Streamer mode')
     expect(html).not.toContain('Your profile')
     expect(html).not.toContain('Instance ID')
+  })
+})
+
+describe('the settings dialog', () => {
+  test('is a large dialog that sits above full pages', () => {
+    const html = signedIn({ kind: 'settings' })
+    expect(html).toContain('md:w-[min(94vw,1120px)]')
+    expect(/^<div class="[^"]*\bz-50\b/.test(html)).toBe(true)
+  })
+
+  test('the nav groups its entries under headings', () => {
+    const html = signedIn({ kind: 'settings' })
+    const nav = html.slice(html.indexOf('<nav'), html.indexOf('</nav>'))
+    const headings = [...nav.matchAll(/<p class="[^"]*uppercase[^"]*">([^<]+)<\/p>/g)].map(
+      m => m[1]
+    )
+    expect(headings).toEqual(['Your account', 'App settings', 'Peer-to-peer', 'About'])
+  })
+
+  test('the nav header has the search field and a way to the profile', () => {
+    const html = signedIn({ kind: 'settings', section: 'general' })
+    expect(html.indexOf('placeholder="Search settings"')).toBeLessThan(
+      html.indexOf('data-nav-account')
+    )
+    const header = html.slice(html.indexOf('data-nav-account'), html.indexOf('<nav'))
+    expect(header).toContain('<p class="streamer truncate text-sm font-medium text-on-surface">')
+    expect(header).toContain('Edit your profile')
+    const guestHeader = guest({ kind: 'settings' })
+    expect(
+      guestHeader.slice(guestHeader.indexOf('data-nav-account'), guestHeader.indexOf('<nav'))
+    ).not.toContain('Edit your profile')
+  })
+
+  test('opened without a section, phones see the list while wide screens show Profile', () => {
+    const html = signedIn({ kind: 'settings' })
+    expect(html).toContain('data-screen="list"')
+    expect(current(html)).toEqual(['profile'])
+    expect(signedIn({ kind: 'settings', section: 'privacy' })).toContain('data-screen="section"')
+    expect(signedIn({ kind: 'settings', focus: 'bio' })).toContain('data-screen="section"')
+  })
+
+  test('the open section lists its parts in the nav', () => {
+    const html = signedIn({ kind: 'settings', section: 'privacy' })
+    expect([...html.matchAll(/data-settings-part="([a-z_]+)"/g)].map(m => m[1])).toEqual([
+      'user_privacy',
+      'user_blocked',
+    ])
+  })
+
+  const anchored = (open: (dialog: ActiveDialog) => string, sections: SettingsSection[]) => {
+    const signed = open === signedIn
+    const missing: string[] = []
+    for (const section of sections) {
+      const html = open({ kind: 'settings', section })
+      for (const row of settingsRows(section, { signedIn: signed, desktop: false }))
+        if (!html.includes(`id="row-${row.id}"`)) missing.push(`${section}/${row.id}`)
+    }
+    expect(missing).toEqual([])
+  }
+
+  test('every row search finds for an account has its anchor in its section', () => {
+    anchored(signedIn, settingsSections({ signedIn: true, p2p: true }))
+  })
+
+  test('every row search finds for a guest has its anchor in its section', () => {
+    anchored(guest, settingsSections({ signedIn: false, p2p: false }))
+  })
+
+  const extraAnchors = (open: (dialog: ActiveDialog) => string, sections: SettingsSection[]) => {
+    const signed = open === signedIn
+    const extra: string[] = []
+    for (const section of sections) {
+      const html = open({ kind: 'settings', section })
+      const rows = settingsRows(section, { signedIn: signed, desktop: false }).map(r => r.id)
+      for (const [, id] of html.matchAll(/id="row-([^"]+)"/g))
+        if (!rows.includes(id)) extra.push(`${section}/${id}`)
+    }
+    return extra
+  }
+
+  test('every anchor in a section is a row search finds there', () => {
+    expect(extraAnchors(signedIn, settingsSections({ signedIn: true, p2p: true }))).toEqual([])
+    expect(extraAnchors(guest, settingsSections({ signedIn: false, p2p: false }))).toEqual([])
+  })
+
+  test('the way to the profile is a full size touch target on phones', () => {
+    const html = signedIn({ kind: 'settings' })
+    const button = /<button[^>]*>(<svg[^>]*>.*?<\/svg>)?Edit your profile/.exec(html)?.[0] ?? ''
+    expect(button).toContain('min-h-11')
+    expect(button).toContain('md:min-h-0')
   })
 })

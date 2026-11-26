@@ -138,7 +138,7 @@ function AuditLog({ server }: { server: string }) {
   }, [log, fetchFrom])
 
   const filtered = key !== '{}'
-  const back = () => openDialog({ kind: 'server_settings', server })
+  const back = () => openDialog({ kind: 'server_settings', server, section: 'audit' })
 
   return (
     <Dialog full title="Audit Log" onClose={back}>

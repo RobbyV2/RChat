@@ -4,8 +4,11 @@ import { Settings, Users } from 'lucide-react'
 import { PageRow, SettingsPage, type PageSection } from '../../components/settings_page'
 import { layerCovered } from '../escape_layers'
 import {
+  currentEntry,
   focusesSearch,
+  keptSections,
   navKey,
+  openSection,
   pageEscape,
   rowAnchor,
   shownSection,
@@ -153,4 +156,172 @@ test('every icon-only control has a title and a name', () => {
   }
   expect(html).toContain('aria-label="Close"')
   expect(html).toContain('aria-label="Search settings"')
+})
+
+const grouped: PageSection[] = [
+  {
+    id: 'one',
+    label: 'One',
+    icon: Settings,
+    group: 'First',
+    outline: true,
+    rows: [
+      { section: 'one', id: 'one_a', label: 'Part A' },
+      { section: 'one', id: 'one_b', label: 'Part B' },
+    ],
+    render: () => <p>One body</p>,
+  },
+  {
+    id: 'two',
+    label: 'Two',
+    icon: Users,
+    group: 'First',
+    outline: true,
+    rows: [
+      { section: 'two', id: 'two_a', label: 'Part C' },
+      { section: 'two', id: 'two_b', label: 'Part D' },
+    ],
+    render: () => <p>Two body</p>,
+  },
+  {
+    id: 'three',
+    label: 'Three',
+    icon: Users,
+    group: 'Second',
+    rows: [{ section: 'three', id: 'three_a', label: 'Part E' }],
+    render: () => <p>Three body</p>,
+  },
+]
+
+const groupedPage = (
+  active: string | null,
+  extra: Partial<Parameters<typeof SettingsPage>[0]> = {}
+) =>
+  renderToStaticMarkup(
+    <SettingsPage
+      title="Grouped"
+      sections={grouped}
+      active={active}
+      onSection={() => {}}
+      onClose={() => {}}
+      {...extra}
+    />
+  )
+
+test('the page is a large dialog on wide screens and fills narrow ones', () => {
+  const html = page('general')
+  expect(html).toContain('md:w-[min(94vw,1120px)]')
+  expect(html).toContain('md:h-[min(88dvh,820px)]')
+  expect(/role="dialog" aria-modal="true" aria-label="Demo settings"/.test(html)).toBe(true)
+  const panel = /<div role="dialog"[^>]*class="([^"]*)"/.exec(html)?.[1] ?? ''
+  expect(panel.split(' ')).toContain('h-full')
+  expect(panel.split(' ')).toContain('w-full')
+  expect(panel.split(' ')).toContain('px-safe')
+})
+
+test('a section screen on narrow screens has the back arrow and a close button', () => {
+  const html = page('people')
+  const bar = html.slice(html.indexOf('title="Back"'), html.indexOf('<h1'))
+  expect(bar).toContain('title="Close" aria-label="Close"')
+  expect(bar).toContain('People')
+})
+
+test('nav groups get one heading each, in order', () => {
+  const html = groupedPage('one')
+  const headings = [...html.matchAll(/<p class="[^"]*uppercase[^"]*">([^<]+)<\/p>/g)].map(m => m[1])
+  expect(headings).toEqual(['Grouped', 'First', 'Second'])
+})
+
+test('a header takes the place of the title at the top of the nav', () => {
+  const html = groupedPage('one', { header: <div data-probe>Who</div> })
+  expect(html).toContain('data-probe')
+  const headings = [...html.matchAll(/<p class="[^"]*uppercase[^"]*">([^<]+)<\/p>/g)].map(m => m[1])
+  expect(headings).toEqual(['First', 'Second'])
+  expect(html.indexOf('data-probe')).toBeLessThan(html.indexOf('data-settings-section="one"'))
+})
+
+test('the shown section lists its parts under it in the nav, with a fold button', () => {
+  const html = groupedPage('two')
+  const parts = [...html.matchAll(/data-settings-part="([a-z_]+)"/g)].map(m => m[1])
+  expect(parts).toEqual(['two_a', 'two_b'])
+  expect(html).toContain(
+    'title="Hide the parts of Two" aria-label="Hide the parts of Two" aria-expanded="true"'
+  )
+  expect(html.indexOf('data-settings-section="two"')).toBeLessThan(html.indexOf('two_a'))
+  expect(html.indexOf('two_b')).toBeLessThan(html.indexOf('data-settings-section="three"'))
+})
+
+test('a section with one part, or no outline, lists no parts', () => {
+  expect(groupedPage('three')).not.toContain('data-settings-part')
+  expect(page('general')).not.toContain('data-settings-part')
+  expect(groupedPage('three')).not.toContain('aria-expanded')
+})
+
+test('the actor shows beside the section name', () => {
+  const html = groupedPage('one', { actor: <span data-actor-probe /> })
+  const header = html.slice(html.indexOf('<h1'))
+  expect(header).toContain('data-actor-probe')
+})
+
+test('the section header and close button sit above the content, which scrolls alone', () => {
+  const html = groupedPage('one', { closeTitle: 'Close grouped' })
+  const header = /<div class="([^"]*)"><h1/.exec(html)?.[1] ?? ''
+  expect(header.split(' ')).toContain('shrink-0')
+  expect(header.split(' ')).toContain('border-b')
+  const after = html.slice(html.indexOf('<h1'))
+  expect(after).toContain('title="Close grouped" aria-label="Close grouped"')
+  expect(
+    /overflow-y-auto[^"]*"><div class="mx-auto max-w-3xl"><div data-section-body="one"><p>One body/.test(
+      after
+    )
+  ).toBe(true)
+})
+
+test('wide screens mark the shown section current; the narrow list marks only an open one', () => {
+  expect(currentEntry('a', { shown: 'a', active: null, wide: true })).toBe(true)
+  expect(currentEntry('a', { shown: 'a', active: null, wide: false })).toBe(false)
+  expect(currentEntry('b', { shown: 'b', active: 'b', wide: false })).toBe(true)
+  expect(currentEntry('a', { shown: 'b', active: 'b', wide: true })).toBe(false)
+})
+
+test('a page with one section opens it without the list', () => {
+  expect(openSection([{ id: 'a' }], null)).toBe('a')
+  expect(openSection([{ id: 'a' }, { id: 'b' }], null)).toBeNull()
+  expect(openSection([{ id: 'a' }, { id: 'b' }], 'b')).toBe('b')
+})
+
+test('visited sections stay kept, in the order they were opened', () => {
+  const first = keptSections([], 'a')
+  expect(first).toEqual(['a'])
+  expect(keptSections(first, 'a')).toBe(first)
+  expect(keptSections(first, 'b')).toEqual(['a', 'b'])
+  expect(keptSections(['a', 'b'], 'a')).toEqual(['a', 'b'])
+  expect(keptSections(['a'], null)).toEqual(['a'])
+})
+
+test('a section shows in its own body, and only the shown one is made at first', () => {
+  const html = groupedPage('two')
+  expect([...html.matchAll(/data-section-body="([a-z]+)"/g)].map(m => m[1])).toEqual(['two'])
+  expect(html).not.toContain('One body')
+})
+
+test('the only section opens on phones too, with no way back to a one-entry list', () => {
+  const html = renderToStaticMarkup(
+    <SettingsPage
+      title="Single"
+      sections={[grouped[2]]}
+      active={null}
+      onSection={() => {}}
+      onClose={() => {}}
+    />
+  )
+  expect(html).toContain('data-screen="section"')
+  expect(html).not.toContain('title="Back"')
+  expect(html).toContain('Three body')
+  expect(html.split('title="Close" aria-label="Close"').length - 1).toBe(3)
+})
+
+test('a lead shows above the shown section', () => {
+  const html = groupedPage('one', { lead: <p data-lead>Notice</p> })
+  expect(html.indexOf('data-lead')).toBeLessThan(html.indexOf('data-section-body="one"'))
 })

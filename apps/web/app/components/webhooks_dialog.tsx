@@ -69,7 +69,7 @@ type Tab = 'incoming' | 'outgoing'
 function Webhooks({ server }: { server: string }) {
   const openDialog = useStore(s => s.openDialog)
   const [tab, setTab] = useState<Tab>('incoming')
-  const back = () => openDialog({ kind: 'server_settings', server })
+  const back = () => openDialog({ kind: 'server_settings', server, section: 'integrations' })
   const tabCls = (on: boolean) =>
     `flex-1 rounded-full px-3 py-1.5 text-sm font-medium ${
       on

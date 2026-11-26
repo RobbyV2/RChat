@@ -55,17 +55,7 @@ import type {
 import { WITH_OPTION, keepGuestsChoices } from './server_settings'
 import { SettingSwitch } from './settings_fields'
 import { GUEST_VOICE_OFF, GUEST_VOICE_ON } from '../lib/guest_voice'
-import {
-  Chips,
-  Dialog,
-  FieldError,
-  dangerBtn,
-  fieldCls,
-  filledBtn,
-  sectionCls,
-  textBtn,
-  useCopied,
-} from './ui'
+import { Chips, Dialog, FieldError, dangerBtn, fieldCls, filledBtn, textBtn, useCopied } from './ui'
 
 const UNTITLED = 'Untitled password'
 
@@ -773,7 +763,6 @@ export function ServerAccessSection({
 
   return (
     <>
-      <p className={sectionCls}>Access</p>
       {!data ? (
         error ? (
           <FieldError message={error} />

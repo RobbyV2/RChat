@@ -986,7 +986,6 @@ export function ConfigSyncSection() {
   return (
     <div className="flex flex-col gap-8">
       <section>
-        <p className={sectionCls}>Sync config</p>
         <p className="mb-4 text-sm text-on-surface-variant">
           Move your settings and layout to another device or account. Passwords, sessions, drafts
           and files are never included.

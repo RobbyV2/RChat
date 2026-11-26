@@ -2,6 +2,12 @@
 // them as its query, and a P2P device runs the same rules over the room's members. Times are
 // Unix seconds; `after` bounds include their second and `before` bounds leave it out.
 
+import { Perm } from './types'
+
+// Any of these opens the member search.
+export const MEMBER_SEARCH_PERMS =
+  Perm.Kick | Perm.TimeoutMembers | Perm.ManageRoles | Perm.AssignRoles
+
 export const MEMBER_SORTS = [
   'name',
   'joined_desc',

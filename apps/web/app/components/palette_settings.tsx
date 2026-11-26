@@ -46,7 +46,6 @@ export function PaletteSettingsSection() {
   return (
     <div className="flex flex-col gap-8">
       <section>
-        <p className={sectionCls}>Command palette</p>
         <p className="px-2 text-sm text-on-surface-variant">
           Press {paletteShortcut(isMac())} anywhere, or use the palette button at the top on small
           screens. Start with # for channels, @ for people, &gt; for commands, / for the API and ?

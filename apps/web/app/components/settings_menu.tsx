@@ -16,7 +16,19 @@ import { AnnouncementSetting } from './announcements'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import Link from 'next/link'
-import { Globe, UserRound, X } from 'lucide-react'
+import {
+  Bell,
+  Command,
+  Globe,
+  Info as InfoIcon,
+  Network,
+  Pencil,
+  RefreshCw,
+  ShieldCheck,
+  SlidersHorizontal,
+  UserRound,
+  type LucideIcon,
+} from 'lucide-react'
 import { errorText, useStore } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { iceOffer } from '../lib/ice'
@@ -25,15 +37,17 @@ import { RelaySection } from './relay_settings'
 import { P2pOffSection, P2pSection } from './p2p/p2p_settings'
 
 import {
+  SECTION_GROUPS,
   SECTION_LABELS,
   sectionFor,
+  settingsRows,
   settingsSections,
   type SettingsSection,
 } from '../lib/settings_sections'
 import { avatarColorFor, avatarDraft } from '../lib/identicon'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
-import { capabilities } from '../lib/platform'
+import { capabilities, desktopInfo, inShell } from '../lib/platform'
 import { filterSwitch } from '../lib/profanity'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
 import { SHORTCUTS, shortcutLabel, type Shortcut } from '../lib/shortcuts'
@@ -56,6 +70,7 @@ import { BlockedUsersSection } from './blocking'
 import { PaletteSettingsSection } from './palette_settings'
 import { Choice, PrivacyChoices } from './friends'
 import { PassSwitch, WordGrid } from './word_grid'
+import { PageRow, SettingsPage, type PageSection } from './settings_page'
 import {
   dangerBtn,
   FieldError,
@@ -64,7 +79,6 @@ import {
   Masked,
   sectionCls,
   textBtn,
-  useEscape,
   useOwnServer,
 } from './ui'
 
@@ -329,31 +343,50 @@ function GuestAvatar({ size }: { size: number }) {
   )
 }
 
-// The nav header on wide screens: the account the settings belong to.
-function NavAccount() {
+// The top of the nav: the account the settings belong to, and the other accounts to pick.
+function NavAccount({
+  section,
+  onProfile,
+}: {
+  section: SettingsSection | null
+  onProfile: () => void
+}) {
   const me = useStore(s => s.me)
   const { label, host } = useInstanceLabel()
   return (
-    <div data-nav-account className="hidden min-w-0 items-center gap-3 px-3 pb-3 md:flex">
-      {me ? (
-        <UserAvatar
-          username={me.username}
-          avatarKind={me.avatar_kind}
-          avatarColor={me.avatar_color}
-          size={32}
-        />
-      ) : (
-        <GuestAvatar size={32} />
-      )}
-      <div className="min-w-0">
-        <p className="streamer truncate text-sm font-medium text-on-surface">
-          {me ? me.display_name : 'Guest'}
-        </p>
-        <p className="streamer truncate text-xs text-on-surface-variant">{label}</p>
-        {host !== label && (
-          <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
+    <div data-nav-account className="flex min-w-0 flex-col gap-2 px-1">
+      <div className="flex min-w-0 items-center gap-3">
+        {me ? (
+          <UserAvatar
+            username={me.username}
+            avatarKind={me.avatar_kind}
+            avatarColor={me.avatar_color}
+            size={40}
+          />
+        ) : (
+          <GuestAvatar size={40} />
         )}
+        <div className="min-w-0">
+          <p className="streamer truncate text-sm font-medium text-on-surface">
+            {me ? me.display_name : 'Guest'}
+          </p>
+          <p className="streamer truncate text-xs text-on-surface-variant">{label}</p>
+          {host !== label && (
+            <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
+          )}
+          {me && (
+            <button
+              type="button"
+              onClick={onProfile}
+              className="mt-0.5 inline-flex min-h-11 items-center gap-1 rounded-md text-xs font-medium text-primary hover:underline md:min-h-0"
+            >
+              <Pencil size={12} />
+              Edit your profile
+            </button>
+          )}
+        </div>
       </div>
+      <SettingsAccountPicker section={section} />
     </div>
   )
 }
@@ -375,7 +408,7 @@ function ProfileFields() {
   const [banner, setBanner] = useState<string | null>(me?.banner_color ?? null)
   if (!me) return null
   return (
-    <section>
+    <PageRow id="user_profile">
       <p className={sectionCls}>Your profile</p>
       <div className="flex flex-col gap-5">
         {editName && <DisplayNameField focus={focusName} />}
@@ -407,7 +440,7 @@ function ProfileFields() {
         <AboutMe focus={focusBio} />
       </div>
       <ServerProfiles />
-    </section>
+    </PageRow>
   )
 }
 
@@ -730,17 +763,19 @@ function StatusSection() {
   const setAppearOffline = useStore(s => s.setAppearOffline)
   if (appearOffline === undefined) return null
   return (
-    <section>
-      <p className={sectionCls}>Status</p>
-      <SettingSwitch
-        label="Appear offline"
-        value={appearOffline}
-        onChange={v => void setAppearOffline(v)}
-      />
-      <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        You will never appear online to others. You can still chat normally.
-      </p>
-    </section>
+    <PageRow id="user_status">
+      <section>
+        <p className={sectionCls}>Status</p>
+        <SettingSwitch
+          label="Appear offline"
+          value={appearOffline}
+          onChange={v => void setAppearOffline(v)}
+        />
+        <p className="mt-2 px-2 text-xs text-on-surface-variant">
+          You will never appear online to others. You can still chat normally.
+        </p>
+      </section>
+    </PageRow>
   )
 }
 
@@ -752,12 +787,18 @@ function ChatSection() {
   return (
     <section>
       <p className={sectionCls}>Chat</p>
-      <SettingSwitch label="Typing indicators" value={on} onChange={setOn} />
-      <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        Show when others are typing and let them see when you type. Off hides both.
-      </p>
-      <ProfanitySwitch />
-      <SpoilersChoice />
+      <PageRow id="user_typing">
+        <SettingSwitch label="Typing indicators" value={on} onChange={setOn} />
+        <p className="mt-2 px-2 text-xs text-on-surface-variant">
+          Show when others are typing and let them see when you type. Off hides both.
+        </p>
+      </PageRow>
+      <PageRow id="user_profanity">
+        <ProfanitySwitch />
+      </PageRow>
+      <PageRow id="user_spoilers">
+        <SpoilersChoice />
+      </PageRow>
     </section>
   )
 }
@@ -770,7 +811,7 @@ function AnimationsSetting() {
   if (!shown) return null
   const held = animHeldBack(anim, reduced)
   return (
-    <div>
+    <PageRow id="user_animations">
       <SettingSwitch label="Animations" value={anim.on} onChange={on => setAnim({ ...anim, on })} />
       <p className="mt-2 px-2 text-xs text-on-surface-variant">
         Things fade and move when they open, arrive or change.
@@ -788,7 +829,7 @@ function AnimationsSetting() {
           </p>
         )}
       </div>
-    </div>
+    </PageRow>
   )
 }
 
@@ -859,7 +900,7 @@ function ConnectionSection() {
   const offer = iceOffer(info)
   const relayUsable = (info?.turn === true || own) && on && signedIn
   return (
-    <section>
+    <PageRow id="user_connection">
       <p className={sectionCls}>Voice and P2P</p>
       <p className="mb-2 px-2 text-xs text-on-surface-variant">
         Calls, voice and P2P files connect you straight to the other person, so they can see your IP
@@ -903,7 +944,7 @@ function ConnectionSection() {
           'Turn on connection helpers to use the relay.'
         )}
       </p>
-    </section>
+    </PageRow>
   )
 }
 
@@ -912,27 +953,33 @@ function ProfileSection() {
   const { label } = useInstanceLabel()
   return (
     <div className="flex flex-col gap-8">
-      <AccountCard />
-      <button
-        className="self-start text-sm text-primary"
-        onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
-      >
-        Switch account
-      </button>
-      <ManageAccounts />
+      <PageRow id="user_account" className="flex flex-col gap-8">
+        <AccountCard />
+        <button
+          className="self-start text-sm text-primary"
+          onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
+        >
+          Switch account
+        </button>
+        <ManageAccounts />
+      </PageRow>
       <ProfileFields />
-      <SignInSection />
-      <section>
+      <PageRow id="user_sign_in">
+        <SignInSection />
+      </PageRow>
+      <PageRow id="user_instance">
         <p className={sectionCls}>
           About <span className="streamer">{label}</span>
         </p>
         <InstanceDetails />
-      </section>
+      </PageRow>
     </div>
   )
 }
 
 function GeneralSection() {
+  const relays = useStore(s => s.me !== null)
+  const desktop = desktopInfo() !== null && inShell()
   const theme = useStore(s => s.theme)
   const setTheme = useStore(s => s.setTheme)
   const streamer = useStore(s => s.streamer)
@@ -942,25 +989,37 @@ function GeneralSection() {
       <StatusSection />
       <ChatSection />
       <ConnectionSection />
-      <RelaySection />
+      {relays && (
+        <PageRow id="user_relays">
+          <RelaySection />
+        </PageRow>
+      )}
       <section>
         <p className={sectionCls}>Appearance</p>
-        <AnnouncementSetting />
-        <SettingSwitch
-          label="Light theme"
-          value={theme === 'light'}
-          onChange={v => setTheme(v ? 'light' : 'dark')}
-        />
+        <PageRow id="user_announcements">
+          <AnnouncementSetting />
+        </PageRow>
+        <PageRow id="user_theme">
+          <SettingSwitch
+            label="Light theme"
+            value={theme === 'light'}
+            onChange={v => setTheme(v ? 'light' : 'dark')}
+          />
+        </PageRow>
         <AnimationsSetting />
       </section>
-      <section>
+      <PageRow id="user_streamer">
         <p className={sectionCls}>Streamer mode</p>
         <SettingSwitch label="Streamer mode" value={streamer} onChange={setStreamer} />
         <p className="mt-2 px-2 text-xs text-on-surface-variant">
           Blurs server names, usernames, and DM names until hovered.
         </p>
-      </section>
-      <DesktopSection />
+      </PageRow>
+      {desktop && (
+        <PageRow id="user_desktop" className="empty:hidden">
+          <DesktopSection />
+        </PageRow>
+      )}
     </div>
   )
 }
@@ -970,12 +1029,14 @@ function P2pPage() {
   return p2pOn ? <P2pSection /> : <P2pOffSection />
 }
 
-function Info({ title, children }: { title: string; children: React.ReactNode }) {
+function Info({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
-    <section>
-      <p className={sectionCls}>{title}</p>
-      <div className="flex flex-col gap-2 text-sm text-on-surface-variant">{children}</div>
-    </section>
+    <PageRow id={id}>
+      <section>
+        <p className={sectionCls}>{title}</p>
+        <div className="flex flex-col gap-2 text-sm text-on-surface-variant">{children}</div>
+      </section>
+    </PageRow>
   )
 }
 
@@ -1040,13 +1101,13 @@ function InformationSection() {
   const uploadMib = useStore(s => Math.round(limitsOf(s.instance).upload_bytes / 1048576))
   return (
     <div className="flex flex-col gap-8">
-      <Info title="About RChat">
+      <Info id="user_info_about" title="About RChat">
         <p>
           Anonymous chat with a Discord-style layout. Everything runs on the server you connect to;
           no external APIs, no telemetry, no email.
         </p>
       </Info>
-      <Info title="Accounts and passwords">
+      <Info id="user_info_accounts" title="Accounts and passwords">
         <p>
           Accounts are anonymous: no email, no phone, no recovery flow. A lost password means a lost
           account. Passwords are stored as argon2 hashes, never in plain text, and any non-empty
@@ -1066,7 +1127,7 @@ function InformationSection() {
           changing your password signs out every other session, and logging out ends that session.
         </p>
       </Info>
-      <Info title="Files and attachments">
+      <Info id="user_info_files" title="Files and attachments">
         <p>
           Server uploads are capped at {uploadMib}MB and deleted exactly one day after posting; the
           message stays and shows a removal notice. Uploaded blobs live in the server database.
@@ -1077,7 +1138,7 @@ function InformationSection() {
           and still holding it. The sender picks an expiry (or indefinite) when sending.
         </p>
       </Info>
-      <Info title="Voice and video">
+      <Info id="user_info_voice" title="Voice and video">
         <p>
           Voice channels and calls are WebRTC connections directly between browsers. By default
           there is no relay and no external service, so media never passes through the server. If
@@ -1097,7 +1158,7 @@ function InformationSection() {
           only real protection, since a peer can always skip relays.
         </p>
       </Info>
-      <Info title="Servers and identity">
+      <Info id="user_info_servers" title="Servers and identity">
         <p>
           Lowercased usernames are user IDs, and lowercased server names are server IDs and also the
           invite codes; knowing a server&apos;s name is enough to join or view it. Password
@@ -1109,7 +1170,7 @@ function InformationSection() {
           Their server list is saved in their browser.
         </p>
       </Info>
-      <Info title="Keyboard shortcuts">
+      <Info id="user_info_shortcuts" title="Keyboard shortcuts">
         <p>
           Select text in the message box or the edit box for the formatting toolbar, or use the keys
           below. Spoilers are written as ||text|| and stay hidden until clicked, unless Show
@@ -1117,11 +1178,69 @@ function InformationSection() {
         </p>
         <ShortcutList />
       </Info>
-      <Info title="Moderation">
+      <Info id="user_info_moderation" title="Moderation">
         <ModerationText />
       </Info>
     </div>
   )
+}
+
+const SECTION_ICONS: Record<SettingsSection, LucideIcon> = {
+  profile: UserRound,
+  privacy: ShieldCheck,
+  general: SlidersHorizontal,
+  notifications: Bell,
+  palette: Command,
+  sync: RefreshCw,
+  p2p: Network,
+  information: InfoIcon,
+}
+
+function SectionBody({ section }: { section: SettingsSection }) {
+  switch (section) {
+    case 'profile':
+      return <ProfileSection />
+    case 'general':
+      return <GeneralSection />
+    case 'notifications':
+      return (
+        <PageRow id="user_notifications">
+          <NotificationsSection />
+        </PageRow>
+      )
+    case 'privacy':
+      return (
+        <section>
+          <PageRow id="user_privacy">
+            <PrivacyChoices />
+          </PageRow>
+          <PageRow id="user_blocked" className="pt-5">
+            <p className={sectionCls}>Blocked users</p>
+            <BlockedUsersSection />
+          </PageRow>
+        </section>
+      )
+    case 'p2p':
+      return (
+        <PageRow id="user_p2p">
+          <P2pPage />
+        </PageRow>
+      )
+    case 'sync':
+      return (
+        <PageRow id="user_sync">
+          <ConfigSyncSection />
+        </PageRow>
+      )
+    case 'palette':
+      return (
+        <PageRow id="user_palette">
+          <PaletteSettingsSection />
+        </PageRow>
+      )
+    case 'information':
+      return <InformationSection />
+  }
 }
 
 function Menu() {
@@ -1138,82 +1257,49 @@ function Menu() {
   const focus = useStore(s =>
     s.activeDialog?.kind === 'settings' ? (s.activeDialog.focus ?? null) : null
   )
-  const [picked, setPicked] = useState<SettingsSection>(() => sectionFor(asked, focus, shown))
+  const pickFor = () => (asked || focus ? sectionFor(asked, focus, shown) : null)
+  const [picked, setPicked] = useState<SettingsSection | null>(pickFor)
+  const [row, setRow] = useState<string | null>(null)
   const sso = useStore(s => s.activeDialog?.kind === 'settings' && s.activeDialog.sso)
   const askKey = sso || `${asked}|${focus}`
   const [seenAsk, setSeenAsk] = useState(askKey)
   if (seenAsk !== askKey) {
     setSeenAsk(askKey)
-    if (asked || focus) setPicked(sectionFor(asked, focus, shown))
+    if (asked || focus) {
+      setPicked(pickFor())
+      setRow(null)
+    }
   }
-  const section = shown.includes(picked) ? picked : shown[0]
-  useEscape(closeDialog)
+  const section = picked !== null && shown.includes(picked) ? picked : shown[0]
+  const desktop = desktopInfo() !== null && inShell()
+  const sections: PageSection[] = shown.map(id => ({
+    id,
+    label: SECTION_LABELS[id],
+    icon: SECTION_ICONS[id],
+    group: SECTION_GROUPS[id],
+    rows: settingsRows(id, { signedIn, desktop }),
+    outline: true,
+    render: () => <SectionBody section={id} />,
+  }))
+  const open = (id: string | null, at?: string) => {
+    setPicked(id === null ? null : (shown.find(s => s === id) ?? shown[0]))
+    setRow(at ?? null)
+  }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Settings"
-      className="fixed inset-x-0 top-app z-50 flex h-app flex-col bg-surface px-safe md:flex-row"
-    >
-      <div className="flex shrink-0 items-center border-b border-outline-variant bg-surface-container-low pr-3 md:contents">
-        <nav
-          aria-label="Settings sections"
-          className="flex min-w-0 flex-1 gap-1 overflow-x-auto p-3 md:w-56 md:flex-none md:flex-col md:overflow-y-auto md:border-r md:border-outline-variant md:bg-surface-container-low md:p-4"
-        >
-          <NavAccount />
-          <SettingsAccountPicker section={section} />
-          {shown.map(key => (
-            <button
-              key={key}
-              data-settings-section={key}
-              aria-current={section === key ? 'page' : undefined}
-              onClick={() => setPicked(key)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-left text-sm md:rounded-xl md:py-2 ${
-                section === key
-                  ? 'bg-secondary-container text-on-secondary-container'
-                  : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-              }`}
-            >
-              {SECTION_LABELS[key]}
-            </button>
-          ))}
-        </nav>
-        <button
-          title="Close settings"
-          aria-label="Close settings"
-          onClick={closeDialog}
-          className="shrink-0 rounded-full md:absolute md:top-4 md:right-[max(1rem,env(safe-area-inset-right))] md:z-10 border border-outline-variant bg-surface p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-        >
-          <X size={18} />
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-6 md:p-10">
-        <div className="max-w-lg pb-10">
-          {section === 'profile' ? (
-            <ProfileSection />
-          ) : section === 'general' ? (
-            <GeneralSection />
-          ) : section === 'notifications' ? (
-            <NotificationsSection />
-          ) : section === 'privacy' ? (
-            <section>
-              <p className={sectionCls}>Privacy</p>
-              <PrivacyChoices />
-              <p className={sectionCls}>Blocked users</p>
-              <BlockedUsersSection />
-            </section>
-          ) : section === 'p2p' ? (
-            <P2pPage />
-          ) : section === 'sync' ? (
-            <ConfigSyncSection />
-          ) : section === 'palette' ? (
-            <PaletteSettingsSection />
-          ) : (
-            <InformationSection />
-          )}
-        </div>
-      </div>
-    </div>
+    <SettingsPage
+      title="Settings"
+      closeTitle="Close settings"
+      layer="dialog"
+      top
+      sections={sections}
+      active={picked === null ? null : section}
+      row={row}
+      header={
+        <NavAccount section={picked === null ? null : section} onProfile={() => open('profile')} />
+      }
+      onSection={open}
+      onClose={closeDialog}
+    />
   )
 }

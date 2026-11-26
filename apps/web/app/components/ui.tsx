@@ -20,6 +20,8 @@ import { useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 import type { RChatState } from '../lib/store_types'
 import { layerCovered, type EscapeLayer } from '../lib/escape_layers'
+import { dialogBlurs, dialogLayout, type DialogChrome, type DialogSize } from '../lib/dialog_size'
+import { useMotionPlays } from '../lib/motion/use_motion'
 import { maskOutsideCode, maskRuns } from '../lib/profanity'
 import { useMask, useStore } from '../lib/store'
 import { useChatSource } from './chat_source'
@@ -231,60 +233,97 @@ export function PanelHeader({
   )
 }
 
-// `full` fills the screen on mobile. `compact` is the small card of the add server dialog.
+// `size` picks the box (see `DialogSize`); `full` fills the screen on phones and `compact` is the
+// small card of the add server dialog. `bare` chrome leaves the header, padding and scrolling to
+// the children. `top` sits above other dialogs and full pages. The backdrop of a large box blurs
+// while motion plays, unless `blurBackdrop` says otherwise.
 export function Dialog({
   title,
   onClose,
   children,
   full = false,
   compact = false,
+  size,
+  chrome = 'default',
+  blurBackdrop,
+  top = false,
   actor,
   layer = 'dialog',
+  onEscape,
 }: {
   title: string
   onClose: () => void
   children: ReactNode
   full?: boolean
   compact?: boolean
+  size?: DialogSize
+  chrome?: DialogChrome
+  blurBackdrop?: boolean
+  top?: boolean
   actor?: ReactNode
   layer?: EscapeLayer
+  // What Esc does, when it does more than close.
+  onEscape?: () => void
 }) {
   const titleId = useId()
   const backdrop = useBackdrop(onClose)
-  useEscape(onClose, layer)
-  return (
-    <div
-      className={`fixed inset-x-0 top-app ${layer === 'confirm' || compact ? 'z-50' : 'z-40'} flex h-app items-center justify-center bg-scrim/60 ${full ? 'px-safe sm:px-safe-4 sm:py-4' : 'px-safe-4 py-4'}`}
-      {...backdrop}
-    >
+  const moves = useMotionPlays()
+  const panelRef = useRef<HTMLDivElement>(null)
+  // Focus moves into the dialog as it opens, unless something in it took focus already. A bare
+  // dialog's content places focus itself.
+  useEffect(() => {
+    const panel = panelRef.current
+    if (chrome === 'default' && panel && !panel.contains(document.activeElement))
+      panel.focus({ preventScroll: true })
+  }, [chrome])
+  useEscape(onEscape ?? onClose, layer)
+  const fit = dialogLayout({
+    size,
+    full,
+    compact,
+    chrome,
+    raised: top || layer === 'confirm',
+    blur: dialogBlurs(size, blurBackdrop, moves),
+  })
+  const panel =
+    chrome === 'bare' ? (
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
-        className={`w-full overflow-y-auto bg-surface-container-high p-6 shadow-elevation-3 ${
-          full
-            ? 'h-full max-h-none pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:h-auto sm:max-h-[min(85vh,100%)] sm:max-w-lg sm:rounded-2xl sm:pb-6'
-            : compact
-              ? 'max-h-full max-w-sm rounded-3xl'
-              : 'max-h-[min(85vh,100%)] max-w-lg rounded-2xl'
-        }`}
+        aria-label={title}
+        tabIndex={-1}
+        className={fit.panel}
+        style={fit.style}
       >
-        <div
-          className={`flex items-center justify-between ${
-            full
-              ? 'sticky -top-6 z-10 -mx-6 -mt-6 mb-4 bg-surface-container-high px-6 py-4'
-              : 'mb-4'
-          }`}
-        >
+        {children}
+      </div>
+    ) : (
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className={fit.panel}
+        style={fit.style}
+      >
+        <div className={fit.header}>
           <h2 id={titleId} className="text-lg font-medium text-on-surface">
             {title}
           </h2>
           {actor}
           <CloseButton onClick={onClose} compact={compact} />
         </div>
-        {children}
+        {fit.body ? <div className={fit.body}>{children}</div> : children}
       </div>
-    </div>
+    )
+  return (
+    <>
+      {fit.blur && <div aria-hidden className={fit.blur} />}
+      <div className={fit.backdrop} {...backdrop}>
+        {panel}
+      </div>
+    </>
   )
 }
 

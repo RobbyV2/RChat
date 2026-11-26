@@ -53,3 +53,19 @@ export const focusesSearch = (e: PressedKey, on: { tag: string; editable: boolea
 
 // The element id of a row, for deep links and search results.
 export const rowAnchor = (id: string) => `row-${id}`
+
+// Whether a nav entry is the current page: on wide screens the section that shows beside the nav;
+// on narrow ones, where the list is a screen of its own, only an open section.
+export const currentEntry = (
+  id: string,
+  { shown, active, wide }: { shown: string | null; active: string | null; wide: boolean }
+) => (wide ? shown === id : active === id)
+
+// The open section of a page: the asked one, or its only section, which opens without the list.
+export const openSection = (sections: { id: string }[], active: string | null) =>
+  sections.length === 1 ? sections[0].id : active
+
+// The sections a page keeps mounted: those visited so far and the shown one, so switching away
+// keeps unsaved edits.
+export const keptSections = (visited: readonly string[], shown: string | null) =>
+  shown === null || visited.includes(shown) ? visited : [...visited, shown]

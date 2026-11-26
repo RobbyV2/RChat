@@ -11,7 +11,7 @@ import { longPress } from './context_menu'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { profileTrigger } from './profile_card'
-import { fieldCls, FieldError, sectionCls, textBtn } from './ui'
+import { fieldCls, FieldError, textBtn } from './ui'
 import { ShownName } from './shown_user'
 
 // "alice joined the party." with a green arrow, "alice left the server." with a red one.
@@ -106,7 +106,6 @@ export function ServerSystemMessages({ server }: { server: string }) {
   }
   return (
     <>
-      <p className={sectionCls}>System messages</p>
       {saved ? (
         <div className="flex flex-col gap-2">
           <label htmlFor={selectId} className="text-sm text-on-surface">

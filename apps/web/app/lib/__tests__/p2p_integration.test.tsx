@@ -6,6 +6,8 @@ import { parseForward, forwardValue } from '../forward'
 import { testAccount } from './test_account'
 import { AccountProvider } from '../client/react'
 import { createPeerFixture } from './peer_fixture'
+import { parseBook } from '../client/book'
+import { client } from '../client/client'
 import { AccountSession } from '../client/session'
 const peerOwner = new AccountSession(home)
 const peerApp = createPeerFixture(peerOwner, 'bob')
@@ -37,7 +39,7 @@ import { EMPTY_NOTIFY, setLevel } from '../notify'
 import { parseHome, pushP2pRecent, recentKey, recentShown } from '../home'
 import { messageItems, type ResultCtx } from '../palette_results'
 import { PaletteIndex } from '../palette_index'
-import { p2pKey, type P2pState } from '../p2p/app'
+import { p2pKey, type P2pState, type ServerTab } from '../p2p/app'
 import { blankRoom } from '../p2p/dag'
 
 import { P2pStore, type EventRecord } from '../p2p/db'
@@ -2385,5 +2387,67 @@ describe('P2P placeholders while loading', () => {
     const shown = loaded.slice(0, loaded.indexOf('</aside>'))
     expect(shown).not.toContain('data-skeleton')
     expect(shown).toContain(`data-contact="${ALICE}"`)
+  })
+})
+
+describe('server settings in the settings dialog', () => {
+  const open = (tab?: ServerTab) => {
+    p2pState({ enabled: true, account: 'bob', me: BOB, servers: { [SRV]: server({ perms: -1 }) } })
+    return render(<ServerSettingsDialog room={SRV} tab={tab} />)
+  }
+
+  test('a deep-linked tab opens its section in the large dialog', () => {
+    const html = open('channels')
+    expect(html).toContain('role="dialog" aria-modal="true" aria-label="Server settings"')
+    expect(html).toContain('md:w-[min(94vw,1120px)]')
+    expect(html).toContain('data-screen="section"')
+    expect(html).toContain('data-settings-section="channels" aria-current="page"')
+    expect(html).toContain('>Channels</h1>')
+    expect(html).toContain('aria-label="Name of #general"')
+  })
+
+  test('without a tab, phones see the list and wide screens the overview', () => {
+    const html = open()
+    expect(html).toContain('data-screen="list"')
+    expect(html).toContain('data-settings-section="overview" aria-current="page"')
+    expect([...html.matchAll(/data-settings-section="([a-z]+)"/g)].map(m => m[1])).toEqual([
+      'overview',
+      'roles',
+      'channels',
+      'invites',
+      'system',
+      'history',
+      'members',
+      'bans',
+      'leave',
+    ])
+  })
+
+  test('the dialog says which identity it acts as, beside the section name', () => {
+    const book = client.book.getInitialState()
+    const before = { ...book }
+    Object.assign(
+      book,
+      parseBook(
+        JSON.stringify({
+          v: 1,
+          instances: [
+            {
+              origin: peerOwner.conn.origin,
+              id: peerOwner.conn.origin,
+              name: 'Home',
+              accounts: [{ username: 'bob', identities: [{ local: 'work', name: 'Work' }] }],
+            },
+          ],
+        })
+      )
+    )
+    try {
+      const html = open('roles')
+      const header = html.slice(html.indexOf('<h1'))
+      expect(header).toContain('data-view-actor')
+    } finally {
+      Object.assign(book, before)
+    }
   })
 })

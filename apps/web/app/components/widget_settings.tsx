@@ -27,8 +27,7 @@ type WidgetSettingsProps = { server: string; channels: Channel[] }
 export function WidgetSettings({ server, channels }: WidgetSettingsProps) {
   const enabled = useStore(s => s.settings.widgets && s.instance?.widgets)
   return (
-    <section className="min-w-0 space-y-2">
-      <h3 className="font-medium">Widgets</h3>
+    <section aria-label="Widgets" className="min-w-0 space-y-2">
       {enabled ? (
         <WidgetPicker key={server} server={server} channels={channels} />
       ) : (

@@ -1,24 +1,41 @@
 'use client'
 
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeft, ChevronRight, Search, X, type LucideIcon } from 'lucide-react'
 import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
+import { ArrowLeft, ChevronDown, ChevronRight, Search, X, type LucideIcon } from 'lucide-react'
+import {
+  currentEntry,
   focusesSearch,
+  keptSections,
   navKey,
+  openSection,
   pageEscape,
   rowAnchor,
   shownSection,
   tabWrap,
 } from '../lib/settings_page'
 import { searchRows, type SearchHit, type SearchRow } from '../lib/settings_search'
-import { useEscape } from './ui'
+import type { EscapeLayer } from '../lib/escape_layers'
+import { useMotionPlays } from '../lib/motion/use_motion'
+import { Dialog } from './ui'
 
 export interface PageSection {
   id: string
   label: string
   icon: LucideIcon
+  // The heading the section sits under in the nav.
+  group?: string
   // What search finds in this section.
   rows?: SearchRow[]
+  // Lists the rows under the section in the nav of wide screens while it shows.
+  outline?: boolean
   render: () => ReactNode
 }
 
@@ -30,6 +47,25 @@ const FOCUSABLE =
 
 const shows = (el: Element | null): el is HTMLElement =>
   el instanceof HTMLElement && el.offsetParent !== null
+
+// The dialog that holds `el`.
+const modalOf = (el: HTMLElement | null) => el?.closest<HTMLElement>('[aria-modal="true"]') ?? null
+
+// Whether `modal` is the top one of the open modals.
+const onTop = (modal: HTMLElement) => {
+  const modals = document.querySelectorAll('[aria-modal="true"]')
+  return modals[modals.length - 1] === modal
+}
+
+const WIDE = '(min-width: 768px)'
+const watchWide = (changed: () => void) => {
+  const mq = window.matchMedia(WIDE)
+  mq.addEventListener('change', changed)
+  return () => mq.removeEventListener('change', changed)
+}
+const wideNow = () => window.matchMedia(WIDE).matches
+// Markup made before the screen is known marks the section a wide screen shows.
+const wideBefore = () => true
 
 // The controls of `root` that Tab reaches, in order.
 const focusables = (root: HTMLElement) =>
@@ -47,11 +83,12 @@ export function PageRow({
   children: ReactNode
   className?: string
 }) {
+  const moves = useMotionPlays()
   return (
     <div
       id={rowAnchor(id)}
       data-setting-row
-      className={`scroll-mt-4 rounded-xl transition-colors duration-500 data-[flash]:bg-secondary-container ${className}`}
+      className={`scroll-mt-4 rounded-xl data-[flash]:bg-secondary-container ${moves ? 'transition-colors duration-500' : ''} ${className}`}
     >
       {children}
     </div>
@@ -143,12 +180,13 @@ function Results({ hits, onPick }: { hits: SearchHit[]; onPick: (hit: SearchHit)
   )
 }
 
-// A full page of settings over the app: sections on the left and one section's content on wide
-// screens; on narrow ones the list of sections, then a section as its own screen.
+// A large dialog of settings over the app: sections on the left and one section's content on
+// wide screens; on narrow ones the screen fills with the list of sections, then a section as its
+// own screen.
 export function SettingsPage({
   title,
   sections,
-  active,
+  active: asked,
   onSection,
   onClose,
   onBack,
@@ -156,6 +194,12 @@ export function SettingsPage({
   headingName = false,
   row = null,
   summary,
+  header,
+  actor,
+  lead,
+  closeTitle = 'Close',
+  layer = 'page',
+  top = false,
   search = true,
 }: {
   title: string
@@ -174,9 +218,17 @@ export function SettingsPage({
   row?: string | null
   // Shown above the list of sections on narrow screens.
   summary?: ReactNode
+  // Shown above the list of sections on every screen, in place of the title on wide ones.
+  header?: ReactNode
+  // Who the page acts as, beside the section's name.
+  actor?: ReactNode
+  // Shown above every section's content.
+  lead?: ReactNode
+  closeTitle?: string
+  layer?: EscapeLayer
+  top?: boolean
   search?: boolean
 }) {
-  const titleId = useId()
   const root = useRef<HTMLDivElement>(null)
   const back = useRef<HTMLButtonElement>(null)
   const wideField = useRef<HTMLInputElement>(null)
@@ -184,56 +236,91 @@ export function SettingsPage({
   const sectionField = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
+  const [folded, setFolded] = useState<string | null>(null)
+  // Counts jumps to a row, so asking for the row already shown scrolls to it and flashes again.
+  const [jumps, setJumps] = useState(0)
+  // Where focus was as the page opened, before a field inside it took focus.
+  const [opener] = useState(() => (typeof document === 'undefined' ? null : document.activeElement))
+  const moves = useMotionPlays()
+  const smooth = useRef(moves)
+  useEffect(() => {
+    smooth.current = moves
+  })
+  const active = openSection(sections, asked)
   const shown = shownSection(sections, active)
   const section = sections.find(s => s.id === shown) ?? null
+  const wide = useSyncExternalStore(watchWide, wideNow, wideBefore)
+  const [visited, setVisited] = useState<readonly string[]>([])
+  const kept = keptSections(visited, shown)
+  if (kept !== visited) setVisited(kept)
+  // The last section open, for focus to go back to its entry in the list.
+  const left = useRef<string | null>(null)
+  useEffect(() => {
+    if (active !== null) left.current = active
+  })
+  const single = sections.length === 1
   const hits = useMemo(() => searchRows(sections, query), [sections, query])
 
+  const jump = (to: string, row: string) => {
+    setJumps(n => n + 1)
+    onSection(to, row)
+  }
   const pick = (hit: SearchHit) => {
     setQuery('')
     setSearching(false)
-    onSection(hit.row.section, hit.row.id)
+    jump(hit.row.section, hit.row.id)
   }
   const enter = () => {
     if (hits[0]) pick(hits[0])
   }
   const screen = active === null ? 'list' : 'section'
 
-  useEscape(() => {
+  const escape = () => {
     if (pageEscape(query) === 'clear') setQuery('')
     else onClose()
-  }, 'page')
+  }
 
-  // Focus goes back to where it was when the page closes.
-  useEffect(() => {
-    const opener = document.activeElement
-    return () => {
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus()
-    }
-  }, [])
+  // Focus goes back to where it was when the page closes, unless another dialog took its place.
+  useEffect(
+    () => () => {
+      if (!(opener instanceof HTMLElement) || !opener.isConnected) return
+      const modals = document.querySelectorAll('[aria-modal="true"]')
+      const over = modals[modals.length - 1]
+      if (over && !over.contains(opener)) return
+      opener.focus()
+    },
+    [opener]
+  )
 
   // Focus moves into the page when it opens, and to the new screen when the one it was on hides:
-  // the open section in the nav, else the back arrow.
+  // the entry of the section just left or the current one in the nav, else the back arrow.
   useEffect(() => {
     const el = root.current
-    if (!el) return
+    const modal = modalOf(el)
+    if (!el || !modal) return
     const at = document.activeElement
-    if (at !== el && el.contains(at) && shows(at)) return
-    const current = el.querySelector('nav [aria-current="page"]')
-    const start = shows(current) ? current : shows(back.current) ? back.current : el
-    start.focus({ preventScroll: true })
+    if (at !== modal && modal.contains(at) && shows(at)) return
+    const entry = (id: string | null) =>
+      id === null ? null : el.querySelector(`nav [data-settings-section="${CSS.escape(id)}"]`)
+    const start = [
+      entry(left.current),
+      el.querySelector('nav [aria-current="page"]'),
+      el.querySelector('nav [data-settings-section]'),
+      back.current,
+    ].find(shows)
+    ;(start ?? modal).focus({ preventScroll: true })
   }, [screen, heading])
 
   // Tab stays inside the page while it is the top one.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = root.current
-      if (e.key !== 'Tab' || e.defaultPrevented || !el) return
+      const modal = modalOf(root.current)
+      if (e.key !== 'Tab' || e.defaultPrevented || !modal) return
       const at = document.activeElement
-      const inside = at !== null && el.contains(at)
+      const inside = at !== null && modal.contains(at)
       if (!inside && at !== null && at !== document.body) return
-      const modals = document.querySelectorAll('[aria-modal="true"]')
-      if (modals[modals.length - 1] !== el) return
-      const all = focusables(el)
+      if (!onTop(modal)) return
+      const all = focusables(modal)
       const to = tabWrap(inside ? all.indexOf(at as HTMLElement) : -1, all.length, e.shiftKey)
       if (to === null) return
       e.preventDefault()
@@ -248,8 +335,8 @@ export function SettingsPage({
     const onKey = (e: KeyboardEvent) => {
       const on = e.target instanceof HTMLElement ? e.target : document.body
       if (!focusesSearch(e, { tag: on.tagName, editable: on.isContentEditable })) return
-      const modals = document.querySelectorAll('[aria-modal="true"]')
-      if (modals[modals.length - 1] !== root.current) return
+      const modal = modalOf(root.current)
+      if (!modal || !onTop(modal)) return
       e.preventDefault()
       const wide = wideField.current
       if (wide && wide.offsetParent !== null) return wide.focus()
@@ -269,14 +356,14 @@ export function SettingsPage({
     if (!row) return
     const el = document.getElementById(rowAnchor(row))
     if (!el) return
-    el.scrollIntoView({ block: 'center' })
+    el.scrollIntoView({ block: 'center', behavior: smooth.current ? 'smooth' : 'auto' })
     el.setAttribute('data-flash', '')
     const id = window.setTimeout(() => el.removeAttribute('data-flash'), 1600)
     return () => {
       window.clearTimeout(id)
       el.removeAttribute('data-flash')
     }
-  }, [row, shown])
+  }, [row, shown, jumps])
 
   const searchButton = search && (
     <button
@@ -294,159 +381,224 @@ export function SettingsPage({
       <Search size={20} />
     </button>
   )
+  const closeButton = (className: string) => (
+    <button
+      type="button"
+      data-icon-only
+      title={closeTitle}
+      aria-label={closeTitle}
+      onClick={onClose}
+      className={className}
+    >
+      <X size={20} />
+    </button>
+  )
   const results = query.trim() !== '' && <Results hits={hits} onPick={pick} />
+  const named = heading !== undefined && headingName ? 'streamer' : ''
 
   return (
-    <div
-      ref={root}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      tabIndex={-1}
-      data-settings-page
-      data-screen={screen}
-      className="fixed inset-x-0 top-app z-40 flex h-app flex-col bg-surface px-safe text-on-surface outline-none md:flex-row"
+    <Dialog
+      title={title}
+      onClose={onClose}
+      onEscape={escape}
+      size="settings"
+      chrome="bare"
+      layer={layer}
+      top={top}
     >
       <div
-        className={`${active === null ? 'flex' : 'hidden'} min-h-0 flex-1 flex-col md:flex md:w-64 md:flex-none md:border-r md:border-outline-variant md:bg-surface-container-low`}
+        ref={root}
+        data-settings-page
+        data-screen={screen}
+        className="flex min-h-0 flex-1 flex-col md:flex-row"
       >
-        <div className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-2 md:hidden">
-          <button
-            type="button"
-            data-icon-only
-            title="Close"
-            aria-label="Close"
-            onClick={onClose}
-            className={barBtn}
-          >
-            <X size={20} />
-          </button>
-          <span className="min-w-0 flex-1 truncate px-1 font-medium">{title}</span>
-          {searchButton}
-        </div>
-        <p
-          id={titleId}
-          className="hidden px-7 pt-6 pb-3 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block"
+        <div
+          className={`${active === null ? 'flex' : 'hidden'} min-h-0 flex-1 flex-col md:flex md:w-64 md:flex-none md:border-r md:border-outline-variant md:bg-surface-container-low`}
         >
-          {title}
-        </p>
-        {search && (
-          <>
-            <SearchField
-              query={query}
-              setQuery={setQuery}
-              onEnter={enter}
-              fieldRef={wideField}
-              className="mx-4 mb-3 hidden md:flex"
-            />
-            {searching && (
+          <div className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-2 md:hidden">
+            {closeButton(barBtn)}
+            <span className="min-w-0 flex-1 truncate px-1 font-medium">{title}</span>
+            {actor}
+            {searchButton}
+          </div>
+          {header === undefined && (
+            <p className="hidden px-7 pt-6 pb-3 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block">
+              {title}
+            </p>
+          )}
+          {search && (
+            <>
               <SearchField
                 query={query}
                 setQuery={setQuery}
                 onEnter={enter}
-                fieldRef={listField}
-                className="mx-3 mt-3 md:hidden"
+                fieldRef={wideField}
+                className={`mx-4 mb-3 hidden md:flex ${header === undefined ? '' : 'mt-4'}`}
               />
-            )}
-          </>
-        )}
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-4 md:pt-0">
-          {results && <div className="md:hidden">{results}</div>}
-          <div className={results ? 'hidden md:block' : ''}>
-            {summary && <div className="pb-3 md:hidden">{summary}</div>}
-            <nav
-              aria-label={title}
-              className="flex flex-col gap-1"
-              onKeyDown={e => {
-                const buttons = [...e.currentTarget.querySelectorAll('button')]
-                const to = navKey(
-                  e.key,
-                  buttons.indexOf(document.activeElement as HTMLButtonElement),
-                  buttons.length
-                )
-                if (to === null) return
-                e.preventDefault()
-                buttons[to]?.focus()
-              }}
+              {searching && (
+                <SearchField
+                  query={query}
+                  setQuery={setQuery}
+                  onEnter={enter}
+                  fieldRef={listField}
+                  className="mx-3 mt-3 md:hidden"
+                />
+              )}
+            </>
+          )}
+          {header !== undefined && (
+            <div
+              className={`shrink-0 px-3 pt-3 md:px-4 md:pb-3 ${search ? 'md:pt-0' : 'md:pt-4'} ${results ? 'hidden md:block' : ''}`}
             >
-              {sections.map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  aria-current={shown === id ? 'page' : undefined}
-                  onClick={() => onSection(id)}
-                  className={`flex min-h-11 w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm md:min-h-0 ${
-                    active === id
-                      ? 'bg-secondary-container text-on-secondary-container'
-                      : shown === id
-                        ? 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface md:bg-secondary-container md:text-on-secondary-container'
-                        : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-                  }`}
-                >
-                  <Icon size={18} className="shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">{label}</span>
-                  <ChevronRight size={18} className="shrink-0 md:hidden" />
-                </button>
-              ))}
-            </nav>
+              {header}
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-4 md:pt-0">
+            {results && <div className="md:hidden">{results}</div>}
+            <div className={results ? 'hidden md:block' : ''}>
+              {summary && <div className="pb-3 md:hidden">{summary}</div>}
+              <nav
+                aria-label={title}
+                className="flex flex-col gap-1"
+                onKeyDown={e => {
+                  const buttons = [...e.currentTarget.querySelectorAll('button')].filter(shows)
+                  const to = navKey(
+                    e.key,
+                    buttons.indexOf(document.activeElement as HTMLButtonElement),
+                    buttons.length
+                  )
+                  if (to === null) return
+                  e.preventDefault()
+                  buttons[to]?.focus()
+                }}
+              >
+                {sections.map(({ id, label, icon: Icon, group, rows, outline }, i) => {
+                  const parts = outline && shown === id ? (rows ?? []) : []
+                  const open = parts.length > 1 && folded !== id
+                  const entry = (
+                    <button
+                      type="button"
+                      data-settings-section={id}
+                      aria-current={currentEntry(id, { shown, active, wide }) ? 'page' : undefined}
+                      onClick={() => onSection(id)}
+                      className={`flex min-h-11 w-full min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm md:min-h-0 ${
+                        active === id
+                          ? 'bg-secondary-container text-on-secondary-container'
+                          : shown === id
+                            ? 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface md:bg-secondary-container md:text-on-secondary-container'
+                            : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                      }`}
+                    >
+                      <Icon size={18} className="shrink-0" />
+                      <span className="min-w-0 flex-1 truncate">{label}</span>
+                      <ChevronRight size={18} className="shrink-0 md:hidden" />
+                    </button>
+                  )
+                  const fold = open ? `Hide the parts of ${label}` : `Show the parts of ${label}`
+                  return (
+                    <Fragment key={id}>
+                      {group !== undefined && group !== sections[i - 1]?.group && (
+                        <p className="px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase first:pt-1">
+                          {group}
+                        </p>
+                      )}
+                      {parts.length > 1 ? (
+                        <div className="flex min-w-0 items-center gap-1">
+                          {entry}
+                          <button
+                            type="button"
+                            data-icon-only
+                            title={fold}
+                            aria-label={fold}
+                            aria-expanded={open}
+                            onClick={() => setFolded(open ? id : null)}
+                            className="hidden size-8 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface md:flex"
+                          >
+                            <ChevronDown size={16} className={open ? 'rotate-180' : ''} />
+                          </button>
+                        </div>
+                      ) : (
+                        entry
+                      )}
+                      {open && (
+                        <div className="ml-5 hidden min-w-0 flex-col gap-0.5 border-l border-outline-variant py-1 pl-2 md:flex">
+                          {parts.map(part => (
+                            <button
+                              key={part.id}
+                              type="button"
+                              data-settings-part={part.id}
+                              onClick={() => jump(id, part.id)}
+                              className="min-w-0 truncate rounded-lg px-3 py-1.5 text-left text-sm text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+                            >
+                              {part.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </Fragment>
+                  )
+                })}
+              </nav>
+            </div>
+          </div>
+        </div>
+        <div
+          className={`${active === null ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col md:flex`}
+        >
+          <div className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-2 md:hidden">
+            {(onBack || !single) && (
+              <button
+                ref={back}
+                type="button"
+                data-icon-only
+                title="Back"
+                aria-label="Back"
+                onClick={onBack ?? (() => onSection(null))}
+                className={barBtn}
+              >
+                <ArrowLeft size={20} />
+              </button>
+            )}
+            <span className={`min-w-0 flex-1 truncate px-1 font-medium ${named}`}>
+              {heading ?? section?.label}
+            </span>
+            {actor}
+            {searchButton}
+            {closeButton(barBtn)}
+          </div>
+          {search && searching && (
+            <SearchField
+              query={query}
+              setQuery={setQuery}
+              onEnter={enter}
+              fieldRef={sectionField}
+              className="mx-3 mt-3 md:hidden"
+            />
+          )}
+          <div className="hidden h-16 shrink-0 items-center gap-3 border-b border-outline-variant pr-3 pl-6 md:flex lg:pl-10">
+            <h1 className={`min-w-0 flex-1 truncate text-xl font-medium ${named}`}>
+              {heading ?? section?.label}
+            </h1>
+            {actor}
+            {closeButton(
+              'flex size-10 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+            )}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-6 md:pt-6 md:pb-10 lg:px-10">
+            <div className="mx-auto max-w-3xl">
+              {results}
+              {lead}
+              {sections
+                .filter(s => kept.includes(s.id))
+                .map(s => (
+                  <div key={s.id} data-section-body={s.id} hidden={s.id !== shown}>
+                    {s.render()}
+                  </div>
+                ))}
+            </div>
           </div>
         </div>
       </div>
-      <div
-        className={`${active === null ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col md:flex`}
-      >
-        <div className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-2 md:hidden">
-          <button
-            ref={back}
-            type="button"
-            data-icon-only
-            title="Back"
-            aria-label="Back"
-            onClick={onBack ?? (() => onSection(null))}
-            className={barBtn}
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <span
-            className={`min-w-0 flex-1 truncate px-1 font-medium ${heading !== undefined && headingName ? 'streamer' : ''}`}
-          >
-            {heading ?? section?.label}
-          </span>
-          {searchButton}
-        </div>
-        {search && searching && (
-          <SearchField
-            query={query}
-            setQuery={setQuery}
-            onEnter={enter}
-            fieldRef={sectionField}
-            className="mx-3 mt-3 md:hidden"
-          />
-        )}
-        <div className="hidden shrink-0 items-center gap-3 px-10 pt-6 pb-2 md:flex">
-          <h1
-            className={`min-w-0 flex-1 truncate text-xl font-medium ${heading !== undefined && headingName ? 'streamer' : ''}`}
-          >
-            {heading ?? section?.label}
-          </h1>
-          <button
-            type="button"
-            data-icon-only
-            title="Close"
-            aria-label="Close"
-            onClick={onClose}
-            className="shrink-0 rounded-full border border-outline-variant p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-10 md:pt-2 md:pb-10">
-          <div className="max-w-2xl">
-            {results}
-            {section?.render()}
-          </div>
-        </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

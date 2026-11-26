@@ -10,6 +10,7 @@ import type { Decision, RelayChoice, RelayPrefs } from './relays'
 import type { CallRoute } from './call_choice'
 import type { P2pApp } from './p2p/app/runtime'
 import type { ConfigDoc, SectionKey } from './config_transfer'
+import type { ServerSettingsSection } from './server_settings_sections'
 import type { EmojiPrefs } from './emoji'
 import type { ForwardClip } from './forward'
 import type { AlertInput } from './notices'
@@ -160,7 +161,7 @@ export type ActiveDialog =
   | { kind: 'account_switcher'; manage?: boolean }
   | { kind: 'add_server'; join?: string; locked?: boolean; tab?: 'create' | 'join' }
   | { kind: 'app_preview'; server: string }
-  | { kind: 'server_settings'; server: string }
+  | { kind: 'server_settings'; server: string; section?: ServerSettingsSection }
   | { kind: 'audit_log'; server: string }
   | { kind: 'webhooks'; server: string }
   | { kind: 'timeout'; server: string; user: UserRef }
