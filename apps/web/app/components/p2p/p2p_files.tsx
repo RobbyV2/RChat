@@ -6,19 +6,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 import { useAccount } from '../../lib/client/react'
 
 import { useEffect, useState } from 'react'
-import {
-  Download,
-  Eye,
-  EyeOff,
-  FileText,
-  Film,
-  ImageIcon,
-  Loader2,
-  Music,
-  Play,
-  Waypoints,
-  X,
-} from 'lucide-react'
+import { Download, Eye, EyeOff, FileText, Loader2, Waypoints, X } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { peerChat } from '../../lib/actions/p2p_chat'
 import { fmtSize } from '../../lib/bytes'
@@ -27,6 +15,8 @@ import { type FileView, type PendingFile } from '../../lib/p2p/app'
 import type { Attachment } from '../../lib/p2p/content'
 import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
+import { FileCard } from '../file_card'
+import { fileKind, pct } from '../../lib/file_card'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
 
@@ -36,18 +26,6 @@ import { useInstanceLabel } from '../instance_badge'
 
 const iconBtn =
   'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40'
-
-const claimKind = (a: Attachment) =>
-  a.mime.startsWith('image/')
-    ? 'image'
-    : a.mime.startsWith('video/')
-      ? 'video'
-      : a.mime.startsWith('audio/')
-        ? 'audio'
-        : null
-
-const pct = (v: FileView | undefined) =>
-  v && v.total > 0 ? Math.min(100, Math.floor((v.got / v.total) * 100)) : 0
 
 const fmtDur = (ms: number) => {
   const s = Math.round(ms / 1000)
@@ -111,15 +89,10 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
 
   const acct = useAccount()
 
-  // Shown cleaned like the saved name: no direction overrides or control characters.
-  const clean = downloadName(att.name)
-  const name = useMask(own)(clean)
   const v = useP2p(s => s.files[att.h])
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
-  const [revealed, setRevealed] = useState(false)
   const done = v?.state === 'done'
-  const kind = done && v.type ? kindOf(v.type) : null
-  const url = useFileUrl(att.h, done && kind !== null)
+  const url = useFileUrl(att.h, done && !!v.type && kindOf(v.type) !== null)
   const { label } = useInstanceLabel()
   const thumb = useThumb(done ? undefined : att.thumb)
   useEffect(() => {
@@ -132,50 +105,54 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
         Attachment hidden: <span className="streamer">{label}</span> is text only
       </p>
     )
+  return (
+    <TileView
+      att={att}
+      canFetch={canFetch}
+      own={own}
+      v={v}
+      url={url}
+      thumb={thumb}
+      save={() => void p2pFiles.save(att)}
+      get={() => peerChat.forIdentity(identity).startDownload(att, acct)}
+      cancel={() => void p2pFiles.cancel(att.h)}
+    />
+  )
+}
+
+// A P2P attachment as its state `v` shows it, with `url` the stored file once it plays inline
+// and `thumb` its checked preview.
+export function TileView({
+  att,
+  canFetch,
+  own,
+  v,
+  url,
+  thumb,
+  save,
+  get,
+  cancel,
+}: {
+  att: Attachment
+  canFetch: boolean
+  own: boolean
+  v: FileView | undefined
+  url: string | null
+  thumb: string | null
+  save: () => void
+  get: () => void
+  cancel: () => void
+}) {
+  // Shown cleaned like the saved name: no direction overrides or control characters.
+  const clean = downloadName(att.name)
+  const name = useMask(own)(clean)
+  const [revealed, setRevealed] = useState(false)
+  const done = v?.state === 'done'
+  const kind = done && v.type ? kindOf(v.type) : null
   const hidden = !!att.spoiler && !revealed
   const status = statusText(v)
   const busy = v?.state === 'downloading'
-  const canGet = canFetch && !done && !busy && v?.state !== 'removed'
-
-  const actions = (
-    <>
-      {busy && (
-        <button
-          title="Cancel download"
-          aria-label="Cancel download"
-          onClick={() => void p2pFiles.cancel(att.h)}
-          className={iconBtn}
-        >
-          <X size={14} />
-        </button>
-      )}
-      {canGet && (
-        <button
-          title={`Download ${fmtSize(att.size)}`}
-          aria-label="Download"
-          disabled={!v || v.holders === 0}
-          onClick={() => peerChat.forIdentity(identity).startDownload(att, acct)}
-          className={iconBtn}
-        >
-          {kind === null && claimKind(att) === 'video' ? (
-            <Play size={14} />
-          ) : (
-            <Download size={14} />
-          )}
-        </button>
-      )}
-      {done && (
-        <button
-          title={`Save ${name}`}
-          aria-label="Save"
-          onClick={() => void p2pFiles.save(att)}
-          className={iconBtn}
-        >
-          <Download size={14} />
-        </button>
-      )}
-    </>
-  )
+  const canGet = canFetch && !done && !busy && v?.state !== 'removed' && !!v && v.holders > 0
 
   const caption = (
     <span className="mt-1 flex max-w-full items-center gap-2">
@@ -185,21 +162,10 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
       <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
         {fmtSize(att.size)}
       </span>
-      {actions}
+      <button title={`Save ${name}`} aria-label="Save" onClick={save} className={iconBtn}>
+        <Download size={14} />
+      </button>
     </span>
-  )
-
-  const progress = busy && (
-    <div
-      role="progressbar"
-      aria-label={`Downloading ${name}`}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={pct(v)}
-      className="mt-2 h-1 w-full min-w-40 overflow-hidden rounded-full bg-surface-container-highest"
-    >
-      <div className="h-full rounded-full bg-primary" style={{ width: `${pct(v)}%` }} />
-    </div>
   )
 
   if (hidden) {
@@ -246,64 +212,61 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
         {caption}
       </div>
     )
+
+  const card = {
+    name: clean,
+    own,
+    fileMask: false,
+    kind: fileKind(clean, att.mime),
+    size: att.size,
+    detail: att.dur !== undefined ? ` · ${fmtDur(att.dur)}` : undefined,
+    dashed: true,
+    primary: done
+      ? { label: 'Save' as const, onClick: save }
+      : { label: 'Download' as const, onClick: get, disabled: !canGet },
+    menu: { download: done ? save : canGet ? get : null, link: null },
+  }
+
   if (done && url && kind === 'audio')
     return (
-      <div data-p2p-file={att.h} className="mt-1 w-fit max-w-full">
-        <audio src={url} controls className="max-w-full" />
-        {caption}
-      </div>
+      <FileCard {...card} data={{ 'data-p2p-file': att.h }} progress={null}>
+        <audio src={url} controls className="mt-3 w-full" />
+      </FileCard>
     )
 
-  const Icon =
-    claimKind(att) === 'image'
-      ? ImageIcon
-      : claimKind(att) === 'video'
-        ? Film
-        : claimKind(att) === 'audio'
-          ? Music
-          : FileText
   return (
-    <div
-      data-p2p-file={att.h}
-      data-state={v?.state ?? 'none'}
-      className="mt-1 w-fit max-w-full rounded-xl border border-dashed border-tertiary/60 bg-surface-container px-3 py-2"
+    <FileCard
+      {...card}
+      data={{ 'data-p2p-file': att.h, 'data-state': v?.state ?? 'none' }}
+      progress={busy && v ? { got: v.got, total: v.total } : null}
+      onCancel={cancel}
+      preview={
+        thumb && (
+          <img
+            src={thumb}
+            alt=""
+            aria-hidden
+            className="mb-3 max-h-40 max-w-60 rounded-lg object-contain"
+          />
+        )
+      }
     >
-      {thumb && (
-        <img
-          src={thumb}
-          alt=""
-          aria-hidden
-          className="mb-2 max-h-40 max-w-60 rounded-lg object-contain"
-        />
-      )}
-      <div className="flex items-center gap-2">
-        <Icon size={18} className="shrink-0 text-tertiary" />
-        <span className="max-w-60 truncate text-sm">
-          <Masked text={clean} own={own} />
-        </span>
-        <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
-          {fmtSize(att.size)}
-          {att.dur !== undefined && ` · ${fmtDur(att.dur)}`}
-        </span>
-        {actions}
-      </div>
-      {progress}
-      {status && (
+      {status && !busy && (
         <p
           data-file-status
-          className={`mt-1 text-xs ${v?.state === 'failed' ? 'text-error' : 'text-on-surface-variant'}`}
+          className={`mt-2 text-xs ${v?.state === 'failed' ? 'text-error' : 'text-on-surface-variant'}`}
         >
           {status}
         </p>
       )}
       {done && (kind === null || v.tooBig) && (
-        <p className="mt-1 text-xs text-on-surface-variant">
+        <p className="mt-2 text-xs text-on-surface-variant">
           {v.tooBig
             ? 'Stored on this device. Too large to show here: save it to view.'
             : 'Stored on this device'}
         </p>
       )}
-    </div>
+    </FileCard>
   )
 }
 

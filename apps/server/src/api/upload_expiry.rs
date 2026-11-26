@@ -908,7 +908,9 @@ mod tests {
     use crate::api::media::{
         Charge, MEDIA_TTL_SECS, check_budget, save_upload, save_within, store_media, sweep,
     };
-    use crate::api::messages::{SendReq, insert_message, send_channel_message, send_dm_message};
+    use crate::api::messages::{
+        Quotes, SendReq, insert_message, load_message, send_channel_message, send_dm_message,
+    };
     use crate::api::test_util::{add_member, done, mem_user, pg_done, pg_state, temp_state};
     use crate::api::{ApiError, Authed, Settings};
     use crate::db::{Db, now};
@@ -1168,6 +1170,62 @@ mod tests {
             .expect("message")
             .try_get(0)
             .expect("expiry")
+    }
+
+    #[tokio::test]
+    async fn server_files_carry_their_stored_size() {
+        let (state, path) = temp_state("upload_expiry_size").await;
+        let db = &state.db;
+        let cid = club(&state).await;
+        let id = save_upload(
+            &state,
+            "a.txt",
+            "text/plain",
+            b"hello",
+            "alice",
+            Charge::own("alice"),
+        )
+        .await
+        .expect("upload")
+        .0;
+        let sent = send_channel_message(
+            State(state.clone()),
+            Path(cid),
+            Authed(mem_user("alice", false)),
+            req("", Some(id.clone())),
+        )
+        .await
+        .expect("send")
+        .0;
+        assert_eq!(sent.media.as_ref().and_then(|m| m.size), Some(5));
+        let size = |db: &Db, msg: i64| {
+            let db = db.clone();
+            async move {
+                load_message(&db, msg, Quotes::Partial)
+                    .await
+                    .expect("load")
+                    .and_then(|m| m.media)
+                    .and_then(|m| m.size)
+            }
+        };
+        assert_eq!(size(db, sent.id).await, Some(5));
+        sqlx::query("UPDATE messages SET media_size = NULL WHERE id = $1")
+            .bind(sent.id)
+            .execute(db)
+            .await
+            .expect("unsized");
+        assert_eq!(
+            size(db, sent.id).await,
+            Some(5),
+            "read from the stored file"
+        );
+        sqlx::query("DELETE FROM media WHERE id = $1")
+            .bind(&id)
+            .execute(db)
+            .await
+            .expect("gone");
+        assert_eq!(size(db, sent.id).await, None);
+        done(state, path).await;
     }
 
     #[tokio::test]

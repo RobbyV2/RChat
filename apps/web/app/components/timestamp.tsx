@@ -7,7 +7,9 @@ import { daySnapshot, snapshot, subscribe, subscribeDay, track } from '../lib/st
 import { formatStamp, fullTime, messageTime, type StampStyle } from '../lib/timestamps'
 import { longPress } from './context_menu'
 
-function useLiveNow(target: number | null) {
+// The shared clock's time, ticking while `target` (milliseconds) is set: each second within a
+// minute of it, else each minute.
+export function useLiveNow(target: number | null) {
   useEffect(() => (target === null ? undefined : track(target)), [target])
   return useSyncExternalStore(subscribe, snapshot, snapshot)
 }

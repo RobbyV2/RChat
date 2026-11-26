@@ -1134,6 +1134,7 @@ pub(crate) async fn upload_media(
     Ok(Json(MediaRef::server(
         id,
         filename,
+        body.data.len() as i64,
         false,
         Some(uploaded_at + MEDIA_TTL_SECS),
     )))

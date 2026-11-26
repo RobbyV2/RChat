@@ -21,10 +21,6 @@ import {
   Download,
   EllipsisVertical,
   EyeOff,
-  FileCode,
-  FileText,
-  Image as ImageIcon,
-  Play,
   Share2,
   ShieldAlert,
   X,
@@ -32,7 +28,6 @@ import {
 import { messageInstanceTarget, routeInstanceLink } from '../lib/client/instance_links'
 import { useAccount, useStoreApi } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
-import { fmtSize } from '../lib/bytes'
 import { fileLang, fenceTag } from '../lib/code'
 import type { CodeNode } from '../lib/highlight'
 import { relayOnly } from '../lib/ice'
@@ -106,6 +101,8 @@ import { MaskControl, Masked, MaskedWord, MaskedWords, MaskPlain, useOwn } from 
 import { mentionHandle } from '../lib/display_name'
 import { removedLifetime, removedTail } from '../lib/upload_expiry'
 import { useUploadLifetime } from './upload_expiry'
+import { ExpiryLine, FileCard } from './file_card'
+import { fileKind, type FileExtra } from '../lib/file_card'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -521,7 +518,7 @@ export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: ()
 
 const UNVERIFIED = 'Unverified: sent from an older app'
 
-function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number }) {
+export function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number }) {
   const account = useAccount()
   const p2p = account.files
   const { sessionMark } = account.lifetime
@@ -726,15 +723,39 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
     )
   }
 
+  const card = {
+    name: filename,
+    own,
+    fileMask: true,
+    kind: fileKind(filename, mime),
+    size,
+    primary: {
+      label: 'Download' as const,
+      onClick: () => run(true),
+      disabled: busy || !online,
+      hint:
+        streamer || hoster === null ? "from the sender's browser" : `from ${hosterName}'s browser`,
+    },
+    onCancel: () => ctl.current?.stop.abort(),
+    menu: { download: busy || !online ? null : () => run(true), link: null },
+  }
+
+  if (shown?.kind === 'audio') {
+    return (
+      <FileCard {...card} progress={progress}>
+        <audio src={shown.url} controls className="mt-3 w-full" />
+        {meta}
+      </FileCard>
+    )
+  }
+
   if (shown !== null) {
     return (
       <div className="mt-1 w-fit max-w-full">
         {shown.kind === 'image' ? (
           <img src={shown.url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
-        ) : shown.kind === 'video' ? (
-          <video src={shown.url} controls className="max-h-80 max-w-full rounded-xl" />
         ) : (
-          <audio src={shown.url} controls className="max-w-full" />
+          <video src={shown.url} controls className="max-h-80 max-w-full rounded-xl" />
         )}
         <span className="mt-1 flex items-center gap-2">
           <span className="max-w-60 truncate text-xs text-on-surface-variant">
@@ -750,21 +771,15 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   if (!online) {
     const generic = streamer || hoster === null
     return (
-      <div
-        title={
-          generic
-            ? 'File not available. Ask the sender to send it again.'
-            : `File not available. Ask ${hosterName} to send it again.`
-        }
-        className="mt-1 w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 opacity-60"
-      >
-        <span className="flex items-center gap-2 text-sm text-on-surface-variant">
-          <FileText size={18} className="shrink-0" />
-          <span className="max-w-60 truncate">
-            <Masked text={filename} file own={own} />
-          </span>
-        </span>
-        <p className="mt-1 text-xs text-on-surface-variant italic">
+      <FileCard {...card} progress={null} dim>
+        <p
+          title={
+            generic
+              ? 'File not available. Ask the sender to send it again.'
+              : `File not available. Ask ${hosterName} to send it again.`
+          }
+          className="mt-2 text-xs text-on-surface-variant italic"
+        >
           File not available. Ask{' '}
           {hoster === null ? (
             'the sender'
@@ -776,88 +791,36 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
           to send it again.
         </p>
         {meta}
-      </div>
+      </FileCard>
     )
   }
 
-  const pct =
-    progress && progress.total > 0 ? Math.min(100, (progress.got / progress.total) * 100) : 0
+  const connects = '(connects to the sender)'
+  const extra: FileExtra[] = [
+    ...(canPreview && guess === 'image' && !autoLoad
+      ? [{ kind: 'image' as const, hint: connects, run: () => run(false) }]
+      : []),
+    ...(canText && !autoLoad && account.textPreviews.get(key) !== null
+      ? [{ kind: 'preview' as const, hint: connects, run: () => run(false) }]
+      : []),
+    ...(canPreview && guess !== 'image'
+      ? [
+          {
+            kind: guess === 'video' ? ('video' as const) : ('audio' as const),
+            run: () => run(false),
+          },
+        ]
+      : []),
+  ]
   return (
-    <div className="mt-1 w-fit max-w-full rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
-      <div className="flex items-center gap-2">
-        <FileText size={18} className="shrink-0 text-tertiary" />
-        <span className="max-w-60 truncate text-sm">
-          <Masked text={filename} file own={own} />
-        </span>
-        {size !== null && (
-          <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
-            {fmtSize(size)}
-          </span>
-        )}
-        {busy ? (
-          <button
-            title="Cancel download"
-            aria-label="Cancel download"
-            onClick={() => ctl.current?.stop.abort()}
-            className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-error"
-          >
-            <X size={14} />
-          </button>
-        ) : (
-          <>
-            {canPreview && guess === 'image' && !autoLoad && (
-              <button
-                title="Show image (connects to the sender)"
-                aria-label="Show image"
-                onClick={() => run(false)}
-                className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary"
-              >
-                <ImageIcon size={14} />
-              </button>
-            )}
-            {canText && !autoLoad && account.textPreviews.get(key) !== null && (
-              <button
-                title="Show preview (connects to the sender)"
-                aria-label="Show preview"
-                onClick={() => run(false)}
-                className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary"
-              >
-                <FileCode size={14} />
-              </button>
-            )}
-            {canPreview && guess !== 'image' && (
-              <button
-                title={guess === 'video' ? 'Play video' : 'Play audio'}
-                aria-label={guess === 'video' ? 'Play video' : 'Play audio'}
-                onClick={() => run(false)}
-                className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary"
-              >
-                <Play size={14} />
-              </button>
-            )}
-            {saveButton}
-          </>
-        )}
-      </div>
-      {busy && (
-        <div
-          role="progressbar"
-          aria-label={`Downloading ${filename}`}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(pct)}
-          className="mt-2 h-1 w-full min-w-40 overflow-hidden rounded-full bg-surface-container-highest"
-        >
-          <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
-        </div>
-      )}
-      {failed !== null && <p className="mt-1 text-xs text-error">{failed}</p>}
+    <FileCard {...card} progress={progress} extra={extra}>
+      {failed !== null && <p className="mt-2 text-xs text-error">{failed}</p>}
       {meta}
-    </div>
+    </FileCard>
   )
 }
 
-function MediaAttachment({
+export function MediaAttachment({
   media,
   own,
   postedAt,
@@ -983,32 +946,32 @@ function MediaAttachment({
       />
     )
   }
-  const card = (
-    <>
-      <span className="flex items-center gap-2">
-        <FileText size={18} className="shrink-0 text-primary" />
-        <span className="max-w-60 truncate text-sm">
-          <Masked text={filename} file own={own} />
-        </span>
-        <Download size={14} className="shrink-0 text-on-surface-variant" />
-      </span>
-      {expiry}
-    </>
-  )
-  const box =
-    'mt-1 block w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 text-left hover:bg-surface-container-high'
-  if (fetched) {
-    return (
-      <button title={`Download ${filename}`} onClick={save} className={box}>
-        {card}
-      </button>
-    )
-  }
   return (
-    <a href={api.mediaUrl(id)} download={filename} className={box}>
-      {card}
-    </a>
+    <FileCard
+      name={filename}
+      own={own}
+      fileMask
+      kind={fileKind(filename, media.mime)}
+      size={media.size}
+      progress={null}
+      primary={
+        fetched
+          ? { label: 'Download', onClick: save }
+          : { label: 'Download', href: api.mediaUrl(id), download: filename }
+      }
+      menu={{ download: save, link: mediaLink(account, id) }}
+      footer={expires_at !== null && <ExpiryLine at={expires_at} />}
+    />
   )
+}
+
+// The address of an uploaded file, for whoever may read it.
+const mediaLink = (account: AccountSession, id: string) => {
+  try {
+    return new URL(account.api.mediaUrl(id), account.shareOrigin).href
+  } catch {
+    return null
+  }
 }
 
 function EmbedCard({
@@ -1277,6 +1240,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           {canDelete && !media.removed && (
             <button
               title="Remove attachment"
+              aria-label="Remove attachment"
               onClick={() => void deleteMedia(message.id)}
               className="absolute -top-1.5 -right-1.5 rounded-full bg-surface-container-highest p-1 text-on-surface-variant opacity-0 shadow-elevation-1 group-focus-within/att:opacity-100 group-hover/att:opacity-100 hover:text-error max-md:opacity-100"
             >

@@ -38,7 +38,7 @@ use crate::limits::shared::Rate;
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews";
 const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
@@ -1042,12 +1042,12 @@ async fn claim_media(
     .execute(&mut **tx)
     .await?
     .rows_affected();
-    let row = sqlx::query("SELECT filename, uploaded_at FROM media WHERE id = $1")
+    let row = sqlx::query("SELECT filename, uploaded_at, size FROM media WHERE id = $1")
         .bind(id)
         .fetch_optional(&mut **tx)
         .await?;
-    let (filename, uploaded_at): (String, i64) = match &row {
-        Some(r) => (r.try_get(0)?, r.try_get(1)?),
+    let (filename, uploaded_at, size): (String, i64, i64) = match &row {
+        Some(r) => (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?),
         None => {
             return Err(bad("Unknown media"));
         }
@@ -1071,6 +1071,7 @@ async fn claim_media(
     Ok(MediaRef::server(
         id.to_string(),
         filename,
+        size,
         spoiler,
         crate::api::upload_expiry::deadline(uploaded_at, ttl),
     ))
@@ -1487,7 +1488,7 @@ async fn forwarded(
         (None, Some(_)) => Some(Origin::Dm),
         (None, None) => return Err(cannot_forward()),
     };
-    let row = sqlx::query("SELECT m.content, m.kind, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.author, m.created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_dropped FROM messages m WHERE m.id = $1")
+    let row = sqlx::query("SELECT m.content, m.kind, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.author, m.created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_dropped FROM messages m WHERE m.id = $1")
         .bind(id)
         .fetch_optional(db)
         .await?

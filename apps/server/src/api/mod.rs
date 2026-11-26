@@ -717,7 +717,7 @@ pub struct MediaRef {
     /// this follows the server's upload expiry (24 hours after upload by default; DMs always
     /// use the default); for `p2p` media it is the sender's chosen expiry.
     pub expires_at: Option<i64>,
-    /// Size in bytes, known for `p2p` media; `null` for `server` media.
+    /// Size in bytes; `null` when a `server` file is no longer stored.
     pub size: Option<i64>,
     /// MIME type, known for `p2p` media; `null` for `server` media. Declared by the sender and
     /// not verified: clients decide how to show a file from its bytes.
@@ -739,6 +739,7 @@ impl MediaRef {
     pub fn server(
         id: String,
         filename: String,
+        size: i64,
         spoiler: bool,
         expires_at: Option<i64>,
     ) -> MediaRef {
@@ -748,7 +749,7 @@ impl MediaRef {
             kind: MediaKind::Server,
             hoster: None,
             expires_at,
-            size: None,
+            size: Some(size),
             mime: None,
             sha256: None,
             removed: false,

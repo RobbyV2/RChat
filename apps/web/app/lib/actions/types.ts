@@ -1,6 +1,7 @@
 import type { P2pApp } from '../p2p/app/runtime'
 import type { AccountSession } from '../client/session'
 import type { LucideIcon } from 'lucide-react'
+import type { FileMenu } from '../file_card'
 import type { InboxEntry } from '../inbox'
 import type { Folder } from '../nav_layout'
 import type { Contact } from '../p2p/contacts'
@@ -64,6 +65,8 @@ export type Target =
   | { kind: 'dm_list' }
   // A link preview under a message; `banner`: it shows an image.
   | { kind: 'embed'; message: Message; ord: number; banner: boolean }
+  // A file card, hosted or P2P: `now` reads the card as it is, null once it is gone.
+  | { kind: 'file'; now(): FileMenu | null }
   // A timestamp in a message's text: `ts` in milliseconds, `token` as written.
   | { kind: 'timestamp'; ts: number; token: string }
   // An inbox row, with its panel's open and mark-read.

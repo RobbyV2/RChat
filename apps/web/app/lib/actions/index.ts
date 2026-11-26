@@ -4,6 +4,7 @@ import { cardActions } from './cards'
 import { channelActions } from './channel'
 import { ctxFor } from './ctx'
 import { dmActions, dmListActions } from './dm'
+import { fileActions } from './file'
 import { folderActions } from './folder'
 import { friendActions } from './friends'
 import { railAccountActions } from './rail_account'
@@ -45,6 +46,7 @@ export const registerAppActions = () => {
     dmListActions,
     messageActions,
     embedActions,
+    fileActions,
     serverActions,
     channelActions,
     cardActions,

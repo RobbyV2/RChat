@@ -77,6 +77,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'home':
     case 'dm_list':
     case 'timestamp':
+    case 'file':
     case 'inbox':
     case 'card':
     case 'p2p_contact':
@@ -121,6 +122,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'header':
       return s.profile?.user ?? null
     case 'voice_guest':
+    case 'file':
     case 'p2p_contact':
     case 'p2p_server':
     case 'p2p_channel':
@@ -160,6 +162,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'home':
     case 'dm_list':
     case 'timestamp':
+    case 'file':
     case 'inbox':
     case 'card':
     case 'p2p_contact':
@@ -221,7 +224,8 @@ const liveList = (s: RChatState, key: string) =>
     (s.panel?.kind === 'thread' && threadKey(s.panel.root.id) === key))
 
 // A message is gone when its loaded list lacks it inside its window, or above it while the list
-// is live. A server that isn't loaded keeps the target's channel and categories.
+// is live. A server that isn't loaded keeps the target's channel and categories. A file card is
+// gone once it leaves the page.
 const freshTarget = (s: RChatState, t: Target): Target | null => {
   switch (t.kind) {
     case 'message': {
@@ -286,6 +290,8 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'voice_guest':
     case 'sign_in':
       return t
+    case 'file':
+      return t.now() ? t : null
   }
 }
 

@@ -763,7 +763,8 @@ describe('file names', () => {
       const message = msg(1, { content: 'see cun.ts', author: user('bob'), media: file })
       const html = readText(renderToStaticMarkup(<MarkdownMessage message={message} />))
       expect(html).toContain('see ***.**')
-      expect(html).toContain(file.removed ? 'File cun.ts ' : '>cun.ts<')
+      for (const part of file.removed ? ['File cun.ts '] : ['title="cun.ts"', '>cun<', '>.ts<'])
+        expect(html).toContain(part)
     }
     Object.assign(initial, { settings })
   })

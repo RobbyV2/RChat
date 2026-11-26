@@ -2,7 +2,14 @@
 import { useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 
-import { useEffect, useMemo, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
+import {
+  createContext,
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+  type MouseEvent,
+  type ReactNode,
+} from 'react'
 import { Check, Ellipsis, ListChecks, SquareCheckBig, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { actionsVersion, subscribeActions } from '../lib/actions/registry'
@@ -35,6 +42,9 @@ const editable = (t: EventTarget | null) =>
     t.tagName === 'INPUT' ||
     t.tagName === 'TEXTAREA' ||
     t.tagName === 'SELECT')
+
+// True inside a row in selection mode: right-click and long-press there open the row's menu.
+export const RowSelecting = createContext(false)
 
 // 0: not in selection mode for `scope`; 1: in it, row not picked; 2: picked.
 const useRowState = (scope: string | null, m: Message) =>
@@ -160,7 +170,9 @@ export function Selectable({
           </span>
         </button>
       )}
-      <div className={state ? 'min-w-0 flex-1' : undefined}>{children}</div>
+      <div className={state ? 'min-w-0 flex-1' : undefined}>
+        <RowSelecting.Provider value={state > 0}>{children}</RowSelecting.Provider>
+      </div>
     </div>
   )
 }
