@@ -72,6 +72,7 @@ import type { Timeout } from './timeouts'
 import type { TypingMap } from './typing'
 import type { AnimPrefs } from './motion/setting'
 import type { SelfAudio } from './voice_layout'
+import type { SeatAudio } from './voice_status'
 
 // More that "Mark all as read" marks (P2P): whether it has anything unread, and marking it.
 export interface MarkAllExtra {
@@ -319,6 +320,8 @@ export interface RChatState {
   voiceMuted: Record<number, string[]>
   // guests staff muted for everyone in each voice channel
   voiceHushed: Record<number, string[]>
+  // what people in each voice channel say about their own mic and sound, when not the default
+  voiceAudio: Record<number, Record<string, SeatAudio>>
   // running timeouts by server and username, as moderators see them
   timeouts: Record<string, Record<string, Timeout>>
   // the ends (unix seconds) of the server profile locks a moderator here has learned of, by

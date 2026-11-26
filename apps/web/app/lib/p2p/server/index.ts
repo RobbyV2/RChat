@@ -260,6 +260,7 @@ export class Servers {
         const a = node.author()
         return a ? { dk: keyId(a.dk.pk), sk: a.dk.sk } : null
       },
+      audio: () => deps.audio?.() ?? { muted: false, deafened: false },
       allowed: (room, ch, ik) => this.voiceAllowed(room, ch, ik),
       certs: ik => {
         const d = node.anyDevicesOf(ik)

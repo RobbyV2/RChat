@@ -3,8 +3,10 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
-import { HeadphoneOff, Lock, MicOff, Volume2 } from 'lucide-react'
+import { Lock, Volume2 } from 'lucide-react'
 import { useStore } from '../../lib/store'
+import { voiceStatus } from '../../lib/voice_status'
+import { VoiceStatusIcons } from '../voice_status'
 
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import type { VoiceUser } from '../../lib/p2p/voice'
@@ -43,8 +45,13 @@ function VoiceMember({
   const name = m?.name ?? (self ? myName : 'Member')
   const peer = inRoom && !self ? callRtc.peer(u.ik) : undefined
   const speaking = inRoom && callRtc.isSpeaking(u.ik)
-  const muted = inRoom && (self ? selfAudio.muted : (peer?.muted ?? false))
-  const deafened = inRoom && self && selfAudio.deafened
+  const status = voiceStatus({
+    self: self && inRoom,
+    selfAudio,
+    live: peer ? { muted: peer.muted } : null,
+    roster: { muted: u.muted, deafened: u.deafened },
+    forced: null,
+  })
   const live = inRoom && (self ? callRtc.sharing : (peer?.screenOn ?? false))
   const open = m ? menu(m) : null
   return (
@@ -72,21 +79,7 @@ function VoiceMember({
       {live && (
         <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />
       )}
-      {muted && !deafened && (
-        <span title="Muted" aria-label="Muted" role="img" className="flex shrink-0 text-mute-fg">
-          <MicOff size={14} />
-        </span>
-      )}
-      {deafened && (
-        <span
-          title="Deafened"
-          aria-label="Deafened"
-          role="img"
-          className="flex shrink-0 text-mute-fg"
-        >
-          <HeadphoneOff size={14} />
-        </span>
-      )}
+      <VoiceStatusIcons status={status} self={self} size={14} variant="row" />
     </div>
   )
 }

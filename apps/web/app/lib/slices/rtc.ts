@@ -15,6 +15,7 @@ import type { RChatState } from '../store_types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../timeouts'
 import type { CallKind, VoiceMsg, WsEvent } from '../types'
 import { SELF_AUDIO_IDLE, type SelfAudio, toggleDeafenAudio, toggleMicAudio } from '../voice_layout'
+import type { SeatAudio } from '../voice_status'
 import { defaultViewing } from '../viewing'
 import { type GetState, type Handlers, type SetState } from './ctx'
 
@@ -48,6 +49,71 @@ const keptFor = (marks: MuteMarks, channelId: number, users: string[]): MuteMark
   return next
 }
 
+type AudioMarks = Record<number, Record<string, SeatAudio>>
+
+// The audio of a channel with what `username` says, kept only when it is not the default.
+const withAudio = (
+  marks: AudioMarks,
+  channelId: number,
+  username: string,
+  audio: SeatAudio
+): AudioMarks => {
+  const { [username]: _was, ...rest } = marks[channelId] ?? {}
+  const room = audio.muted || audio.deafened ? { ...rest, [username]: audio } : rest
+  const next = { ...marks }
+  if (Object.keys(room).length) next[channelId] = room
+  else delete next[channelId]
+  return next
+}
+
+// What a snapshot room state says about the audio of the people in it, off the default; null
+// when it says nothing (a live room state).
+const seatsOf = (
+  ev: Extract<WsEvent, { type: 'voice_state' }>
+): Record<string, SeatAudio> | null => {
+  if (!Array.isArray(ev.audio)) return null
+  const room: Record<string, SeatAudio> = {}
+  for (const a of ev.audio as unknown[]) {
+    if (typeof a !== 'object' || a === null) continue
+    const { username, muted, deafened } = a as Record<string, unknown>
+    if (typeof username !== 'string' || !ev.users.includes(username)) continue
+    if (muted === true || deafened === true)
+      room[username] = { muted: muted === true, deafened: deafened === true }
+  }
+  return room
+}
+
+// The audio of a channel replaced by what a snapshot says.
+const withRoomAudio = (
+  marks: AudioMarks,
+  channelId: number,
+  room: Record<string, SeatAudio>
+): AudioMarks => {
+  const next = { ...marks }
+  if (Object.keys(room).length) next[channelId] = room
+  else delete next[channelId]
+  return next
+}
+
+// The audio of a channel kept only for `users`, or null when none went.
+const audioFor = (marks: AudioMarks, channelId: number, users: string[]): AudioMarks | null => {
+  const room = marks[channelId]
+  if (!room) return null
+  const kept = Object.entries(room).filter(([u]) => users.includes(u))
+  if (kept.length === Object.keys(room).length) return null
+  const next = { ...marks }
+  if (kept.length) next[channelId] = Object.fromEntries(kept)
+  else delete next[channelId]
+  return next
+}
+
+const sameAudio = (a: SeatAudio, b: SeatAudio) => a.muted === b.muted && a.deafened === b.deafened
+
+const NO_SEAT_AUDIO: SeatAudio = { muted: false, deafened: false }
+
+// How long a change of your own mic or sound waits, so a burst of toggles goes as one.
+export const AUDIO_SEND_MS = 250
+
 // A room closed by a local viewing choice keeps its people out of this client.
 export const rosterClosed = (
   s: RChatState,
@@ -69,10 +135,15 @@ export const applyVoiceState = (
   else delete voiceUsers[ev.channel_id]
   const voiceMuted = keptFor(s.voiceMuted, ev.channel_id, ev.users)
   const voiceHushed = keptFor(s.voiceHushed, ev.channel_id, ev.users)
+  const seats = seatsOf(ev)
+  const voiceAudio = seats
+    ? withRoomAudio(s.voiceAudio, ev.channel_id, seats)
+    : audioFor(s.voiceAudio, ev.channel_id, ev.users)
   return {
     voiceUsers,
     ...(voiceMuted ? { voiceMuted } : {}),
     ...(voiceHushed ? { voiceHushed } : {}),
+    ...(voiceAudio ? { voiceAudio } : {}),
   }
 }
 
@@ -294,9 +365,46 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     }
   }
 
+  // Our own mic and sound against what the room's roster says about our seat. While the server
+  // lists us, a difference is told once (`audioAsked`), and again only once the room or what it
+  // says about us changed. A change here waits a moment first, so a burst of toggles goes as one.
+  let audioTimer: ReturnType<typeof setTimeout> | null = null
+  let audioAsked: SeatAudio | null = null
+  const seatAudio = (): SeatAudio => {
+    const { muted, deafened } = get().selfAudio
+    return { muted, deafened }
+  }
+  const reconcileAudio = () => {
+    const s = get()
+    const self = voiceSelf(s)
+    if (!s.voice || !voiceListed || self === null || audioTimer !== null) return
+    if (!(s.voiceUsers[s.voice.channelId] ?? []).includes(self)) return
+    const heard = s.voiceAudio[s.voice.channelId]?.[self] ?? NO_SEAT_AUDIO
+    const audio = seatAudio()
+    if (sameAudio(heard, audio) || (audioAsked && sameAudio(audioAsked, audio))) return
+    if (home.ws.sendVoice({ type: 'voice_audio', ...audio })) audioAsked = audio
+  }
+  const queueAudio = () => {
+    audioAsked = null
+    if (audioTimer === null && get().voice)
+      audioTimer = setTimeout(() => {
+        audioTimer = null
+        reconcileAudio()
+      }, AUDIO_SEND_MS)
+  }
+
+  // P2P server voice says it in its own frames.
+  const p2pVoiceAudio = () => {
+    const claim = client.calls.current()
+    if (claim?.account === acct && claim.kind === 'p2p-voice')
+      acct.identities.get(claim.identity)?.p2pVoice.audioChanged()
+  }
+
   const setSelfAudio = (selfAudio: SelfAudio) => {
     set({ selfAudio })
     applyMic()
+    queueAudio()
+    p2pVoiceAudio()
   }
 
   const endRtc = () => {
@@ -394,10 +502,15 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   let voiceListed = false
   const bindMedia = () => {
     rtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
+    rtc.heardMuted = user => {
+      const { voice, voiceAudio } = get()
+      return !!voice && voiceAudio[voice.channelId]?.[user]?.muted === true
+    }
     p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
     p2p.onError = message => fail(new Error(message))
     return () => {
       rtc.onChange = p2p.onChange = p2p.onError = () => {}
+      rtc.heardMuted = () => false
     }
   }
   const actions: Pick<
@@ -448,7 +561,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           if (at === sessionMark()) abandonMedia()
           throw e
         }
-        sendOrAbandon({ type: 'voice_join', channel_id: channelId })
+        // The join says our audio; until the server lists us, nothing else needs to.
+        const audio = seatAudio()
+        sendOrAbandon({ type: 'voice_join', channel_id: channelId, ...audio })
+        audioAsked = audio
         joins.joined(channelId, (get().voiceUsers[channelId] ?? []).includes(self))
         voiceListed = false
         set({ voice: { server, channelId }, call: null })
@@ -644,8 +760,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
       const listing = joins.state(ev.channel_id, ev.users.includes(self))
       if (voice?.channelId === ev.channel_id) {
         if (listing === 'listed') {
+          if (voiceListed) audioAsked = null
           voiceListed = true
           rtc.sync(ev.users)
+          reconcileAudio()
         } else if (listing === 'absent' && voiceListed) {
           endedVoice = ev.channel_id
           endVoiceMedia()
@@ -661,6 +779,17 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
             : { voiceMuted: marked(s.voiceMuted, ev.channel_id, ev.username, ev.muted) }
         )
       applyMic()
+    },
+
+    voice_audio: ev => {
+      if (rosterClosed(get(), ev.server, ev.channel_id, acct.viewing)) return
+      const audio = { muted: ev.muted === true, deafened: ev.deafened === true }
+      set(s => ({ voiceAudio: withAudio(s.voiceAudio, ev.channel_id, ev.username, audio) }))
+      if (get().voice?.channelId !== ev.channel_id) return
+      if (ev.username === voiceSelf(get())) {
+        audioAsked = null
+        reconcileAudio()
+      } else rtc.noteMuted(ev.username, audio.muted)
     },
 
     call_state: ev => {

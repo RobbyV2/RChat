@@ -90,8 +90,18 @@ pub(super) enum ClientMsg {
     },
     VoiceJoin {
         channel_id: i64,
+        #[serde(default)]
+        muted: bool,
+        #[serde(default)]
+        deafened: bool,
     },
     VoiceLeave,
+    VoiceAudio {
+        #[serde(default)]
+        muted: bool,
+        #[serde(default)]
+        deafened: bool,
+    },
     CallStart {
         attempt_id: Option<u64>,
         dm_id: i64,
@@ -158,7 +168,11 @@ impl ClientMsg {
                 attempt_id: Some(id),
                 ..
             } => RefusedRequest::Call { attempt_id: *id },
-            Self::VoiceJoin { channel_id } => RefusedRequest::VoiceJoin {
+            Self::VoiceJoin {
+                channel_id,
+                muted: _,
+                deafened: _,
+            } => RefusedRequest::VoiceJoin {
                 channel_id: *channel_id,
             },
             _ => RefusedRequest::Other,

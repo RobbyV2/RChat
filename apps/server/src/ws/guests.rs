@@ -7,7 +7,7 @@ use super::protocol::{ClientMsg, Refused};
 
 use crate::api::access::{ws_channel_now, ws_guest_voice_channel};
 use crate::db::ChannelKind;
-use crate::hub::Hub;
+use crate::hub::{Audio, Hub};
 use crate::state::AppState;
 
 /// Names of guests in voice rooms start with this. Usernames never contain `@`.
@@ -35,7 +35,8 @@ pub(crate) fn is_guest(name: &str) -> bool {
 }
 
 /// What a guest does in voice under `name`: join a voice channel of a server it follows and
-/// may open, leave, and signal the others in its room. Calls need an account.
+/// may open, leave, say whether its mic and sound are off, and signal the others in its room.
+/// Calls need an account.
 pub(super) async fn guest_voice(
     state: &AppState,
     access: &Access,
@@ -44,18 +45,22 @@ pub(super) async fn guest_voice(
     msg: ClientMsg,
 ) -> Result<(), Refused> {
     match msg {
-        ClientMsg::VoiceJoin { channel_id } => {
+        ClientMsg::VoiceJoin {
+            channel_id,
+            muted,
+            deafened,
+        } => {
             switched_on(state, CallKind::Rtc).await?;
             let server = admit(state, access, channel_id).await?;
             let ends = state
                 .hub
-                .guest_voice_join(
+                .guest_join_with(
                     name,
                     conn,
-                    &server,
-                    channel_id,
+                    (&server, channel_id),
                     state.limits.voice_room_max,
                     access.addr,
+                    Audio { muted, deafened },
                 )
                 .await?;
             for end in ends {
@@ -72,6 +77,10 @@ pub(super) async fn guest_voice(
         }
         ClientMsg::VoiceLeave => {
             state.hub.voice_leave(name).await;
+            Ok(())
+        }
+        ClientMsg::VoiceAudio { muted, deafened } => {
+            state.hub.voice_audio(name, conn, Audio { muted, deafened });
             Ok(())
         }
         ClientMsg::RtcSignal {

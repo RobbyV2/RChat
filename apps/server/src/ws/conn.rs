@@ -15,7 +15,7 @@ use super::access::{
     ADDR_FULL, Access, COPY_FULL, Pace, SocketAccount, catch_up, grant_deadlines, reauthorize,
     socket_account,
 };
-use super::calls::{VoiceWait, finalize_call_log, send_voice_snapshot, voice_cmd};
+use super::calls::{VoiceWait, finalize_call_log, noted_voice, send_voice_snapshot, voice_cmd};
 use super::event::WsEvent;
 use super::filter::on_event;
 use super::guests::{guest_name, leave_closed_voice};
@@ -37,7 +37,7 @@ use crate::api::Settings;
 use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws_member_servers};
 use crate::db::{now, setting_on};
 use crate::fanout::Topic;
-use crate::hub::{AddrSlot, Hub, SlotRefused};
+use crate::hub::{AUDIO_EVERY, AddrSlot, Hub, SlotRefused};
 use crate::limits::bucket::{Policy, Single};
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
@@ -58,8 +58,10 @@ use crate::state::AppState;
 /// them too often closes the new one with code 4029 (try again later). Then the client sends
 /// `viewing` (the open
 /// server, for its `presence_snapshot` and `presence_changed` events), `subscribe` (servers to
-/// follow, with guest grants for password-protected ones), `voice_join` / `voice_leave`,
-/// `call_start` (with `p2p` and `video` flags) / `call_accept` / `call_decline` / `call_leave`
+/// follow, with guest grants for password-protected ones), `voice_join` (optional `muted` and
+/// `deafened`: what the joiner says about its own mic and sound) / `voice_leave`, `voice_audio`
+/// (`{muted, deafened}` for the voice seat the connection holds, ignored without one; paced per
+/// account, a few per second, the latest waits and wins), `call_start` (with `p2p` and `video` flags) / `call_accept` / `call_decline` / `call_leave`
 /// for DM calls, `rtc_signal` for
 /// WebRTC signalling, and `p2p_hosting` / `p2p_who` / `p2p_peer` for P2P files (`p2p_peer`
 /// gives a reader of one message the hoster's peer id and a short-lived download token; `p2p_who`
@@ -74,13 +76,15 @@ use crate::state::AppState;
 /// Guests are read-only: no presence, typing or calls. A guest connection first gets
 /// `guest_name` (`{name}`): its name in voice rooms, `@guest:` and 16 hex digits, new for each
 /// connection. A guest may join the voice channels it can view in the servers it follows
-/// (`subscribe`) and send `rtc_signal` to the others in its room. While the instance's `calls`
+/// (`subscribe`), say its `voice_audio` there and send `rtc_signal` to the others in its room. While the instance's `calls`
 /// setting is off, `voice_join`, and `call_start` and `call_accept` for a call that is not
 /// P2P, get an `error` frame with reason `off_site` and control `calls`, and running voice
 /// rooms and calls end (`voice_ended` with `Calls were turned off`, `call_state` ended); P2P
 /// calls follow `p2p` the same way. The server sends the events in `WsEvent` (`apps/server/src/ws/event.rs`),
 /// for example `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
-/// `voice_state`, `call_state` (with `kind` and `video`; an active P2P call also carries its id
+/// `voice_state` (in the snapshot a connection gets on opening or subscribing, `audio` lists
+/// each user in the room not at the default with `{username, muted, deafened}`), `voice_audio`
+/// (`{server, channel_id, username, muted, deafened}`, one change), `call_state` (with `kind` and `video`; an active P2P call also carries its id
 /// and the peer id of both tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live
 /// attachments, and the key it checks download tokens with), `p2p_peer`, `error` (`{message}`, plus the `reason` object of REST errors when the error has one) and `resync` (fetch state again after missed events). Frames
 /// are at most 64 KiB. The token goes in the `auth` frame, not in the bearer security scheme.
@@ -359,6 +363,8 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     let mut frames = frame_bucket(Instant::now());
     let mut typer = Typer::new();
     let mut voice = VoiceWait::default();
+    let mut audio = VoiceWait::every(AUDIO_EVERY);
+    let mut stated = None;
     let mut ping = tokio::time::interval_at(Instant::now() + PING_EVERY, PING_EVERY);
     let mut heard = Instant::now();
     let mut lag = Pace::new(LAG_REAUTH_EVERY);
@@ -508,14 +514,17 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                         Ok(other) => {
                             let now = Instant::now();
                             let ready = match (access.voice_name(), &other) {
-                                (Some(me), ClientMsg::VoiceJoin { channel_id: _ } | ClientMsg::VoiceLeave) =>
+                                (Some(me), ClientMsg::VoiceJoin { channel_id: _, muted: _, deafened: _ } | ClientMsg::VoiceLeave) =>
                                     voice.offer(other, || state.hub.voice_ok(me), now),
+                                (Some(me), ClientMsg::VoiceAudio { muted: _, deafened: _ }) =>
+                                    audio.offer(other, || state.hub.audio_ok(me), now),
                                 (_, _) => Some(other),
                             };
-                            if let Some(msg) = ready
-                                && !handle_voice(&state, &mut access, conn, &out, msg).await
-                            {
-                                break;
+                            if let Some(msg) = ready {
+                                noted_voice(&msg, &mut audio, &mut stated);
+                                if !handle_voice(&state, &mut access, conn, &out, msg).await {
+                                    break;
+                                }
                             }
                         }
                     },
@@ -545,10 +554,23 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                     Some(me) => voice.fire(|| state.hub.voice_ok(me), Instant::now()),
                     None => voice.wanted.take(),
                 };
-                if let Some(msg) = ready
-                    && !handle_voice(&state, &mut access, conn, &out, msg).await
-                {
-                    break;
+                if let Some(msg) = ready {
+                    noted_voice(&msg, &mut audio, &mut stated);
+                    if !handle_voice(&state, &mut access, conn, &out, msg).await {
+                        break;
+                    }
+                }
+            }
+            _ = tokio::time::sleep_until(audio.due.unwrap_or_else(Instant::now)), if audio.due.is_some() => {
+                let ready = match access.voice_name() {
+                    Some(me) => audio.fire(|| state.hub.audio_ok(me), Instant::now()),
+                    None => audio.wanted.take(),
+                };
+                if let Some(msg) = ready {
+                    noted_voice(&msg, &mut audio, &mut stated);
+                    if !handle_voice(&state, &mut access, conn, &out, msg).await {
+                        break;
+                    }
                 }
             }
             _ = tokio::time::sleep_until(access.sub.due.unwrap_or_else(Instant::now)), if access.sub.due.is_some() => {
@@ -575,6 +597,10 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                     break;
                 }
                 access.announce(&state, conn).await;
+                // The realtime state was rebuilt: the seat says its audio again.
+                if let (Some(me), Some(said)) = (access.voice_name(), stated) {
+                    state.hub.voice_audio(me, conn, said);
+                }
             }
             _ = out.tx.closed() => break,
         }

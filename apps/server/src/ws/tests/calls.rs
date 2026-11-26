@@ -9,7 +9,7 @@ use crate::api::test_util::{set_guest_voice, site_sets};
 use crate::db::now;
 use crate::hub::VOICE_EVERY;
 use crate::ws::access::{Access, still_held};
-use crate::ws::calls::{VoiceWait, call_peer_id, in_call, in_voice, voice_msg};
+use crate::ws::calls::{VoiceWait, call_peer_id, in_call, in_voice, noted_voice, voice_msg};
 use crate::ws::guests::GUESTS_NO_VOICE;
 use crate::ws::p2p::CALLING_TOO_OFTEN;
 use crate::ws::protocol::ClientMsg;
@@ -31,7 +31,7 @@ async fn banned_user_cannot_join_voice() {
     }
     let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
     exec(&state.db, "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('rchat', 'bob', 'alice', 0)").await;
-    let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
+    let join = |user| voice_msg(&state, user, 1, join_msg(cid));
     assert_eq!(join("bob").await, Err("Channel not found".into()));
     join("carol").await.expect("carol joins");
     assert_eq!(
@@ -67,7 +67,7 @@ async fn timed_out_members_cannot_join_voice() {
     let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
     let other = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'den', 'voice', 0) RETURNING id").await;
     time_out(&state.db, "bob", now() + 600).await;
-    let join = |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
+    let join = |user, channel_id| voice_msg(&state, user, 1, join_msg(channel_id));
     let timed_out = Err(crate::api::access::TIMED_OUT.into());
     assert_eq!(join("bob", cid).await, timed_out);
     join("carol", cid).await.expect("carol joins");
@@ -106,7 +106,7 @@ async fn timed_out_members_cannot_turn_on_video_in_voice() {
     }
     let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
     for name in ["bob", "carol"] {
-        voice_msg(&state, name, 1, ClientMsg::VoiceJoin { channel_id: cid })
+        voice_msg(&state, name, 1, join_msg(cid))
             .await
             .expect("join");
     }
@@ -170,14 +170,9 @@ async fn timed_out_members_cannot_tell_if_hidden_voice_is_in_use() {
         .execute(&state.db)
         .await
         .expect("rule");
-    voice_msg(
-        &state,
-        "alice",
-        1,
-        ClientMsg::VoiceJoin { channel_id: busy },
-    )
-    .await
-    .expect("alice joins");
+    voice_msg(&state, "alice", 1, join_msg(busy))
+        .await
+        .expect("alice joins");
     time_out(&state.db, "bob", now() + 600).await;
     let probe = |channel_id| {
         voice_msg(
@@ -222,7 +217,7 @@ async fn locked_server_voice_needs_membership() {
         "INSERT INTO members(server, username, is_admin, joined_at) VALUES('vault', 'bob', 0, 0)",
     )
     .await;
-    let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
+    let join = |user| voice_msg(&state, user, 1, join_msg(cid));
     join("bob").await.expect("member joins");
     state.hub.voice_leave("bob").await;
     exec(
@@ -318,7 +313,7 @@ async fn voice_follows_who_can_open_the_server() {
     let db = &state.db;
     let rooms = reading_world(&state).await;
     let hidden = insert_id(db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('open', 'staff', 'voice', 0, 1) RETURNING id").await;
-    let join = |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
+    let join = |user, channel_id| voice_msg(&state, user, 1, join_msg(channel_id));
     let gone = Err("Channel not found".into());
     for (mode, reading, opens) in [
         ("everyone", "1", ["vault", "open", "lobby"].as_slice()),
@@ -364,7 +359,7 @@ async fn readers_leave_voice_when_the_server_closes_to_them() {
     let rooms = reading_world(&state).await;
     let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
     let follow = crate::api::Settings::follow(&state);
-    let join = |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
+    let join = |user, channel_id| voice_msg(&state, user, 1, join_msg(channel_id));
     join("eve", room("lobby")).await.expect("eve reads lobby");
     site_sets(&state, serde_json::json!({"server_joining": "invites"})).await;
     within_5s("eve leaves a server only members open now", || {
@@ -443,7 +438,7 @@ async fn guests_use_voice_where_they_can_open_the_server() {
     let hidden = insert_id(db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('lobby', 'staff', 'voice', 0, 1) RETURNING id").await;
     let text = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('lobby', 'chat', 'text', 0) RETURNING id").await;
     let all = guest_at(&["vault", "locked", "open", "lobby"], &[("locked", &grant)]);
-    let join = |channel_id| ClientMsg::VoiceJoin { channel_id };
+    let join = join_msg;
     let gone = Err("Channel not found".into());
     for (mode, opens) in [
         ("everyone", ["vault", "locked", "open", "lobby"].as_slice()),
@@ -593,7 +588,7 @@ async fn a_guest_leaves_voice_when_its_server_closes_to_it() {
     )
     .await;
     assert_eq!(guest.subs, set(&["locked", "lobby"]));
-    let join = |channel_id| ClientMsg::VoiceJoin { channel_id };
+    let join = join_msg;
     as_guest(&state, &guest, join(room("locked")))
         .await
         .expect("in with the password");
@@ -642,7 +637,7 @@ async fn a_guest_removed_by_staff_waits_before_using_that_servers_voice() {
     add_user_row(db, "10.1.2.3").await;
     crate::api::test_util::add_member(db, "lobby", "10.1.2.3", 0, 0, 0).await;
     let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
-    let join = |channel_id| ClientMsg::VoiceJoin { channel_id };
+    let join = join_msg;
     let mut guest = guest_at(&["lobby", "open"], &[]);
     guest.addr = Some("10.1.2.3".parse().expect("addr"));
     as_guest(&state, &guest, join(room("lobby")))
@@ -696,7 +691,7 @@ async fn guests_use_a_servers_voice_only_while_it_lets_them() {
     let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
     add_user_row(db, "carol").await;
     crate::api::test_util::add_member(db, "lobby", "carol", 0, 0, 0).await;
-    let join = |channel_id| ClientMsg::VoiceJoin { channel_id };
+    let join = join_msg;
     let guest = guest_at(&["lobby", "open"], &[]);
     as_guest(&state, &guest, join(room("lobby")))
         .await
@@ -801,7 +796,7 @@ async fn a_guest_join_that_raced_the_switch_going_off_is_undone() {
     let lagging = state.clone().with_reader(replica.db.clone());
     let guest = guest_at(&["lobby"], &[]);
     assert_eq!(
-        as_guest(&lagging, &guest, ClientMsg::VoiceJoin { channel_id: lobby }).await,
+        as_guest(&lagging, &guest, join_msg(lobby)).await,
         Err(GUESTS_NO_VOICE.into()),
         "the replica has not seen the switch yet"
     );
@@ -885,7 +880,7 @@ async fn site_admins_get_member_view_in_voice() {
         .execute(db)
         .await
         .expect("rule");
-    let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
+    let join = |user| voice_msg(&state, user, 1, join_msg(cid));
     assert_eq!(
         join("root").await,
         Err("Channel not found".into()),
@@ -1495,7 +1490,7 @@ async fn voice_hops_are_paced_per_account_and_the_last_wins() {
     let mut ran = 0;
     for n in 0..100 {
         let channel_id = if n % 2 == 0 { a } else { b };
-        let msg = ClientMsg::VoiceJoin { channel_id };
+        let msg = join_msg(channel_id);
         if let Some(msg) = tabs[n % 20].offer(msg, || state.hub.voice_ok_at("bob", at), now) {
             voice_msg(&state, "bob", 1, msg).await.expect("join");
             ran += 1;
@@ -1509,7 +1504,9 @@ async fn voice_hops_are_paced_per_account_and_the_last_wins() {
         }
     }
     assert!(states <= 2 * ran as usize, "{states} voice states");
-    assert!(matches!(tabs[0].wanted, Some(ClientMsg::VoiceJoin { channel_id }) if channel_id == a));
+    assert!(
+        matches!(tabs[0].wanted, Some(ClientMsg::VoiceJoin { channel_id, muted: _, deafened: _ }) if channel_id == a)
+    );
     tabs[0].offer(ClientMsg::VoiceLeave, || true, now);
     assert!(
         matches!(tabs[0].wanted, Some(ClientMsg::VoiceLeave)),
@@ -1524,7 +1521,7 @@ async fn voice_hops_are_paced_per_account_and_the_last_wins() {
     let later = now + VOICE_EVERY * 2;
     assert!(matches!(
         tabs[1].fire(|| state.hub.voice_ok_at("bob", later.into_std()), later),
-        Some(ClientMsg::VoiceJoin { channel_id }) if channel_id == b
+        Some(ClientMsg::VoiceJoin { channel_id, muted: _, deafened: _ }) if channel_id == b
     ));
     assert!(
         state.hub.voice_ok("carol"),
@@ -1625,7 +1622,7 @@ async fn signals_are_capped_in_size_and_bytes_per_account() {
     }
     let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
     for name in ["alice", "bob"] {
-        voice_msg(&state, name, 1, ClientMsg::VoiceJoin { channel_id: cid })
+        voice_msg(&state, name, 1, join_msg(cid))
             .await
             .expect("join");
     }
@@ -1669,7 +1666,7 @@ async fn a_full_voice_room_can_be_negotiated_twice_at_once() {
     }
     let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
     for name in ["alice", "bob"] {
-        voice_msg(&state, name, 1, ClientMsg::VoiceJoin { channel_id: cid })
+        voice_msg(&state, name, 1, join_msg(cid))
             .await
             .expect("join");
     }
@@ -1809,7 +1806,7 @@ async fn call_errors_never_carry_database_text() {
         peer_id: None,
         relays: Vec::new(),
     };
-    let join = ClientMsg::VoiceJoin { channel_id: cid };
+    let join = join_msg(cid);
     for msg in [start, join] {
         let refused = voice_msg(&busy, "alice", 1, msg).await.expect_err("busy");
         let (message, reason) = refused.into_parts();
@@ -1886,9 +1883,7 @@ async fn the_calls_switch_refuses_voice_and_calls_with_its_reason() {
         "INSERT INTO dms(user_a, user_b) VALUES('carol', 'dave') RETURNING id",
     )
     .await;
-    let join = |user: &'static str, channel_id| {
-        voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id })
-    };
+    let join = |user: &'static str, channel_id| voice_msg(&state, user, 1, join_msg(channel_id));
     site_sets(&state, serde_json::json!({"guest_voice_enabled": true})).await;
     add_user_row(db, "manager").await;
     crate::api::test_util::add_member(db, "rchat", "manager", 1, 0, 0).await;
@@ -1901,7 +1896,7 @@ async fn the_calls_switch_refuses_voice_and_calls_with_its_reason() {
     voice_msg(&state, "alice", 1, ClientMsg::VoiceLeave)
         .await
         .expect("leave");
-    as_guest(&state, &guest, ClientMsg::VoiceJoin { channel_id: cid })
+    as_guest(&state, &guest, join_msg(cid))
         .await
         .expect("a guest joins too");
     as_guest(&state, &guest, ClientMsg::VoiceLeave)
@@ -1938,7 +1933,7 @@ async fn the_calls_switch_refuses_voice_and_calls_with_its_reason() {
         );
     }
     assert_eq!(
-        as_guest(&state, &guest, ClientMsg::VoiceJoin { channel_id: cid }).await,
+        as_guest(&state, &guest, join_msg(cid)).await,
         calls_off(),
         "a guest gets the same answer"
     );
@@ -2032,7 +2027,7 @@ async fn turning_calls_off_ends_running_calls() {
     )
     .await;
     let follow = crate::api::Settings::follow(&state);
-    voice_msg(&state, "erin", 5, ClientMsg::VoiceJoin { channel_id: cid })
+    voice_msg(&state, "erin", 5, join_msg(cid))
         .await
         .expect("erin joins voice");
     voice_msg(&state, "alice", 1, rtc_call(dm, false))
@@ -2115,4 +2110,262 @@ async fn turning_calls_off_ends_running_calls() {
     within_5s("the P2P call ends", || state.hub.call_kind(p2p).is_none()).await;
     follow.abort();
     crate::api::test_util::done(state, path).await;
+}
+
+fn audio_msg(muted: bool, deafened: bool) -> ClientMsg {
+    ClientMsg::VoiceAudio { muted, deafened }
+}
+
+// What the voice snapshot says about each user's own audio, by room.
+fn audio_heard(state: &AppState) -> Vec<(i64, String, bool, bool)> {
+    state
+        .hub
+        .voice_snapshot()
+        .into_iter()
+        .filter_map(|ev| match ev {
+            WsEvent::VoiceState {
+                server: _,
+                channel_id,
+                users: _,
+                audio: Some(audio),
+            } => Some((channel_id, audio)),
+            _ => None,
+        })
+        .flat_map(|(cid, audio)| {
+            audio.into_iter().map(move |seat| {
+                let crate::ws::SeatAudio {
+                    username,
+                    muted,
+                    deafened,
+                } = seat;
+                (cid, username, muted, deafened)
+            })
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn voice_join_flags_seed_the_roster() {
+    let (state, path) = crate::api::test_util::temp_state("ws_voice_flags").await;
+    for name in ["bob", "carol"] {
+        add_user_row(&state.db, name).await;
+        crate::api::test_util::add_member(&state.db, "rchat", name, 0, 0, 0).await;
+    }
+    let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let joined: ClientMsg = serde_json::from_value(serde_json::json!({
+        "type": "voice_join",
+        "channel_id": cid,
+        "muted": true,
+    }))
+    .expect("frame");
+    let mut rx = state.hub.subscribe();
+    voice_msg(&state, "bob", 1, joined).await.expect("join");
+    let mut order = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        match ev {
+            WsEvent::VoiceState {
+                server: _,
+                channel_id: _,
+                users: _,
+                audio: None,
+            } => order.push("state"),
+            WsEvent::VoiceAudio {
+                server: _,
+                channel_id: _,
+                username: _,
+                muted: true,
+                deafened: false,
+            } => order.push("audio"),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        order,
+        ["state", "audio"],
+        "the roster and the flags arrive together"
+    );
+    assert_eq!(audio_heard(&state), vec![(cid, s("bob"), true, false)]);
+    voice_msg(&state, "bob", 1, audio_msg(true, true))
+        .await
+        .expect("deafen");
+    voice_msg(&state, "bob", 2, audio_msg(false, false))
+        .await
+        .expect("another tab holds no seat");
+    voice_msg(&state, "carol", 1, audio_msg(true, false))
+        .await
+        .expect("carol holds no seat");
+    assert_eq!(audio_heard(&state), vec![(cid, s("bob"), true, true)]);
+    let plain: ClientMsg = serde_json::from_value(serde_json::json!({
+        "type": "voice_join",
+        "channel_id": cid,
+    }))
+    .expect("a join without flags");
+    voice_msg(&state, "carol", 3, plain).await.expect("join");
+    assert_eq!(audio_heard(&state), vec![(cid, s("bob"), true, true)]);
+    voice_msg(&state, "bob", 1, ClientMsg::VoiceLeave)
+        .await
+        .expect("leave");
+    assert!(audio_heard(&state).is_empty());
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn guest_seats_say_their_audio() {
+    let (state, path) = crate::api::test_util::temp_state("guest_voice_audio").await;
+    let rooms = reading_world(&state).await;
+    let lobby = rooms.iter().find(|(s, _)| *s == "lobby").expect("room").1;
+    let guest = guest_at(&["lobby"], &[]);
+    assert_eq!(
+        as_guest(&state, &guest, audio_msg(true, false)).await,
+        Ok(()),
+        "without a seat it is ignored"
+    );
+    assert!(audio_heard(&state).is_empty());
+    let join = ClientMsg::VoiceJoin {
+        channel_id: lobby,
+        muted: false,
+        deafened: true,
+    };
+    as_guest(&state, &guest, join).await.expect("join");
+    assert_eq!(audio_heard(&state), vec![(lobby, s(GUEST), false, true)]);
+    as_guest(&state, &guest, audio_msg(true, false))
+        .await
+        .expect("mute");
+    assert_eq!(audio_heard(&state), vec![(lobby, s(GUEST), true, false)]);
+    let mut held = guest_at(&["lobby"], &[]);
+    held.retry.at = Some(Instant::now());
+    assert_eq!(
+        as_guest(&state, &held, audio_msg(true, true)).await,
+        Ok(()),
+        "a seat says its audio while its access is read again"
+    );
+    assert_eq!(audio_heard(&state), vec![(lobby, s(GUEST), true, true)]);
+    let mut nameless = guest_at(&["lobby"], &[]);
+    nameless.guest = None;
+    assert_eq!(
+        as_guest(&state, &nameless, audio_msg(false, false)).await,
+        Ok(()),
+        "a connection without a voice name holds no seat and is not told off"
+    );
+    assert_eq!(audio_heard(&state), vec![(lobby, s(GUEST), true, true)]);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn voice_audio_is_paced_and_the_latest_wins() {
+    let (state, path) = crate::api::test_util::temp_state("ws_audio_pace").await;
+    add_user_row(&state.db, "bob").await;
+    crate::api::test_util::add_member(&state.db, "rchat", "bob", 0, 0, 0).await;
+    let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    voice_msg(&state, "bob", 1, join_msg(cid))
+        .await
+        .expect("join");
+    let mut rx = state.hub.subscribe();
+    let mut tabs: Vec<VoiceWait> = (0..2)
+        .map(|_| VoiceWait::every(crate::hub::AUDIO_EVERY))
+        .collect();
+    let now = Instant::now();
+    let at = now.into_std();
+    let mut ran = 0;
+    for n in 0..100 {
+        let msg = audio_msg(n % 2 == 0, false);
+        if let Some(msg) = tabs[n % 2].offer(msg, || state.hub.audio_ok_at("bob", at), now) {
+            voice_msg(&state, "bob", 1, msg).await.expect("audio");
+            ran += 1;
+        }
+    }
+    assert_eq!(ran, crate::hub::AUDIO_BURST);
+    let mut said = 0;
+    while let Ok(ev) = rx.try_recv() {
+        if matches!(
+            ev,
+            WsEvent::VoiceAudio {
+                server: _,
+                channel_id: _,
+                username: _,
+                muted: _,
+                deafened: _,
+            }
+        ) {
+            said += 1;
+        }
+    }
+    assert!(said <= ran as usize, "{said} audio events");
+    assert!(matches!(
+        tabs[0].wanted,
+        Some(ClientMsg::VoiceAudio {
+            muted: true,
+            deafened: false
+        })
+    ));
+    tabs[0].offer(audio_msg(false, true), || true, now);
+    assert!(
+        matches!(
+            tabs[0].wanted,
+            Some(ClientMsg::VoiceAudio {
+                muted: false,
+                deafened: true
+            })
+        ),
+        "the latest replaces a waiting one"
+    );
+    assert!(
+        tabs[0]
+            .fire(|| state.hub.audio_ok_at("bob", at), now)
+            .is_none()
+    );
+    let later = now + crate::hub::AUDIO_EVERY * 2;
+    let last = tabs[0]
+        .fire(|| state.hub.audio_ok_at("bob", later.into_std()), later)
+        .expect("the latest goes once the pace allows");
+    voice_msg(&state, "bob", 1, last).await.expect("audio");
+    assert_eq!(audio_heard(&state), vec![(cid, s("bob"), false, true)]);
+    assert!(
+        state.hub.audio_ok("carol"),
+        "other accounts keep their own pace"
+    );
+    assert!(
+        state.hub.voice_ok("bob"),
+        "audio changes leave the pace of joins alone"
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
+#[test]
+fn a_join_or_leave_drops_a_waiting_audio_change_and_keeps_what_was_stated() {
+    let now = Instant::now();
+    let mut audio = VoiceWait::every(crate::hub::AUDIO_EVERY);
+    let mut stated = None;
+    let quiet = crate::hub::Audio {
+        muted: true,
+        deafened: false,
+    };
+    audio.offer(audio_msg(true, true), || false, now);
+    assert!(audio.wanted.is_some() && audio.due.is_some());
+    let join = ClientMsg::VoiceJoin {
+        channel_id: 4,
+        muted: true,
+        deafened: false,
+    };
+    noted_voice(&join, &mut audio, &mut stated);
+    assert!(audio.wanted.is_none() && audio.due.is_none());
+    assert_eq!(stated, Some(quiet));
+    noted_voice(&audio_msg(true, true), &mut audio, &mut stated);
+    assert_eq!(
+        stated,
+        Some(crate::hub::Audio {
+            muted: true,
+            deafened: true
+        })
+    );
+    audio.offer(audio_msg(false, false), || false, now);
+    noted_voice(&ClientMsg::VoiceLeave, &mut audio, &mut stated);
+    assert!(audio.wanted.is_none() && audio.due.is_none());
+    assert_eq!(stated, None);
+    noted_voice(
+        &ClientMsg::Typing { scope: s("c1") },
+        &mut audio,
+        &mut stated,
+    );
+    assert_eq!(stated, None);
 }

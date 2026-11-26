@@ -731,6 +731,14 @@ fn every_event() -> Vec<WsEvent> {
                 server: s(server),
                 channel_id: 1,
                 users: Vec::new(),
+                audio: None,
+            },
+            WsEvent::VoiceAudio {
+                server: s(server),
+                channel_id: 1,
+                username: s("x"),
+                muted: true,
+                deafened: false,
             },
             WsEvent::ServerCreated {
                 server: lite(server),
@@ -1234,6 +1242,46 @@ async fn reactions_reach_only_those_who_can_see_the_channel() {
         assert_eq!(wire["emoji"], "👍");
         assert_eq!(wire["username"], "bob");
     }
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn voice_audio_reaches_only_people_who_can_view_the_channel() {
+    let (state, path, general, secret) = peek_world("ws_voice_audio_routes").await;
+    let conn = state.hub.next_conn();
+    let mut alice = Access::new(Some(s("alice")), false, set(&["open"]));
+    let mut nora = Access::new(Some(s("nora")), false, set(&["home"]));
+    let audio = |cid: i64| WsEvent::VoiceAudio {
+        server: s("open"),
+        channel_id: cid,
+        username: s("bob"),
+        muted: true,
+        deafened: true,
+    };
+    let (seen, hidden) = (audio(general), audio(secret));
+    assert_eq!(
+        crate::fanout::route(&seen),
+        crate::fanout::Route::To(vec![crate::fanout::Target::Server("open")])
+    );
+    assert_eq!(event_channel(&hidden), Some(("open", secret)));
+    assert_eq!(on_event(&state, conn, &mut alice, &seen).await, Some(true));
+    assert_eq!(
+        on_event(&state, conn, &mut alice, &hidden).await,
+        Some(false)
+    );
+    assert_eq!(on_event(&state, conn, &mut nora, &seen).await, Some(false));
+    let wire = serde_json::to_value(&seen).expect("json");
+    assert_eq!(
+        wire,
+        serde_json::json!({
+            "type": "voice_audio",
+            "server": "open",
+            "channel_id": general,
+            "username": "bob",
+            "muted": true,
+            "deafened": true,
+        })
+    );
     crate::api::test_util::done(state, path).await;
 }
 

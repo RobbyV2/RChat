@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use sqlx::Row;
 use tokio::time::Instant;
 
@@ -14,7 +16,7 @@ use crate::api::access::{ws_dm_users, ws_voice_channel};
 use crate::api::messages::load_broadcast;
 use crate::api::timeouts::running_timeouts;
 use crate::db::{ChannelKind, now, touch_interaction};
-use crate::hub::{CallEnd, VOICE_EVERY};
+use crate::hub::{Audio, CallEnd, VOICE_EVERY};
 use crate::state::AppState;
 
 async fn insert_call_log(
@@ -190,7 +192,11 @@ pub(super) async fn voice_msg(
     msg: ClientMsg,
 ) -> Result<(), Refused> {
     match msg {
-        ClientMsg::VoiceJoin { channel_id } => {
+        ClientMsg::VoiceJoin {
+            channel_id,
+            muted,
+            deafened,
+        } => {
             switched_on(state, CallKind::Rtc).await?;
             let channel = ws_voice_channel(&state.read(), user, channel_id).await?;
             if channel.kind() != ChannelKind::Voice {
@@ -206,7 +212,13 @@ pub(super) async fn voice_msg(
             let server = channel.server().name().to_string();
             let ends = state
                 .hub
-                .voice_join_capped(user, conn, &server, channel_id, state.limits.voice_room_max)
+                .voice_join_with(
+                    user,
+                    conn,
+                    (&server, channel_id),
+                    state.limits.voice_room_max,
+                    Audio { muted, deafened },
+                )
                 .await?;
             for end in ends {
                 finalize_call_log(state, end, false).await;
@@ -228,6 +240,10 @@ pub(super) async fn voice_msg(
         }
         ClientMsg::VoiceLeave => {
             state.hub.voice_leave(user).await;
+            Ok(())
+        }
+        ClientMsg::VoiceAudio { muted, deafened } => {
+            state.hub.voice_audio(user, conn, Audio { muted, deafened });
             Ok(())
         }
         ClientMsg::CallStart {
@@ -442,6 +458,7 @@ pub(super) async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mu
             server,
             channel_id,
             users,
+            audio: _,
         } = &ev
             && !users.is_empty()
         {
@@ -465,23 +482,70 @@ pub(super) async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mu
     true
 }
 
+/// What `msg` says about the sender's own audio: `voice_audio` does, and so does a join.
+fn stated_audio(msg: &ClientMsg) -> Option<Audio> {
+    match msg {
+        ClientMsg::VoiceJoin {
+            channel_id: _,
+            muted,
+            deafened,
+        }
+        | ClientMsg::VoiceAudio { muted, deafened } => Some(Audio {
+            muted: *muted,
+            deafened: *deafened,
+        }),
+        _ => None,
+    }
+}
+
+/// A voice frame of a connection about to run. A join or a leave carries the audio state that
+/// matters, so a change still waiting for the pace (`audio`) goes; what the frame states is
+/// kept in `stated`, to say again when the realtime state was rebuilt.
+pub(super) fn noted_voice(msg: &ClientMsg, audio: &mut VoiceWait, stated: &mut Option<Audio>) {
+    match msg {
+        ClientMsg::VoiceJoin {
+            channel_id: _,
+            muted: _,
+            deafened: _,
+        } => audio.clear(),
+        ClientMsg::VoiceLeave => {
+            audio.clear();
+            *stated = None;
+            return;
+        }
+        _ => {}
+    }
+    if let Some(said) = stated_audio(msg) {
+        *stated = Some(said);
+    }
+}
+
 pub(super) async fn voice_cmd(
     state: &AppState,
     access: &Access,
     conn: u64,
     msg: ClientMsg,
 ) -> Result<(), Refused> {
-    let leaving = matches!(
+    let audio = matches!(
         msg,
-        ClientMsg::VoiceLeave
-            | ClientMsg::CallLeave { dm_id: _ }
-            | ClientMsg::CallDecline { dm_id: _ }
+        ClientMsg::VoiceAudio {
+            muted: _,
+            deafened: _
+        }
     );
-    match (
-        &access.user,
-        &access.guest,
-        access.retry.pending() && !leaving,
-    ) {
+    // A connection without a voice name holds no seat to say anything about.
+    if audio && access.voice_name().is_none() {
+        return Ok(());
+    }
+    // Leaving, and what a seat says about its own audio, need no access read again.
+    let held = audio
+        || matches!(
+            msg,
+            ClientMsg::VoiceLeave
+                | ClientMsg::CallLeave { dm_id: _ }
+                | ClientMsg::CallDecline { dm_id: _ }
+        );
+    match (&access.user, &access.guest, access.retry.pending() && !held) {
         (Some(_), _, true) | (None, Some(_), true) => Err(RECONNECTING.into()),
         (Some(user), _, false) => voice_msg(state, user, conn, msg).await,
         (None, Some(name), false) => guest_voice(state, access, name, conn, msg).await,
@@ -489,15 +553,30 @@ pub(super) async fn voice_cmd(
     }
 }
 
-// A connection's `voice_join` / `voice_leave` past its user's pace: the latest waits and runs
-// once the pace allows, and replaces any earlier one still waiting.
-#[derive(Default)]
+// A connection's `voice_join` / `voice_leave` (or, on a wait of its own, `voice_audio`) past its
+// user's pace: the latest waits and runs once the pace allows, and replaces any earlier one still
+// waiting. It tries again every `every`.
 pub(super) struct VoiceWait {
     pub(super) wanted: Option<ClientMsg>,
     pub(super) due: Option<Instant>,
+    every: Duration,
+}
+
+impl Default for VoiceWait {
+    fn default() -> VoiceWait {
+        VoiceWait::every(VOICE_EVERY)
+    }
 }
 
 impl VoiceWait {
+    pub(super) fn every(every: Duration) -> VoiceWait {
+        VoiceWait {
+            wanted: None,
+            due: None,
+            every,
+        }
+    }
+
     pub(super) fn offer(
         &mut self,
         msg: ClientMsg,
@@ -508,13 +587,19 @@ impl VoiceWait {
             return Some(msg);
         }
         self.wanted = Some(msg);
-        self.due.get_or_insert(now + VOICE_EVERY);
+        self.due.get_or_insert(now + self.every);
         None
+    }
+
+    // Drops what is waiting: a join or leave carries the state that matters now.
+    pub(super) fn clear(&mut self) {
+        self.wanted = None;
+        self.due = None;
     }
 
     pub(super) fn fire(&mut self, ok: impl FnOnce() -> bool, now: Instant) -> Option<ClientMsg> {
         if self.wanted.is_some() && !ok() {
-            self.due = Some(now + VOICE_EVERY);
+            self.due = Some(now + self.every);
             return None;
         }
         self.due = None;

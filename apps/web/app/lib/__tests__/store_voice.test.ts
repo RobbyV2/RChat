@@ -6,6 +6,7 @@ import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } fr
 import type { VoiceMsg } from '../types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
 import { drain, me, serverDetail, until } from './fixtures'
+import { AUDIO_SEND_MS } from '../slices/rtc'
 
 const { rtc } = getHomeSession()
 
@@ -653,7 +654,7 @@ describe('voice and call mic state', () => {
     expect(st().voice?.channelId).toBe(12)
     expect(rtc.active()).toBe(true)
     expect(sent.filter(m => m.type === 'voice_join')).toEqual([
-      { type: 'voice_join', channel_id: 12 },
+      { type: 'voice_join', channel_id: 12, muted: false, deafened: false },
     ])
     expect(sent.some(m => m.type === 'voice_leave')).toBe(false)
     expect(stopped).toEqual([false, true])
@@ -907,5 +908,195 @@ describe('guests muted by staff', () => {
     expect(st().voiceHushed).toEqual({ 2: [guestName] })
     st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 2, users: [] })
     expect(st().voiceHushed).toEqual({})
+  })
+})
+
+describe('what people in voice say about their own audio', () => {
+  const said = (channel_id: number, username: string, muted: boolean, deafened: boolean) =>
+    st().applyWsEvent({
+      type: 'voice_audio',
+      server: 'lounge',
+      channel_id,
+      username,
+      muted,
+      deafened,
+    })
+  const audioSent = () => sent.filter(m => m.type === 'voice_audio')
+  const settle = () => new Promise(r => setTimeout(r, AUDIO_SEND_MS + 150))
+  const listed = (
+    channel_id: number,
+    users: string[],
+    audio?: { username: string; muted: boolean; deafened: boolean }[]
+  ) =>
+    st().applyWsEvent({
+      type: 'voice_state',
+      server: 'lounge',
+      channel_id,
+      users,
+      ...(audio ? { audio } : {}),
+    })
+  const talk = { id: 3, name: 'talk', kind: 'voice' as const, slowmode_seconds: 0 }
+  const marked = { ...talk, id: 4, name: 'marked', sensitive: true }
+
+  afterEach(() => useStore.setState({ voiceAudio: {}, voiceUsers: {}, servers: {} }))
+
+  test('voice_audio applies, goes with the roster and is ignored in a room closed here', () => {
+    useStore.setState({
+      servers: { lounge: serverDetail('lounge', { channels: [talk, marked] }) },
+      voiceUsers: { 3: ['bob', 'carol'] },
+    })
+    said(3, 'bob', true, false)
+    said(3, 'carol', true, true)
+    expect(st().voiceAudio).toEqual({
+      3: { bob: { muted: true, deafened: false }, carol: { muted: true, deafened: true } },
+    })
+    said(3, 'bob', false, false)
+    expect(st().voiceAudio).toEqual({ 3: { carol: { muted: true, deafened: true } } })
+    said(4, 'dan', true, false)
+    expect(st().voiceAudio[4]).toBeUndefined()
+    listed(3, ['bob'])
+    expect(st().voiceAudio).toEqual({})
+  })
+
+  test("a snapshot's room state brings the room's audio, and not into a room closed here", () => {
+    useStore.setState({
+      servers: { lounge: serverDetail('lounge', { channels: [talk, marked] }) },
+      voiceAudio: { 3: { gone: { muted: true, deafened: false } } },
+    })
+    listed(
+      3,
+      ['bob', 'carol', 'dan'],
+      [
+        { username: 'bob', muted: true, deafened: false },
+        { username: 'carol', muted: true, deafened: true },
+        { username: 'dan', muted: false, deafened: false },
+        { username: 'eve', muted: true, deafened: false },
+        { username: 7, muted: true } as unknown as {
+          username: string
+          muted: boolean
+          deafened: boolean
+        },
+      ]
+    )
+    expect(st().voiceAudio).toEqual({
+      3: { bob: { muted: true, deafened: false }, carol: { muted: true, deafened: true } },
+    })
+    listed(3, ['bob', 'carol', 'dan'], [])
+    expect(st().voiceAudio).toEqual({})
+    listed(4, ['dan'], [{ username: 'dan', muted: true, deafened: false }])
+    expect(st().voiceAudio).toEqual({})
+  })
+
+  test('your own changes go once after a short wait, and every join carries them', async () => {
+    await st().joinVoice('lounge', 1)
+    expect(sent.find(m => m.type === 'voice_join')).toEqual({
+      type: 'voice_join',
+      channel_id: 1,
+      muted: false,
+      deafened: false,
+    })
+    listed(1, ['alice'])
+    st().toggleMute()
+    st().toggleDeafen()
+    st().toggleDeafen()
+    expect(audioSent()).toEqual([])
+    await until(() => audioSent().length > 0, 2000)
+    expect(audioSent()).toEqual([{ type: 'voice_audio', muted: true, deafened: false }])
+    said(1, 'alice', true, false)
+    st().toggleMute()
+    st().toggleMute()
+    await settle()
+    expect(audioSent()).toHaveLength(1)
+    await switchCall(() => st().joinVoice('lounge', 2))
+    expect(sent.filter(m => m.type === 'voice_join').at(-1)).toEqual({
+      type: 'voice_join',
+      channel_id: 2,
+      muted: true,
+      deafened: false,
+    })
+    listed(2, ['alice'])
+    expect(audioSent()).toHaveLength(1)
+    said(2, 'alice', true, false)
+    st().toggleDeafen()
+    await until(() => audioSent().length > 1, 2000)
+    expect(audioSent().at(-1)).toEqual({ type: 'voice_audio', muted: true, deafened: true })
+    st().leaveVoice()
+    await settle()
+    expect(audioSent()).toHaveLength(2)
+  })
+
+  test('what the roster says about us is set right once, and again when the room changes', async () => {
+    await st().joinVoice('lounge', 1)
+    st().toggleMute()
+    await settle()
+    expect(audioSent()).toEqual([])
+    listed(1, ['alice'])
+    expect(audioSent()).toEqual([{ type: 'voice_audio', muted: true, deafened: false }])
+    listed(1, ['alice'])
+    expect(audioSent()).toHaveLength(2)
+    // A resync brings the room again: once it says what we said, nothing more goes.
+    listed(1, ['alice'], [{ username: 'alice', muted: true, deafened: false }])
+    expect(audioSent()).toHaveLength(2)
+    // A lost change: the next room state shows it and it goes again.
+    listed(1, ['alice'], [])
+    expect(audioSent()).toHaveLength(3)
+    said(1, 'alice', true, false)
+    await settle()
+    expect(audioSent()).toHaveLength(3)
+  })
+
+  test('while another tab holds the seat, ours says its audio once the seat moves here', async () => {
+    useStore.setState({
+      voiceUsers: { 1: ['alice'] },
+      voiceAudio: { 1: { alice: { muted: true, deafened: false } } },
+    })
+    await st().joinVoice('lounge', 1)
+    listed(1, ['alice'])
+    expect(audioSent()).toEqual([])
+    st().toggleMute()
+    await settle()
+    expect(audioSent()).toEqual([])
+    // The join lands with what it carried: an open mic.
+    listed(1, ['alice'])
+    said(1, 'alice', false, false)
+    expect(audioSent()).toEqual([{ type: 'voice_audio', muted: true, deafened: false }])
+  })
+})
+
+describe('voice rooms a refetch reveals', () => {
+  const realFetch = globalThis.fetch
+  const ws = home.ws as unknown as { resubscribe: () => void }
+  const realResubscribe = ws.resubscribe
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    ws.resubscribe = realResubscribe
+    useStore.setState({ servers: {} })
+  })
+
+  test('ask for the rosters again, so their audio shows', async () => {
+    const talk = { id: 3, name: 'talk', kind: 'voice' as const, slowmode_seconds: 0 }
+    const hidden = { ...talk, id: 4, name: 'hidden' }
+    const chat = { ...talk, id: 5, name: 'chat', kind: 'text' as const }
+    let detail = serverDetail('lounge', { channels: [talk] })
+    globalThis.fetch = (async () => Response.json(detail)) as unknown as typeof fetch
+    let asked = 0
+    ws.resubscribe = () => {
+      asked += 1
+    }
+    useStore.setState({ servers: { lounge: detail } })
+    const refetched = async (next: typeof detail) => {
+      detail = next
+      const before = st().servers.lounge
+      st().applyWsEvent({ type: 'channel_perms_changed', server: 'lounge', channel_id: 3 })
+      await until(() => st().servers.lounge !== before, 2000)
+      expect(st().servers.lounge?.channels.map(c => c.id)).toEqual(next.channels.map(c => c.id))
+    }
+    await refetched(serverDetail('lounge', { channels: [talk] }))
+    expect(asked).toBe(0)
+    await refetched(serverDetail('lounge', { channels: [talk, hidden] }))
+    expect(asked).toBe(1)
+    await refetched(serverDetail('lounge', { channels: [talk, hidden, chat] }))
+    expect(asked).toBe(1)
   })
 })

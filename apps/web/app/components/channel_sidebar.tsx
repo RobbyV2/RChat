@@ -6,11 +6,9 @@ import {
   ChevronDown,
   ChevronRight,
   FolderPlus,
-  HeadphoneOff,
   Hash,
   ListFilter,
   Lock,
-  MicOff,
   Pin,
   Plus,
   UserPlus,
@@ -28,7 +26,9 @@ import {
 } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
 import { useChannelEdit, type Editing } from '../lib/channel_edit'
-import { STAFF_MUTED, isGuestName, voiceSelf } from '../lib/guest_voice'
+import { isGuestName, voiceSelf } from '../lib/guest_voice'
+import { voiceStatus } from '../lib/voice_status'
+import { VoiceStatusIcons } from './voice_status'
 import { useGuestMenu } from './guest_voice_menu'
 import { dmSections, type DmSections } from '../lib/nav_layout'
 import {
@@ -262,10 +262,12 @@ function VoiceChannelRow({
 function VoiceMemberRow({
   username,
   server,
+  channelId,
   inRoom,
 }: {
   username: string
   server: string
+  channelId: number
   inRoom: boolean
 }) {
   const store = useStoreApi()
@@ -278,13 +280,17 @@ function VoiceMemberRow({
   const self = mine === username
   const silenced = useStore(s => Object.values(s.voiceMuted).some(l => l.includes(username)))
   const hushed = useStore(s => Object.values(s.voiceHushed).some(l => l.includes(username)))
+  const roster = useStore(s => s.voiceAudio[channelId]?.[username] ?? null)
   const menu = useGuestMenu(server, username)
   const speaking = inRoom && rtc.isSpeaking(username) && !silenced && !hushed
-  const muted =
-    silenced ||
-    hushed ||
-    (inRoom && (self ? selfAudio.muted : (rtc.peer(username)?.muted ?? false)))
-  const deafened = inRoom && self && selfAudio.deafened
+  const peer = inRoom && !self ? rtc.peer(username) : undefined
+  const status = voiceStatus({
+    self: self && inRoom,
+    selfAudio,
+    live: peer ? { muted: peer.muted } : null,
+    roster,
+    forced: hushed ? 'staff' : silenced ? 'timeout' : null,
+  })
   const live = inRoom && (self ? rtc.sharing : shownMedia(rtc.peer(username), silenced).screen)
   return (
     <div
@@ -317,16 +323,7 @@ function VoiceMemberRow({
       {live && (
         <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />
       )}
-      {muted && !deafened && (
-        <span title={hushed ? STAFF_MUTED : 'Muted'} className="flex shrink-0 text-mute-fg">
-          <MicOff size={14} />
-        </span>
-      )}
-      {deafened && (
-        <span title="Deafened" className="flex shrink-0 text-mute-fg">
-          <HeadphoneOff size={14} />
-        </span>
-      )}
+      <VoiceStatusIcons status={status} self={self} size={14} variant="row" />
     </div>
   )
 }
@@ -1107,7 +1104,13 @@ export function ChannelSidebar() {
           drag={channelDragSpec(c)}
         />
         {roster.map(u => (
-          <VoiceMemberRow key={u} username={u} server={server} inRoom={voice?.channelId === c.id} />
+          <VoiceMemberRow
+            key={u}
+            username={u}
+            server={server}
+            channelId={c.id}
+            inRoom={voice?.channelId === c.id}
+          />
         ))}
       </div>
     )

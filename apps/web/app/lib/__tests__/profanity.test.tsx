@@ -32,6 +32,7 @@ import { ProfileHandle } from '../../components/profile_card'
 import { dmPlaceholder } from '../display_name'
 import { ReplyPreview } from '../../components/replies'
 import { Tile } from '../../components/voice_grid'
+import { VOICE_STATUS_ON } from '../voice_status'
 import { P2pVoiceRow } from '../../components/p2p/p2p_voice'
 import {
   ChannelAccess,
@@ -419,8 +420,7 @@ describe('in messages', () => {
             user: user(u, { display_name: 'shit head' }),
             stream: null,
             hasVideo: false,
-            muted: false,
-            deafened: false,
+            status: VOICE_STATUS_ON,
             speaking: false,
             mirror: false,
             pending: false,

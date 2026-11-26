@@ -302,3 +302,117 @@ async fn a_chat_frame_hears_changes_in_its_channel_without_reading_the_room_each
     server.abort();
     done(state, path).await;
 }
+
+#[tokio::test]
+async fn a_voice_frame_says_its_audio_while_it_holds_its_seat() {
+    let (state, path) = world("widget_socket_audio").await;
+    let db = &state.db;
+    let room = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let (id, ticket) = widget(&state, room, "voice").await;
+    let (addr, server) = serve(&state).await;
+    let audio = |muted: bool| {
+        Wire::Text(
+            serde_json::json!({ "type": "voice_audio", "muted": muted, "deafened": false })
+                .to_string()
+                .into(),
+        )
+    };
+    let heard = |state: &AppState| {
+        state
+            .hub
+            .voice_snapshot()
+            .into_iter()
+            .map(|ev| match ev {
+                WsEvent::VoiceState {
+                    server: _,
+                    channel_id: _,
+                    users: _,
+                    audio: Some(audio),
+                } => audio.len(),
+                _ => 0,
+            })
+            .sum::<usize>()
+    };
+    let mut member = dial(addr, &id, &ticket, Some("member-token")).await;
+    assert_eq!(until(&mut member, "widget_ready").await["name"], "member");
+    member.send(audio(true)).await.expect("audio");
+    let muted_join = serde_json::json!({ "type": "voice_join", "channel_id": room, "muted": true });
+    member
+        .send(Wire::Text(muted_join.to_string().into()))
+        .await
+        .expect("join");
+    until(&mut member, "voice_state").await;
+    let own = until(&mut member, "voice_audio").await;
+    assert_eq!(
+        (own["username"].clone(), own["muted"].clone()),
+        ("member".into(), true.into())
+    );
+    assert_eq!(heard(&state), 1);
+    member.send(audio(false)).await.expect("unmute");
+    let open = until(&mut member, "voice_audio").await;
+    assert_eq!(open["muted"], false);
+    assert_eq!(heard(&state), 0, "the default is not kept");
+    assert_eq!(
+        state.hub.rooms_in("rchat", Some(room)),
+        vec![(room, vec!["member".to_string()])]
+    );
+    server.abort();
+    done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_frame_hears_audio_only_in_the_call_of_its_channel() {
+    use crate::hub::Audio;
+    let (state, path) = world("widget_socket_audio_scope").await;
+    let db = &state.db;
+    let room = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let other = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'other', 'voice', 0) RETURNING id").await;
+    let (id, ticket) = widget(&state, room, "voice").await;
+    let (addr, server) = serve(&state).await;
+    let said = |frames: &[(tokio::time::Instant, serde_json::Value)]| {
+        frames
+            .iter()
+            .filter(|(_, f)| f["type"] == "voice_audio")
+            .map(|(_, f)| (f["username"].clone(), f["deafened"].clone()))
+            .collect::<Vec<_>>()
+    };
+    let mut member = dial(addr, &id, &ticket, Some("member-token")).await;
+    assert_eq!(until(&mut member, "widget_ready").await["name"], "member");
+    let (alice, carol) = (state.hub.next_conn(), state.hub.next_conn());
+    let muted = Audio {
+        muted: true,
+        deafened: false,
+    };
+    let deaf = Audio {
+        muted: true,
+        deafened: true,
+    };
+    state
+        .hub
+        .voice_join_with("alice", alice, ("rchat", room), 0, muted)
+        .await
+        .expect("alice joins");
+    state
+        .hub
+        .voice_join_with("carol", carol, ("rchat", other), 0, muted)
+        .await
+        .expect("carol joins");
+    assert!(
+        said(&quiet(&mut member, Duration::from_millis(1500)).await).is_empty(),
+        "outside the call"
+    );
+    member.send(join(room)).await.expect("join");
+    until(&mut member, "widget_mutes").await;
+    state.hub.voice_audio("carol", carol, deaf);
+    state.hub.voice_audio("alice", alice, deaf);
+    assert_eq!(
+        said(&quiet(&mut member, Duration::from_millis(1500)).await),
+        vec![(
+            serde_json::Value::from("alice"),
+            serde_json::Value::from(true)
+        )],
+        "only its own channel"
+    );
+    server.abort();
+    done(state, path).await;
+}

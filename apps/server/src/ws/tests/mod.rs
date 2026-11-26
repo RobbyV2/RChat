@@ -73,6 +73,14 @@ fn message() -> Message {
     }
 }
 
+fn join_msg(channel_id: i64) -> crate::ws::protocol::ClientMsg {
+    crate::ws::protocol::ClientMsg::VoiceJoin {
+        channel_id,
+        muted: false,
+        deafened: false,
+    }
+}
+
 async fn exec(db: &Db, sql: &'static str) {
     sqlx::query(sql).execute(db).await.unwrap();
 }

@@ -1005,8 +1005,9 @@ export interface InboxPage {
 }
 
 export type VoiceMsg =
-  | { type: 'voice_join'; channel_id: number }
+  | { type: 'voice_join'; channel_id: number; muted?: boolean; deafened?: boolean }
   | { type: 'voice_leave' }
+  | { type: 'voice_audio'; muted: boolean; deafened: boolean }
   | {
       type: 'call_start'
       attempt_id?: number
@@ -1136,7 +1137,14 @@ export type WsEvent =
   | { type: 'ping'; username: string; ping: Ping }
   | ({ type: 'ping_count'; username: string; scope: string } & PingSummary)
   | { type: 'group_pings_seen'; username: string; scope: string; message_ids: number[] }
-  | { type: 'voice_state'; server: string; channel_id: number; users: string[] }
+  | {
+      type: 'voice_state'
+      server: string
+      channel_id: number
+      users: string[]
+      // In a snapshot: what each of them not at the default says about their own mic and sound.
+      audio?: { username: string; muted: boolean; deafened: boolean }[]
+    }
   | {
       type: 'voice_muted'
       server: string
@@ -1145,6 +1153,15 @@ export type WsEvent =
       muted: boolean
       // A guest staff muted for everyone, not a timeout.
       staff?: boolean
+    }
+  | {
+      // What someone in a voice channel says about their own mic and sound.
+      type: 'voice_audio'
+      server: string
+      channel_id: number
+      username: string
+      muted: boolean
+      deafened: boolean
     }
   | {
       type: 'member_timeout'

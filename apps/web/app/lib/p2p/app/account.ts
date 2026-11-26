@@ -371,7 +371,17 @@ export function createAccountPart(
   // The rest of the account's P2P runtime on its store and node.
   const startParts = (deps: StartDeps, s: P2pStore, n: P2pNode) => {
     const d = new Dms({ ...deps.dms, node: n, store: s })
-    const sv = new Servers({ ...deps.servers, node: n, store: s, dms: d })
+    const { account } = deps
+    const sv = new Servers({
+      ...deps.servers,
+      node: n,
+      store: s,
+      dms: d,
+      audio: () => {
+        const { muted, deafened } = account.store.getState().selfAudio
+        return { muted, deafened }
+      },
+    })
     const pingLog = new PingLog({
       store: s,
       dms: d,
@@ -379,7 +389,6 @@ export function createAccountPart(
       onWrite: parts.inbox.pingLogged,
       limits: deps.inbox,
     })
-    const { account } = deps
     const claim = (kind: 'p2p-voice' | 'p2p-call', leave: () => void, valid: () => boolean) =>
       client.calls.request(
         { account, identity: scope.localId, kind },
@@ -480,6 +489,7 @@ export function createAccountPart(
       put.dms(d)
       put.servers(sv)
       sv.voice.media = parts.calls.callRtc
+      parts.calls.callRtc.heardMuted = ik => sv.voice.heardMuted(ik)
       sv.voice.denied = ik => {
         const at = sv.voice.current()
         p2pHost.toast(RELAY_DENIED_TEXT, at ? parts.servers.memberName(at.room, ik) : 'a member')

@@ -95,6 +95,7 @@ fn voice_of(evs: &[WsEvent]) -> Vec<(i64, Vec<String>)> {
                 server: _,
                 channel_id,
                 users,
+                audio: _,
             } => Some((*channel_id, users.clone())),
             _ => None,
         })
@@ -586,5 +587,72 @@ fn block_refusals_say_how_long_is_left() {
             voice_blocked_text(ms),
             format!("Removed from voice by staff. Try again in {text}")
         );
+    }
+}
+
+#[tokio::test]
+async fn voice_audio_reaches_every_instance() {
+    let bus = MemBus::new();
+    let (a, b) = (bus.join(), bus.join());
+    let conn = b.next_conn();
+    let muted = Audio {
+        muted: true,
+        deafened: false,
+    };
+    b.voice_join_with("amy", conn, ("club", 5), 0, muted)
+        .await
+        .expect("in");
+    a.flush().await;
+    let seats = |hub: &Hub| {
+        hub.voice_snapshot()
+            .into_iter()
+            .filter_map(|ev| match ev {
+                WsEvent::VoiceState {
+                    server: _,
+                    channel_id: _,
+                    users: _,
+                    audio: Some(audio),
+                } => Some(audio),
+                _ => None,
+            })
+            .flatten()
+            .map(
+                |crate::ws::SeatAudio {
+                     username,
+                     muted,
+                     deafened,
+                 }| (username, muted, deafened),
+            )
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(seats(&a), vec![("amy".to_string(), true, false)]);
+    let mut heard = a.subscribe();
+    b.voice_audio(
+        "amy",
+        conn,
+        Audio {
+            muted: true,
+            deafened: true,
+        },
+    );
+    a.voice_audio("amy", a.next_conn(), Audio::default());
+    b.flush().await;
+    a.flush().await;
+    let changes: Vec<(String, bool, bool)> = drain(&mut heard)
+        .into_iter()
+        .filter_map(|ev| match ev {
+            WsEvent::VoiceAudio {
+                server: _,
+                channel_id: 5,
+                username,
+                muted,
+                deafened,
+            } => Some((username, muted, deafened)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(changes, vec![("amy".to_string(), true, true)]);
+    for hub in [&a, &b] {
+        assert_eq!(seats(hub), vec![("amy".to_string(), true, true)]);
     }
 }

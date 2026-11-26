@@ -3,6 +3,7 @@ use crate::hub::replica::{
     Index, STAFF_MUTE_MS, VOICE_BLOCKS_MAX, VOICE_BLOCKS_PER_SERVER, VOICE_MUTES_MAX,
     VOICE_MUTES_PER_SERVER,
 };
+use crate::ws::SeatAudio;
 
 fn script() -> Vec<(u32, Op, i64)> {
     let s = |v: &str| v.to_string();
@@ -46,6 +47,8 @@ fn script() -> Vec<(u32, Op, i64)> {
                 channel_id: 5,
                 cap: 0,
                 addr: None,
+                muted: false,
+                deafened: false,
             },
             T0 + 20,
         ),
@@ -58,6 +61,8 @@ fn script() -> Vec<(u32, Op, i64)> {
                 channel_id: 6,
                 cap: 0,
                 addr: None,
+                muted: false,
+                deafened: false,
             },
             T0 + 25,
         ),
@@ -149,6 +154,8 @@ fn sweep_uses_op_time() {
         channel_id: 5,
         cap: 0,
         addr: None,
+        muted: false,
+        deafened: false,
     };
     replica.apply(1, join, T0);
     let early = replica.apply(1, Op::SweepVoice { idle: 60 }, T0 + 59_999);
@@ -734,6 +741,8 @@ fn indexes_follow_every_op() {
             channel_id: 11,
             cap: 0,
             addr: None,
+            muted: true,
+            deafened: false,
         },
         Op::VoiceJoin {
             user: s("erin"),
@@ -742,6 +751,14 @@ fn indexes_follow_every_op() {
             channel_id: 11,
             cap: 0,
             addr: None,
+            muted: false,
+            deafened: false,
+        },
+        Op::VoiceAudio {
+            user: s("erin"),
+            conn: (3 << 32) | 1,
+            muted: true,
+            deafened: true,
         },
         guest_join(
             "@guest:0000000000000001",
@@ -809,6 +826,8 @@ fn indexes_follow_every_op() {
             channel_id: 11,
             cap: 0,
             addr: None,
+            muted: false,
+            deafened: false,
         },
         Op::Broadcast {
             event: WsEvent::MembersPurged {
@@ -862,6 +881,8 @@ fn full_voice_rooms_turn_joins_away() {
         channel_id,
         cap: 2,
         addr: None,
+        muted: false,
+        deafened: false,
     };
     for (user, conn) in [("a", 1), ("b", 2)] {
         let applied = replica.apply(1, join(user, conn, 5), T0);
@@ -888,6 +909,8 @@ fn signals_for_a_left_room_are_dropped() {
         channel_id,
         cap: 0,
         addr: None,
+        muted: false,
+        deafened: false,
     };
     let signal = |channel_id: i64| Op::Broadcast {
         event: WsEvent::RtcSignal {
@@ -933,6 +956,8 @@ fn rejoin_from_another_connection_restates_the_room() {
         channel_id: 5,
         cap: 0,
         addr: None,
+        muted: false,
+        deafened: false,
     };
     replica.apply(1, join(1), T0);
     let moved = replica.apply(1, join(9), T0);
@@ -1017,6 +1042,8 @@ fn purge_event_removes_members_in_one_op() {
                 channel_id: 3,
                 cap: 0,
                 addr: None,
+                muted: false,
+                deafened: false,
             },
             T0,
         );
@@ -1053,6 +1080,8 @@ fn guest_join(user: &str, conn: u64, server: &str, channel_id: i64, addr: &str) 
         channel_id,
         cap: 0,
         addr: Some(addr.to_string()),
+        muted: false,
+        deafened: false,
     }
 }
 
@@ -1064,6 +1093,8 @@ fn account_join(user: &str, conn: u64, server: &str, channel_id: i64) -> Op {
         channel_id,
         cap: 0,
         addr: None,
+        muted: false,
+        deafened: false,
     }
 }
 
@@ -1777,4 +1808,283 @@ fn renames_keep_the_lookup() {
     replica.apply(1, renamed("club", "hall"), T0);
     assert!(replica.hushed(a, "hall") && !replica.hushed(a, "club"));
     assert_eq!(replica.index, reindexed(&replica));
+}
+
+fn audio_join(user: &str, conn: u64, channel_id: i64, muted: bool, deafened: bool) -> Op {
+    Op::VoiceJoin {
+        user: user.to_string(),
+        conn,
+        server: "club".to_string(),
+        channel_id,
+        cap: 0,
+        addr: None,
+        muted,
+        deafened,
+    }
+}
+
+fn audio_op(user: &str, conn: u64, muted: bool, deafened: bool) -> Op {
+    Op::VoiceAudio {
+        user: user.to_string(),
+        conn,
+        muted,
+        deafened,
+    }
+}
+
+fn audio_of(evs: &[WsEvent]) -> Vec<(i64, String, bool, bool)> {
+    evs.iter()
+        .filter_map(|ev| match ev {
+            WsEvent::VoiceAudio {
+                server: _,
+                channel_id,
+                username,
+                muted,
+                deafened,
+            } => Some((*channel_id, username.clone(), *muted, *deafened)),
+            _ => None,
+        })
+        .collect()
+}
+
+// What snapshot room states say about each user's own audio, by room.
+fn seats_of(evs: &[WsEvent]) -> Vec<(i64, String, bool, bool)> {
+    evs.iter()
+        .filter_map(|ev| match ev {
+            WsEvent::VoiceState {
+                server: _,
+                channel_id,
+                users: _,
+                audio: Some(audio),
+            } => Some((*channel_id, audio)),
+            _ => None,
+        })
+        .flat_map(|(cid, audio)| {
+            audio.iter().map(move |a| {
+                let SeatAudio {
+                    username,
+                    muted,
+                    deafened,
+                } = a;
+                (cid, username.clone(), *muted, *deafened)
+            })
+        })
+        .collect()
+}
+
+fn audio_in(replica: &Replica, channel_id: i64) -> Vec<(String, bool, bool)> {
+    replica
+        .rooms
+        .get(&channel_id)
+        .map(|room| {
+            room.audio
+                .iter()
+                .map(|(user, a)| (user.clone(), a.muted, a.deafened))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn voice_audio_changes_only_the_senders_seat() {
+    let s = |v: &str| v.to_string();
+    let mut replica = Replica::default();
+    replica.apply(1, audio_join("amy", 1, 5, false, false), T0);
+    replica.apply(1, audio_join("ben", 2, 5, false, false), T0);
+    let muted = replica.apply(1, audio_op("amy", 1, true, false), T0);
+    assert_eq!(audio_of(&muted.events), vec![(5, s("amy"), true, false)]);
+    assert_eq!(audio_in(&replica, 5), vec![(s("amy"), true, false)]);
+    for (user, conn) in [("amy", 9), ("cat", 3), ("ben", 1)] {
+        let other = replica.apply(1, audio_op(user, conn, true, true), T0);
+        assert!(
+            other.events.is_empty(),
+            "{user} on {conn} holds no seat there"
+        );
+    }
+    assert!(
+        replica
+            .apply(1, audio_op("amy", 1, true, false), T0)
+            .events
+            .is_empty(),
+        "an unchanged state says nothing"
+    );
+    let deaf = replica.apply(1, audio_op("ben", 2, true, true), T0);
+    assert_eq!(audio_of(&deaf.events), vec![(5, s("ben"), true, true)]);
+    let open = replica.apply(1, audio_op("amy", 1, false, false), T0);
+    assert_eq!(audio_of(&open.events), vec![(5, s("amy"), false, false)]);
+    assert_eq!(
+        audio_in(&replica, 5),
+        vec![(s("ben"), true, true)],
+        "only states off the default are kept"
+    );
+    assert_eq!(replica.index, reindexed(&replica));
+}
+
+#[test]
+fn voice_audio_goes_with_the_seat() {
+    let s = |v: &str| v.to_string();
+    let mut replica = Replica::default();
+    replica.apply(1, audio_join("ben", 2, 5, false, false), T0);
+    let joined = replica.apply(1, audio_join("amy", 1, 5, true, false), T0);
+    assert_eq!(
+        voice_of(&joined.events),
+        vec![(5, vec![s("ben"), s("amy")])]
+    );
+    assert_eq!(audio_of(&joined.events), vec![(5, s("amy"), true, false)]);
+    let moved = replica.apply(1, audio_join("amy", 1, 6, false, true), T0);
+    assert_eq!(audio_of(&moved.events), vec![(6, s("amy"), false, true)]);
+    assert!(
+        audio_in(&replica, 5).is_empty(),
+        "a move drops the old seat's state"
+    );
+    replica.apply(1, audio_join("amy", 1, 5, true, false), T0);
+    let tab = replica.apply(1, audio_join("amy", 7, 5, false, false), T0);
+    assert_eq!(audio_of(&tab.events), vec![(5, s("amy"), false, false)]);
+    assert!(
+        replica
+            .apply(1, audio_op("amy", 1, true, false), T0)
+            .events
+            .is_empty(),
+        "the tab the seat moved from says nothing"
+    );
+    let ways_out = [
+        Op::VoiceLeave { user: s("amy") },
+        Op::DropConn {
+            user: s("amy"),
+            conn: 7,
+        },
+        Op::EvictVoice {
+            user: s("amy"),
+            channel_id: 5,
+            reason: None,
+        },
+        kick("amy", "club", STAFF, 0),
+        Op::Broadcast {
+            event: WsEvent::MemberLeft {
+                server: s("club"),
+                username: s("amy"),
+            },
+        },
+    ];
+    for out in ways_out {
+        replica.apply(1, audio_join("amy", 7, 5, true, true), T0);
+        assert_eq!(audio_in(&replica, 5), vec![(s("amy"), true, true)]);
+        replica.apply(1, out, T0);
+        assert_eq!(replica.rooms[&5].users, vec![(s("ben"), 2)]);
+        assert!(audio_in(&replica, 5).is_empty());
+    }
+    replica.apply(1, audio_op("ben", 2, true, false), T0);
+    replica.apply(1, Op::VoiceLeave { user: s("ben") }, T0);
+    assert!(
+        !replica.rooms.contains_key(&5),
+        "the room ends with its state"
+    );
+    assert_eq!(replica.index, reindexed(&replica));
+}
+
+#[test]
+fn snapshots_carry_voice_audio() {
+    let s = |v: &str| v.to_string();
+    let mut replica = Replica::default();
+    replica.apply(1, audio_join("amy", 1, 5, true, false), T0);
+    replica.apply(1, audio_join("ben", 2, 5, true, true), T0);
+    replica.apply(1, audio_join("cat", 3, 5, false, false), T0);
+    replica.apply(
+        1,
+        Op::VoiceJoin {
+            user: s("dan"),
+            conn: 4,
+            server: s("other"),
+            channel_id: 8,
+            cap: 0,
+            addr: None,
+            muted: true,
+            deafened: false,
+        },
+        T0,
+    );
+    let held = [s("club")];
+    let evs = replica.voice_snapshot_for(held.iter(), None);
+    assert_eq!(evs.len(), 1, "one event for the room");
+    assert_eq!(
+        voice_of(&evs),
+        vec![(5, vec![s("amy"), s("ben"), s("cat")])]
+    );
+    assert_eq!(
+        seats_of(&evs),
+        vec![(5, s("amy"), true, false), (5, s("ben"), true, true)]
+    );
+    assert!(audio_of(&evs).is_empty());
+    assert_eq!(seats_of(&replica.voice_snapshot()).len(), 3);
+    let reloaded = round_trip(&replica);
+    assert_eq!(
+        seats_of(&reloaded.voice_snapshot_for(held.iter(), None)),
+        seats_of(&evs)
+    );
+    let quiet = replica.apply(1, audio_op("amy", 1, false, false), T0);
+    assert!(
+        matches!(
+            quiet.events.as_slice(),
+            [WsEvent::VoiceAudio {
+                server: _,
+                channel_id: 5,
+                username: _,
+                muted: false,
+                deafened: false,
+            }]
+        ),
+        "live changes come one by one"
+    );
+    let live = replica.apply(1, audio_join("eve", 5, 5, true, false), T0);
+    assert!(
+        live.events.iter().all(|ev| !matches!(
+            ev,
+            WsEvent::VoiceState {
+                server: _,
+                channel_id: _,
+                users: _,
+                audio: Some(_),
+            }
+        )),
+        "a live room state carries no audio"
+    );
+}
+
+#[test]
+fn rooms_without_audio_load() {
+    let s = |v: &str| v.to_string();
+    let old = r#"{"rooms":{"5":{"server":"club","users":[["amy",1],["ben",2]],"lone_since":0}},"seen":{}}"#;
+    let mut replica: Replica = serde_json::from_str(old).expect("old snapshot");
+    assert!(audio_in(&replica, 5).is_empty());
+    assert!(seats_of(&replica.voice_snapshot()).is_empty());
+    let json = serde_json::to_string(&replica).unwrap();
+    assert!(!json.contains("audio"), "{json}");
+    let join: Op = serde_json::from_str(
+        r#"{"op":"voice_join","user":"cat","conn":3,"server":"club","channel_id":5}"#,
+    )
+    .expect("a join of an older version");
+    assert!(matches!(
+        join,
+        Op::VoiceJoin {
+            user: _,
+            conn: 3,
+            server: _,
+            channel_id: 5,
+            cap: 0,
+            addr: None,
+            muted: false,
+            deafened: false,
+        }
+    ));
+    replica.apply(1, join, T0);
+    replica.apply(1, audio_op("amy", 1, true, false), T0);
+    assert_eq!(
+        audio_in(&round_trip(&replica), 5),
+        vec![(s("amy"), true, false)]
+    );
+    let quiet = serde_json::to_string(&audio_join("cat", 3, 5, false, false)).unwrap();
+    assert!(
+        !quiet.contains("muted") && !quiet.contains("deafened"),
+        "{quiet}"
+    );
 }

@@ -4,6 +4,7 @@ import { guestSessionHeaders, postGuest } from './guest_chat'
 import { readLocal, writeLocal } from './instances'
 import { findMessageLinks } from './message_links'
 import { RtcManager, JoinAborted } from './rtc'
+import { voiceStatus, voiceStatusText, type SeatAudio } from './voice_status'
 import type { MessageLocation, VoiceMsg, WsEvent } from './types'
 import { parentOrigin, type WidgetMode, type WidgetRoom, type WidgetRoomMetadata } from './widgets'
 
@@ -11,7 +12,7 @@ type Event =
   | WsEvent
   | { type: 'widget_ready'; name: string }
   | { type: 'widget_refresh' }
-  | { type: 'widget_mutes'; users: string[] }
+  | { type: 'widget_mutes'; users: string[]; staff?: string[] }
 
 const roomRevision = (room: WidgetRoomMetadata) => ({
   'X-Widget-Room-Revision': room.channel_id + '.' + (room.sensitive ? '1' : '0'),
@@ -54,6 +55,10 @@ export class WidgetConnection {
   inVoice = false
   userMuted = false
   silenced: string[] = []
+  // Of those, whom staff muted (the rest are timed out).
+  staffMuted: string[] = []
+  // What people in the call say about their own mic and sound, when not the default.
+  audio: Record<string, SeatAudio> = {}
 
   constructor(
     private id: string,
@@ -61,6 +66,7 @@ export class WidgetConnection {
     private canView: (room: WidgetRoomMetadata, account: string | null) => boolean = () => true
   ) {
     this.rtc.onChange = redraw
+    this.rtc.heardMuted = user => this.audio[user]?.muted === true
     this.storageKey = 'rchat_widget:' + id + ':' + this.parent
     this.token = readLocal(this.storageKey)
     this.grant = readLocal(this.storageKey + ':grant')
@@ -288,6 +294,9 @@ export class WidgetConnection {
         case 'voice_state':
           if (!this.room || event.channel_id !== this.room.channel_id) return
           this.room = { ...this.room, users: event.users }
+          this.audio = Object.fromEntries(
+            Object.entries(this.audio).filter(([u]) => event.users.includes(u))
+          )
           if (this.joining && this.rtc.active() && event.users.includes(this.name)) {
             this.inVoice = true
             this.joining = false
@@ -301,14 +310,27 @@ export class WidgetConnection {
           })
           return
         case 'widget_mutes':
+          this.staffMuted = Array.isArray(event.staff) ? event.staff : []
           this.updateMutes(event.users)
           break
         case 'voice_muted':
+          this.staffMuted = [
+            ...this.staffMuted.filter(u => u !== event.username),
+            ...(event.muted && event.staff === true ? [event.username] : []),
+          ]
           this.updateMutes([
             ...this.silenced.filter(u => u !== event.username),
             ...(event.muted ? [event.username] : []),
           ])
           break
+        case 'voice_audio': {
+          if (!this.room || event.channel_id !== this.room.channel_id) return
+          const { [event.username]: _was, ...rest } = this.audio
+          const audio = { muted: event.muted === true, deafened: event.deafened === true }
+          this.audio = audio.muted || audio.deafened ? { ...rest, [event.username]: audio } : rest
+          this.rtc.noteMuted(event.username, audio.muted)
+          break
+        }
         case 'error':
           this.error = event.message
           break
@@ -375,7 +397,8 @@ export class WidgetConnection {
       }
       if (this.socket !== ws || !this.joining || !this.rtc.active()) return
       this.ice = { iceServers }
-      if (!this.signal({ type: 'voice_join', channel_id: room.channel_id }))
+      const audio = { muted: this.userMuted, deafened: false }
+      if (!this.signal({ type: 'voice_join', channel_id: room.channel_id, ...audio }))
         throw Error('Voice disconnected.')
     } catch (e) {
       if (this.socket !== ws || e instanceof JoinAborted) return
@@ -388,6 +411,7 @@ export class WidgetConnection {
     if (!this.inVoice || this.silenced.includes(this.name)) return
     this.userMuted = !this.userMuted
     this.rtc.setMuted(this.userMuted)
+    this.signal({ type: 'voice_audio', muted: this.userMuted, deafened: false })
     this.changed()
   }
   private release() {
@@ -395,7 +419,29 @@ export class WidgetConnection {
     this.joining = false
     this.userMuted = false
     this.silenced = []
+    this.staffMuted = []
+    this.audio = {}
     this.rtc.leave()
+  }
+  // What the list in the frame says about someone's mic and sound.
+  statusOf(user: string): string[] {
+    const own = user === this.name
+    const peer = own ? undefined : this.rtc.peer(user)
+    const { mic, sound } = voiceStatusText(
+      voiceStatus({
+        self: own && this.inVoice,
+        selfAudio: { muted: this.userMuted, deafened: false, restoreMute: false },
+        live: peer ? { muted: peer.muted } : null,
+        roster: this.audio[user] ?? null,
+        forced: this.staffMuted.includes(user)
+          ? 'staff'
+          : this.silenced.includes(user)
+            ? 'timeout'
+            : null,
+      }),
+      own
+    )
+    return [mic, sound].filter((t): t is string => t !== null)
   }
   private closeSocket() {
     const ws = this.socket

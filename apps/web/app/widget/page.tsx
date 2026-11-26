@@ -484,7 +484,7 @@ export default function WidgetPage() {
                   <li key={u} className="streamer break-words">
                     {isGuestName(u) ? guestLabel(u) : u}
                     {u === client.name ? ' (you)' : ''}
-                    {client.silenced.includes(u) ? ' · Muted by staff' : ''}
+                    {client.statusOf(u).map(text => ` · ${text}`)}
                   </li>
                 ))}
               </ul>

@@ -9,7 +9,7 @@ use tokio::time::Instant;
 
 use super::WsEvent;
 use super::access::Access;
-use super::calls::{finalize_call_log, voice_cmd};
+use super::calls::{VoiceWait, finalize_call_log, voice_cmd};
 use super::conn::{admit_frame, frame_bucket};
 use super::filter::event_channel;
 use super::guests::guest_name;
@@ -20,7 +20,7 @@ use crate::api::widgets::{Room, room};
 use crate::api::{ApiError, user_for_token};
 use crate::db::{User, pool_key};
 use crate::fanout::Topic;
-use crate::hub::AddrSlot;
+use crate::hub::{AUDIO_EVERY, AddrSlot};
 use crate::state::AppState;
 
 static VIEWERS: LazyLock<Shares> = LazyLock::new(Shares::default);
@@ -84,6 +84,7 @@ struct Seat<'a> {
     refreshed: Instant,
     recheck_at: Option<Instant>,
     refresh_at: Option<Instant>,
+    audio: VoiceWait,
 }
 
 impl Seat<'_> {
@@ -140,12 +141,13 @@ impl Seat<'_> {
         }
     }
 
-    /// The next time this seat owes a read of its room or a refresh notice.
+    /// The next time this seat owes a read of its room, a refresh notice or a waiting audio
+    /// change.
     fn due(&self) -> Option<Instant> {
-        match (self.recheck_at, self.refresh_at) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        [self.recheck_at, self.refresh_at, self.audio.due]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     fn later_refresh(&mut self) {
@@ -153,8 +155,13 @@ impl Seat<'_> {
             .get_or_insert(Instant::now().max(self.refreshed + SETTLE));
     }
 
-    async fn catch_up(&mut self, socket: &mut WebSocket) -> bool {
+    async fn catch_up(&mut self, access: &Access, socket: &mut WebSocket) -> bool {
         let now = Instant::now();
+        if self.audio.due.is_some_and(|at| at <= now)
+            && let Some(cmd) = self.audio.fire(|| self.state.hub.audio_ok(self.name), now)
+        {
+            self.say_audio(access, cmd).await;
+        }
         if self.recheck_at.is_some_and(|at| at <= now) {
             if self.recheck().await.is_none() {
                 return false;
@@ -175,18 +182,42 @@ impl Seat<'_> {
         true
     }
 
+    // What the seat says about its own audio, while it holds its room.
+    async fn say_audio(&self, access: &Access, cmd: ClientMsg) {
+        if self.active && self.owns() {
+            let _ = voice_cmd(self.state, access, self.conn, cmd).await;
+        }
+    }
+
     async fn command(&mut self, access: &Access, socket: &mut WebSocket, text: &str) -> bool {
         let Ok(cmd) = serde_json::from_str::<ClientMsg>(text) else {
             return false;
         };
         let joining = match &cmd {
-            ClientMsg::VoiceJoin { channel_id } if *channel_id == self.channel => {
+            ClientMsg::VoiceAudio {
+                muted: _,
+                deafened: _,
+            } => {
+                let now = Instant::now();
+                let name = self.name;
+                let hub = &self.state.hub;
+                if let Some(cmd) = self.audio.offer(cmd, || hub.audio_ok(name), now) {
+                    self.say_audio(access, cmd).await;
+                }
+                return true;
+            }
+            ClientMsg::VoiceJoin {
+                channel_id,
+                muted: _,
+                deafened: _,
+            } if *channel_id == self.channel => {
                 if self.recheck().await.is_none() {
                     return false;
                 }
                 if self.active || !self.allowed || !self.state.hub.voice_ok(self.name) {
                     return false;
                 }
+                self.audio.clear();
                 true
             }
             ClientMsg::RtcSignal {
@@ -254,24 +285,43 @@ impl Seat<'_> {
                 else {
                     return false;
                 };
+                let staff: Vec<_> = users
+                    .iter()
+                    .filter(|u| self.state.hub.hushed(u, self.server))
+                    .collect();
                 let muted: Vec<_> = users
                     .iter()
-                    .filter(|u| self.state.hub.hushed(u, self.server) || timeouts.contains_key(*u))
+                    .filter(|u| staff.contains(u) || timeouts.contains_key(*u))
                     .collect();
                 send(
                     socket,
-                    json!({"type":"widget_mutes","users":muted}),
+                    json!({"type":"widget_mutes","users":muted,"staff":staff}),
                     self.state.limits.ws_send_timeout(),
                 )
                 .await
             }
-            WsEvent::VoiceMuted { .. } if here && self.active => {
+            WsEvent::VoiceMuted { .. }
+            | WsEvent::VoiceAudio {
+                server: _,
+                channel_id: _,
+                username: _,
+                muted: _,
+                deafened: _,
+            } if here && self.active => {
                 self.owns() && send(socket, ev, self.state.limits.ws_send_timeout()).await
             }
             WsEvent::VoiceState { .. } if here => {
                 !self.roster || send(socket, ev, self.state.limits.ws_send_timeout()).await
             }
-            WsEvent::VoiceMuted { .. } | WsEvent::Typing { .. } => true,
+            WsEvent::VoiceMuted { .. }
+            | WsEvent::VoiceAudio {
+                server: _,
+                channel_id: _,
+                username: _,
+                muted: _,
+                deafened: _,
+            }
+            | WsEvent::Typing { .. } => true,
             _ => {
                 if here {
                     self.later_refresh();
@@ -353,6 +403,7 @@ pub(super) async fn run(state: AppState, id: String, mut socket: WebSocket, mut 
         refreshed: Instant::now(),
         recheck_at: None,
         refresh_at: None,
+        audio: VoiceWait::every(AUDIO_EVERY),
     };
     let mut frames = frame_bucket(Instant::now());
     let mut check = tokio::time::interval_at(Instant::now() + RECHECK_EVERY, RECHECK_EVERY);
@@ -382,7 +433,7 @@ pub(super) async fn run(state: AppState, id: String, mut socket: WebSocket, mut 
                     if inbox.lagged() || !seat.event(&mut socket, &event.ev).await { break; }
                 }
                 _ = tokio::time::sleep_until(seat.due().unwrap_or_else(Instant::now)), if seat.due().is_some() => {
-                    if !seat.catch_up(&mut socket).await { break; }
+                    if !seat.catch_up(&access, &mut socket).await { break; }
                 }
                 _ = check.tick() => {
                     if heard.elapsed() > super::SILENT_LIMIT { break; }

@@ -143,6 +143,8 @@ export function createCallsPart(
     leave: () => state.servers?.voice.leave(),
     // A camera or a screen share went on or off (the others show the notice for video).
     videoChanged: () => state.servers?.voice.setVideo(mediaVideo()),
+    // Our mic or sound went on or off.
+    audioChanged: () => state.servers?.voice.setAudio(),
     async camera() {
       try {
         await callRtc.camera(callRtc.videoTrack === null)

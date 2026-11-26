@@ -63,6 +63,8 @@ import {
   type LiveShare,
 } from '../lib/voice_layout'
 import { canShareScreen } from '../lib/screen'
+import { VOICE_STATUS_ON, voiceStatus, type VoiceStatus } from '../lib/voice_status'
+import { VoiceStatusIcons } from './voice_status'
 import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
@@ -285,16 +287,13 @@ interface TileData {
   user: UserRef
   stream: MediaStream | null
   hasVideo: boolean
-  muted: boolean
-  deafened: boolean
+  status: VoiceStatus
   speaking: boolean
   mirror: boolean
   pending: boolean
   tint: string
   screen: boolean
   shareId: string | null
-  // A guest staff muted for everyone.
-  staffMuted?: boolean
   // A P2P contact (or this side of a P2P call): no instance profile to open.
   local?: boolean
   // In a P2P call, whether the tile is your own: people there go by their P2P identity.
@@ -317,35 +316,6 @@ export function LiveBadge({
     >
       LIVE
     </span>
-  )
-}
-
-function StateIcons({
-  muted,
-  deafened,
-  staffMuted = false,
-  size,
-}: {
-  muted: boolean
-  deafened: boolean
-  staffMuted?: boolean
-  size: number
-}) {
-  const badge = 'flex shrink-0 rounded-full bg-mute p-0.5 text-on-mute'
-  const label = staffMuted ? STAFF_MUTED : 'Muted'
-  return (
-    <>
-      {muted && !deafened && (
-        <span title={label} aria-label={label} role="img" className={badge}>
-          <MicOff size={size} strokeWidth={2.5} />
-        </span>
-      )}
-      {deafened && (
-        <span title="Deafened" aria-label="Deafened" role="img" className={badge}>
-          <HeadphoneOff size={size} strokeWidth={2.5} />
-        </span>
-      )}
-    </>
   )
 }
 
@@ -378,7 +348,7 @@ export function Tile({
   onToggle: () => void
 }) {
   const store = useStoreApi()
-  const { user, stream, hasVideo, muted, deafened, speaking, mirror, pending, tint, screen } = tile
+  const { user, stream, hasVideo, status, speaking, mirror, pending, tint, screen } = tile
   const streamer = useStore(s => s.streamer)
   const box = height ?? (compact ? 72 : 240)
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
@@ -481,11 +451,11 @@ export function Tile({
         {screen ? (
           <Monitor size={compact ? 11 : 13} className="shrink-0" aria-hidden />
         ) : (
-          <StateIcons
-            muted={muted}
-            deafened={deafened}
-            staffMuted={tile.staffMuted}
+          <VoiceStatusIcons
+            status={status}
+            self={tile.own ?? mine}
             size={compact ? 10 : 12}
+            variant="tile"
           />
         )}
         <span className="streamer truncate">
@@ -496,7 +466,7 @@ export function Tile({
           )}
         </span>
         {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
-        {tile.staffMuted && !screen && !compact && (
+        {status.forced === 'staff' && !screen && !compact && (
           <span className="shrink-0 opacity-75">{STAFF_MUTED}</span>
         )}
       </span>
@@ -1021,8 +991,9 @@ export function VoiceGrid({
   const ask = useStore(s => accountPrompt(s.settings))
   const voice = useStore(s => s.voice)
   const call = useStore(s => s.call)
-  const { muted: selfMuted, deafened } = useStore(s => s.selfAudio)
+  const selfAudio = useStore(s => s.selfAudio)
   const roomUsers = useStore(s => (channelId !== undefined ? s.voiceUsers[channelId] : undefined))
+  const roomAudio = useStore(s => (channelId !== undefined ? s.voiceAudio[channelId] : undefined))
   const silenced = useStore(s => voiceMutedIn(s, channelId ?? null))
   const hushed = useStore(s => voiceHushedIn(s, channelId ?? null))
   const view = useStore(s => s.view)
@@ -1123,16 +1094,23 @@ export function VoiceGrid({
       shareId: null,
       local: p2pIdentity,
       own: p2pIdentity ? u === self : undefined,
-      staffMuted: hushed.includes(u),
     }
     const quiet = silenced.includes(u) || hushed.includes(u)
+    const seat = forVoice ? voiceUsers.find(v => v.ik === u) : undefined
+    const status = (own: boolean, live: { muted: boolean } | null) =>
+      voiceStatus({
+        self: own,
+        selfAudio,
+        live,
+        roster: channelId !== undefined ? (roomAudio?.[u] ?? null) : (seat ?? null),
+        forced: hushed.includes(u) ? 'staff' : silenced.includes(u) ? 'timeout' : null,
+      })
     if (joined && u === self)
       return {
         ...base,
         stream: p2pKind ? p2p.camView : mgr.local,
         hasVideo: p2pKind ? p2p.camOn : mgr.videoTrack !== null,
-        muted: selfMuted || quiet,
-        deafened,
+        status: status(true, null),
         speaking: p2pKind ? p2p.localSpeaking : mgr.isSpeaking(u) && !quiet,
         mirror: p2pKind ? p2p.camOn : mgr.videoTrack !== null,
       }
@@ -1141,8 +1119,7 @@ export function VoiceGrid({
         ...base,
         stream: joined ? p2p.remote : null,
         hasVideo: joined && p2p.remoteCamOn,
-        muted: joined && p2p.remoteMuted,
-        deafened: false,
+        status: status(false, joined ? { muted: p2p.remoteMuted } : null),
         speaking: joined && p2p.remoteSpeaking,
         mirror: false,
       }
@@ -1151,8 +1128,7 @@ export function VoiceGrid({
       ...base,
       stream: peer?.stream ?? null,
       hasVideo: shownMedia(peer, silenced.includes(u)).cam,
-      muted: (peer?.muted ?? false) || quiet,
-      deafened: false,
+      status: status(false, peer ? { muted: peer.muted } : null),
       speaking: joined && mgr.isSpeaking(u) && !quiet,
       mirror: false,
     }
@@ -1194,8 +1170,7 @@ export function VoiceGrid({
       user,
       stream: null,
       hasVideo: false,
-      muted: false,
-      deafened: false,
+      status: VOICE_STATUS_ON,
       speaking: false,
       mirror: false,
       pending: true,

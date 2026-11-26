@@ -416,6 +416,7 @@ export function createChatStore(acct: AccountSession) {
       voiceUsers: {},
       voiceMuted: {},
       voiceHushed: {},
+      voiceAudio: {},
       timeouts: {},
       profileLocks: {},
       p2pAvailability: {},
@@ -558,7 +559,7 @@ export function createChatStore(acct: AccountSession) {
   }
 
   // Without each other's people: rosters drop out while their room is closed here.
-  const withoutRooms = (marks: Record<number, string[]>, hidden: Set<number>) => {
+  const withoutRooms = <T>(marks: Record<number, T>, hidden: Set<number>) => {
     const kept = Object.entries(marks).filter(([id]) => !hidden.has(Number(id)))
     return kept.length === Object.keys(marks).length ? null : Object.fromEntries(kept)
   }
@@ -583,6 +584,7 @@ export function createChatStore(acct: AccountSession) {
       voiceUsers: withoutRooms(s.voiceUsers, hidden),
       voiceMuted: withoutRooms(s.voiceMuted, hidden),
       voiceHushed: withoutRooms(s.voiceHushed, hidden),
+      voiceAudio: withoutRooms(s.voiceAudio, hidden),
     }
     const pruned = Object.fromEntries(Object.entries(rosters).filter(([, v]) => v !== null))
     if (Object.keys(pruned).length) chatStore.setState(pruned)

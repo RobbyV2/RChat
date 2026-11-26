@@ -16,6 +16,7 @@ import { PreviewLine } from '../../components/invite_card'
 import { VoterRow } from '../../components/poll_card'
 import TimeoutDialogHost from '../../components/timeout_dialog'
 import { DockPlace, Tile } from '../../components/voice_grid'
+import { VOICE_STATUS_ON } from '../voice_status'
 import { CreatorNote } from '../../components/webhooks_dialog'
 import { ReplyPreview } from '../../components/replies'
 import { asMessage, P2pRow } from '../../components/p2p/p2p_chat'
@@ -333,8 +334,7 @@ const tileOf = (u: ReturnType<typeof user>, p2p: { own: boolean } | null, screen
   user: u,
   stream: null,
   hasVideo: false,
-  muted: false,
-  deafened: false,
+  status: VOICE_STATUS_ON,
   speaking: false,
   mirror: false,
   pending: false,

@@ -22,10 +22,10 @@ use limits::{Pacing, connect_policy, signal_burst_for, signal_policy};
 use link::{Link, Posted, Reply, Resolved, Store, late_purge};
 
 pub use limits::{
-    ACCEPT_BURST, ACCEPT_EVERY, AUTH_WAIT, AddrSlot, CALL_BURST, CALL_EVERY, CONNECT_BURST,
-    CONNECTS_PER_MINUTE, CONNS_PER_USER, DM_CALL_BURST, DM_CALL_EVERY, GUESTS_MAX, GUESTS_PER_IP,
-    Limits, PACED_USERS_MAX, SIGNAL_BURST, SIGNAL_BYTES_PER_SEC, SOCKETS_PER_IP, TYPING_USER_BURST,
-    TYPING_USER_EVERY, VOICE_BURST, VOICE_EVERY,
+    ACCEPT_BURST, ACCEPT_EVERY, AUDIO_BURST, AUDIO_EVERY, AUTH_WAIT, AddrSlot, CALL_BURST,
+    CALL_EVERY, CONNECT_BURST, CONNECTS_PER_MINUTE, CONNS_PER_USER, DM_CALL_BURST, DM_CALL_EVERY,
+    GUESTS_MAX, GUESTS_PER_IP, Limits, PACED_USERS_MAX, SIGNAL_BURST, SIGNAL_BYTES_PER_SEC,
+    SOCKETS_PER_IP, TYPING_USER_BURST, TYPING_USER_EVERY, VOICE_BURST, VOICE_EVERY,
 };
 /// Why a realtime socket was not counted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,7 +37,7 @@ pub enum SlotRefused {
 }
 
 pub use replica::{
-    Aftermath, Applied, CallEnd, Envelope, Op, Outcome, P2pDrop, Purge, Replica, Scope,
+    Aftermath, Applied, Audio, CallEnd, Envelope, Op, Outcome, P2pDrop, Purge, Replica, Scope,
 };
 
 pub const DEAD_AFTER_MS: i64 = 30_000;
@@ -835,7 +835,27 @@ impl Hub {
         channel_id: i64,
         cap: usize,
     ) -> Result<Vec<CallEnd>, String> {
-        self.join_room(user, conn, server, channel_id, cap, None)
+        self.join_room(
+            user,
+            conn,
+            (server, channel_id),
+            cap,
+            None,
+            Audio::default(),
+        )
+        .await
+    }
+
+    /// `voice_join_capped`, with what the user says about their own `audio` from the start.
+    pub async fn voice_join_with(
+        &self,
+        user: &str,
+        conn: u64,
+        (server, channel_id): (&str, i64),
+        cap: usize,
+        audio: Audio,
+    ) -> Result<Vec<CallEnd>, String> {
+        self.join_room(user, conn, (server, channel_id), cap, None, audio)
             .await
     }
 
@@ -850,8 +870,29 @@ impl Hub {
         cap: usize,
         addr: Option<IpAddr>,
     ) -> Result<Vec<CallEnd>, String> {
+        self.guest_join_with(
+            name,
+            conn,
+            (server, channel_id),
+            cap,
+            addr,
+            Audio::default(),
+        )
+        .await
+    }
+
+    /// `guest_voice_join`, with what the guest says about its own `audio` from the start.
+    pub async fn guest_join_with(
+        &self,
+        name: &str,
+        conn: u64,
+        (server, channel_id): (&str, i64),
+        cap: usize,
+        addr: Option<IpAddr>,
+        audio: Audio,
+    ) -> Result<Vec<CallEnd>, String> {
         let addr = addr.map(|a| crate::api::budget::group(a).to_string());
-        self.join_room(name, conn, server, channel_id, cap, addr)
+        self.join_room(name, conn, (server, channel_id), cap, addr, audio)
             .await
     }
 
@@ -859,11 +900,12 @@ impl Hub {
         &self,
         user: &str,
         conn: u64,
-        server: &str,
-        channel_id: i64,
+        (server, channel_id): (&str, i64),
         cap: usize,
         addr: Option<String>,
+        audio: Audio,
     ) -> Result<Vec<CallEnd>, String> {
+        let Audio { muted, deafened } = audio;
         let op = Op::VoiceJoin {
             user: user.to_string(),
             conn,
@@ -871,6 +913,8 @@ impl Hub {
             channel_id,
             cap,
             addr,
+            muted,
+            deafened,
         };
         match self.ask(op).await {
             Outcome::Ends(ends) => Ok(ends),
@@ -886,6 +930,21 @@ impl Hub {
             user: user.to_string(),
         };
         self.call_applied(op).await;
+    }
+
+    /// What `user` says about their own `audio` for the voice seat its connection `conn` holds.
+    /// Without a seat it does nothing.
+    pub fn voice_audio(&self, user: &str, conn: u64, audio: Audio) {
+        if self.replica(|r| r.seat_of(user, conn)).is_none() {
+            return;
+        }
+        let Audio { muted, deafened } = audio;
+        self.post(Op::VoiceAudio {
+            user: user.to_string(),
+            conn,
+            muted,
+            deafened,
+        });
     }
 
     #[cfg(test)]
@@ -1231,6 +1290,7 @@ impl Hub {
             accepts: _,
             signals: _,
             typing: _,
+            audio: _,
         } = &self.inner.pacing;
         let now = Instant::now();
         calls.remaining(user, now) >= 1.0
@@ -1254,6 +1314,17 @@ impl Hub {
     /// Whether `user` may show a typing indicator now, across all their connections.
     pub fn typing_ok(&self, user: &str) -> bool {
         self.inner.pacing.typing.take(user, 1.0, Instant::now())
+    }
+
+    /// Whether `user` may change what they say about their own voice audio now.
+    pub fn audio_ok(&self, user: &str) -> bool {
+        self.audio_ok_at(user, Instant::now())
+    }
+
+    /// Whether `user` may change what they say about their own voice audio at `now`, across all
+    /// their connections.
+    pub fn audio_ok_at(&self, user: &str, now: Instant) -> bool {
+        self.inner.pacing.audio.take(user, 1.0, now)
     }
 
     /// Why a call between `user` and `other` would be refused now, read from the replica.

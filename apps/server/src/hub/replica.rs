@@ -9,7 +9,7 @@ use super::{
     owner,
 };
 
-use crate::ws::{CallKind, CallPeer, CallPhase, CallRelays, WsEvent};
+use crate::ws::{CallKind, CallPeer, CallPhase, CallRelays, SeatAudio, WsEvent};
 
 fn link<K: Ord, V: Ord>(map: &mut BTreeMap<K, BTreeSet<V>>, key: K, val: V) {
     map.entry(key).or_default().insert(val);
@@ -35,12 +35,39 @@ pub(super) struct Room {
     pub(super) server: String,
     pub(super) users: Vec<(String, u64)>,
     lone_since: i64,
+    // What the people in the room said about their own mic and sound; only those not at the
+    // default are kept.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) audio: BTreeMap<String, Audio>,
+}
+
+/// What someone in a voice room says about themselves: their mic is off, or they hear nobody.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Audio {
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default)]
+    pub deafened: bool,
+}
+
+impl Audio {
+    fn is_default(&self) -> bool {
+        *self == Audio::default()
+    }
 }
 
 impl Room {
     fn touch(&mut self, t: i64) {
         if self.users.len() == 1 {
             self.lone_since = t;
+        }
+    }
+
+    // Keeps what `user` says about their audio here: true when it changed.
+    fn set_audio(&mut self, user: &str, audio: Audio) -> bool {
+        match audio.is_default() {
+            true => self.audio.remove(user).is_some(),
+            false => self.audio.insert(user.to_string(), audio) != Some(audio),
         }
     }
 }
@@ -463,9 +490,20 @@ pub enum Op {
         /// The address a guest joins from (`budget::group`); `None` for accounts.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         addr: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        muted: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        deafened: bool,
     },
     VoiceLeave {
         user: String,
+    },
+    /// What `user` says about their own mic and sound, for the seat its connection `conn` holds.
+    VoiceAudio {
+        user: String,
+        conn: u64,
+        muted: bool,
+        deafened: bool,
     },
     CallStart {
         user: String,
@@ -635,8 +673,16 @@ impl Op {
                 channel_id: _,
                 cap: _,
                 addr: _,
+                muted: _,
+                deafened: _,
             }
             | Op::VoiceLeave { user: _ }
+            | Op::VoiceAudio {
+                user: _,
+                conn: _,
+                muted: _,
+                deafened: _,
+            }
             | Op::CallStart {
                 user: _,
                 conn: _,
@@ -744,11 +790,43 @@ fn hush_ev(server: &str, channel_id: i64, user: &str, muted: bool) -> WsEvent {
     }
 }
 
+fn audio_ev(server: &str, channel_id: i64, user: &str, audio: Audio) -> WsEvent {
+    let Audio { muted, deafened } = audio;
+    WsEvent::VoiceAudio {
+        server: server.to_string(),
+        channel_id,
+        username: user.to_string(),
+        muted,
+        deafened,
+    }
+}
+
 fn room_state(channel_id: i64, room: &Room) -> WsEvent {
     WsEvent::VoiceState {
         server: room.server.clone(),
         channel_id,
         users: room.users.iter().map(|(u, _)| u.clone()).collect(),
+        audio: None,
+    }
+}
+
+// A room as a snapshot shows it: with what the people in it say about their own audio, in the
+// same event, so a snapshot stays one event per room.
+fn room_snapshot(channel_id: i64, room: &Room) -> WsEvent {
+    let audio = room
+        .audio
+        .iter()
+        .map(|(user, &Audio { muted, deafened })| SeatAudio {
+            username: user.clone(),
+            muted,
+            deafened,
+        })
+        .collect();
+    WsEvent::VoiceState {
+        server: room.server.clone(),
+        channel_id,
+        users: room.users.iter().map(|(u, _)| u.clone()).collect(),
+        audio: Some(audio),
     }
 }
 
@@ -963,6 +1041,15 @@ impl Replica {
             .unwrap_or_default()
     }
 
+    // The voice room whose seat of `user` its connection `conn` holds.
+    pub(super) fn seat_of(&self, user: &str, conn: u64) -> Option<i64> {
+        self.rooms_of(user).into_iter().find(|cid| {
+            self.rooms
+                .get(cid)
+                .is_some_and(|r| r.users.iter().any(|(u, c)| u == user && *c == conn))
+        })
+    }
+
     // The voice room `user` is in inside `server`.
     pub(super) fn room_in(&self, user: &str, server: &str) -> Option<i64> {
         self.rooms_of(user)
@@ -1115,9 +1202,10 @@ impl Replica {
         }
     }
 
-    // A room as a new listener learns it: who is in it and whom staff muted there.
+    // A room as a new listener learns it: who is in it and what they say about their own audio,
+    // and whom staff muted there.
     fn room_events(&self, cid: i64, room: &Room, evs: &mut Vec<WsEvent>) {
-        evs.push(room_state(cid, room));
+        evs.push(room_snapshot(cid, room));
         if self.voice_mutes.is_empty() {
             return;
         }
@@ -1177,6 +1265,7 @@ impl Replica {
                 server,
                 users,
                 lone_since,
+                audio,
             } = room;
             let mut left = Vec::new();
             users.retain(|(u, c)| match gone(server, u, *c) {
@@ -1190,6 +1279,7 @@ impl Replica {
                 continue;
             }
             for user in &left {
+                audio.remove(user);
                 unlink(&mut self.index.user_rooms, user.as_str(), &cid);
             }
             if users.len() == 1 {
@@ -1926,6 +2016,8 @@ impl Replica {
                 channel_id,
                 cap,
                 addr,
+                muted,
+                deafened,
             } => match self.blocked_until(&server, &user, addr.as_deref(), t_ms) {
                 Some(until) => Outcome::Blocked(until - t_ms),
                 None => {
@@ -1938,12 +2030,18 @@ impl Replica {
                         .rooms
                         .get_mut(&channel_id)
                         .and_then(|room| room.users.iter_mut().find(|(u, _)| *u == user));
+                    let audio = Audio { muted, deafened };
                     match (slot, full) {
                         (Some(slot), _) => {
                             let moved = slot.1 != conn;
                             slot.1 = conn;
-                            if moved && let Some(room) = self.rooms.get(&channel_id) {
-                                evs.push(room_state(channel_id, room));
+                            if let Some(room) = self.rooms.get_mut(&channel_id) {
+                                if moved {
+                                    evs.push(room_state(channel_id, room));
+                                }
+                                if room.set_audio(&user, audio) {
+                                    evs.push(audio_ev(&room.server, channel_id, &user, audio));
+                                }
                             }
                             if let Some(addr) = addr {
                                 self.voice_addrs.insert(user, addr);
@@ -1965,12 +2063,16 @@ impl Replica {
                                 server,
                                 users: Vec::new(),
                                 lone_since: 0,
+                                audio: BTreeMap::new(),
                             });
                             room.users.push((user.clone(), conn));
                             room.touch(t);
                             evs.push(room_state(channel_id, room));
                             if hushed {
                                 evs.push(hush_ev(&room.server, channel_id, &user, true));
+                            }
+                            if room.set_audio(&user, audio) {
+                                evs.push(audio_ev(&room.server, channel_id, &user, audio));
                             }
                             if let Some(addr) = addr {
                                 self.voice_addrs.insert(user, addr);
@@ -1983,6 +2085,21 @@ impl Replica {
             Op::VoiceLeave { user } => {
                 let rooms = self.rooms_of(&user);
                 self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
+                Outcome::Done
+            }
+            Op::VoiceAudio {
+                user,
+                conn,
+                muted,
+                deafened,
+            } => {
+                let audio = Audio { muted, deafened };
+                if let Some(cid) = self.seat_of(&user, conn)
+                    && let Some(room) = self.rooms.get_mut(&cid)
+                    && room.set_audio(&user, audio)
+                {
+                    evs.push(audio_ev(&room.server, cid, &user, audio));
+                }
                 Outcome::Done
             }
             Op::CallStart {
@@ -2115,6 +2232,7 @@ impl Replica {
                             server: room.server.clone(),
                             channel_id: cid,
                             users: Vec::new(),
+                            audio: None,
                         });
                         evs.push(WsEvent::VoiceEnded {
                             server: Some(room.server),
@@ -2174,6 +2292,7 @@ impl Replica {
                         room.users.retain(|(u, _)| *u != user);
                         match room.users.len() != before {
                             true => {
+                                room.audio.remove(&user);
                                 room.touch(t);
                                 evs.push(room_state(channel_id, room));
                                 true

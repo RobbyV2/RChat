@@ -327,10 +327,14 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
   const refetchServer = (server: string) => void reloadServer(server)
 
+  const voiceIds = (detail: ServerDetail | undefined) =>
+    new Set((detail?.channels ?? []).filter(c => c.kind === 'voice').map(c => c.id))
+
   const reloadServer = (server: string): Promise<void> => {
     if (!get().servers[server]) return Promise.resolve()
     return fetchServer(server)
       .then(detail => {
+        const before = voiceIds(get().servers[server])
         const { view } = get()
         const lost =
           view?.kind === 'channel' &&
@@ -342,6 +346,9 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           if (!get().servers[server]) return
         }
         putServer(server, detail)
+        // A voice room we can see now gets its people, and what they say about their audio.
+        if (get().servers[server] === detail && [...voiceIds(detail)].some(id => !before.has(id)))
+          home.ws.resubscribe()
         if (lost && next) void get().openChannel(server, next.id, 'replace')
       })
       .catch(fail)

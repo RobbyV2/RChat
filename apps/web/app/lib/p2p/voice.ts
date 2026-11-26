@@ -31,6 +31,11 @@ import { isShortId } from './state'
 // device, passed-on frames about it no longer count: a claim it doesn't confirm within
 // `confirmMs` is dropped and ignored for `ttlMs`. At most `keepMax` participants hold sessions
 // outside the budget.
+//
+// A frame may carry `aud {m, d, sig}`: the participant's mic (`m`) or sound (`d`) is off, signed
+// apart from the frame under its own tag and bound to its stamp, so peers that don't know it still
+// verify the frame and a relay can't move it onto a newer one. A malformed one is dropped alone; a
+// bad signature strikes. It goes on with the frame as it came.
 
 export const VOICE = {
   // Participants a channel lists at most.
@@ -53,6 +58,14 @@ export const pastFit = (count: number, video: boolean, fit: Fit = LOCAL.voice) =
 export const NO_VOICE = "You can't join this voice channel."
 export const RELAY_DENIED_TEXT = 'Relay not allowed. Not connected to'
 
+// What a participant says about its own mic (`m`) and sound (`d`) when either is off, with its
+// device's signature over audioBody.
+export interface VoiceAudio {
+  m?: true
+  d?: true
+  sig: string
+}
+
 export interface VoiceFrame {
   t: 'gvoice'
   room: string
@@ -68,9 +81,11 @@ export interface VoiceFrame {
   // The participant's device and its signature over voiceBody.
   dk: string
   sig: string
+  aud?: VoiceAudio
 }
 
 export const VOICE_TAG = 'rchat-p2p-voice1\0'
+export const AUDIO_TAG = 'rchat-p2p-voice-audio1\0'
 
 // What a participant signs: its state, whoever passes it on. The body is a fixed projection of
 // the known fields: a field signed in a later version needs a new tag (or frame type), because
@@ -89,7 +104,28 @@ export const voiceBody = (
   ik,
 })
 
+// What a participant signs about its audio, bound to the frame's stamp.
+export const audioBody = (
+  f: { room: string; ch: string; n: number; aud?: { m?: true; d?: true } },
+  ik: string
+) => ({
+  room: f.room,
+  ch: f.ch,
+  n: f.n,
+  ik,
+  m: f.aud?.m === true,
+  d: f.aud?.d === true,
+})
+
 const isSig = (x: unknown): x is string => typeof x === 'string' && bytesOf(x, 64) !== null
+
+const optionalFlag = (x: unknown) => x === undefined || typeof x === 'boolean'
+
+// `aud`, or null when it is malformed (the frame stands without it).
+export const readVoiceAudio = (x: unknown): VoiceAudio | null => {
+  if (!isRecord(x) || !isSig(x.sig) || !optionalFlag(x.m) || !optionalFlag(x.d)) return null
+  return { ...(x.m === true ? { m: true } : {}), ...(x.d === true ? { d: true } : {}), sig: x.sig }
+}
 
 export interface VoiceRtcFrame {
   t: 'gvrtc'
@@ -100,7 +136,7 @@ export interface VoiceRtcFrame {
 
 export const readVoiceFrame = (x: unknown): VoiceFrame | null => {
   if (!isRecord(x) || !hasKeys(x, ['t', 'room', 'ch', 'on', 'n', 'dk', 'sig'])) return null
-  const { t, room, ch, on, n, video, relays, ik, dk, sig } = x
+  const { t, room, ch, on, n, video, relays, ik, dk, sig, aud } = x
   if (t !== 'gvoice' || !isRoomId(room) || !isShortId(ch) || typeof on !== 'boolean') return null
   if (!isKeyId(dk) || !isSig(sig)) return null
   if (!Number.isSafeInteger(n) || (n as number) < 0) return null
@@ -108,6 +144,7 @@ export const readVoiceFrame = (x: unknown): VoiceFrame | null => {
   if (ik !== undefined && !isKeyId(ik)) return null
   const hosts = declaredHosts(relays)
   if (hosts === null || (Array.isArray(relays) && hosts.length !== relays.length)) return null
+  const audio = aud === undefined ? null : readVoiceAudio(aud)
   return {
     t,
     room,
@@ -119,6 +156,7 @@ export const readVoiceFrame = (x: unknown): VoiceFrame | null => {
     ...(ik !== undefined ? { ik } : {}),
     dk,
     sig,
+    ...(audio ? { aud: audio } : {}),
   }
 }
 
@@ -160,9 +198,10 @@ export interface VoiceState {
   relays: string[]
   // Heard from them on their own session.
   direct: boolean
-  // Their signature, passed on with it.
+  // Their signature, passed on with it, and what they said about their audio.
   dk: string
   sig: string
+  aud: VoiceAudio | null
 }
 
 // Who is in which voice channel of each room, as far as we heard.
@@ -186,6 +225,7 @@ export class VoiceRoster {
       relays?: string[]
       dk?: string
       sig?: string
+      aud?: VoiceAudio
     },
     now: number,
     direct: boolean
@@ -218,6 +258,7 @@ export class VoiceRoster {
       direct,
       dk: f.dk ?? '',
       sig: f.sig ?? '',
+      aud: f.aud ?? null,
     })
     return true
   }
@@ -287,6 +328,8 @@ export interface VoiceMedia {
   sync(users: string[]): void
   leave(): void
   onSignal(from: string, payload: RtcPayload, scope: { p2pRoom: string; ch: string }): Promise<void>
+  // What a participant's frame says about its mic, for media that hasn't heard it from them.
+  noteMuted?(user: string, muted: boolean): void
 }
 
 export interface VoicePlan {
@@ -300,7 +343,11 @@ export interface VoicePlan {
 export interface VoiceUser {
   ik: string
   video: boolean
+  muted: boolean
+  deafened: boolean
 }
+
+const NO_AUDIO = { muted: false, deafened: false }
 
 export interface VoiceDeps {
   clock: Clock
@@ -316,6 +363,8 @@ export interface VoiceDeps {
   device: (room: string, ik: string, dk: string) => boolean
   // Our device key, to sign our state with.
   signer: () => { dk: string; sk: Uint8Array } | null
+  // What we say about our own mic and sound.
+  audio: () => { muted: boolean; deafened: boolean }
   // A member who may view the channel.
   allowed: (room: string, ch: string, ik: string) => boolean | Promise<boolean>
   certs: (ik: string) => { ik: string; certs: Cert[] } | null
@@ -334,7 +383,7 @@ interface Relayed {
 }
 
 const stateKey = (f: VoiceFrame) =>
-  `${f.ch}\n${f.on}\n${f.video === true}\n${(f.relays ?? []).join()}`
+  `${f.ch}\n${f.on}\n${f.video === true}\n${(f.relays ?? []).join()}\n${f.aud?.m === true}\n${f.aud?.d === true}`
 
 interface Mine {
   claim?: CallClaim | null
@@ -344,6 +393,11 @@ interface Mine {
   plan: VoicePlan
   since: number
   timer: unknown
+  // What our last frame to everyone said about our audio, when a frame for a change of it last
+  // went, and the change waiting for the gap.
+  said: { muted: boolean; deafened: boolean }
+  audioAt: number
+  audioTimer: unknown
 }
 
 export class Voice implements Signaler {
@@ -568,6 +622,7 @@ export class Voice implements Signaler {
   private own(m: Mine, on = true): VoiceFrame | null {
     const key = this.deps.signer()
     if (!key || (on && this.away)) return null
+    const me = this.deps.me()
     const f = {
       room: m.room,
       ch: m.ch,
@@ -576,8 +631,25 @@ export class Voice implements Signaler {
       ...(on && m.video ? { video: true } : {}),
       ...(on && m.plan.declared.length ? { relays: m.plan.declared } : {}),
     }
-    const sig = signTagged(key.sk, VOICE_TAG, voiceBody(f, this.deps.me()))
-    return { t: 'gvoice', ...f, dk: key.dk, sig }
+    const sig = signTagged(key.sk, VOICE_TAG, voiceBody(f, me))
+    const frame: VoiceFrame = { t: 'gvoice', ...f, dk: key.dk, sig }
+    const { muted, deafened } = on ? this.deps.audio() : NO_AUDIO
+    if (!muted && !deafened) return frame
+    const flags = {
+      ...(muted ? { m: true as const } : {}),
+      ...(deafened ? { d: true as const } : {}),
+    }
+    const audSig = signTagged(key.sk, AUDIO_TAG, audioBody({ ...f, aud: flags }, me))
+    return { ...frame, aud: { ...flags, sig: audSig } }
+  }
+
+  // Our frame to everyone who may hear it, with what it says about our audio noted.
+  private tellAll(m: Mine) {
+    const { muted, deafened } = this.deps.audio()
+    const f = this.own(m)
+    if (!f) return
+    m.said = { muted, deafened }
+    this.broadcast(f)
   }
 
   private frameOf(room: string, ik: string, st: VoiceState): VoiceFrame {
@@ -592,6 +664,7 @@ export class Voice implements Signaler {
       ik,
       dk: st.dk,
       sig: st.sig,
+      ...(st.aud ? { aud: st.aud } : {}),
     }
   }
 
@@ -642,6 +715,9 @@ export class Voice implements Signaler {
       plan,
       since: this.deps.clock.now(),
       timer: null,
+      said: this.deps.audio(),
+      audioAt: -Infinity,
+      audioTimer: null,
     }
     this.mine = m
     this.changed()
@@ -656,7 +732,7 @@ export class Voice implements Signaler {
       throw e
     }
     if (this.mine !== m) return
-    this.broadcast(this.own(m))
+    this.tellAll(m)
     this.arm(m)
     this.deps.onChange(room)
     this.resync()
@@ -666,7 +742,7 @@ export class Voice implements Signaler {
   private arm(m: Mine) {
     m.timer = this.deps.clock.set(() => {
       if (this.mine !== m) return
-      this.broadcast(this.own(m))
+      this.tellAll(m)
       this.arm(m)
     }, this.limits.refreshMs)
   }
@@ -677,6 +753,7 @@ export class Voice implements Signaler {
     m.claim?.release()
     this.mine = null
     if (m.timer !== null) this.deps.clock.clear(m.timer)
+    if (m.audioTimer !== null) this.deps.clock.clear(m.audioTimer)
     this.broadcast(this.own(m, false))
     this.ok.clear()
     this.no.clear()
@@ -702,7 +779,7 @@ export class Voice implements Signaler {
     const m = this.mine
     if (!this.away) return
     this.away = false
-    if (m) this.broadcast(this.own(m))
+    if (m) this.tellAll(m)
   }
 
   // A camera or a screen share went on or off.
@@ -710,8 +787,28 @@ export class Voice implements Signaler {
     const m = this.mine
     if (!m || m.video === on) return
     m.video = on
-    this.broadcast(this.own(m))
+    this.tellAll(m)
     this.deps.onChange(m.room)
+  }
+
+  // Our mic or sound went on or off: a new frame says so, one every gapMs at most (the latest
+  // goes when the gap is over).
+  setAudio() {
+    const m = this.mine
+    if (!m || m.audioTimer !== null) return
+    const go = () => {
+      m.audioTimer = null
+      const { muted, deafened } = this.deps.audio()
+      // Until the join is out, its own frame says it.
+      if (this.mine !== m || m.timer === null) return
+      if (m.said.muted === muted && m.said.deafened === deafened) return
+      m.audioAt = this.deps.clock.now()
+      this.tellAll(m)
+      this.deps.onChange(m.room)
+    }
+    const wait = m.audioAt + this.limits.gapMs - this.deps.clock.now()
+    if (wait <= 0) go()
+    else m.audioTimer = this.deps.clock.set(go, wait)
   }
 
   // We left the room or were removed: out of its voice too.
@@ -721,6 +818,14 @@ export class Voice implements Signaler {
   }
 
   // ----- Views -----
+
+  // Whether a participant of our channel said its mic is off.
+  heardMuted(ik: string): boolean {
+    const m = this.mine
+    if (!m) return false
+    const st = this.roster.state(m.room, ik, this.deps.clock.now())
+    return st?.ch === m.ch && st.aud?.m === true
+  }
 
   // Who is in each voice channel of the room: us while we are in one, and whom we heard of.
   channels(room: string): Record<string, VoiceUser[]> {
@@ -732,12 +837,22 @@ export class Voice implements Signaler {
       for (const ik of iks) {
         const st = this.roster.state(room, ik, now)
         if (st && this.deps.member(room, ik) && this.deps.isVoice(room, ch))
-          all.push({ ik, ch, video: st.video, since: st.since })
+          all.push({
+            ik,
+            ch,
+            video: st.video,
+            muted: st.aud?.m === true,
+            deafened: st.aud?.d === true,
+            since: st.since,
+          })
       }
-    if (m && m.room === room)
-      all.push({ ik: this.deps.me(), ch: m.ch, video: m.video, since: m.since })
+    if (m && m.room === room) {
+      const { muted, deafened } = this.deps.audio()
+      all.push({ ik: this.deps.me(), ch: m.ch, video: m.video, muted, deafened, since: m.since })
+    }
     all.sort((a, b) => a.since - b.since || (a.ik < b.ik ? -1 : 1))
-    for (const { ik, ch, video } of all) (out[ch] ??= []).push({ ik, video })
+    for (const { ik, ch, video, muted, deafened } of all)
+      (out[ch] ??= []).push({ ik, video, muted, deafened })
     return out
   }
 
@@ -861,9 +976,14 @@ export class Voice implements Signaler {
     if (direct && f.dk !== s.remote?.dk) return
     if (!direct && this.ownWordOnly(ik, f.dk, now)) return
     if (!direct && f.n < now - this.limits.ttlMs - this.limits.skewMs) return
-    // A device the room doesn't list (yet) for them: dropped. A bad signature strikes.
+    // A device the room doesn't list (yet) for them: dropped. A bad signature strikes, also one
+    // over what they say about their audio, which then goes alone.
     if (!this.deps.device(room, ik, f.dk)) return
     if (!verifyTagged(f.dk, VOICE_TAG, voiceBody(f, ik), f.sig)) return s.strike()
+    if (f.aud && !verifyTagged(f.dk, AUDIO_TAG, audioBody(f, ik), f.aud.sig)) {
+      s.strike()
+      delete f.aud
+    }
     if (!(await this.deps.allowed(room, ch, from))) return
     if (ik !== from && !(await this.deps.allowed(room, ch, ik))) return
     const was = this.roster.state(room, ik, now)
@@ -873,6 +993,8 @@ export class Voice implements Signaler {
     if (f.on && !known && this.roster.in(room, ch, now).length >= this.limits.listMax) return
     if (!this.roster.apply(room, ik, f, now, direct)) return
     this.forward(f, ik, s)
+    const mine = this.mine
+    if (mine?.room === room && mine.ch === ch) this.media?.noteMuted?.(ik, f.aud?.m === true)
     // A newcomer to the channel hears whom we know in it, at most once per refresh.
     const tk = `${room}\n${ch}\n${ik}`
     if (

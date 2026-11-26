@@ -512,6 +512,25 @@ describe('first negotiation', () => {
   })
 })
 
+describe('what the roster says', () => {
+  test('a peer starts from its mic as the roster has it, and follows it until it says so itself', async () => {
+    const { alice } = await room()
+    alice.heardMuted = user => user === 'bob'
+    alice.sync(['alice', 'bob'])
+    expect(alice.peer('bob')?.muted).toBe(true)
+    alice.noteMuted('bob', false)
+    expect(alice.peer('bob')?.muted).toBe(false)
+    alice.noteMuted('bob', true)
+    expect(alice.peer('bob')?.muted).toBe(true)
+    await alice.onSignal('bob', { cam: false, sid: 'b1' }, { channelId: 5 })
+    alice.noteMuted('bob', false)
+    expect(alice.peer('bob')?.muted).toBe(false)
+    await alice.onSignal('bob', { muted: true, sid: 'b1' }, { channelId: 5 })
+    alice.noteMuted('bob', false)
+    expect(alice.peer('bob')?.muted).toBe(true)
+  })
+})
+
 describe('closed peers', () => {
   test('a closed peer sends nothing, and its timers are cleared', async () => {
     const { alice, bob } = await room({ alice: 20, bob: 20 })

@@ -356,6 +356,8 @@ export interface ServerDeps {
   attachments?: () => boolean
   // Where the evaluator runs (a worker in the browser).
   resolver?: AclHost
+  // What we say about our own mic and sound in voice channels.
+  audio?: () => { muted: boolean; deafened: boolean }
 }
 
 export const MENTION_EVERYONE = /(^|[^\p{L}\p{N}\p{M}_])@everyone(?![\p{L}\p{N}\p{M}_])/iu

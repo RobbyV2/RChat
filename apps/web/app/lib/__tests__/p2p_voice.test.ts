@@ -5,12 +5,14 @@ import { describe, expect, test } from 'bun:test'
 import { ManualClock, settle } from './p2p_net'
 import { b64u, randomBytes } from '../p2p/canonical'
 import type { Message } from '../p2p/frames'
-import { keyId, newKeyPair, signTagged, type Cert, type KeyPair } from '../p2p/keys'
+import { keyId, newKeyPair, signTagged, verifyTagged, type Cert, type KeyPair } from '../p2p/keys'
 import { victimFor, type Held } from '../p2p/node'
 import { LOCAL } from '../p2p/limits'
 import type { Clock, Session } from '../p2p/session'
 import { instanceLocal } from '../p2p/user_limits'
 import {
+  AUDIO_TAG,
+  audioBody,
   pastFit,
   readVoiceFrame,
   readVoiceRefuse,
@@ -42,13 +44,23 @@ interface Node {
   // Members this node may not show in a channel (lost view).
   hidden: Set<string>
   consent: ((hosts: string[]) => Promise<string | null>) | null
+  // What this node says about its own mic and sound.
+  audio: { muted: boolean; deafened: boolean }
 }
 
 class FakeMedia implements VoiceMedia {
   users: string[] = []
   joined = false
+  // A join waits for this while set.
+  hold: Promise<void> | null = null
+  // What frames said about participants' mics.
+  noted: [string, boolean][] = []
   async join() {
+    if (this.hold) await this.hold
     this.joined = true
+  }
+  noteMuted(user: string, muted: boolean) {
+    this.noted.push([user, muted])
   }
   sync(users: string[]) {
     this.users = users
@@ -91,6 +103,7 @@ class Net {
       sessions: new Map(),
       hidden: new Set(),
       consent: null,
+      audio: { muted: false, deafened: false },
       voice: null as unknown as Voice,
     }
     const ready = () => [...node.sessions.values()].filter(s => s.state === 'ready')
@@ -104,6 +117,7 @@ class Net {
       isVoice: (_room, ch) => ch === CH || ch === CH2,
       device: (_room, x, dk) => this.nodes.some(n => n.ik === x && n.dk === dk),
       signer: () => ({ dk: node.dk, sk: node.dkKey.sk }),
+      audio: () => node.audio,
       allowed: (_room, _ch, x) => !node.hidden.has(x),
       certs: x => ({
         ik: x,
@@ -1147,4 +1161,214 @@ test('a voice channel joins only after its identity acquires the call and releas
   } finally {
     account.store.dispose()
   }
+})
+
+describe('what participants say about their audio', () => {
+  // A frame about `who` with what it says about its audio, signed by its device.
+  const withAudio = (
+    who: Node,
+    flags: { m?: true; d?: true },
+    over: Partial<VoiceFrame> = {}
+  ): Message => {
+    const f = signedBy(who, over) as unknown as VoiceFrame
+    const sig = signTagged(who.dkKey.sk, AUDIO_TAG, audioBody({ ...f, aud: flags }, who.ik))
+    return { ...f, aud: { ...flags, sig } } as unknown as Message
+  }
+  const userIn = (n: Node, of: Node, ch = CH) =>
+    n.voice.channels(ROOM)[ch]?.find(u => u.ik === of.ik)
+  const gvoice = (s: FakeSession) => s.sent.filter(m => m.t === 'gvoice') as unknown as VoiceFrame[]
+
+  test('it is signed apart from the frame, verified and shown', async () => {
+    const net = new Net()
+    const [a, b] = ['A', 'B'].map(n => net.add(n))
+    net.connect(a, b)
+    await b.voice.join(ROOM, CH, { plan, muted: false })
+    a.audio = { muted: true, deafened: false }
+    await a.voice.join(ROOM, CH, { plan, muted: true })
+    await net.flush()
+    expect(b.voice.heardMuted(a.ik)).toBe(true)
+    expect(b.media.noted.at(-1)).toEqual([a.ik, true])
+    const f = gvoice(a.sessions.get(b.dk)!).at(-1)!
+    expect(f.aud?.m).toBe(true)
+    expect(f.aud?.d).toBeUndefined()
+    expect(verifyTagged(a.dk, AUDIO_TAG, audioBody(f, a.ik), f.aud?.sig)).toBe(true)
+    expect(userIn(b, a)).toEqual({ ik: a.ik, video: false, muted: true, deafened: false })
+    expect(userIn(a, a)).toEqual({ ik: a.ik, video: false, muted: true, deafened: false })
+    a.audio = { muted: false, deafened: false }
+    a.voice.setAudio()
+    await net.flush()
+    expect(gvoice(a.sessions.get(b.dk)!).at(-1)?.aud).toBeUndefined()
+    expect(userIn(b, a)?.muted).toBe(false)
+    expect(b.sessions.get(a.dk)!.strikes).toBe(0)
+  })
+
+  test('a reader that knows only the frame verifies one that carries it', () => {
+    const net = new Net()
+    const a = net.add('A')
+    const m = withAudio(a, { m: true, d: true }, { n: 7 }) as unknown as VoiceFrame
+    // What a peer without `aud` keeps of the frame and checks: the known fields under VOICE_TAG.
+    const { aud, ...older } = m
+    expect(voiceBody(m, a.ik)).toEqual(voiceBody(older, a.ik))
+    expect(verifyTagged(a.dk, VOICE_TAG, voiceBody(older, a.ik), older.sig)).toBe(true)
+    expect(readVoiceFrame(m)?.aud).toEqual(aud)
+    expect(readVoiceFrame(older)?.aud).toBeUndefined()
+  })
+
+  test('a malformed one is dropped alone, without a strike', async () => {
+    const net = new Net()
+    const [a, f] = ['A', 'F'].map(n => net.add(n))
+    net.connect(a, f)
+    const s = a.sessions.get(f.dk)!
+    const t = net.clock.now()
+    const bad = [
+      { m: 'yes', sig: SIG },
+      { m: true },
+      'muted',
+      { d: 1, sig: SIG },
+      { m: true, sig: 'short' },
+    ]
+    for (const [i, aud] of bad.entries()) {
+      expect(readVoiceFrame(frame({ aud }))).toEqual(readVoiceFrame(frame()))
+      await s.deliver({ ...withAudio(f, { m: true }, { n: t + i }), aud } as Message)
+      expect(userIn(a, f)).toEqual({ ik: f.ik, video: false, muted: false, deafened: false })
+    }
+    expect(s.strikes).toBe(0)
+    const extra = { ...withAudio(f, { d: true }, { n: t + 9 }) } as unknown as VoiceFrame
+    await s.deliver({ ...extra, aud: { ...extra.aud, later: 1 } } as unknown as Message)
+    expect(userIn(a, f)?.deafened).toBe(true)
+    expect(s.strikes).toBe(0)
+  })
+
+  test('a bad signature strikes, and the frame stands without it', async () => {
+    const net = new Net()
+    const [a, f] = ['A', 'F'].map(n => net.add(n))
+    net.connect(a, f)
+    const s = a.sessions.get(f.dk)!
+    const t = net.clock.now()
+    await s.deliver({ ...signedBy(f, { n: t + 1 }), aud: { m: true, sig: SIG } } as Message)
+    expect(s.strikes).toBe(1)
+    expect(names(net, inCh(a))).toEqual(['F'])
+    expect(userIn(a, f)?.muted).toBe(false)
+    // One signed for an earlier stamp doesn't verify on a newer frame.
+    const earlier = withAudio(f, { m: true }, { n: t + 2 })
+    await s.deliver(earlier)
+    expect(userIn(a, f)?.muted).toBe(true)
+    const moved = (earlier as unknown as VoiceFrame).aud
+    await s.deliver({ ...signedBy(f, { n: t + 3 }), aud: moved } as Message)
+    expect(s.strikes).toBe(2)
+    expect(userIn(a, f)?.muted).toBe(false)
+  })
+
+  test('a relay passes it on as it came', async () => {
+    const net = new Net()
+    const [f, r, l] = ['F', 'R', 'L'].map(n => net.add(n))
+    net.connect(f, r)
+    net.connect(r, l)
+    const fromF = r.sessions.get(f.dk)!
+    const toL = r.sessions.get(l.dk)!
+    const m = withAudio(f, { m: true, d: true }, { n: net.clock.now() + 1 })
+    await fromF.deliver(m)
+    await net.flush()
+    const passed = toL.sent.filter(x => x.t === 'gvoice' && x.ik === f.ik)
+    expect(passed.length).toBe(1)
+    expect(passed[0].aud).toEqual(m.aud)
+    expect(userIn(l, f)).toEqual({ ik: f.ik, video: false, muted: true, deafened: true })
+    expect(l.sessions.get(r.dk)!.strikes).toBe(0)
+    // A change of audio alone goes on too, once the gap is over.
+    await fromF.deliver(signedBy(f, { n: net.clock.now() + 2 }))
+    await net.step(1_000, 1_000)
+    expect(toL.sent.filter(x => x.t === 'gvoice' && x.ik === f.ik).length).toBe(2)
+    expect(userIn(l, f)?.muted).toBe(false)
+  })
+
+  test('changes go one per gap, the latest last', async () => {
+    const net = new Net()
+    const [a, b] = ['A', 'B'].map(n => net.add(n))
+    net.connect(a, b)
+    await a.voice.join(ROOM, CH, { plan, muted: false })
+    await net.flush()
+    const toB = a.sessions.get(b.dk)!
+    const before = gvoice(toB).length
+    const say = (muted: boolean, deafened: boolean) => {
+      a.audio = { muted, deafened }
+      a.voice.setAudio()
+    }
+    say(true, false)
+    say(true, true)
+    say(true, false)
+    say(true, true)
+    await net.flush()
+    expect(gvoice(toB).length).toBe(before + 1)
+    expect(userIn(b, a)).toEqual({ ik: a.ik, video: false, muted: true, deafened: false })
+    await net.step(1_000, 1_000)
+    expect(gvoice(toB).length).toBe(before + 2)
+    expect(userIn(b, a)).toEqual({ ik: a.ik, video: false, muted: true, deafened: true })
+    // Off and on again within a gap says nothing new.
+    say(true, false)
+    say(true, true)
+    await net.step(1_000, 1_000)
+    expect(gvoice(toB).length).toBe(before + 2)
+    a.voice.leave()
+    say(false, false)
+    await net.step(1_000, 1_000)
+    expect(gvoice(toB).at(-1)?.on).toBe(false)
+  })
+
+  test('a change made while joining goes in the join frame', async () => {
+    const net = new Net()
+    const [a, b] = ['A', 'B'].map(n => net.add(n))
+    net.connect(a, b)
+    let open = () => {}
+    a.media.hold = new Promise(r => (open = r))
+    const joining = a.voice.join(ROOM, CH, { plan, muted: false })
+    await until(() => a.voice.current() !== null)
+    a.audio = { muted: true, deafened: true }
+    a.voice.setAudio()
+    await net.flush()
+    const toB = a.sessions.get(b.dk)!
+    expect(gvoice(toB)).toEqual([])
+    open()
+    await joining
+    await net.flush()
+    expect(gvoice(toB).map(f => [f.on, f.aud?.m, f.aud?.d])).toEqual([[true, true, true]])
+    expect(userIn(b, a)).toEqual({ ik: a.ik, video: false, muted: true, deafened: true })
+  })
+
+  test('one moved into another room or channel strikes', async () => {
+    const net = new Net()
+    const [a, f] = ['A', 'F'].map(n => net.add(n))
+    net.connect(a, f)
+    const s = a.sessions.get(f.dk)!
+    const t = net.clock.now()
+    const signed = withAudio(f, { m: true }, { n: t + 1 }) as unknown as VoiceFrame
+    const otherRoom = b64u(randomBytes(32))
+    await s.deliver({ ...signedBy(f, { n: t + 1, ch: CH2 }), aud: signed.aud } as Message)
+    expect(s.strikes).toBe(1)
+    expect(userIn(a, f, CH2)?.muted).toBe(false)
+    await s.deliver({ ...signedBy(f, { n: t + 1, room: otherRoom }), aud: signed.aud } as Message)
+    expect(s.strikes).toBe(2)
+    await s.deliver(withAudio(f, { m: true }, { n: t + 2 }))
+    expect(s.strikes).toBe(2)
+    expect(userIn(a, f, CH)?.muted).toBe(true)
+  })
+
+  test('a change that could not be signed goes once it can', async () => {
+    const net = new Net()
+    const [a, b] = ['A', 'B'].map(n => net.add(n))
+    net.connect(a, b)
+    await a.voice.join(ROOM, CH, { plan, muted: false })
+    await net.flush()
+    const deps = (a.voice as unknown as { deps: { signer: () => unknown } }).deps
+    const signer = deps.signer
+    deps.signer = () => null
+    a.audio = { muted: true, deafened: false }
+    a.voice.setAudio()
+    await net.flush()
+    expect(userIn(b, a)?.muted).toBe(false)
+    deps.signer = signer
+    await net.step(1_000, 1_000)
+    a.voice.setAudio()
+    await net.flush()
+    expect(userIn(b, a)?.muted).toBe(true)
+  })
 })

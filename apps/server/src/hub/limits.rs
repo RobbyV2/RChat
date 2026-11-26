@@ -75,6 +75,8 @@ pub const ACCEPT_BURST: u32 = 5;
 pub const ACCEPT_EVERY: Duration = Duration::from_secs(3);
 pub const TYPING_USER_BURST: u32 = 8;
 pub const TYPING_USER_EVERY: Duration = Duration::from_millis(500);
+pub const AUDIO_BURST: u32 = 8;
+pub const AUDIO_EVERY: Duration = Duration::from_millis(250);
 
 /// Per-account pacing of realtime commands, across all of a user's connections on this
 /// instance.
@@ -85,6 +87,7 @@ pub(super) struct Pacing {
     pub(super) accepts: Keyed,
     pub(super) signals: Keyed,
     pub(super) typing: Keyed,
+    pub(super) audio: Keyed,
 }
 
 /// Signalling bytes one account may send at once: at least enough to negotiate with a full voice
@@ -115,7 +118,7 @@ pub(super) fn signal_policy(room_max: usize) -> Policy {
 
 impl Pacing {
     /// Every pacing map.
-    pub(super) fn each(&self) -> [&Keyed; 6] {
+    pub(super) fn each(&self) -> [&Keyed; 7] {
         let Pacing {
             voice,
             calls,
@@ -123,8 +126,9 @@ impl Pacing {
             accepts,
             signals,
             typing,
+            audio,
         } = self;
-        [voice, calls, dm_calls, accepts, signals, typing]
+        [voice, calls, dm_calls, accepts, signals, typing, audio]
     }
 }
 
@@ -143,6 +147,7 @@ impl Default for Pacing {
                 PACED_USERS_MAX,
             ),
             typing: paced(TYPING_USER_BURST, TYPING_USER_EVERY),
+            audio: paced(AUDIO_BURST, AUDIO_EVERY),
         }
     }
 }

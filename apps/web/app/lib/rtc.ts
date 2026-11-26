@@ -91,6 +91,8 @@ interface Peer {
   screen: MediaStream | null
   heard: MediaStreamTrack | null
   muted: boolean
+  // The peer said its own media state on this connection.
+  told: boolean
   camOn: boolean
   screenOn: boolean
   shareId: string | null
@@ -145,6 +147,9 @@ export class RtcManager {
   private graceMs: number
   private restartDebounceMs: number
   onChange: () => void = () => {}
+  // What the room's roster says about a peer's mic: a connection starts from it and follows it
+  // until the peer says its state itself.
+  heardMuted: (user: string) => boolean = () => false
 
   constructor(opts: RtcOptions) {
     this.signaler = 'signaler' in opts ? opts.signaler : wsSignaler(opts.send)
@@ -165,6 +170,13 @@ export class RtcManager {
 
   active(): boolean {
     return this.target !== null
+  }
+
+  noteMuted(user: string, muted: boolean) {
+    const peer = this.peers.get(user)
+    if (!peer || peer.told || peer.muted === muted) return
+    peer.muted = muted
+    this.onChange()
   }
 
   get sharing(): boolean {
@@ -454,7 +466,8 @@ export class RtcManager {
       stream: null,
       screen: null,
       heard: null,
-      muted: false,
+      muted: this.heardMuted(user),
+      told: false,
       camOn: false,
       screenOn: false,
       shareId: null,
@@ -637,6 +650,7 @@ export class RtcManager {
     )
     if (screen && !peer.screenOn) peer.shareId = nextShareId('r')
     if (!screen) peer.shareId = null
+    if (status.muted !== undefined) peer.told = true
     peer.muted = muted ?? false
     peer.camOn = cam ?? false
     peer.screenOn = screen ?? false

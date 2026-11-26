@@ -12,7 +12,6 @@ use crate::ws::access::{Access, Pace, catch_up};
 use crate::ws::calls::voice_msg;
 use crate::ws::conn::{admit_frame, frame_bucket, sub_held, subscribe};
 use crate::ws::filter::on_event;
-use crate::ws::protocol::ClientMsg;
 
 #[tokio::test]
 async fn an_overflowed_inbox_drops_stale_events_and_resyncs() {
@@ -144,6 +143,11 @@ type Client =
 
 async fn live(tag: &str) -> (AppState, std::path::PathBuf, std::net::SocketAddr) {
     let (state, path) = crate::api::test_util::temp_state(tag).await;
+    let addr = serve(&state).await;
+    (state, path, addr)
+}
+
+async fn serve(state: &AppState) -> std::net::SocketAddr {
     let trusted =
         crate::server::client_ip::ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
     let app = crate::api::routes(
@@ -164,7 +168,7 @@ async fn live(tag: &str) -> (AppState, std::path::PathBuf, std::net::SocketAddr)
         )
         .await;
     });
-    (state, path, addr)
+    addr
 }
 
 async fn dial(
@@ -569,7 +573,7 @@ async fn normal_tabs_keep_working_under_the_limits() {
         }
         tabs.push(tab);
     }
-    voice_msg(&state, "bob", 1, ClientMsg::VoiceJoin { channel_id: cid })
+    voice_msg(&state, "bob", 1, join_msg(cid))
         .await
         .expect("join");
     for tab in &mut tabs {
@@ -1064,6 +1068,151 @@ async fn typing_reaches_viewers_of_other_channels_only_where_they_can_see() {
         .expect("typing in a channel bob can see");
     assert_eq!(got["scope"], format!("c{random}"));
     assert_eq!(got["username"], "alice");
+    end_events(&state);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn voice_audio_live_and_in_snapshots_passes_the_channel_gate() {
+    use tokio_tungstenite::tungstenite::Message as T;
+    let (state, path, addr) = live("ws_voice_audio_gate").await;
+    let db = &state.db;
+    for name in ["alice", "bob", "carol"] {
+        socket_account(&state, name, 0).await;
+    }
+    let quiet = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'quiet', 'voice', 0) RETURNING id").await;
+    for name in ["alice", "bob"] {
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, 1, 1, 1)")
+            .bind(quiet)
+            .bind(format!("u:{name}"))
+            .execute(db)
+            .await
+            .expect("let in");
+    }
+    crate::api::test_util::restrict_ruled(db).await;
+    let mut bob = viewing_socket(addr, "bob").await;
+    let mut carol = viewing_socket(addr, "carol").await;
+    let mut alice = viewing_socket(addr, "alice").await;
+    let frame = |v: serde_json::Value| T::text(v.to_string());
+    alice
+        .send(frame(serde_json::json!({
+            "type": "voice_join", "channel_id": quiet, "muted": true,
+        })))
+        .await
+        .expect("join");
+    let heard = next_of_type(&mut bob, "voice_audio", Duration::from_secs(10))
+        .await
+        .expect("bob hears alice is muted");
+    assert_eq!(heard["username"], "alice");
+    assert_eq!(heard["muted"], true);
+    assert_eq!(heard["deafened"], false);
+    alice
+        .send(frame(
+            serde_json::json!({ "type": "voice_audio", "muted": true, "deafened": true }),
+        ))
+        .await
+        .expect("deafen");
+    let deaf = next_of_type(&mut bob, "voice_audio", Duration::from_secs(10))
+        .await
+        .expect("bob hears alice deafened");
+    assert_eq!(deaf["deafened"], true);
+    assert!(
+        next_among(
+            &mut carol,
+            &["voice_audio", "voice_state"],
+            Duration::from_secs(2)
+        )
+        .await
+        .is_none(),
+        "carol can't see the channel"
+    );
+    let snapshot = |frames: &[serde_json::Value]| {
+        assert!(frames.iter().all(|f| f["type"] != "voice_audio"));
+        frames
+            .iter()
+            .filter(|f| f["type"] == "voice_state")
+            .flat_map(|f| f["audio"].as_array().cloned().unwrap_or_default())
+            .map(|a| {
+                (
+                    a["username"].clone(),
+                    a["muted"].clone(),
+                    a["deafened"].clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    for (name, sees) in [("bob", true), ("carol", false)] {
+        let mut ws = dial(addr, "203.0.113.22").await.expect("socket");
+        send_auth(&mut ws, Some(&format!("{name}-token"))).await;
+        ws.send(T::text(r#"{"type":"viewing","server":"rchat"}"#))
+            .await
+            .expect("viewing");
+        let frames = frames_until(&mut ws, |f| f["type"] == "presence_snapshot").await;
+        let want: Vec<(serde_json::Value, serde_json::Value, serde_json::Value)> = match sees {
+            true => vec![("alice".into(), true.into(), true.into())],
+            false => Vec::new(),
+        };
+        assert_eq!(snapshot(&frames), want, "{name}");
+    }
+    end_events(&state);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_voice_snapshot_with_many_muted_seats_fits_a_small_outbox() {
+    use std::sync::Arc;
+    use tokio_tungstenite::tungstenite::Message as T;
+    let (state, path) = crate::api::test_util::temp_state("ws_voice_audio_outbox").await;
+    let limits = crate::limits::Limits {
+        ws_out_frames: 16,
+        ..(*state.limits).clone()
+    };
+    let state = state.with_limits(Arc::new(limits));
+    let addr = serve(&state).await;
+    socket_account(&state, "bob", 0).await;
+    let muted = crate::hub::Audio {
+        muted: true,
+        deafened: false,
+    };
+    let mut rooms = Vec::new();
+    for n in 0..3 {
+        let cid = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', $1, 'voice', 0) RETURNING id",
+        )
+        .bind(format!("room{n}"))
+        .fetch_one(&state.db)
+        .await
+        .expect("room");
+        for seat in 0..20 {
+            let conn = state.hub.next_conn();
+            state
+                .hub
+                .voice_join_with(&format!("u{n}x{seat}"), conn, ("rchat", cid), 0, muted)
+                .await
+                .expect("seat");
+        }
+        rooms.push(cid);
+    }
+    let mut ws = dial(addr, "203.0.113.23").await.expect("socket");
+    send_auth(&mut ws, Some("bob-token")).await;
+    ws.send(T::text(r#"{"type":"viewing","server":"rchat"}"#))
+        .await
+        .expect("viewing");
+    let frames = frames_until(&mut ws, |f| f["type"] == "presence_snapshot").await;
+    assert!(frames.iter().all(|f| f["type"] != "resync"), "{frames:?}");
+    let states: Vec<_> = frames
+        .iter()
+        .filter(|f| f["type"] == "voice_state")
+        .collect();
+    assert_eq!(states.len(), rooms.len());
+    for room in states {
+        assert_eq!(room["audio"].as_array().map(Vec::len), Some(20));
+    }
+    assert!(
+        next_of_type(&mut ws, "resync", Duration::from_secs(1))
+            .await
+            .is_none()
+    );
     end_events(&state);
     crate::api::test_util::done(state, path).await;
 }

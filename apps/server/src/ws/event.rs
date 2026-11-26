@@ -99,6 +99,14 @@ impl Updated {
     }
 }
 
+/// What a user in a voice room says about their own mic and sound.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatAudio {
+    pub username: String,
+    pub muted: bool,
+    pub deafened: bool,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RefusedRequest {
@@ -356,10 +364,15 @@ pub enum WsEvent {
         pings_until: i64,
         thread_pings: Vec<ThreadPings>,
     },
+    /// Who is in a voice channel now. In the snapshot a connection gets when it opens or
+    /// subscribes, `audio` also lists what each of them not at the default says about their own
+    /// mic and sound; changes after that come as `voice_audio`.
     VoiceState {
         server: String,
         channel_id: i64,
         users: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audio: Option<Vec<SeatAudio>>,
     },
     /// A user in a voice channel was muted there by a timeout, or the timeout ended; or, with
     /// `staff`, staff muted a guest for everyone in the server's voice, or ended that. Apps stop
@@ -371,6 +384,15 @@ pub enum WsEvent {
         muted: bool,
         #[serde(default)]
         staff: bool,
+    },
+    /// What a user in a voice channel says about their own mic (`muted`) and sound (`deafened`)
+    /// changed.
+    VoiceAudio {
+        server: String,
+        channel_id: i64,
+        username: String,
+        muted: bool,
+        deafened: bool,
     },
     /// A timeout of `username` in `server` started or changed (`until`, `remaining` seconds and
     /// the reason) or ended (`until` null). Only to that user and to members with the Timeout

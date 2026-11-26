@@ -603,3 +603,51 @@ test('refresh notices that arrive during a refresh lead to one more', async () =
     }
   )
 })
+
+test('the voice list in a frame says who is muted or deafened, and by whom', async () => {
+  const metadata: WidgetRoomMetadata = { server: 'music', channel_id: 15, kind: 'voice' }
+  await withWidget(
+    async (url: string) => {
+      const path = new URL(url).pathname.split('/').at(-1)!
+      if (path === 'session') return Response.json({ mode: 'voice', ticket: 'ticket' })
+      if (path === 'room') return Response.json(metadata)
+      if (path === 'view')
+        return Response.json({
+          ...metadata,
+          name: 'Lounge',
+          participate: true,
+          users: ['alice', 'bob', 'carol'],
+          messages: [],
+        })
+      throw Error('Unexpected request')
+    },
+    async (client, _sockets, _closed, ready, deliver) => {
+      await client.start()
+      await client.refresh()
+      ready()
+      const audio = (channel_id: number, username: string, muted: boolean, deafened: boolean) =>
+        deliver({ type: 'voice_audio', server: 'music', channel_id, username, muted, deafened })
+      audio(15, 'alice', true, true)
+      audio(16, 'carol', true, false)
+      expect(client.statusOf('alice')).toEqual(['Muted', 'Deafened'])
+      expect(client.statusOf('carol')).toEqual([])
+      deliver({ type: 'widget_mutes', users: ['bob', 'carol'], staff: ['carol'] })
+      expect(client.statusOf('bob')).toEqual(['Muted by a moderator'])
+      expect(client.statusOf('carol')).toEqual(['Muted by staff'])
+      deliver({
+        type: 'voice_muted',
+        server: 'music',
+        channel_id: 15,
+        username: 'carol',
+        muted: false,
+        staff: true,
+      })
+      expect(client.statusOf('carol')).toEqual([])
+      audio(15, 'alice', false, false)
+      expect(client.statusOf('alice')).toEqual([])
+      audio(15, 'alice', true, false)
+      deliver({ type: 'voice_state', server: 'music', channel_id: 15, users: ['bob'] })
+      expect(client.audio).toEqual({})
+    }
+  )
+})

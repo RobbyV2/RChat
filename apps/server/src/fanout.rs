@@ -269,6 +269,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             server,
             channel_id: _,
             users: _,
+            audio: _,
         }
         | WsEvent::VoiceMuted {
             server,
@@ -276,6 +277,13 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username: _,
             muted: _,
             staff: _,
+        }
+        | WsEvent::VoiceAudio {
+            server,
+            channel_id: _,
+            username: _,
+            muted: _,
+            deafened: _,
         } => to(vec![Target::Server(server)]),
         WsEvent::MemberTimeout {
             server,
