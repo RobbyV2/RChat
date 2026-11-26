@@ -80,6 +80,8 @@ import { GroupedRow, groupPadCls, mentionRowCls } from '../message_pane'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
+import { UnreadBanner, UnreadDivider } from '../unread_banner'
+import { p2pUnread, p2pUnreadStart } from '../../lib/unread_banner'
 import { Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
@@ -338,11 +340,7 @@ export const P2pRow = memo(function P2pRow({
   )
   return (
     <div data-row data-mid={m.id} data-event={p.id}>
-      {divider && (
-        <div data-divider className="px-4 py-1" aria-hidden>
-          <div className="h-0.5 rounded-full bg-error" />
-        </div>
-      )}
+      {divider && <UnreadDivider />}
       <div
         {...longPress((x, y) => onMenu(p, m, x, y))}
         data-flash={flash ? '' : undefined}
@@ -409,11 +407,7 @@ function P2pSystemRow({ m, divider }: { m: Message; divider: boolean }) {
   const Arrow = join ? ArrowRight : ArrowLeft
   return (
     <div data-row data-mid={m.id}>
-      {divider && (
-        <div data-divider className="px-4 py-1" aria-hidden>
-          <div className="h-0.5 rounded-full bg-error" />
-        </div>
-      )}
+      {divider && <UnreadDivider />}
       <div data-system={m.kind} className="flex items-start gap-3 px-4 py-1">
         <span
           className={`flex w-9 shrink-0 justify-center pt-0.5 ${join ? 'text-status-green' : 'text-error'}`}
@@ -455,13 +449,7 @@ function P2pPinRow({
     <PinLine
       row={{ 'data-row': '', 'data-mid': m.id, 'data-event': p.id }}
       inner={{ 'data-system': 'pin' }}
-      divider={
-        divider && (
-          <div data-divider className="px-4 py-1" aria-hidden>
-            <div className="h-0.5 rounded-full bg-error" />
-          </div>
-        )
-      }
+      divider={divider && <UnreadDivider />}
       press={longPress((x, y) => onMenu(p, x, y))}
       name={
         <span className="streamer font-medium text-on-surface">
@@ -510,11 +498,7 @@ export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
   const [before, after] = hiddenRemovedText('\u0000').split('\u0000')
   return (
     <div data-row data-mid={m.id}>
-      {divider && (
-        <div data-divider className="px-4 py-1" aria-hidden>
-          <div className="h-0.5 rounded-full bg-error" />
-        </div>
-      )}
+      {divider && <UnreadDivider />}
       <div data-p2p-hidden className="flex items-start gap-3 px-4 py-1">
         <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
           <EyeOff size={16} aria-hidden />
@@ -536,11 +520,7 @@ export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
 export function P2pSlowRow({ m, divider }: { m: Message; divider: boolean }) {
   return (
     <div data-row data-mid={m.id}>
-      {divider && (
-        <div data-divider className="px-4 py-1" aria-hidden>
-          <div className="h-0.5 rounded-full bg-error" />
-        </div>
-      )}
+      {divider && <UnreadDivider />}
       <div data-p2p-slow-hidden className="flex items-start gap-3 px-4 py-1">
         <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
           <EyeOff size={16} aria-hidden />
@@ -1096,6 +1076,24 @@ export interface ChatBodyProps {
   dataAttr: Record<string, string>
 }
 
+// The open conversation's first unread message when it isn't loaded, looked up in storage once
+// per `key` (null: not needed).
+function useFirstUnread(key: string | null) {
+  const { p2pDm } = useP2pApp()!
+  const [found, setFound] = useState<{ key: string; id: string; ts: number } | null>(null)
+  useEffect(() => {
+    if (key === null) return
+    let live = true
+    void p2pDm.firstUnread().then(r => {
+      if (live && r) setFound({ key, ...r })
+    })
+    return () => {
+      live = false
+    }
+  }, [key, p2pDm])
+  return found && found.key === key ? found : null
+}
+
 function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
   const { profileName, p2pDm, p2pFiles } = identity
@@ -1175,15 +1173,40 @@ function IdentityChatBody(props: ChatBodyProps) {
   const fresh = newSince(shared, scroll.leftAt, me ?? undefined)
   const flash = useP2pFlash(listRef, scope, focus, num, shared, scroll.settle)
 
-  const divider = useMemo(() => {
-    if (!chat.readSeq) return -1
-    return messages.findIndex(m => m.sender !== me && m.seq > chat.readSeq)
-  }, [chat, messages, me])
+  const start = useMemo(
+    () => p2pUnreadStart(messages, chat.readSeq, me, chat.more),
+    [messages, chat.readSeq, me, chat.more]
+  )
+  // Unread messages that aren't loaded (or may be older than the first loaded row).
+  const above =
+    (start.first < 0 || start.ambiguous) &&
+    !start.sent &&
+    !!chat.readSeq &&
+    (chat.unread ?? 0) > 0 &&
+    !chat.loading
+  const firstUnread = useFirstUnread(above ? `${chat.room}:${chat.ch ?? ''}:${chat.readSeq}` : null)
+  const divider = start.ambiguous
+    ? firstUnread && firstUnread.id === messages[0]?.id
+      ? 0
+      : -1
+    : start.first
   const places = useMemo(
     () => groupPlaces(messages.map(p2pCue), new Set([divider])),
     [messages, divider]
   )
   const days = useMemo(() => dayStarts(rows.map(r => r.m.created_at)), [rows])
+  const unread = useMemo(
+    () =>
+      p2pUnread(
+        messages,
+        divider,
+        !chat.newer,
+        me,
+        { count: chat.unread ?? 0, seq: chat.unreadSeq ?? 0 },
+        firstUnread
+      ),
+    [messages, divider, chat.newer, me, chat.unread, chat.unreadSeq, firstUnread]
+  )
 
   const rowJump = useCallback(
     (n: number) => {
@@ -1239,6 +1262,16 @@ function IdentityChatBody(props: ChatBodyProps) {
         {props.header}
         {props.above}
         <div className="relative flex min-h-0 flex-1 flex-col">
+          {(divider >= 0 || above) && (
+            <UnreadBanner
+              unread={unread}
+              onJump={() => {
+                const id = divider >= 0 ? messages[divider].id : firstUnread?.id
+                if (id) void p2pDm.jumpTo(id)
+              }}
+              onMarkRead={() => p2pDm.dismissUnread(key)}
+            />
+          )}
           {scroll.positioned && fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />}
           <div ref={listRef} onScroll={scroll.onScroll} className="flex-1 overflow-y-auto py-3">
             {props.intro}

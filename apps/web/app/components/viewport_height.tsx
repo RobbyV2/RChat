@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { ArrowDown, LoaderCircle, X } from 'lucide-react'
+import { ArrowDown, LoaderCircle } from 'lucide-react'
 import { useStore, type Focus } from '../lib/store'
 import {
   EDITABLE,
@@ -145,7 +145,7 @@ export function useChatScroll(opts: {
       el.scrollTop = divider
         ? Math.max(
             0,
-            divider.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 48
+            divider.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 96
           )
         : el.scrollHeight
       settle()
@@ -255,10 +255,17 @@ export function useScrollAnchor(
   }, [ref])
 }
 
-export function OlderLoading({ newer = false }: { newer?: boolean }) {
+// `lower`: below the new messages banner.
+export function OlderLoading({
+  newer = false,
+  lower = false,
+}: {
+  newer?: boolean
+  lower?: boolean
+}) {
   return (
     <div
-      className={`pointer-events-none absolute inset-x-0 z-10 flex justify-center ${newer ? 'bottom-2' : 'top-2'}`}
+      className={`pointer-events-none absolute inset-x-0 z-10 flex justify-center ${newer ? 'bottom-2' : lower ? 'top-14' : 'top-2'}`}
     >
       <span
         role="status"
@@ -345,23 +352,6 @@ export function useFocusMessage(
     return () => clearTimeout(t)
   }, [flash])
   return flash
-}
-
-export function UnreadBar({ onJump, onDismiss }: { onJump: () => void; onDismiss: () => void }) {
-  return (
-    <div className="absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-primary-container px-4 py-1.5 text-xs text-on-primary-container shadow-elevation-1">
-      <button onClick={onJump} className="min-w-0 flex-1 truncate text-left font-medium">
-        New messages above · Jump to first unread
-      </button>
-      <button
-        title="Mark as read"
-        onClick={onDismiss}
-        className="shrink-0 rounded-full p-1 hover:bg-on-primary-container/10"
-      >
-        <X size={14} />
-      </button>
-    </div>
-  )
 }
 
 export function PresentBar({ onJump, count = 0 }: { onJump: () => void; count?: number }) {

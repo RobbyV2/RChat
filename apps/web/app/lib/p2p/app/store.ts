@@ -81,6 +81,9 @@ export interface P2pChat {
   newer?: boolean
   // The read marker when the conversation was opened: the unread line goes after it.
   readSeq: number
+  // How many unread messages it had when it opened, and its newest arrival number then.
+  unread?: number
+  unreadSeq?: number
   // Calls missed here that the caller hasn't logged (yet).
   missed: MissedCall[]
 }

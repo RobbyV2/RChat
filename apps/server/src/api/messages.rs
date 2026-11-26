@@ -3981,6 +3981,112 @@ pub(crate) async fn unreads(
     Ok(Json(Unreads { items, more }))
 }
 
+/// Where to count unread messages from.
+#[derive(Deserialize, IntoParams)]
+pub struct UnreadCountQuery {
+    /// Count the messages after this id. Default: the caller's stored read position for the
+    /// scope (0 if never read).
+    #[param(example = 340)]
+    after: Option<i64>,
+}
+
+/// The messages from others after a position in a channel or DM.
+#[derive(Serialize, ToSchema)]
+pub struct UnreadCount {
+    /// How many, at most 100.
+    #[schema(example = 15)]
+    pub count: i64,
+    /// More than `count` follow.
+    pub more: bool,
+    /// Unix seconds of the first one; `null` when there are none.
+    #[schema(example = 1764102000)]
+    pub since: Option<i64>,
+    /// Id of the newest one counted; `null` when there are none.
+    #[schema(example = 352)]
+    pub latest: Option<i64>,
+}
+
+const UNREAD_COUNT_MAX: i64 = 100;
+
+/// Count unread messages in a channel or DM
+///
+/// Counts the messages by other users after `after` (or the caller's read position) in a text
+/// channel (top-level messages only) or a DM, oldest first, at most 100, with the time of the
+/// first one. The caller must be able to read the scope: the same checks as listing its
+/// messages, and without read-history access only messages since joining count. Requires a
+/// bearer token. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/unreads/{scope}", tag = "Messages", params(("scope" = String, Path, description = "`c<channel id>` or `d<dm id>`"), UnreadCountQuery), responses((status = 200, description = "The count (at most 100, with `more` when more follow), the time of the first unread message and the id of the newest one counted", body = UnreadCount), (status = 400, description = "`scope` is not `c` or `d` followed by digits (`Invalid scope`), or a non-numeric `after` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel or DM does not exist or you cannot read it (hidden channel, a server you have no access to or are banned from, a DM you are not in, or a participant's account is being deleted); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+pub(crate) async fn unread_count(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    headers: HeaderMap,
+    Path(scope): Path<String>,
+    Query(q): Query<UnreadCountQuery>,
+) -> Result<Json<UnreadCount>, ApiError> {
+    let db = &state.read();
+    let (id, cond, min_ts, scope) = match ReadTarget::parse(&scope) {
+        Some(ReadTarget::Channel(id)) => {
+            let channel = resolve_channel(
+                db,
+                id,
+                Some(&user),
+                &Proof::headers(&headers, &state.limits),
+            )
+            .await?;
+            let cond = match channel.shows_membership_notices() {
+                true => "m.channel_id = $1 AND m.thread_root_id IS NULL",
+                false => {
+                    "m.channel_id = $1 AND m.thread_root_id IS NULL AND m.kind NOT IN ('join', 'leave')"
+                }
+            };
+            (id, cond, channel.read_since(db).await?, format!("c{id}"))
+        }
+        Some(ReadTarget::Dm(id)) => {
+            resolve_dm(db, id, &user).await?;
+            (id, "m.dm_id = $1", None, format!("d{id}"))
+        }
+        Some(ReadTarget::Thread(_)) | None => return Err(bad("Invalid scope")),
+    };
+    let after = match q.after {
+        Some(after) => after,
+        None => sqlx::query_scalar::<_, i64>(
+            "SELECT last_read FROM read_state WHERE username = $1 AND scope = $2",
+        )
+        .bind(&user.username)
+        .bind(&scope)
+        .fetch_optional(db)
+        .await?
+        .unwrap_or(0),
+    };
+    let sql = format!(
+        "SELECT m.id, m.created_at FROM messages m WHERE {cond} AND m.id > $2 AND m.created_at >= $3 AND m.author <> $4 AND {LIVE_AUTHOR} ORDER BY m.id ASC LIMIT $5"
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .bind(after)
+        .bind(min_ts.unwrap_or(i64::MIN))
+        .bind(&user.username)
+        .bind(UNREAD_COUNT_MAX + 1)
+        .fetch_all(db)
+        .await?;
+    let more = rows.len() as i64 > UNREAD_COUNT_MAX;
+    let counted = &rows[..rows.len().min(UNREAD_COUNT_MAX as usize)];
+    let since = match counted.first() {
+        Some(r) => Some(r.try_get::<i64, _>(1)?),
+        None => None,
+    };
+    let latest = match counted.last() {
+        Some(r) => Some(r.try_get::<i64, _>(0)?),
+        None => None,
+    };
+    Ok(Json(UnreadCount {
+        count: counted.len() as i64,
+        more,
+        since,
+        latest,
+    }))
+}
+
 /// Mark a channel, DM or thread read
 ///
 /// Stores the last-read message id of the caller for a scope (`c<channel id>` or `d<dm id>`). The
@@ -7145,6 +7251,163 @@ mod tests {
         .await;
         assert!(ok.is_ok());
         done(state, path).await;
+    }
+
+    async fn count_of(
+        state: &AppState,
+        name: &str,
+        scope: &str,
+        after: Option<i64>,
+    ) -> Result<(i64, bool, Option<i64>, Option<i64>), StatusCode> {
+        unread_count(
+            State(state.clone()),
+            Authed(mem_user(name, false)),
+            HeaderMap::new(),
+            Path(scope.to_string()),
+            Query(UnreadCountQuery { after }),
+        )
+        .await
+        .map(|Json(c)| (c.count, c.more, c.since, c.latest))
+        .map_err(|ApiError(status, _, _)| status)
+    }
+
+    #[tokio::test]
+    async fn unread_count_counts_others_after_a_position_up_to_its_cap() {
+        let (state, path) = temp_state("unread_count").await;
+        let db = &state.db;
+        let general = general_id(db).await;
+        let t = now();
+        add_member(db, "rchat", "alice", 0, 0, t).await;
+        add_member(db, "rchat", "bob", 0, 0, t).await;
+        let c = format!("c{general}");
+        let first = insert(db, Some(general), None, None, "bob").await;
+        let second = insert(db, Some(general), None, None, "bob").await;
+        insert(db, Some(general), None, None, "alice").await;
+        insert(db, Some(general), None, Some(first), "bob").await;
+        let last = insert(db, Some(general), None, None, "bob").await;
+        sqlx::query("UPDATE messages SET created_at = $1 WHERE id = $2")
+            .bind(t - 50)
+            .bind(first)
+            .execute(db)
+            .await
+            .expect("time");
+        assert_eq!(
+            count_of(&state, "alice", &c, None).await,
+            Ok((3, false, Some(t - 50), Some(last)))
+        );
+        assert_eq!(
+            count_of(&state, "alice", &c, Some(first))
+                .await
+                .map(|c| c.0),
+            Ok(2)
+        );
+        assert_eq!(
+            count_of(&state, "alice", &c, Some(last)).await,
+            Ok((0, false, None, None))
+        );
+        sqlx::query("INSERT INTO read_state(username, scope, last_read) VALUES('alice', $1, $2)")
+            .bind(&c)
+            .bind(second)
+            .execute(db)
+            .await
+            .expect("read state");
+        assert_eq!(
+            count_of(&state, "alice", &c, None).await.map(|c| c.0),
+            Ok(1)
+        );
+        assert_eq!(
+            count_of(&state, "alice", &format!("c00{general}"), None)
+                .await
+                .map(|c| c.0),
+            Ok(1)
+        );
+        assert_eq!(count_of(&state, "bob", &c, None).await.map(|c| c.0), Ok(1));
+        let mut ids = Vec::new();
+        for _ in 0..105 {
+            ids.push(insert(db, Some(general), None, None, "bob").await);
+        }
+        let (count, more, _, latest) = count_of(&state, "alice", &c, Some(last))
+            .await
+            .expect("capped");
+        assert_eq!((count, more, latest), (100, true, Some(ids[99])));
+        for bad_scope in ["t1", "c", "cx", "x1", "c1x", "d-1"] {
+            assert_eq!(
+                count_of(&state, "alice", bad_scope, None).await,
+                Err(StatusCode::BAD_REQUEST),
+                "{bad_scope}"
+            );
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn unread_count_needs_access_and_keeps_to_read_history() {
+        let (state, path) = temp_state("unread_count_access").await;
+        let db = &state.db;
+        let t = now();
+        add_member(db, "rchat", "alice", 0, 0, t).await;
+        add_member(db, "rchat", "bob", 0, 0, t).await;
+        let private = add_channel(db, "private", "text").await;
+        perm(db, private, "u:alice", 0).await;
+        insert(db, Some(private), None, None, "bob").await;
+        assert_eq!(
+            count_of(&state, "alice", &format!("c{private}"), None).await,
+            Err(StatusCode::NOT_FOUND)
+        );
+        assert_eq!(
+            count_of(&state, "alice", "c999999", None).await,
+            Err(StatusCode::NOT_FOUND)
+        );
+        let nohist = add_channel(db, "nohist", "text").await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 0)")
+            .bind(nohist)
+            .execute(db)
+            .await
+            .expect("no history perm");
+        crate::api::test_util::restrict_ruled(db).await;
+        let old = insert(db, Some(nohist), None, None, "bob").await;
+        sqlx::query("UPDATE messages SET created_at = $1 WHERE id = $2")
+            .bind(t - 100)
+            .bind(old)
+            .execute(db)
+            .await
+            .expect("old");
+        let fresh = insert(db, Some(nohist), None, None, "bob").await;
+        assert_eq!(
+            count_of(&state, "alice", &format!("c{nohist}"), Some(0)).await,
+            Ok((1, false, Some(now_of(db, fresh).await), Some(fresh)))
+        );
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let note = insert(db, None, Some(dm), None, "bob").await;
+        insert(db, None, Some(dm), None, "alice").await;
+        let d = format!("d{dm}");
+        assert_eq!(
+            count_of(&state, "alice", &d, None)
+                .await
+                .map(|c| (c.0, c.3)),
+            Ok((1, Some(note)))
+        );
+        assert_eq!(count_of(&state, "bob", &d, None).await.map(|c| c.0), Ok(1));
+        add_member(db, "rchat", "carol", 0, 0, t).await;
+        assert_eq!(
+            count_of(&state, "carol", &d, None).await,
+            Err(StatusCode::NOT_FOUND)
+        );
+        done(state, path).await;
+    }
+
+    async fn now_of(db: &Db, id: i64) -> i64 {
+        sqlx::query_scalar("SELECT created_at FROM messages WHERE id = $1")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .expect("created_at")
     }
 
     #[tokio::test]

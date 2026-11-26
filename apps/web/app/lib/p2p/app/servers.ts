@@ -705,6 +705,8 @@ export function createServersPart(
                 more: false,
                 loading: !(st.chat?.room === cur.room && st.chat.ch === ch),
                 readSeq: st.servers[cur.room]?.chans[ch]?.readSeq ?? 0,
+                unread: st.servers[cur.room]?.chans[ch]?.unread ?? 0,
+                unreadSeq: st.servers[cur.room]?.seq ?? 0,
                 missed: [],
               }
             : null,

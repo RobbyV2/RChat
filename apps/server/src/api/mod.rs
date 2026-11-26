@@ -2529,6 +2529,7 @@ fn api_routes(
             get(messages::thread_messages).post(messages::send_thread_message),
         )
         .route("/unreads", get(messages::unreads))
+        .route("/unreads/{scope}", get(messages::unread_count))
         .route("/read", post(messages::mark_read))
         .route("/read/batch", post(messages::mark_read_batch))
         .route("/settings", get(admin::get_settings))

@@ -65,6 +65,8 @@ import { Perm, hasPerm, type CallLog, type Member, type Message, type UserRef } 
 import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
+import { UnreadBanner, UnreadDivider } from './unread_banner'
+import { hostedUnread, type UnreadCount } from '../lib/unread_banner'
 import { DateDivider } from './date_divider'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
@@ -83,7 +85,6 @@ import {
   EdgeSentinel,
   OlderLoading,
   PresentBar,
-  UnreadBar,
   useChatScroll,
   useFocusMessage,
   useScrollAnchor,
@@ -444,11 +445,46 @@ export function useMemberLookup(server: string | null) {
   )
 }
 
-const unreadDivider = (
-  <div data-divider className="px-4 py-1" aria-hidden>
-    <div className="h-0.5 rounded-full bg-error" />
-  </div>
-)
+const unreadDivider = <UnreadDivider />
+
+// The new messages banner of a hosted list: counted from the loaded rows, or asked of the server
+// while the first unread message or the newest one isn't loaded (`away`: the unread part is above
+// or below what is loaded).
+function useHostedUnread(
+  scope: string | null,
+  messages: Message[],
+  first: number,
+  away: boolean,
+  tail: boolean,
+  after: number,
+  me: string | undefined
+) {
+  const { api } = useAccount()
+  const ask = scope !== null && (away || (first >= 0 && !tail))
+  const key = `${scope}:${after}`
+  const [counted, setCounted] = useState<{ key: string; count: UnreadCount } | null>(null)
+  useEffect(() => {
+    if (!ask || scope === null) return
+    let live = true
+    api.getUnreadCount(scope, after).then(
+      count => {
+        if (live) setCounted({ key, count })
+      },
+      () => {}
+    )
+    return () => {
+      live = false
+    }
+  }, [api, ask, scope, after, key])
+  const rows = useMemo(
+    () => messages.map(m => ({ id: m.id, author: m.author.username, created_at: m.created_at })),
+    [messages]
+  )
+  return useMemo(
+    () => hostedUnread(rows, first, tail, me, after, counted?.key === key ? counted.count : null),
+    [rows, first, tail, me, after, counted, key]
+  )
+}
 
 interface RowProps {
   m: Message
@@ -840,8 +876,23 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       ]),
     [messages, myName, groupIds]
   )
-  const mark = unreadMark(ids, anchor, older?.more !== false, lastOwn(messages, me?.username))
+  const ownLast = lastOwn(messages, me?.username)
+  const mark = unreadMark(ids, anchor, older?.more !== false, ownLast)
   const dividerIndex = mark.divider
+  // Opened in older history: every loaded message is at or before the read marker.
+  const below =
+    !!anchor && dividerIndex < 0 && !mark.above && detached && (ids.at(-1) ?? 0) <= anchor
+  const unread = useHostedUnread(
+    scope,
+    messages,
+    dividerIndex,
+    mark.above || below,
+    !detached,
+    Math.max(anchor ?? 0, ownLast),
+    myName
+  )
+  const bannered =
+    !!scope && (mark.above || dividerIndex >= 0 || (below && (unread.count ?? 0) > 0))
   const places = useMemo(
     () =>
       messagePlaces(
@@ -1114,16 +1165,17 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           {wide && <SelectionBar scope={scope} sheet={false} />}
           <BulkJobBar scope={scope} />
           <div className="relative flex min-h-0 flex-1 flex-col">
-            {older?.loading ? (
-              <OlderLoading />
-            ) : (
-              mark.above &&
-              scope && (
-                <UnreadBar
-                  onJump={() => void jumpToUnread()}
-                  onDismiss={() => dismissUnread(scope)}
-                />
-              )
+            {older?.loading && <OlderLoading lower={bannered} />}
+            {bannered && scope && (
+              <UnreadBanner
+                unread={unread}
+                onJump={() => {
+                  const line = listRef.current?.querySelector('[data-divider]')
+                  if (dividerIndex >= 0 && line) line.scrollIntoView({ block: 'center' })
+                  else void jumpToUnread()
+                }}
+                onMarkRead={() => dismissUnread(scope)}
+              />
             )}
             {newer?.loading && <OlderLoading newer />}
             {detached && !newer?.loading && scope && (

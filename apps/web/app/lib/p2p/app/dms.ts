@@ -336,6 +336,8 @@ export function createDmsPart(
           more: false,
           loading: st.chat?.room !== room,
           readSeq: r?.readSeq ?? 0,
+          unread: r?.unread ?? 0,
+          unreadSeq: r?.lastSeq ?? 0,
           missed: st.chat?.room === room ? st.chat.missed : [],
         },
         pins: null,
@@ -648,6 +650,22 @@ export function createDmsPart(
       const r = useP2p.getState().rooms[room]
       if (!r || (!r.unread && !r.pings)) return
       void withDms(d => d.markRead(room))
+    },
+
+    // The open conversation's first unread message (in storage when not loaded), for its banner.
+    async firstUnread(): Promise<{ id: string; ts: number } | null> {
+      const chat = useP2p.getState().chat
+      const s = dbNow()
+      const me = meNow()
+      if (!chat || !chat.readSeq || !s || !me) return null
+      const r = await s.firstMessageAfter(chat.room, chat.readSeq, me, chat.ch).catch(() => null)
+      return r ? { id: r.id, ts: r.effTs } : null
+    },
+
+    // Marks the open conversation read and drops its new messages line and banner.
+    dismissUnread(key: string) {
+      p2pDm.markRead(key)
+      useP2p.setState(st => (st.chat?.readSeq ? { chat: { ...st.chat, readSeq: 0 } } : {}))
     },
 
     // Every conversation with unread messages or pings. Only the tab that runs P2P can.

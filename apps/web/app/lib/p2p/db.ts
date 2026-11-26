@@ -597,6 +597,48 @@ export class P2pStore {
   outbox(room: string): Promise<OutboxRecord[]> {
     return this.db.getAllFromIndex('outbox', 'room', room)
   }
+
+  // The first message from someone else that arrived after `seq`: in a conversation, by arrival;
+  // in one channel of a P2P server (`ch`, top level), newest first back to the first one already
+  // read. It looks at `max` events at most.
+  async firstMessageAfter(
+    room: string,
+    seq: number,
+    me: string,
+    ch?: string,
+    max = 2000
+  ): Promise<EventRecord | null> {
+    const theirs = (r: EventRecord) => r.type === 'msg' && r.sender !== me && !r.redacted
+    const tx = this.db.transaction('events')
+    let found: EventRecord | null = null
+    let seen = 0
+    if (ch === undefined) {
+      const range = IDBKeyRange.bound([room, seq + 1], [room, Infinity])
+      for (
+        let cur = await tx.store.index('room_seq').openCursor(range);
+        cur && seen < max && !found;
+        cur = await cur.continue()
+      ) {
+        seen += 1
+        if (theirs(cur.value)) found = cur.value
+      }
+    } else {
+      const range = IDBKeyRange.bound([room, ch, ''], [room, ch, '\uffff'])
+      for (
+        let cur = await tx.store.index('room_chan_sort').openCursor(range, 'prev');
+        cur && seen < max;
+        cur = await cur.continue()
+      ) {
+        seen += 1
+        const r = cur.value
+        if (r.thread !== undefined || r.type !== 'msg') continue
+        if (r.seq <= seq) break
+        if (theirs(r)) found = r
+      }
+    }
+    await tx.done.catch(() => {})
+    return found
+  }
 }
 
 export const removeP2pDb = (name: string) => deleteDB(name)

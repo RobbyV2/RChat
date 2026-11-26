@@ -246,6 +246,7 @@ impl Modify for Bearer {
         super::messages::message_locations,
         super::messages::search,
         super::messages::unreads,
+        super::messages::unread_count,
         super::messages::mark_read,
         super::messages::mark_read_batch,
         super::reactions::add_reaction,

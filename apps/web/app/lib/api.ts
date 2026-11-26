@@ -73,6 +73,7 @@ import type {
 import type { UploadExpiry, UploadExpiryState } from './upload_expiry'
 import type { LayoutOrder } from './categories'
 import type { Page } from './lists'
+import type { UnreadCount } from './unread_banner'
 import type { Privacy, Relation, RequestStatus } from './friends'
 import type { Secret } from './password'
 import type {
@@ -904,6 +905,8 @@ export const endpoints = (c: ApiClient) => ({
     return c.page<SearchResult>(`/search?${qs.toString()}`, signal)
   },
   getUnreads: () => c.req<{ items: Unread[]; more: boolean }>('GET', '/unreads'),
+  getUnreadCount: (scope: string, after: number) =>
+    c.req<UnreadCount>('GET', `/unreads/${encodeURIComponent(scope)}?after=${after}`),
   postRead: (scope: string, last_read: number, keepalive = false, pings_until?: number) =>
     c.req<void>(
       'POST',
