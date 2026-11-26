@@ -15,11 +15,13 @@ import {
 import { serverAdminPerms, useStore, viewKey } from '../lib/store'
 import { Perm, hasPerm, type Message, type Role, type UserRef } from '../lib/types'
 import {
-  MENTION_QUERY,
-  SUGGEST_DEBOUNCE,
+  dmPeople,
+  withYouLast,
   groupSuggestions,
+  MENTION_QUERY,
   mentionText,
   recentAuthors,
+  SUGGEST_DEBOUNCE,
   suggestKey,
   suggestPeople,
 } from '../lib/mention_suggest'
@@ -44,10 +46,26 @@ const NO_PEOPLE: UserRef[] = []
 const CACHE_MAX = 200
 
 // Mention suggestions: recent authors in view, then server members that match the query
-// (debounced and cached), then cached members. DMs suggest the other person.
+// (debounced and cached), then cached members. DMs suggest the other person and you. Mentioning
+// yourself never pings you.
 function useMentionSearch(listKey: string | null, query: string | null) {
   const api = useApi()
-  const me = useStore(s => s.me?.username ?? null)
+  const meName = useStore(s => s.me?.username ?? null)
+  const meShown = useStore(s => s.me?.display_name ?? '')
+  const meKind = useStore(s => s.me?.avatar_kind ?? 'identicon')
+  const meColor = useStore(s => s.me?.avatar_color ?? null)
+  const meRef = useMemo<UserRef | null>(
+    () =>
+      meName === null
+        ? null
+        : {
+            username: meName,
+            display_name: meShown,
+            avatar_kind: meKind,
+            avatar_color: meColor,
+          },
+    [meName, meShown, meKind, meColor]
+  )
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const dmOther = useStore(s => {
     const v = s.view
@@ -84,7 +102,7 @@ function useMentionSearch(listKey: string | null, query: string | null) {
   return useCallback(
     (q: string): UserRef[] => {
       void tick
-      if (dmOther) return suggestPeople(q, [[dmOther]], () => false)
+      if (dmOther) return suggestPeople(q, [dmPeople(dmOther, meRef)], () => false)
       if (!server) return []
       let remote: UserRef[] = NO_PEOPLE
       for (let n = q.length; n > 0; n -= 1) {
@@ -101,11 +119,14 @@ function useMentionSearch(listKey: string | null, query: string | null) {
       const shown = (group: readonly UserRef[]) => group.map(u => looks.get(u.username) ?? u)
       return suggestPeople(
         q,
-        [shown(recentAuthors(own)), shown(recentAuthors(parent)), remote, shown(list)],
-        name => name === me || info?.[name] === null
+        withYouLast(
+          [shown(recentAuthors(own)), shown(recentAuthors(parent)), remote, shown(list)],
+          meRef && shown([meRef])[0]
+        ),
+        name => info?.[name] === null
       )
     },
-    [cache, tick, dmOther, server, own, parent, list, info, me, shownOf]
+    [cache, tick, dmOther, meRef, server, own, parent, list, info, shownOf]
   )
 }
 

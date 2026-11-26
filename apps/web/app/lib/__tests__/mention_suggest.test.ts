@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { findTrigger } from '../autocomplete'
 import {
+  dmPeople,
+  withYouLast,
   MENTION_QUERY,
   matchesPerson,
   recentAuthors,
@@ -57,6 +59,28 @@ describe('suggestPeople', () => {
     const msgs = ['a', 'b', 'a', 'c', 'b'].map(n => ({ author: user(n) }))
     expect(names(recentAuthors(msgs))).toEqual(['b', 'c', 'a'])
     expect(names(recentAuthors(msgs, 2))).toEqual(['b', 'c'])
+  })
+
+  test('in a channel you come after everyone else, never first', () => {
+    const me = user('alice')
+    const groups = [
+      [me, user('albert')],
+      [user('alfred'), me],
+    ]
+    const got = suggestPeople('al', withYouLast(groups, me), () => false)
+    expect(got.map(u => u.username)).toEqual(['albert', 'alfred', 'alice'])
+    expect(withYouLast(groups, null)).toEqual(groups)
+  })
+
+  test('a DM suggests the other person and you, and you once in your own DM', () => {
+    const bob = user('bob')
+    const me = user('alice')
+    expect(dmPeople(bob, me).map(u => u.username)).toEqual(['bob', 'alice'])
+    expect(dmPeople(me, me).map(u => u.username)).toEqual(['alice'])
+    expect(dmPeople(bob, null).map(u => u.username)).toEqual(['bob'])
+    expect(suggestPeople('al', [dmPeople(bob, me)], () => false).map(u => u.username)).toEqual([
+      'alice',
+    ])
   })
 
   test('cache keys are per server and lowercase query', () => {

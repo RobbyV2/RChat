@@ -409,8 +409,9 @@ export const usePeopleKey = (messages: Message[], extra: string[] = []) => {
   return authorKey(messages, [...extra, ...mentioned])
 }
 
+// A message that mentions you: a warm wash and a bar on its left edge, in both themes.
 export const mentionRowCls =
-  'bg-primary/8 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary hover:bg-primary/12'
+  'bg-mention before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-mention-bar hover:bg-mention-hover'
 
 // Forwarded text is a copy of someone else's words: its mentions never highlight or ping.
 export const mentionsMe = (m: Message, me: string | undefined) =>

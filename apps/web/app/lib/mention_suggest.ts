@@ -12,7 +12,7 @@ export const matchesPerson = (u: UserRef, q: string) => {
 }
 
 // Mention suggestions: groups in order, no duplicate usernames, prefix match on username or
-// display name, at most `max`. `skip` removes people (you, known non-members).
+// display name, at most `max`. `skip` removes people (known non-members).
 export const suggestPeople = (
   query: string,
   groups: readonly (readonly UserRef[])[],
@@ -30,6 +30,17 @@ export const suggestPeople = (
     }
   return out
 }
+
+// A channel's groups with you taken out of them and put last, so you never come first.
+export const withYouLast = (
+  groups: readonly (readonly UserRef[])[],
+  me: UserRef | null
+): (readonly UserRef[])[] =>
+  me ? [...groups.map(g => g.filter(u => u.username !== me.username)), [me]] : [...groups]
+
+// Who a DM's composer suggests: the other person, then you (once in the DM with yourself).
+export const dmPeople = (other: UserRef, me: UserRef | null): UserRef[] =>
+  me && me.username !== other.username ? [other, me] : [other]
 
 // Newest distinct authors first.
 export const recentAuthors = <T extends { author: UserRef }>(messages: readonly T[], max = 50) => {

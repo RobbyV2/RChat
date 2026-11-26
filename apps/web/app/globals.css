@@ -39,6 +39,9 @@
   --color-status-green: #7dd97b;
   --color-status-yellow: #ffd54f;
   --color-status-red: #f2b8b5;
+  --color-mention: rgb(255 213 79 / 0.1);
+  --color-mention-hover: rgb(255 213 79 / 0.16);
+  --color-mention-bar: #ffd54f;
   --color-danger: #dc362e;
   --color-on-danger: #ffffff;
   --color-mute: #d32f2f;
@@ -158,6 +161,9 @@
   --color-status-green: #2e7d32;
   --color-status-yellow: #b26a00;
   --color-status-red: #b3261e;
+  --color-mention: rgb(245 178 0 / 0.13);
+  --color-mention-hover: rgb(245 178 0 / 0.2);
+  --color-mention-bar: #b26a00;
   --color-mute-fg: #b3261e;
   --color-code-blue: #00639a;
   --color-code-orange: #9a4521;
@@ -202,6 +208,9 @@
   --color-inverse-primary: #6750a4;
   --color-status-green: #7dd97b;
   --color-status-yellow: #ffd54f;
+  --color-mention: rgb(255 213 79 / 0.1);
+  --color-mention-hover: rgb(255 213 79 / 0.16);
+  --color-mention-bar: #ffd54f;
   --color-status-red: #f2b8b5;
   --color-mute-fg: #ff8a80;
   color: var(--color-on-surface);
