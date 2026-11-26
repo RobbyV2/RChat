@@ -2,21 +2,39 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { endOfList, shortSearch } from '../search'
 import { resetSessionCaches } from '../store'
-import { SearchView } from '../../components/search_panel'
+import { SearchView, type SearchHitView } from '../../components/search_panel'
 
 afterAll(resetSessionCaches)
 
 const OLDER = 'Search older messages'
 
+const HIT: SearchHitView = {
+  key: '1',
+  channel: 'general',
+  server: 'club',
+  avatar: null,
+  name: 'bob',
+  createdAt: 1_700_000_000,
+  content: 'we meet at noon',
+  own: false,
+  forwarded: false,
+  file: null,
+  onOpen: () => {},
+}
+
 const view = (
   q: string,
-  { loading = false, hasMore = true }: { loading?: boolean; hasMore?: boolean } = {},
+  {
+    loading = false,
+    hasMore = true,
+    hits = [],
+  }: { loading?: boolean; hasMore?: boolean; hits?: SearchHitView[] } = {},
   scrollForMore: ((q: string) => boolean) | null = shortSearch
 ) =>
   renderToStaticMarkup(
     <SearchView
       channels={undefined}
-      hits={[]}
+      hits={hits}
       loading={loading}
       hasMore={hasMore}
       pageKey="0:a"
@@ -36,6 +54,15 @@ describe('search panel paging', () => {
   test('short text offers older messages at the end of the list', () => {
     const offer = new RegExp(`<button[^>]*cursor-pointer[^>]*>${OLDER}</button>`)
     expect(offer.test(view('we'))).toBe(true)
+  })
+
+  test('a first page that is loading shows placeholders and no footer', () => {
+    for (const html of [view('we', { loading: true }), view('weekly', { loading: true })]) {
+      expect(html).toContain('data-skeleton="messages"')
+      expect(html).not.toContain('Searching')
+      expect(html).not.toContain(OLDER)
+    }
+    expect(view('we', { loading: true, hits: [HIT] })).not.toContain('data-skeleton')
   })
 
   test('no offer while a page loads, after the last page, for longer text, or where pages load on sight', () => {
@@ -61,8 +88,8 @@ describe('end of the search list', () => {
   test('for short text the end of the list keeps its height while a page loads', () => {
     const footer = (html: string) =>
       /<div class="([^"]*)"><(?:button|p)[^>]*>(Search older messages|Searching)</.exec(html)
-    const idle = footer(view('we'))
-    const busy = footer(view('we', { loading: true }))
+    const idle = footer(view('we', { hits: [HIT] }))
+    const busy = footer(view('we', { loading: true, hits: [HIT] }))
     expect(idle?.[2]).toBe('Search older messages')
     expect(busy?.[2]).toBe('Searching')
     expect(/\bh-\d+\b/.test(idle?.[1] ?? '')).toBe(true)

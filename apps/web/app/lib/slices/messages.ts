@@ -437,7 +437,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   const headLoad = async <T>(key: string, run: () => Promise<T>): Promise<T> => {
     const mine = heads
     mine.set(key, (mine.get(key) ?? 0) + 1)
-    if (get().messages[key]?.length) set(s => ({ stale: { ...s.stale, [key]: true } }))
+    const cached = get().messages[key]
+    if (!cached || cached.length) set(s => ({ stale: { ...s.stale, [key]: true } }))
     try {
       const page = await run()
       if (mine !== heads) throw new Ended()

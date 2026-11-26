@@ -53,10 +53,10 @@ import {
   Masked,
   PanelHeader,
   Sentinel,
-  SkeletonRows,
   textBtn,
   useEscape,
 } from './ui'
+import { RowsSkeleton } from './skeletons'
 
 // The unseen friend pings (requests and accepted requests), for badges.
 export const useFriendPings = () => useStore(s => scopePings(badgePings(s), FRIENDS_SCOPE))
@@ -638,7 +638,7 @@ function AccountFriendsSection({ max }: { max: number }) {
       )}
       <Heading>Online friends</Heading>
       {friends.length === 0 && loading ? (
-        <SkeletonRows rows={2} label="Loading friends" />
+        <RowsSkeleton rows={2} label="Loading friends" />
       ) : friends.length === 0 ? (
         <p className="px-2 py-2 text-sm text-on-surface-variant">No friends online right now.</p>
       ) : (

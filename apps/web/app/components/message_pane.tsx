@@ -109,6 +109,7 @@ import { isNotice, isSystem } from '../lib/system_messages'
 import { MessageTime, ShortTime } from './timestamp'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
+import { MessageListSkeleton } from './skeletons'
 import {
   BulkJobBar,
   SelectButton,
@@ -939,6 +940,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     },
   })
   const positioned = scroll.positioned
+  // The newest page is loading over a cached list or none: placeholders until it is placed.
+  const loading = stale && !positioned
   const fresh = newSince(messages, scroll.leftAt, me?.username)
 
   const flash = useFocusMessage(listRef, scope, focus, messages, scroll.settle)
@@ -1187,6 +1190,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           {wide && <SelectionBar scope={scope} sheet={false} />}
           <BulkJobBar scope={scope} />
           <div className="relative flex min-h-0 flex-1 flex-col">
+            {loading && scope && <MessageListSkeleton seed={scope} className="absolute inset-0" />}
             {older?.loading && <OlderLoading lower={bannered} />}
             {bannered && scope && (
               <UnreadBanner
@@ -1209,7 +1213,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             <div
               ref={listRef}
               onScroll={onScroll}
-              className={`flex-1 overflow-y-auto py-3 ${stale && !positioned ? 'invisible' : ''}`}
+              className={`flex-1 overflow-y-auto py-3 ${loading ? 'invisible' : ''}`}
             >
               {!view && (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-on-surface-variant">

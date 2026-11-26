@@ -72,6 +72,14 @@ import { MemberCard } from './p2p_server_roles'
 import { PeerTimeoutBadge, TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
 import { hex, memberGroups, nameColor } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
+import { serversLoading } from '../../lib/p2p/conversations'
+import {
+  ChannelListSkeleton,
+  Held,
+  MemberListSkeleton,
+  MessageListSkeleton,
+  ServerRailSkeleton,
+} from '../skeletons'
 
 // P2P servers in the app: their group at the bottom of the rail (dashed rings, the Waypoints
 // badge, folders of their own), and the open server: channels, the channel's messages and the
@@ -346,13 +354,14 @@ function P2pServerRailBody({ actorLabel }: { actorLabel?: string }) {
   const enabled = useP2p(s => s.enabled)
   const servers = useP2p(s => s.servers)
   const layout = useP2p(s => s.layout)
+  const loading = useP2p(serversLoading)
   const list = useMemo(
     () => Object.values(servers).sort((a, b) => (a.name < b.name ? -1 : 1)),
     [servers]
   )
-  if (!enabled || !list.length) return null
+  if (!enabled || (!list.length && !loading)) return null
   const items = railItems(list, v => v.id, layout.servers)
-  return (
+  const section = (
     <>
       <div className="my-1 h-px w-8 shrink-0 border-t border-dashed border-tertiary" />
       {actorLabel && (
@@ -379,9 +388,11 @@ function P2pServerRailBody({ actorLabel }: { actorLabel?: string }) {
             <P2pFolderEntry key={item.key} folder={item.folder} list={item.servers} at={at} />
           )
         )}
+        {!list.length && <ServerRailSkeleton seed={identity.localId} few />}
       </div>
     </>
   )
+  return list.length ? section : <Held>{section}</Held>
 }
 
 // ----- The open server -----
@@ -441,13 +452,19 @@ function P2pServerSidebarBody() {
 
   const acct = useAccount()
 
-  const { v } = useOpen()
+  const { room, v } = useOpen()
+  const loading = useP2p(serversLoading)
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const active = useP2p(s => s.server?.ch ?? null)
   const prefs = useStore(s => s.notifyPrefs)
   const [adding, setAdding] = useState<string | null>(null)
   const [kind, setKind] = useState<'text' | 'voice'>('text')
-  if (!v) return <aside className="flex h-full w-60 shrink-0 flex-col bg-surface-container-low" />
+  if (!v)
+    return (
+      <aside className="flex h-full w-60 shrink-0 flex-col bg-surface-container-low">
+        {room && loading && <ChannelListSkeleton seed={room} header className="min-h-0 flex-1" />}
+      </aside>
+    )
   const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
   const submit = () => {
     const name = (adding ?? '').trim()
@@ -676,7 +693,8 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
 }
 
 function P2pMemberListBody() {
-  const { v } = useOpen()
+  const { room: open, v } = useOpen()
+  const loading = useP2p(serversLoading)
   const me = useP2p(s => s.me)
   const [shown, setShown] = useState(PAGE)
   const room = v?.id
@@ -686,7 +704,13 @@ function P2pMemberListBody() {
     setAt(room)
     setShown(PAGE)
   }
-  if (!v) return null
+  if (!v)
+    return open && loading ? (
+      <aside className="flex h-full w-60 shrink-0 flex-col overflow-hidden bg-surface-container-low pb-3">
+        <PeerActorTag header />
+        <MemberListSkeleton seed={open} className="px-1" />
+      </aside>
+    ) : null
   const paged = pageGroups(memberGroups(v.members, v.roles, me), shown)
   return (
     <aside
@@ -829,7 +853,8 @@ function P2pChannelPaneBody({
 
   const acct = useAccount()
 
-  const { v } = useOpen()
+  const { room: openRoom, v } = useOpen()
+  const loading = useP2p(serversLoading)
   const chat = useP2p(s => (s.chat?.ch ? s.chat : null))
   const openCh = useP2p(s => s.server?.ch ?? null)
   const me = useP2p(s => s.me)
@@ -864,7 +889,22 @@ function P2pChannelPaneBody({
   const moderator = can(v, P.ManageMessages) && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
 
-  if (!v) return <main className="flex min-w-0 flex-1 flex-col bg-surface" />
+  if (!v)
+    return (
+      <main className="flex min-w-0 flex-1 flex-col bg-surface">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-3 md:px-4">
+          <button
+            title="Menu"
+            aria-label="Menu"
+            onClick={onMenu}
+            className="rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
+          >
+            <Menu size={20} />
+          </button>
+        </header>
+        {openRoom && loading && <MessageListSkeleton seed={openRoom} className="min-h-0 flex-1" />}
+      </main>
+    )
 
   const others = v.members.some(m => m.m === 'join' && m.online && m.ik !== me)
   const header = (

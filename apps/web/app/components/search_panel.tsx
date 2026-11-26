@@ -7,6 +7,7 @@ import { FileText, Hash, Search } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, endOfList, shortSearch, type SearchArgs } from '../lib/search'
 import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
+import { MessageListSkeleton } from './skeletons'
 import { ShownAvatar, ShownName } from './shown_user'
 import { avatarTriggerCls, nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
@@ -157,6 +158,8 @@ export function SearchView({
   const runRef = useRef(onRun)
   runRef.current = onRun
   const stepped = active && (scrollForMore?.(args.q) ?? false)
+  // Nothing found yet while the search runs.
+  const first = active && loading && hits.length === 0
   const steppedRef = useRef(stepped)
   steppedRef.current = stepped
   const pageRef = useRef(pageKey)
@@ -264,6 +267,7 @@ export function SearchView({
         {active && !loading && hits.length === 0 && !hasMore && (
           <p className="px-3 py-6 text-center text-sm text-on-surface-variant">No results.</p>
         )}
+        {first && <MessageListSkeleton seed="search" variant="search" label="Loading results" />}
         {hits.map(r => (
           <PreviewRow
             key={r.key}
@@ -290,7 +294,7 @@ export function SearchView({
           </PreviewRow>
         ))}
         {active && hasMore && <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />}
-        {stepped && (hasMore || loading) && (
+        {stepped && !first && (hasMore || loading) && (
           <div className="flex h-9 items-end justify-center">
             {loading ? (
               <p className="py-2 text-xs text-on-surface-variant">Searching</p>
@@ -305,7 +309,7 @@ export function SearchView({
             )}
           </div>
         )}
-        {loading && !stepped && (
+        {loading && !stepped && !first && (
           <p className="px-3 py-2 text-center text-xs text-on-surface-variant">Searching</p>
         )}
       </div>

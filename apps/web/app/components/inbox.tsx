@@ -45,15 +45,8 @@ import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MessageTime } from './timestamp'
-import {
-  Masked,
-  Sentinel,
-  SheetGrip,
-  SkeletonRows,
-  textBtn as textBtnCls,
-  useEscape,
-  useOwnServer,
-} from './ui'
+import { Masked, Sentinel, SheetGrip, textBtn as textBtnCls, useEscape, useOwnServer } from './ui'
+import { RowsSkeleton } from './skeletons'
 import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
 import { INSTANCE_INBOX } from '../lib/inbox_source'
@@ -621,7 +614,7 @@ export function InboxPreview({ max = 5, beforeOpen }: { max?: number; beforeOpen
           </button>
         </div>
       ) : (loading || more) && shown.length === 0 ? (
-        <SkeletonRows rows={2} label="Loading notifications" />
+        <RowsSkeleton rows={2} label="Loading notifications" />
       ) : shown.length === 0 ? (
         <p className="flex items-center gap-2 px-2 py-3 text-sm text-on-surface-variant">
           <AtSign size={16} className="shrink-0" />

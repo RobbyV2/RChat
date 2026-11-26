@@ -2295,7 +2295,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           return
         }
         const msgs = await headLoad(key, () => fetchPage(key, {}))
-        if (intent !== navigation || get().view !== view) return
+        if (intent !== navigation || get().view !== view) {
+          if (get().stale[key] && !loadingHead(key))
+            set(s => ({ stale: keyed(s.stale, key, null) }))
+          return
+        }
         firstPage(key, msgs)
         askP2p(msgs)
       }),

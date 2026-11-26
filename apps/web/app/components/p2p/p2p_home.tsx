@@ -82,6 +82,7 @@ import { menuItems, openActionMenu } from '../../lib/actions/menu'
 import { peerContact } from '../../lib/actions/p2p_contact'
 import { LabelText, useInstanceLabel } from '../instance_badge'
 import { useDrawerClose } from '../drawer'
+import { DmListSkeleton } from '../skeletons'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
@@ -579,6 +580,7 @@ function DmList() {
   const rooms = useP2p(s => s.rooms)
   const me = useP2p(s => s.me)
   const open = useP2p(s => s.chat?.peer)
+  const loading = useP2p(s => s.loading)
   const list = conversations(contacts, lastTsOf(rooms, me))
   return (
     <aside className="hidden w-72 shrink-0 flex-col border-r border-outline-variant bg-surface-container-low md:flex">
@@ -588,16 +590,24 @@ function DmList() {
         </button>
         <P2pBadge />
       </header>
-      <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">
-        {list.map(c => (
-          <ContactRow
-            key={c.ik}
-            c={c}
-            presence={presence[c.ik] ?? 'offline'}
-            active={c.ik === open}
-          />
-        ))}
-      </ul>
+      {loading && !list.length ? (
+        <DmListSkeleton
+          seed={identity.localId}
+          label="Loading contacts"
+          className="min-h-0 flex-1 overflow-hidden p-2"
+        />
+      ) : (
+        <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">
+          {list.map(c => (
+            <ContactRow
+              key={c.ik}
+              c={c}
+              presence={presence[c.ik] ?? 'offline'}
+              active={c.ik === open}
+            />
+          ))}
+        </ul>
+      )}
       <VoiceDock />
     </aside>
   )
@@ -747,7 +757,9 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
                 </ul>
               </section>
             )}
-            {list.length === 0 && pending.length === 0 ? (
+            {list.length === 0 && pending.length === 0 && loading ? (
+              <DmListSkeleton seed={identity.localId} label="Loading contacts" />
+            ) : list.length === 0 && pending.length === 0 ? (
               <div className="flex flex-col items-start gap-3 px-3 py-6">
                 <p className="font-medium">No P2P contacts yet</p>
                 <p className="text-sm text-on-surface-variant">

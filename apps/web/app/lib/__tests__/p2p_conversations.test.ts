@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Contact } from '../p2p/contacts'
-import { addsContacts, conversations, p2pDmSection } from '../p2p/conversations'
+import { addsContacts, conversations, p2pDmSection, serversLoading } from '../p2p/conversations'
 
 const contact = (ik: string, over: Partial<Contact> = {}) =>
   ({
@@ -81,5 +81,28 @@ describe('addsContacts', () => {
     expect(addsContacts({ ...on, enabled: false })).toBe(false)
     expect(addsContacts({ ...on, loading: true })).toBe(false)
     expect(addsContacts({ ...on, elsewhere: true })).toBe(false)
+  })
+})
+
+describe('serversLoading', () => {
+  const starting = {
+    enabled: true,
+    loading: true,
+    countsLoaded: null,
+    elsewhere: false,
+    error: null,
+  }
+
+  test('while P2P starts, and after until the stored servers are listed', () => {
+    expect(serversLoading(starting)).toBe(true)
+    expect(serversLoading({ ...starting, loading: false })).toBe(true)
+    expect(serversLoading({ ...starting, loading: false, countsLoaded: {} })).toBe(false)
+  })
+
+  test('not while P2P is off, runs in another tab, or failed', () => {
+    expect(serversLoading({ ...starting, enabled: false })).toBe(false)
+    expect(serversLoading({ ...starting, loading: false, elsewhere: true })).toBe(false)
+    expect(serversLoading({ ...starting, loading: false, error: 'Storage is full' })).toBe(false)
+    expect(serversLoading({ ...starting, error: 'Storage is full' })).toBe(false)
   })
 })

@@ -60,6 +60,7 @@ import { AccountSwitcherTile } from './account_switcher'
 import { ThemeToggle } from './status_clock'
 import { PaletteButton } from './palette'
 import { Sentinel, iconBtn, useOwnServer } from './ui'
+import { ServerRailSkeleton } from './skeletons'
 import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon } from './notify_menu'
 import { P2pRailTile } from './p2p/p2p_home'
@@ -363,8 +364,9 @@ function ResumeAccount({ row }: { row: SwitcherRow }) {
   )
 }
 
-function AccountServers({ row }: { row?: SwitcherRow }) {
+export function AccountServers({ row }: { row?: SwitcherRow }) {
   const me = useStore(s => s.me)
+  const bootError = useStore(s => s.bootError)
   const saved = useStore(s => s.layout.servers)
   const guest = useStore(s => s.guest)
   const guestServers = useStore(s => s.guestServers)
@@ -373,7 +375,12 @@ function AccountServers({ row }: { row?: SwitcherRow }) {
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
   useVoiceLists()
-  if (row?.username && !me) return <ResumeAccount row={row} />
+  if (row?.username && !me)
+    return row.status === 'Connecting' && !bootError ? (
+      <ServerRailSkeleton seed={row.origin + ':' + row.username} />
+    ) : (
+      <ResumeAccount row={row} />
+    )
   const items = railItems(
     railServers({ me, guest, guestServers, guestNames, servers }),
     x => x.name,

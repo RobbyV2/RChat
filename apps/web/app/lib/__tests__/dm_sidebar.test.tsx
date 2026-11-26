@@ -90,3 +90,12 @@ test('unread only keeps paging while the unread list is cut or not loaded', () =
   expect(cut).not.toContain(NONE)
   expect(sidebar({ unread: true }, { readsReady: false })).toContain(LOADER)
 })
+
+test('unread only shows placeholders while unread dms outside the list are looked up', () => {
+  const html = sidebar({ unread: true }, { reads: { d9: { lastRead: 1, latest: 9 } } })
+  expect(html).toContain('data-skeleton="dms"')
+  expect(html).toContain('aria-label="Loading direct messages"')
+  expect(html).not.toContain(NONE)
+  expect(sidebar({ unread: true }, { reads: {} })).not.toContain('data-skeleton')
+  expect(sidebar({}, { reads: {} })).not.toContain('data-skeleton')
+})

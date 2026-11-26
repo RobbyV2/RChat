@@ -14,6 +14,7 @@ import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Badge, profileTrigger } from './profile_card'
 import { Sentinel } from './ui'
+import { MemberListSkeleton } from './skeletons'
 import { FitName } from './display_name'
 import { useShownMembers } from './shown_user'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
@@ -79,10 +80,14 @@ export function MemberTimeout({ server, username }: { server: string; username: 
   return t ? <TimeoutBadge t={t} compact /> : null
 }
 
+const asideCls = 'h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low p-2'
+const loadingCls = 'h-full w-60 shrink-0 overflow-hidden bg-surface-container-low p-2'
+
 export default function MemberSidebar() {
   const acct = useAccount()
   const { store } = acct
 
+  const viewServer = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : null))
   const cache = useStore(s => (s.view?.kind === 'channel' ? s.members[s.view.server] : undefined))
   const info = useStore(s => (s.view?.kind === 'channel' ? s.memberInfo[s.view.server] : undefined))
@@ -153,12 +158,25 @@ export default function MemberSidebar() {
     return out
   }, [detail, cache, info, inter, more, moreOnline, moreInteracted, shownOf])
   const { ref, range } = useWindowed(items)
-  if (!detail) return null
+  if (!detail)
+    return viewServer ? (
+      <aside className={loadingCls}>
+        <ViewActorTag header />
+        <MemberListSkeleton seed={viewServer} />
+      </aside>
+    ) : null
   if (!listed)
     return (
-      <aside className="h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low p-2">
+      <aside className={asideCls}>
         <ViewActorTag header />
         <p className="px-2 py-3 text-sm text-on-surface-variant">{MEMBERS_HIDDEN_LINE}</p>
+      </aside>
+    )
+  if (detail.member_count > 0 && (!cache || (cache.loading && !cache.list.length)))
+    return (
+      <aside className={loadingCls}>
+        <ViewActorTag header />
+        <MemberListSkeleton seed={detail.name} />
       </aside>
     )
 
@@ -244,7 +262,7 @@ export default function MemberSidebar() {
   }
 
   return (
-    <aside ref={ref} className="h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low p-2">
+    <aside ref={ref} className={asideCls}>
       <ViewActorTag header />
       <div style={{ height: range.before }} />
       {items.slice(range.start, range.end).map(render)}

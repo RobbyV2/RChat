@@ -227,7 +227,10 @@ export function createServersPart(
       useP2p.setState({ chat: { ...now, messages, more, newer: false, loading: false } })
       if (!keep) await readSlow(room, ch)
     } catch {
-      // Storage went away.
+      // Storage went away: the channel stops loading.
+      const now = useP2p.getState().chat
+      if (now?.room === room && now.ch === ch && now.loading && gen === parts.dms.jumpGen)
+        useP2p.setState({ chat: { ...now, loading: false } })
     }
   }
 
@@ -247,7 +250,10 @@ export function createServersPart(
         thread: { ...now, head: got.root, messages: got.messages, more: got.more, loading: false },
       })
     } catch {
-      // Storage went away.
+      // Storage went away: the thread stops loading.
+      const now = useP2p.getState().thread
+      if (now?.room === t.room && now.root === t.root && now.loading)
+        useP2p.setState({ thread: { ...now, loading: false } })
     }
   }
 

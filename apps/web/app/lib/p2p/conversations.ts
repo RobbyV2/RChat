@@ -22,3 +22,13 @@ export const p2pDmSection = (st: {
 // Contacts can be added (and our code shown) only from the tab that runs P2P, once it started.
 export const addsContacts = (st: { enabled: boolean; loading: boolean; elsewhere: boolean }) =>
   st.enabled && !st.loading && !st.elsewhere
+
+// The P2P servers stored here are still being read: P2P is starting, or runs in this tab and
+// hasn't listed them yet. Not while another tab runs it, nor once it failed.
+export const serversLoading = (st: {
+  enabled: boolean
+  loading: boolean
+  countsLoaded: object | null
+  elsewhere: boolean
+  error: string | null
+}) => st.enabled && st.error === null && (st.loading || (st.countsLoaded === null && !st.elsewhere))

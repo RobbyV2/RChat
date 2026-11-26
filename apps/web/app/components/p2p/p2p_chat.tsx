@@ -88,6 +88,7 @@ import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
 import { UnreadBanner, UnreadDivider } from '../unread_banner'
+import { MessageListSkeleton } from '../skeletons'
 import { p2pUnread, p2pUnreadStart } from '../../lib/unread_banner'
 import { Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
@@ -1175,13 +1176,15 @@ function IdentityChatBody(props: ChatBodyProps) {
 
   const lastNum = shared[shared.length - 1]?.id
   const ownCount = useMemo(() => messages.filter(m => m.sender === me).length, [messages, me])
+  // The conversation opens or syncs with nothing loaded yet.
+  const first = chat.loading === true && messages.length === 0
   const scroll = useChatScroll({
     list: listRef,
     content: contentRef,
     scope,
     count: shared.length,
     lastId: lastNum,
-    stale: chat.loading === true && messages.length === 0,
+    stale: first,
     focus: focus !== null,
     detached: false,
     outCount: ownCount,
@@ -1286,6 +1289,7 @@ function IdentityChatBody(props: ChatBodyProps) {
         {props.header}
         {props.above}
         <div className="relative flex min-h-0 flex-1 flex-col">
+          {first && <MessageListSkeleton seed={scope} className="absolute inset-0" />}
           {(divider >= 0 || above) && (
             <UnreadBanner
               unread={unread}
@@ -1297,7 +1301,11 @@ function IdentityChatBody(props: ChatBodyProps) {
             />
           )}
           {scroll.positioned && fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />}
-          <div ref={listRef} onScroll={scroll.onScroll} className="flex-1 overflow-y-auto py-3">
+          <div
+            ref={listRef}
+            onScroll={scroll.onScroll}
+            className={`flex-1 overflow-y-auto py-3 ${first ? 'invisible' : ''}`}
+          >
             {props.intro}
             {!chat.loading && messages.length === 0 && (
               <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant opacity-70">

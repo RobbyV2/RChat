@@ -102,6 +102,7 @@ import { InboxButton } from '../../components/inbox'
 import { P2pHome } from '../../components/p2p/p2p_home'
 import { memberMenu, P2pMemberList, P2pServerSidebar } from '../../components/p2p/p2p_server_view'
 import { P2pDmPane } from '../../components/p2p/p2p_dm_pane'
+import { P2pThreadPanel } from '../../components/p2p/p2p_thread'
 import { AccountChip } from '../../components/p2p/p2p_badge'
 import { ServerSettingsDialog } from '../../components/p2p/p2p_server_settings'
 import { ServerInviteDialog, ServerNewDialog } from '../../components/p2p/p2p_invite_dialog'
@@ -2246,5 +2247,141 @@ describe('P2P on Home', () => {
       ['Busy', 0],
       ['Pinged', 0],
     ])
+  })
+})
+
+describe('P2P placeholders while loading', () => {
+  const chat = {
+    room: ROOM,
+    peer: ALICE,
+    messages: [],
+    more: false,
+    loading: true,
+    readSeq: 0,
+    missed: [],
+  }
+  const talking = (loading: boolean) =>
+    p2pState({
+      enabled: true,
+      account: 'bob',
+      me: BOB,
+      status: 'online',
+      home: true,
+      countsLoaded: {},
+      contacts: [contact(ALICE, 'Alice')],
+      rooms: {
+        [ROOM]: { id: ROOM, peer: ALICE, seq: 0, unread: 0, pings: 0, lastTs: NOW },
+      } as unknown as P2pState['rooms'],
+      chat: { ...chat, loading },
+    })
+
+  test('a conversation opening with nothing loaded shows message placeholders, then its empty state', () => {
+    Object.assign(initial, { me: me('bob') })
+    talking(true)
+    const opening = render(<P2pDmPane onBack={() => {}} onMenu={() => {}} />)
+    expect(opening).toContain('data-skeleton="messages"')
+    expect(opening).toContain('aria-label="Loading messages"')
+    talking(false)
+    const empty = render(<P2pDmPane onBack={() => {}} onMenu={() => {}} />)
+    expect(empty).not.toContain('data-skeleton')
+    expect(empty).toContain('No messages here yet')
+  })
+
+  test('contacts show placeholders while P2P starts, then the empty state', () => {
+    Object.assign(initial, { me: me('bob') })
+    p2pState({ enabled: true, account: 'bob', loading: true })
+    const starting = render(<P2pHome onMenu={() => {}} />)
+    expect(starting).toContain('data-skeleton="dms"')
+    expect(starting).not.toContain('No P2P contacts yet')
+    p2pState({ enabled: true, account: 'bob', me: BOB, status: 'online', countsLoaded: {} })
+    const started = render(<P2pHome onMenu={() => {}} />)
+    expect(started).not.toContain('data-skeleton')
+    expect(started).toContain('No P2P contacts yet')
+  })
+
+  test('an open server shows channel, member and rail placeholders until it is read', () => {
+    Object.assign(initial, { me: me('bob'), home: false, view: null })
+    const open = { enabled: true, account: 'bob', me: BOB, server: { room: SRV, ch: null } }
+    p2pState({ ...open, servers: {} })
+    expect(render(<P2pServerSidebar />)).toContain('data-skeleton="channels"')
+    expect(render(<P2pMemberList />)).toContain('data-skeleton="members"')
+    const rail = render(<ServerRail />)
+    expect(rail).toContain('data-skeleton="servers"')
+    expect(rail).toContain('<div hidden="" class="contents"><div class="my-1 h-px w-8')
+    p2pState({ ...open, servers: { [SRV]: server() }, countsLoaded: {} })
+    const read = render(<P2pServerSidebar />) + render(<P2pMemberList />) + render(<ServerRail />)
+    expect(read).not.toContain('data-skeleton')
+    p2pState({ ...open, servers: {}, countsLoaded: {} })
+    expect(render(<ServerRail />)).not.toContain('data-skeleton')
+  })
+
+  test('a thread opening with no replies loaded shows reply placeholders', () => {
+    Object.assign(initial, { me: me('bob'), home: false, view: null })
+    const thread = {
+      room: SRV,
+      ch: CH,
+      root: 'root1',
+      head: null,
+      messages: [],
+      more: false,
+      loading: true,
+    }
+    const open = {
+      enabled: true,
+      account: 'bob',
+      me: BOB,
+      countsLoaded: {},
+      server: { room: SRV, ch: CH },
+      servers: { [SRV]: server() },
+      panel: 'thread' as const,
+    }
+    p2pState({ ...open, thread })
+    const loading = render(<P2pThreadPanel />)
+    expect(loading).toContain('data-skeleton="messages"')
+    expect(loading).toContain('aria-label="Loading replies"')
+    p2pState({ ...open, thread: { ...thread, loading: false } })
+    expect(render(<P2pThreadPanel />)).not.toContain('data-skeleton')
+  })
+
+  test('the P2P part under the DMs holds its placeholders back while P2P starts', () => {
+    const self: DmSummary = {
+      id: 1,
+      other: user('bob'),
+      is_self: true,
+      last_message_id: null,
+      last_message_at: null,
+      friend: false,
+    }
+    Object.assign(initial, {
+      me: me('bob'),
+      token: 'tok',
+      view: { kind: 'dm', dmId: 1 },
+      dms: [self],
+      dmsMore: false,
+    })
+    p2pState({ enabled: true, account: 'bob', loading: true })
+    const html = render(<ChannelSidebar />)
+    const part = html.slice(html.indexOf('data-p2p-dms'))
+    expect(part).toContain('<div hidden="" class="contents"><div role="status"')
+    expect(part).toContain('aria-label="Loading contacts"')
+    p2pState({ enabled: true, account: 'bob', me: BOB, countsLoaded: {} })
+    const started = render(<ChannelSidebar />)
+    expect(started).toContain('data-p2p-dms')
+    expect(started).not.toContain('data-skeleton')
+  })
+
+  test('the contact list beside an open conversation shows placeholders while P2P starts', () => {
+    Object.assign(initial, { me: me('bob') })
+    p2pState({ enabled: true, account: 'bob', loading: true, home: true, chat })
+    const html = render(<P2pHome onMenu={() => {}} />)
+    const list = html.slice(0, html.indexOf('</aside>'))
+    expect(list).toContain('data-skeleton="dms"')
+    expect(list).toContain('aria-label="Loading contacts"')
+    expect(list).not.toContain('hidden=""')
+    talking(false)
+    const loaded = render(<P2pHome onMenu={() => {}} />)
+    const shown = loaded.slice(0, loaded.indexOf('</aside>'))
+    expect(shown).not.toContain('data-skeleton')
+    expect(shown).toContain(`data-contact="${ALICE}"`)
   })
 })

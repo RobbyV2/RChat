@@ -389,6 +389,35 @@ body {
   }
 }
 
+/* A loading placeholder's blobs carry a sheen across them while animations play: the same
+   160 px band crosses every blob from its left edge at one speed, so rows sweep together. */
+[data-shimmer] [data-blob] {
+  position: relative;
+  overflow: hidden;
+}
+
+[data-shimmer] [data-blob]::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 160px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-surface-bright) 70%, transparent),
+    transparent
+  );
+  transform: translateX(-160px);
+  animation: skeleton-shimmer 2s linear infinite;
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    transform: translateX(1600px);
+  }
+}
+
 @media (pointer: coarse) {
   [data-long-press] {
     -webkit-touch-callout: none;

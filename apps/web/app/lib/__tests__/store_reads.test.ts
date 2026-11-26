@@ -1,4 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { MessagePane } from '../../components/message_pane'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
 import { textChannel, serverDetail, me, msg, until, user } from './fixtures'
@@ -118,6 +121,80 @@ describe('returning to a cached view', () => {
     await open
     expect(st().stale.c41).toBeUndefined()
     expect(ids('c41').at(-1)).toBe(101)
+  })
+})
+
+describe('opening a list that is not cached', () => {
+  const pane = () => {
+    const initial = useStore.getInitialState()
+    const saved = { ...initial }
+    Object.assign(initial, st())
+    try {
+      return renderToStaticMarkup(
+        createElement(MessagePane, { onMenu: () => {}, onMembers: () => {} })
+      )
+    } finally {
+      Object.assign(initial, saved)
+    }
+  }
+
+  test('is marked stale while its first page loads, and cleared when it lands', async () => {
+    holdMessages = true
+    const open = st().openChannel('s', 41, 'none')
+    await tick()
+    expect(st().messages.c41).toBeUndefined()
+    expect(st().stale.c41).toBe(true)
+    expect(pane()).toContain('data-skeleton="messages"')
+    held[0](range(81, 130))
+    await open
+    expect(st().stale.c41).toBeUndefined()
+    expect(ids('c41').at(-1)).toBe(130)
+  })
+
+  test('a failed first page clears the mark and the pane shows its empty state', async () => {
+    globalThis.fetch = (async () =>
+      new Response('{"error":"down"}', { status: 500 })) as unknown as typeof fetch
+    await st().openChannel('s', 41, 'none')
+    expect(st().stale.c41).toBeUndefined()
+    expect(st().messages.c41).toBeUndefined()
+    const html = pane()
+    expect(html).not.toContain('data-skeleton')
+    expect(html).toContain('No messages here yet')
+  })
+
+  test('a cached empty list is never marked while it reloads', async () => {
+    useStore.setState({ messages: { c41: [] } })
+    holdMessages = true
+    const open = st().openChannel('s', 41, 'none')
+    await tick()
+    expect(st().stale.c41).toBeUndefined()
+    expect(pane()).toContain('No messages here yet')
+    held[0]([])
+    await open
+    expect(st().stale.c41).toBeUndefined()
+  })
+
+  test('a jump into it is marked until the page around the message lands, then focuses it', async () => {
+    holdMessages = true
+    const open = st().openChannel('s', 41, 'none', 50)
+    await tick()
+    expect(st().stale.c41).toBe(true)
+    held[0](range(30, 70))
+    await open
+    expect(st().stale.c41).toBeUndefined()
+    expect(st().focus.c41).toEqual({ id: 50, flash: true })
+    expect(ids('c41')).toContain(50)
+  })
+
+  test('leaving before the first page lands clears the mark', async () => {
+    holdMessages = true
+    const open = st().openChannel('s', 41, 'none')
+    await tick()
+    expect(st().stale.c41).toBe(true)
+    useStore.setState({ view: { kind: 'channel', server: 's', channelId: 2 } })
+    held[0](range(81, 130))
+    await open
+    expect(st().stale.c41).toBeUndefined()
   })
 })
 

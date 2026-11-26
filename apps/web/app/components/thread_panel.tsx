@@ -43,6 +43,7 @@ import {
 } from './viewport_height'
 import { PanelHeader, useEscape } from './ui'
 import { BlockedList } from './blocking'
+import { MessageListSkeleton } from './skeletons'
 import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
 import { canForward } from '../lib/forward'
@@ -394,6 +395,9 @@ export default function ThreadPanel() {
           )}
           tail={lastShownAt => (
             <>
+              {stale && replies.length === 0 && root.reply_count > 0 && (
+                <MessageListSkeleton seed={key} variant="panel" label="Loading replies" />
+              )}
               {positioned && detached && replies.length > 0 && (
                 <EdgeSentinel
                   key={`n${replies[replies.length - 1].id}`}

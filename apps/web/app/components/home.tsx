@@ -69,7 +69,8 @@ import { TypingEllipsis, useHostedTypers } from './typing_indicator'
 import { ServerGlyph } from './server_rail'
 import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
-import { Masked, SkeletonRows, fieldCls, filledBtn, textBtn, useOwnServer } from './ui'
+import { Masked, fieldCls, filledBtn, textBtn, useOwnServer } from './ui'
+import { RowsSkeleton } from './skeletons'
 import { type P2pState } from '../lib/p2p/app'
 import type { P2pDialog } from '../lib/p2p/app/store'
 import { cardRows, homeCard, onlineText, p2pEntry, type CardState } from '../lib/p2p/home_card'
@@ -1040,7 +1041,7 @@ function UnreadSummary() {
       }
     >
       {!ready && !any ? (
-        <SkeletonRows rows={2} label="Loading unread messages" />
+        <RowsSkeleton rows={2} label="Loading unread messages" />
       ) : !any ? (
         <Empty>Nothing unread.</Empty>
       ) : (

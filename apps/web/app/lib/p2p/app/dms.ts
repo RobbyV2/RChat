@@ -136,7 +136,10 @@ export function createDmsPart(
       if (!current() || now?.room !== room || gen !== jumpRevision) return
       useP2p.setState({ chat: { ...now, messages, more, newer: false, loading: false, missed } })
     } catch {
-      // Storage went away (sign out, Remove P2P data).
+      // Storage went away (sign out, Remove P2P data): the conversation stops loading.
+      const now = useP2p.getState().chat
+      if (current() && now?.room === room && !now.ch && now.loading && gen === jumpRevision)
+        useP2p.setState({ chat: { ...now, loading: false } })
     }
   }
 

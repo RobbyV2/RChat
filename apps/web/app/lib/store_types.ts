@@ -364,6 +364,7 @@ export interface RChatState {
   messages: Record<string, Message[]>
   older: Record<string, OlderState>
   newer: Record<string, OlderState>
+  // Lists whose newest page is loading, unless what is cached is empty
   stale: Record<string, boolean>
   focus: Record<string, Focus>
   outbox: Record<string, Outgoing[]>

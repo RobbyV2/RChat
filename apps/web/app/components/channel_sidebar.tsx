@@ -83,6 +83,7 @@ import { shownMedia } from '../lib/timeouts'
 import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
 import { ContactRow, lastTsOf } from './p2p/p2p_home'
 import { P2pBadge } from './p2p/p2p_badge'
+import { ChannelListSkeleton, DmListSkeleton, Held } from './skeletons'
 import { channelTarget } from '../lib/viewing'
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
@@ -406,6 +407,7 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
   const presence = useP2p(s => s.presence)
   const open = useP2p(s => (s.home && s.dmList ? (s.chat?.peer ?? null) : null))
   const adds = useP2p(addsContacts)
+  const loading = useP2p(s => s.loading)
   const section = p2pDmSection({ account, enabled, contacts, lastTs: lastTsOf(rooms, me) })
   if (!section && !peer) return null
   const selectIdentity = () => {
@@ -449,6 +451,16 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
           </button>
         )}
       </div>
+      {loading && section && !section.rows.length && (
+        <Held>
+          <DmListSkeleton
+            seed={identity?.localId ?? 'p2p'}
+            rows={3}
+            label="Loading contacts"
+            className="px-2"
+          />
+        </Held>
+      )}
       <ul onClickCapture={selectIdentity} className="flex min-h-0 flex-col overflow-y-auto px-2">
         {section?.rows.map(c => (
           <ContactRow
@@ -479,16 +491,19 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
   )
 }
 
-function DmBlock({
+// `connecting`: the account is starting, so its conversations may not be loaded yet.
+export function DmBlock({
   dmId,
   label,
   peers,
   accounts,
+  connecting = false,
 }: {
   dmId: number
   label?: string
   peers?: { row: SwitcherRow; label: string }[]
   accounts: AccountSession[]
+  connecting?: boolean
 }) {
   const acct = useAccount()
   const [collapsed, collapse] = useState(false)
@@ -498,6 +513,7 @@ function DmBlock({
   // While a P2P conversation is open beside the list, no instance DM is the current one.
   const beside = useP2p(s => s.home && s.dmList)
   const dms = useStore(s => s.dms)
+  const starting = useStore(s => connecting && s.me === null && !s.bootError)
   const layout = useStore(s => s.layout)
   const dmsMore = useStore(s => s.dmsMore)
   const dmsEdge = useStore(s => s.dmsEdge)
@@ -743,6 +759,15 @@ function DmBlock({
               >
                 {rest.map(row)}
                 {rest.length === 0 &&
+                  (starting ||
+                    (filtersOn(prefs) > 0 && !paging && !!unreadKey && looked !== unreadKey)) && (
+                    <DmListSkeleton
+                      seed={label ?? 'dms'}
+                      label="Loading direct messages"
+                      className="px-2"
+                    />
+                  )}
+                {rest.length === 0 &&
                   filtersOn(prefs) > 0 &&
                   !paging &&
                   (!unreadKey || looked === unreadKey) && (
@@ -821,6 +846,7 @@ function DmSidebar({ dmId }: { dmId: number }) {
                       <DmBlock
                         dmId={owner === acct ? dmId : -1}
                         accounts={accounts}
+                        connecting={row.status === 'Connecting'}
                         label={accounts.length > 1 ? row.username + ' · ' + g.name : undefined}
                         peers={g.peers
                           .filter(p => p.username === row.username)
@@ -901,7 +927,12 @@ export function ChannelSidebar() {
 
   if (!view) return null
   const detail = servers[view.server]
-  if (!detail) return <aside className={base} />
+  if (!detail)
+    return (
+      <aside className={base}>
+        <ChannelListSkeleton seed={view.server} header className="min-h-0 flex-1" />
+      </aside>
+    )
   const canManage = hasPerm(perms, Perm.ManageChannels)
   const server = detail.name
   const groups = channelGroups(detail, canManage)

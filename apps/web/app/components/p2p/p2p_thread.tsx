@@ -36,6 +36,7 @@ import { usePeerTimeoutEnds } from '../timeout_dialog'
 import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
+import { MessageListSkeleton } from '../skeletons'
 
 // The thread of a P2P server channel beside it (full screen on phones): its root, the replies
 // stored here and a composer, through the same panel as instance threads.
@@ -231,6 +232,13 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
               {row(r, false, places[i] ?? ALONE)}
             </Fragment>
           ))}
+          tail={
+            t.loading &&
+            replies.length === 0 &&
+            (t.head?.replies ?? 1) > 0 && (
+              <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
+            )
+          }
           footer={
             <>
               <TypingIndicator
