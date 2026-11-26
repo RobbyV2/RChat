@@ -182,6 +182,7 @@ describe('export never carries secrets', () => {
         'streamer',
         'theme',
         'typing',
+        'animations',
         'profanity',
         'spoilers',
         'v',
@@ -193,6 +194,7 @@ describe('export never carries secrets', () => {
     useStore.setState({ me: null, guest: true, token: null, guestServers: ['rchat'] })
     const doc = buildConfig(configSourceOf(st()), ALL)
     expect(Object.keys(doc).sort()).toEqual([
+      'animations',
       'layout',
       'notify',
       'profanity',

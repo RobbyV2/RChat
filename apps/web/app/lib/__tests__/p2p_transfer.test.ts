@@ -557,6 +557,7 @@ describe('dump and encryption', () => {
           emoji: null,
           calls: null,
           typing: true,
+          animations: null,
           profanity: null,
           spoilers: null,
           relays: null,

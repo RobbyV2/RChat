@@ -9,6 +9,7 @@ import {
   Settings,
   ShieldOff,
   SlidersHorizontal,
+  Sparkles,
   Type,
   UserPen,
   UserRound,
@@ -105,6 +106,20 @@ export const settingsActions: Action[] = [
     icon: Type,
     available: ({ s }) => local(s),
     run: ({ acct }) => acct.store.getState().setTypingOn(!acct.store.getState().typingOn),
+  },
+  {
+    id: 'animations',
+    title: 'Animations',
+    label: ({ s }) => (s.anim.on ? 'Turn off animations' : 'Turn on animations'),
+    scope: 'global',
+    group: 'settings',
+    icon: Sparkles,
+    keywords: ['motion', 'appearance'],
+    available: ({ s }) => local(s),
+    run: ({ acct }) => {
+      const { anim, setAnim } = acct.store.getState()
+      setAnim({ ...anim, on: !anim.on })
+    },
   },
   {
     id: 'profanity',

@@ -100,6 +100,7 @@ export const configSourceOf = (s: RChatState): ConfigSource => ({
   emoji: s.me ? s.emoji : null,
   calls: s.me ? s.callRoute : null,
   typing: s.me || s.guest ? s.typingOn : null,
+  animations: s.me || s.guest ? s.anim : null,
   profanity: s.me || s.guest ? s.profanityOn : null,
   spoilers: s.me || s.guest ? s.showSpoilers : null,
   relays: s.me ? s.relayPrefs : null,

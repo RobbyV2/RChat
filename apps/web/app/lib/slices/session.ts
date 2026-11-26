@@ -133,6 +133,7 @@ import type { readsSlice } from './reads'
 import type { rtcSlice } from './rtc'
 import type { serversSlice } from './servers'
 import type { uiSlice } from './ui'
+import { ANIM_DEFAULT } from '../motion/setting'
 
 // Waits before opening the URL again after a boot left nothing open because of 429s. Exported
 // so tests can shorten them.
@@ -172,6 +173,7 @@ export type SessionDeps = { acct: AccountSession } & Pick<
   | 'readProfanity'
   | 'readSpoilers'
   | 'readTyping'
+  | 'readAnim'
   | 'saveCallRoute'
   | 'saveEmoji'
   | 'saveLayout'
@@ -179,6 +181,7 @@ export type SessionDeps = { acct: AccountSession } & Pick<
   | 'saveProfanityOn'
   | 'saveShowSpoilers'
   | 'saveTypingOn'
+  | 'saveAnim'
   | 'systemNotice'
   | 'toast'
   | 'useNotify'
@@ -316,6 +319,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     readQueue,
     readSpoilers,
     readTyping,
+    readAnim,
     readsHub,
     refreshMemberInfo,
     reopenDm,
@@ -326,6 +330,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     saveProfanityOn,
     saveShowSpoilers,
     saveTypingOn,
+    saveAnim,
     selectionHub,
     serverPager,
     serversHub,
@@ -562,6 +567,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (want.has('emoji') && doc.emoji && me) saveEmoji(doc.emoji)
     if (want.has('calls') && doc.calls && me) saveCallRoute(doc.calls)
     if (want.has('typing') && doc.typing !== undefined) saveTypingOn(doc.typing)
+    if (want.has('animations') && doc.animations) saveAnim(doc.animations)
     if (want.has('profanity') && doc.profanity !== undefined) saveProfanityOn(doc.profanity)
     if (want.has('spoilers') && doc.spoilers !== undefined) saveShowSpoilers(doc.spoilers)
     if (want.has('relays') && doc.relays && me)
@@ -605,7 +611,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   const loadGuestLayout = () => {
-    set({ layout: readLayout(null), typingOn: readTyping(null), showSpoilers: readSpoilers(null) })
+    set({
+      layout: readLayout(null),
+      typingOn: readTyping(null),
+      anim: readAnim(null),
+      showSpoilers: readSpoilers(null),
+    })
     useProfanity(readProfanity(null))
     useNotify(readNotify(null))
     saveLayout(pruneLayout(get().layout, get().guestServers, null))
@@ -734,6 +745,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
             forwardClip: readForward(fresh.username),
             notifyPrefs: readNotify(fresh.username),
             typingOn: readTyping(fresh.username),
+            anim: readAnim(fresh.username),
             showSpoilers: readSpoilers(fresh.username),
           }),
     })
@@ -2068,6 +2080,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         notifyPrefs: EMPTY_NOTIFY,
         typingOn: true,
         typing: {},
+        anim: ANIM_DEFAULT,
         showSpoilers: 'click',
         view: null,
         home: false,

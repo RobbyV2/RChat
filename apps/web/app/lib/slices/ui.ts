@@ -83,6 +83,14 @@ import type { RChatState } from '../store_types'
 import { type TimeoutWire, fromWire } from '../timeouts'
 import { parseTyping, typingKey, typingValue } from '../typing'
 import {
+  ANIM_DEFAULT,
+  animKey,
+  animValue,
+  parseAnim,
+  sameAnim,
+  type AnimPrefs,
+} from '../motion/setting'
+import {
   Banned,
   Ended,
   type GetState,
@@ -279,6 +287,19 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     readScoped(notifyKey(username), parseNotify, EMPTY_NOTIFY)
 
   const readTyping = (owner: string | null) => readScoped(typingKey(owner), parseTyping, true)
+
+  const readAnim = (owner: string | null) => readScoped(animKey(owner), parseAnim, ANIM_DEFAULT)
+
+  const useAnim = (prefs: AnimPrefs) => {
+    if (!sameAnim(prefs, get().anim)) set({ anim: prefs })
+  }
+
+  const saveAnim = (prefs: AnimPrefs) => {
+    const owner = notifyOwner()
+    if (owner === undefined) return
+    useAnim(prefs)
+    writeLocal(home.scoped(animKey(owner)), animValue(prefs))
+  }
 
   const readSpoilers = (owner: string | null) =>
     readScoped(spoilersKey(owner), parseSpoilers, 'click' as ShowSpoilers)
@@ -556,6 +577,8 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     | 'setProfanityOn'
     | 'setShowSpoilers'
     | 'reloadTyping'
+    | 'setAnim'
+    | 'reloadAnim'
   > = {
     showToast: toast,
 
@@ -703,6 +726,11 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
       if (on !== get().typingOn) set({ typingOn: on })
       if (!on) forgetTyping(true)
     },
+    setAnim: saveAnim,
+    reloadAnim: () => {
+      const owner = notifyOwner()
+      if (owner !== undefined) useAnim(readAnim(owner))
+    },
   }
 
   return {
@@ -722,6 +750,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     readProfanity,
     readSpoilers,
     readTyping,
+    readAnim,
     notifyOwner,
     useNotify,
     useProfanity,
@@ -734,6 +763,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     saveProfanityOn,
     saveShowSpoilers,
     saveTypingOn,
+    saveAnim,
     forgetServerRules,
     selfDmId,
     pinSelf,

@@ -2,7 +2,7 @@
 // (`rc1.` + base64url of deflate-raw JSON) and share links (`/config/{id}/`).
 //
 // Document: `{ v: 1, theme?, streamer?, appearOffline?, layout?, notify?, emoji?, calls?,
-// typing?, profanity?, spoilers?, relays?, p2p? }`. All
+// typing?, animations?, profanity?, spoilers?, relays?, p2p? }`. All
 // sections are optional and decoded separately. Unknown sections and fields are dropped, so older
 // readers skip new sections. `v` changes only for an incompatible change. Only listed store
 // fields are copied, so tokens, grants, drafts, passwords and relay credentials never get in.
@@ -23,6 +23,7 @@ import {
   type SelfPin,
 } from './nav_layout'
 import { notifyValue, parseNotify, type NotifyPrefs } from './notify'
+import { isMotionChoice, motionLabel, type AnimPrefs } from './motion/setting'
 import {
   MAX_USED,
   TONES,
@@ -111,6 +112,7 @@ export interface ConfigDoc {
   emoji?: EmojiPrefs
   calls?: CallRoute
   typing?: boolean
+  animations?: AnimPrefs
   profanity?: boolean
   spoilers?: ShowSpoilers
   relays?: RelaysSection
@@ -126,6 +128,7 @@ export type SectionKey =
   | 'emoji'
   | 'calls'
   | 'typing'
+  | 'animations'
   | 'profanity'
   | 'spoilers'
   | 'relays'
@@ -156,6 +159,7 @@ export const SECTIONS: Section[] = [
   { key: 'emoji', label: 'Frequent emoji and skin tone', account: true, device: false, link: true },
   { key: 'calls', label: 'Call connection', account: true, device: false, link: true },
   { key: 'typing', label: 'Typing indicators', account: false, device: false, link: true },
+  { key: 'animations', label: 'Animations', account: false, device: false, link: true },
   { key: 'profanity', label: 'Filter profanity', account: false, device: false, link: true },
   { key: 'spoilers', label: 'Show spoilers', account: false, device: false, link: true },
   // Relay URLs and allowed hosts only. Links are stored on the server, so relays stay out.
@@ -182,6 +186,7 @@ export interface ConfigSource {
   emoji: EmojiPrefs | null
   calls: CallRoute | null
   typing: boolean | null
+  animations: AnimPrefs | null
   profanity: boolean | null
   spoilers: ShowSpoilers | null
   relays: RelayPrefs | null
@@ -229,6 +234,8 @@ export const buildConfig = (src: ConfigSource, include: ReadonlySet<SectionKey>)
   if (on('emoji') && src.emoji) doc.emoji = pickEmoji(src.emoji)
   if (on('calls') && src.calls) doc.calls = src.calls
   if (on('typing') && src.typing !== null) doc.typing = src.typing
+  if (on('animations') && src.animations)
+    doc.animations = { on: src.animations.on, motion: src.animations.motion }
   if (on('profanity') && src.profanity !== null) doc.profanity = src.profanity
   if (on('spoilers') && src.spoilers !== null) doc.spoilers = src.spoilers
   if (on('relays') && src.relays) doc.relays = exportRelays(src.relays)
@@ -332,6 +339,12 @@ const cleanEmoji = (x: unknown, now: number): EmojiPrefs | undefined => {
   }
 }
 
+// Both fields or nothing, so an import never half-applies the setting.
+const cleanAnimations = (x: unknown): AnimPrefs | null =>
+  isRecord(x) && typeof x.on === 'boolean' && isMotionChoice(x.motion)
+    ? { on: x.on, motion: x.motion }
+    : null
+
 export type Decoded = { ok: true; doc: ConfigDoc } | { ok: false; error: string }
 
 export const DAMAGED = 'This config string is damaged or incomplete'
@@ -351,6 +364,7 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
     emoji,
     calls,
     typing,
+    animations,
     profanity,
     spoilers,
     relays,
@@ -370,6 +384,8 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
   if (e) doc.emoji = e
   if (isRoute(calls)) doc.calls = calls
   if (typeof typing === 'boolean') doc.typing = typing
+  const a = cleanAnimations(animations)
+  if (a) doc.animations = a
   if (typeof profanity === 'boolean') doc.profanity = profanity
   if (isShowSpoilers(spoilers)) doc.spoilers = spoilers
   const r = cleanRelaysSection(relays)
@@ -572,6 +588,10 @@ export const describeChanges = (doc: ConfigDoc, src: ConfigSource): Change[] => 
         return d.calls ? ROUTE_LABEL[d.calls] : 'Needs an account'
       case 'typing':
         return d.typing === undefined ? 'Not set' : onOff(d.typing)
+      case 'animations':
+        return d.animations
+          ? `${onOff(d.animations.on)}, motion: ${motionLabel(d.animations.motion)}`
+          : 'Not set'
       case 'profanity':
         return d.profanity === undefined ? 'Not set' : onOff(d.profanity)
       case 'spoilers':

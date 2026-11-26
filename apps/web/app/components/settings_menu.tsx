@@ -46,6 +46,8 @@ import { ColorField } from './color_field'
 import { InstanceDetails, useInstanceLabel } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './settings_fields'
+import { MOTION_CHOICES, animHeldBack } from '../lib/motion/setting'
+import { useReducedMotion } from '../lib/motion/use_motion'
 import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { DesktopSection } from './desktop_settings'
@@ -758,6 +760,36 @@ function ChatSection() {
   )
 }
 
+function AnimationsSetting() {
+  const anim = useStore(s => s.anim)
+  const setAnim = useStore(s => s.setAnim)
+  const shown = useStore(s => s.me !== null || s.guest)
+  const reduced = useReducedMotion(anim.on && anim.motion === 'device')
+  if (!shown) return null
+  const held = animHeldBack(anim, reduced)
+  return (
+    <div>
+      <SettingSwitch label="Animations" value={anim.on} onChange={on => setAnim({ ...anim, on })} />
+      <p className="mt-2 px-2 text-xs text-on-surface-variant">
+        Things fade and move when they open, arrive or change.
+      </p>
+      <div className="mt-4 px-2">
+        <Choice
+          label="Motion"
+          value={anim.motion}
+          options={MOTION_CHOICES}
+          onChange={motion => setAnim({ ...anim, motion })}
+        />
+        {held && (
+          <p role="status" className="mt-2 text-xs text-on-surface">
+            {held}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const SPOILER_CHOICES = [
   { value: 'click', label: 'On click' },
   { value: 'always', label: 'Always' },
@@ -917,6 +949,7 @@ function GeneralSection() {
           value={theme === 'light'}
           onChange={v => setTheme(v ? 'light' : 'dark')}
         />
+        <AnimationsSetting />
       </section>
       <section>
         <p className={sectionCls}>Streamer mode</p>

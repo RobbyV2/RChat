@@ -70,6 +70,7 @@ import type {
 import type { AdminSection, View, Nav } from './view'
 import type { Timeout } from './timeouts'
 import type { TypingMap } from './typing'
+import type { AnimPrefs } from './motion/setting'
 import type { SelfAudio } from './voice_layout'
 
 // More that "Mark all as read" marks (P2P): whether it has anything unread, and marking it.
@@ -300,6 +301,8 @@ export interface RChatState {
   notifyPrefs: NotifyPrefs
   typingOn: boolean
   typing: TypingMap
+  // Settings > Appearance > Animations and Motion.
+  anim: AnimPrefs
   // Settings > Chat > Show spoilers.
   showSpoilers: ShowSpoilers
   // The personal profanity filter: on, loaded and masking, or failed to load.
@@ -578,6 +581,8 @@ export interface RChatState {
   setProfanityOn: (on: boolean) => void
   setShowSpoilers: (show: ShowSpoilers) => void
   reloadTyping: () => void
+  setAnim: (prefs: AnimPrefs) => void
+  reloadAnim: () => void
   noteTyping: (scope: string, active: boolean) => void
   sendForward: (key: string) => void
   openForward: (m: Message) => Promise<void>

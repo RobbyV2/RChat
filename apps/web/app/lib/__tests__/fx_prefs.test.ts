@@ -16,7 +16,6 @@ import { SEASON_IDS } from '../fx/seasons'
 const custom: FxPrefs = {
   v: 2,
   on: false,
-  motion: 'always',
   seasons: false,
   seasonOff: ['halloween', 'friday_13'],
   hemisphere: 'south',
@@ -29,12 +28,11 @@ const custom: FxPrefs = {
 }
 
 describe('fun effects prefs', () => {
-  test('defaults: everything on, following the device', () => {
+  test('defaults: everything on', () => {
     expect(FX_KEY).toBe('fx')
     expect(defaultFxPrefs).toEqual({
       v: 2,
       on: true,
-      motion: 'device',
       seasons: true,
       seasonOff: [],
       hemisphere: 'auto',
@@ -56,12 +54,12 @@ describe('fun effects prefs', () => {
   test('a saved value reads back', () => {
     expect(parseFxPrefs(fxValue(custom))).toEqual(custom)
     expect(parseFxPrefs(fxValue(defaultFxPrefs))).toEqual(defaultFxPrefs)
+    expect(parseFxPrefs(JSON.stringify({ ...custom, motion: 'always' }))).toEqual(custom)
   })
 
   test('every field falls back alone', () => {
     const bad: Record<keyof Omit<FxPrefs, 'v'>, unknown[]> = {
       on: [1, 'true', null],
-      motion: ['fast', 1, null],
       seasons: ['no', 0],
       seasonOff: ['halloween', { halloween: true }, 3],
       hemisphere: ['east', 2, null],
@@ -113,9 +111,9 @@ describe('what is shared between devices', () => {
       ...custom,
       birthday: '07-04',
     })
-    expect(importFxShared(local, { v: 2, on: 'no', motion: 'still' })).toEqual({
+    expect(importFxShared(local, { v: 2, on: 'no', eggs: false })).toEqual({
       ...local,
-      motion: 'still',
+      eggs: false,
     })
     for (const junk of [null, 'x', 3, [], { v: 1, on: false }])
       expect(importFxShared(local, junk)).toEqual(local)

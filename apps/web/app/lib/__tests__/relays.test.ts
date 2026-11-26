@@ -427,6 +427,7 @@ describe('relays in the config export', () => {
       emoji: null,
       calls: null,
       typing: null,
+      animations: null,
       profanity: null,
       spoilers: null,
       relays: p,

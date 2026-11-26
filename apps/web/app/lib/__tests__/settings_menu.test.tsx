@@ -200,6 +200,10 @@ describe('Profile', () => {
     expect(html).toContain('alpha-id')
   })
 
+  test('a guest keeps the Animations row', () => {
+    expect(guest({ kind: 'settings', section: 'general' })).toContain('aria-label="Animations"')
+  })
+
   test('for a guest shows the guest, no profile fields or password, and the instance', () => {
     const html = guest({ kind: 'settings' })
     expect(html).toContain('Guest')
@@ -213,6 +217,11 @@ describe('Profile', () => {
     const html = signedIn({ kind: 'settings', section: 'general' })
     expect(html).toContain('Typing indicators')
     expect(html).toContain('Light theme')
+    expect(html).toContain('role="switch" aria-checked="false" aria-label="Animations"')
+    expect(html).toContain('title="Animations"')
+    expect(html).toContain('aria-label="Motion"')
+    expect(html).toContain('Play motion anyway')
+    expect(html).not.toContain('so things change without moving')
     expect(html).toContain('Streamer mode')
     expect(html).not.toContain('Your profile')
     expect(html).not.toContain('Instance ID')

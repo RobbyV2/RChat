@@ -39,6 +39,7 @@ import { menuActions, uiSlice } from './slices/ui'
 import { friendsInitial, friendsSlice } from './friends_store'
 import { pollsSlice } from './polls_store'
 import { selectionInitial, selectionSlice } from './selection_store'
+import { ANIM_DEFAULT } from './motion/setting'
 import type { BlockedUser, ServerSummaryLite, UserRef, WsEvent } from './types'
 
 export * from './attachments'
@@ -106,6 +107,7 @@ export function createChatStore(acct: AccountSession) {
       readProfanity,
       readSpoilers,
       readTyping,
+      readAnim,
       saveCallRoute,
       saveEmoji,
       saveForward,
@@ -114,6 +116,7 @@ export function createChatStore(acct: AccountSession) {
       saveProfanityOn,
       saveShowSpoilers,
       saveTypingOn,
+      saveAnim,
       selfDmId,
       systemNotice,
       toast,
@@ -324,6 +327,7 @@ export function createChatStore(acct: AccountSession) {
       readQueue,
       readSpoilers,
       readTyping,
+      readAnim,
       readsHub,
       refreshMemberInfo,
       reopenDm,
@@ -334,6 +338,7 @@ export function createChatStore(acct: AccountSession) {
       saveProfanityOn,
       saveShowSpoilers,
       saveTypingOn,
+      saveAnim,
       selectionHub,
       serverPager,
       serversHub,
@@ -399,6 +404,7 @@ export function createChatStore(acct: AccountSession) {
       notifyPrefs: EMPTY_NOTIFY,
       typingOn: true,
       typing: {},
+      anim: ANIM_DEFAULT,
       showSpoilers: 'click',
       profanityOn: false,
       profanityReady: false,

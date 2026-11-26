@@ -213,6 +213,25 @@ for (const [browser, storage] of BROWSERS)
   })
 
 describe('start-up with working storage', () => {
+  test('the Animations setting is read at sign-in and for a guest, and reset at sign-out', async () => {
+    install({ value: memoryStorage })
+    memoryStorage.setItem('rchat_anim:bob', '{"v":1,"on":true,"motion":"always"}')
+    memoryStorage.setItem('rchat_anim:guest', '{"v":1,"on":true,"motion":"still"}')
+    try {
+      await st().login({ username: 'bob', password: 'x' } as never)
+      expect(st().anim).toEqual({ on: true, motion: 'always' })
+      st().logout()
+      expect(st().anim).toEqual({ on: false, motion: 'device' })
+      await st().enterGuest()
+      expect(st().anim).toEqual({ on: true, motion: 'still' })
+      st().logout()
+      expect(st().anim).toEqual({ on: false, motion: 'device' })
+    } finally {
+      memoryStorage.removeItem('rchat_anim:bob')
+      memoryStorage.removeItem('rchat_anim:guest')
+    }
+  })
+
   test('the kept theme and streamer mode win over this tab, and nothing kept keeps it', () => {
     install({ value: memoryStorage })
     memoryStorage.setItem('rchat_theme', 'light')

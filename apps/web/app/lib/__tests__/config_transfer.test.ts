@@ -53,6 +53,7 @@ const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
     emoji,
     calls: 'p2p',
     typing: false,
+    animations: { on: true, motion: 'always' },
     profanity: true,
     spoilers: 'always',
     relays: null,
@@ -438,6 +439,7 @@ describe('building', () => {
         'streamer',
         'theme',
         'typing',
+        'animations',
         'profanity',
         'spoilers',
         'v',
@@ -465,6 +467,7 @@ describe('preview', () => {
       'emoji',
       'calls',
       'typing',
+      'animations',
       'profanity',
       'spoilers',
     ])
@@ -492,6 +495,40 @@ describe('preview', () => {
     const rows = describeChanges({ v: 1, typing: true }, source({ typing: false }))
     expect(rows).toEqual([
       { key: 'typing', label: 'Typing indicators', now: 'Off', next: 'On', same: false },
+    ])
+  })
+
+  test('animations travel with their Motion choice, whole or not at all', async () => {
+    const only = new Set<SectionKey>(['animations'])
+    const doc = buildConfig(source(), only)
+    expect(doc).toEqual({ v: 1, animations: { on: true, motion: 'always' } })
+    expect(buildConfig(source({ animations: null }), ALL).animations).toBeUndefined()
+    expect(await decodeConfig(await encodeConfig(doc))).toEqual({ ok: true, doc })
+    for (const animations of [
+      true,
+      null,
+      { on: true },
+      { motion: 'still' },
+      { on: 'yes', motion: 'still' },
+      { on: true, motion: 'fast' },
+    ]) {
+      const out = sanitizeConfig({ v: 1, animations })
+      expect([animations, out.ok && out.doc.animations]).toEqual([animations, undefined])
+    }
+    const out = sanitizeConfig({ v: 1, animations: { on: false, motion: 'still', extra: 1 } })
+    expect(out).toEqual({ ok: true, doc: { v: 1, animations: { on: false, motion: 'still' } } })
+    const rows = describeChanges(
+      { v: 1, animations: { on: false, motion: 'still' } },
+      source({ animations: { on: true, motion: 'device' } })
+    )
+    expect(rows).toEqual([
+      {
+        key: 'animations',
+        label: 'Animations',
+        now: 'On, motion: Follow my device',
+        next: 'Off, motion: Reduced',
+        same: false,
+      },
     ])
   })
 

@@ -263,6 +263,7 @@ export function SessionServices() {
       if (event.key?.startsWith('rchat_forward:')) account.store.getState().reloadForward()
       if (event.key?.startsWith('rchat_notify:')) account.store.getState().reloadNotify()
       if (event.key?.startsWith('rchat_typing:')) account.store.getState().reloadTyping()
+      if (event.key?.startsWith('rchat_anim:')) account.store.getState().reloadAnim()
       if (event.key?.startsWith('rchat_home:')) account.home.reloadHome()
       if (event.key?.startsWith('rchat_palette:')) account.palettePrefs.reloadPalettePrefs()
     }

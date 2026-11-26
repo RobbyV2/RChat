@@ -1,12 +1,11 @@
 // An account's fun effects settings on this device (`fx` through `writeLocal`), versioned and
-// parsed field by field. Pure.
-import type { MotionChoice } from './gate'
+// parsed field by field. Pure. Motion is the account's Animations setting (`motion/setting.ts`),
+// shared with animations.
 import { SEASON_IDS, hemisphereOf, type Hemisphere, type SeasonId } from './seasons'
 
 export interface FxPrefs {
   v: 2
   on: boolean
-  motion: MotionChoice
   seasons: boolean
   seasonOff: SeasonId[]
   hemisphere: 'auto' | Hemisphere
@@ -25,7 +24,6 @@ export const FX_KEY = 'fx'
 export const defaultFxPrefs: FxPrefs = {
   v: 2,
   on: true,
-  motion: 'device',
   seasons: true,
   seasonOff: [],
   hemisphere: 'auto',
@@ -60,10 +58,6 @@ const read = (data: unknown, base: FxPrefs): FxPrefs => {
   return {
     v: 2,
     on: bool(o.on, base.on),
-    motion:
-      o.motion === 'device' || o.motion === 'still' || o.motion === 'always'
-        ? o.motion
-        : base.motion,
     seasons: bool(o.seasons, base.seasons),
     seasonOff: seasonOff(o.seasonOff, base.seasonOff),
     hemisphere:

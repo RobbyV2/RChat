@@ -2,8 +2,8 @@
 
 export type FxMode = 'off' | 'still' | 'motion'
 
-// The account's Motion setting: follow the device (off under reduced motion), still pictures,
-// or play motion anyway.
+// The account's Motion setting, shared by animations and fun effects: follow the device (off
+// under reduced motion), reduced (effects show still pictures), or play motion anyway.
 export type MotionChoice = 'device' | 'still' | 'always'
 
 export interface FxInput {
