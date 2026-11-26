@@ -1,3 +1,4 @@
+import { sameDay } from './date_dividers'
 import type { P2pMessage } from './p2p/dm'
 import type { Outgoing } from './store_types'
 import { isNotice } from './system_messages'
@@ -25,15 +26,13 @@ export interface GroupPlace {
   last: boolean
 }
 
-const dayOf = (seconds: number) => new Date(seconds * 1000).toDateString()
-
 export const continues = (prev: GroupCue | undefined, cur: GroupCue) =>
   prev !== undefined &&
   !prev.end &&
   !cur.head &&
   prev.who === cur.who &&
   Math.abs(cur.at - prev.at) <= GROUP_WINDOW &&
-  dayOf(prev.at) === dayOf(cur.at)
+  sameDay(prev.at, cur.at)
 
 // `breaks` holds the rows with a separator above them (the new messages line, a gap).
 export function groupPlaces(

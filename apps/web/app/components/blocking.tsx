@@ -4,8 +4,10 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } f
 import { UserX } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { blockedLabel, blockedRuns, type BlockedRun } from '../lib/blocks'
+import { dayLines } from '../lib/date_dividers'
 import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { DateDivider } from './date_divider'
 import { fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
 
 // Collapsed runs of blocked users' messages. A run opens with Show, or by itself when a jump
@@ -95,23 +97,55 @@ export function BlockedQuote({ onShow }: { onShow: () => void }) {
 
 // Renders `messages` with blocked users' runs collapsed. `row(m, i)` draws one message;
 // `dividerAt` is the unread divider index, drawn on a collapsed row that hides it.
+// A line with the date goes above each shown row on another day than the last line (from
+// `dayAbove`, the time of what shows above the list); a folded run counts as its first row.
+// `tail` draws what follows the list, given the time of the last row shown (or `dayAbove`).
 export function BlockedList({
   messages,
   focusId,
   dividerAt = -1,
   divider,
+  dayAbove = null,
   row,
+  tail,
 }: {
   messages: Message[]
   focusId: number | null
   dividerAt?: number
   divider?: ReactNode
+  dayAbove?: number | null
   row: (m: Message, i: number) => ReactNode
+  tail?: (lastShownAt: number | null) => ReactNode
 }) {
   const { runs, isOpen, toggle } = useBlockedRuns(messages, focusId)
-  return messages.map((m, i) => {
+  const shown = useMemo(
+    () =>
+      messages.map((_, i) => {
+        const run = runs.get(i)
+        return !run || run.start === i || isOpen(run)
+      }),
+    [messages, runs, isOpen]
+  )
+  const lines = useMemo(
+    () =>
+      dayLines(
+        messages.map(m => m.created_at),
+        shown,
+        dayAbove
+      ),
+    [messages, shown, dayAbove]
+  )
+  const last = shown.lastIndexOf(true)
+  const dayLine = (i: number) => (lines.has(i) ? <DateDivider at={messages[i].created_at} /> : null)
+  const items = messages.map((m, i) => {
     const run = runs.get(i)
-    if (!run) return <Fragment key={m.id}>{row(m, i)}</Fragment>
+    if (!run)
+      return (
+        <Fragment key={m.id}>
+          {dayLine(i)}
+          {row(m, i)}
+        </Fragment>
+      )
     const open = isOpen(run)
     const head =
       run.start === i ? (
@@ -128,11 +162,18 @@ export function BlockedList({
       ) : null
     return (
       <Fragment key={m.id}>
+        {(open || run.start === i) && dayLine(i)}
         {head}
         {open && row(m, i)}
       </Fragment>
     )
   })
+  return (
+    <>
+      {items}
+      {tail?.(last >= 0 ? messages[last].created_at : dayAbove)}
+    </>
+  )
 }
 
 // Replaces the composer in a DM with someone you blocked.

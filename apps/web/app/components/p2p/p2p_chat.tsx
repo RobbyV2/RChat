@@ -9,6 +9,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 import { useAccount, useStoreApi } from '../../lib/client/react'
 
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -77,6 +78,8 @@ import { MessageTime } from '../timestamp'
 import { PresentBar, useChatScroll, useFocusMessage } from '../viewport_height'
 import { GroupedRow, groupPadCls, mentionRowCls } from '../message_pane'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
+import { dayStarts } from '../../lib/date_dividers'
+import { DateDivider } from '../date_divider'
 import { Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
@@ -1180,6 +1183,7 @@ function IdentityChatBody(props: ChatBodyProps) {
     () => groupPlaces(messages.map(p2pCue), new Set([divider])),
     [messages, divider]
   )
+  const days = useMemo(() => dayStarts(rows.map(r => r.m.created_at)), [rows])
 
   const rowJump = useCallback(
     (n: number) => {
@@ -1252,47 +1256,48 @@ function IdentityChatBody(props: ChatBodyProps) {
                 </div>
               )}
               {gapNote}
-              {rows.map(({ p, m }, i) =>
-                p.system?.kind === 'pin' ? (
-                  <P2pPinRow
-                    key={p.id}
-                    p={p}
-                    m={m}
-                    divider={i === divider}
-                    place={props.pinsPlace}
-                    onMenu={(row, x, y) => rowMenu(row, m, x, y)}
-                  />
-                ) : p.system ? (
-                  <P2pSystemRow key={p.id} m={m} divider={i === divider} />
-                ) : p.removed ? (
-                  <P2pHiddenRow key={p.id} m={m} divider={i === divider} />
-                ) : p.slowHidden ? (
-                  <P2pSlowRow key={p.id} m={m} divider={i === divider} />
-                ) : p.call ? (
-                  <P2pCallRow key={p.id} p={p} me={me} />
-                ) : (
-                  <P2pRow
-                    key={p.id}
-                    p={p}
-                    m={m}
-                    first={places[i]?.first ?? true}
-                    last={places[i]?.last ?? true}
-                    mine={p.sender === me}
-                    pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
-                    mentioned={pingsMe(p, me)}
-                    divider={i === divider}
-                    flash={flash === m.id}
-                    canAct={canAct && !p.archived}
-                    canDelete={mayDelete(p)}
-                    editing={editing && editingState?.id === p.id ? editing : null}
-                    draftKey={key}
-                    threads={!!chat.ch}
-                    onMenu={rowMenu}
-                    onCopy={copyRow}
-                    onJump={rowJump}
-                  />
-                )
-              )}
+              {rows.map(({ p, m }, i) => (
+                <Fragment key={p.id}>
+                  {days.has(i) && <DateDivider at={m.created_at} />}
+                  {p.system?.kind === 'pin' ? (
+                    <P2pPinRow
+                      p={p}
+                      m={m}
+                      divider={i === divider}
+                      place={props.pinsPlace}
+                      onMenu={(row, x, y) => rowMenu(row, m, x, y)}
+                    />
+                  ) : p.system ? (
+                    <P2pSystemRow m={m} divider={i === divider} />
+                  ) : p.removed ? (
+                    <P2pHiddenRow m={m} divider={i === divider} />
+                  ) : p.slowHidden ? (
+                    <P2pSlowRow m={m} divider={i === divider} />
+                  ) : p.call ? (
+                    <P2pCallRow p={p} me={me} />
+                  ) : (
+                    <P2pRow
+                      p={p}
+                      m={m}
+                      first={places[i]?.first ?? true}
+                      last={places[i]?.last ?? true}
+                      mine={p.sender === me}
+                      pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
+                      mentioned={pingsMe(p, me)}
+                      divider={i === divider}
+                      flash={flash === m.id}
+                      canAct={canAct && !p.archived}
+                      canDelete={mayDelete(p)}
+                      editing={editing && editingState?.id === p.id ? editing : null}
+                      draftKey={key}
+                      threads={!!chat.ch}
+                      onMenu={rowMenu}
+                      onCopy={copyRow}
+                      onJump={rowJump}
+                    />
+                  )}
+                </Fragment>
+              ))}
               {chat.newer && (
                 <div
                   data-p2p-newer

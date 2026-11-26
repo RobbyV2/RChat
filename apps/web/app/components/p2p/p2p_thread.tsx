@@ -6,7 +6,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef } from 'react'
 import { roomLooksKey } from '../../lib/server_profile'
 import { useStore } from '../../lib/store'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
@@ -33,6 +33,8 @@ import {
 } from './p2p_chat'
 import { sendBlockFor } from './p2p_server_view'
 import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
+import { dayStarts } from '../../lib/date_dividers'
+import { DateDivider } from '../date_divider'
 
 // The thread of a P2P server channel beside it (full screen on phones): its root, the replies
 // stored here and a composer, through the same panel as instance threads.
@@ -109,6 +111,15 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const list = useMemo(() => (t.head ? rows.slice(1) : rows), [rows, t.head])
   const shared = useMemo(() => list.map(r => r.m), [list])
   const places = useMemo(() => groupPlaces(list.map(r => p2pCue(r.p))), [list])
+  const headAt = head?.m.created_at ?? null
+  const days = useMemo(
+    () =>
+      dayStarts(
+        list.map(r => r.m.created_at),
+        headAt
+      ),
+    [list, headAt]
+  )
   const ownCount = useMemo(() => replies.filter(m => m.sender === me).length, [replies, me])
   useEscape(e => {
     if (!e.defaultPrevented) p2pThread.close()
@@ -211,7 +222,12 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
             )
           }
           count={t.head?.replies ?? replies.length}
-          replies={list.map((r, i) => row(r, false, places[i] ?? ALONE))}
+          replies={list.map((r, i) => (
+            <Fragment key={r.p.id}>
+              {days.has(i) && <DateDivider at={r.m.created_at} />}
+              {row(r, false, places[i] ?? ALONE)}
+            </Fragment>
+          ))}
           footer={
             <>
               <TypingIndicator

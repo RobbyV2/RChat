@@ -4,7 +4,16 @@ import { useP2pApp } from '../lib/client/p2p_react'
 
 import { useAccount, useStoreApi } from '../lib/client/react'
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Clock,
@@ -30,6 +39,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { lastOwn, newSince, unreadMark } from '../lib/lists'
+import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
 import { readOnly } from '../lib/reactions'
@@ -55,6 +65,7 @@ import { Perm, hasPerm, type CallLog, type Member, type Message, type UserRef } 
 import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
+import { DateDivider } from './date_divider'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MarkdownMessage } from './markdown_message'
@@ -674,15 +685,18 @@ export function OutgoingRow({
 const ALONE: GroupPlace = { first: true, last: true }
 
 // My sends on their way below a list; `places` are theirs from the list's grouping.
+// `dayAbove`: the time of the last row shown above the sends, for their date lines.
 export function OutboxRows({
   msgKey,
   outgoing,
   places,
+  dayAbove,
   size = 36,
 }: {
   msgKey: string
   outgoing: readonly Outgoing[]
   places: readonly GroupPlace[]
+  dayAbove: number | null
   size?: number
 }) {
   const me = useStore(s => s.me)
@@ -691,21 +705,31 @@ export function OutboxRows({
   const cancelOutgoing = useStore(s => s.cancelOutgoing)
   const jumpTo = useStore(s => s.jumpTo)
   const jump = (id: number) => void jumpTo(msgKey, id)
+  const days = useMemo(
+    () =>
+      dayStarts(
+        outgoing.map(o => o.msg.created_at),
+        dayAbove
+      ),
+    [outgoing, dayAbove]
+  )
   if (!me || !outgoing.length) return null
   return (
     <>
       {outgoing.map((o, i) => (
-        <OutgoingRow
-          key={o.tempId}
-          o={o}
-          author={me}
-          server={server}
-          place={places[i] ?? ALONE}
-          size={size}
-          onJump={jump}
-          onRetry={() => retryOutgoing(msgKey, o.tempId)}
-          onCancel={() => cancelOutgoing(msgKey, o.tempId)}
-        />
+        <Fragment key={o.tempId}>
+          {days.has(i) && <DateDivider at={o.msg.created_at} />}
+          <OutgoingRow
+            o={o}
+            author={me}
+            server={server}
+            place={places[i] ?? ALONE}
+            size={size}
+            onJump={jump}
+            onRetry={() => retryOutgoing(msgKey, o.tempId)}
+            onCancel={() => cancelOutgoing(msgKey, o.tempId)}
+          />
+        </Fragment>
       ))}
     </>
   )
@@ -1172,22 +1196,27 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                       />
                     </Selectable>
                   )}
+                  tail={lastShownAt => (
+                    <>
+                      {positioned && detached && messages.length > 0 && (
+                        <EdgeSentinel
+                          key={`n${messages[messages.length - 1].id}`}
+                          root={listRef}
+                          edge="bottom"
+                          onVisible={onBottom}
+                        />
+                      )}
+                      {view && (
+                        <OutboxRows
+                          msgKey={viewKey(view)}
+                          outgoing={outgoing}
+                          places={places.slice(messages.length)}
+                          dayAbove={lastShownAt}
+                        />
+                      )}
+                    </>
+                  )}
                 />
-                {positioned && detached && messages.length > 0 && (
-                  <EdgeSentinel
-                    key={`n${messages[messages.length - 1].id}`}
-                    root={listRef}
-                    edge="bottom"
-                    onVisible={onBottom}
-                  />
-                )}
-                {view && (
-                  <OutboxRows
-                    msgKey={viewKey(view)}
-                    outgoing={outgoing}
-                    places={places.slice(messages.length)}
-                  />
-                )}
               </div>
             </div>
           </div>

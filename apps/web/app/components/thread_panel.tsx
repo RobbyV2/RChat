@@ -214,6 +214,7 @@ export default function ThreadPanel() {
     () => messagePlaces(replies, detached ? new Set([replies.length]) : undefined, outgoing),
     [replies, detached, outgoing]
   )
+  const rootAt = root?.created_at ?? null
 
   const canUnreact = me !== null && !guest
   const canReact =
@@ -385,34 +386,36 @@ export default function ThreadPanel() {
         <BlockedList
           messages={replies}
           focusId={focus?.id ?? null}
+          dayAbove={rootAt}
           row={(m, i) => (
             <Selectable key={m.id} m={m} scope={key}>
               {row(m, places[i] ?? ALONE)}
             </Selectable>
           )}
-        />
-      }
-      tail={
-        <>
-          {positioned && detached && replies.length > 0 && (
-            <EdgeSentinel
-              key={`n${replies[replies.length - 1].id}`}
-              root={listRef}
-              edge="bottom"
-              onVisible={() => {
-                if (newer?.loading) return
-                snapEdge()
-                void loadNewerThread()
-              }}
-            />
+          tail={lastShownAt => (
+            <>
+              {positioned && detached && replies.length > 0 && (
+                <EdgeSentinel
+                  key={`n${replies[replies.length - 1].id}`}
+                  root={listRef}
+                  edge="bottom"
+                  onVisible={() => {
+                    if (newer?.loading) return
+                    snapEdge()
+                    void loadNewerThread()
+                  }}
+                />
+              )}
+              <OutboxRows
+                msgKey={key}
+                outgoing={outgoing}
+                places={places.slice(replies.length)}
+                dayAbove={lastShownAt}
+                size={30}
+              />
+            </>
           )}
-          <OutboxRows
-            msgKey={key}
-            outgoing={outgoing}
-            places={places.slice(replies.length)}
-            size={30}
-          />
-        </>
+        />
       }
       footer={
         <>
