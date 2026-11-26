@@ -73,7 +73,7 @@ describe('desktop detection', () => {
 
 describe('desktop notifier', () => {
   test('permission comes from the shell; notices and badges go to it', async () => {
-    g.document = { title: '(2) RChat' }
+    g.document = { title: 'RChat' }
     const { call, calls } = fakeInvoke({
       notify_permission: () => 'granted',
       notify_request: () => 'granted',
@@ -97,6 +97,9 @@ describe('desktop notifier', () => {
       ['set_badge', { count: 0 }],
     ])
     expect((g.document as { title: string }).title).toBe('RChat')
+    n.setTitle('• @Alice')
+    n.setMark('pings')
+    expect((g.document as { title: string }).title).toBe('• @Alice')
   })
 
   test('a denied permission stops notices and tells listeners', async () => {

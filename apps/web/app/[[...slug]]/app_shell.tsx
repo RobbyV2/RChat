@@ -46,6 +46,7 @@ import { AppPreview } from '../components/app_preview'
 import { ViewingPrompt } from '../components/viewing_prompt'
 import { RelayPrompt } from '../components/relay_settings'
 import SettingsMenu from '../components/settings_menu'
+import { TabTitle } from '../components/tab_title'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import FriendsPanel, { AddFriendsDialog } from '../components/friends'
@@ -172,6 +173,7 @@ export default function AppShell() {
     <AccountProvider session={shown}>
       {ready ? <RecentChats shown={shown} sessions={sessions} /> : <div>Loading RChat</div>}
       <DeviceBadge />
+      <TabTitle />
       <CallBanner />
       <ExpandedCallPane />
       {sessions.map(session => (
@@ -353,11 +355,6 @@ function Chat() {
     setLeftOpen(false)
     setRightOpen(false)
   }, 'panel')
-
-  const appName = useStore(s => s.brand?.app_name ?? null)
-  useEffect(() => {
-    if (appName !== null) notifications().setTitle(appName)
-  }, [appName])
 
   const guestBlocked = useStore(s => s.guest && !s.settings.guests_enabled)
   useEffect(() => {

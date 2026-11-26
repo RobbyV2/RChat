@@ -146,8 +146,6 @@ export const shownPings = (
 
 export const badgeText = (n: number) => (n > 99 ? '99+' : String(n))
 
-export const pingTitle = (base: string, n: number) => (n > 0 ? `(${badgeText(n)}) ${base}` : base)
-
 export interface Watching {
   view: string | null
   thread: number | null

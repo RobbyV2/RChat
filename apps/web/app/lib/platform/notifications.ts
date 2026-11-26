@@ -14,6 +14,9 @@ export interface NoticeOptions {
   onClick: () => void
 }
 
+// What the favicon shows: nothing, an unread dot, or a notification dot.
+export type TabMark = 'none' | 'unread' | 'pings'
+
 export interface NoticeHandle {
   close: () => void
 }
@@ -26,11 +29,12 @@ export interface Notifier {
   show: (opts: NoticeOptions) => NoticeHandle | null
   // Calls back when the permission changes outside the app (e.g. revoked in site settings).
   onPermissionChange: (cb: (p: Permission) => void) => () => void
-  // Unseen notification count on the tab title / app icon; 0 clears it.
+  // Unseen notification count on the app icon; 0 clears it.
   setBadge: (count: number) => void
-  // The app's name on the tab title, behind the unseen count. The desktop and mobile shells
-  // keep the name they were built with.
+  // The whole tab or window title (the place on screen, with the unseen count).
   setTitle: (title: string) => void
+  // The favicon's dot, where there is a favicon.
+  setMark: (mark: TabMark) => void
 }
 
 export const permissionOf = (raw: unknown): Permission =>

@@ -1,4 +1,4 @@
-import { pingTitle } from '../pings'
+import { badgedIcon } from '../favicon_badge'
 import { permissionOf, type Notifier, type Permission } from './notifications'
 
 const api = () => (typeof Notification === 'undefined' ? null : Notification)
@@ -15,9 +15,9 @@ const ask = (N: typeof Notification) =>
     if (out) void out.then(resolve, () => resolve(N.permission))
   })
 
-let baseTitle: string | null = null
-// The unseen count the title shows.
-let shown = 0
+// The page's icon links; each keeps the icon it had in `data-base-href`, so a mark comes off.
+const iconLinks = () => [...document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]')]
+let marking = 0
 
 // The Notification API without a service worker. Browsers that only allow notifications from a
 // service worker (some mobile ones) throw on `new Notification`; those get no notice.
@@ -76,9 +76,6 @@ export const webNotifier: Notifier = {
     }
   },
   setBadge: count => {
-    baseTitle ??= document.title.replace(/^\(\d+\+?\) /, '')
-    shown = count
-    document.title = pingTitle(baseTitle, count)
     const nav = navigator as Navigator & {
       setAppBadge?: (n?: number) => Promise<void>
       clearAppBadge?: () => Promise<void>
@@ -87,7 +84,20 @@ export const webNotifier: Notifier = {
     void done?.catch(() => {})
   },
   setTitle: title => {
-    baseTitle = title
-    document.title = pingTitle(title, shown)
+    if (document.title !== title) document.title = title
+  },
+  setMark: mark => {
+    if (typeof document === 'undefined') return
+    const run = ++marking
+    for (const link of iconLinks()) {
+      const base = (link.dataset.baseHref ??= link.href)
+      if (mark === 'none') {
+        if (link.href !== base) link.href = base
+        continue
+      }
+      void badgedIcon(base, mark).then(url => {
+        if (url && run === marking) link.href = url
+      })
+    }
   },
 }

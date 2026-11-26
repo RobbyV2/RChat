@@ -119,7 +119,7 @@ describe('web adapter', () => {
     expect(status.on.size).toBe(0)
   })
 
-  test('badge: count on the tab title and the app icon', () => {
+  test('badge on the app icon; the title is set whole', () => {
     const calls: string[] = []
     g.document = { title: 'RChat' }
     g.navigator = {
@@ -127,10 +127,24 @@ describe('web adapter', () => {
       clearAppBadge: async () => void calls.push('clear'),
     }
     webNotifier.setBadge(3)
-    expect((g.document as { title: string }).title).toBe('(3) RChat')
-    webNotifier.setBadge(0)
     expect((g.document as { title: string }).title).toBe('RChat')
+    webNotifier.setBadge(0)
     expect(calls).toEqual(['set 3', 'clear'])
+    webNotifier.setTitle('(3) • #general · Club')
+    expect((g.document as { title: string }).title).toBe('(3) • #general · Club')
+  })
+
+  test('the favicon mark goes on each icon link and comes off again', async () => {
+    const link = { href: 'http://x/favicon.ico', dataset: {} as Record<string, string> }
+    g.document = { title: 'RChat', querySelectorAll: () => [link] }
+    webNotifier.setMark('none')
+    expect([link.href, link.dataset.baseHref]).toEqual([
+      'http://x/favicon.ico',
+      'http://x/favicon.ico',
+    ])
+    link.href = 'data:image/png;base64,AAAA'
+    webNotifier.setMark('none')
+    expect(link.href).toBe('http://x/favicon.ico')
   })
 })
 

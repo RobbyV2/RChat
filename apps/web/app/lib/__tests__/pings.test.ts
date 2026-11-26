@@ -9,7 +9,6 @@ import {
   pingAction,
   pingAlert,
   pingCount,
-  pingTitle,
   pingUntil,
   scopePings,
   serverPings,
@@ -151,12 +150,9 @@ describe('ping counts', () => {
     })
   })
 
-  test('badge and title text', () => {
+  test('badge text', () => {
     expect(badgeText(7)).toBe('7')
     expect(badgeText(100)).toBe('99+')
-    expect(pingTitle('RChat', 0)).toBe('RChat')
-    expect(pingTitle('RChat', 3)).toBe('(3) RChat')
-    expect(pingTitle('RChat', 250)).toBe('(99+) RChat')
   })
 })
 

@@ -1,4 +1,3 @@
-import { pingTitle } from '../pings'
 import type { Invoke } from './desktop'
 import { permissionOf, type Notifier, type Permission } from './notifications'
 
@@ -6,7 +5,6 @@ import { permissionOf, type Notifier, type Permission } from './notifications'
 // plugin (macOS asks the user; other systems report granted). Clicking a notice focuses the app on
 // most systems but does not call `onClick`.
 export const desktopNotifier = (call: Invoke): Notifier => {
-  let baseTitle: string | null = null
   let state: Permission = 'default'
   const listeners = new Set<(p: Permission) => void>()
   const settle = (raw: unknown) => {
@@ -35,12 +33,12 @@ export const desktopNotifier = (call: Invoke): Notifier => {
     },
     setBadge: count => {
       const n = Math.max(0, Math.floor(count))
-      if (typeof document !== 'undefined') {
-        baseTitle ??= document.title.replace(/^\(\d+\+?\) /, '')
-        document.title = pingTitle(baseTitle, n)
-      }
       void call('set_badge', { count: n }).catch(() => {})
     },
-    setTitle: () => {},
+    // The window's title bar shows the page title.
+    setTitle: title => {
+      if (typeof document !== 'undefined' && document.title !== title) document.title = title
+    },
+    setMark: () => {},
   }
 }

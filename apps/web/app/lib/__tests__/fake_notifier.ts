@@ -37,6 +37,7 @@ export const fakeNotifier = (start: Permission = 'default'): FakeNotifier => {
       fake.badge = n
     },
     setTitle: () => {},
+    setMark: () => {},
   }
   return fake
 }
