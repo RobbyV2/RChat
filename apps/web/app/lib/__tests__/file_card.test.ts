@@ -12,13 +12,12 @@ import {
 } from '../file_card'
 import { downloadName } from '../sniff'
 
-const zone = process.env.TZ
+const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
 beforeEach(() => {
   process.env.TZ = 'America/New_York'
 })
 afterEach(() => {
-  if (zone === undefined) delete process.env.TZ
-  else process.env.TZ = zone
+  process.env.TZ = zone
 })
 
 describe('fileKind', () => {
