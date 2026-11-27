@@ -177,6 +177,7 @@ async fn sign_in_once(
         _ => None,
     };
     let defaults = &Policy::cached(&state.db).await.default_servers;
+    let sealer = crate::crypt::secrets::Sealer::of(&state.db).await?;
     let mut tx = auth::begin_account_write(&state.db).await?;
     let mut linked = linked_username(&mut tx, id).await?;
     if let Some((username, _)) = confirmation
@@ -345,7 +346,10 @@ async fn sign_in_once(
         .map(|limit| t.saturating_add(limit))
         .min()
         .unwrap_or(i64::MAX);
-        Some(flow::issue_confirmation(&mut tx, app, &username, &token, session_deadline).await?)
+        Some(
+            flow::issue_confirmation(&mut tx, &sealer, app, &username, &token, session_deadline)
+                .await?,
+        )
     } else {
         None
     };

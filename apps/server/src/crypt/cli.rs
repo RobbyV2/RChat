@@ -6,7 +6,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use zeroize::Zeroizing;
 
-use super::ring::{Ring, RingStatus, create_key_file, write_new_file};
+use super::ring::{Ring, RingStatus, SecretsReset, create_key_file, write_new_file};
 use super::{CryptError, KEY_LEN, Kek, NONCE_LEN, check_key_id, decrypt, encrypt, parse_keys};
 use crate::config::AppConfig;
 use crate::db::DbOptions;
@@ -231,6 +231,7 @@ pub fn printed(status: &RingStatus) -> String {
         key_file,
         database_key,
         backed_up_at,
+        secrets_reset,
         data_keys,
     } = status;
     let mut out = vec![match (source.as_str(), key_file) {
@@ -253,6 +254,12 @@ pub fn printed(status: &RingStatus) -> String {
     }
     if let Some(at) = backed_up_at {
         out.push(format!("Key copy saved at {at}."));
+    }
+    if let Some(SecretsReset { at, secrets }) = secrets_reset {
+        out.push(format!(
+            "Stored secrets that could not be opened were made again at {at}: {}.",
+            secrets.join(", ")
+        ));
     }
     for key in data_keys {
         let held = match (key.held, key.mismatch) {

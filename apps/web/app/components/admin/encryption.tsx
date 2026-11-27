@@ -11,6 +11,7 @@ import {
   lostWarning,
   parseAdminEncryption,
   readinessLine,
+  resetWarning,
   type AdminEncryption,
 } from '../../lib/admin_encryption'
 import { useAccount } from '../../lib/client/react'
@@ -20,10 +21,17 @@ import { PageRow } from '../settings_page'
 const cardCls = 'flex min-w-0 flex-col gap-1 rounded-xl bg-surface-container px-4 py-3'
 const cardTitleCls = 'text-xs font-medium tracking-wide text-on-surface-variant uppercase'
 
-export function EncryptionStatus({ view }: { view: AdminEncryption }) {
+export function EncryptionStatus({
+  view,
+  now = Date.now(),
+}: {
+  view: AdminEncryption
+  now?: number
+}) {
   const prints = fingerprints(view)
   const lost = lostKeys(view)
   const note = keySourceNote(view)
+  const reset = resetWarning(view, now)
   return (
     <div className="space-y-3">
       {view.needs_backup && (
@@ -44,6 +52,16 @@ export function EncryptionStatus({ view }: { view: AdminEncryption }) {
         >
           <TriangleAlert size={18} aria-hidden className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{lostWarning(lost)}</span>
+        </p>
+      )}
+      {reset !== null && (
+        <p
+          role="alert"
+          data-warning="reset"
+          className="flex min-w-0 items-start gap-2 rounded-xl bg-error-container px-4 py-3 text-sm text-on-error-container"
+        >
+          <TriangleAlert size={18} aria-hidden className="mt-0.5 shrink-0" />
+          <span className="min-w-0 break-words">{reset}</span>
         </p>
       )}
       <div className={cardCls}>

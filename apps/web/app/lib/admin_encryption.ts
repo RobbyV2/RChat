@@ -1,5 +1,7 @@
 // What the site administration page says about the site's encryption keys.
 
+import { formatStamp, type FormatOptions } from './timestamps'
+
 export interface AdminDataKey {
   id: number
   purpose: string
@@ -11,6 +13,14 @@ export interface AdminDataKey {
   mismatch: boolean
 }
 
+// The relay or P2P secrets the server made again because the stored ones could not be opened.
+export interface SecretsReset {
+  // Unix seconds.
+  at: number
+  // `relay_secret`, `p2p_secret`.
+  secrets: string[]
+}
+
 export interface AdminEncryption {
   // Where the root keys come from: `operator`, `file` or `none`.
   source: string
@@ -20,6 +30,7 @@ export interface AdminEncryption {
   // Whether secrets are sealed with a key kept in the database.
   database_key: boolean
   backed_up_at: number | null
+  secrets_reset: SecretsReset | null
   data_keys: AdminDataKey[]
   // `ready`, `first_need` (the first switch makes the key), `keys` (no key can be made) or
   // `updating`.
@@ -58,8 +69,8 @@ export function keySourceNote(view: AdminEncryption): string | null {
     default:
       if (view.database_key)
         return makesKey(view)
-          ? 'Sign-in secrets are protected against casual reads only. Encrypted storage for messages starts when a server or DM turns it on, or when ENCRYPTION_KEYS is set.'
-          : 'Sign-in secrets are protected against casual reads only.'
+          ? 'Stored secrets are protected against casual reads only. Encrypted storage for messages starts when a server or DM turns it on, or when ENCRYPTION_KEYS is set.'
+          : 'Stored secrets are protected against casual reads only.'
       return makesKey(view)
         ? 'A key is made when a server or DM first turns on encrypted storage. Set ENCRYPTION_KEYS to keep the key off the server.'
         : null
@@ -102,6 +113,35 @@ export const LOST_WARNING =
 export const MISMATCH_WARNING =
   "A key set here is not the one that encrypted some data. That data can't be opened until the right key is restored."
 
+// How long the page shows that tokens were reset, in seconds.
+export const RESET_SHOWN_FOR = 30 * 86400
+
+const TOKENS: Record<string, string> = { relay_secret: 'Relay', p2p_secret: 'P2P' }
+
+// What the page says in the month after relay or P2P tokens were reset, else null.
+export function resetWarning(
+  view: AdminEncryption,
+  now: number,
+  o: FormatOptions = {}
+): string | null {
+  const reset = view.secrets_reset
+  if (reset === null || now / 1000 - reset.at > RESET_SHOWN_FOR) return null
+  const names = reset.secrets.flatMap(s => (Object.hasOwn(TOKENS, s) ? [TOKENS[s]] : []))
+  const what = names.length === 0 ? 'Tokens' : `${names.join(' and ')} tokens`
+  const stored = names.length > 1 ? 'The stored secrets' : 'The stored secret'
+  return `${what} were reset on ${formatStamp(reset.at * 1000, 'f', now, o)}. ${stored} couldn't be opened.`
+}
+
+const parseReset = (value: unknown): SecretsReset | null => {
+  if (typeof value !== 'object' || value === null) return null
+  const v = value as Record<string, unknown>
+  if (typeof v.at !== 'number') return null
+  const secrets = Array.isArray(v.secrets)
+    ? v.secrets.filter((s): s is string => typeof s === 'string')
+    : []
+  return { at: v.at, secrets }
+}
+
 export const lostWarning = (lost: AdminDataKey[]) =>
   lost.some(k => k.mismatch) ? MISMATCH_WARNING : LOST_WARNING
 
@@ -121,6 +161,7 @@ export function parseAdminEncryption(value: unknown): AdminEncryption | null {
     key_file: typeof v.key_file === 'string' ? v.key_file : null,
     database_key: v.database_key === true,
     backed_up_at: typeof v.backed_up_at === 'number' ? v.backed_up_at : null,
+    secrets_reset: parseReset(v.secrets_reset),
     data_keys: keys.flatMap(k => {
       if (typeof k !== 'object' || k === null) return []
       const row = k as Record<string, unknown>

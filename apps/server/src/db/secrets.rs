@@ -1,12 +1,15 @@
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use sha2::{Digest, Sha256};
-use sqlx::Row;
 
 use super::pool::{Db, pool_key};
+use crate::crypt::ring::Ring;
+use crate::crypt::secrets::{PEPPER, secret_setting};
 
 pub(super) static PEPPERS: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
+    LazyLock::new(Default::default);
+pub(super) static RINGS: LazyLock<Mutex<HashMap<String, Arc<Ring>>>> =
     LazyLock::new(Default::default);
 
 /// The pepper of server password lookups: `PASSWORD_PEPPER` when it is set, else the value
@@ -22,14 +25,14 @@ pub(super) async fn pepper_with(db: &Db, configured: Option<&str>) -> sqlx::Resu
     if let Some(pepper) = PEPPERS.lock().ok().and_then(|m| m.get(&key).cloned()) {
         return Ok(pepper);
     }
-    let value: String = match configured {
-        Some(value) => value.to_string(),
-        None => sqlx::query("SELECT value FROM settings WHERE key = 'password_pepper'")
-            .fetch_one(db)
-            .await?
-            .try_get(0)?,
+    let pepper = match configured {
+        Some(value) => value.as_bytes().to_vec(),
+        None => secret_setting(db, PEPPER)
+            .await
+            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?
+            .as_bytes()
+            .to_vec(),
     };
-    let pepper = value.into_bytes();
     if let Ok(mut peppers) = PEPPERS.lock() {
         peppers.insert(key, pepper.clone());
     }

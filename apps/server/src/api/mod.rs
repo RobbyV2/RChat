@@ -2778,6 +2778,7 @@ fn api_routes(
 #[cfg(test)]
 pub(crate) mod test_util {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use crate::db::{AvatarKind, Db, User, now, open_started};
     use crate::instance::{Instance, InstanceConfig};
@@ -2821,9 +2822,12 @@ pub(crate) mod test_util {
     pub(crate) async fn temp_state_env(tag: &str, pairs: &[(&str, &str)]) -> (AppState, PathBuf) {
         let path = crate::db::temp_db_path(tag);
         let _ = std::fs::remove_file(&path);
-        let opts = crate::config::AppConfig::from_map(pairs)
-            .expect("config")
-            .db_options();
+        let opts = crate::db::DbOptions {
+            ring: Some(Arc::default()),
+            ..crate::config::AppConfig::from_map(pairs)
+                .expect("config")
+                .db_options()
+        };
         let db = crate::db::open_with(path.to_str(), &opts)
             .await
             .expect("open db");

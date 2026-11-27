@@ -99,7 +99,14 @@ mod tests {
         let sent = serde_json::to_string(&view).expect("json");
         assert!(!sent.contains(secret), "{sent}");
         assert!(sent.contains("\"fingerprints\":[\"k1:"), "{sent}");
-        assert_eq!(view.status.data_keys.len(), 1);
+        assert_eq!(
+            view.status
+                .data_keys
+                .iter()
+                .map(|k| k.purpose.as_str())
+                .collect::<Vec<_>>(),
+            ["secrets", "content"]
+        );
         sqlx::query("INSERT INTO settings(key, value) VALUES('keys_backed_up_at', '5')")
             .execute(&state.db)
             .await

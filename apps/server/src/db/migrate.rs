@@ -9,6 +9,8 @@ use super::secrets::secret_key;
 use super::{BUILTIN_STATE, NO_EXTRA_HASH, now};
 use crate::api::access::perms::{PRE_REPORT_PERMS, Perm};
 use crate::api::controls::{Control, ControlSeeds};
+use crate::crypt::ring::Ring;
+use crate::crypt::secrets::Supplied;
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "password_hash TEXT"),
@@ -162,6 +164,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "description TEXT"),
     ("servers", "icon_kind TEXT"),
     ("messages", "media_alt TEXT"),
+    ("outgoing_webhooks", "secret_sealed {BYTES}"),
+    ("sso_pending", "data_sealed {BYTES}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -293,7 +297,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 57: descriptions of attached images (`messages.media_alt`).
 /// 58: wrapped data keys for encryption at rest.
 /// 59: category permission rules and channels that copy their category's rules.
-pub const SCHEMA_VERSION: i64 = 59;
+/// 60: sealed instance secrets, outgoing webhook secrets and pending sign-in data.
+pub const SCHEMA_VERSION: i64 = 60;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -561,6 +566,8 @@ pub(super) async fn init_schema(
     conn: &mut AnyConnection,
     is_sqlite: bool,
     controls: Option<&ControlSeeds>,
+    ring: Option<&Ring>,
+    supplied: Supplied,
 ) -> anyhow::Result<ConfigStart> {
     let schema = match is_sqlite {
         true => SQLITE_SCHEMA,
@@ -751,15 +758,8 @@ pub(super) async fn init_schema(
         Some(controls) => apply_controls(conn, controls).await?,
         None => ConfigStart::default(),
     };
-    for (key, value) in [
-        ("instance_id", crate::identity::random_id()),
-        ("instance_signing_key", crate::identity::new_seed()),
-        ("password_pepper", crate::api::auth::new_token()),
-        ("relay_secret", crate::api::auth::new_token()),
-        ("p2p_secret", crate::api::auth::new_token()),
-    ] {
-        seed_setting(conn, key, &value).await?;
-    }
+    seed_setting(conn, "instance_id", &crate::identity::random_id()).await?;
+    crate::crypt::secrets::settle(conn, ring, supplied).await?;
     if version == 33 {
         store_setting(conn, "channel_search_predecessor", "33").await?;
     }

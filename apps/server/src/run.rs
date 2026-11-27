@@ -191,10 +191,16 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
     }
 
     let roles = config.roles;
-    let ring = crate::crypt::ring::Ring::load(&config.encryption, config.database_url.as_deref())?;
-    let db = crate::db::open_with(config.database_url.as_deref(), &config.db_options()).await?;
+    let ring = Arc::new(crate::crypt::ring::Ring::load(
+        &config.encryption,
+        config.database_url.as_deref(),
+    )?);
+    let opts = crate::db::DbOptions {
+        ring: Some(ring.clone()),
+        ..config.db_options()
+    };
+    let db = crate::db::open_with(config.database_url.as_deref(), &opts).await?;
     held.db = Some(db.clone());
-    ring.check(&db).await?;
     ring.note_source(&db).await?;
     match crate::db::connection_budget(&db).await {
         Ok(Some(budget)) if budget.tight() => tracing::warn!("{}", budget.message()),
@@ -292,7 +298,7 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
     let mut state = AppState::new(db, hub, config.s3()?, bus, instance)
         .with_limits(Arc::new(config.limits.clone()))
         .with_sso(Arc::new(crate::sso::Sso::new(config.sso.clone())?))
-        .with_crypt(Arc::new(ring));
+        .with_crypt(ring);
     if state.bus.is_some() {
         let (hub, ring) = (state.hub.clone(), state.crypt.clone());
         held.spawn(async move {

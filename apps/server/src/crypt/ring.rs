@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use sqlx::Row;
+use sqlx::{AnyConnection, Row};
 use zeroize::Zeroizing;
 
 use super::{Kek, Key, Purpose, Subkeys, decode_key, parse_keys, random_key};
@@ -22,6 +22,8 @@ const SOURCE_SETTING: &str = "keys_source";
 const MADE_SETTING: &str = "keys_file_print";
 pub const BACKED_UP_SETTING: &str = "keys_backed_up_at";
 const SEALED_MARK: &str = "!sealed";
+/// The `SecretsReset` of the last start that made a stored secret again, as JSON.
+pub const RESET_SETTING: &str = "secrets_reset";
 
 /// Whether this build reads and writes sealed records, as its copy announcement says.
 pub const SEALS: bool = false;
@@ -230,7 +232,16 @@ pub struct RingStatus {
     /// Whether the `secrets` purpose runs on the key kept in the database.
     pub database_key: bool,
     pub backed_up_at: Option<i64>,
+    pub secrets_reset: Option<SecretsReset>,
     pub data_keys: Vec<DataKeyStatus>,
+}
+
+/// The relay or P2P secrets a start made again because the stored ones could not be opened.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SecretsReset {
+    pub at: i64,
+    /// The `settings` names, such as `relay_secret`.
+    pub secrets: Vec<String>,
 }
 
 impl RingStatus {
@@ -327,22 +338,54 @@ fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     lock.write().unwrap_or_else(|e| e.into_inner())
 }
 
-async fn setting(db: &Db, key: &str) -> sqlx::Result<Option<String>> {
+async fn setting(conn: &mut AnyConnection, key: &str) -> sqlx::Result<Option<String>> {
     sqlx::query("SELECT value FROM settings WHERE key = $1")
         .bind(key)
-        .fetch_optional(db)
+        .fetch_optional(&mut *conn)
         .await?
         .map(|r| r.try_get(0))
         .transpose()
 }
 
-async fn put_setting(db: &Db, key: &str, value: &str) -> sqlx::Result<()> {
+async fn put_setting(conn: &mut AnyConnection, key: &str, value: &str) -> sqlx::Result<()> {
     sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         .bind(key)
         .bind(value)
-        .execute(db)
+        .execute(&mut *conn)
         .await
         .map(|_| ())
+}
+
+/// Refuses `kek` for a new data key while a data key in use names its id but does not unwrap
+/// with it. An id names one key only, so the key that wrapped that data key can come back.
+async fn id_is_free(conn: &mut AnyConnection, kek: &Kek) -> anyhow::Result<()> {
+    let rows = sqlx::query(
+        "SELECT id, purpose, gen, wrapped FROM data_keys WHERE kek = $1 AND state <> 'destroyed' ORDER BY id",
+    )
+    .bind(&kek.id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for row in rows {
+        let (id, purpose, generation): (i64, String, i64) =
+            (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
+        let wrapped: String = row.try_get(3)?;
+        if Purpose::parse(&purpose).is_some_and(|p| kek.unwrap(p, generation, &wrapped).is_ok()) {
+            continue;
+        }
+        let restore = match kek.id.as_str() {
+            DATABASE_KEK => format!(
+                "which the settings key {DB_KEK_SETTING} does not hold. Restore {DB_KEK_SETTING}, or set ENCRYPTION_KEYS or ACCOUNT_SECRETS_KEY"
+            ),
+            id => format!(
+                "but the key {id} here is a different key. Restore that key, or give the new key another id"
+            ),
+        };
+        anyhow::bail!(
+            "the data key {id} ({purpose}) needs the key {}, {restore}. A new data key is never wrapped under an id that names another key",
+            kek.id
+        );
+    }
+    Ok(())
 }
 
 impl Ring {
@@ -464,6 +507,8 @@ impl Ring {
             Ok(path) => path,
             Err(no) => return Ok(Err(no)),
         };
+        let mut conn = db.acquire().await?;
+        let conn = &mut *conn;
         let made = Kek::generate("k1");
         let keks = match create_key_file(path, std::slice::from_ref(&made)) {
             Ok(()) => {
@@ -471,13 +516,13 @@ impl Ring {
                     "created the key file {}. Back it up: without it, encrypted messages can't be opened",
                     path.display()
                 );
-                put_setting(db, MADE_SETTING, &made.fingerprint()).await?;
+                put_setting(conn, MADE_SETTING, &made.fingerprint()).await?;
                 read_key_file(path)?
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => read_key_file(path)?,
             Err(e) => anyhow::bail!("the key file {} cannot be written: {e}", path.display()),
         };
-        put_setting(db, SOURCE_SETTING, Source::File.name()).await?;
+        put_setting(conn, SOURCE_SETTING, Source::File.name()).await?;
         *write(&self.loaded) = Loaded {
             source: Some(Source::File),
             keks,
@@ -500,14 +545,16 @@ impl Ring {
 
     /// Records the source in use in `settings`.
     pub async fn note_source(&self, db: &Db) -> sqlx::Result<()> {
-        let made = setting(db, MADE_SETTING).await?;
+        let mut conn = db.acquire().await?;
+        let conn = &mut *conn;
+        let made = setting(conn, MADE_SETTING).await?;
         let Some(source) = self.source(made.as_deref()) else {
             return Ok(());
         };
-        if setting(db, SOURCE_SETTING).await?.as_deref() == Some(source.name()) {
+        if setting(conn, SOURCE_SETTING).await?.as_deref() == Some(source.name()) {
             return Ok(());
         }
-        put_setting(db, SOURCE_SETTING, source.name()).await
+        put_setting(conn, SOURCE_SETTING, source.name()).await
     }
 
     /// Where the root keys this process holds were read, as a start refusal names it.
@@ -534,7 +581,11 @@ impl Ring {
         }
     }
 
-    async fn database_kek(&self, db: &Db, create: bool) -> anyhow::Result<Option<Kek>> {
+    async fn database_kek(
+        &self,
+        conn: &mut AnyConnection,
+        create: bool,
+    ) -> anyhow::Result<Option<Kek>> {
         if create {
             let fresh = Kek::generate(DATABASE_KEK);
             let value = fresh.encoded();
@@ -547,10 +598,10 @@ impl Ring {
             )
             .bind(DB_KEK_SETTING)
             .bind(value)
-            .execute(db)
+            .execute(&mut *conn)
             .await?;
         }
-        let Some(stored) = setting(db, DB_KEK_SETTING).await?.map(Zeroizing::new) else {
+        let Some(stored) = setting(conn, DB_KEK_SETTING).await?.map(Zeroizing::new) else {
             return Ok(None);
         };
         if stored.as_str() == SEALED_MARK {
@@ -561,14 +612,18 @@ impl Ring {
         Ok(Some(Kek::new(DATABASE_KEK, key)))
     }
 
-    async fn wrapping_kek(&self, db: &Db, purpose: Purpose) -> anyhow::Result<Option<Kek>> {
+    async fn wrapping_kek(
+        &self,
+        conn: &mut AnyConnection,
+        purpose: Purpose,
+    ) -> anyhow::Result<Option<Kek>> {
         if let Some(first) = read(&self.loaded).keks.first() {
             return Ok(Some(first.clone()));
         }
         match purpose {
             Purpose::Secrets => match self.alias.first() {
                 Some(alias) => Ok(Some(alias.clone())),
-                None => self.database_kek(db, true).await,
+                None => self.database_kek(conn, true).await,
             },
             Purpose::Content | Purpose::Media | Purpose::Search | Purpose::Bus => Ok(None),
         }
@@ -578,14 +633,14 @@ impl Ring {
     /// key under the id that wrapped it, else the fingerprint of the key it holds under that id.
     async fn unwrap_row(
         &self,
-        db: &Db,
+        conn: &mut AnyConnection,
         purpose: Purpose,
         generation: i64,
         kek: &str,
         wrapped: &str,
     ) -> anyhow::Result<Result<Key, Option<String>>> {
         let found = match kek {
-            DATABASE_KEK => self.database_kek(db, false).await?,
+            DATABASE_KEK => self.database_kek(conn, false).await?,
             id => self.kek(id, purpose),
         };
         let Some(found) = found else {
@@ -599,31 +654,48 @@ impl Ring {
     /// The active data key of `purpose`, made on first use: inserted if absent and read back,
     /// so copies starting together agree. `None` when no key may wrap this purpose yet.
     pub async fn data_key(&self, db: &Db, purpose: Purpose) -> anyhow::Result<Option<(u32, Key)>> {
-        if let Some(id) = read(&self.active).get(&purpose).copied()
-            && let Some(dek) = read(&self.deks).get(&id)
-        {
-            return Ok(Some((id, dek.key.clone())));
+        if let Some(held) = self.held_data_key(purpose) {
+            return Ok(Some(held));
+        }
+        self.data_key_on(&mut *db.acquire().await?, purpose).await
+    }
+
+    fn held_data_key(&self, purpose: Purpose) -> Option<(u32, Key)> {
+        let id = read(&self.active).get(&purpose).copied()?;
+        let key = read(&self.deks).get(&id)?.key.clone();
+        Some((id, key))
+    }
+
+    /// `data_key` on one connection, for a caller inside a transaction.
+    pub async fn data_key_on(
+        &self,
+        conn: &mut AnyConnection,
+        purpose: Purpose,
+    ) -> anyhow::Result<Option<(u32, Key)>> {
+        if let Some(held) = self.held_data_key(purpose) {
+            return Ok(Some(held));
         }
         const ACTIVE: &str = "SELECT id, gen, kek, wrapped FROM data_keys WHERE purpose = $1 AND state = 'active' ORDER BY gen DESC LIMIT 1";
         let mut row = sqlx::query(ACTIVE)
             .bind(purpose.name())
-            .fetch_optional(db)
+            .fetch_optional(&mut *conn)
             .await?;
         if row.is_none() {
-            let Some(kek) = self.wrapping_kek(db, purpose).await? else {
+            let Some(kek) = self.wrapping_kek(conn, purpose).await? else {
                 return Ok(None);
             };
+            id_is_free(conn, &kek).await?;
             let wrapped = kek.wrap(purpose, 1, &random_key());
             sqlx::query("INSERT INTO data_keys(purpose, gen, kek, wrapped, created_at) VALUES($1, 1, $2, $3, $4) ON CONFLICT(purpose, gen) DO NOTHING")
                 .bind(purpose.name())
                 .bind(&kek.id)
                 .bind(wrapped)
                 .bind(crate::db::now())
-                .execute(db)
+                .execute(&mut *conn)
                 .await?;
             row = sqlx::query(ACTIVE)
                 .bind(purpose.name())
-                .fetch_optional(db)
+                .fetch_optional(&mut *conn)
                 .await?;
         }
         let Some(row) = row else {
@@ -632,7 +704,7 @@ impl Ring {
         let (id, generation): (i64, i64) = (row.try_get(0)?, row.try_get(1)?);
         let (kek, wrapped): (String, String) = (row.try_get(2)?, row.try_get(3)?);
         let Ok(key) = self
-            .unwrap_row(db, purpose, generation, &kek, &wrapped)
+            .unwrap_row(conn, purpose, generation, &kek, &wrapped)
             .await?
         else {
             anyhow::bail!("the data key {id} cannot be unwrapped with the key {kek}");
@@ -656,11 +728,23 @@ impl Ring {
         if let Some(dek) = read(&self.deks).get(&id) {
             return Ok(Some((dek.purpose, dek.key.clone())));
         }
+        self.key_by_id_on(&mut *db.acquire().await?, id).await
+    }
+
+    /// `key_by_id` on one connection, for a caller inside a transaction.
+    pub async fn key_by_id_on(
+        &self,
+        conn: &mut AnyConnection,
+        id: u32,
+    ) -> anyhow::Result<Option<(Purpose, Key)>> {
+        if let Some(dek) = read(&self.deks).get(&id) {
+            return Ok(Some((dek.purpose, dek.key.clone())));
+        }
         let row = sqlx::query(
             "SELECT purpose, gen, kek, wrapped FROM data_keys WHERE id = $1 AND state <> 'destroyed'",
         )
         .bind(i64::from(id))
-        .fetch_optional(db)
+        .fetch_optional(&mut *conn)
         .await?;
         let Some(row) = row else {
             return Ok(None);
@@ -671,7 +755,7 @@ impl Ring {
             return Ok(None);
         };
         let Ok(key) = self
-            .unwrap_row(db, purpose, generation, &kek, &wrapped)
+            .unwrap_row(conn, purpose, generation, &kek, &wrapped)
             .await?
         else {
             return Ok(None);
@@ -685,6 +769,55 @@ impl Ring {
             },
         );
         Ok(Some((purpose, key)))
+    }
+
+    /// Whether a start goes on with records it cannot open (`ENCRYPTION_ALLOW_LOST=on`).
+    pub fn allow_lost(&self) -> bool {
+        self.allow_lost
+    }
+
+    /// Drops the held data keys, as after a transaction that made one was rolled back.
+    pub fn forget_data_keys(&self) {
+        write(&self.active).clear();
+        write(&self.deks).clear();
+        self.subkeys.forget(None);
+    }
+
+    /// Makes the next generation of the data key of `purpose` the active one, for a purpose
+    /// whose active key does not unwrap here. The key it replaces stays listed for its records.
+    /// `None` when no key may wrap this purpose.
+    pub async fn renew_on(
+        &self,
+        conn: &mut AnyConnection,
+        purpose: Purpose,
+    ) -> anyhow::Result<Option<(u32, Key)>> {
+        let Some(kek) = self.wrapping_kek(conn, purpose).await? else {
+            return Ok(None);
+        };
+        id_is_free(conn, &kek).await?;
+        let last: i64 =
+            sqlx::query("SELECT COALESCE(MAX(gen), 0) FROM data_keys WHERE purpose = $1")
+                .bind(purpose.name())
+                .fetch_one(&mut *conn)
+                .await?
+                .try_get(0)?;
+        let generation = last + 1;
+        sqlx::query(
+            "UPDATE data_keys SET state = 'retiring' WHERE purpose = $1 AND state = 'active'",
+        )
+        .bind(purpose.name())
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query("INSERT INTO data_keys(purpose, gen, kek, wrapped, created_at) VALUES($1, $2, $3, $4, $5)")
+            .bind(purpose.name())
+            .bind(generation)
+            .bind(&kek.id)
+            .bind(kek.wrap(purpose, generation, &random_key()))
+            .bind(crate::db::now())
+            .execute(&mut *conn)
+            .await?;
+        write(&self.active).remove(&purpose);
+        self.data_key_on(conn, purpose).await
     }
 
     /// The generation of a cached data key.
@@ -710,25 +843,44 @@ impl Ring {
     /// `ENCRYPTION_ALLOW_LOST=on`; then the ids are returned and their records read as
     /// unreadable.
     pub async fn check(&self, db: &Db) -> anyhow::Result<Vec<i64>> {
+        self.check_on(&mut *db.acquire().await?).await
+    }
+
+    /// `check` on one connection. The data keys that unwrap stay held, so reading a record
+    /// under one of them asks the database nothing.
+    pub async fn check_on(&self, conn: &mut AnyConnection) -> anyhow::Result<Vec<i64>> {
         let rows = sqlx::query(
             "SELECT id, purpose, gen, kek, wrapped FROM data_keys WHERE state <> 'destroyed' ORDER BY id",
         )
-        .fetch_all(db)
+        .fetch_all(&mut *conn)
         .await?;
         let mut lost = Vec::new();
         for row in rows {
             let (id, purpose, generation): (i64, String, i64) =
                 (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
             let (kek, wrapped): (String, String) = (row.try_get(3)?, row.try_get(4)?);
-            let held = match Purpose::parse(&purpose) {
+            let parsed = Purpose::parse(&purpose);
+            let held = match parsed {
                 Some(purpose) => {
-                    self.unwrap_row(db, purpose, generation, &kek, &wrapped)
+                    self.unwrap_row(conn, purpose, generation, &kek, &wrapped)
                         .await?
                 }
                 None => Err(None),
             };
-            let Err(found) = held else {
-                continue;
+            let found = match (held, parsed, u32::try_from(id)) {
+                (Ok(key), Some(purpose), Ok(id)) => {
+                    write(&self.deks).insert(
+                        id,
+                        Dek {
+                            purpose,
+                            generation,
+                            key,
+                        },
+                    );
+                    continue;
+                }
+                (Ok(_), _, _) => continue,
+                (Err(found), _, _) => found,
             };
             let whence = match kek.as_str() {
                 DATABASE_KEK => format!("the settings key {DB_KEK_SETTING}"),
@@ -755,7 +907,9 @@ impl Ring {
     }
 
     pub async fn status(&self, db: &Db) -> anyhow::Result<RingStatus> {
-        let made = setting(db, MADE_SETTING).await?;
+        let mut conn = db.acquire().await?;
+        let conn = &mut *conn;
+        let made = setting(conn, MADE_SETTING).await?;
         let source = self.source(made.as_deref());
         let (source, fingerprints) = {
             let loaded = read(&self.loaded);
@@ -772,7 +926,7 @@ impl Ring {
         };
         let rows =
             sqlx::query("SELECT id, purpose, gen, kek, wrapped, state FROM data_keys ORDER BY id")
-                .fetch_all(db)
+                .fetch_all(&mut *conn)
                 .await?;
         let mut data_keys = Vec::with_capacity(rows.len());
         let mut database_key = false;
@@ -782,7 +936,7 @@ impl Ring {
                 (row.try_get(3)?, row.try_get(4)?, row.try_get(5)?);
             let held = match Purpose::parse(&purpose) {
                 Some(purpose) => {
-                    self.unwrap_row(db, purpose, generation, &kek, &wrapped)
+                    self.unwrap_row(conn, purpose, generation, &kek, &wrapped)
                         .await?
                 }
                 None => Err(None),
@@ -798,9 +952,12 @@ impl Ring {
                 held: held.is_ok(),
             });
         }
-        let backed_up_at = setting(db, BACKED_UP_SETTING)
+        let backed_up_at = setting(conn, BACKED_UP_SETTING)
             .await?
             .and_then(|v| v.trim().parse().ok());
+        let secrets_reset = setting(conn, RESET_SETTING)
+            .await?
+            .and_then(|v| serde_json::from_str(&v).ok());
         let named = self.named_file || source == Source::File.name();
         Ok(RingStatus {
             key_file: named
@@ -810,6 +967,7 @@ impl Ring {
             fingerprints,
             database_key,
             backed_up_at,
+            secrets_reset,
             data_keys,
         })
     }

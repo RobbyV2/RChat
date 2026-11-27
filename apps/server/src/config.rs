@@ -443,6 +443,11 @@ impl AppConfig {
         DbOptions {
             limits: self.limits.clone(),
             pepper: self.secrets.password_pepper.clone(),
+            ring: None,
+            signing_key_set: self
+                .instance_signing_key
+                .as_ref()
+                .is_some_and(|Secret(spec)| !spec.trim().is_empty()),
             controls: Some(self.controls.clone()),
             light_commits: self.light_commits,
             web_only: self.roles

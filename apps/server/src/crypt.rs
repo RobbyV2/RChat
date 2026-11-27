@@ -13,6 +13,7 @@ use zeroize::Zeroizing;
 
 pub mod cli;
 pub mod ring;
+pub mod secrets;
 
 #[cfg(test)]
 mod tests;

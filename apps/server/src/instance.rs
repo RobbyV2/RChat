@@ -8,6 +8,7 @@ use sqlx::Row;
 use url::Url;
 use utoipa::ToSchema;
 
+use crate::crypt::secrets::{P2P_SECRET, RELAY_SECRET, SIGNING_KEY, secret_setting};
 use crate::db::Db;
 use crate::identity::{JWKS_PATH, Keyring, host_of};
 use crate::relay::{IceConfig, IceServer};
@@ -156,7 +157,7 @@ impl Instance {
             Some(spec) if !spec.is_empty() => {
                 Keyring::parse(spec).map_err(|e| anyhow::anyhow!("INSTANCE_SIGNING_KEY: {e}"))?
             }
-            Some(_) | None => Keyring::parse(&setting(db, "instance_signing_key").await?)?,
+            Some(_) | None => Keyring::parse(&secret_setting(db, SIGNING_KEY).await?)?,
         };
         let parse = |raw: &Option<String>, what: &str, schemes: &[&str]| {
             raw.as_deref()
@@ -177,11 +178,11 @@ impl Instance {
             ice: ice.clone(),
             relay_secret: match relay_secret {
                 Some(secret) => secret.clone(),
-                None => setting(db, "relay_secret").await?,
+                None => secret_setting(db, RELAY_SECRET).await?.to_string(),
             },
             p2p_secret: match p2p_secret {
                 Some(secret) => secret.clone(),
-                None => setting(db, "p2p_secret").await?,
+                None => secret_setting(db, P2P_SECRET).await?.to_string(),
             },
             id,
             name: name

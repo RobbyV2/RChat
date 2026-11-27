@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{
     api::{ApiError, auth::new_token, bad, reauth::Session},
+    crypt::secrets::{Sealer, open_or},
     db::{Db, now, secret_key},
     state::AppState,
 };
@@ -184,6 +185,46 @@ pub fn return_url(ret: Return, public_url: &Url, query: &str) -> String {
     }
 }
 
+/// Adds a pending row. Its data is stored sealed, bound to the row id, when a key seals secrets.
+async fn put<'e>(
+    conn: impl sqlx::Executor<'e, Database = sqlx::Any>,
+    sealer: &Sealer,
+    (id, kind, provider): (&str, &str, &str),
+    data: String,
+    expiry: i64,
+) -> sqlx::Result<()> {
+    let sealed = sealer.seal("sso_pending", "data", id, &data);
+    let query = match sealed {
+        Some(record) => sqlx::query(
+            "INSERT INTO sso_pending(id,kind,provider,data,data_sealed,expires_at) VALUES($1,$2,$3,'',$4,$5)",
+        )
+        .bind(id)
+        .bind(kind)
+        .bind(provider)
+        .bind(record),
+        None => sqlx::query(
+            "INSERT INTO sso_pending(id,kind,provider,data,expires_at) VALUES($1,$2,$3,$4,$5)",
+        )
+        .bind(id)
+        .bind(kind)
+        .bind(provider)
+        .bind(data),
+    };
+    query.bind(expiry).execute(conn).await.map(|_| ())
+}
+
+/// The data of a pending row as it was stored.
+async fn pending(
+    db: &Db,
+    id: &str,
+    data: String,
+    sealed: Option<Vec<u8>>,
+) -> Result<String, ApiError> {
+    Ok(open_or(db, "sso_pending", "data", id, sealed, data)
+        .await?
+        .to_string())
+}
+
 async fn store<T: Serialize>(
     db: &Db,
     value: &str,
@@ -193,14 +234,8 @@ async fn store<T: Serialize>(
     expiry: i64,
 ) -> Result<(), ApiError> {
     let data = serde_json::to_string(data).map_err(ApiError::internal)?;
-    sqlx::query("INSERT INTO sso_pending(id,kind,provider,data,expires_at) VALUES($1,$2,$3,$4,$5)")
-        .bind(secret_key(value))
-        .bind(kind)
-        .bind(provider)
-        .bind(data)
-        .bind(expiry)
-        .execute(db)
-        .await?;
+    let (sealer, id) = (Sealer::of(db).await?, secret_key(value));
+    put(db, &sealer, (&id, kind, provider), data, expiry).await?;
     Ok(())
 }
 
@@ -256,10 +291,16 @@ pub(crate) async fn issue_ticket(
 }
 
 pub async fn take_ticket(db: &Db, value: &str, provider: &str) -> Result<Option<Ticket>, ApiError> {
-    let data: Option<String> = sqlx::query_scalar("DELETE FROM sso_pending WHERE id=$1 AND kind='ticket' AND provider=$2 AND expires_at>$3 RETURNING data")
-        .bind(secret_key(value)).bind(provider).bind(now()).fetch_optional(db).await?;
-    data.map(|s| serde_json::from_str(&s).map_err(ApiError::internal))
-        .transpose()
+    let id = secret_key(value);
+    let row: Option<(String, Option<Vec<u8>>)> = sqlx::query_as("DELETE FROM sso_pending WHERE id=$1 AND kind='ticket' AND provider=$2 AND expires_at>$3 RETURNING data, data_sealed")
+        .bind(&id).bind(provider).bind(now()).fetch_optional(db).await?;
+    let Some((data, sealed)) = row else {
+        return Ok(None);
+    };
+    let data = pending(db, &id, data, sealed).await?;
+    serde_json::from_str(&data)
+        .map(Some)
+        .map_err(ApiError::internal)
 }
 
 fn fresh(auth_time: Option<i64>) -> bool {
@@ -379,10 +420,11 @@ pub async fn finish_response(
     state_param: &str,
     response: Result<&str, CallbackError>,
 ) -> Result<(Return, String), (Return, CallbackError)> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "DELETE FROM sso_pending WHERE id=$1 AND kind='flow' AND provider=$2 AND expires_at>$3 RETURNING data",
+    let id = secret_key(state_param);
+    let row: Option<(String, Option<Vec<u8>>)> = sqlx::query_as(
+        "DELETE FROM sso_pending WHERE id=$1 AND kind='flow' AND provider=$2 AND expires_at>$3 RETURNING data, data_sealed",
     )
-    .bind(secret_key(state_param))
+    .bind(&id)
     .bind(&provider.config.id)
     .bind(now())
     .fetch_optional(&state.db)
@@ -391,7 +433,13 @@ pub async fn finish_response(
         tracing::warn!(%e, "OIDC state lookup failed");
         (Return::Web, CallbackError::Failed)
     })?;
-    let (data,) = row.ok_or((Return::Web, CallbackError::Expired))?;
+    let (data, sealed) = row.ok_or((Return::Web, CallbackError::Expired))?;
+    let data = pending(&state.db, &id, data, sealed)
+        .await
+        .map_err(|ApiError(_, e, _)| {
+            tracing::warn!(%e, "OIDC state lookup failed");
+            (Return::Web, CallbackError::Failed)
+        })?;
     let p: Pending =
         serde_json::from_str(&data).map_err(|_| (Return::Web, CallbackError::Failed))?;
     let ret = p.flow.ret.clone();
@@ -571,6 +619,7 @@ pub struct Confirmation {
 
 pub(super) async fn issue_confirmation(
     conn: &mut sqlx::AnyConnection,
+    sealer: &Sealer,
     app: &AppCode,
     username: &str,
     token: &str,
@@ -592,14 +641,13 @@ pub(super) async fn issue_confirmation(
         ..app.clone()
     };
     let code = new_token();
-    sqlx::query(
-        "INSERT INTO sso_pending(id,kind,provider,data,expires_at) VALUES($1,'code',$2,$3,$4)",
+    put(
+        conn,
+        sealer,
+        (&secret_key(&code), "code", &app.identity.provider),
+        serde_json::to_string(&proof).map_err(ApiError::internal)?,
+        expires_at,
     )
-    .bind(secret_key(&code))
-    .bind(&app.identity.provider)
-    .bind(serde_json::to_string(&proof).map_err(ApiError::internal)?)
-    .bind(expires_at)
-    .execute(conn)
     .await?;
     Ok(Confirmation {
         provider: app.identity.provider.clone(),
@@ -609,14 +657,16 @@ pub(super) async fn issue_confirmation(
 }
 
 pub async fn take_code(db: &Db, code: &str) -> Result<AppCode, ApiError> {
-    let (data, expires_at): (String, i64) = sqlx::query_as(
-        "DELETE FROM sso_pending WHERE id=$1 AND kind='code' AND expires_at>$2 RETURNING data, expires_at",
+    let id = secret_key(code);
+    let (data, expires_at, sealed): (String, i64, Option<Vec<u8>>) = sqlx::query_as(
+        "DELETE FROM sso_pending WHERE id=$1 AND kind='code' AND expires_at>$2 RETURNING data, expires_at, data_sealed",
     )
-    .bind(secret_key(code))
+    .bind(&id)
     .bind(now())
     .fetch_optional(db)
     .await?
     .ok_or_else(expired)?;
+    let data = pending(db, &id, data, sealed).await?;
     let mut app: AppCode = serde_json::from_str(&data).map_err(ApiError::internal)?;
     app.expires_at = expires_at;
     Ok(app)
@@ -665,33 +715,34 @@ pub async fn client_consent(
     if receipt.len() != 64 || !receipt.bytes().all(|c| c.is_ascii_hexdigit()) {
         return Err(expired());
     }
+    let (sealer, id) = (Sealer::of(db).await?, secret_key(receipt));
     let mut tx = db.begin().await?;
     let sql = match action {
         ConsentAction::Describe => {
-            "SELECT data,expires_at FROM sso_pending WHERE id=$1 AND kind='client_consent' AND expires_at>$2"
+            "SELECT data,expires_at,data_sealed FROM sso_pending WHERE id=$1 AND kind='client_consent' AND expires_at>$2"
         }
         _ => {
-            "DELETE FROM sso_pending WHERE id=$1 AND kind='client_consent' AND expires_at>$2 RETURNING data,expires_at"
+            "DELETE FROM sso_pending WHERE id=$1 AND kind='client_consent' AND expires_at>$2 RETURNING data,expires_at,data_sealed"
         }
     };
-    let (raw, expires): (String, i64) = sqlx::query_as(sql)
-        .bind(secret_key(receipt))
+    let (raw, expires, sealed): (String, i64, Option<Vec<u8>>) = sqlx::query_as(sql)
+        .bind(&id)
         .bind(now())
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(expired)?;
+    let raw = pending(db, &id, raw, sealed).await?;
     let consent: Consent = serde_json::from_str(&raw).map_err(ApiError::internal)?;
     let code = if matches!(action, ConsentAction::Allow) {
         let code = new_token();
         let data = serde_json::to_string(&consent.app).map_err(ApiError::internal)?;
-        sqlx::query(
-            "INSERT INTO sso_pending(id,kind,provider,data,expires_at) VALUES($1,'code',$2,$3,$4)",
+        put(
+            &mut *tx,
+            &sealer,
+            (&secret_key(&code), "code", &consent.app.identity.provider),
+            data,
+            expires,
         )
-        .bind(secret_key(&code))
-        .bind(&consent.app.identity.provider)
-        .bind(data)
-        .bind(expires)
-        .execute(&mut *tx)
         .await?;
         Some(code)
     } else {

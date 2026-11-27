@@ -41,6 +41,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, Message, OkResp, ProfanityTarget, Settings, UserRef, allowed,
     bad, check_len, embeds, media, ok, placeholders, valid_color,
 };
+use crate::crypt::secrets::{HOOK_COLUMN, HOOK_TABLE, Sealer, open_or};
 use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, lock_server, now, pepper};
 use crate::limits::bucket::{self, Keyed};
 use crate::net_guard::{self, AllowedHost, Http, Policy};
@@ -2177,6 +2178,7 @@ pub(crate) async fn create_outgoing(
     let url = check_url(&url).await?;
     let secret = new_secret();
     let actor = manager_actor(db, &access, &user).await?;
+    let sealer = Sealer::of(db).await?;
     let mut tx = db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     let sql = format!(
@@ -2187,7 +2189,10 @@ pub(crate) async fn create_outgoing(
         .bind(&hook_name)
         .bind(&url)
         .bind(&events)
-        .bind(&secret)
+        .bind(match sealer.seals() {
+            true => "",
+            false => secret.as_str(),
+        })
         .bind(&user.username)
         .bind(now())
         .bind(state.limits.server_outgoing_webhooks_max)
@@ -2204,6 +2209,13 @@ pub(crate) async fn create_outgoing(
             )
         })?;
     let id: i64 = row.try_get(0)?;
+    if let Some(record) = sealer.seal(HOOK_TABLE, HOOK_COLUMN, &id.to_string(), &secret) {
+        sqlx::query("UPDATE outgoing_webhooks SET secret_sealed = $1 WHERE id = $2")
+            .bind(record)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
     audit::record(
         &mut tx,
         outgoing_entry(
@@ -2473,9 +2485,24 @@ pub(crate) async fn reset_secret(
     };
     let secret = new_secret();
     let actor = manager_actor(db, &access, &user).await?;
+    let sealed = Sealer::of(db)
+        .await?
+        .seal(HOOK_TABLE, HOOK_COLUMN, &id.to_string(), &secret);
     let mut tx = db.begin().await?;
-    let wrote = sqlx::query("UPDATE outgoing_webhooks SET secret = $1, creator = CASE WHEN $3 <> 0 THEN $4 ELSE creator END, url = $6 WHERE id = $2 AND COALESCE(creator, '') = $5 AND url = $7")
-        .bind(&secret)
+    let sql = match sealed {
+        Some(_) => {
+            "UPDATE outgoing_webhooks SET secret = '', secret_sealed = $1, creator = CASE WHEN $3 <> 0 THEN $4 ELSE creator END, url = $6 WHERE id = $2 AND COALESCE(creator, '') = $5 AND url = $7"
+        }
+        None => {
+            "UPDATE outgoing_webhooks SET secret = $1, secret_sealed = NULL, creator = CASE WHEN $3 <> 0 THEN $4 ELSE creator END, url = $6 WHERE id = $2 AND COALESCE(creator, '') = $5 AND url = $7"
+        }
+    };
+    let wrote = sqlx::query(sql);
+    let wrote = match sealed {
+        Some(record) => wrote.bind(record),
+        None => wrote.bind(&secret),
+    };
+    let wrote = wrote
         .bind(id)
         .bind(takes as i64)
         .bind(&user.username)
@@ -3164,6 +3191,7 @@ async fn queue(state: &AppState, hook: i64, fact: &Fact) -> Result<(), ApiError>
 const OFF_FAILURES: &str = "failures";
 const OFF_OWNER: &str = "owner";
 const OWNER_GONE: &str = "Owner has no access to this server";
+const SECRET_LOST: &str = "The secret can't be opened. Reset it";
 
 /// Turns `hook` off because its owner is no longer a member (or their account is gone).
 async fn owner_gone(db: &Db, hook: i64, at: i64) -> Result<(), ApiError> {
@@ -3481,7 +3509,7 @@ pub async fn run_due(state: &AppState, policy: &Policy, at: i64) -> Result<usize
 /// from current data first. Returns whether a request was sent.
 async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<bool, ApiError> {
     let db = &state.db;
-    let row = sqlx::query("SELECT d.hook_id, d.payload, d.attempts, d.created_at, h.url, h.secret, h.enabled, h.server, h.creator FROM webhook_deliveries d JOIN outgoing_webhooks h ON h.id = d.hook_id WHERE d.id = $1 AND d.status = 'pending'")
+    let row = sqlx::query("SELECT d.hook_id, d.payload, d.attempts, d.created_at, h.url, h.secret, h.enabled, h.server, h.creator, h.secret_sealed FROM webhook_deliveries d JOIN outgoing_webhooks h ON h.id = d.hook_id WHERE d.id = $1 AND d.status = 'pending'")
         .bind(id)
         .fetch_optional(db)
         .await?;
@@ -3501,6 +3529,7 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
         row.try_get(7)?,
         row.try_get(8)?,
     );
+    let sealed: Option<Vec<u8>> = row.try_get(9)?;
     let off = !Settings::cached(db).await.outgoing_webhooks;
     let give_up = async |why: &str| {
         finish(
@@ -3525,6 +3554,26 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
         .await?;
         return Ok(false);
     }
+    let secret = match open_or(
+        db,
+        HOOK_TABLE,
+        HOOK_COLUMN,
+        &hook.to_string(),
+        sealed,
+        secret,
+    )
+    .await
+    {
+        Ok(secret) => secret,
+        Err(e) => match e.downcast::<sqlx::Error>() {
+            Ok(e) => return Err(e.into()),
+            Err(e) => {
+                tracing::warn!("outgoing webhook {hook}: {e:#}");
+                give_up(SECRET_LOST).await?;
+                return Ok(false);
+            }
+        },
+    };
     let Some(owner) = hook_owner(db, &server, owner.as_deref()).await? else {
         give_up(OWNER_GONE).await?;
         owner_gone(db, hook, at).await?;
@@ -5062,8 +5111,10 @@ mod tests {
         }
     }
 
+    /// An outgoing webhook whose secret `whsec_test` is stored sealed, as `create_outgoing`
+    /// stores one.
     async fn outgoing_hook(db: &Db, url: &str, events: &str, creator: &str) -> i64 {
-        sqlx::query("INSERT INTO outgoing_webhooks(server, name, url, events, secret, creator, created_at) VALUES('rchat', 'Out', $1, $2, 'whsec_test', $3, 1) RETURNING id")
+        let id: i64 = sqlx::query("INSERT INTO outgoing_webhooks(server, name, url, events, secret, creator, created_at) VALUES('rchat', 'Out', $1, $2, '', $3, 1) RETURNING id")
             .bind(url)
             .bind(events)
             .bind(creator)
@@ -5071,7 +5122,155 @@ mod tests {
             .await
             .expect("hook")
             .try_get(0)
-            .expect("id")
+            .expect("id");
+        let record = Sealer::of(db)
+            .await
+            .expect("sealer")
+            .seal(HOOK_TABLE, HOOK_COLUMN, &id.to_string(), "whsec_test")
+            .expect("sealed");
+        sqlx::query("UPDATE outgoing_webhooks SET secret_sealed = $1 WHERE id = $2")
+            .bind(record)
+            .bind(id)
+            .execute(db)
+            .await
+            .expect("seal");
+        id
+    }
+
+    async fn stored_secret(db: &Db, id: i64) -> (String, Option<Vec<u8>>) {
+        sqlx::query_as("SELECT secret, secret_sealed FROM outgoing_webhooks WHERE id = $1")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .expect("hook")
+    }
+
+    #[tokio::test]
+    async fn outgoing_secrets_are_stored_sealed() {
+        let (state, path, _) = setup("wh_out_sealed").await;
+        let db = &state.db;
+        switch_on(db).await;
+        let Json(made) = create_outgoing(
+            State(state.clone()),
+            Authed(mem_user("owner", false)),
+            Path("rchat".to_string()),
+            Json(NewOutgoing {
+                name: "Out".to_string(),
+                url: "https://93.184.216.34/a".to_string(),
+                events: vec!["message.created".to_string()],
+            }),
+        )
+        .await
+        .expect("create");
+        let id = made.webhook.id;
+        let opened = |(plain, sealed): (String, Option<Vec<u8>>)| async move {
+            assert!(plain.is_empty() && sealed.is_some(), "no plain copy");
+            open_or(db, HOOK_TABLE, HOOK_COLUMN, &id.to_string(), sealed, plain)
+                .await
+                .expect("opens")
+                .to_string()
+        };
+        assert!(made.secret.starts_with("whsec_"));
+        assert_eq!(opened(stored_secret(db, id).await).await, made.secret);
+        let Json(reset) = reset_secret(
+            State(state.clone()),
+            Authed(mem_user("owner", false)),
+            Path(("rchat".to_string(), id)),
+            None,
+        )
+        .await
+        .expect("reset");
+        assert_ne!(reset.secret, made.secret);
+        assert_eq!(opened(stored_secret(db, id).await).await, reset.secret);
+
+        let other = outgoing_hook(db, "https://93.184.216.34/b", "message.created", "owner").await;
+        let (_, moved) = stored_secret(db, id).await;
+        sqlx::query("UPDATE outgoing_webhooks SET secret_sealed = $1 WHERE id = $2")
+            .bind(moved.expect("record"))
+            .bind(other)
+            .execute(db)
+            .await
+            .expect("move");
+        let (plain, sealed) = stored_secret(db, other).await;
+        assert!(
+            open_or(
+                db,
+                HOOK_TABLE,
+                HOOK_COLUMN,
+                &other.to_string(),
+                sealed,
+                plain
+            )
+            .await
+            .is_err(),
+            "a record moved to another webhook does not open"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_delivery_whose_secret_does_not_open_fails_without_sending() {
+        let (state, path, _) = setup("wh_out_lost").await;
+        let db = &state.db;
+        switch_on(db).await;
+        let (port, seen) = receiver(vec![200]).await;
+        let url = format!("http://127.0.0.1:{port}/in");
+        let lost = outgoing_hook(db, &url, "message.created", "owner").await;
+        let good = outgoing_hook(db, &url, "message.created", "owner").await;
+        let (_, moved) = stored_secret(db, good).await;
+        sqlx::query("UPDATE outgoing_webhooks SET secret_sealed = $1 WHERE id = $2")
+            .bind(moved.expect("record"))
+            .bind(lost)
+            .execute(db)
+            .await
+            .expect("swap");
+        let last = |hook: i64| async move {
+            sqlx::query_as::<_, (String, i64, Option<String>)>("SELECT status, attempts, last_error FROM webhook_deliveries WHERE hook_id = $1 ORDER BY id DESC LIMIT 1")
+                .bind(hook)
+                .fetch_one(db)
+                .await
+                .expect("delivery")
+        };
+        queue(&state, lost, &ping(lost)).await.expect("queue");
+        let policy = local_policy();
+        let mut at = now();
+        for _ in 0..10 {
+            assert_eq!(run_due(&state, &policy, at).await.expect("run"), 0);
+            at += 3600;
+        }
+        assert_eq!(
+            last(lost).await,
+            ("failed".to_string(), 0, Some(SECRET_LOST.to_string()))
+        );
+        assert_eq!(
+            int(
+                db,
+                &format!("SELECT failures FROM outgoing_webhooks WHERE id = {lost}")
+            )
+            .await,
+            0
+        );
+        exec(
+            db,
+            &format!("UPDATE outgoing_webhooks SET enabled = 0 WHERE id = {lost}"),
+        )
+        .await;
+        queue(&state, lost, &ping(lost)).await.expect("queue");
+        assert_eq!(run_due(&state, &policy, at).await.expect("off"), 0);
+        assert_eq!(
+            last(lost).await,
+            (
+                "failed".to_string(),
+                0,
+                Some("This webhook is off".to_string())
+            ),
+            "a hook that is off says so first"
+        );
+        queue(&state, good, &ping(good)).await.expect("queue");
+        assert_eq!(run_due(&state, &policy, at).await.expect("good"), 1);
+        assert_eq!(last(good).await.0, "delivered");
+        assert_eq!(seen.await.expect("receiver").len(), 1, "one request in all");
+        done(state, path).await;
     }
 
     #[tokio::test]

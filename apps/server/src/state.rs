@@ -31,6 +31,7 @@ impl AppState {
         instance: Arc<Instance>,
     ) -> AppState {
         let reader = crate::db::reader(&db);
+        let crypt = crate::db::ring(&db);
         let limits = Arc::new(Limits::default());
         AppState {
             db,
@@ -42,7 +43,7 @@ impl AppState {
             instance,
             limits: limits.clone(),
             sso: Arc::new(crate::sso::Sso::off()),
-            crypt: Arc::default(),
+            crypt,
         }
         .with_limits(limits)
     }

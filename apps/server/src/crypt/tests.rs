@@ -597,6 +597,22 @@ async fn the_first_need_makes_a_key_file_and_no_key_reaches_the_database() {
         status.data_keys.iter().all(|k| !k.held && k.mismatch),
         "a key under the same id that does not open it is not held"
     );
+    let reused = wrong.data_key(&db, Purpose::Media).await.unwrap_err();
+    assert!(
+        reused
+            .to_string()
+            .contains("but the key k1 here is a different key"),
+        "{reused}"
+    );
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM data_keys WHERE purpose = 'media'"
+        )
+        .await,
+        0,
+        "no new data key under an id that names another key"
+    );
     assert!(super::cli::printed(&status).contains("the key k1 here is a different key"));
     crate::db::close(&db).await;
     let _ = temp_file("crypt_first_need");

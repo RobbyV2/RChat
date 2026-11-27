@@ -288,10 +288,18 @@ async fn pending_identity_retains_only_the_fields_used_at_exchange() {
     }));
     let code = param(&f.returned("web").await, "code");
     let key = crate::db::secret_key(&code);
-    let pending = || {
-        sqlx::query_scalar::<_, String>("SELECT data FROM sso_pending WHERE id=$1 AND kind='code'")
-            .bind(&key)
-            .fetch_one(&f.state.db)
+    let pending = || async {
+        let (data, sealed): (String, Option<Vec<u8>>) =
+            sqlx::query_as("SELECT data, data_sealed FROM sso_pending WHERE id=$1 AND kind='code'")
+                .bind(&key)
+                .fetch_one(&f.state.db)
+                .await?;
+        assert!(data.is_empty() && sealed.is_some(), "stored sealed");
+        let opened =
+            crate::crypt::secrets::open_or(&f.state.db, "sso_pending", "data", &key, sealed, data)
+                .await
+                .expect("opens");
+        Ok::<_, sqlx::Error>(opened.to_string())
     };
     let data = pending().await.unwrap();
     for private in [

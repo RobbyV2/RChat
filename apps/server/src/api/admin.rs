@@ -3894,14 +3894,10 @@ mod tests {
             "p2p_secret",
             "instance_signing_key",
         ] {
-            let value: String = sqlx::query("SELECT value FROM settings WHERE key = $1")
-                .bind(key)
-                .fetch_one(&state.db)
+            let value = crate::crypt::secrets::secret_setting(&state.db, key)
                 .await
-                .expect(key)
-                .try_get(0)
-                .expect("value");
-            assert!(!value.is_empty() && !text.contains(&value), "{key}");
+                .expect(key);
+            assert!(!value.is_empty() && !text.contains(value.as_str()), "{key}");
         }
         done(state, path).await;
     }

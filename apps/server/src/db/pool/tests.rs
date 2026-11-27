@@ -140,6 +140,29 @@ fn sources(dir: &std::path::Path, src: &std::path::Path, found: &mut Vec<(String
     }
 }
 
+/// The four stored secrets are named in `crypt/secrets.rs` only, so no other code reads their
+/// `settings` rows past the sealed ones.
+#[test]
+fn the_stored_secrets_are_read_in_one_place() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    sources(&src, &src, &mut files);
+    assert!(files.iter().any(|(path, _)| path == "crypt/secrets.rs"));
+    for (path, code) in files {
+        if path == "crypt/secrets.rs" {
+            continue;
+        }
+        for key in crate::crypt::secrets::SETTINGS {
+            for quote in ['"', '\''] {
+                assert!(
+                    !code.contains(&format!("{quote}{key}{quote}")),
+                    "{path} names the stored secret {key}"
+                );
+            }
+        }
+    }
+}
+
 /// The name of the function a line declares.
 fn declared(line: &str) -> Option<&str> {
     let at = line.find("fn ")?;

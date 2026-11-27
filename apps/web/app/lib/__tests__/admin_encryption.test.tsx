@@ -11,6 +11,8 @@ import {
   MISMATCH_WARNING,
   parseAdminEncryption,
   readinessLine,
+  RESET_SHOWN_FOR,
+  resetWarning,
   SET_KEYS,
   type AdminDataKey,
   type AdminEncryption,
@@ -22,6 +24,7 @@ const view = (part: Partial<AdminEncryption> = {}): AdminEncryption => ({
   key_file: null,
   database_key: false,
   backed_up_at: null,
+  secrets_reset: null,
   data_keys: [],
   readiness: 'keys',
   needs_backup: false,
@@ -60,7 +63,7 @@ test('promises a key on first use only where the site can make one', () => {
   expect(readinessLine(none)).toBe(SET_KEYS)
   expect(keySourceNote(none)).toBeNull()
   expect(keySourceNote({ ...none, database_key: true })).toBe(
-    'Sign-in secrets are protected against casual reads only.'
+    'Stored secrets are protected against casual reads only.'
   )
   const html = renderToStaticMarkup(<EncryptionStatus view={none} />)
   expect(html).toContain('ENCRYPTION_KEYS_FILE')
@@ -85,6 +88,7 @@ test('the answer is read defensively', () => {
     key_file: '/data/rchat.db.keys',
     database_key: 'yes',
     backed_up_at: '5',
+    secrets_reset: { at: '7', secrets: ['relay_secret'] },
     data_keys: [
       { id: 1, purpose: 'content', generation: 1, kek: 'k1', state: 'active', held: true },
       {
@@ -151,6 +155,39 @@ test('the page says when no key exists and when one is missing', () => {
   expect(lost).toContain(LOST_WARNING.replace("'", '&#x27;'))
   const wrong = page([dataKey({ mismatch: true })])
   expect(wrong).toContain(MISMATCH_WARNING.replace("'", '&#x27;'))
+})
+
+test('the page says which tokens were reset and when, for a month', () => {
+  expect(
+    parseAdminEncryption({
+      source: 'none',
+      secrets_reset: { at: 7, secrets: ['relay_secret', 3], later: 1 },
+    })!.secrets_reset
+  ).toEqual({ at: 7, secrets: ['relay_secret'] })
+  expect(parseAdminEncryption({ source: 'none', secrets_reset: 7 })!.secrets_reset).toBeNull()
+  const at = Date.UTC(2026, 10, 24, 19, 42) / 1000
+  const o = { locale: 'en-US', timeZone: 'UTC' }
+  const reset = (secrets: string[]) => view({ secrets_reset: { at, secrets } })
+  const later = at * 1000 + 86400_000
+  expect(resetWarning(reset(['relay_secret']), later, o)).toBe(
+    "Relay tokens were reset on November 24, 2026 at 7:42 PM. The stored secret couldn't be opened."
+  )
+  expect(resetWarning(reset(['p2p_secret']), later, o)?.startsWith('P2P tokens were reset')).toBe(
+    true
+  )
+  expect(resetWarning(reset(['relay_secret', 'p2p_secret']), later, o)).toBe(
+    "Relay and P2P tokens were reset on November 24, 2026 at 7:42 PM. The stored secrets couldn't be opened."
+  )
+  expect(resetWarning(reset(['other']), later, o)?.startsWith('Tokens were reset on')).toBe(true)
+  expect(resetWarning(view(), later, o)).toBeNull()
+  const gone = (at + RESET_SHOWN_FOR + 1) * 1000
+  expect(resetWarning(reset(['relay_secret']), gone, o)).toBeNull()
+  const html = renderToStaticMarkup(<EncryptionStatus view={reset(['relay_secret'])} now={later} />)
+  expect(html).toContain('data-warning="reset"')
+  expect(html).toContain('Relay tokens were reset on')
+  expect(
+    renderToStaticMarkup(<EncryptionStatus view={reset(['relay_secret'])} now={gone} />)
+  ).not.toContain('data-warning')
 })
 
 test('the section says when the status cannot be read', () => {

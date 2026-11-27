@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
@@ -7,8 +7,10 @@ use sqlx::{AnyConnection, AnyPool, Row};
 
 use super::migrate::{ConfigChange, ConfigStart, init_schema};
 use super::schema::{probe_fts, set_fts, sqlite_search_index};
-use super::secrets::{PEPPERS, pepper_with};
+use super::secrets::{PEPPERS, RINGS, pepper_with};
 use crate::api::controls::{Control, ControlSeeds};
+use crate::crypt::ring::Ring;
+use crate::crypt::secrets::Supplied;
 use crate::limits::Limits;
 
 pub type Db = AnyPool;
@@ -86,6 +88,11 @@ pub(super) fn light_mode(db: &Db) -> &'static str {
 pub struct DbOptions {
     pub limits: Limits,
     pub pepper: Option<String>,
+    /// The key ring of a server start, which seals the stored secrets. `None` for a tool that
+    /// opens the database without keys: it leaves them as they are.
+    pub ring: Option<Arc<Ring>>,
+    /// `INSTANCE_SIGNING_KEY` is set, so the start does not need the stored one.
+    pub signing_key_set: bool,
     pub controls: Option<ControlSeeds>,
     pub light_commits: LightCommits,
     /// This process only serves the web app (`RCHAT_ROLES=web`), so one connection is enough.
@@ -121,6 +128,15 @@ pub fn opened_limits(db: &Db) -> Limits {
         .unwrap_or_default()
 }
 
+/// The key ring `db` was opened with; one without root keys for a tool.
+pub fn ring(db: &Db) -> Arc<Ring> {
+    RINGS
+        .lock()
+        .ok()
+        .and_then(|rings| rings.get(&pool_key(db)).cloned())
+        .unwrap_or_default()
+}
+
 pub fn reader(db: &Db) -> Db {
     separate_reader(db).unwrap_or_else(|| db.clone())
 }
@@ -145,6 +161,9 @@ pub(crate) fn writer(db: &Db) -> Db {
 pub async fn close(db: &Db) {
     if let Ok(mut peppers) = PEPPERS.lock() {
         peppers.remove(&pool_key(db));
+    }
+    if let Ok(mut rings) = RINGS.lock() {
+        rings.remove(&pool_key(db));
     }
     take_config_start(db);
     if let Ok(mut limits) = LIMITS.lock() {
@@ -276,6 +295,7 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
 pub(crate) async fn open_started(database_url: Option<&str>) -> anyhow::Result<Db> {
     let opts = DbOptions {
         controls: Some(ControlSeeds::default()),
+        ring: Some(Arc::default()),
         ..DbOptions::default()
     };
     open_with(database_url, &opts).await
@@ -285,6 +305,8 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
     let DbOptions {
         limits,
         pepper,
+        ring,
+        signing_key_set,
         controls,
         light_commits,
         web_only,
@@ -358,8 +380,31 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
             .execute(&mut *tx)
             .await?;
     }
-    let started = init_schema(&mut tx, is_sqlite, controls.as_ref()).await?;
+    let supplied = Supplied {
+        pepper: pepper.is_some(),
+        signing_key: *signing_key_set,
+    };
+    let started = match init_schema(
+        &mut tx,
+        is_sqlite,
+        controls.as_ref(),
+        ring.as_deref(),
+        supplied,
+    )
+    .await
+    {
+        Ok(started) => started,
+        Err(e) => {
+            if let Some(ring) = ring {
+                ring.forget_data_keys();
+            }
+            return Err(e);
+        }
+    };
     tx.commit().await?;
+    if let Ok(mut rings) = RINGS.lock() {
+        rings.insert(pool_key(&pool), ring.clone().unwrap_or_default());
+    }
     for ConfigChange {
         key,
         from,
@@ -428,7 +473,10 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
         }
         false => set_fts(&pool, false),
     }
-    pepper_with(&pool, pepper.as_deref()).await?;
+    let pepper = pepper_with(&pool, pepper.as_deref()).await;
+    if ring.is_some() {
+        pepper?;
+    }
     Ok(pool)
 }
 

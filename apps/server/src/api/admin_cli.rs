@@ -2,7 +2,10 @@ use crate::api::auth::{NewAccount, add_account, hash_password, shaped_display_na
 use crate::api::policy::Policy;
 use crate::api::temp_passwords::{self, Issued, Issuer};
 use crate::api::{ApiError, ProfanityTarget, Settings, check_profanity, instance_audit};
+use std::sync::Arc;
+
 use crate::config::AppConfig;
+use crate::crypt::ring::Ring;
 use crate::db::{AvatarKind, Db, DbOptions, get_user, now};
 use crate::limits::Limits;
 use crate::state::AppState;
@@ -31,8 +34,10 @@ pub enum UserCommand {
 /// they are.
 pub async fn run(config: &AppConfig, command: UserCommand) -> anyhow::Result<String> {
     crate::api::auth::configure(&config.limits);
+    let ring = Ring::load(&config.encryption, config.database_url.as_deref())?;
     let opts = DbOptions {
         controls: None,
+        ring: Some(Arc::new(ring)),
         ..config.db_options()
     };
     let db = crate::db::open_with(config.database_url.as_deref(), &opts).await?;

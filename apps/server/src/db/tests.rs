@@ -1388,7 +1388,7 @@ async fn the_reset_profiles_permission_reaches_kick_holders_once() {
 #[tokio::test]
 async fn data_keys_upgrade_preserves_v57_rows() {
     on_each_database("data_keys_upgrade", |url| async move {
-        let db = open(Some(&url)).await.unwrap();
+        let db = super::open(Some(&url)).await.unwrap();
         for sql in [
             "DROP TABLE data_keys",
             "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1)",
@@ -1400,7 +1400,7 @@ async fn data_keys_upgrade_preserves_v57_rows() {
         let pepper: String = sqlx::query_scalar("SELECT value FROM settings WHERE key='password_pepper'").fetch_one(&db).await.unwrap();
         close(&db).await;
         for round in 0..2 {
-            let db = open(Some(&url)).await.unwrap();
+            let db = super::open(Some(&url)).await.unwrap();
             assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
             assert_eq!(count(&db, "SELECT COUNT(*) FROM users WHERE username='alice'").await, 1);
             assert_eq!(count(&db, "SELECT COUNT(*) FROM servers WHERE name='den'").await, 1);
@@ -1419,6 +1419,59 @@ async fn data_keys_upgrade_preserves_v57_rows() {
                     assert!(sqlx::query(bad).execute(&db).await.is_err(), "{bad}");
                 }
             }
+            close(&db).await;
+        }
+    }).await;
+}
+
+#[tokio::test]
+async fn sealed_secrets_upgrade_preserves_v59_rows() {
+    use crate::crypt::secrets::{SETTINGS, Sealer, open_or, sealed_name, secret_setting};
+    on_each_database("sealed_secrets_upgrade", |url| async move {
+        let db = super::open(Some(&url)).await.unwrap();
+        for sql in [
+            "ALTER TABLE outgoing_webhooks DROP COLUMN secret_sealed",
+            "ALTER TABLE sso_pending DROP COLUMN data_sealed",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1)",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 1)",
+            "INSERT INTO outgoing_webhooks(server, name, url, events, secret, created_at) VALUES('den', 'Out', 'https://example.com/', 'message.created', 'whsec_kept', 1)",
+            "INSERT INTO sso_pending(id, kind, provider, data, expires_at) VALUES('kept', 'flow', 'test', '{\"a\":1}', 9999999999)",
+            "UPDATE settings SET value='59' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let mut before = Vec::new();
+        for key in SETTINGS {
+            let value: String = sqlx::query_scalar("SELECT value FROM settings WHERE key = $1").bind(key).fetch_one(&db).await.unwrap();
+            before.push(value);
+        }
+        let hook = count(&db, "SELECT id FROM outgoing_webhooks").await;
+        close(&db).await;
+        let mut first = None;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM users WHERE username='alice'").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM data_keys WHERE purpose='secrets'").await, 1);
+            for (key, value) in SETTINGS.iter().zip(&before) {
+                assert_eq!(secret_setting(&db, key).await.unwrap().as_str(), value, "{key}");
+                let rows: Vec<String> = sqlx::query_scalar("SELECT key FROM settings WHERE key = $1 OR key = $2").bind(key).bind(sealed_name(key)).fetch_all(&db).await.unwrap();
+                assert_eq!(rows, [sealed_name(key)], "{key} is stored sealed only");
+            }
+            assert_eq!(pepper(&db).await.unwrap(), before[1].as_bytes());
+            let (plain, sealed): (String, Option<Vec<u8>>) = sqlx::query_as("SELECT secret, secret_sealed FROM outgoing_webhooks WHERE id = $1").bind(hook).fetch_one(&db).await.unwrap();
+            assert!(plain.is_empty() && sealed.is_some(), "the hook secret is stored sealed only");
+            assert_eq!(open_or(&db, "outgoing_webhooks", "secret", &hook.to_string(), sealed.clone(), plain).await.unwrap().as_str(), "whsec_kept");
+            assert_eq!(first.get_or_insert(sealed.clone()), &sealed, "sealed once");
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM sso_pending WHERE id = 'kept' AND data = '{\"a\":1}' AND data_sealed IS NULL").await, 1);
+            if round == 0 {
+                let record = Sealer::of(&db).await.unwrap().seal("sso_pending", "data", "new", "{}").unwrap();
+                sqlx::query("INSERT INTO sso_pending(id, kind, provider, data, data_sealed, expires_at) VALUES('new', 'flow', 'test', '', $1, 9999999999)").bind(record).execute(&db).await.unwrap();
+            }
+            let (data, sealed): (String, Option<Vec<u8>>) = sqlx::query_as("SELECT data, data_sealed FROM sso_pending WHERE id = 'new'").fetch_one(&db).await.unwrap();
+            assert!(data.is_empty() && sealed.is_some());
+            assert_eq!(open_or(&db, "sso_pending", "data", "new", sealed.clone(), data.clone()).await.unwrap().as_str(), "{}");
+            assert!(open_or(&db, "sso_pending", "data", "kept", sealed, data).await.is_err());
             close(&db).await;
         }
     }).await;
@@ -1628,9 +1681,7 @@ async fn server_passwords_migrate_onto_an_old_database() {
         "DROP TABLE server_passwords",
         "ALTER TABLE members DROP COLUMN joined_via",
         "ALTER TABLE guest_grants DROP COLUMN password_id",
-        "DELETE FROM settings WHERE key = 'password_pepper'",
-        "DELETE FROM settings WHERE key = 'relay_secret'",
-        "DELETE FROM settings WHERE key = 'p2p_secret'",
+        "DELETE FROM settings WHERE key IN ('password_pepper.sealed', 'relay_secret.sealed', 'p2p_secret.sealed')",
         "UPDATE settings SET value = 'old-instance' WHERE key = 'instance_id'",
         "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at) VALUES('club', 'Club', 'alice', 'hash', 1, 1)",
         "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'alice', 1, 0, 5)",
@@ -1678,19 +1729,15 @@ async fn server_passwords_migrate_onto_an_old_database() {
         let p = pepper(&db).await.expect("pepper");
         assert_eq!(p.len(), 64);
         peppers.push(p);
-        let relay: String = sqlx::query("SELECT value FROM settings WHERE key = 'relay_secret'")
-            .fetch_one(&db)
+        let relay = crate::crypt::secrets::secret_setting(&db, "relay_secret")
             .await
             .expect("relay secret")
-            .try_get(0)
-            .expect("value");
+            .to_string();
         assert_eq!(relay.len(), 64);
-        let p2p: String = sqlx::query("SELECT value FROM settings WHERE key = 'p2p_secret'")
-            .fetch_one(&db)
+        let p2p = crate::crypt::secrets::secret_setting(&db, "p2p_secret")
             .await
             .expect("p2p secret")
-            .try_get(0)
-            .expect("value");
+            .to_string();
         assert_eq!(p2p.len(), 64);
         assert_ne!(p2p, relay);
         relays.push(format!("{relay}{p2p}"));
@@ -4872,6 +4919,8 @@ async fn open_with_uses_the_configured_options() {
             ..Default::default()
         },
         pepper: Some("configured".into()),
+        ring: None,
+        signing_key_set: false,
         controls: Some(
             ControlSeeds::of(&[
                 ("GUESTS_ENABLED", " Off "),
