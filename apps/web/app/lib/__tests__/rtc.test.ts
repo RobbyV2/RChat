@@ -922,7 +922,7 @@ describe('screen share', () => {
     ).toBe(true)
     expect(carol.peer('alice')?.screenOn).toBe(true)
     expect(bob.peer('alice')?.screenOn).toBe(true)
-    expect(errors.some(e => e[0] === 'rtc share')).toBe(true)
+    expect(errors.some(e => e[0] === 'rtc step' && e[1] === 'rtc_share')).toBe(true)
   })
 
   test('one peer failing to take the camera does not keep it from the others', async () => {
@@ -939,6 +939,6 @@ describe('screen share', () => {
     await settle()
     expect(pcOf(alice, 'carol')?.transceivers[2].sender.track === alice.videoTrack).toBe(true)
     expect(carol.peer('alice')?.camOn).toBe(true)
-    expect(errors.some(e => e[0] === 'rtc camera')).toBe(true)
+    expect(errors.some(e => e[0] === 'rtc step' && e[1] === 'rtc_camera')).toBe(true)
   })
 })
