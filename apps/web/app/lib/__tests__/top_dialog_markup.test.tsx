@@ -46,6 +46,7 @@ test('a sheet is a labelled modal panel over a dim backdrop, on its layer', () =
   expect(panel).toContain('aria-label="Inbox"')
   expect(panel).toContain('data-inbox=""')
   expect(panel).toContain('rounded-t-3xl')
+  expect(panel).toContain('data-sheet=""')
   expect(html).toContain('pt-3 pb-2')
   const palette = renderToStaticMarkup(
     <Sheet aria-label="Command palette" layer="palette" onClose={() => {}}>

@@ -289,6 +289,7 @@ export function Sheet({
         {...rest}
         ref={ref}
         role={role}
+        data-sheet={sheet ? '' : undefined}
         aria-modal={role === 'dialog' && backdrop !== 'none' ? 'true' : undefined}
         className={`${look} flex flex-col ${SURFACE[surface]} shadow-elevation-3 outline-none ${
           scroll ? 'overflow-y-auto overscroll-contain' : 'overflow-hidden'
