@@ -34,3 +34,14 @@ declare module 'bun:test' {
     clearAllTimers(): void
   }
 }
+
+declare module 'bun' {
+  interface Loaded {
+    contents: string
+    loader: 'ts' | 'tsx'
+  }
+  interface Build {
+    onLoad(options: { filter: RegExp }, load: (args: { path: string }) => Promise<Loaded>): void
+  }
+  export function plugin(options: { name: string; setup(build: Build): void }): void
+}

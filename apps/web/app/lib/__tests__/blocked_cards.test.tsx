@@ -1,11 +1,9 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { useStore, resetSessionCaches } from '../store'
+import { useStore } from '../store'
 import { ForwardCard } from '../../components/forwards'
 import { MessageLinkCard } from '../../components/message_link_card'
 import { me, msg, user, serverDetail, textChannel } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const forward = (author: string) =>
   renderToStaticMarkup(

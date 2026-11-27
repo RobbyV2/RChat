@@ -1,14 +1,12 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { EMPTY_NOTIFY, type NotifyPrefs } from '../notify'
 import type { Contact } from '../p2p/contacts'
 import { p2pTileCount } from '../p2p/alerts'
 import type { RoomSummary } from '../p2p/app/store'
 import type { PingCount } from '../pings'
 import { dmTile } from '../selectors'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { RChatState } from '../store_types'
-
-afterAll(resetSessionCaches)
 
 const ping = (scope: string, n: number, server: string | null = null): PingCount => ({
   scope,

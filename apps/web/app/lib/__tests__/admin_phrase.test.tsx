@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import AdminDialogs from '../../components/admin/dialogs'
 import { UserPage } from '../../components/admin/users'
@@ -9,7 +9,7 @@ import { registerAppActions } from '../actions/index'
 import { actionById, runAction } from '../actions/registry'
 import { api } from './home_instance'
 import { instanceAuditLine } from '../instance_audit'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { InstanceAuditEntry } from '../types'
 import { drain, me, msg, paged, user } from './fixtures'
 import { Secret } from '../secret'
@@ -25,8 +25,6 @@ afterEach(() => {
   Object.assign(initial, saved)
   useStore.setState({ ...saved })
 })
-
-afterAll(resetSessionCaches)
 
 const entry = (over: Partial<InstanceAuditEntry> = {}): InstanceAuditEntry => ({
   id: 1,

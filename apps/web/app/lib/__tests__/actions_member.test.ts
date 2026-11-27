@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import { HostedServer } from '../place/place'
 import { client } from '../client/client'
 import {
@@ -26,7 +26,7 @@ import type { MemberWhere, Target } from '../actions/types'
 import { emptyLayout } from '../nav_layout'
 import { EMPTY_NOTIFY, setLevel, setMute } from '../notify'
 import { setSharing, sharing } from '../platform'
-import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
+import { useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import type { RChatState } from '../store_types'
 import { Perm, type DmSummary, type Member, type UserRef } from '../types'
 import { drain, me, member, msg, paged, role, serverDetail, user } from './fixtures'
@@ -44,8 +44,6 @@ afterEach(() => {
   g.window = realWindow
   useStore.setState(initial, true)
 })
-
-afterAll(resetSessionCaches)
 
 const HOUR = 3_600_000
 const bobby = user('bob', { display_name: 'Bobby' })

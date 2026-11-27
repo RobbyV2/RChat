@@ -1,11 +1,9 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { reconnectDelay } from '../backoff'
 import { DEFAULT_LIMITS, limitsOf, tooLargeText } from '../instance_limits'
 import { InstanceConnection } from '../instances'
-import { resetSessionCaches, startMode, useStore } from '../store'
+import { startMode, useStore } from '../store'
 import type { InstanceInfo, SiteSettings } from '../types'
-
-afterAll(resetSessionCaches)
 
 const MIB = 1024 * 1024
 

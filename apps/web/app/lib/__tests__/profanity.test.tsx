@@ -1,5 +1,5 @@
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,7 +24,7 @@ import {
 } from '../profanity'
 import { messageFilterOn, siteFilterOn } from '../rules'
 import { home } from './home_instance'
-import { maskOf, useStore, resetSessionCaches } from '../store'
+import { maskOf, useStore } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { MaskControl, Masked, MaskedWords } from '../../components/ui'
 import { NameWithUsername, nameRevealKey } from '../../components/display_name'
@@ -52,8 +52,6 @@ import { ownsP2pServer } from '../p2p/server/types'
 import { embed, me, media, memoryStorage, msg, user } from './fixtures'
 import { readText } from './masked_text'
 import samples from './fixtures/profanity.json'
-
-afterAll(resetSessionCaches)
 
 interface Sample {
   text: string

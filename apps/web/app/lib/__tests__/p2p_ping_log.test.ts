@@ -1,14 +1,12 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { Hub, ManualClock, waitFor } from './p2p_net'
-import { eventually, general, joinWithCode, makeMember, pump, stopAll } from './p2p_server_net'
+import { eventually, general, joinWithCode, makeMember, pump } from './p2p_server_net'
 import type { Member } from './p2p_server_net'
 import type { EventRecord } from '../p2p/db'
 import { dmRoomId } from '../p2p/dm'
 import { PING_LOG, type PingRec } from '../p2p/inbox'
 import { PingLog, pingAlive, pingOf, pingText } from '../p2p/ping_log'
 import { LOCAL } from '../p2p/limits'
-
-afterEach(stopAll)
 
 const later = (ms: number) => new Promise(r => setTimeout(r, ms))
 

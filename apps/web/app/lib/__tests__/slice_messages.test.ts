@@ -1,9 +1,7 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { dropDeletedIn, patchMessages, updatedRow } from '../slices/messages'
-import { resetSessionCaches, useStore, type RChatState } from '../store'
+import { useStore, type RChatState } from '../store'
 import { msg } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const state = (over: Partial<RChatState>): RChatState => ({ ...useStore.getState(), ...over })
 const ids = (s: Partial<RChatState>, key: string) => s.messages![key].map(m => m.id)

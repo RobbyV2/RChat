@@ -1,11 +1,9 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { applyServerChange, dropMemberRow } from '../slices/servers'
 import { serverIconColor, serverIconKind } from '../selectors'
-import { resetSessionCaches, useStore, type RChatState } from '../store'
+import { useStore, type RChatState } from '../store'
 import type { Channel, ServerSummaryLite } from '../types'
 import { me, member, paged, role, serverDetail, user } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const state = (over: Partial<RChatState>): RChatState => ({ ...useStore.getState(), ...over })
 const channel: Channel = { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }

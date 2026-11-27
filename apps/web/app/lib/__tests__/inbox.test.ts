@@ -1,6 +1,6 @@
 import { serverDetail } from './fixtures'
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { allPings, resetSessionCaches, useStore } from '../store'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { allPings, useStore } from '../store'
 import {
   allRead,
   compareEntries,
@@ -32,8 +32,6 @@ import { EMPTY_NOTIFY, setLevel, setSuppress } from '../notify'
 import type { InboxItem, WsEvent } from '../types'
 import { me, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const item = (source: InboxItem['source'], id: number, at: number, over: Partial<InboxItem> = {}) =>
   ({

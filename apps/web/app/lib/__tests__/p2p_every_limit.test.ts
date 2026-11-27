@@ -1,11 +1,10 @@
+import { testSession } from './test_account'
 import { rulesBase } from '../perms_load'
 import { createPeerFixture } from './peer_fixture'
-import { AccountSession } from '../client/session'
-const peerOwner = new AccountSession(home)
-afterAll(() => peerOwner.store.dispose())
+const peerOwner = testSession(home)
 const peerApp = createPeerFixture(peerOwner, 'ann')
 const { p2pDm, openNode, startDeps, startParts, put } = peerApp
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { home } from './home_instance'
 
 import { b64u } from '../p2p/canonical'
@@ -44,7 +43,6 @@ import {
 Object.assign(globalThis, { localStorage: memoryStorage })
 
 afterEach(() => {
-  stopAll()
   memoryStorage.clear()
 })
 

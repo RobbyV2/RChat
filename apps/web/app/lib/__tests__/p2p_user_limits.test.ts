@@ -1,10 +1,10 @@
+import { testSession } from './test_account'
 import { peerStorage } from '../client/keys'
 import { createPeerFixture } from './peer_fixture'
-import { AccountSession } from '../client/session'
-const peerOwner = new AccountSession(home)
+const peerOwner = testSession(home)
 const peerApp = createPeerFixture(peerOwner, 'ann')
 const { useP2p, startDeps } = peerApp
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { itemFor } from '../actions/menu'
@@ -38,7 +38,6 @@ import {
   makeMember,
   pump,
   restart,
-  stopAll,
   stopMember,
   withLimits,
   type Member,
@@ -60,10 +59,7 @@ const GIB = 1024 * MIB
 
 Object.assign(globalThis, { localStorage: memoryStorage })
 
-afterAll(() => peerOwner.store.dispose())
-
 afterEach(() => {
-  stopAll()
   memoryStorage.clear()
 })
 

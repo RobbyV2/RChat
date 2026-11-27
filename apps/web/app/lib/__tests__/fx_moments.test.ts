@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import { dayNum } from '../fx/astro'
 import {
   CAUGHT_UP_GLYPHS,
@@ -32,12 +32,8 @@ import {
 import { profileRetroButtons } from '../fx/retro_buttons'
 import { SEASONS, SEASON_IDS, activeSeasons } from '../fx/seasons'
 
-const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
 beforeEach(() => {
   process.env.TZ = 'UTC'
-})
-afterEach(() => {
-  process.env.TZ = zone
 })
 
 const secs = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime() / 1000

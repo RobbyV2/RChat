@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import type { ReactElement, ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { longPress } from '../../components/context_menu'
@@ -16,14 +16,13 @@ import { client } from '../client/client'
 import type { MediaMode } from '../media_src'
 import { emptySelection } from '../selection'
 import { PREVIEW_MAX } from '../sniff'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { me, media, msg, user } from './fixtures'
 
 const initial = useStore.getInitialState()
 const saved = { ...initial }
 beforeAll(registerAppActions)
 afterEach(() => void Object.assign(initial, saved))
-afterAll(resetSessionCaches)
 afterEach(() => client.shown().media.videoFailures.clear())
 
 // Media loads by address (`url`) or from fetched bytes (`blob`), whatever earlier tests left.

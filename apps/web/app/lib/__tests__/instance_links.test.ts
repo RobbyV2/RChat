@@ -17,25 +17,21 @@ test('zero, one and multiple candidates, remembered owner, actor, and recency ti
 
 test('ordinary links require an exact recognized origin and an app route', () => {
   const owner = testAccount('alice', 'https://beta.test:8443')
-  try {
-    for (const href of [
-      'http://beta.test:8443/dm/1/5/',
-      'https://beta.test/dm/1/5/',
-      'https://beta.test:8443/blog',
-      'https://a@beta.test:8443/invite/main/',
-    ])
-      expect(messageInstanceTarget(owner, href)).toBeNull()
-    expect(messageInstanceTarget(owner, 'https://beta.test:8443/i/abc234/')).toEqual({
-      origin: owner.conn.origin,
-      path: '/i/abc234/',
-    })
-    expect(messageInstanceTarget(owner, 'rchat://other.test/i/abc234/')).toEqual({
-      origin: 'https://other.test',
-      path: '/i/abc234/',
-    })
-  } finally {
-    owner.store.dispose()
-  }
+  for (const href of [
+    'http://beta.test:8443/dm/1/5/',
+    'https://beta.test/dm/1/5/',
+    'https://beta.test:8443/blog',
+    'https://a@beta.test:8443/invite/main/',
+  ])
+    expect(messageInstanceTarget(owner, href)).toBeNull()
+  expect(messageInstanceTarget(owner, 'https://beta.test:8443/i/abc234/')).toEqual({
+    origin: owner.conn.origin,
+    path: '/i/abc234/',
+  })
+  expect(messageInstanceTarget(owner, 'rchat://other.test/i/abc234/')).toEqual({
+    origin: 'https://other.test',
+    path: '/i/abc234/',
+  })
 })
 
 test('superseding navigation retires a chooser and prevents accepting the stale link', async () => {
@@ -60,14 +56,13 @@ test('superseding navigation retires a chooser and prevents accepting the stale 
     expect(client.shown()).toBe(source)
   } finally {
     client.shown = previous
-    for (const owner of [source, a, b]) owner.store.dispose()
   }
 })
 
 test('an account that reauthenticates while a chooser is open needs a new click', async () => {
   const source = testAccount('actor', 'https://alpha.reauth.test')
   const target = testAccount('bob', 'https://beta.reauth.test')
-  const other = testAccount('carol', target.conn.origin)
+  testAccount('carol', target.conn.origin)
   const previous = client.shown
   client.shown = () => source
   try {
@@ -81,6 +76,5 @@ test('an account that reauthenticates while a chooser is open needs a new click'
     expect(source.store.getState().error).toBe('Sign in again to open this link.')
   } finally {
     client.shown = previous
-    for (const owner of [source, target, other]) owner.store.dispose()
   }
 })

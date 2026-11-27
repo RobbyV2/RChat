@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement, ReactNode } from 'react'
 import { MarkdownMessage, MediaAttachment, P2pFile } from '../../components/markdown_message'
@@ -20,7 +20,7 @@ import type { FileView } from '../p2p/app'
 import type { Attachment } from '../p2p/content'
 import { setSharing, sharing } from '../platform'
 import { resetMasking, setMasking } from '../profanity'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { me, media, msg, user } from './fixtures'
 
 const initial = useStore.getInitialState()
@@ -34,7 +34,6 @@ afterEach(() => {
   Object.assign(initial, saved)
   setSharing(realSharing)
 })
-afterAll(resetSessionCaches)
 
 // The element a component returns, called inside a host so its hooks run.
 const returned = (render: () => ReactNode) => {

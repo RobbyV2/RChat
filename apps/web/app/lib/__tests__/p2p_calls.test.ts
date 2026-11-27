@@ -929,31 +929,27 @@ test('a contact call can cancel a handoff before capturing or ringing and releas
   const guard = new CallGuard()
   const account = testAccount('test')
   const source = { account, identity: 'contact', kind: 'p2p-call' as const }
-  try {
-    const { a, b } = await pair({ claim: (leave, valid) => guard.request(source, leave, valid) })
-    let left = 0
-    const voice = await guard.request({ account, kind: 'voice' }, () => {
-      left++
-    })
-    const start = () => a.calls.start(b.node.ik, false)
-    const cancelled = start()
-    await waitFor(() => account.store.getState().confirm !== null, 'handoff')
-    account.store.getState().closeConfirm()
-    await cancelled
-    expect(a.media.target).toBeNull()
-    expect(b.calls.view()).toBeNull()
-    expect(guard.current()).toBe(voice)
-    const started = start()
-    await waitFor(() => account.store.getState().confirm !== null, 'handoff')
-    account.store.getState().confirm!.action('')
-    await started
-    expect(left).toBe(1)
-    expect(guard.current()?.identity).toBe('contact')
-    await waitFor(() => b.calls.view() !== null, 'ring')
-    b.calls.decline()
-    await waitFor(() => !a.calls.view(), 'end')
-    expect(guard.current()).toBeNull()
-  } finally {
-    account.store.dispose()
-  }
+  const { a, b } = await pair({ claim: (leave, valid) => guard.request(source, leave, valid) })
+  let left = 0
+  const voice = await guard.request({ account, kind: 'voice' }, () => {
+    left++
+  })
+  const start = () => a.calls.start(b.node.ik, false)
+  const cancelled = start()
+  await waitFor(() => account.store.getState().confirm !== null, 'handoff')
+  account.store.getState().closeConfirm()
+  await cancelled
+  expect(a.media.target).toBeNull()
+  expect(b.calls.view()).toBeNull()
+  expect(guard.current()).toBe(voice)
+  const started = start()
+  await waitFor(() => account.store.getState().confirm !== null, 'handoff')
+  account.store.getState().confirm!.action('')
+  await started
+  expect(left).toBe(1)
+  expect(guard.current()?.identity).toBe('contact')
+  await waitFor(() => b.calls.view() !== null, 'ring')
+  b.calls.decline()
+  await waitFor(() => !a.calls.view(), 'end')
+  expect(guard.current()).toBeNull()
 })

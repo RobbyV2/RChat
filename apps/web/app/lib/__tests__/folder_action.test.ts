@@ -1,6 +1,6 @@
 import { peerStorage } from '../client/keys'
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { itemFor, menuItems } from '../actions/menu'
@@ -10,11 +10,10 @@ import type { Target } from '../actions/types'
 import { FOLDER_PRESETS } from '../folder_colors'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
 
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { ContextMenuItem } from '../store_types'
 import { me, memoryStorage } from './fixtures'
 
-afterAll(resetSessionCaches)
 beforeAll(registerAppActions)
 
 const st = () => useStore.getState()

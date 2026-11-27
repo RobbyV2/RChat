@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChannelSidebar, DmBlock } from '../../components/channel_sidebar'
 import MemberSidebar from '../../components/member_sidebar'
@@ -17,7 +17,7 @@ import {
 } from '../../components/skeletons'
 import type { SwitcherRow } from '../client/switcher_rows'
 import { AccountProvider } from '../client/react'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { RChatState } from '../store_types'
 import { me, member, msg, paged, serverDetail, textChannel } from './fixtures'
 import { testAccount } from './test_account'
@@ -31,7 +31,6 @@ const put = (state: Partial<RChatState>) => {
   useStore.setState(state)
 }
 afterEach(() => put({ ...saved }))
-afterAll(resetSessionCaches)
 
 const KINDS = [
   ['messages', 'Loading messages', <MessageListSkeleton key="m" seed="c1" />],
@@ -216,15 +215,11 @@ describe('accounts that are starting in the background', () => {
   test('the rail shows placeholder tiles while connecting, and the resume tile once boot fails', () => {
     const rail = (bootError: string | null, status: SwitcherRow['status']) => {
       const b = starting(bootError)
-      try {
-        return renderToStaticMarkup(
-          <AccountProvider session={b}>
-            <AccountServers row={row(status)} />
-          </AccountProvider>
-        )
-      } finally {
-        b.store.dispose()
-      }
+      return renderToStaticMarkup(
+        <AccountProvider session={b}>
+          <AccountServers row={row(status)} />
+        </AccountProvider>
+      )
     }
     const connecting = rail(null, 'Connecting')
     expect(connecting).toContain('data-skeleton="servers"')
@@ -238,15 +233,11 @@ describe('accounts that are starting in the background', () => {
   test('the DM list shows placeholders while connecting, and nothing once boot fails', () => {
     const dms = (bootError: string | null, connecting: boolean) => {
       const b = starting(bootError)
-      try {
-        return renderToStaticMarkup(
-          <AccountProvider session={b}>
-            <DmBlock dmId={-1} accounts={[b]} connecting={connecting} label="bob · b" />
-          </AccountProvider>
-        )
-      } finally {
-        b.store.dispose()
-      }
+      return renderToStaticMarkup(
+        <AccountProvider session={b}>
+          <DmBlock dmId={-1} accounts={[b]} connecting={connecting} label="bob · b" />
+        </AccountProvider>
+      )
     }
     const loading = dms(null, true)
     expect(loading).toContain('data-skeleton="dms"')

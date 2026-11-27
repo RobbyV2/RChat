@@ -165,7 +165,7 @@ test('a locked account relinquishes its live session and call while own accounts
 test('revoking access retires the foreign link chooser, peer identity and pending attachment', async () => {
   const source = testAccount('sam', own)
   const remote = testAccount('sam', beta)
-  const second = testAccount('second', beta)
+  testAccount('second', beta)
   const file = new File(['private fixture'], 'test.txt')
   const wait = Promise.withResolvers<void>()
   try {
@@ -208,7 +208,6 @@ test('revoking access retires the foreign link chooser, peer identity and pendin
   } finally {
     wait.resolve()
     acceptHostedPolicy(own, true)
-    for (const account of [source, remote, second]) account.store.dispose()
   }
 })
 
@@ -255,7 +254,5 @@ test('a locked remote invite preview uses anonymous discovery and metadata, inde
   } finally {
     globalThis.fetch = previous
     acceptHostedPolicy(own, true)
-    source.store.dispose()
-    saved.store.dispose()
   }
 })

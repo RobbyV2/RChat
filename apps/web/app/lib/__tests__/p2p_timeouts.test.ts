@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, jest, test } from 'bun:test'
+import { describe, expect, jest, test } from 'bun:test'
 import { evaluate } from '../p2p/acl/eval'
 import {
   aclContentOk,
@@ -30,9 +30,7 @@ import { endWatch, peerTimeout, timedOutIn } from '../timeouts'
 import { AclWorld, devOwner } from './p2p_acl_world'
 import { timeout as signTimeout } from '../p2p/server/roles'
 import type { ServerCtx } from '../p2p/server/context'
-import { Hub, makeMember, ManualClock, stopAll } from './p2p_server_net'
-
-afterEach(stopAll)
+import { Hub, makeMember, ManualClock } from './p2p_server_net'
 
 const MIN = 60_000
 

@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import { P2pStore, type EventRecord } from '../p2p/db'
 import {
   formatSince,
@@ -10,12 +10,8 @@ import {
   type UnreadCount,
 } from '../unread_banner'
 
-const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
 beforeEach(() => {
   process.env.TZ = 'America/New_York'
-})
-afterEach(() => {
-  process.env.TZ = zone
 })
 
 describe('what the banner says', () => {

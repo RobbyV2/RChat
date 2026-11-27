@@ -1,7 +1,7 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChannelEnd, TypingEllipsis } from '../../components/typing_indicator'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 
 // Markup renders with the store's initial state.
 const initial = useStore.getInitialState()
@@ -10,7 +10,6 @@ afterEach(() => {
   initial.anim = before.anim
   initial.streamer = before.streamer
 })
-afterAll(resetSessionCaches)
 
 describe('typing dots on rows', () => {
   test('do not move with animations off, and bounce with them on', () => {

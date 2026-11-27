@@ -1,4 +1,4 @@
-import { afterAll, afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
@@ -22,7 +22,7 @@ import { ShownAvatar, ShownName } from '../../components/shown_user'
 import { TypingIndicator } from '../../components/typing_indicator'
 import { LOCK_CHOICES, RESET_LABELS } from '../profile_reset'
 import { EMPTY_DRAFT } from '../server_profile_editor'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { AuditEntry, MemberLook } from '../types'
 import { me, member, msg, serverDetail, user } from './fixtures'
 
@@ -32,8 +32,6 @@ const saved = { ...initial }
 afterEach(() => {
   Object.assign(initial, saved)
 })
-
-afterAll(resetSessionCaches)
 
 const router = {
   push: () => {},
@@ -134,22 +132,18 @@ test('a mention pill keeps the handle: the username with the server name as its 
   expect(hosted).toContain('>@Bob</span>')
   const key = 'Bx7pW2'.padEnd(43, 'b')
   const peer = testAccount('peer')
-  try {
-    const place = peerPlace(createPeerFixture(peer, 'peer'), {
-      names: new Map([['skipper', key]]),
-      user: () => user(key, { display_name: 'Skipper' }),
-    })
-    const p2p = render(
-      <PlaceProvider place={place}>
-        <MarkdownMessage message={msg(2, { author: user('me'), content: 'hi @Skipper' })} />
-      </PlaceProvider>
-    )
-    expect(p2p).toContain('>@Skipper</span>')
-    expect(p2p.includes(key)).toBe(false)
-    expect(p2p.includes('title="Robert"')).toBe(false)
-  } finally {
-    peer.store.dispose()
-  }
+  const place = peerPlace(createPeerFixture(peer, 'peer'), {
+    names: new Map([['skipper', key]]),
+    user: () => user(key, { display_name: 'Skipper' }),
+  })
+  const p2p = render(
+    <PlaceProvider place={place}>
+      <MarkdownMessage message={msg(2, { author: user('me'), content: 'hi @Skipper' })} />
+    </PlaceProvider>
+  )
+  expect(p2p).toContain('>@Skipper</span>')
+  expect(p2p.includes(key)).toBe(false)
+  expect(p2p.includes('title="Robert"')).toBe(false)
 })
 
 test('a P2P member avatar keeps the key picture under the avatar set for the server', () => {

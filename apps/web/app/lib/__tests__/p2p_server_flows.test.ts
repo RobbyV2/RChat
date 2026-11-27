@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import {
   CONFLICT_TEXT,
   LONE_TEXT,
@@ -28,7 +28,6 @@ import {
   pump,
   restart,
   signed,
-  stopAll,
   stopMember,
   type Member,
 } from './p2p_server_net'
@@ -36,8 +35,6 @@ import { Hub, ManualClock } from './p2p_net'
 import { LOCAL } from '../p2p/limits'
 
 // The user-facing flows of P2P servers on real members over the in-memory hub.
-
-afterEach(stopAll)
 
 type Emit = (
   room: string,

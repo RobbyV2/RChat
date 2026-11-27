@@ -44,8 +44,6 @@ test('search results use the viewing consent of their account for colliding chan
     expect(render(second)).not.toContain('Private search result')
   } finally {
     client.shown = shown
-    first.store.dispose()
-    second.store.dispose()
   }
 })
 
@@ -75,7 +73,5 @@ test('startup restores the saved session for the requested instance', async () =
   } finally {
     client.shown = shown
     localStorage.removeItem(key)
-    first.store.dispose()
-    second.store.dispose()
   }
 })

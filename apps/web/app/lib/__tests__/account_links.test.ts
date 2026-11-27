@@ -38,8 +38,6 @@ test('invite and config handoffs distinguish accounts at the same origin', () =>
   } finally {
     if (old) Object.defineProperty(globalThis, 'window', old)
     else Reflect.deleteProperty(globalThis, 'window')
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 
@@ -89,7 +87,5 @@ test('P2P inbox preferences and palette registration follow the supplied account
     app.dispose()
     offInbox()
     offIndex()
-    a.store.dispose()
-    b.store.dispose()
   }
 })

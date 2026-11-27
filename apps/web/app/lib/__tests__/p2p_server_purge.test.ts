@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { signDeviceCert2 } from '../p2p/acl/binding'
 import { P } from '../p2p/acl/rules'
 import type { AclRoom } from '../p2p/acl_room'
@@ -24,7 +24,6 @@ import {
   pump,
   restart,
   signed,
-  stopAll,
   stopMember,
   withLimits,
   type Member,
@@ -32,8 +31,6 @@ import {
 
 // Storage of P2P servers on real members over the in-memory hub (orphan drops,
 // proofs, shares and dropped headers, stability, purges and restores, serving).
-
-afterEach(stopAll)
 
 const DAY = 24 * 60 * 60_000
 

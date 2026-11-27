@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore, resetSessionCaches } from '../store'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { useStore } from '../store'
 import { home } from './home_instance'
 import {
   addRequest,
@@ -20,8 +20,6 @@ import { itemFor } from '../actions/menu'
 import type { Friend, FriendRequest, Ping, Profile, UserRef, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 // The "Add friend" row of a menu on a message by `author`.

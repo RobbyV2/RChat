@@ -5,11 +5,10 @@ import AppShell from '../../[[...slug]]/app_shell'
 import { CallBanner, VoiceDock } from '../../components/voice_grid'
 import { ChannelSidebar } from '../../components/channel_sidebar'
 import { client } from '../client/client'
-import { AccountSession } from '../client/session'
 import { InstanceConnection, endpointsFrom } from '../instances'
 import { AccountProvider } from '../client/react'
 import { me, member, memoryStorage, serverDetail, textChannel } from './fixtures'
-import { testAccount } from './test_account'
+import { testAccount, testSession } from './test_account'
 import type { ServerView } from '../p2p/server'
 import { TIMED_OUT_CAMERA, TIMED_OUT_MIC } from '../timeouts'
 
@@ -63,8 +62,6 @@ test('the shell shows a background ring and relay consent during the foreground 
     expect(html).toContain(b.id)
   } finally {
     client.shown = previous
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 
@@ -110,15 +107,13 @@ test('the channel sidebar uses the provider’s identity and RTC for a colliding
     expect(html).toContain('title="Muted"')
   } finally {
     client.shown = previous
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 
 test('the shell uses the P2P owner for alerts, quiet calls and runtime preferences', () => {
   const a = testAccount('reader', 'https://a.test')
   // The initial page identity backs the legacy call card during the W8 transition.
-  const b = new AccountSession(
+  const b = testSession(
     new InstanceConnection(endpointsFrom('https://b.test', null), null, false, true)
   )
   const previous = client.shown
@@ -193,8 +188,6 @@ test('the shell uses the P2P owner for alerts, quiet calls and runtime preferenc
     Object.assign(initial, initialCall)
     useP2p.setState({ callQuiet: quiet })
     client.shown = previous
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 
@@ -271,7 +264,6 @@ test('contact call and server voice audio and controls follow the claimed siblin
       }
     }
   } finally {
-    account.store.dispose()
     memoryStorage.removeItem(key)
   }
 })
@@ -322,7 +314,6 @@ test('a running timeout in a P2P room disables the mic and camera controls of it
       claim?.release()
     }
   } finally {
-    account.store.dispose()
     memoryStorage.removeItem(key)
   }
 })

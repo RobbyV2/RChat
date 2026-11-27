@@ -163,7 +163,6 @@ test('live budget, lock handover, lite trimming, owner-specific polling and stor
     expect(shown).toBe(beta)
   } finally {
     stop()
-    for (const a of sessions) if (client.live().includes(a)) a.store.dispose()
     Date.now = clock
     memoryStorage.clear()
     if (descriptor) Object.defineProperty(globalThis, 'window', descriptor)
@@ -391,8 +390,6 @@ test('a shown account retires its credential and resumes only the newest replace
   } finally {
     cleanup()
     await Promise.resolve()
-    shown.store.dispose()
-    other.store.dispose()
     client.shown = originalShown
     client.book.setState(originalBook, true)
     globalThis.fetch = originalFetch
@@ -460,7 +457,6 @@ test('a kept session stays signed in when another tab removes its credential, un
     expect(alpha.store.getState().signedOut).toBe(true)
   } finally {
     stop()
-    if (client.live().includes(alpha)) alpha.store.dispose()
     memoryStorage.clear()
     if (descriptor) Object.defineProperty(globalThis, 'window', descriptor)
     else Reflect.deleteProperty(globalThis, 'window')

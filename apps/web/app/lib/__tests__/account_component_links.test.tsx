@@ -21,7 +21,5 @@ test('markdown routes only links belonging to the account displaying it', () => 
     }
   } finally {
     client.shown = shown
-    a.store.dispose()
-    b.store.dispose()
   }
 })

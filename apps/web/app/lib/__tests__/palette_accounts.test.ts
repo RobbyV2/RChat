@@ -276,6 +276,5 @@ test('identical peer contacts stay under each identity, the acting peer is first
     expect(opened).toBe('instance')
   } finally {
     client.show(prev, 'none')
-    actor.store.dispose()
   }
 })

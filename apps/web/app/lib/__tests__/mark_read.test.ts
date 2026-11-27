@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import {
   allMarkTargets,
   dmsMarkTargets,
@@ -6,7 +6,6 @@ import {
   serverUnread,
   serversMarkTargets,
   useStore,
-  resetSessionCaches,
 } from '../store'
 import { READ_BATCH_MAX, chunked, markTargets, markedRead, ownRead, withThreads } from '../reads'
 import type { Pings } from '../pings'
@@ -14,8 +13,6 @@ import { EMPTY_NOTIFY } from '../notify'
 import type { ReadMark } from '../lists'
 import { advance, me, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch

@@ -1,8 +1,8 @@
-import { afterAll, afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import AdminRoot from '../../components/admin/admin_page'
 import { useConfigStore } from '../../components/admin/config_state'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { AdminConfig, ConfigControl, SiteSettings } from '../types'
 import type { AdminSection } from '../view'
 import { me } from './fixtures'
@@ -15,8 +15,6 @@ afterEach(() => {
   Object.assign(initial, saved)
   configInitial.config = null
 })
-
-afterAll(resetSessionCaches)
 
 const control = (key: string, env: string, over: Partial<ConfigControl> = {}): ConfigControl => ({
   key,

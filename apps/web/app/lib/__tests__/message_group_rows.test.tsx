@@ -1,9 +1,8 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AccountProvider } from '../client/react'
 import { testAccount } from './test_account'
 import { createPeerFixture } from './peer_fixture'
-import { resetSessionCaches } from '../store'
 import { formatStamp, fullTime } from '../timestamps'
 import type { P2pMessage } from '../p2p/dm'
 import type { Outgoing } from '../store_types'
@@ -12,8 +11,6 @@ import { NameWithUsername } from '../../components/display_name'
 import { P2pRow } from '../../components/p2p/p2p_chat'
 import { MessageToolbar } from '../../components/message_toolbar'
 import { msg, user } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const AT = 1_800_000_000
 const ms = AT * 1000
@@ -110,39 +107,35 @@ const p2pRow = (
   rights: { timedOut?: boolean; canDelete?: boolean } = {}
 ) => {
   const owner = testAccount('bob')
-  try {
-    createPeerFixture(owner, 'bob')
-    return renderToStaticMarkup(
-      <AccountProvider session={owner}>
-        <P2pRow
-          p={{ ...p, ...over }}
-          m={msg(1, {
-            author: user('ik-bob', { display_name: 'Bobby' }),
-            content: 'hello there',
-            created_at: AT,
-          })}
-          first={first}
-          last={last}
-          mine={mine}
-          pendingTip="Waiting for them to come online"
-          mentioned={false}
-          divider={false}
-          flash={false}
-          canAct
-          timedOut={rights.timedOut}
-          canDelete={rights.canDelete ?? false}
-          editing={null}
-          draftKey="room"
-          threads={false}
-          onMenu={() => {}}
-          onCopy={() => {}}
-          onJump={() => {}}
-        />
-      </AccountProvider>
-    )
-  } finally {
-    owner.store.dispose()
-  }
+  createPeerFixture(owner, 'bob')
+  return renderToStaticMarkup(
+    <AccountProvider session={owner}>
+      <P2pRow
+        p={{ ...p, ...over }}
+        m={msg(1, {
+          author: user('ik-bob', { display_name: 'Bobby' }),
+          content: 'hello there',
+          created_at: AT,
+        })}
+        first={first}
+        last={last}
+        mine={mine}
+        pendingTip="Waiting for them to come online"
+        mentioned={false}
+        divider={false}
+        flash={false}
+        canAct
+        timedOut={rights.timedOut}
+        canDelete={rights.canDelete ?? false}
+        editing={null}
+        draftKey="room"
+        threads={false}
+        onMenu={() => {}}
+        onCopy={() => {}}
+        onJump={() => {}}
+      />
+    </AccountProvider>
+  )
 }
 
 describe('a P2P row', () => {

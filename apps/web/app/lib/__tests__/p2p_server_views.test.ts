@@ -1,24 +1,14 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { fileURLToPath } from 'node:url'
 import { P } from '../p2p/state'
 import { publicMembersOf, typeExportsOf } from './api_surface'
 import api from './fixtures/p2p_servers_api.json'
-import {
-  Hub,
-  joinWithCode,
-  makeMember,
-  ManualClock,
-  pump,
-  stopAll,
-  type Member,
-} from './p2p_server_net'
+import { Hub, joinWithCode, makeMember, ManualClock, pump, type Member } from './p2p_server_net'
 
 // The member list a server's view gives (server/views.ts): an owner, a moderator and three
 // members, seen by the owner and by the moderator. The expectation is a pinned view()
 // with identity keys and role ids replaced by names, join times by whether there is one and
 // the codes members joined with by their label ("code" without one).
-
-afterEach(stopAll)
 
 const world = async () => {
   const clock = new ManualClock()

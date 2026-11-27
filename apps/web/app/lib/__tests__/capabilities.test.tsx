@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { P2pExportOption, P2pImport, SlowNote } from '../../components/p2p/p2p_transfer'
 import { ProfanitySwitch } from '../../components/settings_menu'
@@ -32,7 +32,7 @@ import { testAccount } from './test_account'
 import { P2pStore } from '../p2p/db'
 import { capabilities, setCapabilities } from '../platform'
 import { filterSwitch, maskProfanity, resetMasking, setMasking, type Matcher } from '../profanity'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { drain, me } from './fixtures'
 import { Hub, makeNode } from './p2p_net'
 
@@ -88,8 +88,6 @@ afterEach(() => {
   Object.assign(initial, first)
   useStore.setState(state)
 })
-
-afterAll(resetSessionCaches)
 
 describe('the probe', () => {
   test('a realm that compiles and runs a module has WebAssembly', () => {
@@ -601,7 +599,6 @@ describe('P2P passphrase protection without WebAssembly', () => {
       expect((await stored()).every(x => x !== null)).toBe(true)
     } finally {
       app.dispose()
-      owner.store.dispose()
       if (realWindow) Object.defineProperty(globalThis, 'window', realWindow)
     }
   }, 60_000)

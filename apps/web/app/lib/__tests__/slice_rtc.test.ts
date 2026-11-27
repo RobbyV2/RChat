@@ -1,9 +1,7 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { applyCallState, applyVoiceState } from '../slices/rtc'
-import { resetSessionCaches, useStore, type CallSession, type RChatState } from '../store'
+import { useStore, type CallSession, type RChatState } from '../store'
 import type { WsEvent } from '../types'
-
-afterAll(resetSessionCaches)
 
 const state = (over: Partial<RChatState>): RChatState => ({ ...useStore.getState(), ...over })
 const voice = (users: string[]) => ({

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import {
   cardMenu,
   expiryLabel,
@@ -12,12 +12,8 @@ import {
 } from '../file_card'
 import { downloadName } from '../sniff'
 
-const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
 beforeEach(() => {
   process.env.TZ = 'America/New_York'
-})
-afterEach(() => {
-  process.env.TZ = zone
 })
 
 describe('fileKind', () => {

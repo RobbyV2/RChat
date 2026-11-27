@@ -1,12 +1,10 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { dmView, useStore, resetSessionCaches } from '../store'
 import { emptyLayout, type Layout } from '../nav_layout'
 import { home } from './home_instance'
 import type { DmSummary, WsEvent } from '../types'
 import { me, memoryStorage, until, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

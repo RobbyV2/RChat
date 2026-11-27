@@ -1,3 +1,4 @@
+import { own } from './helpers/fixture'
 import { Hub, makeNode, ManualClock, prng, waitFor } from './p2p_net'
 import { CHANNEL_CONTENT } from '../p2p/event_v2'
 import { chainKey, type DevChain } from '../p2p/dag'
@@ -11,8 +12,9 @@ import type { NodeDeps, P2pNode } from '../p2p/node'
 import type { P2pStore } from '../p2p/db'
 import { localDefaults, type Local } from '../p2p/limits'
 
-// Test members of P2P servers: a real node, DMs and servers over the in-memory hub. Each member's
-// DMs and servers share one copy of the limits (`limits(m)`), which a test may change as it runs.
+// Test members of P2P servers: a real node, DMs and servers over the in-memory hub, stopped after
+// the test that made them. Each member's DMs and servers share one copy of the limits
+// (`limits(m)`), which a test may change as it runs.
 
 export interface Member {
   name: string
@@ -78,7 +80,11 @@ export const makeMember = async (
   await n.node.start()
   const m = { name, ...n, dms, servers }
   running.push(m)
-  return m
+  return own(m, member => {
+    const at = running.indexOf(member)
+    if (at >= 0) running.splice(at, 1)
+    stopMember(member)
+  })
 }
 
 // Restarts a member on its own database (it was stopped).

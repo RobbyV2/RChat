@@ -1,5 +1,5 @@
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import SettingsMenu from '../../components/settings_menu'
 import { peerStorage } from '../client/keys'
@@ -9,7 +9,7 @@ import { paletteCommands } from '../actions/palette'
 import { runAction } from '../actions/registry'
 import { home } from './home_instance'
 import { p2pKey } from '../p2p/app'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { ActiveDialog, RChatState } from '../store_types'
 import type { P2pState } from '../p2p/app/store'
 import { settingsRows, settingsSections, type SettingsSection } from '../settings_sections'
@@ -34,8 +34,6 @@ const seed = (state: Partial<RChatState>, p2p: Partial<P2pState> = {}) => {
 }
 
 afterEach(() => seed({ ...saved }, { ...p2pSaved }))
-
-afterAll(resetSessionCaches)
 
 const INSTANCE = {
   name: 'Alpha',

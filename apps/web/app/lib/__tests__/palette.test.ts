@@ -1,5 +1,5 @@
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { paletteCommands } from '../actions/palette'
@@ -22,7 +22,7 @@ import { PaletteIndex } from '../palette_index'
 import { buildSections, flatItems, snippet, type ResultCtx } from '../palette_results'
 import { usePaletteUi } from '../palette_store'
 import { REDACTED, parseOpenApi } from '../openapi'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { SHORTCUTS, conflicts } from '../shortcuts'
 import { emptySelection, selectAll, toggle } from '../selection'
 import type { RChatState } from '../store_types'
@@ -30,8 +30,6 @@ import type { RChatState } from '../store_types'
 import { writeUserLimits } from '../p2p/user_limits'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const has = (list: string[], want: string[]) => want.every(x => list.includes(x))
 

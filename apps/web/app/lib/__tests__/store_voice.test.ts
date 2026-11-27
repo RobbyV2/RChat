@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { client } from '../client/client'
 import { home } from './home_instance'
 import { getHomeSession, useStore, resetSessionCaches } from '../store'
@@ -9,8 +9,6 @@ import { drain, me, serverDetail, until } from './fixtures'
 import { AUDIO_SEND_MS } from '../slices/rtc'
 
 const { rtc } = getHomeSession()
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 

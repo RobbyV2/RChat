@@ -61,12 +61,8 @@ const render = (content: string, p2p: boolean) => {
   const el = <MarkdownMessage message={message(content)} />
   if (!p2p) return withWindow(() => renderToStaticMarkup(el))
   const peer = testAccount('peer')
-  try {
-    const place = peerPlace(createPeerFixture(peer, 'peer'))
-    return renderToStaticMarkup(<PlaceProvider place={place}>{el}</PlaceProvider>)
-  } finally {
-    peer.store.dispose()
-  }
+  const place = peerPlace(createPeerFixture(peer, 'peer'))
+  return renderToStaticMarkup(<PlaceProvider place={place}>{el}</PlaceProvider>)
 }
 
 describe('P2P messages fetch nothing', () => {
@@ -95,35 +91,31 @@ describe('inline images follow the account rendering the message', () => {
   for (const origin of [ORIGIN, 'https://secondary.test']) {
     test(`secondary on ${origin} only previews its own uploaded media`, () => {
       const owner = testAccount('reader', origin)
-      try {
-        const renderImage = (src: string) =>
-          withWindow(() =>
-            renderToStaticMarkup(
-              <AccountProvider session={owner}>
-                <MarkdownMessage message={{ ...message(`![photo](${src})`), embeds: [] }} />
-              </AccountProvider>
-            )
+      const renderImage = (src: string) =>
+        withWindow(() =>
+          renderToStaticMarkup(
+            <AccountProvider session={owner}>
+              <MarkdownMessage message={{ ...message(`![photo](${src})`), embeds: [] }} />
+            </AccountProvider>
           )
-        for (const src of ['/api/media/7', 'api/media/7', `${origin}/api/v1/media/7`]) {
-          const html = renderImage(src)
-          expect(html).toContain('animate-pulse')
-          expect(html).not.toContain('<img')
-        }
-        for (const src of [
-          '/api/media/7?private',
-          '/api/media/7/other',
-          '/api/media/%FF',
-          '/api/messages/1/embeds/0/image',
-          `${ORIGIN}/private/image.png`,
-          ...(origin === ORIGIN ? [] : [`${ORIGIN}/api/media/7`]),
-        ]) {
-          const html = renderImage(src)
-          expect(html).toContain(`href="${new URL(src, origin).href}"`)
-          expect(html).not.toContain('animate-pulse')
-          expect(html).not.toContain('<img')
-        }
-      } finally {
-        owner.store.dispose()
+        )
+      for (const src of ['/api/media/7', 'api/media/7', `${origin}/api/v1/media/7`]) {
+        const html = renderImage(src)
+        expect(html).toContain('animate-pulse')
+        expect(html).not.toContain('<img')
+      }
+      for (const src of [
+        '/api/media/7?private',
+        '/api/media/7/other',
+        '/api/media/%FF',
+        '/api/messages/1/embeds/0/image',
+        `${ORIGIN}/private/image.png`,
+        ...(origin === ORIGIN ? [] : [`${ORIGIN}/api/media/7`]),
+      ]) {
+        const html = renderImage(src)
+        expect(html).toContain(`href="${new URL(src, origin).href}"`)
+        expect(html).not.toContain('animate-pulse')
+        expect(html).not.toContain('<img')
       }
     })
   }
@@ -172,6 +164,5 @@ test('inline links classify and dispatch for the rendering account', async () =>
   } finally {
     client.book.setState(previousBook, true)
     client.shown = previous
-    owner.store.dispose()
   }
 })

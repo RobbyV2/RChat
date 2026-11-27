@@ -42,19 +42,14 @@ placeContract(where, (kind, world) => {
 test('a place opens to one handle per account and id', () => {
   const account = testAccount('ann')
   const other = testAccount('bob')
-  try {
-    const a = HostedServer.open(account, 'harbor')
-    expect(HostedServer.open(account, 'harbor')).toBe(a)
-    expect(HostedServer.open(account, 'pier')).not.toBe(a)
-    expect(HostedServer.open(other, 'harbor')).not.toBe(a)
-    expect(a.id).toBe(HostedServer.open(other, 'harbor').id)
-    expect(HostedDm.open(account, 3).id).not.toBe(HostedDm.open(account, 4).id)
-    expect(isHosted(a) && !inDm(a)).toBe(true)
-    expect(inDm(HostedDm.open(account, 3))).toBe(true)
-  } finally {
-    account.store.dispose()
-    other.store.dispose()
-  }
+  const a = HostedServer.open(account, 'harbor')
+  expect(HostedServer.open(account, 'harbor')).toBe(a)
+  expect(HostedServer.open(account, 'pier')).not.toBe(a)
+  expect(HostedServer.open(other, 'harbor')).not.toBe(a)
+  expect(a.id).toBe(HostedServer.open(other, 'harbor').id)
+  expect(HostedDm.open(account, 3).id).not.toBe(HostedDm.open(account, 4).id)
+  expect(isHosted(a) && !inDm(a)).toBe(true)
+  expect(inDm(HostedDm.open(account, 3))).toBe(true)
 })
 
 test('the kinds of a place tell rooms and DMs apart', () => {
@@ -83,39 +78,35 @@ function Shown() {
 
 test('components use the open hosted place unless a provider gives one', () => {
   const account = testAccount('ann')
+  const render = () =>
+    renderToStaticMarkup(
+      <AccountProvider session={account}>
+        <Shown />
+      </AccountProvider>
+    )
+  const open = (view: View) => {
+    account.store.setState({ view })
+    Object.assign(account.store.getInitialState(), { view })
+  }
+  expect(render()).toBe('<p>none no_place</p>')
+  open({ kind: 'channel', server: 'harbor', channelId: 1 })
+  expect(render()).toBe('<p>hostedServer:harbor harbor</p>')
+  open({ kind: 'dm', dmId: 9 })
+  expect(render()).toBe('<p>hostedDm:9 not_in_dms</p>')
+  const world = contractWorld('p2pRoom')
   try {
-    const render = () =>
+    expect(
       renderToStaticMarkup(
         <AccountProvider session={account}>
-          <Shown />
+          <PlaceProvider place={world.ann.place}>
+            <Shown />
+          </PlaceProvider>
         </AccountProvider>
       )
-    const open = (view: View) => {
-      account.store.setState({ view })
-      Object.assign(account.store.getInitialState(), { view })
-    }
-    expect(render()).toBe('<p>none no_place</p>')
-    open({ kind: 'channel', server: 'harbor', channelId: 1 })
-    expect(render()).toBe('<p>hostedServer:harbor harbor</p>')
-    open({ kind: 'dm', dmId: 9 })
-    expect(render()).toBe('<p>hostedDm:9 not_in_dms</p>')
-    const world = contractWorld('p2pRoom')
-    try {
-      expect(
-        renderToStaticMarkup(
-          <AccountProvider session={account}>
-            <PlaceProvider place={world.ann.place}>
-              <Shown />
-            </PlaceProvider>
-          </AccountProvider>
-        )
-      ).toBe('<p>p2pRoom:room room</p>')
-      expect(world.ann.place).toBe(P2pRoom.open(world.ann.app!, world.room))
-    } finally {
-      disposeWorld(world)
-    }
+    ).toBe('<p>p2pRoom:room room</p>')
+    expect(world.ann.place).toBe(P2pRoom.open(world.ann.app!, world.room))
   } finally {
-    account.store.dispose()
+    disposeWorld(world)
   }
 })
 

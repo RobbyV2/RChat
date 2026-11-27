@@ -1,9 +1,6 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { resetSessionCaches } from '../store'
 import { InboxAction, InboxPanel } from '../../components/inbox'
-
-afterAll(resetSessionCaches)
 
 describe('inbox markup', () => {
   test('role names are blurred in streamer mode like other names', () => {

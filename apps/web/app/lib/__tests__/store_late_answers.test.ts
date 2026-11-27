@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { askKick } from '../place/moderation'
 import { HostedServer } from '../place/place'
 import { client } from '../client/client'
@@ -46,8 +46,6 @@ import {
 import { Secret } from '../secret'
 
 const { files: p2p, relays: relayBook, rtc } = getHomeSession()
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch

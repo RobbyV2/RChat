@@ -1,13 +1,11 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore, resetSessionCaches } from '../store'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { useStore } from '../store'
 import { home } from './home_instance'
 import { blockedLabel, blockedRuns, blockedSet, matchesBlockQuery, withoutTypers } from '../blocks'
 import { typerNames } from '../typing'
 import type { BlockedUser, WsEvent } from '../types'
 import { me, memoryStorage, msg, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

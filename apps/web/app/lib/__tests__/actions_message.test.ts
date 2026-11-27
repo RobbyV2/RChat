@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import { HostedServer } from '../place/place'
 import { client } from '../client/client'
 import {
@@ -38,7 +38,7 @@ import type { InboxEntry } from '../inbox'
 import { emptyLayout } from '../nav_layout'
 import { EMPTY_NOTIFY } from '../notify'
 import { setSharing, sharing } from '../platform'
-import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
+import { useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import type { RChatState } from '../store_types'
 import { ChannelPermBit, Perm, type Member, type Message, type Poll } from '../types'
 import { drain, embed, me, member, msg, paged, role, serverDetail, user } from './fixtures'
@@ -58,8 +58,6 @@ afterEach(() => {
   g.window = realWindow
   useStore.setState(initial, true)
 })
-
-afterAll(resetSessionCaches)
 
 const T0 = 1_700_000_000
 const MOD =

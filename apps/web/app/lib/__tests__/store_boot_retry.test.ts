@@ -1,10 +1,8 @@
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
-import { BOOT_RETRY_MS, useStore, resetSessionCaches } from '../store'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { BOOT_RETRY_MS, useStore } from '../store'
 import { advance, me, memoryStorage, msg, serverDetail } from './fixtures'
 import { installPrimaryAccount } from './home_instance'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -12,14 +10,13 @@ const realWindow = (globalThis as { window?: unknown }).window
 const chan = { id: 77, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
 let limited = 0
 let limitedS = false
-let restoreBook: () => void
 let path = '/'
 
 beforeEach(() => {
   jest.useFakeTimers()
   memoryStorage.clear()
   Object.assign(globalThis, { localStorage: memoryStorage })
-  restoreBook = installPrimaryAccount('bob')
+  installPrimaryAccount('bob')
   limited = 0
   limitedS = false
   path = '/s/s/77/'
@@ -77,7 +74,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  restoreBook()
   jest.useRealTimers()
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow

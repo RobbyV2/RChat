@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { longPress } from '../../components/context_menu'
@@ -6,14 +6,13 @@ import { FileCardBody } from '../../components/file_card'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { Selectable } from '../../components/selection'
 import { emptySelection } from '../selection'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { me, media, msg, user } from './fixtures'
 import { readText } from './masked_text'
 
 const initial = useStore.getInitialState()
 const saved = { ...initial }
 afterEach(() => void Object.assign(initial, saved))
-afterAll(resetSessionCaches)
 
 const base = {
   name: 'Mandy Save.zip',

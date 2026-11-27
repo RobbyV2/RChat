@@ -1,5 +1,5 @@
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { menuItems } from '../actions/menu'
@@ -9,7 +9,7 @@ import { EMPTY_NOTIFY, LEVELS, MUTE_CHOICES, setMute, type NotifyScope } from '.
 import type { Contact } from '../p2p/contacts'
 import { dmRoomId } from '../p2p/dm'
 import { keyId, newKeyPair } from '../p2p/keys'
-import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
+import { useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 
 const initial = useStore.getState()
 const p2pInitial = shownPeer().useP2p.getState()
@@ -20,8 +20,6 @@ afterEach(() => {
   useStore.setState(initial, true)
   shownPeer().useP2p.setState(p2pInitial, true)
 })
-
-afterAll(resetSessionCaches)
 
 const ME = keyId(newKeyPair().pk)
 const DANA = keyId(newKeyPair().pk)

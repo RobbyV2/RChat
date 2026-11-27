@@ -1,9 +1,9 @@
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { home, installPrimaryAccount } from './home_instance'
 import { emptyLayout } from '../nav_layout'
 import { loadHome, noteVisit, parseSummary, unreadSummaryKey, useHome } from '../home_store'
@@ -15,11 +15,8 @@ import type { Channel, DmSummary } from '../types'
 import { me, memoryStorage, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
 
-afterAll(resetSessionCaches)
-
 const st = () => useStore.getState()
 const storage = new Map<string, string>()
-let restoreBook: () => void
 let pushed: string[] = []
 let fetched: string[] = []
 const realFetch = globalThis.fetch
@@ -107,7 +104,7 @@ beforeEach(() => {
     },
   }
   g.document = { cookie: '' }
-  restoreBook = installPrimaryAccount('alice')
+  installPrimaryAccount('alice')
   useStore.setState({
     token: Secret.of('tok'),
     me: me('alice', { display_name: 'Alice A' }),
@@ -128,7 +125,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  restoreBook()
   home.ws.stop()
   globalThis.fetch = realFetch
   Object.assign(globalThis, { localStorage: memoryStorage })

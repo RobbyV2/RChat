@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { client } from '../client/client'
 import type { P2pState } from '../p2p/app/store'
 import type { ServerView } from '../p2p/server/types'
@@ -26,7 +26,6 @@ afterEach(() => {
   resetSessionCaches()
   memoryStorage.clear()
 })
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const voiceRoom = (id: number, over: Partial<Channel> = {}): Channel => ({

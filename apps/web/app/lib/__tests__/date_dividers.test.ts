@@ -1,13 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import { dayLines, dayStarts, formatDateBanner, localDayKey, sameDay } from '../date_dividers'
 import { continues } from '../message_groups'
 
-const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
 beforeEach(() => {
   process.env.TZ = 'America/New_York'
-})
-afterEach(() => {
-  process.env.TZ = zone
 })
 
 // Seconds of a local wall-clock time in the zone under test.

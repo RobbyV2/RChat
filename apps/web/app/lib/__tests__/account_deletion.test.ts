@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   DELETION_DAYS,
   DELETION_P2P_OFFLINE,
@@ -9,10 +9,8 @@ import {
   type DeletionSteps,
 } from '../account_deletion'
 import { client } from '../client/client'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { me } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const DAY = 86_400
 

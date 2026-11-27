@@ -1,9 +1,9 @@
-import { afterAll, afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChannelSidebar } from '../../components/channel_sidebar'
 import type { DmListPrefs } from '../dm_list'
 import { emptyLayout } from '../nav_layout'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { RChatState } from '../store_types'
 import type { DmSummary } from '../types'
 import { me, user } from './fixtures'
@@ -19,8 +19,6 @@ const seed = (state: Partial<RChatState>) => {
 }
 
 afterEach(() => seed({ ...saved }))
-
-afterAll(resetSessionCaches)
 
 const dm = (id: number, other: string, over: Partial<DmSummary> = {}): DmSummary => ({
   id,

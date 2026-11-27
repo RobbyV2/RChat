@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test'
 import { blobs, setBlobs } from '../platform'
-import { client } from '../client/client'
 import { testAccount } from './test_account'
 import type { Decision } from '../relays'
 import type { IceServers, VoiceMsg } from '../types'
@@ -14,41 +13,36 @@ const turn = (credential: string): IceServers => ({
 test('ICE credentials, relay preferences and pending consent follow their owner through release', async () => {
   const a = testAccount('sam', 'https://a.test')
   const b = testAccount('sam', 'https://b.test')
-  try {
-    for (const account of [a, b]) {
-      Object.defineProperty(account.conn, 'info', {
-        get: () => ({ ice: { stun: [], turn: true, relay: false } }),
-      })
-    }
-    const late = Promise.withResolvers<IceServers>()
-    a.api.p2pIce = () => late.promise
-    b.api.p2pIce = async () => turn('for-b')
-    const refreshing = a.ice.setSignedIn(true)
-    await b.ice.setSignedIn(true)
-    const asked = Promise.withResolvers<void>()
-    const answer = Promise.withResolvers<Decision>()
-    a.relays.prompt = () => {
-      asked.resolve()
-      return answer.promise
-    }
-    b.relays.prompt = async () => 'always'
-    const pending = a.relays.consent(['shared.example'])
-    await asked.promise
-    expect(await b.relays.consent(['other.example'])).toBeNull()
-    expect(a.relays.prefs.allowed).toEqual([])
-    a.store.dispose()
-    answer.resolve('always')
-    late.resolve(turn('for-a'))
-    await refreshing
-    expect(await pending).toBe('shared.example')
-    expect(a.ice.servers()).toEqual([])
-    expect(a.relays.prefs.allowed).toEqual([])
-    expect(b.relays.prefs.allowed).toEqual(['other.example'])
-    expect(b.relays.autoConfig().iceServers).toEqual(turn('for-b').ice_servers)
-  } finally {
-    if (client.live().includes(a)) a.store.dispose()
-    b.store.dispose()
+  for (const account of [a, b]) {
+    Object.defineProperty(account.conn, 'info', {
+      get: () => ({ ice: { stun: [], turn: true, relay: false } }),
+    })
   }
+  const late = Promise.withResolvers<IceServers>()
+  a.api.p2pIce = () => late.promise
+  b.api.p2pIce = async () => turn('for-b')
+  const refreshing = a.ice.setSignedIn(true)
+  await b.ice.setSignedIn(true)
+  const asked = Promise.withResolvers<void>()
+  const answer = Promise.withResolvers<Decision>()
+  a.relays.prompt = () => {
+    asked.resolve()
+    return answer.promise
+  }
+  b.relays.prompt = async () => 'always'
+  const pending = a.relays.consent(['shared.example'])
+  await asked.promise
+  expect(await b.relays.consent(['other.example'])).toBeNull()
+  expect(a.relays.prefs.allowed).toEqual([])
+  a.store.dispose()
+  answer.resolve('always')
+  late.resolve(turn('for-a'))
+  await refreshing
+  expect(await pending).toBe('shared.example')
+  expect(a.ice.servers()).toEqual([])
+  expect(a.relays.prefs.allowed).toEqual([])
+  expect(b.relays.prefs.allowed).toEqual(['other.example'])
+  expect(b.relays.autoConfig().iceServers).toEqual(turn('for-b').ice_servers)
 })
 
 test('each RTC manager signals its own socket and releases only its own microphone and peers', async () => {
@@ -99,8 +93,6 @@ test('each RTC manager signals its own socket and releases only its own micropho
     b.rtc.setMuted(false)
     expect(sent.map(s => s.length)).toEqual([1, 2])
   } finally {
-    a.store.dispose()
-    b.store.dispose()
     if (media) Object.defineProperty(navigator, 'mediaDevices', media)
     else Reflect.deleteProperty(navigator, 'mediaDevices')
     if (pc) Object.defineProperty(globalThis, 'RTCPeerConnection', pc)
@@ -163,8 +155,6 @@ test('identical media paths on one origin use separate credentials, blobs and ab
     for (const ref of [first, second, again, waiting]) ref.release()
   } finally {
     globalThis.fetch = fetcher
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 
@@ -210,8 +200,6 @@ test('disposing a file manager cancels staging and preserves both accounts’ st
     expect(a.files.file('pending')).toBeNull()
     expect(await (await b.files.blob('same'))?.text()).toBe(b.id)
   } finally {
-    if (client.live().includes(a)) a.store.dispose()
-    b.store.dispose()
     setBlobs(original)
   }
 })

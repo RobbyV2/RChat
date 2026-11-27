@@ -2,7 +2,7 @@ import { CAN_ALL } from '../channel_perms'
 import { moderationOf } from '../place/moderation'
 import { shownPeer } from './shown_peer'
 import { PURGE_ALL } from '../durations'
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import {
   ArrowRight,
   Bell,
@@ -53,7 +53,7 @@ import { keyId, newKeyPair } from '../p2p/keys'
 import type { MemberView, RoleView, ServerView } from '../p2p/server'
 import { P } from '../p2p/state'
 import { setSharing, sharing } from '../platform'
-import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
+import { useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import type { Message } from '../types'
 
 const initial = useStore.getState()
@@ -67,8 +67,6 @@ afterEach(() => {
   useStore.setState(initial, true)
   shownPeer().useP2p.setState(p2pInitial, true)
 })
-
-afterAll(resetSessionCaches)
 
 const ME = 'IK_ME'.padEnd(43, 'a')
 const BOB = 'IK_BOB'.padEnd(43, 'b')

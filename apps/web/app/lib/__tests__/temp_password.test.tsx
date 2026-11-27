@@ -1,8 +1,8 @@
-import { afterAll, afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Banners } from '../../components/banners'
 import { api } from './home_instance'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { temporaryNotice } from '../temp_password'
 import { me } from './fixtures'
 import { Secret } from '../secret'
@@ -16,8 +16,6 @@ afterEach(() => {
   Object.assign(initial, saved)
   useStore.setState({ ...saved })
 })
-
-afterAll(resetSessionCaches)
 
 test('the notice says what the temporary password asks of the account', () => {
   const now = 1_000_000

@@ -1,11 +1,9 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { cachedProfile, profileKey, rememberProfile } from '../profile'
 import { sessionMark } from '../slices/ctx'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio } from '../rules'
-import { useStore, resetSessionCaches } from '../store'
+import { useStore } from '../store'
 import { me, user } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch

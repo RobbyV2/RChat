@@ -1,8 +1,8 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Dialog } from '../../components/ui'
 import type { DialogFit } from '../dialog_size'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { AnimPrefs } from '../motion/setting'
 
 const initial = useStore.getInitialState()
@@ -12,8 +12,6 @@ afterEach(() => {
   Object.assign(initial, saved)
   useStore.setState({ ...saved })
 })
-
-afterAll(resetSessionCaches)
 
 const render = (props: Omit<DialogFit, 'raised' | 'blur'> & { blurBackdrop?: boolean } = {}) =>
   renderToStaticMarkup(

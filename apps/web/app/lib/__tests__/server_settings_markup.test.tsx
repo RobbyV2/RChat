@@ -1,8 +1,8 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ServerSettings from '../../components/server_settings'
 import { serverSettingsSections, type ServerSettingsSection } from '../server_settings_sections'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { ALL_PERMS, Perm } from '../types'
 import { me, member, paged, serverDetail, textChannel } from './fixtures'
 
@@ -13,8 +13,6 @@ afterEach(() => {
   Object.assign(initial, saved)
   useStore.setState({ ...saved })
 })
-
-afterAll(resetSessionCaches)
 
 // The settings of `name` for alice: the owner, a member admin with only `perms`, or a plain
 // member for 0.

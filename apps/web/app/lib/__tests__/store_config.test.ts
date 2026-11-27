@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { configSourceOf, useStore, resetSessionCaches } from '../store'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { configSourceOf, useStore } from '../store'
 import { sessionStore } from '../instances'
 import { home } from './home_instance'
 import { client } from '../client/client'
@@ -19,8 +19,6 @@ import {
 import type { DmSummary, ServerSummary } from '../types'
 import { me, memoryStorage, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const ALL = new Set<SectionKey>(SECTIONS.map(s => s.key))

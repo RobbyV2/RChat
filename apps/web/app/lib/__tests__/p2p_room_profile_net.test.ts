@@ -1,11 +1,9 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { CANT_TEXT } from '../p2p/flows'
 import { PROFILE_LOCKED_TEXT, PROFILE_OFTEN_TEXT } from '../p2p/server/storage'
 import { memberOf } from '../p2p/state'
 import { Hub, ManualClock } from './p2p_net'
-import { joinWithCode, makeMember, pump, stopAll, type Member } from './p2p_server_net'
-
-afterEach(stopAll)
+import { joinWithCode, makeMember, pump, type Member } from './p2p_server_net'
 
 type Inner = {
   emit: (room: string, t: string, make: () => Record<string, unknown>) => Promise<unknown>

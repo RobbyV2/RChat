@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { cachedProfile, profileKey, rememberProfile } from '../profile'
 import { lookOf } from '../server_profile'
 import { sessionMark } from '../slices/ctx'
@@ -6,8 +6,6 @@ import { resetSessionCaches, useStore } from '../store'
 import { mayEditProfile, profileLockedFor } from '../selectors'
 import type { Member, MemberLook, Profile, ProfilesMode, ServerProfile, WsEvent } from '../types'
 import { me, member, paged, serverDetail, until } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

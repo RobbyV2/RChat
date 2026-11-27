@@ -1,11 +1,9 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { resetSessionCaches, useStore } from '../store'
 import { channelGroups } from '../categories'
 import { emptyLayout } from '../nav_layout'
 import type { Channel, ChannelLayout, WsEvent } from '../types'
 import { me, serverDetail, until } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const dispatch = (ev: WsEvent) => useStore.getState().applyWsEvent(ev)
 const st = () => useStore.getState()

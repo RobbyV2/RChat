@@ -125,7 +125,6 @@ test('a secondary connection never writes the home media cookie', () => {
   } finally {
     if (oldDocument) Object.defineProperty(globalThis, 'document', oldDocument)
     else Reflect.deleteProperty(globalThis, 'document')
-    account.store.dispose()
   }
 })
 
@@ -139,13 +138,9 @@ test('late profile writes cannot cross an instance change for the same username'
   account.conn.retarget(endpointsFrom('https://second.test', null), null, false)
   const current = me('alice', { bio: 'current', display_name: 'Current' })
   account.store.setState({ me: current })
-  try {
-    update.resolve({ ...current, bio: 'old', display_name: 'Old' })
-    await Promise.all(pending)
-    expect(account.store.getState().me).toBe(current)
-  } finally {
-    account.store.dispose()
-  }
+  update.resolve({ ...current, bio: 'old', display_name: 'Old' })
+  await Promise.all(pending)
+  expect(account.store.getState().me).toBe(current)
 })
 
 test('stale settings cannot update a reset store or start a brand fetch', async () => {
@@ -160,14 +155,10 @@ test('stale settings cannot update a reset store or start a brand fetch', async 
   const pending = account.store.getState().loadSettings()
   account.store.resetSessionCaches()
   const before = account.store.getState().settings
-  try {
-    response.resolve({ ...before, guests_enabled: !before.guests_enabled })
-    await pending
-    expect(account.store.getState().settings).toBe(before)
-    expect(brands).toBe(0)
-  } finally {
-    account.store.dispose()
-  }
+  response.resolve({ ...before, guests_enabled: !before.guests_enabled })
+  await pending
+  expect(account.store.getState().settings).toBe(before)
+  expect(brands).toBe(0)
 })
 
 test('a completed profile response cannot commit across a queued account change', async () => {
@@ -182,12 +173,8 @@ test('a completed profile response cannot commit across a queued account change'
     account.conn.retarget(endpointsFrom('https://second.test', null), null, false)
     account.store.setState({ me: current })
   })
-  try {
-    await pending
-    expect(account.store.getState().me).toBe(current)
-  } finally {
-    account.store.dispose()
-  }
+  await pending
+  expect(account.store.getState().me).toBe(current)
 })
 
 test('instance discovery finishing after sign-in keeps the authenticated connection', async () => {
@@ -216,7 +203,6 @@ test('instance discovery finishing after sign-in keeps the authenticated connect
     expect(plain(account.store.getState().token)).toBe('signed-in')
   } finally {
     globalThis.fetch = originalFetch
-    account.store.dispose()
   }
 })
 
@@ -225,15 +211,11 @@ test('an interrupted initial discovery leaves the picker without a failure resul
     const account = testAccount('alice')
     const response = Promise.withResolvers<InstanceInfo>()
     account.api.instance = () => response.promise
-    try {
-      const pending = account.store.getState().loadInstance()
-      account.store.resetSessionCaches()
-      if (succeeded) response.resolve({} as InstanceInfo)
-      else response.reject(new Error('connection unavailable'))
-      expect(await pending).toBeNull()
-    } finally {
-      account.store.dispose()
-    }
+    const pending = account.store.getState().loadInstance()
+    account.store.resetSessionCaches()
+    if (succeeded) response.resolve({} as InstanceInfo)
+    else response.reject(new Error('connection unavailable'))
+    expect(await pending).toBeNull()
   }
 })
 
@@ -308,8 +290,6 @@ for (const stage of ['discovery', 'settings'] as const) {
       expect(client.shown()).toBe(shown)
     } finally {
       held.resolve()
-      callback.store.dispose()
-      sibling.store.dispose()
       memoryStorage.removeItem(qualified)
       memoryStorage.removeItem(alias)
     }

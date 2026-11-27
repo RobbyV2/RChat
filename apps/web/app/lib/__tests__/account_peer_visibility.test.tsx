@@ -1,4 +1,4 @@
-import { AccountSession } from '../client/session'
+import type { AccountSession } from '../client/session'
 import { peerStorage } from '../client/keys'
 import { InstanceConnection, endpointsFrom } from '../instances'
 import 'fake-indexeddb/auto'
@@ -11,7 +11,7 @@ import { p2pKey } from '../p2p/app/store'
 import type { TypingMsg } from '../typing'
 import type { WsEvent } from '../types'
 import { me, msg, user } from './fixtures'
-import { testAccount } from './test_account'
+import { testAccount, testSession } from './test_account'
 
 test('disabled P2P Settings can remove saved slots only for the live signed-in owner', async () => {
   const owner = testAccount('sam', 'https://offline.test')
@@ -72,7 +72,6 @@ test('disabled P2P Settings can remove saved slots only for the live signed-in o
     expect(localStorage.getItem(peerStorage(other.conn, 'sam').scoped(p2pKey('sam')))).toBe(saved)
   } finally {
     if (!disposed) owner.store.dispose()
-    other.store.dispose()
     for (const name of [db, work, otherDb]) indexedDB.deleteDatabase(name)
     localStorage.removeItem(peerStorage(owner.conn, 'sam').scoped(p2pKey('sam')))
     localStorage.removeItem(peerStorage(other.conn, 'sam').scoped(p2pKey('sam')))
@@ -132,8 +131,6 @@ test('only the selected peer identity covers its account’s incoming DM and typ
     expect(owner.identities.list()).toEqual([])
     expect(owner.store.getState().atBottom.d4).toBe(false)
   } finally {
-    owner.store.dispose()
-    other.store.dispose()
     localStorage.removeItem(manifestKey)
   }
 })
@@ -180,8 +177,6 @@ test('private origins keep separate databases, enable flags and identity setting
     expect(remaining).toContain(oldDb)
     expect(localStorage.getItem(historicalFlag)).toBe(saved)
   } finally {
-    first.store.dispose()
-    other.store.dispose()
     for (const key of [historicalFlag, flag + '@http://localhost', flag + '@https://localhost'])
       localStorage.removeItem(key)
     for (const name of names) indexedDB.deleteDatabase(name)
@@ -219,7 +214,6 @@ for (const replacement of [false, true]) {
         expect(account.identities.list()).toEqual([])
       } finally {
         connection.close()
-        account.store.dispose()
         localStorage.removeItem(flag)
         indexedDB.deleteDatabase(name)
       }
@@ -240,7 +234,7 @@ test('default adoption and the sibling manifest stay pinned independently of lat
   localStorage.setItem(manifest, '["work"]')
   localStorage.setItem(flag, '{"v":1,"on":true}')
   localStorage.setItem(flag + '~work', '{"v":1,"on":true}')
-  const owner = new AccountSession(conn)
+  const owner = testSession(conn)
   try {
     owner.store.setState(s => ({ me: me(user), settings: { ...s.settings, p2p: false } }))
     const main = peerStorage(conn, user)
@@ -263,8 +257,6 @@ test('default adoption and the sibling manifest stay pinned independently of lat
     expect(localStorage.getItem(flag)).toBe('{"v":1,"on":true}')
     indexedDB.deleteDatabase(main.db!)
   } finally {
-    owner.store.dispose()
-    remote.store.dispose()
     for (const key of [manifest, flag, flag + '~work', flag + '@' + conn.host])
       localStorage.removeItem(key)
   }
@@ -315,7 +307,7 @@ test('an ambiguous historical main never hides a separately owned work slot at u
   localStorage.setItem(flag, saved)
   localStorage.setItem(flag + '@' + primary.host, saved)
   localStorage.setItem(flag + '~work', saved)
-  const owner = new AccountSession(primary)
+  const owner = testSession(primary)
   try {
     owner.store.setState(s => ({ me: me(user), settings: { ...s.settings, p2p: false } }))
     for (const name of [legacyDb, legacyDb + '~work']) (await openDB(name, 1)).close()
@@ -327,7 +319,6 @@ test('an ambiguous historical main never hides a separately owned work slot at u
     expect((await indexedDB.databases()).map(d => d.name)).toContain(legacyDb)
     expect(localStorage.getItem(flag)).toBe(saved)
   } finally {
-    owner.store.dispose()
     for (const name of [legacyDb, legacyDb + '~work']) indexedDB.deleteDatabase(name)
     for (const key of [manifest, flag, flag + '~work', flag + '@' + primary.host])
       localStorage.removeItem(key)
@@ -349,7 +340,7 @@ for (const remoteFirst of [false, true]) {
         ;(await openDB(db(conn), 1)).close()
       }
       for (const conn of remoteFirst ? [remote, primary] : [primary, remote]) {
-        const account = new AccountSession(conn)
+        const account = testSession(conn)
         accounts.set(conn, account)
         account.store.setState(s => ({ me: me(user), settings: { ...s.settings, p2p: false } }))
         expect(account.keys.db()).toBe(db(conn))

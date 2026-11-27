@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { AclWorld, devOwner, diffProdWorld, TestReplica, toModel } from './p2p_acl_world'
 import { AGREED } from '../p2p/limits'
 import * as M from './acl_model_rules2/model'
@@ -10,7 +10,6 @@ import {
   makeMember,
   pump,
   signed,
-  stopAll,
   type Member,
 } from './p2p_server_net'
 import { Hub, ManualClock, prng } from './p2p_net'
@@ -907,8 +906,6 @@ describe('the summary is safe from keys a member picks', () => {
 })
 
 // ----- On real members over the in-memory hub -----
-
-afterEach(stopAll)
 
 const failure = (p: Promise<unknown>) =>
   p.then(

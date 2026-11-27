@@ -70,7 +70,6 @@ test('the main identity reads historical storage and a sibling writes its own se
     else Reflect.deleteProperty(globalThis, 'window')
     await main.dispose()
     await sibling.dispose()
-    account.store.dispose()
     for (let i = memoryStorage.length - 1; i >= 0; i--) {
       const key = memoryStorage.key(i)
       if (key?.includes('@8.8.8.8')) memoryStorage.removeItem(key)
@@ -131,7 +130,6 @@ test('removing a sibling preserves the historical main identity across sign-in',
     memoryStorage.removeItem(account.conn.scoped('rchat_p2p:sam'))
     memoryStorage.removeItem(account.conn.scoped('rchat_p2p:sam~work'))
     await Promise.all([removeP2pDb(historicalDb), removeP2pDb(sibling.dbFor(user))])
-    account.store.dispose()
   }
 }, 60_000)
 
@@ -233,8 +231,6 @@ test('two factories exchange a DM and disposing the sender releases only its res
     client.shown = shown
     if (!senderDisposed) await a.dispose()
     await b.dispose()
-    alice.store.dispose()
-    bob.store.dispose()
     memoryStorage.removeItem(peerStorage(alice.conn, 'alice').scoped('rchat_p2p:alice'))
     memoryStorage.removeItem(peerStorage(bob.conn, 'bob', 'work').scoped('rchat_p2p:bob'))
     await Promise.all([removeP2pDb(aDb), removeP2pDb(bDb)])
@@ -278,7 +274,6 @@ test('a retained identity cannot delete data after disposal or retargeting', asy
     memoryStorage.removeItem(journal)
     memoryStorage.removeItem(peerStorage(account.conn, user).scoped(app.p2pKey(user)))
     await Promise.all([removeP2pDb(original), removeP2pDb(next)])
-    account.store.dispose()
   }
 })
 
@@ -333,7 +328,6 @@ test('signout while opening the import database cancels the write and both journ
     source.node.stop()
     source.store.close()
     await Promise.all([removeP2pDb(db), removeP2pDb(source.db)])
-    account.store.dispose()
   }
 })
 
@@ -405,8 +399,6 @@ test('a previous reader finishing startup leaves the new account’s older chat 
     await app.p2pAccount(null)
     oldApp.dispose()
     app.dispose()
-    nextOwner.store.dispose()
-    owner.store.dispose()
     for (const { key, raw, db } of saved) {
       writeLocal(key, raw)
       await removeP2pDb(db)
@@ -483,8 +475,6 @@ test('Bob invites two identities of Alice into one room and sends each a private
       )
       await removeP2pDb(db)
     }
-    alice.store.dispose()
-    bob.store.dispose()
   }
 }, 60_000)
 
@@ -521,8 +511,6 @@ test('parking a managed identity keeps only its own drafts until signout', async
       'same-room': other.conn.host,
     })
   } finally {
-    owner.store.dispose()
-    other.store.dispose()
     memoryStorage.removeItem(peerStorage(owner.conn, user).scoped('rchat_p2p:sam'))
     await removeP2pDb(db)
   }
@@ -598,8 +586,6 @@ test('a parked identity keeps its data until it runs here, then leaves its serve
       peerStorage(bob.conn, 'retire-owner').scoped(owner.p2pKey('retire-owner'))
     )
     await Promise.all(dbs.map(db => removeP2pDb(db)))
-    alice.store.dispose()
-    bob.store.dispose()
   }
 }, 60_000)
 
@@ -640,8 +626,6 @@ test('a parked identity that runs here waits for its server to link, however lat
       peerStorage(bob.conn, 'retire-late-owner').scoped(owner.p2pKey('retire-late-owner'))
     )
     await Promise.all(dbs.map(db => removeP2pDb(db)))
-    alice.store.dispose()
-    bob.store.dispose()
   }
 }, 60_000)
 
@@ -687,8 +671,6 @@ test('over a slow link a removed identity keeps its data until the owner has its
       peerStorage(bob.conn, 'retire-slow-owner').scoped(owner.p2pKey('retire-slow-owner'))
     )
     await Promise.all(dbs.map(db => removeP2pDb(db)))
-    alice.store.dispose()
-    bob.store.dispose()
   }
 }, 60_000)
 
@@ -756,7 +738,6 @@ test('an identity another tab runs moves here to leave its servers, and stays de
       peerStorage(bob.conn, 'retire-tabs-owner').scoped(owner.p2pKey('retire-tabs-owner'))
     )
     await Promise.all(dbs.map(db => removeP2pDb(db)))
-    for (const a of [first, second, bob]) a.store.dispose()
   }
 }, 60_000)
 
@@ -797,7 +778,6 @@ test('a tab that asked for an identity while another ran one makes none once tha
     await one.dispose()
     memoryStorage.removeItem(peerStorage(first.conn, user).scoped(one.p2pKey(user)))
     await removeP2pDb(db)
-    for (const a of [first, second]) a.store.dispose()
   }
 }, 60_000)
 
@@ -819,6 +799,5 @@ test('a held identity is not parked until it is let go', () => {
     expect(parked).toBe(1)
   } finally {
     memoryStorage.removeItem(peerStorage(account.conn, user).scoped('rchat_p2p:sam'))
-    account.store.dispose()
   }
 })

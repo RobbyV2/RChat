@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { sessionStore } from '../instances'
 import { home, api } from './home_instance'
 import { dropStashedInvite, stashInvite, takeStashedInvite } from '../invite'
@@ -8,8 +8,6 @@ import { keptSession, restoreStreamer, restoreTheme, startApp } from '../start'
 import { drain, me, memoryStorage } from './fixtures'
 import { client } from '../client/client'
 import { plain } from './helpers/secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const g = globalThis as { window?: unknown; document?: unknown }

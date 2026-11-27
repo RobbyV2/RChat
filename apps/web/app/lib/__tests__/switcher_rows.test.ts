@@ -144,8 +144,6 @@ test('signing out a parked account revokes its own credential and retains both b
     expect(client.book.getState()).toEqual(book)
   } finally {
     client.show(shown, 'none')
-    a.store.dispose()
-    b.store.dispose()
     client.book.setState(previous, true)
     if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
     else Reflect.deleteProperty(globalThis, 'localStorage')
@@ -212,7 +210,6 @@ test('a delayed parent bootstrap cannot select an earlier sibling or reopen its 
     expect(selected).toEqual([])
   } finally {
     client.show(shown, 'none')
-    a.store.dispose()
     client.book.setState(previous, true)
     memoryStorage.clear()
   }
@@ -269,8 +266,6 @@ test('incoming requests stay on their identity across parking and clear on resol
     expect(badges()).toEqual([0])
   } finally {
     client.show(shown, 'none')
-    a.store.dispose()
-    b.store.dispose()
     client.book.setState(previous, true)
     memoryStorage.clear()
   }

@@ -3,13 +3,13 @@ import { peerChat } from '../actions/p2p_chat'
 import { ForwardBar } from '../../components/forwards'
 import { P2pProvider } from '../client/p2p_react'
 import { parseForward, forwardValue } from '../forward'
-import { testAccount } from './test_account'
+import { testAccount, testSession } from './test_account'
 import { AccountProvider } from '../client/react'
 import { createPeerFixture } from './peer_fixture'
 import { parseBook } from '../client/book'
 import { client } from '../client/client'
-import { AccountSession } from '../client/session'
-const peerOwner = new AccountSession(home)
+import type { AccountSession } from '../client/session'
+const peerOwner = testSession(home)
 const peerApp = createPeerFixture(peerOwner, 'bob')
 const {
   mirrorFrom,
@@ -25,7 +25,7 @@ const {
   p2pServer,
 } = peerApp
 import 'fake-indexeddb/auto'
-import { afterAll, afterEach, beforeEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, beforeAll, describe, expect, test } from 'bun:test'
 import { openDB } from 'idb'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
@@ -117,7 +117,6 @@ import { readText } from './masked_text'
 import { NO_ABOUT } from '../server_about'
 
 beforeAll(registerAppActions)
-afterAll(() => peerOwner.store.dispose())
 pinEmptyBook()
 
 const NOW = 1_800_000_000_000
@@ -753,7 +752,7 @@ describe('rail', () => {
 describe('P2P switched off on the instance', () => {
   let offline: AccountSession
   beforeEach(() => {
-    offline = new AccountSession(home)
+    offline = testSession(home)
     offline.store.setState(s => ({
       me: me('bob'),
       guest: false,
@@ -761,7 +760,6 @@ describe('P2P switched off on the instance', () => {
     }))
     Object.assign(offline.store.getInitialState(), offline.store.getState())
   })
-  afterEach(() => offline.store.dispose())
   const offSection = () =>
     render(
       <AccountProvider session={offline}>
@@ -1128,82 +1126,76 @@ describe('forwarding', () => {
   test('copy and send use the source identity for colliding channels, threads and direct messages', async () => {
     const account = testAccount('bob', 'https://forward-owner.test')
     const other = testAccount('bob', 'https://forward-other.test')
-    try {
-      for (const owner of [account, other]) createPeerFixture(owner, 'bob')
-      const main = account.identities.get()!
-      const work = account.identities.add('work')
-      const elsewhere = other.identities.add('work')
-      for (const app of [main, work, elsewhere])
-        app.useP2p.setState({ servers: { [SRV]: server() } })
-      const target = work.peerTarget(work.useP2p.getState(), SRV, CH)!
-      account.viewing.markPersonally(target, true)
-      const copy = (app: typeof work, key: string) => {
-        render(
-          <AccountProvider session={account}>
-            <P2pProvider identity={app}>
-              <Probe messages={[message]} draftKey={key} />
-            </P2pProvider>
-          </AccountProvider>
-        )
-        const row = list!.rows[0]
-        list!.copyRow(row.p, row.m)
-      }
-      const state = account.store.getState
-      const sent: string[] = []
-      account.store.setState({ sendThreadMessage: body => void sent.push(body) })
-      copy(work, `${SRV}/${CH}#root`)
-      expect(state().forwardClip).toBeNull()
-      copy(main, `${SRV}/${CH}`)
-      expect(state().forwardClip?.source).toEqual({ kind: 'p2p', room: SRV, ch: CH })
-      account.viewing.markPersonally(target, false)
-      copy(work, `${SRV}/${CH}#root`)
-      const clip = parseForward(forwardValue(state().forwardClip))!
-      expect(clip.source).toEqual({ kind: 'p2p', room: SRV, ch: CH, identity: 'work' })
-      account.viewing.markPersonally(target, true)
-      expect(state().forwardClip).toBeNull()
-      account.store.setState({ forwardClip: clip })
-      const bar = (owner: typeof account) => {
-        Object.assign(owner.store.getInitialState(), { forwardClip: clip })
-        return render(
-          <AccountProvider session={owner}>
-            <ForwardBar draftKey="t1" />
-          </AccountProvider>
-        )
-      }
-      expect(bar(account)).not.toContain(message.body)
-      expect(bar(other)).toContain(message.body)
-      state().sendForward('t1')
-      expect(sent).toEqual([])
-      account.viewing.markPersonally(target, false)
-      state().sendForward('t1')
-      expect(sent).toEqual([message.body])
-      copy(main, ROOM)
-      expect(state().forwardClip?.source).toEqual({ kind: 'direct' })
-      copy(work, ROOM)
-      expect(state().forwardClip?.source).toEqual({ kind: 'direct', identity: 'work' })
-      const commands = peerChat.forIdentity(work)
-      const wait = Promise.withResolvers<string>()
-      const forwarded: string[] = []
-      work.p2pDm.ensureRoom = () => wait.promise
-      work.p2pDm.forward = async room => {
-        forwarded.push(room)
-        return true
-      }
-      const pending = commands.forwardTo(ALICE, message, 'Alice', account, ROOM)
-      account.identities.unregister('work')
-      expect(state().forwardClip).toBeNull()
-      account.identities.add('work')
-      wait.resolve(ROOM)
-      await pending
-      expect(forwarded).toEqual([])
+    for (const owner of [account, other]) createPeerFixture(owner, 'bob')
+    const main = account.identities.get()!
+    const work = account.identities.add('work')
+    const elsewhere = other.identities.add('work')
+    for (const app of [main, work, elsewhere]) app.useP2p.setState({ servers: { [SRV]: server() } })
+    const target = work.peerTarget(work.useP2p.getState(), SRV, CH)!
+    account.viewing.markPersonally(target, true)
+    const copy = (app: typeof work, key: string) => {
+      render(
+        <AccountProvider session={account}>
+          <P2pProvider identity={app}>
+            <Probe messages={[message]} draftKey={key} />
+          </P2pProvider>
+        </AccountProvider>
+      )
       const row = list!.rows[0]
-      commands.copyForP2p(message, row.m, 'Alice', ROOM, account)
-      peerChat.forIdentity(elsewhere).copyForP2p(message, row.m, 'Alice', ROOM, account)
-      expect(state().forwardClip).toBeNull()
-    } finally {
-      account.store.dispose()
-      other.store.dispose()
+      list!.copyRow(row.p, row.m)
     }
+    const state = account.store.getState
+    const sent: string[] = []
+    account.store.setState({ sendThreadMessage: body => void sent.push(body) })
+    copy(work, `${SRV}/${CH}#root`)
+    expect(state().forwardClip).toBeNull()
+    copy(main, `${SRV}/${CH}`)
+    expect(state().forwardClip?.source).toEqual({ kind: 'p2p', room: SRV, ch: CH })
+    account.viewing.markPersonally(target, false)
+    copy(work, `${SRV}/${CH}#root`)
+    const clip = parseForward(forwardValue(state().forwardClip))!
+    expect(clip.source).toEqual({ kind: 'p2p', room: SRV, ch: CH, identity: 'work' })
+    account.viewing.markPersonally(target, true)
+    expect(state().forwardClip).toBeNull()
+    account.store.setState({ forwardClip: clip })
+    const bar = (owner: typeof account) => {
+      Object.assign(owner.store.getInitialState(), { forwardClip: clip })
+      return render(
+        <AccountProvider session={owner}>
+          <ForwardBar draftKey="t1" />
+        </AccountProvider>
+      )
+    }
+    expect(bar(account)).not.toContain(message.body)
+    expect(bar(other)).toContain(message.body)
+    state().sendForward('t1')
+    expect(sent).toEqual([])
+    account.viewing.markPersonally(target, false)
+    state().sendForward('t1')
+    expect(sent).toEqual([message.body])
+    copy(main, ROOM)
+    expect(state().forwardClip?.source).toEqual({ kind: 'direct' })
+    copy(work, ROOM)
+    expect(state().forwardClip?.source).toEqual({ kind: 'direct', identity: 'work' })
+    const commands = peerChat.forIdentity(work)
+    const wait = Promise.withResolvers<string>()
+    const forwarded: string[] = []
+    work.p2pDm.ensureRoom = () => wait.promise
+    work.p2pDm.forward = async room => {
+      forwarded.push(room)
+      return true
+    }
+    const pending = commands.forwardTo(ALICE, message, 'Alice', account, ROOM)
+    account.identities.unregister('work')
+    expect(state().forwardClip).toBeNull()
+    account.identities.add('work')
+    wait.resolve(ROOM)
+    await pending
+    expect(forwarded).toEqual([])
+    const row = list!.rows[0]
+    commands.copyForP2p(message, row.m, 'Alice', ROOM, account)
+    peerChat.forIdentity(elsewhere).copyForP2p(message, row.m, 'Alice', ROOM, account)
+    expect(state().forwardClip).toBeNull()
   })
 
   test('a forward carries the author’s own profile name, never a petname or a masked name', async () => {
@@ -1776,7 +1768,7 @@ describe('a tab that only reads', () => {
     const alice = await P2pStore.create(crypto.randomUUID())
     const room = blankRoom(dmRoomId(ALICE, CAROL), CAROL, NOW)
     const delayed = Promise.withResolvers<RoomRecord>()
-    const aliceOwner = new AccountSession(home)
+    const aliceOwner = testSession(home)
     const aliceApp = createPeerFixture(aliceOwner, 'alice')
     alice.room = () => delayed.promise
     alice.rooms = async () => [await delayed.promise]
@@ -1797,7 +1789,6 @@ describe('a tab that only reads', () => {
       expect(bob.account).toBe('bob')
     } finally {
       await p2pAccount(null)
-      aliceOwner.store.dispose()
       alice.close()
     }
   })

@@ -115,8 +115,6 @@ test('trust precedes any name, file or key and reservations stay with the signed
     expect(() => identityOwner(owner)).toThrow()
   } finally {
     await client.updateBook(b => removeInstance(b, origin))
-    owner.store.dispose()
-    sibling.store.dispose()
   }
 })
 
@@ -180,7 +178,6 @@ test('an encrypted identity import attaches its existing key to the selected sib
     expect(main.p2p.hasData('importer')).toBe(false)
     await slot.app.p2p.removeData('importer')
   } finally {
-    account.store.dispose()
     source.node.stop()
     source.store.close()
     await removeP2pDb(source.db)
@@ -267,7 +264,6 @@ test('repeated detached cancellations prune only the original empty manifest res
     account.identities.setAccount('alice')
     expect(account.identities.get(local)?.localId).toBe(local)
   } finally {
-    account.store.dispose()
     memoryStorage.removeItem(manifest)
     await client.updateBook(book => removeInstance(book, origin))
   }
@@ -386,7 +382,6 @@ test('overlapping encrypted applies protect both keys and recheck the preview in
   } finally {
     resume.resolve()
     client.updateStoredBook = update
-    account.store.dispose()
     for (const store of stores) {
       const name = store.db.name
       store.close()

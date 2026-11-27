@@ -1,10 +1,7 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { endOfList, shortSearch } from '../search'
-import { resetSessionCaches } from '../store'
 import { SearchView, type SearchHitView } from '../../components/search_panel'
-
-afterAll(resetSessionCaches)
 
 const OLDER = 'Search older messages'
 

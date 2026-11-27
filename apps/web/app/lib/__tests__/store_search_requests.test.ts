@@ -1,9 +1,7 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { SearchArgs } from '../search'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { memoryStorage, result } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const g = globalThis as { window?: unknown; document?: unknown }

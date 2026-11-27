@@ -3,7 +3,7 @@ import type { AccountSession } from '../client/session'
 import { testAccount } from './test_account'
 import { AccountTabLock, accountNoticeTag } from '../client/tab_lock'
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   allPings,
   dmPingCount,
@@ -28,7 +28,6 @@ import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { keyId, newKeyPair } from '../p2p/keys'
 import { Secret } from '../secret'
 
-afterAll(resetSessionCaches)
 pinEmptyBook()
 
 const st = () => useStore.getState()
@@ -732,7 +731,6 @@ describe('desktop notifications', () => {
       client.shown = shown
       if (show) Object.defineProperty(client, 'show', show)
       else Reflect.deleteProperty(client, 'show')
-      for (const account of accounts) account.store.dispose()
     }
   })
 

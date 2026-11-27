@@ -10,7 +10,6 @@ import {
   Hub,
   ManualClock,
   makeMember,
-  stopAll,
   joinWithCode,
   general,
   pump,
@@ -73,8 +72,6 @@ test('the device badge counts each account and sibling inbox source once and fol
     offA()
     offB()
     tab.restore()
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 
@@ -136,7 +133,6 @@ test('parked polling counts only its qualified account and discards a response a
     globalThis.fetch = original
     a.tabLock.holds = held
     for (const key of [name, storage.key('rchat_token'), snapshot]) memoryStorage.removeItem(key)
-    a.store.dispose()
   }
 })
 
@@ -219,7 +215,6 @@ test('parked polls retain peer badges, incoming requests, concurrent clears and 
     globalThis.fetch = original
     memoryStorage.removeItem(token)
     memoryStorage.removeItem(snapshot)
-    a.store.dispose()
   }
 })
 
@@ -280,7 +275,6 @@ test('a registered identity retains its badge through park and resume until its 
     expect(a.counts.value()).toBe(0)
   } finally {
     stop()
-    a.store.dispose()
     tab.restore()
     memoryStorage.removeItem(snapshot)
     memoryStorage.removeItem(flag)
@@ -358,8 +352,6 @@ test('a registered P2P reader counts visible channel mentions across resume, rea
   } finally {
     stop()
     log.stop()
-    a.store.dispose()
-    stopAll()
     data.close()
     bob.store.close()
     alice.store.close()
@@ -439,8 +431,6 @@ test('a connected tab clearing counts invalidates a parked poll even if delivery
   } finally {
     stop()
     stopConnected()
-    connected.store.dispose()
-    a.store.dispose()
     tab.restore()
     globalThis.fetch = original
     memoryStorage.removeItem(key)

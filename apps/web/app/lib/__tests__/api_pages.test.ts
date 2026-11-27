@@ -1,10 +1,8 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { api } from './home_instance'
-import { useStore, resetSessionCaches } from '../store'
+import { useStore } from '../store'
 import { ALL_PERMS, Perm } from '../types'
 import { member, paged } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const realFetch = globalThis.fetch
 let requests: URL[] = []

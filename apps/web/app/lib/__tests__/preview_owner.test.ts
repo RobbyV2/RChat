@@ -57,31 +57,27 @@ test('file approvals and preview actions belong to the account where the definit
 
 test('losing the owner’s preview while a definition is loading discards the late result', async () => {
   const owner = testAccount('reader')
-  try {
-    open(owner)
-    const preview = previewFor(owner)
-    const reading = Promise.withResolvers<void>()
-    const body = Promise.withResolvers<string>()
-    const pending = preview.launchPreview('garden', {
-      installation: 'notes',
-      name: 'Notes',
-      revision: '1',
-      publisher: 'local',
-      read() {
-        reading.resolve()
-        return body.promise
-      },
-    })
-    owner.viewing.useViewing.getState().prompt!.answer(true, false)
-    await reading.promise
-    owner.store.setState({ view: null })
-    open(owner)
-    body.resolve(JSON.stringify(example))
-    await pending
-    expect(preview.usePreview.getState().loaded).toBeNull()
-  } finally {
-    owner.store.dispose()
-  }
+  open(owner)
+  const preview = previewFor(owner)
+  const reading = Promise.withResolvers<void>()
+  const body = Promise.withResolvers<string>()
+  const pending = preview.launchPreview('garden', {
+    installation: 'notes',
+    name: 'Notes',
+    revision: '1',
+    publisher: 'local',
+    read() {
+      reading.resolve()
+      return body.promise
+    },
+  })
+  owner.viewing.useViewing.getState().prompt!.answer(true, false)
+  await reading.promise
+  owner.store.setState({ view: null })
+  open(owner)
+  body.resolve(JSON.stringify(example))
+  await pending
+  expect(preview.usePreview.getState().loaded).toBeNull()
 })
 
 test('the registered server menu opens the preview in its owner while another account is shown', () => {
@@ -121,46 +117,40 @@ test('the registered server menu opens the preview in its owner while another ac
     expect(b.store.getState().activeDialog).toEqual({ kind: 'app_preview', server: 'garden' })
   } finally {
     client.shown = shown
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 
 test('leaving a preview server dismisses its slash consent and preserves a replacement prompt', async () => {
   const owner = testAccount('reader', 'https://slash.test')
   const preview = previewFor(owner)
-  try {
-    for (const replace of [false, true]) {
-      open(owner)
-      const pending = preview.launchPreview(
-        'garden',
-        fileSource(new File([JSON.stringify(example)], 'field.json'))
-      )
-      owner.viewing.useViewing.getState().prompt!.answer(true, false)
-      await pending
-      preview.closePreview()
-      expect(preview.dispatchPreviewText('/fieldnote moss')).toBe(true)
-      const consent = owner.viewing.useViewing.getState().prompt
-      expect(consent?.target.kind).toBe('app')
-      const other = replace
-        ? owner.viewing.requestViewing({
-            kind: 'app',
-            key: 'unrelated',
-            name: 'Another app',
-            sensitive: false,
-          })
-        : null
-      const replacement = replace ? owner.viewing.useViewing.getState().prompt : null
-      owner.store.setState({ view: { kind: 'dm', dmId: 4 } })
-      expect(preview.usePreview.getState().loaded).toBeNull()
-      expect(owner.viewing.useViewing.getState().prompt).toBe(replacement)
-      consent!.answer(true, true)
-      expect(owner.viewing.canView(consent!.target)).toBe(false)
-      replacement?.answer(false, false)
-      if (other) expect(await other).toBe(false)
-      expect(owner.store.getState().activeDialog).toBeNull()
-    }
-  } finally {
-    owner.store.dispose()
+  for (const replace of [false, true]) {
+    open(owner)
+    const pending = preview.launchPreview(
+      'garden',
+      fileSource(new File([JSON.stringify(example)], 'field.json'))
+    )
+    owner.viewing.useViewing.getState().prompt!.answer(true, false)
+    await pending
+    preview.closePreview()
+    expect(preview.dispatchPreviewText('/fieldnote moss')).toBe(true)
+    const consent = owner.viewing.useViewing.getState().prompt
+    expect(consent?.target.kind).toBe('app')
+    const other = replace
+      ? owner.viewing.requestViewing({
+          kind: 'app',
+          key: 'unrelated',
+          name: 'Another app',
+          sensitive: false,
+        })
+      : null
+    const replacement = replace ? owner.viewing.useViewing.getState().prompt : null
+    owner.store.setState({ view: { kind: 'dm', dmId: 4 } })
+    expect(preview.usePreview.getState().loaded).toBeNull()
+    expect(owner.viewing.useViewing.getState().prompt).toBe(replacement)
+    consent!.answer(true, true)
+    expect(owner.viewing.canView(consent!.target)).toBe(false)
+    replacement?.answer(false, false)
+    if (other) expect(await other).toBe(false)
+    expect(owner.store.getState().activeDialog).toBeNull()
   }
 })

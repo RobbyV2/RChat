@@ -1,11 +1,10 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { BlockedList } from '../../components/blocking'
 import { DateDivider } from '../../components/date_divider'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { msg, user } from './fixtures'
 
-const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
 beforeEach(() => {
   process.env.TZ = 'America/New_York'
 })
@@ -13,10 +12,8 @@ beforeEach(() => {
 const initial = useStore.getInitialState()
 const blockedBefore = initial.blocked
 afterEach(() => {
-  process.env.TZ = zone
   initial.blocked = blockedBefore
 })
-afterAll(resetSessionCaches)
 
 const at = (d: number, h = 12) => new Date(2026, 10, d, h).getTime() / 1000
 

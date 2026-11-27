@@ -1,9 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { Hub, ManualClock } from './p2p_net'
-import { general, joinWithCode, makeMember, pump, stopAll, type Member } from './p2p_server_net'
+import { general, joinWithCode, makeMember, pump, type Member } from './p2p_server_net'
 import { NO_VOICE, type VoiceMedia } from '../p2p/voice'
-
-afterEach(stopAll)
 
 class FakeMedia implements VoiceMedia {
   users: string[] = []

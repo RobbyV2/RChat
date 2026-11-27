@@ -1,7 +1,7 @@
 import { shownPeer } from './shown_peer'
 import { HostedServer } from '../place/place'
 import { client } from '../client/client'
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
@@ -41,7 +41,7 @@ import {
 import { DEFAULT_FEATURES } from '../features'
 import { api } from './home_instance'
 import { setMasking, resetMasking } from '../profanity'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { ApiError } from '../api'
 import { typerNames } from '../typing'
 
@@ -60,8 +60,6 @@ afterEach(() => {
   Object.assign(initial, saved)
   useStore.setState({ ...saved })
 })
-
-afterAll(resetSessionCaches)
 
 test('display names are 1 to 32 characters after trimming', () => {
   expect(displayNameError('  Ally  ')).toBe(null)

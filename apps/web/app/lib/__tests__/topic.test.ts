@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   TOPIC_MAX,
   cleanTopic,
@@ -7,11 +7,9 @@ import {
   topicLine,
   topicParts,
 } from '../topic'
-import { useStore, resetSessionCaches } from '../store'
+import { useStore } from '../store'
 import type { Channel } from '../types'
 import { me, serverDetail } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch

@@ -157,7 +157,6 @@ test('a new login retires the previous history nonce after bootstrap expires bef
     expect(reload.store.getState().invite?.password).toBeNull()
   } finally {
     localStorage.removeItem(reload.conn.scoped('rchat_token'))
-    reload.store.dispose()
     restore()
   }
 })

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { joinWithCode, makeMember, pump, stopAll } from './p2p_server_net'
+import { describe, expect, test } from 'bun:test'
+import { joinWithCode, makeMember, pump } from './p2p_server_net'
 import { Hub, ManualClock } from './p2p_net'
 import { P } from '../p2p/acl/rules'
 import { logLines } from '../audit_format'
@@ -8,8 +8,6 @@ import { loadPerms } from './helpers/perms'
 
 // The moderation log of a P2P room: admitted changes with the reasons their authors gave, newest
 // first, a page at a time, for every member.
-
-afterEach(stopAll)
 
 const two = async () => {
   await loadPerms()

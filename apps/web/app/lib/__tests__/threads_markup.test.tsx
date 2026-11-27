@@ -1,11 +1,9 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { ThreadsButton, ThreadsPanel, type useThreadPages } from '../../components/threads'
 import type { ThreadRow } from '../thread_list'
 import { me, msg, user } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 // Server rendering reads the store's initial state, so the test state goes there too.
 const initial = useStore.getInitialState()

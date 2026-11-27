@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import { Bell, BellOff, CheckCheck, ExternalLink, LogOut, Trash2 } from 'lucide-react'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -12,13 +12,7 @@ import { P2P_IP_HINT } from '../call_choice'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
 import { EMPTY_NOTIFY, setLevel, setMute, setSuppress, type NotifyPrefs } from '../notify'
 import { setSharing, sharing } from '../platform'
-import {
-  getHomeSession,
-  resetSessionCaches,
-  useStore,
-  type ConfirmRequest,
-  type ContextMenuItem,
-} from '../store'
+import { getHomeSession, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import { Perm, type Channel, type DmSummary } from '../types'
 import { drain, me, member, memoryStorage, paged, role, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
@@ -38,8 +32,6 @@ afterEach(() => {
   endViewing()
   useChannelEdit.getState().stop()
 })
-
-afterAll(resetSessionCaches)
 
 const general: Channel = { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }
 const random: Channel = {

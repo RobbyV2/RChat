@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { P } from '../p2p/acl/rules'
 import { SUM_SHAPE } from '../p2p/acl/summary'
 import { IMPL } from '../p2p/acl_room'
@@ -37,15 +37,12 @@ import {
   pump,
   restart,
   signed,
-  stopAll,
   stopMember,
   type Member,
 } from './p2p_server_net'
 
 // Abuse limits and local storage of P2P servers on real members over
 // the in-memory hub.
-
-afterEach(stopAll)
 
 const DAY = 24 * 60 * 60_000
 

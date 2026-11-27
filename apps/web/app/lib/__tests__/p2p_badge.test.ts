@@ -10,7 +10,7 @@ import {
 } from 'jose'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
 import { LOCAL } from '../p2p/limits'
-import { joinWithCode, makeMember, pump, stopAll } from './p2p_server_net'
+import { joinWithCode, makeMember, pump } from './p2p_server_net'
 import {
   AssertionError,
   BINDING_AUD,
@@ -77,7 +77,6 @@ const badgeSets: Badges[] = []
 afterEach(() => {
   for (const n of nodes.splice(0)) n.stop()
   for (const b of badgeSets.splice(0)) b.stop()
-  stopAll()
 })
 
 const DAY = 24 * 60 * 60_000

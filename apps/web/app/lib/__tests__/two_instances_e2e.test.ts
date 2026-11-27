@@ -1,5 +1,5 @@
+import { testSession } from './test_account'
 import { expect, test } from 'bun:test'
-import { AccountSession } from '../client/session'
 import { endpointsFrom, InstanceConnection, rememberInstance } from '../instances'
 import { removeP2pDb } from '../p2p/db'
 import { PeerTransport } from '../p2p/transport'
@@ -9,11 +9,8 @@ import { drain, me, memoryStorage, msg, user } from './fixtures'
 import { Hub, waitFor } from './p2p_net'
 
 test('two instances bootstrap the same username and route messages, badges and peer identities independently', async () => {
-  const accounts = ['east', 'west'].map(
-    name =>
-      new AccountSession(
-        new InstanceConnection(endpointsFrom(`https://${name}.isolation.test`, null))
-      )
+  const accounts = ['east', 'west'].map(name =>
+    testSession(new InstanceConnection(endpointsFrom(`https://${name}.isolation.test`, null)))
   )
   const [east, west] = accounts
   const sockets = new Map<string, Socket>()

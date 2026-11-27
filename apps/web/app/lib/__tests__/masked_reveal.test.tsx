@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { ctxFor, paletteCtx, refreshCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { REVEAL_ACTION, revealMasked } from '../actions/masked'
@@ -13,7 +13,7 @@ import {
   withActionElement,
 } from '../masked_reveal'
 import { hasMasked, type PaletteItem } from '../palette'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { longPress } from '../../components/context_menu'
 import { msg } from './fixtures'
 
@@ -69,7 +69,6 @@ const onScreen = <T,>(list: unknown[], f: () => T): T => {
 }
 
 beforeAll(registerAppActions)
-afterAll(resetSessionCaches)
 afterEach(() => useStore.setState({ contextMenu: null }))
 
 describe('Show masked text is a registry action', () => {

@@ -1,11 +1,9 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { routeEvent, type Handlers } from '../slices/ctx'
 import { applyPresence, rowOnline } from '../slices/presence'
-import { IGNORED, eventTables, resetSessionCaches, useStore, type RChatState } from '../store'
+import { IGNORED, eventTables, useStore, type RChatState } from '../store'
 import type { WsEvent } from '../types'
 import { member, paged, serverDetail } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const state = (): RChatState => ({
   ...useStore.getState(),

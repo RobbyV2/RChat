@@ -67,7 +67,5 @@ test('same-named rooms contribute once per owner and identity, while an instance
     expect(source.snapshot().map(s => s.pings)).toEqual([6, 0])
   } finally {
     off()
-    a.store.dispose()
-    b.store.dispose()
   }
 })

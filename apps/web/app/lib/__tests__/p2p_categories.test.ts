@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { AclWorld, devOwner, TestReplica } from './p2p_acl_world'
 import { AGREED } from '../p2p/limits'
-import { joinWithCode, makeMember, pump, stopAll, type Member } from './p2p_server_net'
+import { joinWithCode, makeMember, pump, type Member } from './p2p_server_net'
 import { Hub, ManualClock } from './p2p_net'
 import { CHANNELS, P } from '../p2p/acl/rules'
 import { CATEGORIES_MAX, categoriesOf, chcatsOf } from '../p2p/acl/summary'
@@ -246,5 +246,3 @@ describe('categories in the app', () => {
     })
   })
 })
-
-afterEach(stopAll)

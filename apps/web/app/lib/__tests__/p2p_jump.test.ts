@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, waitFor } from './p2p_net'
-import { makeMember, stopAll, general } from './p2p_server_net'
+import { makeMember, general } from './p2p_server_net'
 import { Dms, dmRoomId, loadAround, loadMessages } from '../p2p/dm'
 import { LOCAL } from '../p2p/limits'
 import type { P2pNode } from '../p2p/node'
@@ -17,7 +17,6 @@ afterEach(() => {
     p.dms.stop()
     p.node.stop()
   }
-  stopAll()
 })
 
 const bodiesOf = (rows: { body?: string; system?: unknown; call?: unknown }[]) =>

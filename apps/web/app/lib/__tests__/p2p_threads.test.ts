@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { Hub, ManualClock } from './p2p_net'
 import {
   deliver,
@@ -7,7 +7,6 @@ import {
   makeMember,
   pump,
   signed,
-  stopAll,
   stopMember,
   type Member,
 } from './p2p_server_net'
@@ -44,8 +43,6 @@ const forge = (m: Member, room: string, t: string, c: Record<string, unknown>) =
   ).emit(room, t, () => c, { L: 'c' })
 
 // Threads, pins and local search in P2P servers.
-
-afterEach(stopAll)
 
 const failure = (p: Promise<unknown>) =>
   p.then(

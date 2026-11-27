@@ -1,11 +1,11 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { PhraseWords } from '../../components/backup_phrase/phrase_words'
 import { PhraseHints, PhraseInput } from '../../components/backup_phrase/phrase_input'
 import { WordCheck } from '../../components/backup_phrase/word_check'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 
 const W =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'.split(
@@ -18,8 +18,6 @@ const setState = (patch: Partial<typeof initial>) => {
   useStore.setState(patch)
   Object.assign(initial, useStore.getState())
 }
-
-afterAll(resetSessionCaches)
 
 const labelled = (html: string) => [...html.matchAll(/<input[^>]*aria-label="Word (\d+)"[^>]*>/g)]
 const classes = (tag: string) => (/class="([^"]*)"/.exec(tag)?.[1] ?? '').split(' ')

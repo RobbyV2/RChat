@@ -1,8 +1,6 @@
-import { afterAll, afterEach, beforeEach, expect, test } from 'bun:test'
-import { resetSessionCaches, useStore } from '../store'
+import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { useStore } from '../store'
 import { me, msg, serverDetail, textChannel } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch

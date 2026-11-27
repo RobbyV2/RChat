@@ -1,8 +1,6 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
-import { resetSessionCaches, useStore } from '../store'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { useStore } from '../store'
 import type { Registration } from '../types'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const settings = st().settings

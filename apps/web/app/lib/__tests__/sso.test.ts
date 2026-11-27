@@ -131,7 +131,6 @@ test('shell returns retain the issuing authority, popup delivery only consumes i
     expect(await beginPopup(acct, 'local', 'link', 'ticket').catch(e => e)).toBe('popup')
     expect(readIntent()).toBeNull()
   } finally {
-    acct.store.dispose()
     setAuthBrowser()
     if (oldWindow) Object.defineProperty(globalThis, 'window', oldWindow)
     else Reflect.deleteProperty(globalThis, 'window')
@@ -157,23 +156,19 @@ test('a mismatched pinned user is never entered, and a late exchange cannot reac
   }
   acct.api.ssoExchange = async () => result
   const input = { code: 'aa', verifier: newVerifier() }
-  try {
-    await assert.rejects(
-      acct.store.getState().ssoExchange(input, () => true),
-      /saved username/
-    )
-    expect(acct.store.getState().token).toBeNull()
-    const held = Promise.withResolvers<typeof result>()
-    acct.api.ssoExchange = () => held.promise
-    const pending = acct.store.getState().ssoExchange(input, () => true)
-    acct.lifetime.endSession()
-    held.resolve(result)
-    await assert.rejects(pending, /expired/)
-    expect(acct.store.getState().token).toBeNull()
-    expect(revoked).toEqual(['fixture-jules', 'fixture-jules'])
-  } finally {
-    acct.store.dispose()
-  }
+  await assert.rejects(
+    acct.store.getState().ssoExchange(input, () => true),
+    /saved username/
+  )
+  expect(acct.store.getState().token).toBeNull()
+  const held = Promise.withResolvers<typeof result>()
+  acct.api.ssoExchange = () => held.promise
+  const pending = acct.store.getState().ssoExchange(input, () => true)
+  acct.lifetime.endSession()
+  held.resolve(result)
+  await assert.rejects(pending, /expired/)
+  expect(acct.store.getState().token).toBeNull()
+  expect(revoked).toEqual(['fixture-jules', 'fixture-jules'])
 })
 
 test('cancelling an issued login while book admission waits revokes only its token', async () => {
@@ -223,8 +218,6 @@ test('cancelling an issued login while book admission waits revokes only its tok
   } finally {
     client.updateBook = original
     proceed.resolve()
-    actor.store.dispose()
-    neighbor.store.dispose()
   }
 })
 
@@ -279,8 +272,6 @@ test('a native login survives a fresh window, expires by issuer/account, and an 
     else Reflect.deleteProperty(globalThis, 'window')
     if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage)
     else Reflect.deleteProperty(globalThis, 'localStorage')
-    owner.store.dispose()
-    other.store.dispose()
   }
 })
 
@@ -293,22 +284,18 @@ test('logout preference is versioned and belongs to the admitted credential', as
   const conn = actor.conn
   const flag = (name: string) =>
     parseLogoutFlag(localStorage.getItem(accountStorage(conn).key(SSO_LOGOUT_KEY + ':' + name)))
-  try {
-    confirmCredential(conn, me('alice'), Secret.of('old'), false, true)
-    confirmCredential(conn, me('bob'), Secret.of('neighbor'), false, true)
-    confirmCredential(conn, me('alice'), Secret.of('old'), true)
-    expect(flag('alice')).toBe(true)
-    confirmCredential(conn, me('alice'), Secret.of('new'), false, true)
-    forgetCredential(conn, 'alice', Secret.of('old'))
-    expect(flag('alice')).toBe(true)
-    confirmCredential(conn, me('alice'), Secret.of('password'), false)
-    expect(flag('alice')).toBe(false)
-    expect(flag('bob')).toBe(true)
-    forgetCredential(conn, 'bob', Secret.of('neighbor'))
-    expect(flag('bob')).toBe(false)
-  } finally {
-    actor.store.dispose()
-  }
+  confirmCredential(conn, me('alice'), Secret.of('old'), false, true)
+  confirmCredential(conn, me('bob'), Secret.of('neighbor'), false, true)
+  confirmCredential(conn, me('alice'), Secret.of('old'), true)
+  expect(flag('alice')).toBe(true)
+  confirmCredential(conn, me('alice'), Secret.of('new'), false, true)
+  forgetCredential(conn, 'alice', Secret.of('old'))
+  expect(flag('alice')).toBe(true)
+  confirmCredential(conn, me('alice'), Secret.of('password'), false)
+  expect(flag('alice')).toBe(false)
+  expect(flag('bob')).toBe(true)
+  forgetCredential(conn, 'bob', Secret.of('neighbor'))
+  expect(flag('bob')).toBe(false)
 })
 
 test('only the originating foreground session follows its logout response', async () => {
@@ -350,8 +337,6 @@ test('only the originating foreground session follows its logout response', asyn
   } finally {
     client.shown = original
     setAuthBrowser()
-    owner.store.dispose()
-    neighbor.store.dispose()
   }
 })
 
@@ -373,69 +358,65 @@ import { ssoActions } from '../sso_actions'
 import { paletteCtx } from '../actions/ctx'
 test('sign-in commands target their account and require a member and configured provider', () => {
   const owner = testAccount('alice')
-  try {
-    const state = owner.store.getState()
-    const instance = {
-      ...state.instance!,
-      auth: {
-        registration: 'open' as const,
-        password_login: true,
-        providers: [{ id: 'work', name: 'Work' }],
-      },
-    }
-    owner.store.setState({
-      instance,
-      me: { ...state.me!, has_password: false },
-      signInChoices: {
-        mark: owner.lifetime.sessionMark(),
-        username: 'alice',
-        links: [{ provider: 'kc', name: 'Keycloak', linked_at: 0 }],
-      },
-    })
-    for (const action of ssoActions) {
-      const ctx = paletteCtx(owner.store.getState(), owner)
-      expect(action.available(ctx)).toBe(true)
-      expect(action.available({ ...ctx, s: { ...ctx.s, guest: true } })).toBe(false)
-      expect(action.available({ ...ctx, s: { ...ctx.s, instance: null } })).toBe(false)
-      expect(action.available({ ...ctx, s: { ...ctx.s, me: null } })).toBe(false)
-      expect(
-        action.available({
-          ...ctx,
-          s: {
-            ...ctx.s,
-            me: { ...ctx.s.me!, password_temporary: { expires_at: null, change: 'required' } },
-          },
-        })
-      ).toBe(false)
-      const step = action.args![0]
-      if (step.kind !== 'choice') throw Error('expected provider picker')
-      if (action.danger) {
-        expect(step.choices(ctx, '')).toEqual([])
-        owner.store.setState({
-          signInChoices: {
-            ...ctx.s.signInChoices!,
-            links: [
-              { provider: 'work', name: 'Work', linked_at: 0, can_unlink: false },
-              { provider: 'kc', name: 'Keycloak', linked_at: 0, can_unlink: true },
-            ],
-          },
-        })
-        expect(step.choices(paletteCtx(owner.store.getState(), owner), '')).toEqual([
-          { value: 'kc', label: 'Keycloak' },
-        ])
-      }
-      const fresh = paletteCtx(owner.store.getState(), owner)
-      const pick = step.choices(fresh, '')[0]
-      expect(pick.value).toBe(action.danger ? 'kc' : 'work')
-      action.run(fresh, { provider: pick.value })
-      expect(owner.store.getState().activeDialog).toEqual({
-        kind: 'settings',
-        section: 'profile',
-        sso: { type: action.danger ? 'unlink' : 'link', p: { id: pick.value, name: pick.label } },
+  const state = owner.store.getState()
+  const instance = {
+    ...state.instance!,
+    auth: {
+      registration: 'open' as const,
+      password_login: true,
+      providers: [{ id: 'work', name: 'Work' }],
+    },
+  }
+  owner.store.setState({
+    instance,
+    me: { ...state.me!, has_password: false },
+    signInChoices: {
+      mark: owner.lifetime.sessionMark(),
+      username: 'alice',
+      links: [{ provider: 'kc', name: 'Keycloak', linked_at: 0 }],
+    },
+  })
+  for (const action of ssoActions) {
+    const ctx = paletteCtx(owner.store.getState(), owner)
+    expect(action.available(ctx)).toBe(true)
+    expect(action.available({ ...ctx, s: { ...ctx.s, guest: true } })).toBe(false)
+    expect(action.available({ ...ctx, s: { ...ctx.s, instance: null } })).toBe(false)
+    expect(action.available({ ...ctx, s: { ...ctx.s, me: null } })).toBe(false)
+    expect(
+      action.available({
+        ...ctx,
+        s: {
+          ...ctx.s,
+          me: { ...ctx.s.me!, password_temporary: { expires_at: null, change: 'required' } },
+        },
       })
+    ).toBe(false)
+    const step = action.args![0]
+    if (step.kind !== 'choice') throw Error('expected provider picker')
+    if (action.danger) {
+      expect(step.choices(ctx, '')).toEqual([])
+      owner.store.setState({
+        signInChoices: {
+          ...ctx.s.signInChoices!,
+          links: [
+            { provider: 'work', name: 'Work', linked_at: 0, can_unlink: false },
+            { provider: 'kc', name: 'Keycloak', linked_at: 0, can_unlink: true },
+          ],
+        },
+      })
+      expect(step.choices(paletteCtx(owner.store.getState(), owner), '')).toEqual([
+        { value: 'kc', label: 'Keycloak' },
+      ])
     }
-  } finally {
-    owner.store.dispose()
+    const fresh = paletteCtx(owner.store.getState(), owner)
+    const pick = step.choices(fresh, '')[0]
+    expect(pick.value).toBe(action.danger ? 'kc' : 'work')
+    action.run(fresh, { provider: pick.value })
+    expect(owner.store.getState().activeDialog).toEqual({
+      kind: 'settings',
+      section: 'profile',
+      sso: { type: action.danger ? 'unlink' : 'link', p: { id: pick.value, name: pick.label } },
+    })
   }
 })
 
@@ -457,19 +438,15 @@ test('a linked sign-in row menu unlinks it only while another sign-in stays', as
         owner
       )
     )
-  try {
-    const [row] = rows(true)
-    expect(rows(true)).toHaveLength(1)
-    expect(row).toMatchObject({ label: 'Unlink Work', danger: true, disabled: false })
-    row.action!()
-    await Promise.resolve()
-    expect(asked).toBe(1)
-    expect(rows(false)).toMatchObject([{ label: 'Unlink Work', danger: true, disabled: true }])
-    owner.store.setState({ me: null, guest: true })
-    expect(rows(true)).toEqual([])
-  } finally {
-    owner.store.dispose()
-  }
+  const [row] = rows(true)
+  expect(rows(true)).toHaveLength(1)
+  expect(row).toMatchObject({ label: 'Unlink Work', danger: true, disabled: false })
+  row.action!()
+  await Promise.resolve()
+  expect(asked).toBe(1)
+  expect(rows(false)).toMatchObject([{ label: 'Unlink Work', danger: true, disabled: true }])
+  owner.store.setState({ me: null, guest: true })
+  expect(rows(true)).toEqual([])
 })
 
 test('an interrupted foreground confirmation pins a new login and discards the old operation', async () => {
@@ -507,8 +484,6 @@ test('an interrupted foreground confirmation pins a new login and discards the o
     )
   } finally {
     client.shown = original
-    account.store.dispose()
-    neighbor.store.dispose()
   }
 })
 
@@ -539,7 +514,6 @@ test('recent provider proof belongs to the admitted actor, token and session and
     expect(recentConfirmation(account, 'work')).toBeUndefined()
   } finally {
     client.shown = original
-    account.store.dispose()
   }
 })
 
@@ -593,7 +567,6 @@ for (const sibling of [false, true])
         expect(revoked).toEqual(['late'])
       } finally {
         reply.resolve(response('late'))
-        owner.store.dispose()
         if (sibling) target.store.dispose()
       }
     }

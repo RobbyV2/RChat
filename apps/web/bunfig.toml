@@ -1,3 +1,7 @@
 [test]
-# The shared permission rules (the built wasm module) load before any test file.
-preload = ["./app/lib/__tests__/helpers/perms_preload.ts"]
+# The shared permission rules (the built wasm module) load before any test file, and every test's
+# fixtures are undone after it (helpers/fixture.ts).
+preload = [
+  "./app/lib/__tests__/helpers/perms_preload.ts",
+  "./app/lib/__tests__/helpers/fixture_preload.ts",
+]

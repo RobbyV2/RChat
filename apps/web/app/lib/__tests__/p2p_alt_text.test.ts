@@ -1,9 +1,7 @@
-import { afterEach, describe, test } from 'bun:test'
+import { describe, test } from 'bun:test'
 import { altsEdit } from '../alt_text'
 import { Hub, ManualClock } from './p2p_net'
-import { joinWithCode, makeMember, pump, stopAll } from './p2p_server_net'
-
-afterEach(stopAll)
+import { joinWithCode, makeMember, pump } from './p2p_server_net'
 
 describe('image descriptions between devices', () => {
   test('a description sent with an image, then changed by an edit, reaches the other member', async () => {

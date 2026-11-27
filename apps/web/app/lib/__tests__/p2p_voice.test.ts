@@ -1168,22 +1168,18 @@ test('a voice channel joins only after its identity acquires the call and releas
   const account = testAccount('test')
   const net = new Net()
   const a = net.add('A')
-  try {
-    await guard.request({ account, kind: 'dm' }, () => {})
-    a.voice.claim = (leave, valid) =>
-      guard.request({ account, identity: a.ik, kind: 'p2p-voice' }, leave, valid)
-    const joining = a.voice.join(ROOM, CH, { plan, muted: false })
-    await until(() => account.store.getState().confirm !== null)
-    expect(a.media.joined).toBe(false)
-    account.store.getState().confirm!.action('')
-    await joining
-    expect(guard.current()?.identity).toBe(a.ik)
-    expect(a.media.joined).toBe(true)
-    a.voice.leave()
-    expect(guard.current()).toBeNull()
-  } finally {
-    account.store.dispose()
-  }
+  await guard.request({ account, kind: 'dm' }, () => {})
+  a.voice.claim = (leave, valid) =>
+    guard.request({ account, identity: a.ik, kind: 'p2p-voice' }, leave, valid)
+  const joining = a.voice.join(ROOM, CH, { plan, muted: false })
+  await until(() => account.store.getState().confirm !== null)
+  expect(a.media.joined).toBe(false)
+  account.store.getState().confirm!.action('')
+  await joining
+  expect(guard.current()?.identity).toBe(a.ik)
+  expect(a.media.joined).toBe(true)
+  a.voice.leave()
+  expect(guard.current()).toBeNull()
 })
 
 describe('what participants say about their audio', () => {

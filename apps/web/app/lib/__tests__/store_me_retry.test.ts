@@ -1,9 +1,7 @@
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
-import { getHomeSession, resetSessionCaches, useStore } from '../store'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { getHomeSession, useStore } from '../store'
 import { advance, me, memoryStorage } from './fixtures'
 import { plain } from './helpers/secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const g = globalThis as { window?: unknown; document?: unknown; WebSocket?: unknown }

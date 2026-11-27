@@ -1,13 +1,6 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from './home_instance'
-import {
-  getHomeSession,
-  attachModes,
-  siteSettings,
-  startMode,
-  useStore,
-  resetSessionCaches,
-} from '../store'
+import { getHomeSession, attachModes, siteSettings, startMode, useStore } from '../store'
 import type { CallBinding } from '../p2p'
 import { DENIED_CALL } from '../relays'
 import type { CallRelays, MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
@@ -16,8 +9,6 @@ import { DEFAULT_FEATURES } from '../features'
 import { Secret } from '../secret'
 
 const { files: p2p, relays: relayBook } = getHomeSession()
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

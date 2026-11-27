@@ -52,15 +52,11 @@ const device = (start: Date) => {
   }
 }
 
-// Bun follows `process.env.TZ` as it changes. Every test starts in UTC, and the zone the suite
-// ran in is put back by name: deleting the variable would leave the machine's zone, not the
-// test runner's.
-const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+// Bun follows `process.env.TZ` as it changes. Every test starts in UTC.
 beforeEach(() => {
   process.env.TZ = 'UTC'
 })
 afterEach(() => {
-  process.env.TZ = zone
   setTermOffset(() => 0)
 })
 

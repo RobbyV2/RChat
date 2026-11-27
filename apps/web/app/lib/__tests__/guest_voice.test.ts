@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { maskedName, showsUsername } from '../display_name'
 import {
   GUESTS_NO_VOICE,
@@ -11,10 +11,8 @@ import {
   isGuestName,
   voiceSelf,
 } from '../guest_voice'
-import { resetSessionCaches, userRefFor, useStore } from '../store'
+import { userRefFor, useStore } from '../store'
 import { me, serverDetail } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const name = '@guest:3f9a1c2b00000000'
 

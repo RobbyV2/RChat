@@ -32,11 +32,8 @@ beforeEach(() => {
   }) as typeof fetch
 })
 
-const made: ReturnType<typeof testAccount>[] = []
-
 afterEach(() => {
   globalThis.fetch = realFetch
-  for (const acct of made.splice(0)) acct.store.dispose()
 })
 
 const general = { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
@@ -47,7 +44,6 @@ const member = (...names: string[]) =>
 
 const account = () => {
   const acct = testAccount('alice')
-  made.push(acct)
   acct.store.setState({
     me: member('club'),
     servers: { club: serverDetail('club', { channels: [general] }) },

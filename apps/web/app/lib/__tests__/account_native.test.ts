@@ -50,8 +50,6 @@ for (const change of ['switch', 'sign out']) {
     } finally {
       restoreWindow()
       client.shown = previous
-      a.store.dispose()
-      b.store.dispose()
     }
   })
 }
@@ -111,8 +109,6 @@ for (const switched of [false, true]) {
       client.shown = previous
       restorePop()
       restore()
-      a.store.dispose()
-      b.store.dispose()
     }
   })
 }
@@ -159,8 +155,6 @@ test('Android Back checks the shown and overlay lifetimes after two frames', asy
   } finally {
     for (const reset of restore) reset()
     client.shown = previous
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 

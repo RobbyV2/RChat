@@ -23,8 +23,6 @@ test('the inbox bell renders counts from its nearest provider', () => {
     ).toContain('aria-label="Inbox, 3 notifications"')
   } finally {
     client.shown = shown
-    a.store.dispose()
-    b.store.dispose()
   }
 })
 
@@ -73,6 +71,5 @@ test('existing badge subscribers follow added, replaced and removed adapters unt
     expect(counts).toEqual([0, 1, 0, 1, 0, 2, 0])
   } finally {
     off()
-    account.store.dispose()
   }
 })

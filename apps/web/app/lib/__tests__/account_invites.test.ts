@@ -24,21 +24,15 @@ test('invite previews use their own connection on a shared origin and follow a c
     calls++
     return invite
   }
-  try {
-    expect(await alice.invites.remoteConnection(alice.conn.origin)).toBe(alice.conn)
-    expect(await bob.invites.remoteConnection(bob.conn.origin)).toBe(bob.conn)
-    expect(await alice.invites.remoteConnection(remote.conn.origin)).toBe(remote.conn)
-    expect(await alice.invites.remoteInvite(remote.conn.origin, 'club', null)).toBe(invite)
-    expect(calls).toBe(1)
-    alice.invites.requestPreview('same')
-    expect(bob.invites.previewRequested('same')).toBe(false)
-    alice.store.resetSessionCaches()
-    expect(alice.invites.previewRequested('same')).toBe(false)
-  } finally {
-    alice.store.dispose()
-    bob.store.dispose()
-    remote.store.dispose()
-  }
+  expect(await alice.invites.remoteConnection(alice.conn.origin)).toBe(alice.conn)
+  expect(await bob.invites.remoteConnection(bob.conn.origin)).toBe(bob.conn)
+  expect(await alice.invites.remoteConnection(remote.conn.origin)).toBe(remote.conn)
+  expect(await alice.invites.remoteInvite(remote.conn.origin, 'club', null)).toBe(invite)
+  expect(calls).toBe(1)
+  alice.invites.requestPreview('same')
+  expect(bob.invites.previewRequested('same')).toBe(false)
+  alice.store.resetSessionCaches()
+  expect(alice.invites.previewRequested('same')).toBe(false)
 })
 
 test('invite metadata cannot arrive after its destination account changes', async () => {
@@ -46,37 +40,27 @@ test('invite metadata cannot arrive after its destination account changes', asyn
   const target = testAccount('alice', 'https://two.test')
   const response = Promise.withResolvers<Invite>()
   target.api.getInvite = () => response.promise
-  try {
-    const pending = source.invites.remoteInvite(target.conn.origin, 'club', null)
-    target.store.resetSessionCaches()
-    response.resolve(invite)
-    expect(
-      await pending.then(
-        () => false,
-        err => err instanceof Ended
-      )
-    ).toBe(true)
-  } finally {
-    source.store.dispose()
-    target.store.dispose()
-  }
+  const pending = source.invites.remoteInvite(target.conn.origin, 'club', null)
+  target.store.resetSessionCaches()
+  response.resolve(invite)
+  expect(
+    await pending.then(
+      () => false,
+      err => err instanceof Ended
+    )
+  ).toBe(true)
 })
 
 test('rendered text previews expire with their account and cannot collide on file id', () => {
   const alice = testAccount('alice')
   const bob = testAccount('bob')
   const key = 'media:1'
-  try {
-    alice.textPreviews.keep(key, { text: 'private', cut: false })
-    expect(bob.textPreviews.get(key)).toBeUndefined()
-    bob.textPreviews.keep(key, { text: 'other', cut: true })
-    alice.store.resetSessionCaches()
-    expect(alice.textPreviews.get(key)).toBeUndefined()
-    expect(bob.textPreviews.get(key)?.text).toBe('other')
-  } finally {
-    alice.store.dispose()
-    bob.store.dispose()
-  }
+  alice.textPreviews.keep(key, { text: 'private', cut: false })
+  expect(bob.textPreviews.get(key)).toBeUndefined()
+  bob.textPreviews.keep(key, { text: 'other', cut: true })
+  alice.store.resetSessionCaches()
+  expect(alice.textPreviews.get(key)).toBeUndefined()
+  expect(bob.textPreviews.get(key)?.text).toBe('other')
 })
 
 test('an open invite drops visible metadata and a pending message body when its destination changes', async () => {
@@ -113,7 +97,5 @@ test('an open invite drops visible metadata and a pending message body when its 
     expect(third.current()).toBe(false)
   } finally {
     stop()
-    b.store.dispose()
-    a.store.dispose()
   }
 })

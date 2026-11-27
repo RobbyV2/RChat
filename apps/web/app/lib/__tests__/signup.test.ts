@@ -1,8 +1,8 @@
-import { afterAll, afterEach, beforeEach, expect, test } from 'bun:test'
+import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { ApiError } from '../api'
 import { api } from './home_instance'
 import { signupFailure, signupField } from '../signup'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 
 // Every test file of a run shares the store and the client: start signed out with no notice,
 // whatever an earlier file left, and put back what was there.
@@ -19,8 +19,6 @@ afterEach(() => {
   api.send = realSend
   useStore.setState(before)
 })
-
-afterAll(resetSessionCaches)
 
 test('a refused username is shown under the username field', () => {
   for (const message of [

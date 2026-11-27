@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { AclWorld, devOwner, TestReplica } from './p2p_acl_world'
 import { AGREED } from '../p2p/limits'
 import { KICK, SERVER, type AclContent } from '../p2p/acl/rules'
@@ -7,9 +7,7 @@ import { emptySummary } from '../p2p/acl/summary'
 import { roomColor } from '../p2p/state'
 import { NO_ABOUT, p2pAbout, type ServerAbout } from '../server_about'
 import { Hub, ManualClock } from './p2p_net'
-import { joinWithCode, makeMember, pump, stopAll } from './p2p_server_net'
-
-afterEach(stopAll)
+import { joinWithCode, makeMember, pump } from './p2p_server_net'
 
 const world = () => {
   const w = new AclWorld({ model: false, agreed: AGREED })

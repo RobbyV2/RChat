@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { ListFilter, X } from 'lucide-react'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -12,7 +12,6 @@ import type { DmSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
 import { Secret } from '../secret'
 
-afterAll(resetSessionCaches)
 beforeAll(registerAppActions)
 
 const st = () => useStore.getState()

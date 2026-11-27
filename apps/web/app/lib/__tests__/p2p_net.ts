@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto'
+import { own } from './helpers/fixture'
 import { P2pStore } from '../p2p/db'
 import {
   P2pNode,
@@ -226,6 +227,7 @@ export class SlowLink {
 
 let dbSeq = 0
 
+// A node on the hub, stopped after the test that made it.
 export const makeNode = async (
   hub: Hub,
   name: string,
@@ -255,7 +257,7 @@ export const makeNode = async (
     },
     { name }
   )) as P2pNode
-  return { node, store, db }
+  return own({ node, store, db }, made => made.node.stop())
 }
 
 // Web Locks and BroadcastChannel stand-ins: one lock name, steal and abort supported.

@@ -1,21 +1,12 @@
-import { afterEach, expect, test } from 'bun:test'
+import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Banners } from '../../components/banners'
 import { client } from '../client/client'
-import type { AccountSession } from '../client/session'
 import { NOTICES_MAX } from '../notices'
 import { msg, user } from './fixtures'
 import { testAccount } from './test_account'
 
-const accounts: AccountSession[] = []
-function account(name: string) {
-  const session = testAccount(name)
-  accounts.push(session)
-  return session
-}
-afterEach(() => {
-  for (const session of accounts.splice(0)) session.store.dispose()
-})
+const account = testAccount
 
 test('each kind of overlay claims its owner, and disposed stores stop claiming', () => {
   const a = account('a')
@@ -43,7 +34,6 @@ test('each kind of overlay claims its owner, and disposed stores stop claiming',
     activeDialog: null,
   })
   a.store.dispose()
-  accounts.splice(accounts.indexOf(a), 1)
   alice.openDialog({ kind: 'settings' })
   expect(b.store.getState().profile?.user.username).toBe('b')
   expect(client.live()).not.toContain(a)
@@ -106,7 +96,6 @@ test('device appearance mirrors to existing and new sessions and detaches on dis
     b.store.getState().setTheme(theme)
     expect(a.store.getState().theme).toBe(theme)
     b.store.dispose()
-    accounts.splice(accounts.indexOf(b), 1)
     a.store.getState().setStreamer(streamer)
     expect(b.store.getState().streamer).toBe(!streamer)
   } finally {

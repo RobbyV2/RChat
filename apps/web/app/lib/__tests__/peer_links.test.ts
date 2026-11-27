@@ -24,27 +24,22 @@ test('use the initiating identity or the only eligible identity and never a stal
 test('prefer the actor account’s sole identity, then offer eligible live identities by exact runtime', () => {
   const a = testAccount('sam', 'https://codes-a.test')
   const b = testAccount('sam', 'https://codes-b.test')
-  try {
-    const main = createPeerFixture(a, 'sam')
-    const remote = createPeerFixture(b, 'sam')
-    for (const app of [main, remote]) app.useP2p.setState({ enabled: true, account: 'sam' })
-    const link = { kind: 'invite' } as const
-    expect(peerLinkRequest(a, link, null)?.selected).toBe(main)
-    const work = a.identities.add('work')
-    work.useP2p.setState({ enabled: true, account: 'sam' })
-    const request = peerLinkRequest(a, link, null)!
-    expect(request.selected).toBeNull()
-    expect(request.choices).toContain(remote)
-    expect(request.owner(remote)).toBe(b)
-    expect(peerLinkRequest(a, link, remote)).toBeNull()
-    b.store.setState({ guest: true })
-    expect(request.valid(remote)).toBe(false)
-    a.identities.unregister('work')
-    a.identities.add('work').useP2p.setState({ enabled: true, account: 'sam' })
-    expect(request.valid(work)).toBe(false)
-    expect(request.valid(main)).toBe(true)
-  } finally {
-    a.store.dispose()
-    b.store.dispose()
-  }
+  const main = createPeerFixture(a, 'sam')
+  const remote = createPeerFixture(b, 'sam')
+  for (const app of [main, remote]) app.useP2p.setState({ enabled: true, account: 'sam' })
+  const link = { kind: 'invite' } as const
+  expect(peerLinkRequest(a, link, null)?.selected).toBe(main)
+  const work = a.identities.add('work')
+  work.useP2p.setState({ enabled: true, account: 'sam' })
+  const request = peerLinkRequest(a, link, null)!
+  expect(request.selected).toBeNull()
+  expect(request.choices).toContain(remote)
+  expect(request.owner(remote)).toBe(b)
+  expect(peerLinkRequest(a, link, remote)).toBeNull()
+  b.store.setState({ guest: true })
+  expect(request.valid(remote)).toBe(false)
+  a.identities.unregister('work')
+  a.identities.add('work').useP2p.setState({ enabled: true, account: 'sam' })
+  expect(request.valid(work)).toBe(false)
+  expect(request.valid(main)).toBe(true)
 })

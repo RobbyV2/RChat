@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { setBlobs, type BlobStore } from '../platform'
 import { webBlobs } from '../platform/web_blobs'
 import { PaletteIndex, parseDoc, parseManifest, tokenize, type IndexDoc } from '../palette_index'
@@ -14,12 +14,10 @@ import {
   useIndexStatus,
 } from '../palette_sync'
 import { openPalette, openPollFromPalette, usePaletteUi } from '../palette_store'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const doc = (id: number, over: Partial<IndexDoc> = {}): IndexDoc => ({
   id: `m${id}`,

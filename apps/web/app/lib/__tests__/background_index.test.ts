@@ -31,7 +31,6 @@ test('background logout and login discard the former owner’s searchable DMs an
       text: 'keep open',
     })
   } finally {
-    background.store.dispose()
     closePalette()
   }
 })

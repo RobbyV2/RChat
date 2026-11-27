@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore, resetSessionCaches } from '../store'
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { useStore } from '../store'
 import { home } from './home_instance'
 import {
   between,
@@ -37,7 +37,6 @@ import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
 
 beforeAll(registerAppActions)
-afterAll(resetSessionCaches)
 
 const by = (id: number, author: string, over: Partial<Message> = {}) =>
   msg(id, { author: user(author), ...over })

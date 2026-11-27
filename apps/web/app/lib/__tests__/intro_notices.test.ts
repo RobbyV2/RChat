@@ -1,5 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { resetSessionCaches } from '../store'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   EMPTY_HOME,
   P2P_DM_INTRO,
@@ -10,8 +9,6 @@ import {
 } from '../home'
 import { hideTip, loadHome, reloadHome, useHome } from '../home_store'
 import { memoryStorage } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const open = (account: string | null, id: string) => {
   const { owner, prefs } = useHome.getState()

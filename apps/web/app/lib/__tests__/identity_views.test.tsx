@@ -76,8 +76,6 @@ test('selected views and deferred actions lose their identity when its slot clos
     expect(delayed()).toBeUndefined()
     expect(other.identities.get()).not.toBeUndefined()
   } finally {
-    owner.store.dispose()
-    other.store.dispose()
     if (previous) Object.defineProperty(globalThis, 'localStorage', previous)
     else Reflect.deleteProperty(globalThis, 'localStorage')
   }

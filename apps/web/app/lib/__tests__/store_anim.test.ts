@@ -1,9 +1,7 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore, resetSessionCaches } from '../store'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { useStore } from '../store'
 import { ANIM_DEFAULT } from '../motion/setting'
 import { me, memoryStorage } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const storage = new Map<string, string>()

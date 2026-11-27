@@ -1,10 +1,9 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { resetSessionCaches, useStore } from '../store'
 import { ChannelPermBit as B, type Channel, type ChannelPerm, type WsEvent } from '../types'
 import { me, member, role, serverDetail, until } from './fixtures'
 import { loadPerms } from './helpers/perms'
 
-afterAll(resetSessionCaches)
 beforeAll(() => loadPerms())
 
 const st = () => useStore.getState()

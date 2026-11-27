@@ -1,6 +1,6 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import {
   ForwardCard,
   ForwardSourcePill,
@@ -17,8 +17,6 @@ import { shownPeer } from './shown_peer'
 import { fullTimeOf } from '../timestamps'
 import type { ForwardRef } from '../types'
 import { me, msg, serverDetail, user } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 // Server rendering reads the store's initial state, so the test state goes there too.
 const initial = useStore.getInitialState()

@@ -1,9 +1,7 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MessageComposer } from '../../components/message_composer'
-import { resetSessionCaches, useStore } from '../store'
-
-afterAll(resetSessionCaches)
+import { useStore } from '../store'
 
 // A server render reads the store's initial state.
 const initial = useStore.getInitialState()

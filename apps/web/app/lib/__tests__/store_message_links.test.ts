@@ -1,12 +1,10 @@
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { MessageLocation, WsEvent } from '../types'
 import { home, installPrimaryAccount } from './home_instance'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
 import { plain } from './helpers/secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -19,7 +17,6 @@ let maxFlying = 0
 let hold: Promise<void> | null = null
 let pages: string[] = []
 let replaced: string[] = []
-let restoreBook: () => void
 let path = '/'
 
 const card = (over: Partial<MessageLocation> = {}): MessageLocation => ({
@@ -40,7 +37,7 @@ const card = (over: Partial<MessageLocation> = {}): MessageLocation => ({
 beforeEach(() => {
   memoryStorage.clear()
   Object.assign(globalThis, { localStorage: memoryStorage })
-  restoreBook = installPrimaryAccount('bob')
+  installPrimaryAccount('bob')
   readable = {}
   lookups = []
   batches = []
@@ -138,7 +135,6 @@ const dmRoot = msg(50, { channel_id: null, dm_id: 4, reply_count: 1 })
 const dmReply = msg(51, { channel_id: null, dm_id: 4, thread_root_id: 50 })
 
 afterEach(() => {
-  restoreBook()
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow
 })

@@ -1,9 +1,9 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { menuItems } from '../actions/menu'
 import type { Target } from '../actions/types'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { drain, me, memoryStorage, role, serverDetail } from './fixtures'
 import { Secret } from '../secret'
 
@@ -15,8 +15,6 @@ afterEach(() => {
   useStore.setState(initial, true)
   memoryStorage.clear()
 })
-
-afterAll(resetSessionCaches)
 
 const roles = [1, 2, 3, 4].map(id => ({ ...role(id, '#123456', 0), position: 5 - id }))
 const order = roles.map(r => r.id)

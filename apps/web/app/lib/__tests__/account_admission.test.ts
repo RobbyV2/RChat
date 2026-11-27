@@ -55,7 +55,6 @@ test('the last slot is checked at commit and signed-out rows retain their identi
     expect(retained.identities).toEqual([identity])
     expect(memoryStorage.getItem(keys.token('a0'))).toBeNull()
   } finally {
-    conn.store.dispose()
     client.book.setState(savedBook, true)
     if (oldRaw === null) memoryStorage.removeItem('rchat_book')
     else memoryStorage.setItem('rchat_book', oldRaw)

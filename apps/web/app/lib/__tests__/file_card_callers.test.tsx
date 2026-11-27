@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import type { ReactElement, ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { FileCard, type FileCardProps } from '../../components/file_card'
@@ -13,7 +13,7 @@ import { AccountProvider } from '../client/react'
 import { cardMenu, fileTarget } from '../file_card'
 import type { FileView } from '../p2p/app'
 import type { Attachment } from '../p2p/content'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { media, msg, user } from './fixtures'
 import { createPeerFixture } from './peer_fixture'
 import { testAccount } from './test_account'
@@ -22,7 +22,6 @@ const initial = useStore.getInitialState()
 const saved = { ...initial }
 beforeAll(registerAppActions)
 afterEach(() => void Object.assign(initial, saved))
-afterAll(resetSessionCaches)
 
 // The element a component returns, called inside a host so its hooks run.
 const returned = (render: () => ReactNode) => {
@@ -223,22 +222,18 @@ describe('a P2P room or DM file', () => {
 
   test("shows the state its identity's store holds", () => {
     const account = testAccount('sam', 'https://files.test')
-    try {
-      const app = createPeerFixture(account, 'sam')
-      Object.assign(app.useP2p.getInitialState(), {
-        files: { h1: view({ state: 'downloading', got: 1, total: 4 }) },
-      })
-      const html = renderToStaticMarkup(
-        <AccountProvider session={account}>
-          <P2pProvider identity={app}>
-            <AttachmentList att={[att]} canFetch />
-          </P2pProvider>
-        </AccountProvider>
-      )
-      expect(html).toContain('data-p2p-file="h1" data-state="downloading"')
-      expect(html).toContain('Downloading 25%')
-    } finally {
-      account.store.dispose()
-    }
+    const app = createPeerFixture(account, 'sam')
+    Object.assign(app.useP2p.getInitialState(), {
+      files: { h1: view({ state: 'downloading', got: 1, total: 4 }) },
+    })
+    const html = renderToStaticMarkup(
+      <AccountProvider session={account}>
+        <P2pProvider identity={app}>
+          <AttachmentList att={[att]} canFetch />
+        </P2pProvider>
+      </AccountProvider>
+    )
+    expect(html).toContain('data-p2p-file="h1" data-state="downloading"')
+    expect(html).toContain('Downloading 25%')
   })
 })

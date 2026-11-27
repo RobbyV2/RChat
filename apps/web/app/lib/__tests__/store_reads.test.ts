@@ -1,13 +1,11 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MessagePane } from '../../components/message_pane'
-import { useStore, resetSessionCaches } from '../store'
+import { useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { textChannel, serverDetail, me, msg, until, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

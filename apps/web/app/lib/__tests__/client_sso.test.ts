@@ -52,6 +52,5 @@ test('only the originating popup and instance complete this account’s challeng
     else Reflect.deleteProperty(globalThis, 'window')
     if (place) Object.defineProperty(globalThis, 'location', place)
     else Reflect.deleteProperty(globalThis, 'location')
-    account.store.dispose()
   }
 })

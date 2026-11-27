@@ -47,45 +47,37 @@ test('a saved identity counts as another actor and only peer views use its key a
 
 test('a background notice uses the recipient account and identity despite a different viewed identity', () => {
   const receiver = testAccount('alice', beta)
-  try {
-    receiver.identities.setAccount('alice')
-    const main = receiver.identities.get()!
-    const work = receiver.identities.add('work')
-    main.useP2p.setState({ name: 'Main' })
-    work.useP2p.setState({ name: 'Office' })
-    expect(receiver.identities.viewed()).toBe(main)
-    const both = book(saved(alpha), saved(beta))
-    const recipient = (key: string) => resolveNoticeActor(both, receiver, key)?.row
-    expect(recipient('identity/work/p2p-call:42')).toMatchObject({
-      origin: beta,
-      username: 'alice',
-      local: 'work',
-      display: 'Office',
-    })
-    expect(recipient('p2p:room')).toMatchObject({ local: 'main', display: 'Main' })
-    expect(recipient('dm:5')).toMatchObject({ local: null, display: 'alice' })
-  } finally {
-    receiver.store.dispose()
-  }
+  receiver.identities.setAccount('alice')
+  const main = receiver.identities.get()!
+  const work = receiver.identities.add('work')
+  main.useP2p.setState({ name: 'Main' })
+  work.useP2p.setState({ name: 'Office' })
+  expect(receiver.identities.viewed()).toBe(main)
+  const both = book(saved(alpha), saved(beta))
+  const recipient = (key: string) => resolveNoticeActor(both, receiver, key)?.row
+  expect(recipient('identity/work/p2p-call:42')).toMatchObject({
+    origin: beta,
+    username: 'alice',
+    local: 'work',
+    display: 'Office',
+  })
+  expect(recipient('p2p:room')).toMatchObject({ local: 'main', display: 'Main' })
+  expect(recipient('dm:5')).toMatchObject({ local: null, display: 'alice' })
 })
 
 test('a status toast retains its emitting identity even when another identity is viewed', () => {
   const account = testAccount('alice', beta)
-  try {
-    account.identities.setAccount('alice')
-    const main = account.identities.get()!
-    const work = account.identities.add('work')
-    main.useP2p.setState({ name: 'Personal' })
-    work.useP2p.setState({ name: 'Office' })
-    expect(account.identities.viewed()).toBe(main)
-    work.p2pHost.toast('Saved')
-    work.useP2p.setState({ name: 'Renamed' })
-    expect(account.store.getState().toast?.peer).toMatchObject({ local: 'work', name: 'Office' })
-    main.p2pHost.toast('Saved')
-    expect(account.store.getState().toast?.peer).toMatchObject({ local: 'main', name: 'Personal' })
-    account.store.getState().showToast('Saved')
-    expect(account.store.getState().toast?.peer).toBeUndefined()
-  } finally {
-    account.store.dispose()
-  }
+  account.identities.setAccount('alice')
+  const main = account.identities.get()!
+  const work = account.identities.add('work')
+  main.useP2p.setState({ name: 'Personal' })
+  work.useP2p.setState({ name: 'Office' })
+  expect(account.identities.viewed()).toBe(main)
+  work.p2pHost.toast('Saved')
+  work.useP2p.setState({ name: 'Renamed' })
+  expect(account.store.getState().toast?.peer).toMatchObject({ local: 'work', name: 'Office' })
+  main.p2pHost.toast('Saved')
+  expect(account.store.getState().toast?.peer).toMatchObject({ local: 'main', name: 'Personal' })
+  account.store.getState().showToast('Saved')
+  expect(account.store.getState().toast?.peer).toBeUndefined()
 })

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { PasswordReveal } from '../../components/admin/accounts'
 import { useConfigStore } from '../../components/admin/config_state'
@@ -11,7 +11,7 @@ import { menuItems } from '../actions/menu'
 import { paletteCommands } from '../actions/palette'
 import { actionById, runAction } from '../actions/registry'
 import { api } from './home_instance'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { ActiveDialog } from '../store_types'
 import { drain, me, paged, user } from './fixtures'
 import { Secret } from '../secret'
@@ -29,8 +29,6 @@ afterEach(() => {
   useStore.setState({ ...saved })
   configInitial.config = null
 })
-
-afterAll(resetSessionCaches)
 
 const signIn = (part: Partial<typeof initial> = {}) =>
   Object.assign(initial, {

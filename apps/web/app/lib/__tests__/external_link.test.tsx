@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test'
+import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ExternalLinkDialog from '../../components/external_link_dialog'
 import { LinkSafetySection } from '../../components/link_safety_settings'
@@ -9,10 +9,6 @@ import { readLocal } from '../instances'
 import { testAccount } from './test_account'
 import type { RChatState } from '../store_types'
 
-const accounts: { store: { dispose(): void } }[] = []
-afterEach(() => {
-  for (const a of accounts.splice(0)) a.store.dispose()
-})
 // What a server render reads: the store's first state.
 const show = (a: ReturnType<typeof testAccount>, state: Partial<RChatState>) => {
   a.store.setState(state)
@@ -20,7 +16,6 @@ const show = (a: ReturnType<typeof testAccount>, state: Partial<RChatState>) => 
 }
 const account = (name = 'alice') => {
   const a = testAccount(name)
-  accounts.push(a)
   return a
 }
 

@@ -1,11 +1,9 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { getHomeSession, useStore, resetSessionCaches } from '../store'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { getHomeSession, useStore } from '../store'
 import { ChannelPermBit, type Message, type WsEvent } from '../types'
 import { textChannel, me, media, msg, result, serverDetail, user } from './fixtures'
 
 const { files: p2p } = getHomeSession()
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

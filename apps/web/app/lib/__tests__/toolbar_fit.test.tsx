@@ -1,12 +1,9 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Forward, MessageSquareText, Pencil, Reply, Trash2 } from 'lucide-react'
-import { resetSessionCaches } from '../store'
 import { toolbarFit } from '../toolbar_fit'
 import { MessageToolbar, type ToolbarAction } from '../../components/message_toolbar'
 import { msg } from './fixtures'
-
-afterAll(resetSessionCaches)
 
 describe('how much of the toolbar a row shows beside a name line', () => {
   test('rows of 576 px and more show all of it', () => {

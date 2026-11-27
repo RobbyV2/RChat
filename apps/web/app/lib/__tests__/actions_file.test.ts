@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import {
   Copy,
   Download,
@@ -20,7 +20,7 @@ import { allActions } from '../actions/registry'
 import type { Target } from '../actions/types'
 import { fileTarget, type FileMenu } from '../file_card'
 import { setSharing, sharing } from '../platform'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import { drain } from './fixtures'
 
 const realSharing = sharing()
@@ -30,7 +30,6 @@ afterEach(() => {
   setSharing(realSharing)
   useStore.setState({ contextMenu: null, toast: null })
 })
-afterAll(resetSessionCaches)
 
 const items = (t: Target) => menuItems(ctxFor(useStore.getState(), t, 'menu'))
 const labels = (t: Target) => items(t).map(i => i.label)

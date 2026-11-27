@@ -1,9 +1,7 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { pingCount } from '../pings'
 import { applyPingCount, applyReadUpdated } from '../slices/reads'
-import { resetSessionCaches, useStore, type RChatState } from '../store'
-
-afterAll(resetSessionCaches)
+import { useStore, type RChatState } from '../store'
 
 const state = (over: Partial<RChatState>): RChatState => ({ ...useStore.getState(), ...over })
 const read = (scope: string, last_read: number, pings_until?: number) => ({

@@ -1,6 +1,6 @@
 import { P } from '../p2p/acl/rules'
 import { memberOf } from '../p2p/state'
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { Hub, ManualClock, SlowLink } from './p2p_net'
 import { P2pStore } from '../p2p/db'
 import { keyId } from '../p2p/keys'
@@ -14,7 +14,6 @@ import {
   makeMember,
   pump,
   signed,
-  stopAll,
   stopMember,
 } from './p2p_server_net'
 
@@ -23,8 +22,6 @@ const failure = (p: Promise<unknown>) =>
     () => 'ok',
     (e: Error) => e.message
   )
-
-afterEach(stopAll)
 
 describe('P2P servers', () => {
   test('an identity that is removed leaves every server it is in with a signed leave', async () => {

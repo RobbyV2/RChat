@@ -2,16 +2,13 @@ import { shownPeer } from './shown_peer'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CallBanner, VoiceDock } from '../../components/voice_grid'
-import { afterAll, expect, test } from 'bun:test'
+import { expect, test } from 'bun:test'
 
 import { client } from '../client/client'
-import { resetSessionCaches } from '../store'
 import type { CallSource } from '../client/calls'
 import type { AccountSession } from '../client/session'
 import { until, user, textChannel, serverDetail } from './fixtures'
 import { testAccount } from './test_account'
-
-afterAll(resetSessionCaches)
 
 function accept(account: AccountSession) {
   const confirm = account.store.getState().confirm!
@@ -30,33 +27,28 @@ test('a replacement leaves only the prior account and identity across all call k
     { account: alice, identity: 'personal', kind: 'p2p-call' },
     { account: alice, identity: 'work', kind: 'p2p-voice' },
   ]
-  try {
-    let previous = await calls.request(sources[0], () => left.push(sources[0]))
-    for (const source of sources.slice(1)) {
-      const pending = calls.request(source, () => left.push(source))
-      expect(source.account.store.getState().confirm?.body).toBe(
-        `This ends your call as ${previous!.account.id}.`
-      )
-      source.account.store.getState().closeConfirm()
-      expect(await pending).toBeNull()
-      expect(calls.current()).toBe(previous)
-      const replacement = calls.request(source, () => left.push(source))
-      accept(source.account)
-      const next = await replacement
-      expect(next?.account).toBe(source.account)
-      expect(next?.identity).toBe(source.identity)
-      previous?.release()
-      expect(calls.current()).toBe(next)
-      previous = next
-    }
-    expect(left).toEqual(sources.slice(0, 3))
-    bob.store.dispose()
+  let previous = await calls.request(sources[0], () => left.push(sources[0]))
+  for (const source of sources.slice(1)) {
+    const pending = calls.request(source, () => left.push(source))
+    expect(source.account.store.getState().confirm?.body).toBe(
+      `This ends your call as ${previous!.account.id}.`
+    )
+    source.account.store.getState().closeConfirm()
+    expect(await pending).toBeNull()
     expect(calls.current()).toBe(previous)
+    const replacement = calls.request(source, () => left.push(source))
+    accept(source.account)
+    const next = await replacement
+    expect(next?.account).toBe(source.account)
+    expect(next?.identity).toBe(source.identity)
     previous?.release()
-  } finally {
-    alice.store.dispose()
-    if (client.live().includes(bob)) bob.store.dispose()
+    expect(calls.current()).toBe(next)
+    previous = next
   }
+  expect(left).toEqual(sources.slice(0, 3))
+  bob.store.dispose()
+  expect(calls.current()).toBe(previous)
+  previous?.release()
 })
 
 test('replacement and cancellation precede capture and signaling in the requesting account', async () => {
@@ -78,28 +70,23 @@ test('replacement and cancellation precede capture and signaling in the requesti
       },
     })
   }
-  try {
-    await alice.store.getState().joinVoice('club', 3)
-    events.length = 0
-    const attempt = bob.store.getState().startCall(8, false)
-    await until(() => bob.store.getState().confirm !== null)
-    alice.store.getState().openProfile(user('someone'), null, 0, 0)
-    await attempt
-    expect(events).toEqual([])
-    expect(client.calls.current()?.account).toBe(alice)
-    const retry = bob.store.getState().startCall(8, false)
-    await until(() => bob.store.getState().confirm !== null)
-    accept(bob)
-    await retry
-    expect(events).toEqual([alice.id + ' voice_leave', bob.id + ' capture', bob.id + ' call_start'])
-    alice.store.resetSessionCaches()
-    expect(client.calls.current()?.account).toBe(bob)
-    bob.store.getState().hangupCall()
-    expect(client.calls.current()).toBeNull()
-  } finally {
-    alice.store.dispose()
-    bob.store.dispose()
-  }
+  await alice.store.getState().joinVoice('club', 3)
+  events.length = 0
+  const attempt = bob.store.getState().startCall(8, false)
+  await until(() => bob.store.getState().confirm !== null)
+  alice.store.getState().openProfile(user('someone'), null, 0, 0)
+  await attempt
+  expect(events).toEqual([])
+  expect(client.calls.current()?.account).toBe(alice)
+  const retry = bob.store.getState().startCall(8, false)
+  await until(() => bob.store.getState().confirm !== null)
+  accept(bob)
+  await retry
+  expect(events).toEqual([alice.id + ' voice_leave', bob.id + ' capture', bob.id + ' call_start'])
+  alice.store.resetSessionCaches()
+  expect(client.calls.current()?.account).toBe(bob)
+  bob.store.getState().hangupCall()
+  expect(client.calls.current()).toBeNull()
 })
 
 test('the dock shows the account and channel of the call while another account is shown', async () => {
@@ -124,8 +111,6 @@ test('the dock shows the account and channel of the call while another account i
     call?.release()
   } finally {
     client.shown = previous
-    owner.store.dispose()
-    shown.store.dispose()
   }
 })
 

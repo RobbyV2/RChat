@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
-import { useStore, resetSessionCaches } from '../store'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { useStore } from '../store'
 import {
   ballotBody,
   ballotReady,
@@ -26,8 +26,6 @@ import type { Message, Poll, ServerDetail, WsEvent } from '../types'
 import { managesPoll } from '../actions/message'
 import { advance, me, msg, serverDetail } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const poll = (over: Partial<Poll> = {}): Poll => ({
   kind: 'single',

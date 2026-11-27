@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { afterEach, beforeAll, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
@@ -11,7 +11,7 @@ import { registerAppActions } from '../actions/index'
 import { paletteCommands } from '../actions/palette'
 import { actionById } from '../actions/registry'
 import { rowAnchor } from '../settings_page'
-import { resetSessionCaches, useStore } from '../store'
+import { useStore } from '../store'
 import type { AdminPlace } from '../store_types'
 import { ADMIN_SECTIONS } from '../view'
 import { me, paged, user } from './fixtures'
@@ -26,8 +26,6 @@ afterEach(() => {
   Object.assign(initial, saved)
   useStore.setState({ ...saved })
 })
-
-afterAll(resetSessionCaches)
 
 const place = (section: AdminPlace['section'], item: string | null = null): AdminPlace => ({
   section,

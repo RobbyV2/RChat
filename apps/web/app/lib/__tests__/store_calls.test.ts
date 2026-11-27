@@ -1,16 +1,14 @@
-import { AccountSession } from '../client/session'
+import { testSession } from './test_account'
 import { createHomeConnection } from '../instances'
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from './home_instance'
-import { getHomeSession, useStore, resetSessionCaches } from '../store'
+import { getHomeSession, useStore } from '../store'
 import { SELF_AUDIO_IDLE } from '../voice_layout'
 import type { VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage } from './fixtures'
 
 const mediaAccount = getHomeSession()
 const { files: p2p, rtc } = mediaAccount
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -34,16 +32,12 @@ afterEach(() => {
 })
 
 test('recreating a home session gives it independent media', () => {
-  const next = new AccountSession(createHomeConnection())
+  const next = testSession(createHomeConnection())
   const helpers = mediaAccount.ice.helpersOn()
-  try {
-    for (const key of ['ice', 'relays', 'rtc', 'files'] as const)
-      expect(next[key]).not.toBe(mediaAccount[key])
-    next.ice.setHelpers(!helpers)
-    expect(mediaAccount.ice.helpersOn()).toBe(helpers)
-  } finally {
-    next.store.dispose()
-  }
+  for (const key of ['ice', 'relays', 'rtc', 'files'] as const)
+    expect(next[key]).not.toBe(mediaAccount[key])
+  next.ice.setHelpers(!helpers)
+  expect(mediaAccount.ice.helpersOn()).toBe(helpers)
 })
 
 describe('call connection choice', () => {

@@ -1,7 +1,7 @@
 import { peerStorage } from '../client/keys'
 import { HostedServer } from '../place/place'
 import { shownPeer } from './shown_peer'
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
+import { afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
 import { Copy, Trash2 } from 'lucide-react'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -20,7 +20,7 @@ import { buildSections, flatItems, type ResultCtx } from '../palette_results'
 import { closePalette, usePaletteUi } from '../palette_store'
 import { setSharing, sharing } from '../platform'
 import { emptySelection, toggle } from '../selection'
-import { resetSessionCaches, useStore, type ConfirmRequest } from '../store'
+import { useStore, type ConfirmRequest } from '../store'
 import type { RChatState } from '../store_types'
 import { Perm } from '../types'
 import { drain, me, member, msg, paged, role, serverDetail, user } from './fixtures'
@@ -73,8 +73,6 @@ afterEach(() => {
   })
   client.book.setState(previousBook, true)
 })
-
-afterAll(resetSessionCaches)
 
 const MOD = Perm.ViewAuditLog | Perm.ManageWebhooks | Perm.TimeoutMembers
 const HOUR = 3_600_000

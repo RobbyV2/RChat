@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   allPings,
   badgePings,
@@ -6,7 +6,6 @@ import {
   groupPills,
   serverPingCount,
   useStore,
-  resetSessionCaches,
 } from '../store'
 import {
   addGroupPing,
@@ -36,8 +35,6 @@ import { context, headline, type Piece } from '../notices'
 import type { GroupMention, Message, Unread, WsEvent } from '../types'
 import { me, member, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
-
-afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
