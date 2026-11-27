@@ -99,6 +99,14 @@ async fn seed_cases(db: &Db, table: &Value) -> (HashMap<String, i64>, HashMap<St
             .execute(db)
             .await
             .expect("member");
+        if let Some(shown) = m["server_name"].as_str() {
+            sqlx::query("INSERT INTO member_profiles(server, username, name, updated_at) VALUES('club', $1, $2, 1)")
+                .bind(username)
+                .bind(shown)
+                .execute(db)
+                .await
+                .expect("server profile");
+        }
         for role in m["roles"].as_array().expect("roles") {
             sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('club', $1, $2)")
                 .bind(username)
@@ -234,13 +242,21 @@ async fn hits_carry_the_look_members_set_in_the_server() {
             "Ali"
         );
         let (hits, _) = search(&state, &kicker, "").await.expect("everyone");
-        assert!(
-            hits.iter()
-                .filter(|h| h.member.user.username != "alice")
-                .all(|h| h.member.profile.is_none()),
-            "{:?}",
-            names(&hits)
-        );
+        let set: HashMap<&str, &str> = table["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .filter_map(|m| Some((m["username"].as_str()?, m["server_name"].as_str()?)))
+            .chain([("alice", "Ali")])
+            .collect();
+        for hit in &hits {
+            let name = hit.member.user.username.as_str();
+            assert_eq!(
+                hit.member.profile.as_ref().and_then(|l| l.name.as_deref()),
+                set.get(name).copied(),
+                "{name}"
+            );
+        }
         temp.done(state).await;
     }
 }
@@ -310,7 +326,7 @@ async fn accounts_that_show_their_profile_only_to_friends_keep_their_age_to_them
 }
 
 #[tokio::test]
-async fn only_members_who_moderate_or_handle_roles_may_search() {
+async fn only_members_who_moderate_handle_roles_or_reset_profiles_may_search() {
     for (state, temp) in each_db("member_search_who").await {
         let state = roomy(state);
         let db = &state.db;
@@ -320,6 +336,7 @@ async fn only_members_who_moderate_or_handle_roles_may_search() {
         for (name, is_admin, perms) in [
             ("timer", 1, Perm::TimeoutMembers as i64),
             ("roler", 1, Perm::ManageRoles as i64),
+            ("resetter", 1, Perm::ManageProfiles as i64),
             ("helper", 0, 0),
             ("builder", 0, 0),
             ("nobody", 0, 0),
@@ -329,11 +346,11 @@ async fn only_members_who_moderate_or_handle_roles_may_search() {
         }
         exec(db, &format!("INSERT INTO user_roles(server, username, role_id) VALUES('club', 'helper', {assign}), ('club', 'builder', {plain})")).await;
         let missing = (StatusCode::FORBIDDEN, "Missing permission".to_string());
-        for name in ["timer", "roler", "helper"] {
+        for name in ["timer", "roler", "resetter", "helper"] {
             let (hits, _) = search(&state, &mem_user(name, false), "")
                 .await
                 .expect(name);
-            assert_eq!(hits.len(), 5, "{name}");
+            assert_eq!(hits.len(), 6, "{name}");
         }
         for name in ["builder", "nobody"] {
             assert_eq!(
@@ -568,13 +585,41 @@ fn the_sql_pattern_keeps_every_name_the_rule_keeps() {
     ] {
         assert_eq!(q_pattern(q).as_deref(), pattern, "{q}");
     }
-    assert!(name_matches("kir", "henry", "KIRK"));
-    assert!(name_matches("éc", "gina", "ÉCLAIR"));
+    assert!(name_matches("kir", "henry", "KIRK", None));
+    assert!(name_matches("éc", "gina", "ÉCLAIR", None));
     assert!(
-        name_matches("ali", "x", "ALİ"),
+        name_matches("ali", "x", "ALİ", None),
         "İ lowercases to i and a dot"
     );
-    assert!(!name_matches("bob", "alice", "Alice"));
+    assert!(!name_matches("bob", "alice", "Alice", None));
+    assert!(name_matches("skip", "bob", "Bob", Some("Skipper")));
+    assert!(!name_matches("skip", "bob", "Bob", None));
+}
+
+#[tokio::test]
+async fn server_names_are_found_only_while_the_server_shows_them() {
+    let table: Value = serde_json::from_str(CASES).expect("cases");
+    let root = mem_user("root", true);
+    for (state, temp) in each_db("member_search_server_names").await {
+        let state = roomy(state);
+        let db = &state.db;
+        seed_cases(db, &table).await;
+        for (mode, found) in [("no_names", false), ("off", false), ("all", true)] {
+            exec(
+                db,
+                &format!("UPDATE servers SET profiles_mode = '{mode}' WHERE name = 'club'"),
+            )
+            .await;
+            let (hits, next) = search(&state, &root, "q=skip").await.expect(mode);
+            let want: &[&str] = match found {
+                true => &["bob"],
+                false => &[],
+            };
+            assert_eq!(names(&hits), want, "{mode}");
+            assert_eq!(next, None, "{mode}");
+        }
+        temp.done(state).await;
+    }
 }
 
 #[tokio::test]

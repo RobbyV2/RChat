@@ -92,6 +92,7 @@ export interface ServerCtx {
   myDev: Servers['myDev']
   myMembership: Servers['myMembership']
   nameOf: Servers['nameOf']
+  profileName: Servers['profileName']
   noteReached: Servers['noteReached']
   noteRedaction: Servers['noteRedaction']
   ownEvents: Servers['ownEvents']

@@ -185,6 +185,8 @@ export interface MemberView {
   ik: string
   m: Membership
   name: string
+  // The name they give themselves, when `name` shows another (a nickname, our petname).
+  profileName?: string
   // The nickname and avatar they set for this server, when its mode shows them.
   nick?: string
   av?: RoomExtras['av']
@@ -293,6 +295,8 @@ export interface ServerView {
   timedBans?: true
   // Members can be timed out.
   timeouts?: true
+  // We may search the members with filters.
+  memberSearch?: true
   // When our own timeout here ends (ms).
   timedOutUntil?: number
   // The rules version permissions are decided under.

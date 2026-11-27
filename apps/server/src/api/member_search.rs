@@ -11,6 +11,7 @@ use crate::api::access::subjects::{Level, ProfileChoices, level_of, own_choice};
 use crate::api::access::{Proof, forbidden, resolve_server};
 use crate::api::lookup::{self, LookupClass};
 use crate::api::passwords::joined_via;
+use crate::api::profiles::{Shown, shown_in};
 use crate::api::servers::{lookup_text, role_ids_of};
 use crate::api::timeouts::running_timeouts;
 use crate::api::{
@@ -33,7 +34,8 @@ const CHUNK_MAX: usize = 500;
 pub const SEARCH_PERMS: i64 = Perm::Kick as i64
     | Perm::TimeoutMembers as i64
     | Perm::ManageRoles as i64
-    | Perm::AssignRoles as i64;
+    | Perm::AssignRoles as i64
+    | Perm::ManageProfiles as i64;
 
 /// How a member search is ordered. Ties go by username, in the same direction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
@@ -91,8 +93,8 @@ impl MemberSort {
 #[derive(Debug, Default, PartialEq, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct Search {
-    /// Text the username or display name contains, case-insensitive, 1 to 32 characters after
-    /// trimming. Blank means any name.
+    /// Text the username, display name or server profile name (while the server shows them)
+    /// contains, case-insensitive, 1 to 32 characters after trimming. Blank means any name.
     #[param(example = "al")]
     pub q: Option<String>,
     /// Role ids separated by commas, at most 25: members who have any of them.
@@ -200,9 +202,10 @@ impl Search {
     }
 }
 
-/// The `LIKE` pattern that keeps every row whose lowercase username or display name contains
-/// `q`, or `None` when it would keep every row. Only ASCII characters both databases lowercase
-/// the same way are compared; the rest match anything and each row is checked again in Rust.
+/// The `LIKE` pattern that keeps every row whose lowercase username, display name or server
+/// profile name contains `q`, or `None` when it would keep every row. Only ASCII characters both
+/// databases lowercase the same way are compared; the rest match anything and each row is checked
+/// again in Rust.
 fn q_pattern(q: &str) -> Option<String> {
     let mut p = String::from("%");
     let mut exact = false;
@@ -225,10 +228,18 @@ fn q_pattern(q: &str) -> Option<String> {
     exact.then_some(p)
 }
 
-/// Whether the username or display name contains `q`, both lowercased: the rule the P2P filter
-/// runs too (`member_filters.ts`).
-pub(crate) fn name_matches(q: &str, username: &str, display_name: &str) -> bool {
-    username.to_lowercase().contains(q) || display_name.to_lowercase().contains(q)
+/// Whether the username, display name or shown server profile name contains `q`, each
+/// lowercased: the rule the P2P filter runs too (`member_filters.ts`).
+pub(crate) fn name_matches(
+    q: &str,
+    username: &str,
+    display_name: &str,
+    server_name: Option<&str>,
+) -> bool {
+    [Some(username), Some(display_name), server_name]
+        .into_iter()
+        .flatten()
+        .any(|name| name.to_lowercase().contains(q))
 }
 
 enum Arg {
@@ -253,6 +264,8 @@ struct Found {
     display_name: String,
     // The account's own profile choice (`privacy.profile`).
     profile: Option<String>,
+    // Their profile name in the server, while the server shows them.
+    server_name: Option<String>,
 }
 
 impl Found {
@@ -270,12 +283,14 @@ impl Found {
     }
 }
 
-/// Up to `take` rows of `server` the search's SQL keeps, in its order, after `after`.
+/// Up to `take` rows of `server` the search's SQL keeps, in its order, after `after`. Server
+/// profile names are read only while `shown` shows them.
 async fn chunk(
     db: &Db,
     server: &str,
     s: &Search,
     ages: &Ages<'_>,
+    shown: Shown,
     after: Option<&(Option<i64>, String)>,
     take: usize,
 ) -> Result<Vec<Found>, ApiError> {
@@ -283,8 +298,15 @@ async fn chunk(
         true => "m.username",
         false => "(m.username COLLATE \"C\")",
     };
-    let mut sql = String::from(
-        "SELECT m.username, m.is_admin, m.perms, m.joined_at, u.created_at, u.display_name, p.profile FROM members m JOIN users u ON u.username = m.username LEFT JOIN privacy p ON p.username = m.username WHERE m.server = $1",
+    let (named, profiles) = match shown.names() {
+        true => (
+            "mp.name",
+            " LEFT JOIN member_profiles mp ON mp.server = m.server AND mp.username = m.username",
+        ),
+        false => ("CAST(NULL AS TEXT)", ""),
+    };
+    let mut sql = format!(
+        "SELECT m.username, m.is_admin, m.perms, m.joined_at, u.created_at, u.display_name, p.profile, {named} FROM members m JOIN users u ON u.username = m.username LEFT JOIN privacy p ON p.username = m.username{profiles} WHERE m.server = $1"
     );
     let mut args: Vec<Arg> = Vec::new();
     let bounds = [
@@ -318,8 +340,12 @@ async fn chunk(
     }
     if let Some(p) = s.q.as_deref().and_then(q_pattern) {
         let at = arg(&mut args, Arg::Text(p));
+        let server_name = match shown.names() {
+            true => format!(" OR lower(mp.name) LIKE {at} ESCAPE '\\'"),
+            false => String::new(),
+        };
         sql.push_str(&format!(
-            " AND (lower(m.username) LIKE {at} ESCAPE '\\' OR lower(u.display_name) LIKE {at} ESCAPE '\\')"
+            " AND (lower(m.username) LIKE {at} ESCAPE '\\' OR lower(u.display_name) LIKE {at} ESCAPE '\\'{server_name})"
         ));
     }
     let (cmp, order) = match s.sort.key() {
@@ -358,6 +384,7 @@ async fn chunk(
             created_at: r.try_get(4)?,
             display_name: r.try_get(5)?,
             profile: r.try_get(6)?,
+            server_name: r.try_get(7)?,
         });
     }
     Ok(out)
@@ -371,6 +398,7 @@ async fn page(
     server: &str,
     s: &Search,
     ages: &Ages<'_>,
+    shown: Shown,
 ) -> Result<(Vec<Found>, Option<String>), ApiError> {
     let limit = s.limit.clamp(1, PAGE_MAX) as usize;
     let want = limit + 1;
@@ -379,15 +407,19 @@ async fn page(
     let mut take = want;
     let mut read = 0;
     loop {
-        let rows = chunk(db, server, s, ages, after.as_ref(), take).await?;
+        let rows = chunk(db, server, s, ages, shown, after.as_ref(), take).await?;
         let exhausted = rows.len() < take;
         for row in rows {
             read += 1;
             after = Some((row.key(s.sort), row.username.clone()));
-            let hit =
-                s.q.as_deref()
-                    .is_none_or(|q| name_matches(q, &row.username, &row.display_name))
-                    && (!s.reads_ages() || ages.shown(&row));
+            let hit = s.q.as_deref().is_none_or(|q| {
+                name_matches(
+                    q,
+                    &row.username,
+                    &row.display_name,
+                    row.server_name.as_deref(),
+                )
+            }) && (!s.reads_ages() || ages.shown(&row));
             if hit {
                 out.push(row);
                 if out.len() == want {
@@ -442,19 +474,20 @@ pub struct MemberHit {
 
 /// Search server members
 ///
-/// Server members found by name, roles, join time, account age and the extra password they
+/// Server members found by name (username, display name, or the server profile name they set
+/// here while the server shows them), roles, join time, account age and the extra password they
 /// joined with, in pages of `limit` (default and at most 50). Page with `cursor` from the
 /// `X-Next-Cursor` response header. A page may hold fewer members than `limit`, even none,
 /// while `X-Next-Cursor` is present: ask for the next one. Each member carries `joined_via`
 /// for callers with the Manage invites permission and `timeout` for callers with the Timeout
 /// members permission, as in `GET /api/v1/servers/{name}/members`.
 ///
-/// Needs any of the Kick, Timeout members, Manage roles or Assign roles permissions (a timeout
-/// does not take it away); `via` needs Manage invites too. Accounts that show their profile only
-/// to their friends answer `created_at: null` and are left out of the `created_after`,
-/// `created_before`, `created_desc` and `created_asc` results. Each call takes one of the caller's
-/// `member_search` lookups (`LOOKUP_MEMBER_SEARCH_PER_MINUTE`, 30 a minute by default). General
-/// rate-limit bucket.
+/// Needs any of the Kick, Timeout members, Manage roles, Assign roles or Manage profiles
+/// permissions (a timeout does not take it away); `via` needs Manage invites too. Accounts that
+/// show their profile only to their friends answer `created_at: null` and are left out of the
+/// `created_after`, `created_before`, `created_desc` and `created_asc` results. Each call takes one
+/// of the caller's `member_search` lookups (`LOOKUP_MEMBER_SEARCH_PER_MINUTE`, 30 a minute by
+/// default). General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/v1/servers/{name}/members/search",
@@ -501,7 +534,8 @@ pub(crate) async fn search_members(
         settings: &settings,
         caller: &user.username,
     };
-    let (rows, next) = page(db, &key, &search, &ages).await?;
+    let shown = shown_in(db, &key).await?;
+    let (rows, next) = page(db, &key, &search, &ages, shown).await?;
     let names: Vec<String> = rows.iter().map(|r| r.username.clone()).collect();
     let online = state.hub.online_among(&key, &names);
     let refs = user_refs(db, &names).await;
@@ -532,6 +566,7 @@ pub(crate) async fn search_members(
                     created_at,
                     display_name: _,
                     profile: _,
+                    server_name: _,
                 },
                 shown,
             )| MemberHit {

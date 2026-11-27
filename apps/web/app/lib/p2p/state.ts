@@ -118,6 +118,11 @@ export const outranks = (s: Summary, ik: string, other: string) =>
 export const managesRoleOf = (s: Summary, ik: string, id: string) =>
   managesAt(permsOf(s, ik), rankOf(s, ik), roleRank(s, id), rulesOf(s.rules))
 
+// Any of these opens the member search of a server under its rules, the bit that resets server
+// profiles there among them (Kick stands in for it up to rules 4).
+export const searchBits = (rules: unknown) =>
+  P.Kick | P.TimeoutMembers | P.ManageRoles | resetBit(rules)
+
 // Whether `ik` may reset the room profile of `other`, or lift its lock: an owner, or a member
 // with the bit the room's rules ask for who outranks them. Never one's own, never an owner's.
 export const mayResetProfile = (s: Summary, ik: string, other: string) =>

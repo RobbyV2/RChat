@@ -33,7 +33,8 @@ import {
 import { buildSummary, type Summary } from '../p2p/acl/summary'
 import type { RoomRecord } from '../p2p/db'
 import { LOCAL } from '../p2p/limits'
-import { P } from '../p2p/acl/rules'
+import { P, PROFILES } from '../p2p/acl/rules'
+import { searchBits } from '../p2p/state'
 import { serverView } from '../p2p/server/views'
 import { AclWorld, devOwner } from './p2p_acl_world'
 
@@ -44,6 +45,7 @@ const ASSET = fileURLToPath(
 interface CaseMember {
   username: string
   display_name: string
+  server_name?: string
   created_at: number
   joined_at: number
   roles: string[]
@@ -62,7 +64,7 @@ const table = JSON.parse(readFileSync(ASSET, 'utf8')) as { members: CaseMember[]
 // route does) and breaks ties; role and password names stand for their ids.
 const rowOf = (m: CaseMember): MemberRow => ({
   key: m.username,
-  names: [m.username, m.display_name],
+  names: [m.username, m.display_name, ...(m.server_name ? [m.server_name] : [])],
   sortName: m.username,
   roles: m.roles,
   joinedAt: m.joined_at,
@@ -272,8 +274,9 @@ describe('chips', () => {
   })
 })
 
-// A room where owner O made the code "Friends", N joined with it (at 10 s), U (at 20 s) and M (at
-// 30 s) through invites of the owner, and M holds a role that may invite.
+// A room where owner O made the code "Friends", N joined with it (at 10 s), U ("Ulla", at 20 s)
+// and M (at 30 s) through invites of the owner, U goes by "Skipper" there, and M holds a role that
+// may invite.
 function room() {
   const w = new AclWorld({ model: false })
   w.genesis('O1', ['O'])
@@ -281,14 +284,16 @@ function room() {
   const code = w.ok('O1', 'code', { h: 'h1', label: 'Friends' })
   w.ok('O1', 'add', { to: devOwner('N1'), code: code.id })
   w.ok('N1', 'join', {}, { ts: 10_000 })
+  const joins = new Map<string, string>()
   for (const [dev, ts] of [
     ['U1', 20_000],
     ['M1', 30_000],
   ] as const) {
     w.ok('O1', 'add', { to: devOwner(dev) })
-    w.ok(dev, 'join', {}, { ts })
+    joins.set(dev, w.ok(dev, 'join', {}, { ts }).id)
   }
   w.ok('O1', 'assign', { to: 'M', role: inviter })
+  w.ok('U1', 'profile', { name: 'U', nick: 'Skipper', in: joins.get('U1') })
   const summary = buildSummary({
     ix: w.ref.acl.ix,
     unknownRules: undefined,
@@ -301,11 +306,13 @@ function room() {
   return { summary, code: code.id }
 }
 
+// The member list shows U by the nickname, as it does for someone who is not a contact.
 const viewOf = (s: Summary, me: string) =>
   serverView('room', { missing: [], lastSeq: 0, full: false } as unknown as RoomRecord, s, null, {
     me,
     online: () => new Set<string>(),
-    name: ik => ik,
+    name: ik => (ik === 'U' ? 'Skipper' : ik),
+    profileName: ik => (ik === 'U' ? 'Ulla' : ik),
     contact: () => false,
     trying: () => false,
     readOnly: () => null,
@@ -340,10 +347,24 @@ describe('P2P members', () => {
     const members = viewOf(summary, 'O').members.filter(m => m.m === 'join')
     const keys = (f: MemberFilters) => filterMembers(f, members, p2pMemberRow).map(m => m.ik)
     expect(keys({ ...NO_FILTERS, via: code })).toEqual(['N'])
-    expect(keys({ ...NO_FILTERS, q: 'u' })).toEqual(['U'])
+    expect(keys({ ...NO_FILTERS, q: 'ull' })).toEqual(['U'])
     const n = summary.members.N.joinTs!
     expect(keys({ ...NO_FILTERS, joinedAfter: Math.floor(n / 1000) + 1 })).not.toContain('N')
     expect(keys({ ...NO_FILTERS, sort: 'joined_desc' })[0]).toBe('M')
+    expect(keys({ ...NO_FILTERS, q: 'SKIP' })).toEqual(['U'])
+    expect(viewOf(summary, 'O').members.find(m => m.ik === 'U')).toMatchObject({
+      name: 'Skipper',
+      profileName: 'Ulla',
+      nick: 'Skipper',
+    })
+  })
+
+  test('the search opens with the moderation bits and the one that resets profiles', () => {
+    const { summary } = room()
+    expect(viewOf(summary, 'O').memberSearch).toBe(true)
+    for (const me of ['M', 'U']) expect(viewOf(summary, me).memberSearch).toBeUndefined()
+    expect(searchBits(4)).toBe(P.Kick | P.TimeoutMembers | P.ManageRoles)
+    expect(searchBits(5)).toBe(P.Kick | P.TimeoutMembers | P.ManageRoles | PROFILES)
   })
 })
 
@@ -401,5 +422,13 @@ describe('hosted search pages', () => {
       joinedAt: null,
       via: null,
     })
+    expect(p2pMemberRow({ ik: 'K', name: 'A', nick: 'Skipper', roles: [] }).names).toEqual([
+      'A',
+      'Skipper',
+    ])
+    expect(
+      p2pMemberRow({ ik: 'K', name: 'Skipper', profileName: 'Alice', nick: 'Skipper', roles: [] })
+        .names
+    ).toEqual(['Skipper', 'Alice'])
   })
 })

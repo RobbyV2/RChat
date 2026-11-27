@@ -13,6 +13,7 @@
     {
       "username": "bob",
       "display_name": "Builder Bob",
+      "server_name": "Skipper",
       "created_at": 1700000200,
       "joined_at": 1700002000,
       "roles": [],
@@ -21,6 +22,7 @@
     {
       "username": "carol",
       "display_name": "Carol",
+      "server_name": "Ørsted",
       "created_at": 1700000300,
       "joined_at": 1700002000,
       "roles": ["art"],
@@ -128,6 +130,16 @@
       "name": "q takes an underscore literally",
       "query": { "q": "r_s" },
       "expect": ["jack"]
+    },
+    {
+      "name": "q matches the name a member set for the server",
+      "query": { "q": "SKIP" },
+      "expect": ["bob"]
+    },
+    {
+      "name": "q folds the case of a server name beyond ASCII",
+      "query": { "q": "ØRS" },
+      "expect": ["carol"]
     },
     {
       "name": "q that nobody matches finds nobody",

@@ -585,7 +585,7 @@ function Members({ v }: { v: ServerView }) {
   const kick = can(v, P.Kick)
   const ban = can(v, P.Ban)
   const timeout = v.timeouts === true && can(v, P.TimeoutMembers)
-  const search = kick || can(v, P.TimeoutMembers) || can(v, P.ManageRoles)
+  const search = v.memberSearch === true
   const invites = can(v, P.Invite)
   const [filters, setFilters] = useState<MemberFilters>(NO_FILTERS)
   const shown = allowedFilters(filters, { created: false, via: invites })

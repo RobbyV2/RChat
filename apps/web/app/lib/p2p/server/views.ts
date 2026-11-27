@@ -38,6 +38,7 @@ import {
   permsOf,
   roleRank,
   rolesOf,
+  searchBits,
   systemOf,
   topRoleOf,
   type Membership,
@@ -69,6 +70,8 @@ export interface ViewEnv {
   me: string
   online(): Set<string>
   name(ik: string): string
+  // The name they give themselves (`name` can be a nickname or our petname).
+  profileName?(ik: string): string
   contact(ik: string): boolean
   trying(ik: string): boolean
   readOnly(): ServerView['readOnly']
@@ -86,6 +89,7 @@ export function view(cx: ServerCtx, room: string): ServerView | null {
     me: cx.me,
     online: () => cx.gossip.online(room),
     name: ik => cx.nameOf(ik, room),
+    profileName: ik => cx.profileName(ik, room),
     contact: ik => cx.deps.node.contact(ik)?.state === 'mutual',
     trying: ik => cx.redeeming(room, ik) || cx.sync.linksOf(room).some(l => l.ik === ik),
     readOnly: () => cx.readOnly(room),
@@ -99,6 +103,12 @@ export function view(cx: ServerCtx, room: string): ServerView | null {
 
 // The profile a member set for this server, as its mode and the resets of their profile show it
 // at `at`, and whether a moderator's lock on their profile runs.
+// The member's own name, when the list shows another.
+const ownName = (env: ViewEnv, ik: string): Pick<MemberView, 'profileName'> => {
+  const own = env.profileName?.(ik)
+  return own && own !== env.name(ik) ? { profileName: own } : {}
+}
+
 const nickOf = (
   s: Summary,
   m: MemberSum,
@@ -141,6 +151,7 @@ export function serverView(
       ik: m.ik,
       m: m.m,
       name: env.name(m.ik),
+      ...ownName(env, m.ik),
       ...nickOf(s, m, clock),
       ...(mayResetProfile(s, env.me, m.ik) ? { resetProfile: true as const } : {}),
       owner: owners.includes(m.ik),
@@ -187,6 +198,9 @@ export function serverView(
     textOnlyChannels: s.rules === RULES_VERSION,
     ...(timedBans(s.rules) ? { timedBans: true as const } : {}),
     ...(timeouts(s.rules) ? { timeouts: true as const } : {}),
+    ...(me === 'join' && can(s, env.me, searchBits(s.rules))
+      ? { memberSearch: true as const }
+      : {}),
     ...(me === 'join' && mine?.timeoutUntil !== undefined
       ? { timedOutUntil: mine.timeoutUntil }
       : {}),

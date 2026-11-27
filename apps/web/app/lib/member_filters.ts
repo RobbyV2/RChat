@@ -11,6 +11,7 @@ export const MEMBER_SEARCH_PERMS = [
   Perm.TimeoutMembers,
   Perm.ManageRoles,
   Perm.AssignRoles,
+  Perm.ManageProfiles,
 ].reduce<number>(maskOr, 0)
 
 export const MEMBER_SORTS = [
@@ -68,17 +69,19 @@ export interface MemberRow {
   via: string | null
 }
 
-// What the filters read of a P2P member: the name it shows, its roles, when its join was made
-// (seconds) and the code it joined with.
+// What the filters read of a P2P member: the name it shows, its own name and the nickname it
+// set for the server, its roles, when its join was made (seconds) and the code it joined with.
 export const p2pMemberRow = (m: {
   ik: string
   name: string
+  profileName?: string
+  nick?: string
   roles: readonly string[]
   joinedAt?: number
   via?: { id: string }
 }): MemberRow => ({
   key: m.ik,
-  names: [m.name],
+  names: [...new Set([m.name, m.profileName ?? m.name, m.nick ?? m.name])],
   sortName: m.name.toLowerCase(),
   roles: m.roles,
   joinedAt: m.joinedAt === undefined ? null : Math.floor(m.joinedAt / 1000),
