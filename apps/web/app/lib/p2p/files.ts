@@ -4,6 +4,7 @@ import { thumbBytes } from './blobs'
 import { downloadName, GIF_MAX, guessKind, IMAGE_HEAD, imageSize, inlineImageOk } from '../sniff'
 import { LIMITS as EV } from './content'
 import type { Local } from './limits'
+import { time } from '../platform/time'
 
 // Browser side of P2P attachments: hashing in a worker, thumbnails made by the sender and
 // checked again by the receiver, safe download names and free space.
@@ -65,7 +66,10 @@ export interface Preview {
 export type FileLimits = Pick<Local, 'files' | 'bulk'>
 
 const withTimeout = <T>(p: Promise<T>, ms: number) =>
-  Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('slow')), ms))])
+  Promise.race([
+    p,
+    new Promise<T>((_, reject) => time().after(ms, () => reject(new Error('slow')))),
+  ])
 
 const jpegOf = async (
   src: CanvasImageSource,

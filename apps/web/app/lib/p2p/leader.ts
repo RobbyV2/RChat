@@ -1,4 +1,6 @@
+import type { Cancel } from '../clock'
 import { LOCAL, type Local } from './limits'
+import { time } from '../platform/time'
 
 // One P2P node per identity database across tabs. The tab holding the Web Lock runs the node;
 // the others wait in line (and take over when that tab closes). "Use here" asks the holder to
@@ -43,8 +45,8 @@ export const webLeaderDeps = (): LeaderDeps => ({
     typeof BroadcastChannel === 'undefined'
       ? null
       : (new BroadcastChannel(name) as unknown as ChannelLike),
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: h => clearTimeout(h as ReturnType<typeof setTimeout>),
+  set: (fn, ms) => time().after(ms, fn),
+  clear: h => (h as Cancel)(),
 })
 
 type State = 'idle' | 'waiting' | 'leading' | 'handing' | 'stopped'

@@ -23,6 +23,8 @@ import type { VoiceMsg, WsEvent } from './types'
 import { slotLayout, videoPlan, type Slot } from './negotiation'
 import { captureScreen, nextShareId, syncStream, tuneScreen, type ScreenCapture } from './screen'
 import { cause, logError } from './log'
+import { time } from './platform/time'
+import { sleep, type Cancel } from './clock'
 
 export interface StoredFile {
   name: string
@@ -164,11 +166,11 @@ export const unexpired = (expiresAt: number | null, now: number) =>
 export const servable = (file: StoredFile | null, now: number) =>
   file && !file.pending && unexpired(file.expires_at, now) ? file : null
 
-const pause = (ms: number) => new Promise(r => setTimeout(r, ms))
+const pause = (ms: number) => sleep(time(), ms)
 
 const buffered = (conn: DataConnection) => (conn as { bufferSize?: number }).bufferSize ?? 0
 
-const nowS = () => Math.floor(Date.now() / 1000)
+const nowS = () => Math.floor(time().now() / 1000)
 
 const readJson = <T extends object>(key: string): Record<string, T> => {
   try {
@@ -433,12 +435,12 @@ export class P2pManager {
   private epoch = 0
   private pendingTransfers = new Set<() => void>()
   private peer: Peer | null = null
-  private retry: ReturnType<typeof setTimeout> | null = null
+  private retry: Cancel | null = null
   private iceWatch: (() => void) | null = null
   private attempt = 0
   private media: MediaConnection | null = null
   private control: DataConnection | null = null
-  private purgeTimer: ReturnType<typeof setInterval> | null = null
+  private purgeTimer: Cancel | null = null
   // Whose files these are: the account's username, scoped to the instance; null signed out.
   private account: string | null = null
   private user: string | null = null
@@ -451,7 +453,7 @@ export class P2pManager {
       done: Promise<PeerGrant>
       resolve: (g: PeerGrant) => void
       reject: (e: Error) => void
-      timer: ReturnType<typeof setTimeout>
+      timer: Cancel
     }
   >()
   private binding: CallBinding | null = null
@@ -466,7 +468,7 @@ export class P2pManager {
   heldMs = CONSENT_WAIT_MS
   // Downloads waiting to connect, by `{hoster peer}:{connection id}`, failed by a refusal.
   private refusals = new Map<string, (reason: unknown) => void>()
-  private awaiting: ReturnType<typeof setTimeout> | null = null
+  private awaiting: Cancel | null = null
   private heldMedia: MediaConnection[] = []
   private heldControl: DataConnection[] = []
   private cached: Record<string, StoredFile> | null = null
@@ -569,7 +571,7 @@ export class P2pManager {
     this.iceWatch = null
     this.relayWatch?.()
     this.relayWatch = null
-    if (this.purgeTimer !== null) clearInterval(this.purgeTimer)
+    this.purgeTimer?.()
     this.purgeTimer = null
     for (const p of this.previews.values()) URL.revokeObjectURL(p.url)
     this.previews.clear()
@@ -581,7 +583,7 @@ export class P2pManager {
     this.attempt = 0
 
     this.endMedia()
-    if (this.retry) clearTimeout(this.retry)
+    this.retry?.()
     this.retry = null
     const former = this.peer
     this.peer = null
@@ -594,7 +596,7 @@ export class P2pManager {
     this.announced = false
     this.asks.clear()
     for (const [messageId, g] of this.grants) {
-      clearTimeout(g.timer)
+      g.timer?.()
       g.reject(new Error('File not available'))
       this.grants.delete(messageId)
     }
@@ -849,7 +851,7 @@ export class P2pManager {
 
   ensurePurge() {
     this.purgeExpired()
-    if (!this.purgeTimer) this.purgeTimer = setInterval(() => this.purgeExpired(), 60_000)
+    if (!this.purgeTimer) this.purgeTimer = time().every(60_000, () => this.purgeExpired())
   }
 
   // Tells the server which files this tab hosts. Without any, nothing is sent and the tab
@@ -930,16 +932,16 @@ export class P2pManager {
       resolve = ok
       reject = fail
     })
-    const timer = setTimeout(() => {
+    const timer = time().after(GRANT_MS, () => {
       this.grants.delete(messageId)
       reject(new Error('File not available'))
-    }, GRANT_MS)
+    })
     this.grants.set(messageId, { done, resolve, reject, timer })
     this.ensurePeer(true)
     if (
       !this.conn.ws.sendVoice({ type: 'p2p_peer', message_id: messageId, peer_id: this.peerId() })
     ) {
-      clearTimeout(timer)
+      timer?.()
       this.grants.delete(messageId)
       reject(new Error('Not connected'))
     }
@@ -949,7 +951,7 @@ export class P2pManager {
   granted(ev: Extract<WsEvent, { type: 'p2p_peer' }>) {
     const g = this.grants.get(ev.message_id)
     if (!g) return
-    clearTimeout(g.timer)
+    g.timer?.()
     this.grants.delete(ev.message_id)
     if (typeof ev.peer_id === 'string' && typeof ev.token === 'string')
       g.resolve({
@@ -962,10 +964,10 @@ export class P2pManager {
 
   private retryLater() {
     if (this.retry) return
-    this.retry = setTimeout(() => {
+    this.retry = time().after(backoffDelay(this.attempt++), () => {
       this.retry = null
       this.ensurePeer(true)
-    }, backoffDelay(this.attempt++))
+    })
   }
 
   private ensurePeer(now = false): Peer {
@@ -975,7 +977,7 @@ export class P2pManager {
       this.retryLater()
       return cur
     }
-    if (this.retry) clearTimeout(this.retry)
+    this.retry?.()
     this.retry = null
     if (cur && !cur.destroyed) {
       cur.reconnect()
@@ -1065,11 +1067,11 @@ export class P2pManager {
         return refuseOffer(peer, src, cid, 'busy')
       this.holding += 1
       this.holdingBy.set(src, mine + 1)
-      let timer: ReturnType<typeof setTimeout> | undefined
+      let timer: Cancel | undefined
       let cancel!: () => void
       const late = new Promise<'busy'>(resolve => {
         cancel = () => resolve('busy')
-        timer = setTimeout(cancel, this.heldMs)
+        timer = time().after(this.heldMs, cancel)
       })
       this.pendingTransfers.add(cancel)
       void Promise.race([gate.catch(() => 'missing' as const), late])
@@ -1079,7 +1081,7 @@ export class P2pManager {
           else refuseOffer(peer, src, cid, refused)
         })
         .finally(() => {
-          clearTimeout(timer)
+          timer?.()
           this.pendingTransfers.delete(cancel)
           if (epoch !== this.epoch) return
           this.holding -= 1
@@ -1162,7 +1164,7 @@ export class P2pManager {
   // time overall, and a limited number of requests per user per minute.
   private admit(peer: string) {
     if (this.serving >= SERVE_MAX || (this.servingBy.get(peer) ?? 0) >= PEER_SERVE_MAX) return false
-    const now = Date.now()
+    const now = time().now()
     const recent = (this.asks.get(peer) ?? []).filter(t => now - t < 60_000)
     if (recent.length >= ASKS_PER_MIN) {
       this.asks.set(peer, recent)
@@ -1195,9 +1197,9 @@ export class P2pManager {
       if (n > 0) this.servingBy.set(peer, n)
       else this.servingBy.delete(peer)
     }
-    let timer = setTimeout(() => conn.close(), ASK_MS)
+    let timer = time().after(ASK_MS, () => conn.close())
     const closed = () => {
-      clearTimeout(timer)
+      timer?.()
       this.pendingTransfers.delete(cancel)
       release()
     }
@@ -1218,13 +1220,13 @@ export class P2pManager {
       if (answered || msg?.type !== 'get' || typeof msg.id !== 'string') return
       answered = true
       if (msg.acks === true) flow.acked = 0
-      clearTimeout(timer)
+      timer?.()
       const id = msg.id
       void this.tokenUser(msg.token, id, from).then(user => {
         if (epoch !== this.epoch) return
         const refuse = (type: 'busy' | 'missing') => {
           void Promise.resolve(conn.send({ type, id })).catch(() => {})
-          timer = setTimeout(() => conn.close(), 1000)
+          timer = time().after(1000, () => conn.close())
         }
         // A file served through a chosen relay only goes to a connection answered on that plan.
         const planned = this.file(id)?.relay === undefined || offer.pinned === id
@@ -1265,9 +1267,9 @@ export class P2pManager {
       if (epoch === this.epoch) await conn.send({ type: 'file', id, name: f.name, mime, data })
       return
     }
-    const deadline = Date.now() + this.deadlineMs(blob.size)
-    const cutoff = setTimeout(() => conn.close(), deadline - Date.now())
-    const cancel = () => clearTimeout(cutoff)
+    const deadline = time().now() + this.deadlineMs(blob.size)
+    const cutoff = time().after(deadline - time().now(), () => conn.close())
+    const cancel = () => cutoff()
     this.pendingTransfers.add(cancel)
     try {
       await conn.send({ type: 'meta', id, mime, size: blob.size })
@@ -1291,16 +1293,16 @@ export class P2pManager {
   // Returns false on a STALL_MS stall, a passed deadline or a closed connection.
   private async drained(conn: DataConnection, deadline: number, unacked: () => number) {
     let last = [buffered(conn), unacked()]
-    let moved = Date.now()
+    let moved = time().now()
     while (conn.open && (last[0] > BUFFERED_MAX || last[1] > ACK_WINDOW)) {
-      const now = Date.now()
+      const now = time().now()
       if (now - moved > this.stallMs || now > deadline) return false
       await pause(20)
       const left = [buffered(conn), unacked()]
-      if (left[0] < last[0] || left[1] < last[1]) moved = Date.now()
+      if (left[0] < last[0] || left[1] < last[1]) moved = time().now()
       last = left
     }
-    return conn.open && Date.now() <= deadline
+    return conn.open && time().now() <= deadline
   }
 
   // Kept downloads by copy key. Entries from before copies were matched on their hoster and
@@ -1444,11 +1446,11 @@ export class P2pManager {
       let stored = 0
       // Set once the file is complete: settles after the writer finished (and the copy was kept).
       let ending: Promise<unknown> | null = null
-      let timer: ReturnType<typeof setTimeout> | null = null
+      let timer: Cancel | null = null
       const finish = (err: Error | null, out?: Download) => {
         if (state === 'done') return
         state = 'done'
-        if (timer) clearTimeout(timer)
+        timer?.()
         timer = null
         signal?.removeEventListener('abort', canceled)
         this.pendingTransfers.delete(canceled)
@@ -1467,12 +1469,12 @@ export class P2pManager {
       this.pendingTransfers.add(canceled)
       signal?.addEventListener('abort', canceled)
       const idle = () => {
-        if (timer) clearTimeout(timer)
-        timer = setTimeout(
+        timer?.()
+        timer = time().after(
+          opened || plan.declared.length === 0 ? IDLE_MS : CONSENT_WAIT_MS,
           () => {
             if (state === 'open') finish(lost('P2P download timed out'))
-          },
-          opened || plan.declared.length === 0 ? IDLE_MS : CONSENT_WAIT_MS
+          }
         )
       }
       const take = (bytes: Uint8Array) => {
@@ -1500,7 +1502,7 @@ export class P2pManager {
       }
       const end = () => {
         state = 'ending'
-        if (timer) clearTimeout(timer)
+        timer?.()
         const done = chain.then(async () => {
           if (expect !== null && sha.hex() !== expect) throw new Error(MISMATCH)
           const type = safeType(head.subarray(0, headLen), opts.audio === true)
@@ -1515,7 +1517,7 @@ export class P2pManager {
             size: got,
             type,
             verified,
-            at: Date.now(),
+            at: time().now(),
           })
           return { blob, type, verified }
         })
@@ -1775,18 +1777,18 @@ export class P2pManager {
   // The user accepted a P2P call: until the server names the caller, a connection from it may
   // already arrive. Those are held for a moment and checked once the call is bound.
   expectCall() {
-    if (this.awaiting) clearTimeout(this.awaiting)
-    this.awaiting = setTimeout(() => {
+    this.awaiting?.()
+    this.awaiting = time().after(HOLD_MS, () => {
       this.awaiting = null
       if (this.binding === null) this.dropHeld()
-    }, HOLD_MS)
+    })
   }
 
   // Binds the call the server set up. False when it was already bound to this call.
   bind(b: CallBinding): boolean {
     if (!this.local || this.binding?.callId === b.callId) return false
     this.binding = { ...b }
-    if (this.awaiting) clearTimeout(this.awaiting)
+    this.awaiting?.()
     this.awaiting = null
     const media = this.heldMedia
     const control = this.heldControl
@@ -1929,7 +1931,7 @@ export class P2pManager {
     this.gen += 1
     this.binding = null
     this.callIce = null
-    if (this.awaiting) clearTimeout(this.awaiting)
+    this.awaiting?.()
     this.awaiting = null
     this.dropHeld()
     this.remoteLegacy = false

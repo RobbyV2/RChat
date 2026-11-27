@@ -30,6 +30,7 @@ import {
   type Summary,
 } from '../transfer'
 import type { IdentityScope, P2pParts } from './scope'
+import { time } from '../../platform/time'
 
 export interface Unlocked {
   dump: Dump
@@ -150,12 +151,12 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
       const k = kdf ?? defaultKdf(state.identityLimits(username).transfer)
       const out = await withDb(async s =>
         files
-          ? exportP2pWithFiles(s.db, pass, k, Date.now(), watch)
-          : { section: await exportP2p(s.db, pass, k, Date.now(), watch), files: null }
+          ? exportP2pWithFiles(s.db, pass, k, time().now(), watch)
+          : { section: await exportP2p(s.db, pass, k, time().now(), watch), files: null }
       )
       op.check()
       if (watch?.signal?.aborted) throw new Cancelled()
-      const at = Date.now()
+      const at = time().now()
       const n = state.node
       if (n && !n.moved) await n.markExported(at)
       else

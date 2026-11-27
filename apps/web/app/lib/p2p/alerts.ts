@@ -14,6 +14,7 @@ import type { PingKind } from './dag'
 import type { Arrival } from './dm'
 import type { MsgContent } from './content'
 import type { ServerView } from './server'
+import { time } from '../platform/time'
 
 // A P2P notification override as the settings list names it, by its key: `room/ch` is a
 // channel, a server's room a server, anything else a conversation.
@@ -138,14 +139,14 @@ export const serverPings = (v: Chans, prefs: NotifyPrefs) =>
   )
 
 // Unread channels of a server that show it (the server and the channel not muted).
-export const unreadChannels = (v: Chans, prefs: NotifyPrefs, now = Date.now()) =>
+export const unreadChannels = (v: Chans, prefs: NotifyPrefs, now = time().now()) =>
   mutedOf(prefs, { kind: 'p2ps', room: v.id }, now)
     ? 0
     : liveChans(v).filter(
         ([ch, c]) => c.unread > 0 && !mutedOf(prefs, { kind: 'p2pc', room: v.id, ch }, now)
       ).length
 
-export const serverUnread = (v: Chans, prefs: NotifyPrefs, now = Date.now()) =>
+export const serverUnread = (v: Chans, prefs: NotifyPrefs, now = time().now()) =>
   unreadChannels(v, prefs, now) > 0
 
 // Whether listed conversations have unread messages that show it (not muted).
@@ -153,7 +154,7 @@ export const dmUnread = (
   rooms: Record<string, Counted>,
   prefs: NotifyPrefs,
   listed: ReadonlySet<string>,
-  now = Date.now()
+  now = time().now()
 ) =>
   listedRooms(rooms, listed).some(
     r => r.unread > 0 && !mutedOf(prefs, { kind: 'p2p', room: r.id }, now)

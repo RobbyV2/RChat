@@ -6,6 +6,8 @@ import type { P2pState } from './app'
 import { type P2pApp } from './app/runtime'
 import { displayName } from './contacts'
 import type { P2pMessage } from './dm'
+import { time } from '../platform/time'
+import { sleep, type Cancel } from '../clock'
 
 // P2P conversations and server channels in the palette's index: messages as this browser loads
 // them, and in "Full" mode the newest stored page of each conversation and channel. Documents
@@ -171,7 +173,7 @@ export const placesOf = (st: Pick<P2pState, 'rooms' | 'servers' | 'contacts'>) =
   return out
 }
 
-const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
+const wait = (ms: number) => sleep(time(), ms)
 
 // Places whose stored content changed (messages, edits, deletions, channels, membership): their
 // newest event moved. Typing, presence and delivery don't move it.
@@ -218,7 +220,7 @@ export const startP2pIndex = (
   let seen: readonly P2pMessage[] | null = null
   let filled = new Set<string>()
   const dirty = new Set<string>()
-  let timer: ReturnType<typeof setTimeout> | null = null
+  let timer: Cancel | null = null
 
   const indexChat = (st: P2pState) => {
     const chat = st.chat
@@ -328,7 +330,7 @@ export const startP2pIndex = (
     }
     for (const room of changedRooms(prev, st)) dirty.add(room)
     if (dirty.size && !timer)
-      timer = setTimeout(refresh, refreshMs ?? p2p.limits().misc.paletteRefreshMs)
+      timer = time().after(refreshMs ?? p2p.limits().misc.paletteRefreshMs, refresh)
     if (st.chat !== prev.chat) indexChat(st)
     if (st.rooms !== prev.rooms || st.servers !== prev.servers || st.contacts !== prev.contacts)
       backfill()
@@ -348,7 +350,7 @@ export const startP2pIndex = (
     if (stopped) return
     stopped = true
     reset()
-    if (timer) clearTimeout(timer)
+    timer?.()
     offIndex()
     offP2p()
     offSource()

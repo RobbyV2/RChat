@@ -25,6 +25,8 @@ import { channelReadSkips, threadsSig } from './servers'
 import { typingResendMs } from '../sync'
 import type { RoomSummary, P2pChat } from './store'
 import type { IdentityScope, P2pParts } from './scope'
+import { time } from '../../platform/time'
+import type { Cancel } from '../../clock'
 
 export function createDmsPart(
   parts: Pick<P2pParts, 'store' | 'servers' | 'calls' | 'account' | 'attachments'>,
@@ -199,7 +201,7 @@ export function createDmsPart(
     if (st.thread?.room === room) await parts.servers.loadThread(true)
   }
 
-  const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const timers = new Map<string, Cancel>()
 
   const loadPinList = async (room: string) => {
     const current = currentSession()
@@ -249,11 +251,11 @@ export function createDmsPart(
         visible
       : st.home && st.chat?.room === a.room && p2pHost.following(chatScope(a.room)) && visible
     if (watched) {
-      if (a.thread) setTimeout(() => void parts.servers.p2pThread.markRead(), 0)
+      if (a.thread) time().after(0, () => void parts.servers.p2pThread.markRead())
       else void state.dms?.markRead(a.room)
       return
     }
-    const rule = resolveNotify(p2pHost.prefs(), { kind: 'p2p', room: a.room }, Date.now())
+    const rule = resolveNotify(p2pHost.prefs(), { kind: 'p2p', room: a.room }, time().now())
     const current = currentSession()
     const alert = p2pAlert(a, rule, p2pUser(a.peer), () => {
       if (!current()) return
@@ -790,7 +792,7 @@ export function createDmsPart(
 
   scope.onReset(() => {
     ++jumpRevision
-    for (const timer of timers.values()) clearTimeout(timer)
+    for (const timer of timers.values()) timer?.()
     timers.clear()
     readChecked.clear()
   })

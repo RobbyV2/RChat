@@ -19,6 +19,8 @@ import {
   type PingRec,
   type PingWorld,
 } from './inbox'
+import { time } from '../platform/time'
+import type { Cancel } from '../clock'
 
 export const worldOf = (st: P2pState, readSeq: ReadonlyMap<string, number>): PingWorld => ({
   readSeq,
@@ -154,7 +156,7 @@ export const startP2pPings = (account: AccountSession, app: P2pApp, delay?: numb
   let checked: Checked = new Map()
   let mark = account.lifetime.sessionMark()
   let run = 0
-  let timer: ReturnType<typeof setTimeout> | null = null
+  let timer: Cancel | null = null
   const recount = () => {
     timer = null
     const mine = ++run
@@ -178,14 +180,14 @@ export const startP2pPings = (account: AccountSession, app: P2pApp, delay?: numb
   }
   const off = useP2p.subscribe((st, prev) => {
     if (!timer && pingInputsChanged(st, prev))
-      timer = setTimeout(recount, delay ?? p2p.limits().inbox.recountMs)
+      timer = time().after(delay ?? p2p.limits().inbox.recountMs, recount)
   })
   recount()
   return () => {
     if (stopped) return
     stopped = true
     off()
-    if (timer) clearTimeout(timer)
+    timer?.()
     run += 1
     listed.setState({ by: new Map() })
   }

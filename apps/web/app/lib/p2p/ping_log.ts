@@ -16,6 +16,8 @@ import {
   type PingText,
 } from './inbox'
 import { LOCAL } from './limits'
+import { time } from '../platform/time'
+import type { Cancel } from '../clock'
 
 // The ping a counted arrival leaves in the log.
 export const pingOf = (
@@ -100,7 +102,7 @@ export interface PingLogDeps {
 // read-modify-write of the list in one transaction, one after the other.
 export class PingLog {
   private batch: PingRec[] = []
-  private timer: ReturnType<typeof setTimeout> | null = null
+  private timer: Cancel | null = null
   private writes: Promise<unknown> = Promise.resolve()
 
   readonly limits: InboxLimits
@@ -117,23 +119,23 @@ export class PingLog {
     thread: string | null = null
   ) {
     this.batch.push(pingOf(room, ch, kind, rec, thread))
-    if (!this.timer) this.timer = setTimeout(() => void this.flush(), this.limits.pingBatchMs)
+    if (!this.timer) this.timer = time().after(this.limits.pingBatchMs, () => void this.flush())
   }
 
   // Writes the pings noted so far; `true` once they are stored.
   flush(): Promise<boolean> {
-    if (this.timer) clearTimeout(this.timer)
+    this.timer?.()
     this.timer = null
     const add = this.batch
     this.batch = []
-    const now = this.deps.now ?? Date.now
+    const now = this.deps.now ?? (() => time().now())
     return add.length
       ? this.write(list => addPings(list, add, now(), this.limits))
       : Promise.resolve(true)
   }
 
   stop() {
-    if (this.timer) clearTimeout(this.timer)
+    this.timer?.()
     this.timer = null
     this.batch = []
   }

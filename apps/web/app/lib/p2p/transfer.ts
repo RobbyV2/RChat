@@ -73,6 +73,7 @@ import { BLOCK, blobRootOf, blockCount, digest } from './hashing'
 import { LOCAL, type Local } from './limits'
 import { NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
+import { time } from '../platform/time'
 
 // Moving P2P to another device: every store except the excluded ones is dumped
 // as JSON lines, deflated, and sealed with AES-256-GCM under a key from Argon2id over a
@@ -152,11 +153,11 @@ export const whileSlow = async <T>(
   late: (on: boolean) => void,
   after = SLOW_AFTER
 ): Promise<T> => {
-  const timer = setTimeout(() => late(true), after)
+  const timer = time().after(after, () => late(true))
   try {
     return await work
   } finally {
-    clearTimeout(timer)
+    timer()
     late(false)
   }
 }
@@ -551,7 +552,7 @@ const HEADER = 'p2p-dump'
 
 export const dumpBytes = async (
   db: P2pDatabase,
-  now = Date.now(),
+  now = time().now(),
   opts: { id?: string } = {}
 ): Promise<Uint8Array> => {
   const stores = await readStores(db)
@@ -844,7 +845,7 @@ export const exportP2p = async (
   db: P2pDatabase,
   pass: string,
   kdf: Kdf = defaultKdf(),
-  now = Date.now(),
+  now = time().now(),
   watch?: KdfWatch
 ) => seal(await dumpBytes(db, now), pass, kdf, watch)
 
@@ -853,7 +854,7 @@ export const exportP2pWithFiles = async (
   db: P2pDatabase,
   pass: string,
   kdf: Kdf = defaultKdf(),
-  now = Date.now(),
+  now = time().now(),
   watch?: KdfWatch
 ): Promise<{ section: P2pSection; files: FilesKey }> => {
   const id = b64u(randomBytes(16))
@@ -1242,7 +1243,7 @@ export const applyImport = async (
     check?: () => void
   } = {}
 ): Promise<Imported> => {
-  const now = opts.now ?? Date.now()
+  const now = opts.now ?? time().now()
   const lim = opts.lim ?? LOCAL
   const names = storeNames(db)
   const tx = db.transaction(names as StoreName[], 'readwrite') as unknown as LooseTx

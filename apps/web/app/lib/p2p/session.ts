@@ -1,3 +1,4 @@
+import type { Cancel } from '../clock'
 import { b64u, fromB64u } from './canonical'
 import {
   chunk,
@@ -17,6 +18,7 @@ import {
 } from './frames'
 import { Initiator, Responder, type Established, type Me, type Remote } from './handshake'
 import { LOCAL, type Local } from './limits'
+import { time } from '../platform/time'
 
 // One authenticated, encrypted session with a remote device over a reliable binary pipe:
 // handshake, then `hello` both ways, then typed messages. Later tasks register handlers for
@@ -42,9 +44,9 @@ export interface Clock {
 }
 
 export const realClock: Clock = {
-  now: () => Date.now(),
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: h => clearTimeout(h as ReturnType<typeof setTimeout>),
+  now: () => time().now(),
+  set: (fn, ms) => time().after(ms, fn),
+  clear: h => (h as Cancel)(),
 }
 
 // limits.ts `session`.

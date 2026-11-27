@@ -76,6 +76,8 @@ import * as roles from './roles'
 import * as modlog from './modlog'
 import * as categories from './categories'
 import * as moderation from './moderation'
+import { time } from '../../platform/time'
+import { sleep } from '../../clock'
 
 export {
   SERVER,
@@ -386,7 +388,7 @@ export class Servers {
           if (generation === this.generation) this.indexed = true
           return
         }
-        await new Promise(r => setTimeout(r, 0))
+        await sleep(time(), 0)
       }
     } catch {
       // Storage went away.

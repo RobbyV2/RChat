@@ -9,6 +9,8 @@ import { kindOf, NEUTRAL_TYPE } from '../../sniff'
 import { sharing } from '../../platform'
 import type { FileView, PendingFile } from './store'
 import type { IdentityScope, P2pParts } from './scope'
+import { time } from '../../platform/time'
+import type { Cancel } from '../../clock'
 
 // The attachments of a message: as many thumbnails as fit, the last ones dropped first.
 export const fitAttachments = (body: string, list: Attachment[]): Attachment[] | null =>
@@ -36,7 +38,7 @@ export function createAttachmentsPart(
 
   const sizes = new Map<string, number>()
 
-  const fileTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const fileTimers = new Map<string, Cancel>()
 
   const recordOf = (h: string) => {
     const s = parts.dms.dbNow()
@@ -72,10 +74,10 @@ export function createAttachmentsPart(
     if (fileTimers.has(h)) return
     fileTimers.set(
       h,
-      setTimeout(() => {
+      time().after(100, () => {
         fileTimers.delete(h)
         void refreshFile(h)
-      }, 100)
+      })
     )
   }
 
@@ -296,7 +298,7 @@ export function createAttachmentsPart(
   }
 
   scope.onReset(() => {
-    for (const timer of fileTimers.values()) clearTimeout(timer)
+    for (const timer of fileTimers.values()) timer?.()
     fileTimers.clear()
     sizes.clear()
     big.clear()

@@ -30,6 +30,8 @@ import { membershipOf, roomColor, type HistoryVis } from '../state'
 import { p2pAbout, type AboutChange } from '../../server_about'
 import type { P2pThread } from './store'
 import type { IdentityScope, P2pParts } from './scope'
+import { time } from '../../platform/time'
+import type { Cancel } from '../../clock'
 
 // Messages stored here that match (search panel). `from` is matched against member names.
 export interface P2pSearchArgs {
@@ -203,16 +205,16 @@ export function createServersPart(
     if (now.pins?.room === room) await parts.dms.loadPinList(room)
   }
 
-  const serverTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const serverTimers = new Map<string, Cancel>()
 
   const scheduleServer = (room: string) => {
     if (serverTimers.has(room)) return
     serverTimers.set(
       room,
-      setTimeout(() => {
+      time().after(30, () => {
         serverTimers.delete(room)
         void refreshServer(room)
-      }, 30)
+      })
     )
   }
 
@@ -535,7 +537,7 @@ export function createServersPart(
     const left = await state.servers?.slowLeft(room, ch).catch(() => 0)
     if (left === undefined) return
     const key = chatKey({ room, ch })
-    const until = left > 0 ? Date.now() + left : 0
+    const until = left > 0 ? time().now() + left : 0
     if ((useP2p.getState().slowUntil[key] ?? 0) === until) return
     useP2p.setState(st => ({ slowUntil: { ...st.slowUntil, [key]: until } }))
   }
@@ -595,11 +597,11 @@ export function createServersPart(
         p2pHost.following(chatScope(a.room, a.ch)) &&
         visible
     if (watched) {
-      if (a.thread) setTimeout(() => void p2pThread.markRead(), 0)
+      if (a.thread) time().after(0, () => void p2pThread.markRead())
       else void state.servers?.markRead(a.room, a.ch)
       return
     }
-    const rule = resolveNotify(p2pHost.prefs(), channelScope(a.room, a.ch), Date.now())
+    const rule = resolveNotify(p2pHost.prefs(), channelScope(a.room, a.ch), time().now())
     if (rule.muted || rule.level === 'nothing') return
     if (!a.ping && rule.level !== 'all') return
     const v = st.servers[a.room]
@@ -1036,10 +1038,10 @@ export function createServersPart(
   )
 
   const banExpiry = new BanExpiry({
-    now: Date.now,
+    now: () => time().now(),
     random: Math.random,
-    setTimer: (fn, ms) => setTimeout(fn, ms),
-    clearTimer: t => clearTimeout(t as ReturnType<typeof setTimeout>),
+    setTimer: (fn, ms) => time().after(ms, fn),
+    clearTimer: t => (t as Cancel)(),
     view: room => useP2p.getState().servers[room] ?? null,
     unban: (room, ik) => void state.servers?.unban(room, ik).catch(() => {}),
   })
@@ -1059,7 +1061,7 @@ export function createServersPart(
   scope.onReset(() => {
     ++searchGen
     searchAccess = null
-    for (const timer of serverTimers.values()) clearTimeout(timer)
+    for (const timer of serverTimers.values()) timer?.()
     serverTimers.clear()
     banExpiry.stop()
     lastChannel.clear()

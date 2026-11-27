@@ -7,6 +7,7 @@ import { endWatch, TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../..
 import { Calls, type CallView } from '../calls'
 import type { P2pState } from './store'
 import type { IdentityScope, P2pParts } from './scope'
+import { time } from '../../platform/time'
 
 export const CALL_ELSEWHERE = 'Call in another tab.'
 
@@ -61,7 +62,7 @@ export function createCallsPart(
   // to the conversation itself; otherwise the call card, and a desktop notification when the tab
   // is in the background.
   const ringing = (v: CallView) => {
-    const rule = resolveNotify(p2pHost.prefs(), { kind: 'p2p', room: v.room }, Date.now())
+    const rule = resolveNotify(p2pHost.prefs(), { kind: 'p2p', room: v.room }, time().now())
     const quiet = rule.muted || rule.level === 'nothing'
     useP2p.setState({ callQuiet: quiet })
     if (quiet || typeof document === 'undefined' || document.visibilityState === 'visible') return
@@ -109,7 +110,7 @@ export function createCallsPart(
   // When our timeout in `room` ends (ms), while it runs.
   const timedOutEnds = (room: string | undefined) => {
     const until = room === undefined ? undefined : useP2p.getState().servers[room]?.timedOutUntil
-    return until !== undefined && until > Date.now() ? until : null
+    return until !== undefined && until > time().now() ? until : null
   }
 
   // Voice channels of P2P servers: joining leaves any other call or voice channel first.
@@ -249,10 +250,10 @@ export function createCallsPart(
     if (parts.dms.timers.has(room)) return
     parts.dms.timers.set(
       room,
-      setTimeout(() => {
+      time().after(30, () => {
         parts.dms.timers.delete(room)
         void parts.dms.refreshRoom(room)
-      }, 30)
+      })
     )
   }
 

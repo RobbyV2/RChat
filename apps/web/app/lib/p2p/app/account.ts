@@ -27,6 +27,8 @@ import type { IdentityScope, P2pParts } from './scope'
 import { loaded } from '../../perms'
 import { loadPermissionRules } from '../../perms_load'
 import { unavailable } from '../../capabilities'
+import { time } from '../../platform/time'
+import { sleep } from '../../clock'
 
 const RULES_UNAVAILABLE = unavailable(
   "P2P couldn't load its permission rules. Reload to try again."
@@ -42,7 +44,7 @@ const RETIRE_REACH_MS = 5_000
 const RETIRE_RETRY_MS = 5_000
 const RETIRE_POLL_MS = 100
 
-const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+const pause = (ms: number) => sleep(time(), ms)
 
 export function createAccountPart(
   parts: Pick<
@@ -742,9 +744,9 @@ export function createAccountPart(
     // link to a member, told by the servers' changes. False when it is not online here within
     // `ms`.
     async runHere(username: string, ms = RETIRE_START_MS): Promise<boolean> {
-      const until = Date.now() + ms
+      const until = time().now() + ms
       while (!onlineHere()) {
-        if (!scope.current(username) || !readOn(username) || Date.now() >= until) return false
+        if (!scope.current(username) || !readOn(username) || time().now() >= until) return false
         const l = state.leader
         if (!l) await p2pAccount(username)
         else if (l.state === 'waiting') l.takeOver()
@@ -757,7 +759,7 @@ export function createAccountPart(
         const done = () => {
           off()
           stopped()
-          clearTimeout(bound)
+          bound()
           resolve()
         }
         const check = () => {
@@ -765,9 +767,9 @@ export function createAccountPart(
         }
         const off = sv.onChange(check)
         const stopped = n.onChange(check)
-        const bound = setTimeout(
-          done,
-          Math.max(0, Math.min(until, Date.now() + RETIRE_REACH_MS) - Date.now())
+        const bound = time().after(
+          Math.max(0, Math.min(until, time().now() + RETIRE_REACH_MS) - time().now()),
+          done
         )
         if (!unreached()) done()
       })
@@ -781,7 +783,7 @@ export function createAccountPart(
     async retire(username = useP2p.getState().account): Promise<boolean> {
       const sv = state.servers
       if (!username || !scope.current(username) || !sv || !onlineHere()) return false
-      const until = Date.now() + RETIRE_RETRY_MS
+      const until = time().now() + RETIRE_RETRY_MS
       const leaves: Outgoing[] = []
       const pass = async () => {
         const done = await sv.retire().catch(() => null)
@@ -789,7 +791,7 @@ export function createAccountPart(
         return done?.kept ?? null
       }
       let kept = await pass()
-      while (kept?.length !== 0 && state.servers === sv && Date.now() < until) {
+      while (kept?.length !== 0 && state.servers === sv && time().now() < until) {
         await pause(RETIRE_POLL_MS)
         kept = await pass()
       }

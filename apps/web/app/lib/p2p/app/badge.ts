@@ -3,6 +3,8 @@ import { verifyBinding } from '../../identity'
 import type { OwnBadge } from '../db'
 import type { BadgeSlot } from '../badge'
 import type { IdentityScope, P2pParts } from './scope'
+import { time } from '../../platform/time'
+import type { Cancel } from '../../clock'
 
 export function createBadgePart(parts: Pick<P2pParts, 'store' | 'calls'>, scope: IdentityScope) {
   const state = parts.store
@@ -36,32 +38,31 @@ export function createBadgePart(parts: Pick<P2pParts, 'store' | 'calls'>, scope:
     return username ? `${username}@${instanceHost()}` : null
   }
 
-  let badgeTimer: ReturnType<typeof setTimeout> | null = null
+  let badgeTimer: Cancel | null = null
 
-  let expiryTimer: ReturnType<typeof setTimeout> | null = null
+  let expiryTimer: Cancel | null = null
 
   // The badges into the view, and again when the next one expires ("Confirmation expired").
   const mirrorBadges = (all: Record<string, BadgeSlot>) => {
     useP2p.setState({ badges: all })
-    if (expiryTimer !== null) clearTimeout(expiryTimer)
+    expiryTimer?.()
     expiryTimer = null
-    const now = Date.now()
+    const now = time().now()
     const next = Math.min(
       ...Object.values(all).flatMap(b => (b.ok && b.ok.exp * 1000 > now ? [b.ok.exp * 1000] : []))
     )
     if (Number.isFinite(next))
-      expiryTimer = setTimeout(
-        () => mirrorBadges({ ...useP2p.getState().badges }),
-        Math.min(next - now + 1000, 2 ** 31 - 1)
+      expiryTimer = time().after(Math.min(next - now + 1000, 2 ** 31 - 1), () =>
+        mirrorBadges({ ...useP2p.getState().badges })
       )
   }
 
   const scheduleBadges = () => {
     if (badgeTimer !== null) return
-    badgeTimer = setTimeout(() => {
+    badgeTimer = time().after(30, () => {
       badgeTimer = null
       if (state.badges) mirrorBadges(state.badges.all())
-    }, 30)
+    })
   }
 
   // Our own badge changed here: tabs that only read hear it (they re-read it on `badges`).
@@ -104,8 +105,8 @@ export function createBadgePart(parts: Pick<P2pParts, 'store' | 'calls'>, scope:
   }
 
   scope.onReset(() => {
-    if (badgeTimer !== null) clearTimeout(badgeTimer)
-    if (expiryTimer !== null) clearTimeout(expiryTimer)
+    badgeTimer?.()
+    expiryTimer?.()
     badgeTimer = null
     expiryTimer = null
   })

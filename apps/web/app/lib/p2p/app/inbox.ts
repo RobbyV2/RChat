@@ -10,6 +10,7 @@ import type { PingRec, PingText } from '../inbox'
 import { pingAlive, pingText, readPings } from '../ping_log'
 import type { P2pState } from './store'
 import type { P2pParts } from './scope'
+import { time } from '../../platform/time'
 
 export function createInboxPart(
   parts: Pick<P2pParts, 'viewing' | 'store' | 'dms' | 'calls' | 'servers' | 'account'>
@@ -62,7 +63,7 @@ export function createInboxPart(
   // What "Mark all as read" adds for P2P: conversations and joined servers that show unread, as
   // Home's Unread card lists them.
   const p2pMarkAll = (): MarkAllExtra => {
-    const u = p2pUnread(useP2p.getState(), p2pHost.prefs(), Date.now())
+    const u = p2pUnread(useP2p.getState(), p2pHost.prefs(), time().now())
     return {
       pending: u.dms.unread || u.dms.pings > 0 || u.servers.length > 0,
       mark: () => {
@@ -98,14 +99,14 @@ export function createInboxPart(
       const done = (st: P2pState) => st.chat?.room !== room || st.chat.ch !== ch || !st.chat.loading
       if (done(useP2p.getState())) return resolve()
       const stop = () => {
-        clearTimeout(timer)
+        timer()
         off()
         resolve()
       }
       const off = useP2p.subscribe(st => {
         if (done(st)) stop()
       })
-      const timer = setTimeout(stop, 5000)
+      const timer = time().after(5000, stop)
     })
 
   // The newest page of a conversation or channel as stored here (the palette's index).

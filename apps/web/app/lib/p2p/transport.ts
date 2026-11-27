@@ -9,6 +9,7 @@ import { RateWindow } from './rate'
 import { TransportError, type Listener, type OfferGuard, type Transport } from './node'
 import type { Pipe } from './session'
 import { logError } from '../log'
+import { time } from '../platform/time'
 
 // The PeerJS side of P2P messaging: our own Peer on the instance's PeerServer (never the one P2P
 // files use), configured only from the shared ICE seam. Every connection is a reliable binary
@@ -51,7 +52,7 @@ export class OfferGate {
   constructor(
     private book: RelayBook,
     private guard: () => OfferGuard | null,
-    private now: () => number = () => Date.now(),
+    private now: () => number = () => time().now(),
     private limits: TransportLimits = LOCAL.transport
   ) {
     this.checks = new RateWindow(60_000, limits.checksPerMin)
@@ -108,7 +109,7 @@ const drainOf = (conn: DataConnection, lowMark: number) => () =>
     if (!ch || queuedIn(conn) <= lowMark || ch.readyState !== 'open') return resolve()
     ch.bufferedAmountLowThreshold = lowMark
     const done = () => {
-      clearInterval(poll)
+      poll()
       ch.removeEventListener('bufferedamountlow', check)
       ch.removeEventListener('close', done)
       resolve()
@@ -117,7 +118,7 @@ const drainOf = (conn: DataConnection, lowMark: number) => () =>
       if (queuedIn(conn) <= lowMark || ch.readyState !== 'open') done()
     }
     // PeerJS's own queue drains on a timer, so the event alone isn't enough.
-    const poll = setInterval(check, 50)
+    const poll = time().every(50, check)
     ch.addEventListener('bufferedamountlow', check)
     ch.addEventListener('close', done)
   })
@@ -205,13 +206,13 @@ export class PeerTransport implements Transport {
       refresh()
       this.unwatch = [this.owner.ice.onChange(refresh), this.owner.relays.onChange(refresh)]
       let opened = false
-      const timer = setTimeout(() => {
+      const timer = time().after(this.listenMs, () => {
         this.close(peer)
         reject(new TransportError('timeout'))
-      }, this.listenMs)
+      })
       peer.on('open', () => {
         opened = true
-        clearTimeout(timer)
+        timer?.()
         resolve({ close: () => this.close(peer) })
       })
       peer.on('connection', conn => {
@@ -233,7 +234,7 @@ export class PeerTransport implements Transport {
         const type = (err as { type?: string }).type
         if (type === 'peer-unavailable') return
         if (!opened) {
-          clearTimeout(timer)
+          timer?.()
           this.close(peer)
           reject(
             new TransportError(
@@ -294,7 +295,7 @@ export class PeerTransport implements Transport {
       const finish = (err: TransportError | null) => {
         if (done) return
         done = true
-        clearTimeout(timer)
+        timer?.()
         peer.off('error', onError)
         if (err) {
           conn.close()
@@ -305,7 +306,7 @@ export class PeerTransport implements Transport {
         if (err.type === 'peer-unavailable' && String(err.message).endsWith(to))
           finish(new TransportError('peer-unavailable'))
       }
-      const timer = setTimeout(() => finish(new TransportError('timeout')), this.limits.dialMs)
+      const timer = time().after(this.limits.dialMs, () => finish(new TransportError('timeout')))
       peer.on('error', onError)
       conn.on('open', () => finish(null))
       conn.on('close', () => finish(new TransportError('peer-unavailable')))

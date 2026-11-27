@@ -4,6 +4,7 @@ import { loadPermissionRules } from '../perms_load'
 import { hashBlob } from './hashing'
 import { runKdfJob, type KdfJob } from './kdf_job'
 import { serveAcl, type HostRequest } from './resolve_host'
+import { time } from '../platform/time'
 
 // The P2P worker, off the main thread. One script for every job, so the bundler gives every
 // instance the same bootstrap URL (two worker scripts behind one bootstrap URL can get each
@@ -34,7 +35,7 @@ const opts: Partial<AdmitOpts> = {}
 const hash = ({ id, file }: HashJob) => {
   let last = 0
   hashBlob(file, (done, total) => {
-    const now = Date.now()
+    const now = time().now()
     if (done === total || now - last > 100) {
       last = now
       post({ id, progress: [done, total] })

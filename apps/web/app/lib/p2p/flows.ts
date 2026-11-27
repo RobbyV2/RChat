@@ -1,6 +1,7 @@
 import { EVERYONE, timeoutEnd, timeoutEnds } from './acl/rules'
 import { ROLE_LOOKS, type Summary } from './acl/summary'
 import type { Local } from './limits'
+import { time } from '../platform/time'
 
 // The user-facing flows of P2P servers: their copy, and the pure
 // decisions behind them. server.ts runs the flows; the components show this copy.
@@ -245,7 +246,7 @@ export const effectHolds = (
   me: string,
   s: Summary,
   ts: number,
-  now = Date.now()
+  now = time().now()
 ): boolean => {
   const to = typeof c.to === 'string' ? s.members[c.to] : undefined
   const role = typeof c.role === 'string' ? c.role : ''
