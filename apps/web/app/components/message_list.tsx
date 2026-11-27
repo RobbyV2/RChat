@@ -4,7 +4,7 @@ import type { ReactNode, RefObject } from 'react'
 import { History } from 'lucide-react'
 import type { Messages, MessagesState } from '../lib/place/messages'
 import type { UnreadSummary } from '../lib/unread_banner'
-import { Surface } from './layout'
+import { Row, Surface } from './layout'
 import { LightboxList, type LightboxScope } from './media_lightbox'
 import { MessageListSkeleton } from './skeletons'
 import { textBtn } from './ui'
@@ -104,7 +104,7 @@ export function MessageList({
             {children}
             {!pagesOnSight && newer.more && (
               <Surface data-list-newer pad="lg" tone="plain" radius="none">
-                <div className="flex flex-wrap items-center justify-center gap-2">
+                <Row gap="sm" wrap justify="center">
                   <History size={14} className="text-on-surface-variant" />
                   <span className="text-xs text-on-surface-variant">
                     Newer messages aren&apos;t shown.
@@ -115,7 +115,7 @@ export function MessageList({
                   <button onClick={list.toPresent} className={textBtn}>
                     Jump to present
                   </button>
-                </div>
+                </Row>
               </Surface>
             )}
           </div>
