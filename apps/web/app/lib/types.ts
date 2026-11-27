@@ -517,6 +517,19 @@ export interface MessageWebhook {
   embeds: RichEmbed[]
 }
 
+// A job over the stored messages of a place (`s:<server>`, `d:<dm id>` or `*`): storing its
+// earlier messages encrypted, or its encrypted messages plain again.
+export interface SealJob {
+  id: number
+  place: string
+  direction: 'seal' | 'unseal'
+  upto: number
+  done: number
+  state: 'running' | 'done' | 'failed'
+  created_at: number
+  finished_at: number | null
+}
+
 // A background bulk delete (`all`), see `POST /api/messages/bulk_delete`.
 export interface BulkJob {
   id: number
@@ -1226,6 +1239,7 @@ export type WsEvent =
   | { type: 'scheduled_updated'; username: string; scheduled: ScheduledMessage }
   | { type: 'scheduled_removed'; username: string; id: number; sent_message_id: number | null }
   | { type: 'staff_view_opened'; username: string; channel_id: number }
+  | { type: 'seal_job_progress'; username: string; job: SealJob }
   | { type: 'poll_voted'; username: string; message_id: number }
   | ({
       type: 'poll_updated'

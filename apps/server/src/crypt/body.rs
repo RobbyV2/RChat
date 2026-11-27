@@ -299,6 +299,19 @@ impl Opener {
             .parts
             .content
     }
+
+    /// The text of the row `id` of `table` from its record, or None when the record does not
+    /// open.
+    pub fn opened_text(
+        &self,
+        table: &str,
+        id: i64,
+        scope: Option<Scope>,
+        body: &[u8],
+    ) -> Option<String> {
+        let opened = self.opened(scope, table, &id.to_string(), Some(body), Parts::default());
+        (!opened.unreadable).then_some(opened.parts.content)
+    }
 }
 
 /// The text of one message row, for a caller that read a single row.

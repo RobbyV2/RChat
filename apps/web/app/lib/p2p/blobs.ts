@@ -129,6 +129,28 @@ export const assemble = async (db: P2pDatabase, h: string): Promise<Blob | null>
   return new Blob(data, { type })
 }
 
+// Stores the blocks of the finished file `h` sealed where they are plain; its own whole copy
+// becomes sealed blocks. Blocks sealed already are left as they are.
+export async function sealStoredFile(store: P2pStore, h: string) {
+  const db = store.db
+  const rec = await db.get('blobs', h)
+  if (!rec?.done) return
+  const count = blockCount(rec.size)
+  for (let i = 0; i < count; i++) {
+    const part = rec.file ? undefined : await db.get('blob_parts', [h, i])
+    if (part?.sealed === true) continue
+    const bytes = await readBlock(db, rec, i)
+    if (!bytes) return
+    await db.put('blob_parts', await storedPart(db, h, i, bytes, true))
+  }
+  if (rec.file)
+    await store.updateBlob(h, cur => {
+      if (!cur) return null
+      const { file: _file, ...rest } = cur
+      return { ...rest, have: count }
+    })
+}
+
 export const readBlock = async (db: P2pDatabase, rec: BlobRecord, i: number) => {
   if (rec.file)
     return new Uint8Array(await rec.file.slice(i * BLOCK, (i + 1) * BLOCK).arrayBuffer())
@@ -1810,25 +1832,9 @@ export class Blobs {
     this.changed(hashed.h)
   }
 
-  // Stores the blocks of the finished file `h` sealed where they are plain; its own whole copy
-  // becomes sealed blocks.
+  // Stores the blocks of the finished file `h` sealed where they are plain (`sealStoredFile`).
   async sealStored(h: string) {
-    const rec = await this.db.get('blobs', h)
-    if (!rec?.done) return
-    const count = blockCount(rec.size)
-    for (let i = 0; i < count; i++) {
-      const part = rec.file ? undefined : await this.db.get('blob_parts', [h, i])
-      if (part?.sealed === true) continue
-      const bytes = await readBlock(this.db, rec, i)
-      if (!bytes) return
-      await this.db.put('blob_parts', await storedPart(this.db, h, i, bytes, true))
-    }
-    if (rec.file)
-      await this.store.updateBlob(h, cur => {
-        if (!cur) return null
-        const { file: _file, ...rest } = cur
-        return { ...rest, have: count }
-      })
+    await sealStoredFile(this.store, h)
     this.changed(h)
   }
 

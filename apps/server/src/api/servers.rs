@@ -3981,6 +3981,11 @@ async fn rename_live(
             .bind(key)
             .execute(&mut **tx)
             .await?;
+        sqlx::query("UPDATE seal_jobs SET place = $1 WHERE place = $2")
+            .bind(format!("s:{new_key}"))
+            .bind(format!("s:{key}"))
+            .execute(&mut **tx)
+            .await?;
     }
     if let Some(hash) = password_hash {
         sqlx::query(

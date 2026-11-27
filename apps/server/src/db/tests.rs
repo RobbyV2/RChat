@@ -9302,3 +9302,39 @@ async fn sealed_uploads_upgrade_preserves_v64_rows() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn seal_jobs_are_added_to_an_old_database() {
+    on_each_database("seal_jobs_upgrade", |url| async move {
+        let db = super::open(Some(&url)).await.unwrap();
+        for sql in [
+            "DROP TABLE seal_jobs",
+            "UPDATE settings SET value='65' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql)
+                .execute(&db)
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM seal_jobs").await,
+                round,
+                "the table is there and keeps its rows"
+            );
+            sqlx::query("INSERT INTO seal_jobs(place, direction, upto_id, created_at) VALUES('*', 'seal', 0, 1)")
+                .execute(&db)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE seal_jobs SET state = 'done' WHERE state = 'running'")
+                .execute(&db)
+                .await
+                .unwrap();
+            close(&db).await;
+        }
+    })
+    .await;
+}

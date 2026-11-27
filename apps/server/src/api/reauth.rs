@@ -134,13 +134,26 @@ impl TryFrom<ReAuthBody> for ReAuth {
 /// What a re-auth confirms. A phrase signature covers its name and its context.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    SetPhrase { key: String },
+    SetPhrase {
+        key: String,
+    },
     RemovePhrase,
-    LinkIdp { provider: String },
+    LinkIdp {
+        provider: String,
+    },
     SetPassword,
-    P2pData { ik: String },
-    StaffView { channel: String },
+    P2pData {
+        ik: String,
+    },
+    StaffView {
+        channel: String,
+    },
     DeleteAccount,
+    /// Encrypting or decrypting the stored messages of a place (`s:<server>`, `d:<dm id>` or
+    /// `*`).
+    SealData {
+        place: String,
+    },
 }
 
 impl Purpose {
@@ -153,6 +166,7 @@ impl Purpose {
             Purpose::P2pData { .. } => "p2p-data",
             Purpose::StaffView { .. } => "staff_view",
             Purpose::DeleteAccount => "delete_account",
+            Purpose::SealData { .. } => "seal-data",
         }
     }
 
@@ -163,6 +177,7 @@ impl Purpose {
             Purpose::LinkIdp { provider } => provider,
             Purpose::P2pData { ik } => ik,
             Purpose::StaffView { channel } => channel,
+            Purpose::SealData { place } => place,
         }
     }
 
@@ -171,6 +186,7 @@ impl Purpose {
             Purpose::SetPhrase { .. }
             | Purpose::RemovePhrase
             | Purpose::P2pData { .. }
+            | Purpose::SealData { .. }
             | Purpose::LinkIdp { .. }
             | Purpose::StaffView { .. }
             | Purpose::DeleteAccount

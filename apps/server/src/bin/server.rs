@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use rust_next::api::admin_cli::{self, UserCommand};
 use rust_next::config::{AppConfig, CliOverrides};
 use rust_next::crypt::cli::{self as keys_cli, KeysCommand};
+use rust_next::db::cli::{self as db_cli, DbCommand};
 use rust_next::run::{self, RunOptions};
 use tracing::info;
 
@@ -30,6 +31,11 @@ enum Command {
         #[command(subcommand)]
         action: KeysCommand,
     },
+    /// Maintain the instance's database.
+    Db {
+        #[command(subcommand)]
+        action: DbCommand,
+    },
 }
 
 #[tokio::main]
@@ -53,6 +59,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Keys { action }) => {
             println!("{}", keys_cli::run(&config, action).await?);
+            return Ok(());
+        }
+        Some(Command::Db { action }) => {
+            println!("{}", db_cli::run(&config, action).await?);
             return Ok(());
         }
         None => {}
@@ -94,6 +104,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use rust_next::crypt::cli::KeysCommand;
+    use rust_next::db::cli::DbCommand;
 
     use super::{Cli, Command};
 
@@ -219,7 +230,10 @@ mod tests {
     fn keys_commands_parse() {
         let action = |args: &[&str]| match parsed(args).map(|cli| cli.command) {
             Ok(Some(Command::Keys { action })) => Some(action),
-            Ok(Some(Command::User { action: _ })) | Ok(None) | Err(_) => None,
+            Ok(Some(Command::User { action: _ }))
+            | Ok(Some(Command::Db { action: _ }))
+            | Ok(None)
+            | Err(_) => None,
         };
         assert_eq!(
             action(&["keys", "new"]),
@@ -269,5 +283,44 @@ mod tests {
         );
         assert_eq!(action(&["keys", "import"]), None, "a file is required");
         assert_eq!(action(&["keys"]), None);
+        assert_eq!(
+            action(&["keys", "unseal"]),
+            Some(KeysCommand::Unseal {
+                server: None,
+                dm: None
+            })
+        );
+        assert_eq!(
+            action(&["keys", "unseal", "--server", "Club"]),
+            Some(KeysCommand::Unseal {
+                server: Some("Club".into()),
+                dm: None
+            })
+        );
+        assert_eq!(
+            action(&["keys", "unseal", "--dm", "7"]),
+            Some(KeysCommand::Unseal {
+                server: None,
+                dm: Some(7)
+            })
+        );
+        assert_eq!(
+            action(&["keys", "unseal", "--server", "Club", "--dm", "7"]),
+            None,
+            "one place at most"
+        );
+    }
+
+    #[test]
+    fn db_commands_parse() {
+        let action = |args: &[&str]| match parsed(args).map(|cli| cli.command) {
+            Ok(Some(Command::Db { action })) => Some(action),
+            Ok(Some(Command::User { action: _ }))
+            | Ok(Some(Command::Keys { action: _ }))
+            | Ok(None)
+            | Err(_) => None,
+        };
+        assert_eq!(action(&["db", "compact"]), Some(DbCommand::Compact));
+        assert_eq!(action(&["db"]), None);
     }
 }

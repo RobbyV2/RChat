@@ -2661,6 +2661,8 @@ fn api_routes(
         .route("/dms/{id}/threads", get(threads::dm_threads))
         .route("/dms/{id}/close", post(dms::close_dm))
         .route("/dms/{id}/seal", put(seal::put_dm_seal))
+        .route("/seal_jobs", get(seal::list_jobs).post(seal::start_job))
+        .route("/seal_jobs/{id}", get(seal::get_job))
         .route("/blocks", get(blocks::list_blocks).post(blocks::block_user))
         .route("/blocks/usernames", get(blocks::blocked_usernames))
         .route("/blocks/{username}", delete(blocks::unblock_user))

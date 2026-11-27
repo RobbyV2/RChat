@@ -67,6 +67,7 @@ export const IGNORED = [
   'scheduled_removed',
   'scheduled_updated',
   'staff_view_opened',
+  'seal_job_progress',
 ] as const satisfies readonly WsEvent['type'][]
 type Ignored = (typeof IGNORED)[number]
 

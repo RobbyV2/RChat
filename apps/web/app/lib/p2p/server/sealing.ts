@@ -1,6 +1,7 @@
 import { CANT_TEXT } from '../flows'
 import { can, P } from '../state'
 import { storeRegister } from '../../sealing'
+import { followEarlier } from '../seal_earlier'
 import type { ServerCtx } from './context'
 import { ServerError } from './types'
 
@@ -8,8 +9,9 @@ import { ServerError } from './types'
 // the moment a change is admitted here, every event stored after it takes the new form. A device
 // that can't keep a device key stores plain.
 export async function followStore(cx: ServerCtx, room: string) {
-  const { on } = storeRegister(cx.sumOf(room).store)
-  await cx.deps.store.sealing.setRoom(room, on).catch(() => {})
+  const store = storeRegister(cx.sumOf(room).store)
+  await cx.deps.store.sealing.setRoom(room, store.on).catch(() => {})
+  followEarlier(cx.deps.store, room, store, cx.local.search)
 }
 
 // Turns "Encrypt stored messages" of a room on or off (`store`). An owner or a member with

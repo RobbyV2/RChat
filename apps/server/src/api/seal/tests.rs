@@ -726,9 +726,13 @@ async fn the_sweep_seals_what_a_sealed_place_got_stored_plain() {
         let shown = read(stray).await;
         assert_eq!(shown.content, "written plain by another copy");
         assert_eq!(super::sweep(db).await.expect("again"), 0);
-        assert!(super::sweep::seal_row(db, young).await.expect("one row"));
         assert!(
-            !super::sweep::seal_row(db, earlier)
+            super::sweep::seal_row(db, young, false)
+                .await
+                .expect("one row")
+        );
+        assert!(
+            !super::sweep::seal_row(db, earlier, false)
                 .await
                 .expect("before the switch")
         );

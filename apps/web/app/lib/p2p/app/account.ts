@@ -7,6 +7,7 @@ import { probeAddress } from '../../ice'
 import { keepAsker } from '../keep'
 import { dbName, P2pStore, removeP2pDb } from '../db'
 import { dropSealed } from '../sealed_drop'
+import { resumeEarlier } from '../seal_earlier'
 import { followSiteSeal } from '../sealed_db'
 import { BadgeKeeper, Badges, peersCanCheck, readSlots } from '../badge'
 import { fingerprint, keyId } from '../keys'
@@ -523,6 +524,7 @@ export function createAccountPart(
         // Without the device key that sealed them, those rooms are taken from peers again.
         if (await s.sealing.lost()) await dropSealed(s.db)
         await followSite(s)
+        void resumeEarlier(s, state.identityLimits(username).search)
         const stopSite = owner.store.subscribe((now, was) => {
           if (s.closed) return stopSite()
           if (now.settings.encryption_required !== was.settings.encryption_required)

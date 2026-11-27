@@ -732,3 +732,90 @@ async fn pages_of_plain_and_encrypted_matches_list_each_match_once() {
         temp.done(state).await;
     }
 }
+
+/// Terms of plain messages that are keyed terms.
+const KEYED_OF_PLAIN: &str = "SELECT COUNT(*) FROM search_postings p JOIN messages m ON m.id = p.id WHERE m.body IS NULL AND (p.term GLOB 'k[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]' OR p.term GLOB 'k#[0-9a-f][0-9a-f][0-9a-f]')";
+
+async fn job(state: &AppState, direction: crate::api::seal::jobs::Direction) {
+    use crate::api::seal::jobs::{Target, begin, run_job};
+    let job = begin(state, &Target::Server("rchat".into()), direction, None)
+        .await
+        .expect("begin");
+    run_job(state, job.id).await;
+    let ended: String = sqlx::query_scalar("SELECT state FROM seal_jobs WHERE id = $1")
+        .bind(job.id)
+        .fetch_one(&state.db)
+        .await
+        .expect("job");
+    assert_eq!(ended, "done");
+}
+
+#[tokio::test]
+async fn earlier_messages_encrypted_by_a_job_are_found_the_same_with_no_plain_terms_and_back() {
+    use crate::api::seal::jobs::Direction;
+    for (state, temp) in each_db_keyed("job_search").await {
+        let db = &state.db;
+        let (sealed, plain) = two_places(&state).await;
+        switch(&state, false).await;
+        let mut rng = Rng(0x5eed_0007);
+        let docs = corpus(&mut rng);
+        for text in &docs {
+            send(&state, plain, text).await;
+            send(&state, sealed, text).await;
+        }
+        let qs = queries(&mut rng, &docs);
+        if is_sqlite(db) {
+            crate::db::build_channel_index(db).await.expect("merge");
+        }
+        let found = same_hits(&state, &qs).await;
+        assert!(found > 100, "the queries find something: {found}");
+        switch(&state, true).await;
+        job(&state, Direction::Seal).await;
+        let stored = count(db, "SELECT COUNT(*) FROM messages WHERE body IS NOT NULL").await;
+        assert_eq!(stored, docs.len() as i64);
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM messages WHERE body IS NOT NULL AND content <> ''"
+            )
+            .await,
+            0
+        );
+        match is_sqlite(db) {
+            true => {
+                crate::db::build_channel_index(db).await.expect("merge");
+                assert_eq!(count(db, UNKEYED).await, 0, "no plain term is left");
+            }
+            false => assert_eq!(
+                count(
+                    db,
+                    "SELECT COUNT(*) FROM messages WHERE body IS NOT NULL AND grams IS NULL"
+                )
+                .await,
+                0
+            ),
+        }
+        assert_eq!(same_hits(&state, &qs).await, found);
+        job(&state, Direction::Unseal).await;
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM messages WHERE body IS NOT NULL").await,
+            0
+        );
+        match is_sqlite(db) {
+            true => {
+                crate::db::build_channel_index(db).await.expect("merge");
+                assert_eq!(count(db, KEYED_OF_PLAIN).await, 0, "no keyed term is left");
+            }
+            false => assert_eq!(
+                count(
+                    db,
+                    "SELECT COUNT(*) FROM messages WHERE body IS NULL AND grams IS NOT NULL"
+                )
+                .await,
+                0
+            ),
+        }
+        assert_eq!(same_hits(&state, &qs).await, found);
+        temp.done(state).await;
+    }
+}

@@ -901,6 +901,7 @@ pub(super) fn wants(
             username,
             channel_id: _,
         }
+        | WsEvent::SealJobProgress { username, job: _ }
         | WsEvent::FriendRequestAdded {
             username,
             request: _,

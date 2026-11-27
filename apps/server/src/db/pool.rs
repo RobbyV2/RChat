@@ -460,6 +460,9 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
             "PRAGMA busy_timeout=5000",
             "PRAGMA synchronous=NORMAL",
             "PRAGMA mmap_size=268435456",
+            // The pages a delete or an update frees are wiped, so text turned into records
+            // leaves no plain copy in the file, whenever the first key is made.
+            "PRAGMA secure_delete=ON",
         ]
         .map(str::to_string)
         .to_vec(),

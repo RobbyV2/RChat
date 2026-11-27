@@ -53,6 +53,7 @@ import { clip } from './rate'
 import { deadCounts, liveThreadPings, type ThreadPing } from './thread_pings'
 import { isRecord } from '../bytes'
 import { storeRegister, type StoreRegister } from '../sealing'
+import { followEarlier } from './seal_earlier'
 
 // P2P direct messages: one room per pair of identities, its events in IndexedDB on both sides,
 // synced whenever both are online. This module builds the conversation view (edits, reactions,
@@ -958,8 +959,9 @@ export class Dms {
   // Whether this device stores the conversation's events sealed follows its `store` register,
   // for everything stored after the change. A device that can't keep a device key stores plain.
   private async followStore(room: string) {
-    const { on } = await loadStore(this.db, room, this.local)
-    await this.deps.store.sealing.setRoom(room, on).catch(() => {})
+    const store = await loadStore(this.db, room, this.local)
+    await this.deps.store.sealing.setRoom(room, store.on).catch(() => {})
+    followEarlier(this.deps.store, room, store, this.local.search)
   }
 
   private stored(room: string, from: string, added: Inserted[]) {

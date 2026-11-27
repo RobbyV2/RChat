@@ -508,6 +508,9 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
                 {
                     tracing::warn!("the sweep for files to encrypt failed: {e}");
                 }
+                if let Err(e) = crate::api::seal::resume_jobs(&sealing).await {
+                    tracing::warn!("resuming the jobs over stored messages failed: {e}");
+                }
             }
         }
     });

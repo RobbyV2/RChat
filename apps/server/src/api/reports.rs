@@ -11,6 +11,7 @@ mod text;
 pub(crate) use query::{groups as groups_in, list as list_in, open_count, reporter_known};
 pub(crate) use store::{forget_user, purge_server, sweep};
 pub(crate) use store::{mute as mute_in, mutes as mutes_in};
+pub(crate) use text::unseal_copies;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};

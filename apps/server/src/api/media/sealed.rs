@@ -351,6 +351,127 @@ pub(crate) async fn sweep(state: &AppState) -> Result<usize, ApiError> {
     Ok(done)
 }
 
+/// Seals the plain file `id` now: its rows in a transaction of their own, or its S3 object.
+pub(crate) async fn seal_now(state: &AppState, id: &str) -> Result<bool, ApiError> {
+    let db = &state.db;
+    let mut tx = match is_sqlite(db) {
+        true => db.begin_with("BEGIN IMMEDIATE").await?,
+        false => db.begin().await?,
+    };
+    let key = key_on(db, &mut tx).await?;
+    let done = seal_rows(&mut tx, id, &key).await?;
+    tx.commit().await?;
+    match done {
+        Sealing::Sealed => Ok(true),
+        Sealing::InS3 => seal_object(state, id).await,
+        Sealing::Nothing => Ok(false),
+    }
+}
+
+/// Stores the sealed file `id` plain again: its database chunks opened and written back, or a
+/// plain S3 object written before the sealed one goes. A file that does not open stays as it
+/// is. Returns whether this call wrote it.
+pub(crate) async fn unseal_now(state: &AppState, id: &str) -> Result<bool, ApiError> {
+    let db = &state.db;
+    let row = sqlx::query("SELECT mime, size, seal_key, name_sealed, (SELECT COUNT(*) FROM media_chunks c WHERE c.media_id = media.id) FROM media WHERE id = $1 AND seal_key IS NOT NULL")
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    let (mime, size, key_id): (String, i64, i64) =
+        (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
+    let (record, stored): (Option<Vec<u8>>, i64) = (row.try_get(3)?, row.try_get(4)?);
+    let key = MediaKey::named(db, key_id as u32)
+        .await
+        .map_err(ApiError::internal)?;
+    let Some((key, facts)) = key.and_then(|key| {
+        let facts = key.open_facts(id, record.as_deref()?)?;
+        Some((key, facts))
+    }) else {
+        tracing::warn!("the stored file {id} can't be opened");
+        return Ok(false);
+    };
+    let total = chunks(size as u64);
+    let in_s3 = stored == 0 && size > 0;
+    let data = match (in_s3, state.s3.as_deref()) {
+        (false, _) => {
+            let rows: Vec<Vec<u8>> = sqlx::query_scalar(
+                "SELECT data FROM media_chunks WHERE media_id = $1 ORDER BY seq",
+            )
+            .bind(id)
+            .fetch_all(db)
+            .await?;
+            let mut data = Vec::with_capacity(size as usize);
+            for (seq, record) in rows.iter().enumerate() {
+                match key.open_chunk(id, seq as u64, total, record) {
+                    Ok(plain) => data.extend_from_slice(&plain),
+                    Err(_) => return Ok(false),
+                }
+            }
+            data
+        }
+        (true, Some(bucket)) => {
+            let object = bucket
+                .get_object(sealed_key(id))
+                .await
+                .map_err(ApiError::internal)?;
+            let mut reader = ObjectReader::new(id, size as u64, key.clone());
+            let Ok(parts) = reader.feed(&object.to_vec()) else {
+                return Ok(false);
+            };
+            if !reader.finished() {
+                return Ok(false);
+            }
+            parts.concat()
+        }
+        (true, None) => return Ok(false),
+    };
+    if data.len() as i64 != size {
+        return Ok(false);
+    }
+    if let (true, Some(bucket)) = (in_s3, state.s3.as_deref()) {
+        bucket
+            .put_object_with_content_type(s3_key(id), &data, &mime)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    let mut tx = match is_sqlite(db) {
+        true => db.begin_with("BEGIN IMMEDIATE").await?,
+        false => db.begin().await?,
+    };
+    let marked = sqlx::query("UPDATE media SET filename = $1, seal_key = NULL, name_sealed = NULL, plain_object = NULL WHERE id = $2 AND seal_key = $3")
+        .bind(&facts.name)
+        .bind(id)
+        .bind(key_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if marked == 1 && !in_s3 {
+        sqlx::query("DELETE FROM media_chunks WHERE media_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        for (seq, chunk) in data.chunks(MEDIA_CHUNK).enumerate() {
+            sqlx::query("INSERT INTO media_chunks(media_id, seq, data) VALUES($1, $2, $3)")
+                .bind(id)
+                .bind(seq as i64)
+                .bind(chunk.to_vec())
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+    if marked == 1
+        && let Some(bucket) = state.s3.as_deref()
+        && let Err(e) = bucket.delete_object(sealed_key(id)).await
+    {
+        tracing::warn!("s3 delete failed for {}: {e}", sealed_key(id));
+    }
+    Ok(marked == 1)
+}
+
 /// Seals `id` in S3 after the caller's transaction, in the background; the mark `seal_rows`
 /// left keeps it for the sweep when this does not finish.
 pub(crate) fn seal_later(state: &AppState, id: String) {

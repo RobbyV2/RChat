@@ -1,4 +1,5 @@
 mod channel_index;
+pub mod cli;
 mod indexes;
 mod migrate;
 mod pool;

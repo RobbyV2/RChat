@@ -321,7 +321,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 63: keyed search grams of sealed messages (`messages.grams`).
 /// 64: sealed copies: report text and notes, webhook delivery payloads, bios and P2P backups.
 /// 65: sealed uploads (`media.seal_key`, `media.name_sealed`, `media.plain_object`).
-pub const SCHEMA_VERSION: i64 = 65;
+/// 66: jobs that encrypt or decrypt the stored messages of a place (`seal_jobs`).
+pub const SCHEMA_VERSION: i64 = 66;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

@@ -3,6 +3,7 @@ import { partRange } from './blobs'
 import { blankRoom, cacheKey, countOf, moveCounts, TOTAL, TOTAL_BYTES } from './dag'
 import type { P2pDatabase, RoomRecord, ServerCache } from './db'
 import { isSealedPing, logValue, parseLog, PING_LOG } from './inbox'
+import { EARLIER_META } from './seal_earlier'
 import { isSealed, sealingOf } from './sealed_db'
 
 // How many of the members it knew a server is asked of again.
@@ -51,6 +52,7 @@ export async function dropSealed(db: P2pDatabase, now = time().now()): Promise<s
     for (const lo of [`held\n${room}\n`, `share\n${room}\n`])
       await meta.delete(IDBKeyRange.bound(lo, `${lo}\uffff`))
     await meta.delete(cacheKey(room))
+    await meta.delete(EARLIER_META + room)
     const rec = await tx.objectStore('rooms').get(room)
     if (!rec) continue
     const fresh = blankRoom(rec.id, rec.peer, rec.created)

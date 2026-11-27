@@ -963,7 +963,9 @@ pub(crate) async fn put_copies(
     Ok(ok())
 }
 
+pub(crate) mod jobs;
 mod sweep;
+pub(crate) use jobs::{SealJob, get_job, list_jobs, resume_jobs, start_job};
 pub(crate) use sweep::sweep;
 #[cfg(test)]
 pub(crate) use sweep::{WITHOUT_GRAMS, fill_grams};

@@ -41,6 +41,7 @@ import type {
   InstanceInfo,
   LinkedProvider,
   ReAuthBody,
+  SealJob,
   ExchangeRequest,
   ExchangeResponse,
   Invite,
@@ -1045,6 +1046,11 @@ export const endpoints = (c: ApiClient) => ({
   openDm: (username: string) => c.req<DmSummary>('POST', '/dms', { username }),
   closeDm: (id: number) => c.req<unknown>('POST', `/dms/${id}/close`),
   setDmSeal: (id: number, on: boolean) => c.req<unknown>('PUT', `/dms/${id}/seal`, { on }),
+  startSealJob: (place: string, direction: SealJob['direction'], reauth: ReAuthBody) =>
+    c.req<SealJob>('POST', '/seal_jobs', { place, direction, reauth }),
+  sealJob: (id: number) => c.req<SealJob>('GET', `/seal_jobs/${id}`),
+  sealJobs: (place: string) =>
+    c.req<SealJob[]>('GET', `/seal_jobs?place=${encodeURIComponent(place)}`),
   blocks: (cursor: string | null, q: string) =>
     c.page<BlockedUser>(withCursor(`/blocks?limit=50&q=${seg(q)}`, cursor)),
   blockedUsernames: () => c.req<string[]>('GET', '/blocks/usernames'),

@@ -16,10 +16,11 @@ const WINDOW: i64 = 20_000;
 const BATCH: i64 = 200;
 const WINDOWS_PER_RUN: usize = 20;
 
-/// Seals the message `id` and its poll when it is stored plain in a place that seals it. The
-/// row is written only while it still holds the text that was read. Returns whether it was
-/// sealed.
-pub(crate) async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
+/// Seals the message `id` and its poll when it is stored plain in a place that seals it: from
+/// the place's boundary on, or with `earlier` also before it (the earlier messages a job
+/// encrypts). The row is written only while it holds the text that was read. Returns whether
+/// it was sealed.
+pub(crate) async fn seal_row(db: &Db, id: i64, earlier: bool) -> Result<bool, ApiError> {
     let sqlite = is_sqlite(db);
     let mut tx = match sqlite {
         true => db.begin_with("BEGIN IMMEDIATE").await?,
@@ -36,7 +37,7 @@ pub(crate) async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
         return Ok(false);
     };
     let floors: Floors = place(&mut tx, sqlite, scope).await?;
-    if floors.floor().is_none_or(|from| id < from) {
+    if floors.floor().is_none_or(|from| id < from && !earlier) {
         return Ok(false);
     }
     let Some(writer) = writer(db, &mut tx, scope, floors).await? else {
@@ -74,7 +75,16 @@ pub(crate) async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
     }
     let media: Option<String> = row.try_get(7)?;
     if let Some(media) = &media {
-        crate::api::media::sealed::seal_file_on(db, &mut tx, media).await?;
+        // A file that can't be encrypted stays as it is, and its message is encrypted anyway.
+        sqlx::query("SAVEPOINT seal_file").execute(&mut *tx).await?;
+        let undo = match crate::api::media::sealed::seal_file_on(db, &mut tx, media).await {
+            Ok(_) => "RELEASE SAVEPOINT seal_file",
+            Err(ApiError(_, e, _)) => {
+                tracing::warn!("the file {media} of message {id} stays as it is: {e}");
+                "ROLLBACK TO SAVEPOINT seal_file"
+            }
+        };
+        sqlx::query(undo).execute(&mut *tx).await?;
     }
     let question: Option<String> =
         sqlx::query_scalar("SELECT question FROM polls WHERE message_id = $1 AND body IS NULL")
@@ -252,7 +262,7 @@ pub(crate) async fn sweep(db: &Db) -> Result<u64, ApiError> {
         .fetch_all(db)
         .await?;
         for id in &ids {
-            if seal_row(db, *id).await? {
+            if seal_row(db, *id, false).await? {
                 sealed += 1;
             }
         }

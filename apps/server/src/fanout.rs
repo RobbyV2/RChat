@@ -424,6 +424,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username,
             channel_id: _,
         }
+        | WsEvent::SealJobProgress { username, job: _ }
         | WsEvent::FriendRequestAdded {
             username,
             request: _,

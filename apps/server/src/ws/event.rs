@@ -580,6 +580,12 @@ pub enum WsEvent {
         username: String,
         channel_id: i64,
     },
+    /// Progress of a job over stored messages `username` started; to their own connections
+    /// only.
+    SealJobProgress {
+        username: String,
+        job: crate::api::seal::SealJob,
+    },
     /// A friend request between `username` and `request.user` was sent or arrived; to
     /// `username`'s connections only.
     FriendRequestAdded {

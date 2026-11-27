@@ -1525,6 +1525,10 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
                 .bind(PURGING_HASH)
                 .execute(&mut *tx)
                 .await?;
+            sqlx::query("DELETE FROM seal_jobs WHERE place = $1")
+                .bind(format!("s:{key}"))
+                .execute(&mut *tx)
+                .await?;
             clear_purge(&mut tx, kind, key).await?;
             tx.commit().await
         }

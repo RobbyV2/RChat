@@ -157,3 +157,65 @@ pub(super) async fn store_record(
         .await
         .map(|_| ())
 }
+
+/// Stores the encrypted reports and history lines plain again, `batch` at a time; one that does
+/// not open stays.
+pub(crate) async fn unseal_copies(db: &Db, batch: i64) -> Result<(), ApiError> {
+    let mut after = 0;
+    loop {
+        let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+            "SELECT id, sealed FROM reports WHERE sealed IS NOT NULL AND id > $1 ORDER BY id LIMIT $2",
+        )
+        .bind(after)
+        .bind(batch)
+        .fetch_all(db)
+        .await?;
+        let opener = Opener::of(db, rows.iter().map(|(_, r)| r.as_slice())).await?;
+        for (id, record) in &rows {
+            let Some(Text {
+                snapshot,
+                answers,
+                note,
+            }) = Text::open(&opener, *id, record)
+            else {
+                continue;
+            };
+            sqlx::query("UPDATE reports SET snapshot = $1, answers = $2, note = $3, sealed = NULL WHERE id = $4 AND sealed = $5")
+                .bind(snapshot)
+                .bind(answers)
+                .bind(note)
+                .bind(id)
+                .bind(record)
+                .execute(db)
+                .await?;
+        }
+        match rows.last() {
+            Some((last, _)) if rows.len() as i64 == batch => after = *last,
+            _ => break,
+        }
+    }
+    let mut after = 0;
+    loop {
+        let lines: Vec<(i64, Vec<u8>)> = sqlx::query_as("SELECT id, detail_sealed FROM report_events WHERE detail_sealed IS NOT NULL AND id > $1 ORDER BY id LIMIT $2")
+            .bind(after)
+            .bind(batch)
+            .fetch_all(db)
+            .await?;
+        let opener = Opener::of(db, lines.iter().map(|(_, r)| r.as_slice())).await?;
+        for (id, record) in &lines {
+            let Some(detail) = opener.text(REPORT_EVENTS, &id.to_string(), record) else {
+                continue;
+            };
+            sqlx::query("UPDATE report_events SET detail = $1, detail_sealed = NULL WHERE id = $2 AND detail_sealed = $3")
+                .bind(detail)
+                .bind(id)
+                .bind(record)
+                .execute(db)
+                .await?;
+        }
+        match lines.last() {
+            Some((last, _)) if lines.len() as i64 == batch => after = *last,
+            _ => return Ok(()),
+        }
+    }
+}

@@ -325,7 +325,7 @@ export const searchReady = async (db: P2pDatabase, cut: IndexCut = LOCAL.search)
 
 // Bytes of the index rows a step wrote or freed, per room (the rooms and the servers' total
 // count them).
-const account = async (
+export const accountRows = async (
   rooms: {
     get(id: string): Promise<{ bytes?: number } | undefined>
     put(v: never): Promise<unknown>
@@ -397,7 +397,7 @@ export const rebuildStep = async (
     n += 1
     cursor = await cursor.continue()
   }
-  await account(tx.objectStore('rooms'), meta, delta)
+  await accountRows(tx.objectStore('rooms'), meta, delta)
   const done = cursor === null
   await meta.put(
     { v: SEARCH_V, done, at, word: lim.word, words: lim.words, exact, keyed: true },

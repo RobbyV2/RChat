@@ -8,6 +8,7 @@ use zeroize::Zeroizing;
 
 use super::ring::{Ring, RingStatus, SecretsReset, create_key_file, write_new_file};
 use super::{CryptError, KEY_LEN, Kek, NONCE_LEN, check_key_id, decrypt, encrypt, parse_keys};
+use crate::api::seal::jobs::{Direction, Target, begin, run_job, still_sealed};
 use crate::config::AppConfig;
 use crate::db::DbOptions;
 
@@ -62,6 +63,16 @@ pub enum KeysCommand {
         /// A key file to write, for ENCRYPTION_KEYS_FILE. It must not exist yet.
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+    /// Store encrypted messages, their files, and the encrypted copies plain again: of every
+    /// place, or of one server or DM. Keys can be removed once nothing encrypted is left.
+    Unseal {
+        /// Only this server.
+        #[arg(long, conflicts_with = "dm")]
+        server: Option<String>,
+        /// Only this DM, by its id.
+        #[arg(long)]
+        dm: Option<i64>,
     },
 }
 
@@ -313,7 +324,66 @@ pub async fn run(config: &AppConfig, command: KeysCommand) -> anyhow::Result<Str
             passphrase_file,
             out,
         } => imported(&input, passphrase_file.as_deref(), out.as_deref()),
+        KeysCommand::Unseal { server, dm } => {
+            let target = match (server, dm) {
+                (Some(name), _) => Target::Server(name.to_lowercase()),
+                (None, Some(id)) => Target::Dm(id),
+                (None, None) => Target::All,
+            };
+            unsealed(config, &target).await
+        }
     }
+}
+
+/// Runs the decrypting job of `target` here, to its end.
+async fn unsealed(config: &AppConfig, target: &Target) -> anyhow::Result<String> {
+    let opts = DbOptions {
+        controls: None,
+        ring: Some(std::sync::Arc::new(Ring::load(
+            &config.encryption,
+            config.database_url.as_deref(),
+        )?)),
+        ..config.db_options()
+    };
+    let db = crate::db::open_with(config.database_url.as_deref(), &opts).await?;
+    let instance = crate::instance::Instance::load(&db, &config.instance()).await?;
+    let state =
+        crate::state::AppState::new(db, crate::ws::Hub::new(), config.s3()?, None, instance);
+    let job = begin(&state, target, Direction::Unseal, None)
+        .await
+        .map_err(|crate::api::ApiError(_, e, _)| anyhow::anyhow!("{e}"))?;
+    if !run_job(&state, job.id).await {
+        crate::db::close(&state.db).await;
+        anyhow::bail!(
+            "a running server is decrypting {} already; it goes on there",
+            target.key()
+        );
+    }
+    let ended: Option<String> = sqlx::query_scalar("SELECT state FROM seal_jobs WHERE id = $1")
+        .bind(job.id)
+        .fetch_optional(&state.db)
+        .await?;
+    let left = still_sealed(&state.db, target)
+        .await
+        .map_err(|crate::api::ApiError(_, e, _)| anyhow::anyhow!("{e}"))?;
+    crate::db::close(&state.db).await;
+    if ended.as_deref() != Some("done") {
+        anyhow::bail!("decrypting {} stopped; run it again to go on", target.key());
+    }
+    let secrets = match target {
+        Target::All => " Stored secrets stay encrypted with these keys, so keep them.",
+        Target::Server(_) | Target::Dm(_) => "",
+    };
+    Ok(match left {
+        0 => format!(
+            "Everything {} stored encrypted is stored plain now.{secrets}",
+            target.key()
+        ),
+        n => format!(
+            "{n} records of {} are still stored encrypted: these keys don't open them, or they were written since.{secrets}",
+            target.key()
+        ),
+    })
 }
 
 fn imported(
