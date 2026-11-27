@@ -1,5 +1,6 @@
 'use client'
 
+import { iconButtonLook } from '../lib/controls'
 import { useAccount } from '../lib/client/react'
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
@@ -42,7 +43,8 @@ import {
 import { useStore } from '../lib/store'
 import type { Message, Poll, PollVoter } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
-import { Dialog, fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
+import { Button, IconButton, LinkButton, Tab } from './controls'
+import { Dialog, fieldCls, FieldError, Masked, Sentinel } from './ui'
 import { ShownAvatar, ShownName, useViewServer } from './shown_user'
 import { MessageTime } from './timestamp'
 
@@ -218,26 +220,22 @@ function RankOrder({
             <span className="min-w-0 flex-1 truncate">
               <PollText text={optionLabel(o)} option />
             </span>
-            <button
-              type="button"
-              title="Move up"
-              aria-label={`Move ${o.text} up`}
+            <IconButton
+              icon={ChevronUp}
+              label={`Move ${o.text} up`}
+              tooltip="Move up"
+              size="sm"
               disabled={i === 0}
               onClick={() => onMove(id, -1)}
-              className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest disabled:opacity-30 pointer-coarse:p-2"
-            >
-              <ChevronUp size={16} />
-            </button>
-            <button
-              type="button"
-              title="Move down"
-              aria-label={`Move ${o.text} down`}
+            />
+            <IconButton
+              icon={ChevronDown}
+              label={`Move ${o.text} down`}
+              tooltip="Move down"
+              size="sm"
               disabled={i === order.length - 1}
               onClick={() => onMove(id, 1)}
-              className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest disabled:opacity-30 pointer-coarse:p-2"
-            >
-              <ChevronDown size={16} />
-            </button>
+            />
           </li>
         )
       })}
@@ -395,7 +393,7 @@ function AddOption({ id, onDone }: { id: number; onDone: () => void }) {
           title={emoji ? 'Change emoji' : 'Add an emoji'}
           aria-label={emoji ? 'Change emoji' : 'Add an emoji'}
           onClick={() => setPicker(true)}
-          className="shrink-0 rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest"
+          className={`inline-flex ${iconButtonLook('plain', 'md')}`}
         >
           {emoji ? <span className="text-base leading-none">{emoji}</span> : <Smile size={16} />}
         </button>
@@ -415,23 +413,10 @@ function AddOption({ id, onDone }: { id: number; onDone: () => void }) {
           aria-label="New option"
           className={`${fieldCls} py-1.5`}
         />
-        <button
-          type="button"
-          onClick={() => void submit()}
-          disabled={!text.trim() || busy}
-          className={`${textBtn} disabled:opacity-40`}
-        >
+        <Button onClick={() => void submit()} disabled={!text.trim() || busy}>
           Add
-        </button>
-        <button
-          type="button"
-          title="Cancel"
-          aria-label="Cancel"
-          onClick={onDone}
-          className="shrink-0 rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest"
-        >
-          <X size={16} />
-        </button>
+        </Button>
+        <IconButton icon={X} label="Cancel" onClick={onDone} />
       </div>
       <FieldError message={error} />
       {picker && (
@@ -529,19 +514,16 @@ function PollVoters({ m, onClose }: { m: Message; onClose: () => void }) {
         </p>
         <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by option">
           {chips.map(c => (
-            <button
+            <Tab
               key={c.key ?? 'all'}
-              role="tab"
-              aria-selected={option === c.key}
+              selected={option === c.key}
               onClick={() => setOption(c.key)}
-              className={`max-w-full truncate rounded-full border px-3 py-1 text-xs font-medium ${
-                option === c.key
-                  ? 'border-transparent bg-secondary-container text-on-secondary-container'
-                  : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-highest'
-              }`}
+              place="max-w-full"
             >
-              <PollText text={c.label} option />
-            </button>
+              <span className="truncate">
+                <PollText text={c.label} option />
+              </span>
+            </Tab>
           ))}
         </div>
         {poll.kind === 'ranked' && option !== null && (
@@ -669,15 +651,12 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
         {poll.kind === 'ranked' && poll.results && poll.results.rounds.length > 0 && (
           <>
             <RunoffSummary poll={poll} closed={closed} />
-            <button
-              type="button"
-              aria-expanded={rounds}
-              onClick={() => setRounds(r => !r)}
-              className="mt-2 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-            >
-              {rounds ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              {rounds ? 'Hide rounds' : `Show ${poll.results.rounds.length} rounds`}
-            </button>
+            <span className="mt-2 block text-xs">
+              <LinkButton aria-expanded={rounds} onClick={() => setRounds(r => !r)}>
+                {rounds ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                {rounds ? 'Hide rounds' : `Show ${poll.results.rounds.length} rounds`}
+              </LinkButton>
+            </span>
             {rounds && <Rounds poll={poll} />}
           </>
         )}
@@ -687,13 +666,9 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
             {votersLabel(poll.voters)}
           </span>
           {votersShown(poll) && (
-            <button
-              type="button"
-              onClick={() => openDialog({ kind: 'poll_voters', message: m })}
-              className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
-            >
+            <LinkButton onClick={() => openDialog({ kind: 'poll_voters', message: m })}>
               View votes
-            </button>
+            </LinkButton>
           )}
           {!static_ &&
             !closed &&
@@ -701,53 +676,36 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
             voted &&
             poll.allow_change &&
             poll.kind !== 'rating' && (
-              <button
-                type="button"
-                onClick={() => setEditing(e => !e)}
-                className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
-              >
+              <LinkButton onClick={() => setEditing(e => !e)}>
                 {editing ? 'Cancel' : 'Change vote'}
-              </button>
+              </LinkButton>
             )}
           {!static_ && !closed && canVote && voted && poll.allow_change && (
-            <button
-              type="button"
-              onClick={() => void retractVote(m.id)}
-              className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
-            >
-              Remove vote
-            </button>
+            <LinkButton onClick={() => void retractVote(m.id)}>Remove vote</LinkButton>
           )}
           {canAdd && !adding && (
-            <button
-              type="button"
-              onClick={() => setAdding(true)}
-              className="flex items-center gap-0.5 font-medium text-primary hover:underline pointer-coarse:min-h-8"
-            >
+            <LinkButton onClick={() => setAdding(true)}>
               <Plus size={12} />
               Add option
-            </button>
+            </LinkButton>
           )}
           {manage && !static_ && (
-            <button
-              type="button"
-              onClick={() => void (closed ? reopenPoll(m.id) : closePoll(m.id))}
-              className="flex items-center gap-1 font-medium text-primary hover:underline pointer-coarse:min-h-8"
-            >
+            <LinkButton onClick={() => void (closed ? reopenPoll(m.id) : closePoll(m.id))}>
               {closed ? <LockOpen size={12} /> : <Lock size={12} />}
               {closed ? 'Reopen' : 'Close poll'}
-            </button>
+            </LinkButton>
           )}
           {choosing && (
-            <button
-              type="button"
+            <Button
+              variant="filled"
+              size="md"
               data-poll-submit
               disabled={!ready || busy}
               onClick={() => void submit()}
-              className={`${filledBtn} ml-auto px-4 py-1.5`}
+              place="ml-auto"
             >
               {voted ? 'Update vote' : 'Vote'}
-            </button>
+            </Button>
           )}
         </div>
       </div>

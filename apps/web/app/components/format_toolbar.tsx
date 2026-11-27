@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   Bold,
@@ -108,18 +109,16 @@ export function FormatToolbar({
       {FORMATS.map(({ format, label, keys }) => {
         const Icon = ICONS[format]
         return (
-          <button
+          <IconButton
             key={format}
-            type="button"
-            title={keys ? `${label} (${keysLabel(keys)})` : label}
-            aria-label={label}
+            icon={Icon}
+            label={label}
+            tooltip={keys ? `${label} (${keysLabel(keys)})` : label}
+            shape="square"
             data-format={format}
             onMouseDown={e => e.preventDefault()}
             onClick={() => onFormat(format)}
-            className="rounded-lg p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface md:p-1.5"
-          >
-            <Icon size={16} />
-          </button>
+          />
         )
       })}
     </div>

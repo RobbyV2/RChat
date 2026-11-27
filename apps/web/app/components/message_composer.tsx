@@ -1,5 +1,6 @@
 'use client'
 
+import { Button, IconButton } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, useViewActor } from './view_actor'
 import { useEffect, useRef, useState } from 'react'
@@ -42,7 +43,7 @@ import { NO_THREADS_TEXT } from '../lib/channel_perms'
 import { textOnlyDestination } from '../lib/channel_content'
 import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
-import { Dialog, FieldError, fieldCls, filledBtn, Masked, useOwnServer } from './ui'
+import { Dialog, FieldError, fieldCls, Masked, useOwnServer } from './ui'
 import { SITE_FILTER_NOTE } from '../lib/home'
 import { useUploadHint } from './upload_expiry'
 import { useHome } from '../lib/home_store'
@@ -127,13 +128,14 @@ function ExpiryDialog({
             </option>
           ))}
         </select>
-        <button
+        <Button
+          variant="filled"
+          size="md"
           disabled={!customOk}
           onClick={() => onPick(Math.round(custom * mult), relay)}
-          className={`${filledBtn} disabled:opacity-40`}
         >
           Send
-        </button>
+        </Button>
       </div>
     </Dialog>
   )
@@ -195,9 +197,9 @@ function JoinBar({ server }: { server: string }) {
             className={`${fieldCls} max-w-56`}
           />
         )}
-        <button disabled={!ready} className={filledBtn}>
+        <Button type="submit" variant="filled" size="md" disabled={!ready}>
           Join server
-        </button>
+        </Button>
       </form>
       <FieldError message={error} />
     </div>
@@ -635,14 +637,12 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         <FormatToolbar open={formatting.selected} onFormat={formatting.apply} />
         {canAttach && (
           <>
-            <button
-              title="Attach a file"
-              aria-label="Attach a file"
+            <IconButton
+              icon={Plus}
+              label="Attach a file"
+              place="pointer-coarse:-mx-1.5"
               onClick={() => fileRef.current?.click()}
-              className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-            >
-              <Plus size={20} />
-            </button>
+            />
             <input
               ref={fileRef}
               type="file"
@@ -655,16 +655,13 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           </>
         )}
         {pollTarget && (
-          <button
-            type="button"
-            title="Create poll"
-            aria-label="Create poll"
+          <IconButton
+            icon={ChartColumn}
+            label="Create poll"
+            place="pointer-coarse:-mx-1.5"
             data-create-poll
             onClick={() => setPollOpen(true)}
-            className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-          >
-            <ChartColumn size={20} />
-          </button>
+          />
         )}
         <textarea
           ref={inputRef}
@@ -724,37 +721,31 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             {max - count}
           </span>
         )}
-        <button
+        <IconButton
           ref={emojiRef}
-          type="button"
-          title="Emoji"
-          aria-label="Emoji"
+          icon={Smile}
+          label="Emoji"
+          place="pointer-coarse:-mx-1.5"
+          aria-haspopup="dialog"
           aria-expanded={pickerOpen}
           onPointerEnter={() => void loadEmojiData().catch(() => {})}
           onClick={openPicker}
-          className={`shrink-0 rounded-full p-1.5 ${
-            pickerOpen
-              ? 'bg-surface-container-highest text-primary'
-              : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
-          }`}
-        >
-          <Smile size={20} />
-        </button>
-        <button
-          title={
+        />
+        <IconButton
+          icon={SendHorizontal}
+          label="Send"
+          place="pointer-coarse:-mx-1.5"
+          tooltip={
             tooLong
               ? 'Message is too long'
               : slowLeft > 0
                 ? `Slow mode: ${clock(slowLeft)}`
                 : 'Send'
           }
-          aria-label="Send"
+          tone="filled"
           onClick={send}
           disabled={tooLong || slowLeft > 0}
-          className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
-        >
-          <SendHorizontal size={16} />
-        </button>
+        />
       </div>
     </div>
   )

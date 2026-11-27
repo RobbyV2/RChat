@@ -13,6 +13,7 @@ import { MessageTime } from './timestamp'
 import { Snippet } from './replies'
 import { PreviewRow, RevealChannelPreview } from './preview_reveal'
 import { BlockedQuote } from './blocking'
+import { Button } from './controls'
 import { Masked } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
 
@@ -161,15 +162,15 @@ function LinkCard({
           )}
         </div>
       </PreviewRow>
-      <button
-        type="button"
+      <Button
+        variant="tonal"
+        icon={CornerDownRight}
         title="Jump to message"
         onClick={onJump}
-        className="flex shrink-0 items-center gap-1 rounded-full bg-secondary-container px-3 py-1 text-xs font-medium text-on-secondary-container hover:brightness-95 pointer-coarse:min-h-8"
+        place="shrink-0"
       >
-        <CornerDownRight size={12} />
         Jump
-      </button>
+      </Button>
     </div>
   )
 }

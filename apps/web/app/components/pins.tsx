@@ -14,6 +14,7 @@ import { longPress, useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
+import { Button, IconButton } from './controls'
 import { CloseButton, Masked, SheetGrip, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
 import { nameTriggerCls } from './message_pane'
@@ -236,7 +237,7 @@ function PinEntry({
       onClick={onClick}
       className="group/pin relative cursor-pointer rounded-xl border border-outline-variant bg-surface-container px-3 py-2.5 hover:bg-surface-container-highest"
     >
-      <div className="flex min-w-0 items-center gap-2 pr-20">
+      <div className="flex min-w-0 items-center gap-2 pr-20 pointer-coarse:min-h-11 pointer-coarse:pr-30">
         <ShownAvatar user={m.author} server={server} size={24} />
         <span
           {...(profiles ? profileTrigger(store, m.author, server) : {})}
@@ -267,23 +268,21 @@ function PinEntry({
         </p>
       )}
       <div className="absolute top-2 right-2 flex items-center gap-1">
-        <button
-          type="button"
+        <Button
+          variant="tonal"
           onClick={() => onJump(m.id)}
-          className="rounded-full bg-surface-container-highest px-2.5 py-1 text-xs font-medium text-on-surface opacity-0 group-focus-within/pin:opacity-100 group-hover/pin:opacity-100 hover:text-primary focus-visible:opacity-100 pointer-coarse:opacity-100"
+          place="opacity-0 group-focus-within/pin:opacity-100 group-hover/pin:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
         >
           Jump
-        </button>
+        </Button>
         {canUnpin && (
-          <button
-            type="button"
-            title="Unpin Message"
-            aria-label="Unpin Message"
+          <IconButton
+            icon={X}
+            label="Unpin Message"
+            tone="danger"
+            size="sm"
             onClick={() => onUnpin(m.id)}
-            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-error pointer-coarse:p-2"
-          >
-            <X size={16} />
-          </button>
+          />
         )}
       </div>
     </li>
@@ -461,13 +460,7 @@ export function PinsPanel({
         {list === null && failed && (
           <div className="flex flex-col items-center gap-2 py-6 text-sm text-on-surface-variant">
             <span>Couldn&apos;t load pinned messages.</span>
-            <button
-              type="button"
-              onClick={onRetry}
-              className="rounded-full px-3 py-1.5 font-medium text-primary hover:bg-surface-container-highest"
-            >
-              Retry
-            </button>
+            <Button onClick={onRetry}>Retry</Button>
           </div>
         )}
         {list !== null && list.length === 0 && (

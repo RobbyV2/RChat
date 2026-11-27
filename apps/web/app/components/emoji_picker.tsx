@@ -50,7 +50,7 @@ import {
 } from '../lib/emoji'
 import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { useMedia } from './context_menu'
-import { textBtn } from './ui'
+import { Button, IconButton } from './controls'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
 
@@ -566,9 +566,7 @@ const PickerBody = memo(function PickerBody({
     content = (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-on-surface-variant">
         <p>Emoji could not load.</p>
-        <button type="button" onClick={retry} className={textBtn}>
-          Try again
-        </button>
+        <Button onClick={retry}>Try again</Button>
       </div>
     )
   } else if (!data) {
@@ -644,19 +642,17 @@ const PickerBody = memo(function PickerBody({
             className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant md:text-sm"
           />
           {query && (
-            <button
-              type="button"
-              title="Clear search"
-              aria-label="Clear search"
+            <IconButton
+              icon={X}
+              label="Clear search"
+              size="sm"
               onClick={() => {
                 setQuery('')
                 setActive(null)
                 if (!sheet) searchRef.current?.focus()
               }}
-              className="-mr-1 shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-            >
-              <X size={14} />
-            </button>
+              place="-mr-1"
+            />
           )}
         </div>
         <div className="relative shrink-0">

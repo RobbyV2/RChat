@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Check, Copy, FileCode, ShieldAlert } from 'lucide-react'
 import { useAccount, useStoreApi } from '../lib/client/react'
@@ -45,10 +46,10 @@ function CopyButton({ text }: { text: string }) {
   }, [copied])
   const label = copied ? 'Copied' : 'Copy code'
   return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
+    <IconButton
+      icon={copied ? Check : Copy}
+      label={label}
+      size="sm"
       onClick={() =>
         void sharing()
           .copyText(text)
@@ -56,10 +57,7 @@ function CopyButton({ text }: { text: string }) {
             ok ? setCopied(true) : store.getState().setError('Could not copy to the clipboard')
           )
       }
-      className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-primary"
-    >
-      {copied ? <Check size={14} /> : <Copy size={14} />}
-    </button>
+    />
   )
 }
 

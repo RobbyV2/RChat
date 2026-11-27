@@ -48,6 +48,7 @@ import { BlockedQuote } from './blocking'
 import { MessageTime } from './timestamp'
 import { PollCard } from './poll_card'
 import { fullTimeOf, plainStamps } from '../lib/timestamps'
+import { Button, LinkButton } from './controls'
 import { Masked, useOwnServer } from './ui'
 import { NameWithUsername } from './display_name'
 import { WebhookBadge } from './webhooks'
@@ -192,8 +193,9 @@ export function ForwardBar({
               <span className="@max-sm:hidden">{SHOW_SOURCE}</span>
             </button>
           )}
-          <button
-            type="button"
+          <Button
+            variant="filled"
+            icon={SendHorizontal}
             title={
               blocked
                 ? 'This channel only accepts text'
@@ -203,11 +205,10 @@ export function ForwardBar({
             }
             disabled={busy || blocked || waiting}
             onClick={send}
-            className="flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-medium text-on-primary hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-40 pointer-coarse:min-h-10"
+            place="shrink-0"
           >
-            <SendHorizontal size={12} />
             Send
-          </button>
+          </Button>
         </>
       }
     >
@@ -241,13 +242,7 @@ export function ForwardBar({
             failed ? (
               <>
                 Couldn&apos;t check where it&apos;s from.{' '}
-                <button
-                  type="button"
-                  onClick={retry}
-                  className="rounded-sm font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-8"
-                >
-                  Retry
-                </button>
+                <LinkButton onClick={retry}>Retry</LinkButton>
               </>
             ) : (
               "Checking where it's from"

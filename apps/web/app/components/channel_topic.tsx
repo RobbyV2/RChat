@@ -1,4 +1,5 @@
 'use client'
+import { Button } from './controls'
 import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -17,16 +18,7 @@ import type { Channel } from '../lib/types'
 import { useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { MessageLink } from './markdown_message'
-import {
-  CloseButton,
-  fieldCls,
-  FieldError,
-  filledBtn,
-  Masked,
-  SheetGrip,
-  textBtn,
-  useOwnServer,
-} from './ui'
+import { CloseButton, fieldCls, FieldError, Masked, SheetGrip, useOwnServer } from './ui'
 
 const topicFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -317,26 +309,25 @@ export function TopicEditor({
         </span>
       </div>
       <div className="flex justify-end gap-2">
-        <button
-          type="button"
+        <Button
+          size="md"
           onClick={() => {
             setText(saved)
             setError(null)
             setDone(false)
           }}
           disabled={text === saved}
-          className={`${textBtn} disabled:opacity-40`}
         >
           Cancel
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="filled"
+          size="md"
           onClick={() => void save()}
           disabled={busy || over || !changed}
-          className={filledBtn}
         >
           Save
-        </button>
+        </Button>
       </div>
     </div>
   )

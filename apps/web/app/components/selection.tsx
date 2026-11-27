@@ -1,4 +1,5 @@
 'use client'
+import { IconButton } from './controls'
 import { useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 
@@ -292,14 +293,12 @@ export function SelectionBar({
     )
   }
   const exit = (
-    <button
-      title="Stop selecting"
-      aria-label="Stop selecting"
+    <IconButton
+      icon={X}
+      label="Stop selecting"
+      tone="inherit"
       onClick={() => acct.store.getState().exitSelection()}
-      className="shrink-0 rounded-full p-1.5 hover:bg-surface-container-highest"
-    >
-      <X size={18} />
-    </button>
+    />
   )
   const status = (
     <span className="min-w-0 flex-1 truncate text-sm font-medium" aria-live="polite">

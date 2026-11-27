@@ -1,4 +1,5 @@
 'use client'
+import { Button, LinkButton } from './controls'
 import { altError } from '../lib/alt_text'
 import { AltField } from './alt_text'
 import { useStoreApi } from '../lib/client/react'
@@ -35,12 +36,7 @@ export function EditedMark({ at }: { at: number }) {
   )
 }
 
-const linkCls =
-  'rounded-sm font-medium text-primary outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
-
 const POPUP_ROOM = 340
-
-const touchBtn = 'min-h-10 rounded-full px-4 text-sm font-medium'
 
 // An edit box bound to something other than the store's edit state (a P2P conversation).
 export interface EditBinding {
@@ -168,36 +164,18 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
         </div>
       )}
       <div className="mt-1 text-xs text-on-surface-variant pointer-coarse:hidden">
-        escape to{' '}
-        <button type="button" onClick={cancel} className={linkCls}>
-          cancel
-        </button>{' '}
-        • enter to{' '}
-        <button
-          type="button"
-          onClick={save}
-          disabled={blocked}
-          className={`${linkCls} disabled:opacity-40`}
-        >
+        escape to <LinkButton onClick={cancel}>cancel</LinkButton> • enter to{' '}
+        <LinkButton onClick={save} disabled={blocked}>
           save
-        </button>
+        </LinkButton>
       </div>
       <div className="mt-1.5 flex justify-end gap-2 pointer-fine:hidden">
-        <button
-          type="button"
-          onClick={cancel}
-          className={`${touchBtn} text-on-surface-variant hover:bg-surface-container-high`}
-        >
+        <Button size="md" onClick={cancel}>
           Cancel
-        </button>
-        <button
-          type="button"
-          onClick={save}
-          disabled={blocked}
-          className={`${touchBtn} bg-primary text-on-primary disabled:opacity-40`}
-        >
+        </Button>
+        <Button variant="filled" size="md" onClick={save} disabled={blocked}>
           Save
-        </button>
+        </Button>
       </div>
     </div>
   )

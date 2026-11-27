@@ -13,6 +13,7 @@ import { UserAvatar } from './user_avatar'
 import { NameWithUsername } from './display_name'
 import { useShownOrNull, useViewServer } from './shown_user'
 import { KeyAvatar } from './p2p/p2p_badge'
+import { IconButton } from './controls'
 import { Masked, useOwn } from './ui'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
@@ -223,15 +224,7 @@ export function ComposerBar({
     >
       <div className="min-w-0 flex-1 truncate">{children}</div>
       {actions}
-      <button
-        type="button"
-        title={closeLabel}
-        aria-label={closeLabel}
-        onClick={onClose}
-        className="flex shrink-0 items-center justify-center rounded-full p-1 hover:bg-surface-container-highest hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:size-10"
-      >
-        <X size={16} />
-      </button>
+      <IconButton icon={X} label={closeLabel} size="sm" onClick={onClose} />
     </div>
   )
 }
