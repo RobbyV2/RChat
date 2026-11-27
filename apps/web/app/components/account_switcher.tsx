@@ -37,6 +37,7 @@ import { longPress, useMedia } from './context_menu'
 import { RailInstance } from './instance_badge'
 import { Button, IconButton, ListRow } from './controls'
 import { Masked, Sheet, useEscape } from './ui'
+import { obj, opt, parseJson, str, type Schema } from '../lib/schema'
 
 function useRows() {
   const [source] = useState(createSwitcherSource)
@@ -134,6 +135,12 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection | 
   )
 }
 
+const ORDER_TARGET: Schema<OrderTarget> = obj({
+  origin: str(),
+  username: opt(str()),
+  local: opt(str()),
+})
+
 const sameLevel = (a: OrderTarget, b: OrderTarget) =>
   a.username === undefined
     ? b.username === undefined
@@ -188,8 +195,8 @@ function OrderHandle({
             .elementFromPoint(e.clientX, e.clientY)
             ?.closest<HTMLElement>('[data-drop-target]')
           if (!el) return
-          const other = JSON.parse(el.dataset.dropTarget!) as OrderTarget
-          if (sameLevel(target, other)) reorder(target, other)
+          const other = parseJson(el.dataset.dropTarget ?? '', ORDER_TARGET)
+          if (other.ok && sameLevel(target, other.value)) reorder(target, other.value)
         }}
       >
         <GripVertical size={16} />
@@ -243,12 +250,8 @@ function AccountList({
       if (!raw) return
       e.preventDefault()
       e.stopPropagation()
-      try {
-        const from = JSON.parse(raw) as OrderTarget
-        if (sameLevel(from, target)) reorder(from, target)
-      } catch {
-        /* Ignore foreign drags. */
-      }
+      const from = parseJson(raw, ORDER_TARGET)
+      if (from.ok && sameLevel(from.value, target)) reorder(from.value, target)
     },
   })
   const select = (r: SwitcherRow) =>

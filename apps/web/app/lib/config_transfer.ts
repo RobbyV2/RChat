@@ -44,6 +44,7 @@ import type { StorageLike } from './instances'
 import { isShowSpoilers, type ShowSpoilers } from './spoilers'
 import { cleanP2pSection, type P2pSection } from './p2p/section'
 import { plainCopy } from './stable_key'
+import { anything, arr, num, obj, parseJson } from './schema'
 
 const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
@@ -463,13 +464,14 @@ export const decodeConfig = async (
   if (!bytes) return { ok: false, error: DAMAGED }
   const raw = await inflate(bytes, limits.json)
   if (!raw) return { ok: false, error: DAMAGED }
-  let data: unknown
+  let decoded: string
   try {
-    data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw))
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(raw)
   } catch {
     return { ok: false, error: DAMAGED }
   }
-  return sanitizeConfig(data, now)
+  const data = parseJson(decoded, anything)
+  return data.ok ? sanitizeConfig(data.value, now) : { ok: false, error: DAMAGED }
 }
 
 // A config from a share link: only the sections a link may carry, whatever the blob holds.
@@ -626,6 +628,8 @@ export const stashConfig = (
   now = Date.now()
 ) => store.setItem(STASH, JSON.stringify({ at: now, doc, keys }))
 
+const STASHED = obj({ at: num(), doc: anything, keys: arr(anything) })
+
 export const takeStashedConfig = (
   store: StorageLike,
   now = Date.now()
@@ -633,17 +637,15 @@ export const takeStashedConfig = (
   const raw = store.getItem(STASH)
   if (raw === null) return null
   store.removeItem(STASH)
-  try {
-    const saved = JSON.parse(raw) as { at?: unknown; doc?: unknown; keys?: unknown }
-    if (typeof saved.at !== 'number' || saved.at > now || now - saved.at >= STASH_MS) return null
-    const decoded = sanitizeConfig(saved.doc, now)
-    if (!decoded.ok || !Array.isArray(saved.keys)) return null
-    const known = new Set<unknown>(SECTIONS.map(s => s.key))
-    const keys = saved.keys.filter((k): k is SectionKey => known.has(k))
-    return { doc: decoded.doc, keys }
-  } catch {
-    return null
-  }
+  const parsed = parseJson(raw, STASHED)
+  if (!parsed.ok) return null
+  const saved = parsed.value
+  if (saved.at > now || now - saved.at >= STASH_MS) return null
+  const decoded = sanitizeConfig(saved.doc, now)
+  if (!decoded.ok) return null
+  const known = new Set<unknown>(SECTIONS.map(s => s.key))
+  const keys = saved.keys.filter((k): k is SectionKey => known.has(k))
+  return { doc: decoded.doc, keys }
 }
 
 export const hasStashedConfig = (store: StorageLike) => store.getItem(STASH) !== null

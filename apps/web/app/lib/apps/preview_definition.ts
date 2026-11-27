@@ -1,6 +1,7 @@
 import { VIEW_LIMITS } from './ui/catalog'
 import type { Node, On } from './ui/types'
 import { validatePages } from './ui/validate'
+import { anything, parseJson, str } from '../schema'
 
 type Step = Extract<On, { op: 'open' | 'close' }>
 export interface PreviewAction {
@@ -37,15 +38,17 @@ export function argumentValue(expression: string, values: Record<string, string>
   const ref = /^(?:field|form|args)\.([a-z][a-z0-9_-]{0,39})$/.exec(expression)
   if (ref) return Object.hasOwn(values, ref[1]) ? values[ref[1]] : ''
   if (typeof expression === 'string' && expression.startsWith('"') && expression.length <= 4096) {
-    const literal: unknown = JSON.parse(expression)
-    if (typeof literal === 'string') return literal
+    const literal = parseJson(expression, str())
+    if (literal.ok) return literal.value
   }
   return fail('Use a quoted string or a field, form or argument reference.')
 }
 
 export function readPreview(source: string): PreviewDefinition {
   if (source.length > VIEW_LIMITS.chars) return fail('This definition is too large.')
-  const doc: unknown = JSON.parse(source)
+  const parsed = parseJson(source, anything)
+  if (!parsed.ok) return fail('This definition is not valid JSON.')
+  const doc = parsed.value
   if (
     !object(doc) ||
     doc.format !== 1 ||

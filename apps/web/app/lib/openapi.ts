@@ -3,6 +3,7 @@
 // secrets. Only `/api/` paths of this instance are ever called, under the base this client uses.
 
 import { apiTail } from './api_version'
+import { anything, parseJson } from './schema'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -319,11 +320,7 @@ export const validate = (f: Field, v: FormValue, path = f.name, out: Errors = {}
         if (!(f.options ?? []).includes(v)) out[path] = 'Pick one of the options'
         break
       case 'json':
-        try {
-          JSON.parse(v)
-        } catch {
-          out[path] = 'Not valid JSON'
-        }
+        if (!parseJson(v, anything).ok) out[path] = 'Not valid JSON'
         break
       default: {
         const n = chars(sanitize(v))
@@ -365,8 +362,10 @@ export const buildValue = (f: Field, v: FormValue): unknown => {
         return Number(v.trim())
       case 'boolean':
         return v === 'true'
-      case 'json':
-        return JSON.parse(v) as unknown
+      case 'json': {
+        const parsed = parseJson(v, anything)
+        return parsed.ok ? parsed.value : undefined
+      }
       default:
         return sanitize(v)
     }
@@ -648,11 +647,10 @@ export const prettyBody = (raw: string, type: string | null, max = RENDER_MAX) =
   let out = raw
   let json = false
   if (type?.includes('json') || /^\s*[[{]/.test(raw)) {
-    try {
-      out = JSON.stringify(JSON.parse(raw), null, 2)
+    const parsed = parseJson(raw, anything)
+    if (parsed.ok) {
+      out = JSON.stringify(parsed.value, null, 2)
       json = true
-    } catch {
-      out = raw
     }
   }
   const cut = out.length > max

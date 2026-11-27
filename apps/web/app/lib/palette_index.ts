@@ -6,6 +6,7 @@
 
 import MiniSearch from 'minisearch'
 import type { BlobStore } from './platform/blobs'
+import { anything, arr, parseJson } from './schema'
 
 export type DocKind = 'message' | 'member'
 
@@ -344,15 +345,11 @@ export class PaletteIndex {
     for (const b of manifest.buckets) {
       const part = await store.get(`${prefix}${encodeURIComponent(b)}`)
       if (!part) continue
-      try {
-        const list = JSON.parse(await part.text()) as unknown
-        if (!Array.isArray(list)) continue
-        for (const x of list) {
-          const d = parseDoc(x)
-          if (d && d.bucket === b) docs.push(d)
-        }
-      } catch {
-        continue
+      const list = parseJson(await part.text().catch(() => ''), arr(anything))
+      if (!list.ok) continue
+      for (const x of list.value) {
+        const d = parseDoc(x)
+        if (d && d.bucket === b) docs.push(d)
       }
     }
     this.add(docs)

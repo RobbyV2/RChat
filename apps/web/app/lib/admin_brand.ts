@@ -2,6 +2,7 @@
 // and the app it serves, with their limits and the name of each in the server config.
 
 import type { BrandLink, InstanceSuggestion, InstanceSuggestions } from './types'
+import { anything, obj, opt, parseJson, str, type Schema } from './schema'
 
 export const BRAND_NAME_MAX = 64
 export const BRAND_SHORT_NAME_MAX = 16
@@ -159,50 +160,34 @@ export const suggestionsError = (list: InstanceSuggestion[]): string | null => {
   return null
 }
 
+const LINK = obj({ label: str(), url: str() })
+const SUGGESTION = obj({ url: str(), label: opt(anything) })
+const SUGGESTIONS = obj({ mode: opt(anything), list: opt(anything) })
+
+// The entries of `list` that fit `shape`; the others are left out.
+const fitting = <T>(list: unknown, shape: Schema<T>): T[] =>
+  Array.isArray(list)
+    ? list.flatMap(item => {
+        const parsed = shape.parse(item)
+        return parsed.ok ? [parsed.value] : []
+      })
+    : []
+
 // The links a stored or config value holds; an unreadable value holds none.
 export const linksOf = (shown: string | null | undefined): BrandLink[] => {
-  try {
-    const parsed: unknown = JSON.parse(shown ?? '[]')
-    if (!Array.isArray(parsed)) return []
-    return parsed.flatMap(l =>
-      typeof l === 'object' &&
-      l !== null &&
-      typeof (l as BrandLink).label === 'string' &&
-      typeof (l as BrandLink).url === 'string'
-        ? [{ label: (l as BrandLink).label, url: (l as BrandLink).url }]
-        : []
-    )
-  } catch {
-    return []
-  }
+  const parsed = parseJson(shown ?? '[]', anything)
+  return parsed.ok ? fitting(parsed.value, LINK) : []
 }
 
 // The suggested instances a stored or config value holds; an unreadable value holds none.
 export const suggestionsOf = (shown: string | null | undefined): InstanceSuggestions => {
-  const none: InstanceSuggestions = { mode: 'add', list: [] }
-  try {
-    const parsed: unknown = JSON.parse(shown ?? '')
-    if (typeof parsed !== 'object' || parsed === null) return none
-    const { mode, list } = parsed as { mode?: unknown; list?: unknown }
-    return {
-      mode: mode === 'replace' ? 'replace' : 'add',
-      list: Array.isArray(list)
-        ? list.flatMap(s =>
-            typeof s === 'object' && s !== null && typeof (s as InstanceSuggestion).url === 'string'
-              ? [
-                  {
-                    url: (s as InstanceSuggestion).url,
-                    label:
-                      typeof (s as InstanceSuggestion).label === 'string'
-                        ? (s as InstanceSuggestion).label
-                        : '',
-                  },
-                ]
-              : []
-          )
-        : [],
-    }
-  } catch {
-    return none
+  const parsed = parseJson(shown ?? '', SUGGESTIONS)
+  if (!parsed.ok) return { mode: 'add', list: [] }
+  return {
+    mode: parsed.value.mode === 'replace' ? 'replace' : 'add',
+    list: fitting(parsed.value.list, SUGGESTION).map((s): InstanceSuggestion => ({
+      url: s.url,
+      label: typeof s.label === 'string' ? s.label : '',
+    })),
   }
 }

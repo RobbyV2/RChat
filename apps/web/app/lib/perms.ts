@@ -4,6 +4,8 @@
 // canonical (hosted) values, exact below 2^53; `rules` is 0 for a hosted server and the rules
 // version for a P2P room.
 
+import { arr, bool, lit, nullable, num, obj, parseJson, str, union, type Schema } from './schema'
+
 type Tie = string | undefined
 
 export interface PermsModule {
@@ -157,7 +159,24 @@ export interface Bit {
 }
 
 let bits: Bit[] | null = null
-export const registry = (): Bit[] => (bits ??= JSON.parse(rules().perms_registry()) as Bit[])
+const STATE = union(lit('live'), lit('reserved'))
+const BITS: Schema<Bit[]> = arr(
+  obj({
+    name: str(),
+    label: str(),
+    value: num(),
+    scope: union(lit('server'), lit('channel')),
+    everyone: bool,
+    hosted: STATE,
+    p2p: nullable(obj({ value: num(), state: STATE, since: num() })),
+  })
+)
+export const registry = (): Bit[] => {
+  if (bits) return bits
+  const parsed = parseJson(rules().perms_registry(), BITS)
+  if (!parsed.ok) throw new Error('The permission rules could not be read')
+  return (bits = parsed.value)
+}
 export const bit = (name: string): number => {
   const found = registry().find(b => b.name === name)
   if (found === undefined) throw new Error(`unknown permission ${name}`)
