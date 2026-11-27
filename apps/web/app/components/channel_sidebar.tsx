@@ -666,7 +666,7 @@ export function DmBlock({
                     pinning ? 'bg-primary-container/40' : ''
                   }`}
                 >
-                  <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-surface-container-low px-4 pt-3 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                  <div className="sticky top-0 z-raised flex items-center gap-1.5 bg-surface-container-low px-4 pt-3 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
                     <Pin size={12} className="shrink-0" />
                     Pinned
                   </div>
@@ -676,7 +676,7 @@ export function DmBlock({
               <div
                 data-drop-zone={pinZone ? 'pinned' : undefined}
                 data-drop-label={pinZone ? 'Pin' : undefined}
-                className="sticky top-0 z-10 shrink-0 bg-surface-container-low"
+                className="sticky top-0 z-raised shrink-0 bg-surface-container-low"
               >
                 {pinZone ? (
                   <div

@@ -72,8 +72,8 @@ function AccountBanners() {
 export function Banners() {
   const sessions = useLiveSessions()
   return (
-    <div className="pointer-events-none fixed inset-x-4 top-[calc(var(--safe-top)+4rem)] z-60 flex flex-col gap-2 sm:contents">
-      <div className="contents sm:pointer-events-none sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:flex sm:-translate-x-1/2 sm:flex-col sm:gap-2">
+    <div className="pointer-events-none fixed inset-x-4 top-[calc(var(--safe-top)+4rem)] z-banner flex flex-col gap-2 sm:contents">
+      <div className="contents sm:pointer-events-none sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-banner sm:flex sm:-translate-x-1/2 sm:flex-col sm:gap-2">
         {sessions.map(session => (
           <AccountProvider key={session.renderKey} session={session}>
             <AccountBanners />

@@ -317,7 +317,7 @@ function AccountList({
             <section key={g.origin} aria-label={g.name}>
               {(model.groups.length > 1 || manage) && (
                 <div
-                  className="sticky top-0 z-10 flex min-h-10 items-center gap-2 bg-surface-container px-3 py-1"
+                  className="sticky top-0 z-raised flex min-h-10 items-center gap-2 bg-surface-container px-3 py-1"
                   {...drag({ origin: g.origin }, gi)}
                 >
                   <InstanceTag origin={g.origin} name={g.name} />
@@ -537,7 +537,7 @@ export function SwitcherDialog({ initialManage }: { initialManage: boolean }) {
   useEscape(close)
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end bg-scrim/40 md:items-start md:bg-transparent"
+      className="fixed inset-0 z-top flex items-end bg-scrim/40 md:items-start md:bg-transparent"
       onMouseDown={e => {
         if (e.target === e.currentTarget) close()
       }}

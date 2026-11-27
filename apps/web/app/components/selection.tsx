@@ -364,7 +364,7 @@ export function SelectionBar({
     <div
       role="toolbar"
       aria-label="Selected messages"
-      className={`z-10 flex shrink-0 items-center border-b border-outline-variant bg-surface-container-high py-1.5 ${compact ? 'gap-0.5 px-1.5' : 'gap-1 px-3'}`}
+      className={`z-raised flex shrink-0 items-center border-b border-outline-variant bg-surface-container-high py-1.5 ${compact ? 'gap-0.5 px-1.5' : 'gap-1 px-3'}`}
     >
       {exit}
       {status}
@@ -384,7 +384,7 @@ export function BulkJobBar({ scope }: { scope: string | null }) {
   return (
     <div
       role="status"
-      className="z-10 flex shrink-0 items-center gap-3 border-b border-outline-variant bg-secondary-container px-4 py-1.5 text-sm text-on-secondary-container"
+      className="z-raised flex shrink-0 items-center gap-3 border-b border-outline-variant bg-secondary-container px-4 py-1.5 text-sm text-on-secondary-container"
     >
       <span className="min-w-0 flex-1 truncate">
         Deleting messages: {done} of about {of}

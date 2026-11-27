@@ -124,7 +124,7 @@ export default function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="fixed inset-x-0 top-0 z-80 flex h-(--titlebar-h) items-center bg-surface-container-lowest text-xs text-on-surface-variant select-none"
+      className="fixed inset-x-0 top-0 z-chrome flex h-(--titlebar-h) items-center bg-surface-container-lowest text-xs text-on-surface-variant select-none"
     >
       {os === 'windows' ? (
         <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2 pl-3">

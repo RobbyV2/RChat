@@ -102,7 +102,7 @@ export function FormatToolbar({
       role="toolbar"
       aria-label="Formatting"
       data-format-toolbar
-      className={`absolute left-2 z-20 flex items-center gap-0.5 rounded-xl bg-surface-container-highest p-1 shadow-elevation-2 ${
+      className={`absolute left-2 z-float flex items-center gap-0.5 rounded-xl bg-surface-container-highest p-1 shadow-elevation-2 ${
         below ? 'top-full mt-1' : 'bottom-full mb-1'
       }`}
     >

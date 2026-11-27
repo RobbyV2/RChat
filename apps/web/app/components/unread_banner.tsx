@@ -19,7 +19,7 @@ export function UnreadBanner({
   return (
     <div
       data-unread-banner
-      className={`absolute inset-x-3 top-2 z-10 flex items-center gap-1 rounded-xl bg-primary py-0.5 pr-1 pl-3.5 text-sm text-on-primary shadow-elevation-2 ${moves ? 'animate-banner-in' : ''}`}
+      className={`absolute inset-x-3 top-2 z-raised flex items-center gap-1 rounded-xl bg-primary py-0.5 pr-1 pl-3.5 text-sm text-on-primary shadow-elevation-2 ${moves ? 'animate-banner-in' : ''}`}
     >
       <button
         onClick={onJump}

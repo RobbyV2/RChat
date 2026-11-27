@@ -105,7 +105,7 @@ export function AutocompletePopup<T>({
   return (
     <div
       data-popover
-      className={`absolute inset-x-0 z-30 overflow-hidden rounded-2xl ${below ? 'top-full mt-2' : 'bottom-full mb-2'} bg-surface-container-high py-2 shadow-elevation-2`}
+      className={`absolute inset-x-0 z-popover overflow-hidden rounded-2xl ${below ? 'top-full mt-2' : 'bottom-full mb-2'} bg-surface-container-high py-2 shadow-elevation-2`}
       onMouseDown={e => e.preventDefault()}
     >
       <div className="truncate px-4 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase">

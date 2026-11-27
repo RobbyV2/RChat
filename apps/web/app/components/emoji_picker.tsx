@@ -253,7 +253,7 @@ export function EmojiPicker({
           e.stopPropagation()
           if (e.target === e.currentTarget) onClose()
         }}
-        className="fixed inset-x-0 top-app z-50 flex h-app flex-col justify-end bg-scrim/40"
+        className="fixed inset-x-0 top-app z-top flex h-app flex-col justify-end bg-scrim/40"
       >
         <div
           ref={rootRef}
@@ -285,7 +285,7 @@ export function EmojiPicker({
       aria-label={label}
       data-popover
       style={pos ?? undefined}
-      className={`fixed z-50 flex h-[27.5rem] max-h-[calc(100dvh-1rem)] w-[27.5rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3 ${
+      className={`fixed z-top flex h-[27.5rem] max-h-[calc(100dvh-1rem)] w-[27.5rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3 ${
         pos ? '' : 'pointer-events-none opacity-0'
       }`}
     >
@@ -517,7 +517,7 @@ const PickerBody = memo(function PickerBody({
         >
           <div
             aria-hidden
-            className="sticky top-0 z-10 h-[30px] bg-surface-container-high/95 px-2 pt-2 pb-1.5 text-xs font-medium tracking-wide text-on-surface-variant uppercase backdrop-blur-sm"
+            className="sticky top-0 z-raised h-[30px] bg-surface-container-high/95 px-2 pt-2 pb-1.5 text-xs font-medium tracking-wide text-on-surface-variant uppercase backdrop-blur-sm"
           >
             {g.label}
           </div>
@@ -673,7 +673,7 @@ const PickerBody = memo(function PickerBody({
             <div
               role="menu"
               aria-label="Skin tone"
-              className="absolute top-full right-0 z-20 mt-1 flex flex-col gap-0.5 rounded-3xl bg-surface-container-highest p-1 shadow-elevation-2"
+              className="absolute top-full right-0 z-float mt-1 flex flex-col gap-0.5 rounded-3xl bg-surface-container-highest p-1 shadow-elevation-2"
             >
               {TONE_NAMES.map((name, t) => (
                 <button

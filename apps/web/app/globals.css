@@ -64,6 +64,7 @@
   --z-index-popover: 30;
   --z-index-page: 40;
   --z-index-top: 50;
+  --z-index-palette: 55;
   --z-index-banner: 60;
   --z-index-drag: 70;
   --z-index-chrome: 80;

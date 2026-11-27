@@ -631,7 +631,7 @@ function Palette() {
 
   return (
     <div
-      className="fixed inset-0 z-[55] bg-scrim/50"
+      className="fixed inset-0 z-palette bg-scrim/50"
       onMouseDown={e => {
         pressed.current = e.target === e.currentTarget
       }}

@@ -804,7 +804,7 @@ function Card({ target }: { target: ProfileTarget }) {
   if (sheet) {
     return (
       <div
-        className="fixed inset-x-0 top-app z-50 flex h-app flex-col justify-end bg-scrim/40"
+        className="fixed inset-x-0 top-app z-top flex h-app flex-col justify-end bg-scrim/40"
         onClick={close}
         onContextMenu={e => e.preventDefault()}
       >
@@ -834,7 +834,7 @@ function Card({ target }: { target: ProfileTarget }) {
         top: pos?.y ?? y,
         visibility: pos ? 'visible' : 'hidden',
       }}
-      className="fixed z-50 flex max-h-[calc(100dvh-1rem)] w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high pb-4 shadow-elevation-3 outline-none"
+      className="fixed z-top flex max-h-[calc(100dvh-1rem)] w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high pb-4 shadow-elevation-3 outline-none"
     >
       {body}
     </div>

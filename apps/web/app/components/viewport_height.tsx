@@ -265,7 +265,7 @@ export function OlderLoading({
 }) {
   return (
     <div
-      className={`pointer-events-none absolute inset-x-0 z-10 flex justify-center ${newer ? 'bottom-2' : lower ? 'top-14' : 'top-2'}`}
+      className={`pointer-events-none absolute inset-x-0 z-raised flex justify-center ${newer ? 'bottom-2' : lower ? 'top-14' : 'top-2'}`}
     >
       <span
         role="status"
@@ -356,7 +356,7 @@ export function useFocusMessage(
 
 export function PresentBar({ onJump, count = 0 }: { onJump: () => void; count?: number }) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-raised flex justify-center">
       <button
         onClick={onJump}
         className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-on-primary shadow-elevation-2 hover:opacity-90"

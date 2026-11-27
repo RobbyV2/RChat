@@ -197,7 +197,7 @@ function TopicWindow({
         onClick={e => {
           if (e.target === e.currentTarget) onClose()
         }}
-        className="fixed inset-x-0 top-app z-40 flex h-app flex-col justify-end bg-scrim/40"
+        className="fixed inset-x-0 top-app z-page flex h-app flex-col justify-end bg-scrim/40"
       >
         <div
           ref={rootRef}
@@ -222,7 +222,7 @@ function TopicWindow({
       tabIndex={-1}
       data-popover
       style={at ? { top: at.top, left: at.left } : { visibility: 'hidden' }}
-      className="fixed z-30 flex max-h-[min(28rem,calc(100dvh-6rem))] outline-none w-[28rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
+      className="fixed z-popover flex max-h-[min(28rem,calc(100dvh-6rem))] outline-none w-[28rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
     >
       {body}
     </div>,

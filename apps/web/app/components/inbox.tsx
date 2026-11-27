@@ -698,7 +698,7 @@ export function InboxHost() {
   }
 
   return (
-    <div className={sheet ? 'fixed inset-0 z-50' : ''}>
+    <div className={sheet ? 'fixed inset-0 z-top' : ''}>
       {sheet && (
         <div data-inbox-scrim className="absolute inset-0 bg-scrim/50" onClick={() => close()} />
       )}
@@ -711,7 +711,7 @@ export function InboxHost() {
         className={
           sheet
             ? 'absolute inset-x-0 bottom-0 flex h-[85dvh] flex-col rounded-t-3xl bg-surface-container-low pt-2 pb-[env(safe-area-inset-bottom)] shadow-elevation-3'
-            : 'fixed top-[calc(var(--safe-top)+3.25rem)] right-3 z-50 flex h-[min(40rem,calc(100dvh-var(--safe-top)-4.5rem))] w-[26rem] flex-col rounded-2xl border border-outline-variant bg-surface-container-low shadow-elevation-3'
+            : 'fixed top-[calc(var(--safe-top)+3.25rem)] right-3 z-top flex h-[min(40rem,calc(100dvh-var(--safe-top)-4.5rem))] w-[26rem] flex-col rounded-2xl border border-outline-variant bg-surface-container-low shadow-elevation-3'
         }
       >
         {sheet && <SheetGrip />}

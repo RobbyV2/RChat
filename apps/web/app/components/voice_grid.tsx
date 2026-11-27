@@ -235,7 +235,7 @@ function AudioUnblock() {
   return (
     <button
       onClick={unblockAudio}
-      className={`${ctlBase} fixed top-[calc(var(--safe-top)+4rem)] left-1/2 z-50 -translate-x-1/2 gap-2 bg-inverse-surface px-4 py-2 text-sm whitespace-nowrap font-medium text-inverse-on-surface shadow-elevation-3 hover:opacity-90`}
+      className={`${ctlBase} fixed top-[calc(var(--safe-top)+4rem)] left-1/2 z-top -translate-x-1/2 gap-2 bg-inverse-surface px-4 py-2 text-sm whitespace-nowrap font-medium text-inverse-on-surface shadow-elevation-3 hover:opacity-90`}
     >
       <Volume2 size={16} />
       Click to enable audio
@@ -428,7 +428,7 @@ export function Tile({
       )}
       {screen && (
         <span
-          className={`pointer-events-none absolute z-10 ${compact ? 'top-1 left-1' : 'top-2 left-2'}`}
+          className={`pointer-events-none absolute z-raised ${compact ? 'top-1 left-1' : 'top-2 left-2'}`}
         >
           <LiveBadge size={compact ? 'sm' : 'md'} />
         </span>
@@ -1464,7 +1464,7 @@ export function CallBanner() {
       </CallOwner>
       <div
         data-call-banner
-        className="pointer-events-none fixed inset-x-0 top-app z-50 flex max-h-[calc(100dvh-var(--safe-top))] flex-col items-center gap-2 overflow-y-auto pt-3 pb-5 empty:hidden"
+        className="pointer-events-none fixed inset-x-0 top-app z-top flex max-h-[calc(100dvh-var(--safe-top))] flex-col items-center gap-2 overflow-y-auto pt-3 pb-5 empty:hidden"
       >
         {sessions.map(account => (
           <AccountProvider key={account.renderKey} session={account}>

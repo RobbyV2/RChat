@@ -112,7 +112,7 @@ function ReactionTooltip({
       data-reaction-tooltip
       aria-label={reactionLabel(r.emoji, code, names, r.count, streamer)}
       style={pos ?? { top: -9999, left: -9999 }}
-      className="pointer-events-none fixed z-50 flex max-w-64 items-center gap-3 rounded-lg bg-inverse-surface px-3 py-2 text-inverse-on-surface shadow-elevation-2"
+      className="pointer-events-none fixed z-top flex max-w-64 items-center gap-3 rounded-lg bg-inverse-surface px-3 py-2 text-inverse-on-surface shadow-elevation-2"
     >
       <span aria-hidden className="shrink-0 font-emoji text-3xl leading-none">
         {r.emoji}
@@ -308,7 +308,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
         e.stopPropagation()
         if (e.target === e.currentTarget) onClose()
       }}
-      className={`fixed inset-x-0 top-app z-50 flex h-app bg-scrim/40 ${
+      className={`fixed inset-x-0 top-app z-top flex h-app bg-scrim/40 ${
         coarse ? 'flex-col justify-end' : 'items-center justify-center px-safe-4 py-4'
       }`}
     >

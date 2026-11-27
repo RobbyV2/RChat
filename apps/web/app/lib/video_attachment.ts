@@ -37,7 +37,7 @@ export const hostedVideo = (
 }
 
 const PILL =
-  'absolute top-2 right-2 z-10 flex items-center rounded-xl border border-outline-variant/40 bg-surface-container-highest/90 p-1 shadow-elevation-2 backdrop-blur-sm'
+  'absolute top-2 right-2 z-raised flex items-center rounded-xl border border-outline-variant/40 bg-surface-container-highest/90 p-1 shadow-elevation-2 backdrop-blur-sm'
 // Shown on hover and keyboard focus (not the focus a click leaves), always on touch and narrow
 // screens.
 const SHOWN =

@@ -396,7 +396,7 @@ export function HeaderPopover({
         onClick={e => {
           if (e.target === e.currentTarget) onClose()
         }}
-        className="fixed inset-x-0 top-app z-40 flex h-app flex-col justify-end bg-scrim/40"
+        className="fixed inset-x-0 top-app z-page flex h-app flex-col justify-end bg-scrim/40"
       >
         <div
           ref={rootRef}
@@ -418,7 +418,7 @@ export function HeaderPopover({
       role="dialog"
       aria-labelledby={titleId}
       data-popover
-      className="absolute top-14 right-2 z-30 flex max-h-[min(36rem,calc(100%-4.5rem))] w-[26rem] max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
+      className="absolute top-14 right-2 z-popover flex max-h-[min(36rem,calc(100%-4.5rem))] w-[26rem] max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
     >
       {body}
     </div>
