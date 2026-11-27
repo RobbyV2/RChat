@@ -26,10 +26,12 @@ import {
   expiryTitle,
   fileTarget,
   pct,
+  primaryText,
   splitShown,
   type FileExtra,
   type FileKind,
   type FileMenu,
+  type FileMenuOwn,
 } from '../lib/file_card'
 import { useMask } from '../lib/store'
 import { longPress } from './context_menu'
@@ -89,8 +91,8 @@ export interface FileCardProps extends CardProps {
   own: boolean
   fileMask: boolean
   // What the menu may do besides the card's buttons: start a download (null while none may),
-  // and copy the instance's address of a file it hosts.
-  menu: Pick<FileMenu, 'download' | 'link'>
+  // copy the instance's address of a file it hosts, and remove the attachment.
+  menu: FileMenuOwn
 }
 
 const square =
@@ -104,11 +106,17 @@ const cardBox = 'mt-1 w-md max-w-full min-w-0'
 // on right-click and long-press that acts on the card as it is when a row runs. In a row in
 // selection mode those open the row's menu instead.
 export function FileCard({ own, fileMask, menu, ...card }: FileCardProps) {
-  const acct = useAccount()
   const shown = useMask(own, fileMask)(card.name)
+  const open = useFileMenu(cardMenu(shown, { ...card, menu }))
+  return <FileCardBody {...card} shown={shown} open={open} />
+}
+
+// Opens the menu of a card or video that is `current` now, its rows reading it as it is when
+// they run; null in a row in selection mode, whose menu takes right-click and long-press.
+export function useFileMenu(current: FileMenu): ((x: number, y: number) => void) | null {
+  const acct = useAccount()
   const selecting = useContext(RowSelecting)
-  const current = cardMenu(shown, { ...card, menu })
-  const live = useRef<FileMenu | null>(null)
+  const live = useRef<FileMenu | null>(current)
   useEffect(() => {
     live.current = current
     return () => {
@@ -116,10 +124,7 @@ export function FileCard({ own, fileMask, menu, ...card }: FileCardProps) {
     }
   })
   const [target] = useState(() => fileTarget(() => live.current))
-  const open = selecting
-    ? null
-    : (x: number, y: number) => openActionMenu(x, y, target, undefined, acct)
-  return <FileCardBody {...card} shown={shown} open={open} />
+  return selecting ? null : (x, y) => openActionMenu(x, y, target, undefined, acct)
 }
 
 // The card for `shown`, the name as the filter shows it (as long as `name`). `open`: its menu,
@@ -146,8 +151,7 @@ export function FileCardBody({
   const Icon = ICONS[kind]
   const percent = progress ? pct(progress) : null
   const sizeLine = [size !== null ? fmtSize(size) : '', detail ?? ''].join('')
-  const label = `${primary.label} ${shown}`
-  const title = primary.hint ? `${label} ${primary.hint}` : label
+  const { label, title } = primaryText(primary.label, shown, primary.hint)
   const button =
     progress && onCancel ? (
       <button

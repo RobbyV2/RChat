@@ -5,12 +5,13 @@ import { client } from './client/client'
 import { useAccount } from './client/react'
 import { headOf } from './p2p'
 import { sharing } from './platform'
-import { downloadName, NEUTRAL_TYPE, sniff } from './sniff'
+import { downloadName, NEUTRAL_TYPE, sniff, type PreviewKind } from './sniff'
+import { failureMemory } from './video_attachment'
 
 // Media a URL can't load is fetched with the credential in a header and shown from a `blob:`
 // URL: a guest's grant never lands in a link, the address bar or history, and an account on an
-// API at another origin has no cookie there. Only images recognized from their bytes get a
-// typed blob; anything else is offered as a download.
+// API at another origin has no cookie there. Only images and videos recognized from their bytes
+// get a typed blob, each where that kind is asked for; anything else is offered as a download.
 
 export type MediaMode = 'url' | 'blob'
 
@@ -35,13 +36,24 @@ interface Entry {
   done: boolean
   value: string | null
   size: number
+  kind: PreviewKind
+  // The bytes a video is expected to hold while it loads.
+  hint: number
+  // Starts the load, while it waits for room; null once started.
+  start: (() => void) | null
+  settle: (url: string | null) => void
+  // On screen now: it starts before the others that wait.
+  urgent: boolean
 }
 
 export const MEDIA_CACHE_BYTES = 64 * 1024 * 1024
 
 // Object URLs by media address, least recently used first. Mounted users hold a reference: an
 // entry in use is never revoked, a load nobody waits for is aborted, and unused entries are
-// revoked while there are more than `keep` or their images hold more than `bytes`.
+// revoked while there are more than `keep` or their files hold more than `bytes`. An entry gets a
+// URL only when its bytes sniff as the `kind` it was first asked for. Videos in use hold at most
+// `bytes` together: one that would pass it waits until others are released, those on screen
+// (`urge`) first.
 export const blobCache = (
   keep: number,
   bytes: number,
@@ -56,6 +68,10 @@ export const blobCache = (
     e.size = 0
     if (e.value) revoke(e.value)
     if (!e.done) e.ctrl.abort()
+    if (e.start) {
+      e.start = null
+      e.settle(null)
+    }
   }
 
   const trim = () => {
@@ -65,43 +81,90 @@ export const blobCache = (
     }
   }
 
-  const acquire = (id: string, load: Load) => {
+  // Bytes held by videos in use, loaded or loading, but `except`.
+  const videoBytes = (except: Entry) => {
+    let held = 0
+    for (const e of entries.values())
+      if (e !== except && e.kind === 'video' && e.users > 0 && !e.start)
+        held += e.done ? e.size : e.hint
+    return held
+  }
+
+  // Starts the waiting loads that have users, those on screen and then the oldest first, while
+  // videos keep within `bytes`.
+  const admit = () => {
+    const waiting = [...entries.values()].filter(e => e.start && e.users > 0)
+    for (const e of [...waiting.filter(e => e.urgent), ...waiting.filter(e => !e.urgent)]) {
+      if (!e.start) continue
+      const held = e.kind === 'video' ? videoBytes(e) : 0
+      if (held > 0 && held + e.hint > bytes) continue
+      const start = e.start
+      e.start = null
+      start()
+    }
+  }
+
+  const acquire = (id: string, load: Load, kind: PreviewKind = 'image', hint = 0) => {
     let e = entries.get(id)
     if (e) entries.delete(id)
     else {
       const ctrl = new AbortController()
+      let settle: (url: string | null) => void = () => {}
+      let fail: (err: unknown) => void = () => {}
       const made: Entry = {
-        url: Promise.resolve(null),
+        url: new Promise<string | null>((resolve, reject) => {
+          settle = resolve
+          fail = reject
+        }),
         users: 0,
         ctrl,
         done: false,
         value: null,
         size: 0,
+        kind,
+        hint,
+        start: null,
+        settle: url => settle(url),
+        urgent: false,
       }
-      made.url = load(id, ctrl.signal).then(async blob => {
-        const seen = sniff(await headOf(blob))
-        const url =
-          seen?.kind === 'image' ? URL.createObjectURL(new Blob([blob], { type: seen.mime })) : null
-        made.done = true
-        if (ctrl.signal.aborted) {
-          if (url) revoke(url)
-          return null
-        }
-        made.value = url
-        if (url) {
-          made.size = blob.size
-          total += blob.size
-          trim()
-        }
-        return url
-      })
-      made.url.catch(() => {
-        if (entries.get(id) === made) entries.delete(id)
-      })
+      made.start = () =>
+        void load(id, ctrl.signal)
+          .then(async blob => {
+            const seen = sniff(await headOf(blob))
+            const url =
+              seen?.kind === kind
+                ? URL.createObjectURL(new Blob([blob], { type: seen.mime }))
+                : null
+            made.done = true
+            if (ctrl.signal.aborted) {
+              if (url) revoke(url)
+              return null
+            }
+            made.value = url
+            if (url) {
+              made.size = blob.size
+              total += blob.size
+              trim()
+            }
+            return url
+          })
+          .then(
+            url => {
+              settle(url)
+              admit()
+            },
+            (err: unknown) => {
+              if (entries.get(id) === made) entries.delete(id)
+              fail(err)
+              admit()
+            }
+          )
+      made.url.catch(() => {})
       e = made
     }
     e.users++
     entries.set(id, e)
+    admit()
     trim()
     const held = e
     let live = true
@@ -114,16 +177,38 @@ export const blobCache = (
         if (held.users > 0 || entries.get(id) !== held) return
         if (!held.done) drop(id, held)
         else trim()
+        admit()
       },
     }
+  }
+
+  // The URL of a loaded entry without taking it (null when its bytes weren't the kind asked
+  // for), or undefined while it isn't loaded.
+  const peek = (id: string) => {
+    const e = entries.get(id)
+    return e?.done ? e.value : undefined
+  }
+
+  // Marks an entry as on screen (or not), which lets it start before others that wait.
+  const urge = (id: string, on: boolean) => {
+    const e = entries.get(id)
+    if (!e || e.urgent === on) return
+    e.urgent = on
+    if (on) admit()
   }
 
   const clear = () => {
     for (const [id, e] of entries) drop(id, e)
   }
 
-  return { acquire, clear, size: () => entries.size, bytes: () => total }
+  return { acquire, peek, urge, clear, size: () => entries.size, bytes: () => total }
 }
+
+// What to show of an entry: the URL a component `held` (it holds the entry, so the URL stays
+// live), never one the cache only `known` of, which a trim may revoke before it is held. Only the
+// cache's word that the bytes are the wrong kind (null) shows at once.
+export const shownBlob = (known: string | null | undefined, held: string | null | undefined) =>
+  held !== undefined ? held : known === null ? null : undefined
 
 export function createMediaSrc(account: AccountSession) {
   const {
@@ -182,12 +267,24 @@ export function createMediaSrc(account: AccountSession) {
       }
     }
   }
-  function key(plain: string, server: string | undefined) {
-    return JSON.stringify([generation, conn.origin, server, plain])
+  function key(plain: string, server: string | undefined, kind: PreviewKind = 'image') {
+    return JSON.stringify([generation, conn.origin, server, plain, kind])
   }
-  function acquire(plain: string, server?: string) {
-    return cache.acquire(key(plain, server), (_, signal) => api.authedBlob(plain, server, signal))
+  function acquire(plain: string, server?: string, kind: PreviewKind = 'image', hint = 0) {
+    return cache.acquire(
+      key(plain, server, kind),
+      (_, signal) => api.authedBlob(plain, server, signal),
+      kind,
+      hint
+    )
   }
+  function peek(plain: string, server: string | undefined, kind: PreviewKind = 'image') {
+    return cache.peek(key(plain, server, kind))
+  }
+  function urge(plain: string, server: string | undefined, kind: PreviewKind, on: boolean) {
+    cache.urge(key(plain, server, kind), on)
+  }
+  const videoFailures = failureMemory()
   async function saveMedia(id: string, server: string | undefined, filename: string) {
     const ctrl = new AbortController()
     saves.add(ctrl)
@@ -204,8 +301,19 @@ export function createMediaSrc(account: AccountSession) {
     cache.clear()
     for (const ctrl of saves) ctrl.abort()
     saves.clear()
+    videoFailures.clear()
   }
-  return { key, acquire, clear, saveMedia, mediaModeFor, subscribe }
+  return {
+    key,
+    acquire,
+    peek,
+    urge,
+    clear,
+    saveMedia,
+    mediaModeFor,
+    subscribe,
+    videoFailures,
+  }
 }
 
 export const mediaModeFor = (server: string | undefined) =>
@@ -217,22 +325,28 @@ function useMediaMode(media: ReturnType<typeof createMediaSrc>, server: string |
   return useSyncExternalStore(media.subscribe, mode, mode)
 }
 
-// The address to show an image from: plain where media loads by URL, else a blob URL.
+// The address to show an image (or `kind`) from: plain where media loads by URL, else a blob URL
+// this component holds. Not `wanted`, a fetched file is undefined, or null when its bytes are
+// known not to be `kind`. `hint`: the bytes it is expected to hold; `urgent`: it is on
+// screen, so it loads before others that wait.
 const useBlobSrc = (
   media: ReturnType<typeof createMediaSrc>,
   plain: string,
   server: string | undefined,
   wanted: boolean,
-  fetched: boolean
+  fetched: boolean,
+  kind: PreviewKind = 'image',
+  hint = 0,
+  urgent = false
 ) => {
-  const key = media.key(plain, server)
+  const key = media.key(plain, server, kind)
   const [blob, setBlob] = useState<{ media: typeof media; key: string; url: string | null } | null>(
     null
   )
   useEffect(() => {
     if (!fetched || !wanted) return
     let current = true
-    const held = media.acquire(plain, server)
+    const held = media.acquire(plain, server, kind, hint)
     held.url.then(
       url => current && setBlob({ media, key, url }),
       () => current && setBlob({ media, key, url: null })
@@ -240,15 +354,36 @@ const useBlobSrc = (
     return () => {
       current = false
       held.release()
+      setBlob(null)
     }
-  }, [fetched, wanted, key, media, plain, server])
+  }, [fetched, wanted, key, media, plain, server, kind, hint])
+  useEffect(() => {
+    if (fetched && wanted) media.urge(plain, server, kind, urgent)
+  }, [fetched, wanted, urgent, media, plain, server, kind])
   if (!fetched) return plain
-  return wanted && blob?.media === media && blob.key === key ? blob.url : undefined
+  const known = media.peek(plain, server, kind)
+  if (!wanted) return known === null ? null : undefined
+  return shownBlob(known, blob?.media === media && blob.key === key ? blob.url : undefined)
 }
 
 export const useMediaSrc = (id: string, server: string | undefined, wanted: boolean) => {
   const { api, media } = useAccount()
   return useBlobSrc(media, api.mediaUrl(id), server, wanted, useMediaMode(media, server) === 'blob')
+}
+
+// The address to play an uploaded video of `size` bytes from: plain where media loads by URL,
+// else a blob URL of bytes that sniff as a video (null when they don't, undefined while they load
+// or aren't `wanted`).
+export const useVideoSrc = (
+  id: string,
+  server: string | undefined,
+  wanted: boolean,
+  size: number,
+  urgent = false
+) => {
+  const { api, media } = useAccount()
+  const fetched = useMediaMode(media, server) === 'blob'
+  return useBlobSrc(media, api.mediaUrl(id), server, wanted, fetched, 'video', size, urgent)
 }
 
 // Only the primary account on the page's API may display an arbitrary image URL.

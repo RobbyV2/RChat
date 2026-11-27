@@ -100,6 +100,7 @@ test('the actions marked as danger', () => {
     'embed_remove',
     'embed_remove_banner',
     'embed_remove_all',
+    'file_remove',
     'channel_delete',
     'category_delete',
     'voice_guest_disconnect',

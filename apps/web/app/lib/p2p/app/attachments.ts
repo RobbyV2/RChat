@@ -153,6 +153,9 @@ export function createAttachmentsPart(
 
     unuse: (h: string) => urls.unuse(h),
 
+    // The stored file's URL while it is live (made by `url` and not dropped since).
+    liveUrl: (h: string) => urls.current(h),
+
     thumb: (thumb: string | undefined) => checkedThumb(thumb, state.limits),
 
     // Saves a stored file under a safe name, as plain bytes (never opened).

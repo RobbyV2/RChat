@@ -1,6 +1,6 @@
 // The menu of a file card, hosted or P2P. Each row reads the card as it is when it runs.
 
-import { Copy, Download, Link, X } from 'lucide-react'
+import { Copy, Download, Link, Trash2, X } from 'lucide-react'
 import { EXTRAS, type FileExtra } from '../file_card'
 import { sharing } from '../platform'
 import type { Action, ActionCtx } from './types'
@@ -72,5 +72,15 @@ export const fileActions: Action[] = [
       const card = cardOf(ctx)
       if (card) copy(card.name)
     },
+  },
+  {
+    id: 'file_remove',
+    title: 'Remove attachment',
+    icon: Trash2,
+    danger: true,
+    ...file,
+    order: 300,
+    available: ctx => !!cardOf(ctx)?.remove,
+    run: ctx => cardOf(ctx)?.remove?.(),
   },
 ]

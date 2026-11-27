@@ -296,6 +296,7 @@ export const freeSpace = async (): Promise<number | null> => (await storageSpace
 export class UrlCache {
   private urls = new Map<string, Promise<string | null>>()
   private refs = new Map<string, number>()
+  private made = new Map<string, string | null>()
 
   constructor(
     private max: number,
@@ -306,7 +307,14 @@ export class UrlCache {
   use(h: string, make: () => Promise<string | null>) {
     let hit = this.urls.get(h)
     if (hit) this.urls.delete(h)
-    else hit = make()
+    else {
+      const made = make()
+      hit = made
+      void made.then(
+        url => this.urls.get(h) === made && this.made.set(h, url),
+        () => {}
+      )
+    }
     this.urls.set(h, hit)
     this.refs.set(h, (this.refs.get(h) ?? 0) + 1)
     this.trim()
@@ -325,7 +333,13 @@ export class UrlCache {
     const u = this.urls.get(h)
     if (!u) return
     this.urls.delete(h)
+    this.made.delete(h)
     void u.then(x => x && this.revoke(x))
+  }
+
+  // The file's URL while it is live: made and not dropped since.
+  current(h: string) {
+    return this.made.get(h) ?? null
   }
 
   clear() {

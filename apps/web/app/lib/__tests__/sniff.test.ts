@@ -50,6 +50,7 @@ describe('sniffing received bytes', () => {
       [bytes('RIFF', [0, 0, 0, 0], 'WEBPVP8 '), 'image/webp'],
       [bytes([0, 0, 0, 0x1c], 'ftypavif'), 'image/avif'],
       [bytes([0, 0, 0, 0x20], 'ftypisom'), 'video/mp4'],
+      [bytes([0, 0, 0, 0x14], 'ftypqt  '), 'video/mp4'],
       [
         bytes([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 1, 0x42, 0x82, 0x84], 'webm'),
         'video/webm',
@@ -64,8 +65,14 @@ describe('sniffing received bytes', () => {
       expect(safeType(head)).toBe(mime)
       expect(kindOf(mime) === null).toBe(false)
     }
-    const webm = cases[6][0]
+    const webm = cases[7][0]
     expect(sniff(webm, true)).toEqual({ mime: 'audio/webm', kind: 'audio' })
+  })
+
+  test('a QuickTime file, as phones record it, plays through the MP4 player', () => {
+    const mov = bytes([0, 0, 0, 0x14], 'ftypqt  ', [0, 0, 2, 0], 'qt  ')
+    expect(sniff(mov)).toEqual({ mime: 'video/mp4', kind: 'video' })
+    expect(kindOf(safeType(mov))).toBe('video')
   })
 
   test('anything else is neutral, whatever its name or declared type', () => {
@@ -74,7 +81,7 @@ describe('sniffing received bytes', () => {
       enc('<?xml version="1.0"?><svg/>'),
       enc('<!doctype html><script>alert(1)</script>'),
       enc('%PDF-1.7'),
-      bytes([0, 0, 0, 0x18], 'ftypqt  '),
+      bytes([0, 0, 0, 0x18], 'ftyp3gp4'),
       bytes([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x82, 0x88], 'matroska'),
       bytes('RIFF', [0, 0, 0, 0], 'AVI '),
       bytes([0x89, 0x50, 0x4e]),
@@ -92,6 +99,7 @@ describe('sniffing received bytes', () => {
     expect(guessKind('a.PNG')).toBe('image')
     expect(guessKind('a.svg')).toBeNull()
     expect(guessKind('clip.webm')).toBe('video')
+    expect(guessKind('IMG_0001.MOV')).toBe('video')
     expect(guessKind('song.mp3')).toBe('audio')
     expect(guessKind('noext')).toBeNull()
     expect(audioHint('x.weba', null)).toBe(true)

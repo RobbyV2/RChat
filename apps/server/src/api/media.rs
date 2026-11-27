@@ -1441,6 +1441,230 @@ fn chunk_stream(
     })
 }
 
+/// Bytes `start..=end` of a file kept in `media_chunks`: only the rows that hold them, the first
+/// and last trimmed. Every row but the last holds `MEDIA_CHUNK` bytes; a file whose rows don't
+/// fit that ends the body with an error.
+fn chunk_range_stream(
+    db: Db,
+    id: String,
+    start: u64,
+    end: u64,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {
+    let piece = MEDIA_CHUNK as u64;
+    let last = end / piece;
+    futures_util::stream::unfold(Some(start / piece), move |seq| {
+        let (db, id) = (db.clone(), id.clone());
+        async move {
+            let seq = seq.filter(|seq| *seq <= last)?;
+            let row = sqlx::query("SELECT data FROM media_chunks WHERE media_id = $1 AND seq = $2")
+                .bind(&id)
+                .bind(seq as i64)
+                .fetch_optional(&db)
+                .await;
+            let bytes = row
+                .ok()
+                .flatten()
+                .and_then(|r| r.try_get::<Vec<u8>, _>(0).ok());
+            let at = seq * piece;
+            let from = start.max(at) - at;
+            let to = (end + 1).min(at + piece) - at;
+            match bytes {
+                Some(bytes)
+                    if to as usize <= bytes.len()
+                        && (seq == last || bytes.len() == MEDIA_CHUNK) =>
+                {
+                    Some((
+                        Ok(bytes[from as usize..to as usize].to_vec()),
+                        Some(seq + 1),
+                    ))
+                }
+                Some(_) => Some((
+                    Err(std::io::Error::other("media chunks out of shape")),
+                    None,
+                )),
+                None => Some((
+                    Err(std::io::Error::other("media removed while streaming")),
+                    None,
+                )),
+            }
+        }
+    })
+}
+
+/// Where an S3 range read is: not started (it starts on the first poll), reading, or over.
+enum S3Range {
+    Start {
+        bucket: std::sync::Arc<Bucket>,
+        key: String,
+        start: u64,
+        end: u64,
+    },
+    Reading {
+        reader: tokio::io::DuplexStream,
+        task: AbortOnDrop<Result<u16, s3::error::S3Error>>,
+        key: String,
+    },
+    Over,
+}
+
+/// A spawned task that is stopped when its handle is dropped: an S3 read nobody reads any more.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Most bytes one 206 from S3 storage sends, so each read ends well within the S3 request's
+/// timeout; `Content-Range` says which bytes, and the client asks for the next ones.
+pub(crate) const S3_WINDOW: u64 = 8 * 1024 * 1024;
+
+/// `wanted` cut to at most `S3_WINDOW` bytes from its start.
+pub(crate) fn s3_window(wanted: Wanted) -> Wanted {
+    match wanted {
+        Wanted::Part { start, end } => Wanted::Part {
+            start,
+            end: end.min(start.saturating_add(S3_WINDOW - 1)),
+        },
+        Wanted::Whole | Wanted::Unsatisfiable => wanted,
+    }
+}
+
+/// Bytes `start..=end` of the S3 object `key`, read with a ranged GET as they are sent. The GET
+/// starts on the first poll; a failed one ends the body with an error, logged.
+fn s3_range_stream(
+    bucket: std::sync::Arc<Bucket>,
+    key: String,
+    start: u64,
+    end: u64,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {
+    use tokio::io::AsyncReadExt;
+    let first = S3Range::Start {
+        bucket,
+        key,
+        start,
+        end,
+    };
+    futures_util::stream::unfold(first, |at| async move {
+        let (mut reader, task, key) = match at {
+            S3Range::Start {
+                bucket,
+                key,
+                start,
+                end,
+            } => {
+                let (mut writer, reader) = tokio::io::duplex(MEDIA_CHUNK);
+                let path = key.clone();
+                let task = AbortOnDrop(tokio::spawn(async move {
+                    bucket
+                        .get_object_range_to_writer(path, start, Some(end), &mut writer)
+                        .await
+                }));
+                (reader, task, key)
+            }
+            S3Range::Reading { reader, task, key } => (reader, task, key),
+            S3Range::Over => return None,
+        };
+        let mut buf = vec![0u8; 64 * 1024];
+        match reader.read(&mut buf).await {
+            Ok(0) => {
+                let mut task = task;
+                let failed = match (&mut task.0).await {
+                    Ok(Ok(_)) => return None,
+                    Ok(Err(e)) => e.to_string(),
+                    Err(e) => e.to_string(),
+                };
+                tracing::warn!(%key, "S3 range read failed: {failed}");
+                Some((Err(std::io::Error::other(failed)), S3Range::Over))
+            }
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok(buf), S3Range::Reading { reader, task, key }))
+            }
+            Err(e) => {
+                tracing::warn!(%key, "S3 range read failed: {e}");
+                Some((Err(e), S3Range::Over))
+            }
+        }
+    })
+}
+
+/// The policy a downloaded file is served under: nothing loads, and opened as a page it is
+/// sandboxed.
+const MEDIA_CSP: &str = "default-src 'none'; sandbox";
+
+/// The bytes of a file of `size` bytes that a `Range` header asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Wanted {
+    /// No range, more than one, or one this server doesn't read: the whole file.
+    Whole,
+    /// Bytes `start..=end`.
+    Part { start: u64, end: u64 },
+    /// One range that starts at or past the end.
+    Unsatisfiable,
+}
+
+/// Reads one `bytes=a-b`, `bytes=a-` or `bytes=-n` range of a file of `size` bytes.
+pub(crate) fn wanted_range(header: Option<&str>, size: u64) -> Wanted {
+    let Some(raw) = header.map(str::trim) else {
+        return Wanted::Whole;
+    };
+    let spec = match raw.split_once('=') {
+        Some((unit, spec)) if unit.trim().eq_ignore_ascii_case("bytes") => spec.trim(),
+        Some(_) | None => return Wanted::Whole,
+    };
+    if spec.contains(',') {
+        return Wanted::Whole;
+    }
+    let Some((first, last)) = spec.split_once('-') else {
+        return Wanted::Whole;
+    };
+    let number = |text: &str| match text.trim() {
+        "" => None,
+        digits if digits.bytes().all(|b| b.is_ascii_digit()) => digits.parse::<u64>().ok(),
+        _ => None,
+    };
+    match (first.trim().is_empty(), last.trim().is_empty()) {
+        (true, true) => Wanted::Whole,
+        (true, false) => match number(last) {
+            None => Wanted::Whole,
+            Some(0) => Wanted::Unsatisfiable,
+            Some(_) if size == 0 => Wanted::Unsatisfiable,
+            Some(n) => Wanted::Part {
+                start: size - n.min(size),
+                end: size - 1,
+            },
+        },
+        (false, open) => {
+            let (Some(start), end) = (number(first), (!open).then(|| number(last))) else {
+                return Wanted::Whole;
+            };
+            match end {
+                Some(None) => Wanted::Whole,
+                Some(Some(end)) if end < start => Wanted::Whole,
+                _ if start >= size => Wanted::Unsatisfiable,
+                Some(Some(end)) => Wanted::Part {
+                    start,
+                    end: end.min(size - 1),
+                },
+                None => Wanted::Part {
+                    start,
+                    end: size - 1,
+                },
+            }
+        }
+    }
+}
+
+/// Whether a `Range` may be served: no `If-Range`, or one naming `etag` exactly. Dates never
+/// match, since media responses carry no `Last-Modified`.
+fn if_range_ok(headers: &axum::http::HeaderMap, etag: &str) -> bool {
+    headers
+        .get(header::IF_RANGE)
+        .is_none_or(|v| v.to_str().is_ok_and(|v| v.trim() == etag))
+}
+
 /// Download a file
 ///
 /// Streams an uploaded file with its stored `Content-Type`, as an attachment
@@ -1448,6 +1672,13 @@ fn chunk_stream(
 /// `Content-Security-Policy`. The token may come from the `Authorization` header or the
 /// `rchat_token` cookie, so browsers can load it directly; guests may download when guest
 /// access is on.
+///
+/// Every answer carries `Accept-Ranges: bytes`. One `Range` (`bytes=a-b`, `bytes=a-` or
+/// `bytes=-n`) answers 206 with those bytes, `Content-Range` and their `Content-Length`; a range
+/// that starts at or past the end answers 416 with `Content-Range: bytes */size`. Several ranges,
+/// a header this server doesn't read, or an `If-Range` other than the file's `ETag` get the whole
+/// file. With S3 storage a 206 holds at most 8 MiB from the range's start, and `Content-Range`
+/// names the bytes sent. `HEAD` answers the same without the body.
 ///
 /// Once attached, the file is visible to anyone who can read one of the messages carrying it,
 /// with the same checks as listing messages: in a server without a password anyone not banned
@@ -1457,9 +1688,10 @@ fn chunk_stream(
 /// joined count; in a direct message its two participants. Before it is attached only the
 /// uploader can fetch it. Access is checked before `If-None-Match`, so a 304 is only sent to
 /// callers allowed to see the file. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag`, `Cache-Control: private, max-age=86400, immutable` and `Vary: X-Guest-Grant`"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file. Carries the same `ETag`, `Cache-Control` and `Vary`"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "`Attachments are turned off on this server`: uploads and P2P attachments are both off (text only); only sent to callers who may see the file", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server"), ("Range" = Option<String>, Header, description = "One byte range: `bytes=a-b`, `bytes=a-` (to the end) or `bytes=-n` (the last n bytes). Several ranges or another form get the whole file"), ("If-Range" = Option<String>, Header, description = "The file's `ETag`: the range is served only while it matches, else the whole file")), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag`, `Cache-Control: private, max-age=86400, immutable`, `Vary: X-Guest-Grant` and `Accept-Ranges: bytes`"), (status = 206, description = "The bytes of the one `Range` asked for, streamed, with `Content-Range: bytes a-b/size`, their `Content-Length` and the same headers as 200. With S3 storage at most 8 MiB from the range's start; `Content-Range` names the bytes sent"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file. Carries the same `ETag`, `Cache-Control`, `Vary`, `Content-Security-Policy` and `X-Content-Type-Options`"), (status = 416, description = "The `Range` starts at or past the end of the file: no body, `Content-Range: bytes */size`"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "`Attachments are turned off on this server`: uploads and P2P attachments are both off (text only); only sent to callers who may see the file", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn download_media(
     State(state): State<AppState>,
+    method: axum::http::Method,
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
@@ -1506,28 +1738,83 @@ pub(crate) async fn download_media(
             .header(header::ETAG, &etag)
             .header(header::CACHE_CONTROL, cache)
             .header(header::VARY, "X-Guest-Grant")
+            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+            .header(header::CONTENT_SECURITY_POLICY, MEDIA_CSP)
             .body(Body::empty())
             .map_err(ApiError::internal);
     }
-    let body = match (inline != 0, chunks > 0, &state.s3) {
+    let asked = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .filter(|_| if_range_ok(&headers, &etag));
+    let stored = u64::try_from(size).unwrap_or_default();
+    let (body, wanted, total) = match (inline != 0, chunks > 0, &state.s3) {
         (true, _, _) => {
-            let bytes: Option<Vec<u8>> = sqlx::query("SELECT data FROM media WHERE id = $1")
+            let bytes: Vec<u8> = sqlx::query("SELECT data FROM media WHERE id = $1")
                 .bind(&id)
                 .fetch_optional(&db)
                 .await?
-                .map(|r| r.try_get(0))
+                .map(|r| r.try_get::<Option<Vec<u8>>, _>(0))
                 .transpose()?
-                .flatten();
-            Body::from(bytes.unwrap_or_default())
+                .flatten()
+                .unwrap_or_default();
+            let total = bytes.len() as u64;
+            let wanted = wanted_range(asked, total);
+            let body = match wanted {
+                Wanted::Whole => Body::from(bytes),
+                Wanted::Part { start, end } => {
+                    Body::from(bytes[start as usize..=end as usize].to_vec())
+                }
+                Wanted::Unsatisfiable => Body::empty(),
+            };
+            (body, wanted, total)
         }
-        (false, true, _) => Body::from_stream(chunk_stream(db.clone(), id.clone(), chunks)),
-        (false, false, _) if size == 0 => Body::empty(),
+        (false, true, _) => {
+            let wanted = wanted_range(asked, stored);
+            let body = match wanted {
+                Wanted::Whole => Body::from_stream(chunk_stream(db.clone(), id.clone(), chunks)),
+                Wanted::Part { start, end } => {
+                    Body::from_stream(chunk_range_stream(db.clone(), id.clone(), start, end))
+                }
+                Wanted::Unsatisfiable => Body::empty(),
+            };
+            (body, wanted, stored)
+        }
+        (false, false, _) if size == 0 => (Body::empty(), wanted_range(asked, 0), 0),
         (false, false, Some(bucket)) => {
-            let stream = bucket
-                .get_object_stream(s3_key(&id))
-                .await
-                .map_err(ApiError::internal)?;
-            Body::from_stream(stream.bytes)
+            let wanted = s3_window(wanted_range(asked, stored));
+            let body = match wanted {
+                _ if method == axum::http::Method::HEAD => Body::empty(),
+                Wanted::Whole => {
+                    let mut open = (**bucket).clone();
+                    open.set_request_timeout(None);
+                    let key = s3_key(&id);
+                    let stream = open
+                        .get_object_stream(&key)
+                        .await
+                        .map_err(ApiError::internal)?;
+                    Body::from_stream(futures_util::StreamExt::map(stream.bytes, move |piece| {
+                        piece.inspect_err(|e| tracing::warn!(%key, "S3 read failed: {e}"))
+                    }))
+                }
+                Wanted::Part { start, end } => {
+                    let mut stream =
+                        Box::pin(s3_range_stream(bucket.clone(), s3_key(&id), start, end));
+                    let first = match futures_util::StreamExt::next(&mut stream).await {
+                        Some(Ok(bytes)) => bytes,
+                        Some(Err(e)) => return Err(ApiError::internal(e)),
+                        None => {
+                            return Err(ApiError::internal("S3 range came back empty"));
+                        }
+                    };
+                    Body::from_stream(futures_util::StreamExt::chain(
+                        futures_util::stream::once(async move { Ok(first) }),
+                        stream,
+                    ))
+                }
+                Wanted::Unsatisfiable => Body::empty(),
+            };
+            (body, wanted, stored)
         }
         (false, false, None) => {
             return Err(ApiError(
@@ -1537,20 +1824,30 @@ pub(crate) async fn download_media(
             ));
         }
     };
-    let mut res = Response::builder()
+    let res = Response::builder()
         .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_DISPOSITION, content_disposition(&filename))
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
-        .header(
-            header::CONTENT_SECURITY_POLICY,
-            "default-src 'none'; sandbox",
-        )
+        .header(header::CONTENT_SECURITY_POLICY, MEDIA_CSP)
         .header(header::ETAG, &etag)
         .header(header::CACHE_CONTROL, cache)
-        .header(header::VARY, "X-Guest-Grant");
-    if chunks > 0 || (inline == 0 && size == 0) {
-        res = res.header(header::CONTENT_LENGTH, size);
-    }
+        .header(header::VARY, "X-Guest-Grant")
+        .header(header::ACCEPT_RANGES, "bytes");
+    let res = match wanted {
+        Wanted::Whole if inline == 0 => res.header(header::CONTENT_LENGTH, size),
+        Wanted::Whole => res,
+        Wanted::Part { start, end } => res
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header(
+                header::CONTENT_RANGE,
+                format!("bytes {start}-{end}/{total}"),
+            )
+            .header(header::CONTENT_LENGTH, end - start + 1),
+        Wanted::Unsatisfiable => res
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+            .header(header::CONTENT_LENGTH, 0),
+    };
     res.body(body).map_err(ApiError::internal)
 }
 
@@ -1701,10 +1998,10 @@ pub async fn sweep_expired(state: &AppState) {
 mod tests {
     use super::{
         Charge, FILENAME_MAX, MEDIA_TTL_SECS, MIME_MAX, NEUTRAL_MIME, PIECE, Quiet, Room,
-        SWEEP_BATCH, UPLOADS_PER_ACCOUNT, Waits, Watch, check_budget, clean_filename, clean_mime,
-        content_disposition, delete_media, download_media, form_within, in_pieces, media_view_ok,
-        next_part, paced, read_chunks, read_json_part, read_small, reading_slot, save_within,
-        share_held, share_kib, store_media, sweep, take_room,
+        SWEEP_BATCH, UPLOADS_PER_ACCOUNT, Waits, Wanted, Watch, check_budget, clean_filename,
+        clean_mime, content_disposition, delete_media, download_media, form_within, in_pieces,
+        media_view_ok, next_part, paced, read_chunks, read_json_part, read_small, reading_slot,
+        save_within, share_held, share_kib, store_media, sweep, take_room, wanted_range,
     };
     use crate::api::access::Proof;
     use crate::api::form_heads::HEAD_MAX;
@@ -1712,7 +2009,10 @@ mod tests {
     use crate::api::{ApiError, Authed};
     use crate::db::{now, open_started as open};
     use axum::extract::{Path, State};
+    use axum::http::Method;
     use axum::http::StatusCode;
+
+    const GET: Method = Method::GET;
     use sqlx::Row;
 
     #[test]
@@ -3239,9 +3539,14 @@ mod tests {
             .execute(&state.db)
             .await
             .expect("attach");
-        let res = download_media(State(state.clone()), axum::http::HeaderMap::new(), Path(id))
-            .await
-            .expect("download");
+        let res = download_media(
+            State(state.clone()),
+            GET,
+            axum::http::HeaderMap::new(),
+            Path(id),
+        )
+        .await
+        .expect("download");
         assert_eq!(res.status(), axum::http::StatusCode::OK);
         assert_eq!(res.headers()[axum::http::header::CONTENT_LENGTH], "0");
         let body = axum::body::to_bytes(res.into_body(), usize::MAX)
@@ -3353,6 +3658,7 @@ mod tests {
         let get = || {
             download_media(
                 State(state.clone()),
+                GET,
                 axum::http::HeaderMap::new(),
                 Path(id.clone()),
             )
@@ -3475,7 +3781,7 @@ mod tests {
             let state = state.clone();
             let id = id.clone();
             async move {
-                download_media(State(state), headers, Path(id))
+                download_media(State(state), GET, headers, Path(id))
                     .await
                     .expect("download")
             }
@@ -3515,6 +3821,479 @@ mod tests {
             .try_get(0)
             .expect("n");
         assert_eq!(left, 0);
+        done(state, path).await;
+    }
+
+    #[test]
+    fn s3_answers_hold_at_most_one_window() {
+        let window = super::S3_WINDOW;
+        assert_eq!(window, 8 * 1024 * 1024);
+        let part = |start, end| Wanted::Part { start, end };
+        let cases = [
+            (part(0, 99), part(0, 99)),
+            (part(0, window - 1), part(0, window - 1)),
+            (part(0, window), part(0, window - 1)),
+            (part(10, 50_000_000), part(10, window + 9)),
+            (part(u64::MAX - 5, u64::MAX), part(u64::MAX - 5, u64::MAX)),
+            (Wanted::Whole, Wanted::Whole),
+            (Wanted::Unsatisfiable, Wanted::Unsatisfiable),
+        ];
+        for (asked, sent) in cases {
+            assert_eq!(super::s3_window(asked), sent, "{asked:?}");
+        }
+    }
+
+    #[test]
+    fn range_headers_name_one_byte_range() {
+        let part = |start, end| Wanted::Part { start, end };
+        let cases: &[(Option<&str>, u64, Wanted)] = &[
+            (None, 100, Wanted::Whole),
+            (Some("bytes=0-9"), 100, part(0, 9)),
+            (Some("bytes=10-"), 100, part(10, 99)),
+            (Some("bytes=-5"), 100, part(95, 99)),
+            (Some("bytes=-500"), 100, part(0, 99)),
+            (Some("bytes=90-500"), 100, part(90, 99)),
+            (Some("BYTES = 1-2"), 100, part(1, 2)),
+            (Some("bytes=99-99"), 100, part(99, 99)),
+            (Some("bytes=100-"), 100, Wanted::Unsatisfiable),
+            (Some("bytes=100-200"), 100, Wanted::Unsatisfiable),
+            (Some("bytes=-0"), 100, Wanted::Unsatisfiable),
+            (Some("bytes=0-"), 0, Wanted::Unsatisfiable),
+            (Some("bytes=-1"), 0, Wanted::Unsatisfiable),
+            (Some("bytes=0-1,4-5"), 100, Wanted::Whole),
+            (Some("bytes=9-3"), 100, Wanted::Whole),
+            (Some("bytes=-"), 100, Wanted::Whole),
+            (Some("bytes=a-b"), 100, Wanted::Whole),
+            (Some("bytes=+1-2"), 100, Wanted::Whole),
+            (Some("bytes=1-2x"), 100, Wanted::Whole),
+            (Some("bytes=99999999999999999999999-"), 100, Wanted::Whole),
+            (Some("items=0-9"), 100, Wanted::Whole),
+            (Some("bytes 0-9"), 100, Wanted::Whole),
+        ];
+        for (header, size, wanted) in cases {
+            assert_eq!(
+                wanted_range(*header, *size),
+                *wanted,
+                "{header:?} of {size}"
+            );
+        }
+    }
+
+    async fn ranged(
+        state: &crate::state::AppState,
+        id: &str,
+        pairs: &[(axum::http::HeaderName, &str)],
+    ) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+        let mut headers = axum::http::HeaderMap::new();
+        for (name, value) in pairs {
+            headers.insert(name.clone(), value.parse().expect("header value"));
+        }
+        let res = download_media(State(state.clone()), GET, headers, Path(id.to_string()))
+            .await
+            .expect("download");
+        let (parts, body) = res.into_parts();
+        let body = axum::body::to_bytes(body, usize::MAX).await.expect("body");
+        (parts.status, parts.headers, body.to_vec())
+    }
+
+    #[tokio::test]
+    async fn downloads_answer_one_byte_range() {
+        use axum::http::header::{
+            ACCEPT_RANGES, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE,
+            CONTENT_SECURITY_POLICY, ETAG, IF_NONE_MATCH, IF_RANGE, RANGE, X_CONTENT_TYPE_OPTIONS,
+        };
+        let (state, path) = temp_state("media_ranges").await;
+        let id = "e1".repeat(16);
+        let blob: Vec<u8> = (0..700_000u32).map(|i| (i % 251) as u8).collect();
+        store_media(
+            &state.db,
+            &id,
+            "clip.mp4",
+            "video/mp4",
+            blob.len() as i64,
+            Some(&blob),
+            "alice",
+            now(),
+        )
+        .await
+        .expect("store media");
+        let cid = general(&state.db).await;
+        sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'clip.mp4', 1)")
+            .bind(cid)
+            .bind(&id)
+            .execute(&state.db)
+            .await
+            .expect("attach");
+        let etag = format!("\"{id}\"");
+
+        let (status, headers, body) = ranged(&state, &id, &[]).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[ACCEPT_RANGES], "bytes");
+        assert_eq!(headers[CONTENT_LENGTH], "700000");
+        assert!(headers.get(CONTENT_RANGE).is_none());
+        assert_eq!(body, blob);
+
+        let chunk = super::MEDIA_CHUNK;
+        for (asked, start, end) in [
+            ("bytes=0-9", 0, 9),
+            ("bytes=262140-262150", chunk - 4, chunk + 6),
+            ("bytes=100000-600000", 100_000, 600_000),
+            ("bytes=524288-524288", 2 * chunk, 2 * chunk),
+            ("bytes=699990-", 699_990, 699_999),
+            ("bytes=-5", 699_995, 699_999),
+            ("bytes=-800000", 0, 699_999),
+            ("bytes=5-999999", 5, 699_999),
+        ] {
+            let (status, headers, body) = ranged(&state, &id, &[(RANGE, asked)]).await;
+            assert_eq!(status, StatusCode::PARTIAL_CONTENT, "{asked}");
+            assert_eq!(
+                headers[CONTENT_RANGE],
+                format!("bytes {start}-{end}/700000").as_str(),
+                "{asked}"
+            );
+            assert_eq!(
+                headers[CONTENT_LENGTH],
+                (end - start + 1).to_string().as_str(),
+                "{asked}"
+            );
+            assert_eq!(body, blob[start..=end], "{asked}");
+            assert_eq!(headers[ACCEPT_RANGES], "bytes");
+            assert_eq!(headers[ETAG], etag.as_str());
+            assert!(
+                headers[CONTENT_DISPOSITION]
+                    .to_str()
+                    .expect("disposition")
+                    .starts_with("attachment;")
+            );
+            assert_eq!(headers[X_CONTENT_TYPE_OPTIONS], "nosniff");
+            assert_eq!(
+                headers[CONTENT_SECURITY_POLICY],
+                "default-src 'none'; sandbox"
+            );
+            assert!(
+                headers[CACHE_CONTROL]
+                    .to_str()
+                    .expect("cache")
+                    .contains("immutable")
+            );
+        }
+
+        for asked in ["bytes=700000-", "bytes=800000-900000", "bytes=-0"] {
+            let (status, headers, body) = ranged(&state, &id, &[(RANGE, asked)]).await;
+            assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE, "{asked}");
+            assert_eq!(headers[CONTENT_RANGE], "bytes */700000");
+            assert_eq!(headers[CONTENT_LENGTH], "0");
+            assert_eq!(headers[X_CONTENT_TYPE_OPTIONS], "nosniff");
+            assert!(body.is_empty());
+        }
+
+        for asked in ["bytes=0-1,5-6", "bytes=abc", "bytes=9-3", "lines=1-2"] {
+            let (status, headers, body) = ranged(&state, &id, &[(RANGE, asked)]).await;
+            assert_eq!(status, StatusCode::OK, "{asked}");
+            assert_eq!(headers[ACCEPT_RANGES], "bytes");
+            assert_eq!(body.len(), blob.len(), "{asked}");
+        }
+
+        let (status, _, body) =
+            ranged(&state, &id, &[(RANGE, "bytes=0-9"), (IF_RANGE, &etag)]).await;
+        assert_eq!((status, body.len()), (StatusCode::PARTIAL_CONTENT, 10));
+        let weak = format!("W/{etag}");
+        for stale in [
+            "\"other\"",
+            "W/\"other\"",
+            weak.as_str(),
+            "Wed, 21 Oct 2015 07:28:00 GMT",
+        ] {
+            let (status, _, body) =
+                ranged(&state, &id, &[(RANGE, "bytes=0-9"), (IF_RANGE, stale)]).await;
+            assert_eq!(
+                (status, body.len()),
+                (StatusCode::OK, blob.len()),
+                "{stale}"
+            );
+        }
+
+        let (status, headers, body) =
+            ranged(&state, &id, &[(RANGE, "bytes=0-9"), (IF_NONE_MATCH, &etag)]).await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED);
+        assert!(headers.get(CONTENT_RANGE).is_none());
+        assert!(body.is_empty());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn ranges_of_files_kept_whole_or_empty() {
+        use axum::http::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
+        let (state, path) = temp_state("media_ranges_inline").await;
+        let cid = general(&state.db).await;
+        let inline = "e2".repeat(16);
+        sqlx::query("INSERT INTO media(id, filename, mime, size, data, uploaded_at) VALUES($1, 'a.bin', 'application/octet-stream', 10, $2, $3)")
+            .bind(&inline)
+            .bind((0u8..10).collect::<Vec<u8>>())
+            .bind(now())
+            .execute(&state.db)
+            .await
+            .expect("inline media");
+        let empty = "e3".repeat(16);
+        store_media(
+            &state.db,
+            &empty,
+            "e.txt",
+            "text/plain",
+            0,
+            Some(&[]),
+            "alice",
+            now(),
+        )
+        .await
+        .expect("empty media");
+        for id in [&inline, &empty] {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.bin', 1)")
+                .bind(cid)
+                .bind(id)
+                .execute(&state.db)
+                .await
+                .expect("attach");
+        }
+        let (status, headers, body) = ranged(&state, &inline, &[(RANGE, "bytes=2-4")]).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(headers[CONTENT_RANGE], "bytes 2-4/10");
+        assert_eq!(headers[CONTENT_LENGTH], "3");
+        assert_eq!(body, vec![2, 3, 4]);
+        let (status, headers, _) = ranged(&state, &inline, &[(RANGE, "bytes=10-")]).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers[CONTENT_RANGE], "bytes */10");
+        let (status, headers, body) = ranged(&state, &empty, &[(RANGE, "bytes=0-")]).await;
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers[CONTENT_RANGE], "bytes */0");
+        assert!(body.is_empty());
+        let (status, headers, body) = ranged(&state, &empty, &[]).await;
+        assert_eq!((status, body.len()), (StatusCode::OK, 0));
+        assert_eq!(headers[CONTENT_LENGTH], "0");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn get_and_head_answer_ranges_through_the_router() {
+        use crate::config::{AppConfig, Roles};
+        use crate::server::client_ip::ProxyTrust;
+        use crate::server::route_builder::{api_router, resolve_versions};
+        let (state, path) = temp_state("media_ranges_router").await;
+        let id = "e5".repeat(16);
+        let blob: Vec<u8> = (0..300_000u32).map(|i| (i % 253) as u8).collect();
+        store_media(
+            &state.db,
+            &id,
+            "clip.webm",
+            "video/webm",
+            blob.len() as i64,
+            Some(&blob),
+            "alice",
+            now(),
+        )
+        .await
+        .expect("store media");
+        let cid = general(&state.db).await;
+        sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'clip.webm', 1)")
+            .bind(cid)
+            .bind(&id)
+            .execute(&state.db)
+            .await
+            .expect("attach");
+        let config = AppConfig {
+            roles: Roles {
+                web: false,
+                ..Roles::ALL
+            },
+            proxy_trust: ProxyTrust::Any,
+            ..AppConfig::defaults()
+        };
+        let app = resolve_versions(api_router(&config, state.clone()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let url = format!(
+            "http://{}/api/v1/media/{id}",
+            listener.local_addr().expect("addr")
+        );
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await;
+        });
+        let client = reqwest::Client::new();
+        let get = client
+            .get(&url)
+            .header("range", "bytes=262000-262200")
+            .send()
+            .await
+            .expect("get");
+        assert_eq!(get.status().as_u16(), 206);
+        assert_eq!(get.headers()["accept-ranges"], "bytes");
+        assert_eq!(get.headers()["content-range"], "bytes 262000-262200/300000");
+        assert_eq!(get.headers()["content-length"], "201");
+        let mut answers = vec![get.headers().clone()];
+        assert_eq!(
+            get.bytes().await.expect("body").as_ref(),
+            &blob[262_000..=262_200]
+        );
+        let head = client
+            .head(&url)
+            .header("range", "bytes=-10")
+            .send()
+            .await
+            .expect("head");
+        assert_eq!(head.status().as_u16(), 206);
+        assert_eq!(
+            head.headers()["content-range"],
+            "bytes 299990-299999/300000"
+        );
+        assert_eq!(head.headers()["content-length"], "10");
+        answers.push(head.headers().clone());
+        assert!(head.bytes().await.expect("body").is_empty());
+        let whole = client.head(&url).send().await.expect("head");
+        assert_eq!(whole.status().as_u16(), 200);
+        assert_eq!(whole.headers()["accept-ranges"], "bytes");
+        assert_eq!(whole.headers()["content-length"], "300000");
+        let past = client
+            .get(&url)
+            .header("range", "bytes=300000-")
+            .send()
+            .await
+            .expect("get");
+        assert_eq!(past.status().as_u16(), 416);
+        assert_eq!(past.headers()["content-range"], "bytes */300000");
+        let past_head = client
+            .head(&url)
+            .header("range", "bytes=300000-")
+            .send()
+            .await
+            .expect("head");
+        assert_eq!(past_head.status().as_u16(), 416);
+        assert_eq!(past_head.headers()["content-range"], "bytes */300000");
+        let full = client.get(&url).send().await.expect("get");
+        assert_eq!(full.status().as_u16(), 200);
+        let etag = full.headers()["etag"].clone();
+        let cached = client
+            .get(&url)
+            .header("if-none-match", etag)
+            .send()
+            .await
+            .expect("get");
+        assert_eq!(cached.status().as_u16(), 304);
+        for answer in [&full, &whole, &past, &past_head, &cached] {
+            answers.push(answer.headers().clone());
+        }
+        for headers in &answers {
+            let policies: Vec<_> = headers
+                .get_all("content-security-policy")
+                .iter()
+                .map(|v| v.to_str().expect("policy"))
+                .collect();
+            assert_eq!(
+                policies,
+                ["default-src 'none'; sandbox", "frame-ancestors 'none'"]
+            );
+            assert_eq!(headers["x-content-type-options"], "nosniff");
+        }
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_range_over_chunks_out_of_shape_ends_in_an_error() {
+        use axum::http::header::RANGE;
+        let (state, path) = temp_state("media_ranges_bad_rows").await;
+        let cid = general(&state.db).await;
+        let chunk = super::MEDIA_CHUNK;
+        let blob: Vec<u8> = (0..(2 * chunk + 100) as u32)
+            .map(|i| (i % 249) as u8)
+            .collect();
+        let mut ids = Vec::new();
+        for (n, fault) in ["short", "missing"].into_iter().enumerate() {
+            let id = format!("e{}", 6 + n).repeat(16);
+            store_media(
+                &state.db,
+                &id,
+                "clip.mp4",
+                "video/mp4",
+                blob.len() as i64,
+                Some(&blob),
+                "alice",
+                now(),
+            )
+            .await
+            .expect("store media");
+            let broken = match fault {
+                "short" => {
+                    sqlx::query("UPDATE media_chunks SET data = $2 WHERE media_id = $1 AND seq = 1")
+                        .bind(&id)
+                        .bind(vec![0u8; 10])
+                        .execute(&state.db)
+                        .await
+                }
+                _ => {
+                    sqlx::query("DELETE FROM media_chunks WHERE media_id = $1 AND seq = 1")
+                        .bind(&id)
+                        .execute(&state.db)
+                        .await
+                }
+            };
+            assert_eq!(broken.expect("break a row").rows_affected(), 1);
+            sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'clip.mp4', 1)")
+                .bind(cid)
+                .bind(&id)
+                .execute(&state.db)
+                .await
+                .expect("attach");
+            ids.push(id);
+        }
+        for id in &ids {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                RANGE,
+                format!("bytes=10-{}", 2 * chunk + 50)
+                    .parse()
+                    .expect("range"),
+            );
+            let res = download_media(State(state.clone()), GET, headers, Path(id.clone()))
+                .await
+                .expect("download");
+            assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT, "{id}");
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX).await;
+            assert!(body.is_err(), "{id}");
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_range_never_opens_hidden_media() {
+        let (state, path) = temp_state("media_ranges_hidden").await;
+        let id = "e4".repeat(16);
+        store_media(
+            &state.db,
+            &id,
+            "a.txt",
+            "text/plain",
+            3,
+            Some(&[1, 2, 3]),
+            "alice",
+            now(),
+        )
+        .await
+        .expect("store media");
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::RANGE,
+            "bytes=0-1".parse().expect("range"),
+        );
+        let hidden = download_media(State(state.clone()), GET, headers, Path(id)).await;
+        assert_eq!(
+            hidden.err().map(|ApiError(c, m, _)| (c, m)),
+            Some((StatusCode::NOT_FOUND, "Media not found".to_string()))
+        );
         done(state, path).await;
     }
 
@@ -3631,7 +4410,7 @@ mod tests {
             axum::http::header::IF_NONE_MATCH,
             format!("\"{fresh}\"").parse().expect("etag"),
         );
-        let cached = download_media(State(state.clone()), headers, Path(fresh.clone())).await;
+        let cached = download_media(State(state.clone()), GET, headers, Path(fresh.clone())).await;
         assert_eq!(
             cached.err().map(|ApiError(c, m, _)| (c, m)),
             Some((
@@ -3688,8 +4467,13 @@ mod tests {
                 .await
                 .is_ok()
         );
-        let hidden =
-            download_media(State(state.clone()), axum::http::HeaderMap::new(), Path(id)).await;
+        let hidden = download_media(
+            State(state.clone()),
+            GET,
+            axum::http::HeaderMap::new(),
+            Path(id),
+        )
+        .await;
         assert_eq!(
             hidden.err().map(|ApiError(c, m, _)| (c, m)),
             Some((

@@ -17,6 +17,7 @@ import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
 import { FileCard } from '../file_card'
 import { fileKind, pct } from '../../lib/file_card'
+import { VideoAttachment } from '../video_attachment'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
 
@@ -116,6 +117,7 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
       save={() => void p2pFiles.save(att)}
       get={() => peerChat.forIdentity(identity).startDownload(att, acct)}
       cancel={() => void p2pFiles.cancel(att.h)}
+      live={src => p2pFiles.liveUrl(att.h) === src}
     />
   )
 }
@@ -132,6 +134,7 @@ export function TileView({
   save,
   get,
   cancel,
+  live = () => true,
 }: {
   att: Attachment
   canFetch: boolean
@@ -142,6 +145,8 @@ export function TileView({
   save: () => void
   get: () => void
   cancel: () => void
+  // Whether `src` is the stored file's live URL now.
+  live?: (src: string) => boolean
 }) {
   // Shown cleaned like the saved name: no direction overrides or control characters.
   const clean = downloadName(att.name)
@@ -205,13 +210,6 @@ export function TileView({
         {caption}
       </div>
     )
-  if (done && url && kind === 'video')
-    return (
-      <div data-p2p-file={att.h} className="mt-1 w-fit max-w-full">
-        <video src={url} controls className="max-h-80 max-w-full rounded-xl" />
-        {caption}
-      </div>
-    )
 
   const card = {
     name: clean,
@@ -226,6 +224,39 @@ export function TileView({
       : { label: 'Download' as const, onClick: get, disabled: !canGet },
     menu: { download: done ? save : canGet ? get : null, link: null },
   }
+
+  const stored = (
+    <p className="mt-2 text-xs text-on-surface-variant">
+      {v?.tooBig
+        ? 'Stored on this device. Too large to show here: save it to view.'
+        : 'Stored on this device'}
+    </p>
+  )
+
+  if (done && url && kind === 'video')
+    return (
+      <VideoAttachment
+        src={url}
+        name={clean}
+        own={own}
+        fileMask={false}
+        primary={card.primary}
+        menu={card.menu}
+        w={att.w}
+        h={att.h_px}
+        remember={{ key: `p2p:${att.h}`, live }}
+        data={{ 'data-p2p-file': att.h }}
+        fallback={
+          <FileCard
+            {...card}
+            data={{ 'data-p2p-file': att.h, 'data-state': 'done' }}
+            progress={null}
+          >
+            {stored}
+          </FileCard>
+        }
+      />
+    )
 
   if (done && url && kind === 'audio')
     return (
@@ -259,13 +290,7 @@ export function TileView({
           {status}
         </p>
       )}
-      {done && (kind === null || v.tooBig) && (
-        <p className="mt-2 text-xs text-on-surface-variant">
-          {v.tooBig
-            ? 'Stored on this device. Too large to show here: save it to view.'
-            : 'Stored on this device'}
-        </p>
-      )}
+      {done && (kind === null || v.tooBig) && stored}
     </FileCard>
   )
 }

@@ -129,6 +129,12 @@ export const expiryTitle = (expiresAt: number, locale?: string) =>
 export const pct = (p: { got: number; total: number } | undefined) =>
   p && p.total > 0 ? Math.min(100, Math.floor((p.got / p.total) * 100)) : 0
 
+// A download button's label and hover title for the shown name; `hint` follows in the title only.
+export const primaryText = (verb: 'Download' | 'Save', shown: string, hint?: string) => {
+  const label = `${verb} ${shown}`
+  return { label, title: hint ? `${label} ${hint}` : label }
+}
+
 // A card's button beside its main one, also in its menu. `hint`: words after the label in the
 // button's title.
 export interface FileExtra {
@@ -146,7 +152,8 @@ export const EXTRAS: Record<FileExtra['kind'], { label: string; icon: LucideIcon
 
 // What a card's menu acts on, as the card is now: `name` as shown, `verb` its main button's
 // ("Save" for a P2P file on the device), `download` while one may start, `cancel` while one
-// runs, `extra` its other buttons, `link` the instance's address of a file it hosts.
+// runs, `extra` its other buttons, `link` the instance's address of a file it hosts, `remove`
+// takes the attachment off its message for whoever may.
 export interface FileMenu {
   name: string
   verb: 'Download' | 'Save'
@@ -154,7 +161,11 @@ export interface FileMenu {
   cancel: (() => void) | null
   extra: FileExtra[]
   link: string | null
+  remove: (() => void) | null
 }
+
+// What a caller gives a card's or video's menu besides its buttons.
+export type FileMenuOwn = Pick<FileMenu, 'download' | 'link'> & { remove?: (() => void) | null }
 
 // The menu of a card showing `shown`: Cancel in place of the download while one runs, and the
 // other buttons only while the card shows them.
@@ -165,7 +176,7 @@ export const cardMenu = (
     progress: { got: number; total: number } | null
     onCancel?: () => void
     extra?: FileExtra[]
-    menu: Pick<FileMenu, 'download' | 'link'>
+    menu: FileMenuOwn
   }
 ): FileMenu => {
   const cancel = card.progress && card.onCancel ? card.onCancel : null
@@ -176,6 +187,7 @@ export const cardMenu = (
     cancel,
     extra: card.progress ? [] : (card.extra ?? []),
     link: card.menu.link,
+    remove: card.menu.remove ?? null,
   }
 }
 

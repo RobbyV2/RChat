@@ -189,7 +189,14 @@ describe('cardMenu', () => {
       cancel: null,
       extra: [image],
       link: 'https://x.example/m',
+      remove: null,
     })
+  })
+
+  test('a file its viewer may take off the message offers that too', () => {
+    const remove = () => {}
+    expect(cardMenu('a.zip', { ...idle, menu: { ...idle.menu, remove } }).remove).toBe(remove)
+    expect(cardMenu('a.zip', idle).remove).toBeNull()
   })
 
   test('while a download runs, Cancel takes its place and the other buttons go', () => {

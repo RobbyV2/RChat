@@ -404,6 +404,11 @@ export class P2pManager {
     return p
   }
 
+  // Whether `url` is the preview kept for a message now (one dropped since is revoked).
+  hasPreview(messageId: number, url: string) {
+    return this.previews.get(messageId)?.url === url
+  }
+
   keepPreview(messageId: number, p: Preview) {
     const old = this.previews.get(messageId)
     if (old !== undefined && old.url !== p.url) URL.revokeObjectURL(old.url)

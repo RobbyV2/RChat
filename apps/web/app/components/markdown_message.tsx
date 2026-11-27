@@ -62,7 +62,13 @@ import {
 } from '../lib/invite'
 import { postedUrl, spoileredUrls } from '../lib/embed_links'
 import { findMessageLinks, parseMessageLink } from '../lib/message_links'
-import { previewPath, useLinkedSrc, useMediaSrc, usePreviewSrc } from '../lib/media_src'
+import {
+  previewPath,
+  useLinkedSrc,
+  useMediaSrc,
+  usePreviewSrc,
+  useVideoSrc,
+} from '../lib/media_src'
 import { expiryText } from '../lib/rules'
 import { remarkMask } from '../lib/profanity'
 import { markSpoilers, spoilerParts } from '../lib/spoilers'
@@ -104,6 +110,8 @@ import { removedLifetime, removedTail } from '../lib/upload_expiry'
 import { useUploadLifetime } from './upload_expiry'
 import { ExpiryLine, FileCard } from './file_card'
 import { fileKind, type FileExtra } from '../lib/file_card'
+import { hostedVideo } from '../lib/video_attachment'
+import { useNearView, VideoAttachment, VideoPlaceholder } from './video_attachment'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -546,7 +554,16 @@ export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: ()
 
 const UNVERIFIED = 'Unverified: sent from an older app'
 
-export function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number }) {
+export function P2pFile({
+  media,
+  messageId,
+  remove,
+}: {
+  media: MessageMedia
+  messageId: number
+  // Takes the attachment off its message, for whoever may.
+  remove?: () => void
+}) {
   const account = useAccount()
   const p2p = account.files
   const { sessionMark } = account.lifetime
@@ -650,7 +667,8 @@ export function P2pFile({ media, messageId }: { media: MessageMedia; messageId: 
           setText(file && { ...file, verified: got.verified })
         }
         const kind = kindOf(got.type)
-        if (canPreview && got.verified && kind !== null && got.blob.size <= PREVIEW_MAX) {
+        const keep = !(save && shown !== null)
+        if (keep && canPreview && got.verified && kind !== null && got.blob.size <= PREVIEW_MAX) {
           const preview = { url: URL.createObjectURL(got.blob), kind }
           p2p.keepPreview(messageId, preview)
           setShown(preview)
@@ -765,8 +783,10 @@ export function P2pFile({ media, messageId }: { media: MessageMedia; messageId: 
         streamer || hoster === null ? "from the sender's browser" : `from ${hosterName}'s browser`,
     },
     onCancel: () => ctl.current?.stop.abort(),
-    menu: { download: busy || !online ? null : () => run(true), link: null },
+    menu: { download: busy || !online ? null : () => run(true), link: null, remove },
   }
+
+  const failedLine = failed !== null && <p className="mt-2 text-xs text-error">{failed}</p>
 
   if (shown?.kind === 'audio') {
     return (
@@ -777,14 +797,35 @@ export function P2pFile({ media, messageId }: { media: MessageMedia; messageId: 
     )
   }
 
+  if (shown?.kind === 'video') {
+    return (
+      <VideoAttachment
+        src={shown.url}
+        name={filename}
+        own={own}
+        fileMask
+        primary={card.primary}
+        progress={progress}
+        onCancel={card.onCancel}
+        menu={card.menu}
+        remember={{ key, live: src => p2p.hasPreview(messageId, src) }}
+        fallback={
+          <FileCard {...card} progress={progress}>
+            {failedLine}
+            {meta}
+          </FileCard>
+        }
+      >
+        {failedLine}
+        {meta}
+      </VideoAttachment>
+    )
+  }
+
   if (shown !== null) {
     return (
       <div className="mt-1 w-fit max-w-full">
-        {shown.kind === 'image' ? (
-          <img src={shown.url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
-        ) : (
-          <video src={shown.url} controls className="max-h-80 max-w-full rounded-xl" />
-        )}
+        <img src={shown.url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
         <span className="mt-1 flex items-center gap-2">
           <span className="max-w-60 truncate text-xs text-on-surface-variant">
             <Masked text={filename} file own={own} />
@@ -842,7 +883,7 @@ export function P2pFile({ media, messageId }: { media: MessageMedia; messageId: 
   ]
   return (
     <FileCard {...card} progress={progress} extra={extra}>
-      {failed !== null && <p className="mt-2 text-xs text-error">{failed}</p>}
+      {failedLine}
       {meta}
     </FileCard>
   )
@@ -852,10 +893,13 @@ export function MediaAttachment({
   media,
   own,
   postedAt,
+  remove,
 }: {
   media: MessageMedia
   own: boolean
   postedAt: number
+  // Takes the attachment off its message, for whoever may.
+  remove?: () => void
 }) {
   const account = useAccount()
   const {
@@ -868,15 +912,21 @@ export function MediaAttachment({
   const always = useSpoilersOpen()
   const lifetime = useUploadLifetime(server)
   const { id, filename, removed, removed_by_author, spoiler, expires_at } = media
+  const hidden = spoiler && !revealed && !always
   const image = previews && IMAGE_EXT.test(filename)
   const src = useMediaSrc(id, server, image && !removed)
-  const fetched = mediaModeFor(server) === 'blob'
-  const lang = previews && !image ? fileLang(filename) : null
-  const text = useServerText(
-    id,
-    server,
-    lang !== null && !removed && !(spoiler && !revealed && !always)
-  )
+  const mode = mediaModeFor(server)
+  const fetched = mode === 'blob'
+  const video = image ? null : hostedVideo(media, previews, mode)
+  const [nearRef, near, inView] = useNearView()
+  const [playing, setPlaying] = useState(false)
+  // Played and not to its end: it stays mounted, keeping its place, buffer and focus.
+  const [played, setPlayed] = useState(false)
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null)
+  const mounted = video !== null && !hidden && (near || playing || played)
+  const videoSrc = useVideoSrc(id, server, mounted, media.size ?? 0, inView)
+  const lang = previews && !image && video === null ? fileLang(filename) : null
+  const text = useServerText(id, server, lang !== null && !removed && !hidden)
   if (removed) {
     return (
       <p className="mt-1 text-xs text-on-surface-variant italic">
@@ -891,7 +941,6 @@ export function MediaAttachment({
       </p>
     )
   }
-  const hidden = spoiler && !revealed && !always
   const expiry =
     expires_at !== null ? (
       <span className="mt-1.5 flex items-center gap-1 text-xs text-on-surface-variant">
@@ -938,6 +987,71 @@ export function MediaAttachment({
     void saveMedia(id, server, filename).catch((err: unknown) => {
       if (!(err instanceof Ended)) account.store.getState().setError(errorText(err))
     })
+  const primary = fetched
+    ? { label: 'Download' as const, onClick: save }
+    : { label: 'Download' as const, href: api.mediaUrl(id), download: filename }
+  const menu = { download: save, link: mediaLink(account, id), remove }
+  const footer = expires_at !== null && <ExpiryLine at={expires_at} />
+  const card = (
+    <FileCard
+      name={filename}
+      own={own}
+      fileMask
+      kind={fileKind(filename, media.mime)}
+      size={media.size}
+      progress={null}
+      primary={primary}
+      menu={menu}
+      footer={footer}
+    />
+  )
+  if (video !== null && videoSrc !== null)
+    return (
+      <div ref={nearRef} className="w-fit max-w-full">
+        {videoSrc === undefined || !mounted ? (
+          <>
+            <VideoPlaceholder
+              name={filename}
+              own={own}
+              fileMask
+              primary={primary}
+              menu={menu}
+              box={box}
+              loading={fetched && mounted}
+            />
+            {footer}
+          </>
+        ) : (
+          <VideoAttachment
+            src={videoSrc}
+            name={filename}
+            own={own}
+            fileMask
+            primary={primary}
+            menu={menu}
+            w={box?.w}
+            h={box?.h}
+            onPlaying={on => {
+              setPlaying(on)
+              if (on) setPlayed(true)
+            }}
+            onEnded={() => setPlayed(false)}
+            onBox={setBox}
+            remember={
+              fetched
+                ? {
+                    key: account.media.key(api.mediaUrl(id), server, 'video'),
+                    live: src => account.media.peek(api.mediaUrl(id), server, 'video') === src,
+                  }
+                : undefined
+            }
+            fallback={card}
+          >
+            {footer}
+          </VideoAttachment>
+        )}
+      </div>
+    )
   if (lang !== null && text === undefined) return <CodePreviewLoading filename={filename} />
   if (lang !== null && text) {
     const iconBtn =
@@ -974,23 +1088,7 @@ export function MediaAttachment({
       />
     )
   }
-  return (
-    <FileCard
-      name={filename}
-      own={own}
-      fileMask
-      kind={fileKind(filename, media.mime)}
-      size={media.size}
-      progress={null}
-      primary={
-        fetched
-          ? { label: 'Download', onClick: save }
-          : { label: 'Download', href: api.mediaUrl(id), download: filename }
-      }
-      menu={{ download: save, link: mediaLink(account, id) }}
-      footer={expires_at !== null && <ExpiryLine at={expires_at} />}
-    />
-  )
+  return card
 }
 
 // The address of an uploaded file, for whoever may read it.
@@ -1165,6 +1263,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
         ? 'P2P attachments are turned off on this server'
         : null
   const { content, media, embeds, edited_at: edited } = message
+  const remove =
+    canDelete && media !== null && !media.removed ? () => void deleteMedia(message.id) : undefined
   const candidates = useMemo(
     () => (content.includes('@') ? mentionCandidates(content) : []),
     [content]
@@ -1262,16 +1362,21 @@ export const MarkdownMessage = memo(function MarkdownMessage({
                 {attachmentsOff(media)}
               </p>
             ) : media.kind === 'p2p' && !media.removed ? (
-              <P2pFile media={media} messageId={message.id} />
+              <P2pFile media={media} messageId={message.id} remove={remove} />
             ) : (
-              <MediaAttachment media={media} own={own} postedAt={message.created_at} />
+              <MediaAttachment
+                media={media}
+                own={own}
+                postedAt={message.created_at}
+                remove={remove}
+              />
             )}
-            {canDelete && !media.removed && (
+            {remove && (
               <button
                 title="Remove attachment"
                 aria-label="Remove attachment"
-                onClick={() => void deleteMedia(message.id)}
-                className="absolute -top-1.5 -right-1.5 rounded-full bg-surface-container-highest p-1 text-on-surface-variant opacity-0 shadow-elevation-1 group-focus-within/att:opacity-100 group-hover/att:opacity-100 hover:text-error max-md:opacity-100"
+                onClick={remove}
+                className="absolute -top-1.5 -right-1.5 rounded-full bg-surface-container-highest p-1 text-on-surface-variant opacity-0 shadow-elevation-1 group-focus-within/att:opacity-100 group-hover/att:opacity-100 group-has-[[data-video-attachment]]/att:hidden hover:text-error max-md:opacity-100"
               >
                 <X size={12} />
               </button>

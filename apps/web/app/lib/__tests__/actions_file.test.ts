@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
-import { Copy, Download, FileCode, Image, Link, Play, X } from 'lucide-react'
+import { Copy, Download, FileCode, Image, Link, Play, Trash2, X } from 'lucide-react'
 import { ctxFor, paletteCtx, refreshCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { menuItems, openActionMenu } from '../actions/menu'
@@ -39,6 +39,7 @@ const card = (over: Partial<FileMenu> = {}): FileMenu => ({
   cancel: null,
   extra: [],
   link: null,
+  remove: null,
   ...over,
 })
 
@@ -100,6 +101,17 @@ test("the card's own buttons follow its main one, in the card's order", () => {
     'Play video',
     'Copy file name',
   ])
+})
+
+test('whoever may take the attachment off its message gets Remove attachment last', () => {
+  let removed = 0
+  const t = fixed(card({ link: LINK, remove: () => removed++ }))
+  expect(labels(t)).toEqual(['Download', 'Copy link', 'Copy file name', 'Remove attachment'])
+  const remove = row(t, 'Remove attachment')
+  expect([remove?.icon, remove?.danger]).toEqual([Trash2, true])
+  remove?.action?.()
+  expect(removed).toBe(1)
+  expect(labels(fixed(card())).includes('Remove attachment')).toBe(false)
 })
 
 test('the copies go through the platform clipboard, the name as shown', async () => {
@@ -165,6 +177,7 @@ test('file actions are message scope, join only file cards and stay out of the p
     'file_play_video',
     'file_copy_link',
     'file_copy_name',
+    'file_remove',
   ])
   for (const a of file) expect([a.id, a.scope, a.targets]).toEqual([a.id, 'message', ['file']])
   const ids = new Set(paletteCommands(paletteCtx(useStore.getState())).map(r => r.id))

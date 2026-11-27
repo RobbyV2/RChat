@@ -130,13 +130,36 @@ pub(crate) fn api_router(config: &AppConfig, state: AppState) -> Router {
         .merge(scim)
         .layer(axum::middleware::map_response(
             |mut res: Response| async move {
-                res.headers_mut().insert(
-                    axum::http::header::CONTENT_SECURITY_POLICY,
-                    axum::http::HeaderValue::from_static("frame-ancestors 'none'"),
-                );
+                refuse_framing(res.headers_mut());
                 res
             },
         ))
+}
+
+/// Whether a `Content-Security-Policy` value has a `frame-ancestors` directive.
+fn names_frame_ancestors(policy: &[u8]) -> bool {
+    policy.split(|b| *b == b';').any(|directive| {
+        directive
+            .split(|b| b.is_ascii_whitespace())
+            .find(|word| !word.is_empty())
+            .is_some_and(|name| name.eq_ignore_ascii_case(b"frame-ancestors"))
+    })
+}
+
+/// Adds a `frame-ancestors 'none'` policy to a response unless one of its policies already says
+/// who may frame it. Each policy header applies on its own, so the others stay as they are.
+pub(crate) fn refuse_framing(headers: &mut axum::http::HeaderMap) {
+    let csp = axum::http::header::CONTENT_SECURITY_POLICY;
+    let named = headers
+        .get_all(&csp)
+        .iter()
+        .any(|v| names_frame_ancestors(v.as_bytes()));
+    if !named {
+        headers.append(
+            csp,
+            axum::http::HeaderValue::from_static("frame-ancestors 'none'"),
+        );
+    }
 }
 
 /// `router` behind the version rewrite, which runs before routing so every route, limiter and
@@ -335,6 +358,48 @@ mod tests {
 
     fn status(r: Request) -> Option<StatusCode> {
         frontend_refusal(&r).map(|res| res.status())
+    }
+
+    #[test]
+    fn framing_is_refused_without_dropping_a_policy_of_its_own() {
+        use axum::http::header::CONTENT_SECURITY_POLICY as CSP;
+        let after = |values: &[&[u8]]| {
+            let mut headers = axum::http::HeaderMap::new();
+            for v in values {
+                headers.append(CSP, axum::http::HeaderValue::from_bytes(v).expect("value"));
+            }
+            refuse_framing(&mut headers);
+            headers
+                .get_all(CSP)
+                .iter()
+                .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(after(&[]), ["frame-ancestors 'none'"]);
+        assert_eq!(
+            after(&[b"default-src 'none'; sandbox"]),
+            ["default-src 'none'; sandbox", "frame-ancestors 'none'"]
+        );
+        assert_eq!(
+            after(&[b"Frame-Ancestors https://a.example"]),
+            ["Frame-Ancestors https://a.example"]
+        );
+        assert_eq!(
+            after(&[b"default-src 'self';  frame-ancestors 'self'"]),
+            ["default-src 'self';  frame-ancestors 'self'"]
+        );
+        assert_eq!(
+            after(&[b"report-uri /x/frame-ancestors"]),
+            ["report-uri /x/frame-ancestors", "frame-ancestors 'none'"]
+        );
+        assert_eq!(
+            after(&[b"default-src 'none'", b"frame-ancestors 'self'"]),
+            ["default-src 'none'", "frame-ancestors 'self'"]
+        );
+        assert_eq!(
+            after(&[b"img-src https://\xc3\xa9.example"]),
+            ["img-src https://\u{e9}.example", "frame-ancestors 'none'"]
+        );
     }
 
     #[test]

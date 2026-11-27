@@ -25,6 +25,8 @@ const MP4_BRANDS = new Set([
   'M4V ',
   'dash',
   'mmp4',
+  // QuickTime, as phones record it: the MP4 player reads it.
+  'qt  ',
 ])
 
 const ascii = (b: Uint8Array, at: number, len: number) =>
@@ -242,7 +244,7 @@ export const kindOf = (type: string): PreviewKind | null =>
 export const guessKind = (filename: string): PreviewKind | null => {
   const ext = /\.([a-z0-9]+)$/i.exec(filename)?.[1]?.toLowerCase() ?? ''
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'].includes(ext)) return 'image'
-  if (['mp4', 'm4v', 'webm'].includes(ext)) return 'video'
+  if (['mp4', 'm4v', 'webm', 'mov'].includes(ext)) return 'video'
   if (['mp3', 'ogg', 'oga', 'opus', 'wav', 'weba'].includes(ext)) return 'audio'
   return null
 }
