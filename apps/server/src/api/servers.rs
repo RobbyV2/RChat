@@ -9513,6 +9513,7 @@ mod tests {
             retry_after: None,
             field: Some(field.to_string()),
             until: None,
+            channel: None,
         };
         (StatusCode::BAD_REQUEST, text.to_string(), Some(reason))
     }
@@ -9671,7 +9672,7 @@ mod tests {
         );
         let refused = |res: Result<Vec<String>, ApiError>| match res {
             Ok(names) => panic!("answered {names:?}"),
-            Err(ApiError(code, text, reason)) => (code, text, reason),
+            Err(ApiError(code, text, reason)) => (code, text, reason.map(|r| *r)),
         };
         for q in [None, Some(""), Some("   ")] {
             assert_eq!(

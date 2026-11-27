@@ -18,7 +18,7 @@ use super::{
 
 use crate::api::access::{
     ViewRules, is_member, is_membership_notice, presence_mode, ws_channel_now, ws_channel_policy,
-    ws_channel_view, ws_closed_servers, ws_grant_deadline, ws_member_servers,
+    ws_channel_seen, ws_closed_servers, ws_grant_deadline, ws_member_servers,
     ws_server_password_hash, ws_thread_start, ws_view_under,
 };
 use crate::api::policy::{ServerJoining, TempChange};
@@ -149,7 +149,10 @@ pub(super) enum Rooted {
     Gone,
 }
 
-type Viewable = HashMap<i64, (String, bool)>;
+/// Per channel: the server that owns it, whether this connection views it, and the unix second
+/// that answer ends at (a site admin's staff view of the channel), `None` for an answer that
+/// holds until the channel's rules or the connection's memberships change.
+type Viewable = HashMap<i64, (String, bool, Option<i64>)>;
 
 pub(super) struct Retry {
     pub(super) at: Option<Instant>,
@@ -681,6 +684,16 @@ impl Access {
         self.member_servers.contains(name) || self.subs.contains(name)
     }
 
+    /// The owner of channel `cid` and whether this connection views it, while that answer
+    /// holds.
+    pub(super) fn seen(&self, cid: i64) -> Option<(&str, bool)> {
+        match self.viewable.get(&cid) {
+            Some((_, _, Some(until))) if *until <= now() => None,
+            Some((owner, view, _)) => Some((owner.as_str(), *view)),
+            None => None,
+        }
+    }
+
     /// Whether this connection reads `server` from outside while it keeps its members to
     /// itself.
     pub(super) fn closes(&self, server: &str) -> bool {
@@ -1071,12 +1084,12 @@ async fn channel_view(
     db: &Db,
     username: Option<&str>,
     cid: i64,
-) -> sqlx::Result<Option<(String, bool)>> {
+) -> sqlx::Result<Option<(String, bool, Option<i64>)>> {
     let Some((owner, _)) = ws_channel_now(db, cid).await? else {
         return Ok(None);
     };
-    let view = ws_channel_view(db, &owner, cid, username).await?;
-    Ok(Some((owner, view)))
+    let (view, until) = ws_channel_seen(db, &owner, cid, username).await?;
+    Ok(Some((owner, view, until)))
 }
 
 pub(super) async fn channel_gate(
@@ -1085,23 +1098,23 @@ pub(super) async fn channel_gate(
     server: &str,
     cid: i64,
 ) -> Option<bool> {
-    if let Some((owner, view)) = access.viewable.get(&cid) {
-        return Some(*view && owner == server);
+    if let Some((owner, view)) = access.seen(cid) {
+        return Some(view && owner == server);
     }
     let started = Instant::now();
     let slot = state.hub.channels().slot(cid);
     let read = state.read();
     let shared = slot.get_or_try_init(|| ws_channel_policy(&read, cid)).await;
     let looked = match shared {
-        Ok(Some(policy)) if policy.public_view => Ok(Some((policy.server.clone(), true))),
+        Ok(Some(policy)) if policy.public_view => Ok(Some((policy.server.clone(), true, None))),
         Ok(Some(_)) => channel_view(&read, access.user.as_deref(), cid).await,
         Ok(None) => Ok(None),
         Err(e) => Err(e),
     };
     match looked {
-        Ok(Some((owner, view))) => {
+        Ok(Some((owner, view, until))) => {
             let open = view && owner == server;
-            access.viewable.insert(cid, (owner, view));
+            access.viewable.insert(cid, (owner, view, until));
             Some(open)
         }
         Ok(None) => Some(false),

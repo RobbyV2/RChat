@@ -60,6 +60,7 @@ export const IGNORED = [
   'poll_updated',
   'poll_voted',
   'privacy_changed',
+  'staff_view_opened',
 ] as const satisfies readonly WsEvent['type'][]
 type Ignored = (typeof IGNORED)[number]
 
@@ -468,6 +469,9 @@ export function createChatStore(acct: AccountSession) {
       forwardClip: null,
       linkCards: {},
       toast: null,
+      staffAsk: null,
+      staffShut: null,
+      staffOpen: [],
       pins: null,
       composerFocus: null,
       editing: null,

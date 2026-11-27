@@ -371,7 +371,7 @@ impl Modify for Bearer {
 
 **Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, OIDC start, callback and exchange, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings, P2P backup uploads and deletes, sending and exporting reports, and media upload also share a strict per-IP bucket (`RATE_LIMIT_STRICT_PER_SECOND`, default 2 per second, burst `RATE_LIMIT_STRICT_BURST`, default 30). Invite previews, joining a server and the webhook execution routes each have their own per-IP bucket (`RATE_LIMIT_INVITE_PER_SECOND` and `RATE_LIMIT_INVITE_BURST`, by default the strict bucket's size); with `REDIS_URL` set, the invite preview and join buckets count across copies. Exceeding a bucket answers `429 {\"error\": \"Too Many Requests! Wait for ns\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After: n` (whole seconds, rounded up). Messages each account sends (channel, thread and DM messages, forwards and polls), and guest text per client address, count in a bucket of `MESSAGE_RATE_BURST` (default 100) that refills `MESSAGE_RATE_PER_MINUTE` a minute (default 2400), across copies when `REDIS_URL` is set; past it the answer is `429 {\"error\": \"Sending too fast, try again in a moment\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After`. Requests a person makes a few times a day at most (sign-ups, new display names, password changes, backup phrase changes, recovery, server name checks, new, renamed and deleted servers, server passwords, webhooks and their secrets and tests, config links, P2P backups and P2P bindings) are rare requests: each kind counts per account, or per client address for sign-ups and recovery, at most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default. Password and backup phrase changes count only once the current password or phrase is confirmed. Past them the answer is `429 {\"error\": \"You've done this too often. Try again later.\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After`.
 
-**Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Many also carry `reason`, an object for programs: `kind` says what happened (`off_site`: turned off for this site; `off_account`: turned off for your account; `off_server`: turned off in this server; `off_app` and `app`: an app's setting or rule; `limit`: you reached a limit; `capacity`: the site is full right now; `invalid`: a value is wrong; `rate`: too many requests; `conflict`: someone else changed it or the name is taken; `sign_in`: the session ended; `unavailable`: the server can't do it right now; `locked`: a moderator locked it), `control` names the setting or limit, `retry_after` is the wait in seconds (also sent as the `Retry-After` header), `field` names the wrong value and `until` is when a lock ends (unix seconds). Status codes and `error` texts are the same with and without it. An error without `reason` is a denial about a server, channel or message you cannot open, or an error that has no kind yet. When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\", \"reason\": {\"kind\": \"unavailable\", \"retry_after\": 1}}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
+**Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Many also carry `reason`, an object for programs: `kind` says what happened (`off_site`: turned off for this site; `off_account`: turned off for your account; `off_server`: turned off in this server; `off_app` and `app`: an app's setting or rule; `limit`: you reached a limit; `capacity`: the site is full right now; `invalid`: a value is wrong; `rate`: too many requests; `conflict`: someone else changed it or the name is taken; `sign_in`: the session ended; `unavailable`: the server can't do it right now; `locked`: a moderator locked it; `confirm`: confirm first), `control` names the setting or limit (for `confirm`, what to confirm), `retry_after` is the wait in seconds (also sent as the `Retry-After` header), `field` names the wrong value, `until` is when a lock ends (unix seconds) and `channel` the channel a `confirm` opens. Status codes and `error` texts are the same with and without it. An error without `reason` is a denial about a server, channel or message you cannot open, or an error that has no kind yet. When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\", \"reason\": {\"kind\": \"unavailable\", \"retry_after\": 1}}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
 
 **Private servers stay hidden.** A password-protected server is indistinguishable from one that does not exist to anyone without access (membership, a valid guest grant, or the password where an endpoint takes one). Every endpoint that takes a server name answers both with the same `404 {\"error\": \"Server not found or wrong password\"}`; endpoints that take a password (`join`, `guest_access`, invites) answer a missing password with the same `401 {\"error\": \"Password required\"}` and a wrong one with that 404, and always hash the password, also for names that do not exist. Endpoints that take a channel or message id answer `404 {\"error\": \"Not found\"}` for ids that do not exist, that you cannot see (hidden channels, messages before your join without read history) or that belong to a server you cannot access. Bans are only reported (403) once access was proven. Servers people join with an invite (`join_mode` `invite`) and closed servers are hidden the same way, under a random key. While the instance's `server_joining` (`GET /api/v1/settings`) is `invites` or `nobody`, a server without a password is hidden in the same way from everyone who is not a member, signed in or not, and under `nobody` a missing password gets the 404 too. `GET /api/v1/servers/{name}/available` is the one deliberate existence check, because creating a server reveals the same.
 
@@ -469,7 +469,7 @@ pub(crate) mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 33] = [
+    const ADMIN_ROUTES: [(&str, &str); 34] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/report_forms"),
         ("put", "/api/v1/admin/report_forms"),
@@ -494,6 +494,7 @@ pub(crate) mod tests {
         ("post", "/api/v1/admin/users/{username}/sign_out"),
         ("delete", "/api/v1/admin/users/{username}/recovery"),
         ("get", "/api/v1/admin/audit"),
+        ("post", "/api/v1/admin/channels/{id}/staff_view"),
         ("get", "/api/v1/admin/users/{username}/servers"),
         ("post", "/api/v1/admin/users/{username}/servers"),
         ("delete", "/api/v1/admin/messages/{id}"),
@@ -1010,7 +1011,14 @@ pub(crate) mod tests {
         assert!(body["properties"]["reason"].is_object());
         let reason = &schemas["Reason"];
         assert_eq!(reason["required"], serde_json::json!(["kind"]));
-        for field in ["kind", "control", "retry_after", "field", "until"] {
+        for field in [
+            "kind",
+            "control",
+            "retry_after",
+            "field",
+            "until",
+            "channel",
+        ] {
             assert!(reason["properties"][field].is_object(), "{field}");
         }
         let kinds: Vec<&str> = schemas["ReasonKind"]["enum"]
@@ -1034,7 +1042,8 @@ pub(crate) mod tests {
                 "conflict",
                 "sign_in",
                 "unavailable",
-                "locked"
+                "locked",
+                "confirm"
             ]
         );
         let about = doc["info"]["description"].as_str().expect("description");

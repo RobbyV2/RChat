@@ -390,6 +390,10 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             message_id: _,
         }
         | WsEvent::BulkDeleteProgress { username, job: _ }
+        | WsEvent::StaffViewOpened {
+            username,
+            channel_id: _,
+        }
         | WsEvent::FriendRequestAdded {
             username,
             request: _,

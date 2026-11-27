@@ -8,6 +8,7 @@ import type { AccountSession } from '../client/session'
 // per-account display preferences, and the confirm builders.
 
 import { ApiError } from '../api'
+import { staffAsked, staffViewChannel } from '../staff_view'
 import {
   type CallRoute,
   DEFAULT_ROUTE,
@@ -233,6 +234,11 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   let toastTimer: ReturnType<typeof setTimeout> | undefined
   const fail = (e: unknown) => {
     if (e instanceof Banned || e instanceof Ended) return
+    const staff = staffViewChannel(e)
+    if (staff !== null && get().me?.is_site_admin) {
+      set(s => staffAsked(s, staff))
+      return
+    }
     if (e instanceof ApiError && e.status === 429) limitedAt = Date.now()
     const message = errorText(e)
     set({ error: message })

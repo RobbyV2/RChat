@@ -111,6 +111,87 @@ const brandLine = (e: InstanceAuditEntry): AuditPart[] => {
   return [{ text: ` changed ${named}` }]
 }
 
+const countOf = (value: unknown) =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
+
+const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+// A server in a staff entry, which may have been deleted since.
+const serverPart = (e: InstanceAuditEntry): AuditPart =>
+  e.target === null ? { text: 'a deleted server' } : { text: e.target, name: true }
+
+// A server opened with instance powers.
+const staffServerLine = (e: InstanceAuditEntry): AuditPart[] => [
+  { text: ' opened ' },
+  serverPart(e),
+  { text: ' as staff' },
+]
+
+// A channel opened past its own rules: the entry has its id, never its name.
+const staffChannelLine = (e: InstanceAuditEntry): AuditPart[] => {
+  const id = countOf(detailOf(e).channel)
+  return [
+    { text: id === null ? ' opened a private channel of ' : ` opened private channel ${id} of ` },
+    serverPart(e),
+  ]
+}
+
+// A search that found messages in channels opened as staff: counts only.
+const staffSearchLine = (e: InstanceAuditEntry): AuditPart[] => {
+  const { hits, channels } = detailOf(e)
+  const found = countOf(hits)
+  const places = Array.isArray(channels) ? channels.length : null
+  if (found === null || places === null) return [{ text: ' searched private channels' }]
+  return [
+    {
+      text: ` found ${counted(found, 'message', 'messages')} in ${counted(places, 'private channel', 'private channels')} by search`,
+    },
+  ]
+}
+
+// A file loaded from a channel opened as staff.
+const staffMediaLine = (e: InstanceAuditEntry): AuditPart[] => {
+  const id = countOf(detailOf(e).channel)
+  return [
+    {
+      text: id === null ? ' opened a file in a channel of ' : ` opened a file in channel ${id} of `,
+    },
+    serverPart(e),
+    { text: ' as staff' },
+  ]
+}
+
+// The reports to a server's moderators, read with instance powers.
+const reportViewLine = (e: InstanceAuditEntry): AuditPart[] => [
+  { text: ' read the reports of ' },
+  serverPart(e),
+  { text: ' as staff' },
+]
+
+// P2P backups and synced identities the instance held for an account: counts only.
+const p2pDataLine = (e: InstanceAuditEntry): AuditPart[] => {
+  const { op, backups, identities } = detailOf(e)
+  const who: AuditPart =
+    e.target === null ? { text: 'a deleted user' } : { text: e.target, name: true }
+  const verb = op === 'purge' ? ' removed' : ' viewed'
+  const held = [
+    [countOf(backups), 'backup', 'backups'] as const,
+    [countOf(identities), 'identity', 'identities'] as const,
+  ].flatMap(([n, one, many]) => (n === null ? [] : [counted(n, one, many)]))
+  const size = held.length ? ` (${held.join(', ')})` : ''
+  return [{ text: `${verb} the P2P data held for ` }, who, ...(size ? [{ text: size }] : [])]
+}
+
+const isStaffAction = (action: string) => action.startsWith('staff.') || action === 'report.view'
+
+// The reason a staff entry was given, after its line.
+const reasonParts = (e: InstanceAuditEntry): AuditPart[] => {
+  const { reason } = detailOf(e)
+  return isStaffAction(e.action) && typeof reason === 'string' && reason !== ''
+    ? [{ text: `. Reason: ${reason}` }]
+    : []
+}
+
 // Actions with a line of their own: what follows the actor.
 const LINES: Record<string, (e: InstanceAuditEntry) => AuditPart[]> = {
   'settings.change': settingLine,
@@ -119,12 +200,18 @@ const LINES: Record<string, (e: InstanceAuditEntry) => AuditPart[]> = {
   'server.add_member': addedLine,
   'user.password_set': passwordSetLine,
   'branding.change': brandLine,
+  'staff.view_server': staffServerLine,
+  'staff.view_channel': staffChannelLine,
+  'staff.search': staffSearchLine,
+  'staff.media': staffMediaLine,
+  'staff.p2p_data': p2pDataLine,
+  'report.view': reportViewLine,
 }
 
 // One line of the instance audit log: who did what to whom. Unknown actions show their code.
 export const instanceAuditLine = (e: InstanceAuditEntry): AuditPart[] => {
   const actor = actorOf(e)
-  if (Object.hasOwn(LINES, e.action)) return [actor, ...LINES[e.action](e)]
+  if (Object.hasOwn(LINES, e.action)) return [actor, ...LINES[e.action](e), ...reasonParts(e)]
   const known = Object.hasOwn(ACTIONS, e.action) ? ACTIONS[e.action] : undefined
   const target: AuditPart[] =
     e.target !== null
@@ -142,6 +229,7 @@ export const AUDIT_KINDS = [
   { value: 'accounts', label: 'Accounts' },
   { value: 'servers', label: 'Servers' },
   { value: 'sign_in', label: 'Sign-in' },
+  { value: 'staff', label: 'Staff access' },
 ] as const
 
 export type AuditKind = (typeof AUDIT_KINDS)[number]['value']
@@ -154,6 +242,8 @@ const KIND_PREFIXES: [string, Exclude<AuditKind, 'all'>][] = [
   ['server.', 'servers'],
   ['sso.', 'sign_in'],
   ['auth.', 'sign_in'],
+  ['staff.', 'staff'],
+  ['report.view', 'staff'],
 ]
 
 // The kind of an entry, from its action; null for an action of no listed kind.

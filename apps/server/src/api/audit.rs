@@ -2048,6 +2048,10 @@ mod tests {
         .expect("grant every permission");
         let secret = id_of(db, "INSERT INTO channels(server, name, created_at, restrict_view) VALUES('club', 'secret', 0, 1) RETURNING id").await;
         let hidden = message(db, secret, "bob").await;
+        let unconfirmed =
+            crate::api::messages::delete_message(s(), Path(hidden), who("root")).await;
+        assert!(unconfirmed.is_err_and(|e| crate::api::staff_audit::asks_to_confirm(&e)));
+        crate::api::staff_audit::tests::confirmed(db, "root", "club", secret).await;
         let _ = crate::api::messages::delete_message(s(), Path(hidden), who("root"))
             .await
             .expect("delete in a channel root can't see as a member");

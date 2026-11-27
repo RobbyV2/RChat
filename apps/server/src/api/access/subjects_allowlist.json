@@ -104,6 +104,10 @@
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },
   {
+    "route": "post /api/v1/admin/channels/{id}/staff_view",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
     "route": "delete /api/v1/admin/messages/{id}",
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },

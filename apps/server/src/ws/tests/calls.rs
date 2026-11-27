@@ -1824,13 +1824,14 @@ async fn call_errors_never_carry_database_text() {
 fn off(control: &'static str, message: &str) -> crate::ws::protocol::Refused {
     crate::ws::protocol::Refused::Error {
         message: message.to_string(),
-        reason: Some(crate::api::Reason {
+        reason: Some(Box::new(crate::api::Reason {
             kind: crate::api::ReasonKind::OffSite,
             control: Some(control.to_string()),
             retry_after: None,
             field: None,
             until: None,
-        }),
+            channel: None,
+        })),
     }
 }
 

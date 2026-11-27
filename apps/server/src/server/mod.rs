@@ -116,6 +116,7 @@ mod tests {
             "x-trust-client",
             "if-none-match",
             "x-background",
+            "x-staff-reason",
         ] {
             assert!(allowed.contains(&asked.to_string()), "{allowed:?}");
         }

@@ -89,6 +89,7 @@ import {
 } from './ui'
 import { LabelText } from './instance_badge'
 import { endsText } from '../lib/durations'
+import { staffChange, staffViewChannel } from '../lib/staff_view'
 
 const SEARCH_DEBOUNCE = 250
 const PICKER_HITS = 8
@@ -409,12 +410,16 @@ function ChannelPermsEditor({
   const clearChannelPerm = useStore(s => s.clearChannelPerm)
   const setChannelRestrict = useStore(s => s.setChannelRestrict)
   const setError = useStore(s => s.setError)
+  const askStaffView = useStore(s => s.askStaffView)
+  const staffOpen = useStore(s => s.staffOpen.includes(channelId))
   const me = useStore(s => s.me?.username ?? null)
   const [rows, setRows] = useState<ChannelPerm[]>([])
+  const [shut, setShut] = useState(false)
   const [subject, setSubject] = useState('')
 
   const reload = useCallback(async () => {
     const showError = inSession(setError)
+    const ask = inSession(askStaffView)
     try {
       const all: ChannelPerm[] = []
       let cursor: string | null = null
@@ -424,13 +429,31 @@ function ChannelPermsEditor({
         cursor = page.next
       } while (cursor !== null)
       setRows(all)
+      setShut(false)
     } catch (e) {
-      showError(errorText(e))
+      const staff = staffViewChannel(e)
+      if (staff === null) {
+        showError(errorText(e))
+        return
+      }
+      setRows([])
+      setShut(true)
+      ask(staff)
     }
-  }, [channelId, setError])
+  }, [channelId, setError, askStaffView])
   useEffect(() => {
     void reload()
   }, [reload])
+  const opened = useRef(staffOpen)
+  useEffect(() => {
+    const change = staffChange(opened.current, staffOpen)
+    opened.current = staffOpen
+    if (change === 'read') void reload()
+    if (change === 'close') {
+      setRows([])
+      setShut(true)
+    }
+  }, [staffOpen, reload])
 
   const save = (perm: ChannelPerm) => void setChannelPerm(channelId, perm).then(inSession(reload))
   const allow = (subj: string) =>
@@ -454,6 +477,19 @@ function ChannelPermsEditor({
       {text}
     </label>
   )
+
+  if (shut)
+    return (
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-xl bg-surface-container-low p-2">
+        <Lock size={14} className="shrink-0 text-on-surface-variant" />
+        <span className="min-w-0 flex-1 text-xs text-on-surface-variant">
+          Confirm to open this channel
+        </span>
+        <button onClick={() => askStaffView(channelId)} className={textBtn}>
+          Open channel
+        </button>
+      </div>
+    )
 
   return (
     <div className="mt-1.5 space-y-2 rounded-xl bg-surface-container-low p-2">

@@ -29,6 +29,7 @@ pub(crate) use pool::open_started;
 pub(crate) use pool::pool_key;
 #[cfg(test)]
 pub(crate) use pool::temp_db_path;
+pub(crate) use pool::writer;
 pub use pool::{
     ConnectionBudget, Db, DbOptions, LightCommits, close, connection_budget, default_pool,
     has_accounts, is_sqlite, light, no_statement_limit, open, open_with, opened_limits, reader,

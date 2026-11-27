@@ -14,6 +14,7 @@ export type ReasonKind =
   | 'unavailable'
   | 'locked'
   | 'app'
+  | 'confirm'
 
 export interface Reason {
   kind: ReasonKind

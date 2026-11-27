@@ -1080,6 +1080,7 @@ export type WsEvent =
   | ({ type: 'message_deleted'; id: number; thread_root_id: number | null } & Scoped)
   | ({ type: 'messages_deleted'; ids: number[]; thread_root_id: number | null } & Scoped)
   | { type: 'bulk_delete_progress'; username: string; job: BulkJob }
+  | { type: 'staff_view_opened'; username: string; channel_id: number }
   | { type: 'poll_voted'; username: string; message_id: number }
   | ({
       type: 'poll_updated'

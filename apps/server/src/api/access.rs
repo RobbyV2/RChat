@@ -14,7 +14,7 @@ use crate::api::budget::{self, Backoff, slow_down};
 use crate::api::join_modes::{join_mode_of, legacy_mode};
 use crate::api::policy::ServerJoining;
 use crate::api::profiles::ProfilesMode;
-use crate::api::{ApiError, Channel, ServerSummaryLite, header_grants};
+use crate::api::{ApiError, Channel, ServerSummaryLite, header_grants, staff_audit};
 use crate::db::{ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, User, now, pool_key};
 use crate::limits::Limits;
 use crate::limits::bucket::{Keyed, Policy};
@@ -831,6 +831,9 @@ pub async fn resolve_invite(
         banned,
         ticket,
     } = gate(db, name, Who::of(viewer), proof).await?;
+    if let (Via::Staff, Some(admin)) = (via, viewer) {
+        staff_audit::view_server(db, admin, &lite.name).await?;
+    }
     match banned {
         true => Ok(InviteView::Banned(lite)),
         false => Ok(InviteView::Open(Box::new(ServerAccess {
@@ -1224,6 +1227,16 @@ impl ServerAccess {
     }
 
     pub async fn channel(self, db: &Db, id: i64) -> Result<ResolvedChannel, ApiError> {
+        self.channel_for(db, id, StaffUse::Open).await
+    }
+
+    /// `channel`, for what a site admin does in a channel only instance powers open to them.
+    pub async fn channel_for(
+        self,
+        db: &Db,
+        id: i64,
+        used: StaffUse,
+    ) -> Result<ResolvedChannel, ApiError> {
         if self.via == Via::Joinable {
             return Err(not_found());
         }
@@ -1239,7 +1252,25 @@ impl ServerAccess {
         if !rights.view {
             return Err(not_found());
         }
+        let (staff, rights) = match &self.user {
+            Some(user) if user.is_site_admin => {
+                match admin_reach(db, self.name(), id, user, used).await? {
+                    AdminReach::Own => (self.via == Via::Staff, rights),
+                    AdminReach::OwnHistory => (
+                        self.via == Via::Staff,
+                        ChannelAccess {
+                            history: false,
+                            ..rights
+                        },
+                    ),
+                    AdminReach::Staff => (true, rights),
+                    AdminReach::Shut => return Err(staff_audit::confirm_first(id)),
+                }
+            }
+            Some(_) | None => (false, rights),
+        };
         Ok(ResolvedChannel {
+            staff,
             id,
             kind: ChannelKind::parse(&row.try_get::<String, _>(1)?)?,
             name: row.try_get(2)?,
@@ -1280,6 +1311,9 @@ impl TextReading {
 
 pub struct ResolvedChannel {
     server: ServerAccess,
+    /// A site admin views it with instance powers: as no member of its server, or past
+    /// channel rules that hide it from their own membership.
+    staff: bool,
     id: i64,
     kind: ChannelKind,
     name: String,
@@ -1289,11 +1323,123 @@ pub struct ResolvedChannel {
     rights: ChannelAccess,
 }
 
+/// What a site admin does in a channel, or in its history, that only instance powers open to
+/// them (`staff_gap`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaffUse {
+    /// Reads it or acts in it: only within `CHANNEL_OPEN_SECS` of a confirmation. Until then a
+    /// channel their membership views without read history reads as it does for members.
+    Open,
+    /// Deletes messages without showing them, for a ban's purge or a running bulk delete job:
+    /// no confirmation. The server's audit log names the staff as the deleter.
+    Delete,
+}
+
+/// What only instance powers show the site admin `admin` in channel `id` of `server`, beyond
+/// what their own membership (or none) shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StaffGap {
+    /// Nothing.
+    None,
+    /// The messages from before their join: their membership views it without read history.
+    History,
+    /// The channel: their membership does not view it.
+    View,
+}
+
+async fn staff_gap(db: &Db, server: &str, id: i64, admin: &User) -> sqlx::Result<StaffGap> {
+    let plain = User {
+        is_site_admin: false,
+        ..admin.clone()
+    };
+    let ChannelAccess {
+        view,
+        send: _,
+        history,
+    } = channel_access(db, server, id, Some(&plain)).await?;
+    Ok(match (view, history) {
+        (false, _) => StaffGap::View,
+        (true, false) => StaffGap::History,
+        (true, true) => StaffGap::None,
+    })
+}
+
+/// How a site admin reaches a channel for `used`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AdminReach {
+    /// Through their membership, or as staff of a server they are no member of, where
+    /// instance powers add nothing inside the channel.
+    Own,
+    /// Through their membership without the read history only instance powers add, while the
+    /// channel is not open to them as staff.
+    OwnHistory,
+    /// With everything instance powers give.
+    Staff,
+    /// Not before a confirmation: only instance powers show the channel.
+    Shut,
+}
+
+/// How the site admin `admin` reaches channel `id` of `server` for `used`: what only instance
+/// powers show takes a confirmation (`staff_audit::channel_open`), except for deletes.
+async fn admin_reach(
+    db: &Db,
+    server: &str,
+    id: i64,
+    admin: &User,
+    used: StaffUse,
+) -> Result<AdminReach, ApiError> {
+    let gap = staff_gap(db, server, id, admin).await?;
+    let open = match (gap, used) {
+        (StaffGap::None, _) => return Ok(AdminReach::Own),
+        (StaffGap::History | StaffGap::View, StaffUse::Delete) => true,
+        (StaffGap::History | StaffGap::View, StaffUse::Open) => {
+            staff_audit::channel_open(db, &admin.username, server, id).await?
+        }
+    };
+    Ok(match (gap, open) {
+        (_, true) => AdminReach::Staff,
+        (StaffGap::History, false) => AdminReach::OwnHistory,
+        (StaffGap::View | StaffGap::None, false) => AdminReach::Shut,
+    })
+}
+
+/// The server of channel `id` for a site admin who confirms opening it, and whether only
+/// instance powers open the channel or its history. Unknown channels and servers the admin
+/// can't open get `not_found`.
+pub(crate) async fn staff_channel_server(
+    db: &Db,
+    admin: &User,
+    id: i64,
+) -> Result<(String, bool), ApiError> {
+    let server: String = sqlx::query("SELECT server FROM channels WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(not_found)?
+        .try_get(0)?;
+    let access = resolve_server(db, &server, Some(admin), &Proof::none())
+        .await
+        .map_err(hidden)?;
+    let needed = staff_gap(db, access.name(), id, admin).await? != StaffGap::None;
+    Ok((access.name().to_string(), needed))
+}
+
 pub async fn resolve_channel(
     db: &Db,
     id: i64,
     viewer: Option<&User>,
     proof: &Proof<'_>,
+) -> Result<ResolvedChannel, ApiError> {
+    resolve_channel_for(db, id, viewer, proof, StaffUse::Open).await
+}
+
+/// `resolve_channel`, for what a site admin does in a channel only instance powers open.
+pub async fn resolve_channel_for(
+    db: &Db,
+    id: i64,
+    viewer: Option<&User>,
+    proof: &Proof<'_>,
+    used: StaffUse,
 ) -> Result<ResolvedChannel, ApiError> {
     let server: String = sqlx::query("SELECT server FROM channels WHERE id = $1")
         .bind(id)
@@ -1304,7 +1450,7 @@ pub async fn resolve_channel(
     resolve_server(db, &server, viewer, proof)
         .await
         .map_err(hidden)?
-        .channel(db, id)
+        .channel_for(db, id, used)
         .await
 }
 
@@ -1362,6 +1508,7 @@ async fn configured_channel(
             user: None,
             ticket: None,
         },
+        staff: false,
         id,
         kind: ChannelKind::parse(&r.try_get::<String, _>(0)?)?,
         name: r.try_get(1)?,
@@ -1400,6 +1547,11 @@ pub async fn resolve_category(db: &Db, id: i64, viewer: &User) -> Result<ServerA
 impl ResolvedChannel {
     pub fn id(&self) -> i64 {
         self.id
+    }
+
+    /// Whether a site admin views this channel with instance powers.
+    pub fn staff_view(&self) -> bool {
+        self.staff
     }
 
     pub fn server(&self) -> &ServerAccess {
@@ -1769,10 +1921,21 @@ pub async fn resolve_message(
     viewer: Option<&User>,
     proof: &Proof<'_>,
 ) -> Result<ResolvedMessage, ApiError> {
+    resolve_message_for(db, id, viewer, proof, StaffUse::Open).await
+}
+
+/// `resolve_message`, for what a site admin does in a channel only instance powers open.
+pub async fn resolve_message_for(
+    db: &Db,
+    id: i64,
+    viewer: Option<&User>,
+    proof: &Proof<'_>,
+    used: StaffUse,
+) -> Result<ResolvedMessage, ApiError> {
     let (mut scope, created_at) = message_row(db, id).await?;
     let channel = match (scope.channel_id, scope.dm_id) {
         (Some(cid), _) => {
-            let channel = resolve_channel(db, cid, viewer, proof).await?;
+            let channel = resolve_channel_for(db, cid, viewer, proof, used).await?;
             channel.check_message(db, &mut scope, created_at).await?;
             Some(channel)
         }
@@ -1975,15 +2138,24 @@ impl ResolvedMessage {
 }
 
 /// Whether `actor` may delete `author`'s messages in channel `channel_id`: the channel through
-/// the gate for `actor`, then the rule of `ResolvedMessage::require_can_delete` for a message of
-/// `author` there. `None` for a channel `actor` can't see.
+/// the gate for `actor` (a site admin deletes there without confirming, `StaffUse::Delete`),
+/// then the rule of `ResolvedMessage::require_can_delete` for a message of `author` there.
+/// `None` for a channel `actor` can't see.
 pub(crate) async fn may_delete_in(
     db: &Db,
     actor: &User,
     channel_id: i64,
     author: &str,
 ) -> Result<Option<bool>, ApiError> {
-    let channel = match resolve_channel(db, channel_id, Some(actor), &Proof::none()).await {
+    let resolved = resolve_channel_for(
+        db,
+        channel_id,
+        Some(actor),
+        &Proof::none(),
+        StaffUse::Delete,
+    )
+    .await;
+    let channel = match resolved {
         Ok(channel) => channel,
         Err(e) if e.failed() => return Err(e),
         Err(_) => return Ok(None),
@@ -2012,8 +2184,10 @@ pub(crate) async fn may_delete_in(
 }
 
 /// Restricted text-channel rights of `user` across the servers it is a member of (unread
-/// counts): channels with rules or restrictions. Membership is the proof: rows of servers the
-/// user has not joined never load.
+/// counts, the inbox): channels with rules or restrictions. Membership is the proof: rows of
+/// servers the user has not joined never load. A site admin counts as a plain member, except
+/// in the channels they have open as staff (`staff_audit::open_channels`), which give them
+/// every right.
 pub(crate) async fn member_channel_rights(
     db: &Db,
     user: &User,
@@ -2035,6 +2209,14 @@ pub(crate) async fn member_channel_rights(
     .await?;
     let subjects = perm_subjects(db, None, &user.username).await?;
     let rules = rules_by_channel(&rows)?;
+    let member = User {
+        is_site_admin: false,
+        ..user.clone()
+    };
+    let opened = match user.is_site_admin {
+        true => staff_audit::open_channels(db, &user.username).await?,
+        false => Vec::new(),
+    };
     let mut manages: HashMap<String, bool> = HashMap::new();
     let mut out = HashMap::with_capacity(channels.len());
     for r in &channels {
@@ -2044,12 +2226,13 @@ pub(crate) async fn member_channel_rights(
             Some(m) => *m,
             None => {
                 let m =
-                    effective_perms(db, &server, user).await? & Perm::ManageChannels as i64 != 0;
+                    effective_perms(db, &server, &member).await? & Perm::ManageChannels as i64 != 0;
                 manages.insert(server, m);
                 m
             }
         };
         let list = rules.get(&id).map(Vec::as_slice).unwrap_or_default();
+        let manage = manage || opened.contains(&id);
         out.insert(id, fold_access(list, &subjects, manage, restrict));
     }
     Ok(out)
@@ -2066,18 +2249,37 @@ pub(crate) async fn channel_manager_servers(db: &Db, user: &User) -> sqlx::Resul
 }
 
 /// WS event filtering and voice eviction: can `username` (or a guest) see channel `cid` of
-/// `server` right now. Never answers a client with target data.
-pub(crate) async fn ws_channel_view(
+/// `server` right now, and until when that answer holds. A site admin sees a channel only
+/// instance powers open while they have it open (`staff_audit::open_until`): that answer ends
+/// when the channel closes, and a closed one holds until they confirm again
+/// (`WsEvent::StaffViewOpened`); when that can't be read, it is closed until the next event.
+/// Every other answer holds (`None`) until the channel's rules or the viewer's memberships
+/// change. Never answers a client with target data.
+pub(crate) async fn ws_channel_seen(
     db: &Db,
     server: &str,
     cid: i64,
     username: Option<&str>,
-) -> sqlx::Result<bool> {
+) -> sqlx::Result<(bool, Option<i64>)> {
     let user = match username {
         Some(name) => crate::db::get_user(db, name).await?,
         None => None,
     };
-    Ok(channel_access(db, server, cid, user.as_ref()).await?.view)
+    let view = channel_access(db, server, cid, user.as_ref()).await?.view;
+    match user {
+        Some(admin)
+            if view
+                && admin.is_site_admin
+                && staff_gap(db, server, cid, &admin).await? == StaffGap::View =>
+        {
+            match staff_audit::open_until(db, &admin.username, server, cid).await {
+                Ok(Some(until)) => Ok((true, Some(until))),
+                Ok(None) => Ok((false, None)),
+                Err(_) => Ok((false, Some(now()))),
+            }
+        }
+        Some(_) | None => Ok((view, None)),
+    }
 }
 
 /// The view rules of a channel (`restrict_view` and its overrides), taken before it is deleted
@@ -2095,7 +2297,7 @@ pub(crate) async fn ws_view_rules(db: &Db, cid: i64) -> sqlx::Result<ViewRules> 
 }
 
 /// WS event filtering for a deleted channel: could `username` (or a guest) view a channel of
-/// `server` with these `rules`, under the same rule as `ws_channel_view`. Never answers a client.
+/// `server` with these `rules`, under the same rule as `ws_channel_seen`. Never answers a client.
 pub(crate) async fn ws_view_under(
     db: &Db,
     server: &str,
@@ -2129,9 +2331,11 @@ pub(crate) async fn ws_manages_channels(
 }
 
 /// `p2p_who`: from when `username` may read channel `cid` of `server`, under the same rule as
-/// `ResolvedChannel::read_since`. `None` when they can't view it (or on any error),
-/// `Some(None)` with read history, otherwise `Some(Some(joined_at))` (now for non-members).
-/// Never answers a client with target data.
+/// `ResolvedChannel::read_since`, also for a site admin: what only instance powers show them
+/// stays shut (the channel) or reads as for members (its history) while it is not open to
+/// them as staff. `None` when they can't view it (or on any error), `Some(None)` with read
+/// history, otherwise `Some(Some(joined_at))` (now for non-members). Never answers a client
+/// with target data.
 pub(crate) async fn ws_channel_read_since(
     db: &Db,
     server: &str,
@@ -2143,7 +2347,18 @@ pub(crate) async fn ws_channel_read_since(
     if !access.view {
         return None;
     }
-    if access.history {
+    let history = match user.is_site_admin {
+        true => match admin_reach(db, server, cid, &user, StaffUse::Open)
+            .await
+            .ok()?
+        {
+            AdminReach::Own | AdminReach::Staff => access.history,
+            AdminReach::OwnHistory => false,
+            AdminReach::Shut => return None,
+        },
+        false => access.history,
+    };
+    if history {
         return Some(None);
     }
     let row = sqlx::query("SELECT joined_at FROM members WHERE server = $1 AND username = $2")
@@ -2217,7 +2432,7 @@ pub(crate) async fn ws_thread_start(
     )
 }
 
-/// Same as `ws_channel_view`, with any error meaning "not viewable".
+/// Whether `username` (or a guest) can view the channel, with any error meaning "not viewable".
 #[cfg(test)]
 pub(crate) async fn ws_channel_viewable(
     db: &Db,
@@ -2346,6 +2561,9 @@ pub async fn report_scope(
             .map(|(id, _)| id)
             .collect(),
     };
+    if staff {
+        staff_audit::report_view(db, &user.username, view.name()).await?;
+    }
     Ok(ReportScope {
         server: Some(view.name().to_string()),
         viewer: user.username.clone(),
@@ -2818,6 +3036,28 @@ pub(crate) async fn ws_p2p_message(db: &Db, message_id: i64) -> sqlx::Result<Opt
     .bind(message_id)
     .fetch_optional(db)
     .await
+}
+
+/// `p2p_peer` for the site admin `admin`: whether the gate shows them message `id`, after the
+/// `staff.media` entry for its P2P attachment `file` when only instance powers do (and the
+/// `staff.view_server` entry for a server they are no member of). What only instance powers
+/// show stays shut until a confirmation. Any refusal or failure is `false`. Never answers a
+/// client with target data.
+pub(crate) async fn ws_staff_file(db: &Db, admin: &str, id: i64, file: &str) -> bool {
+    let Ok(Some(user)) = crate::db::get_user(db, admin).await else {
+        return false;
+    };
+    let Ok(message) = resolve_message(db, id, Some(&user), &Proof::none()).await else {
+        return false;
+    };
+    match message.channel().filter(|c| c.staff_view()) {
+        Some(channel) => {
+            staff_audit::media(db, &user, channel.server().name(), channel.id(), id, file)
+                .await
+                .is_ok()
+        }
+        None => true,
+    }
 }
 
 /// `p2p_who`: the messages holding P2P attachments `ids` of `hoster`, with columns media_id,

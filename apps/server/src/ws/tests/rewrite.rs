@@ -638,7 +638,7 @@ async fn channel_deleted_reaches_only_those_who_could_view_it() {
         "no rules, no memo"
     );
     let mut warm_vic = Access::new(Some(s("vic")), false, set(&["open"]));
-    warm_vic.viewable = HashMap::from([(secret, (s("open"), true))]);
+    warm_vic.viewable = HashMap::from([(secret, (s("open"), true, None))]);
     assert_eq!(
         on_event(&state, 1, &mut warm_vic, &old).await,
         Some(true),

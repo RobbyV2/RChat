@@ -1388,12 +1388,25 @@ pub(crate) async fn media_view_ok(
             (_, _) => Err(media_hidden()),
         };
     }
+    let mut staff = None;
     for r in &rows {
-        if allowed(resolve_message(db, r.try_get(0)?, user, proof).await)?.is_some() {
-            return Ok(());
+        let id: i64 = r.try_get(0)?;
+        let Some(message) = allowed(resolve_message(db, id, user, proof).await)? else {
+            continue;
+        };
+        match message.channel().filter(|c| c.staff_view()) {
+            Some(channel) => {
+                staff.get_or_insert((channel.server().name().to_string(), channel.id(), id));
+            }
+            None => return Ok(()),
         }
     }
-    Err(media_hidden())
+    match (staff, user) {
+        (Some((server, channel, message)), Some(admin)) => {
+            crate::api::staff_audit::media(db, admin, &server, channel, message, media_id).await
+        }
+        (_, _) => Err(media_hidden()),
+    }
 }
 
 fn chunk_stream(
@@ -3581,8 +3594,31 @@ mod tests {
             assert!(!see(Some("carol"), id.clone()).await, "carol {id}");
             assert!(!see(None, id.clone()).await, "guest {id}");
             assert!(see(Some("hist"), id.clone()).await, "hist {id}");
-            assert!(see(Some("root"), id.clone()).await, "root {id}");
+            assert!(!see(Some("root"), id.clone()).await, "root {id}");
         }
+        crate::api::staff_audit::tests::confirmed(db, "root", "rchat", cid).await;
+        for _ in 0..2 {
+            for id in [&old, &fresh, &reply] {
+                assert!(see(Some("root"), id.clone()).await, "root {id}");
+            }
+        }
+        let noted: Vec<String> = sqlx::query(
+            "SELECT detail FROM instance_audit WHERE action = 'staff.media' AND actor = 'root' AND target = 'rchat' ORDER BY id",
+        )
+        .fetch_all(db)
+        .await
+        .expect("entries")
+        .iter()
+        .map(|r| {
+            let detail: String = r.try_get(0).expect("detail");
+            let detail: serde_json::Value = serde_json::from_str(&detail).expect("json");
+            assert_eq!(detail["channel"], serde_json::json!(cid));
+            assert!(detail["message"].is_i64());
+            assert_eq!(detail.as_object().map(|o| o.len()), Some(3), "{detail}");
+            detail["media"].as_str().expect("media").to_string()
+        })
+        .collect();
+        assert_eq!(noted, vec![old.clone(), fresh.clone(), reply.clone()]);
         assert!(!see(Some("bob"), old.clone()).await);
         assert!(see(Some("bob"), fresh.clone()).await);
         assert!(see(Some("bob"), reply.clone()).await);

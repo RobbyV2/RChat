@@ -80,9 +80,8 @@ pub(super) async fn on_event(
             channel_id,
             rules: _,
         } => access
-            .viewable
-            .get(channel_id)
-            .map(|(owner, view)| *view && owner == server),
+            .seen(*channel_id)
+            .map(|(owner, view)| view && owner == server),
         _ => None,
     };
     track(ev, access);
@@ -318,6 +317,16 @@ pub(super) fn track(ev: &WsEvent, access: &mut Access) {
         WsEvent::ServerUpdated { server } => {
             access.note_option(&server.name, server.members_visible);
             forget_server(access, &server.name);
+        }
+        WsEvent::StaffViewOpened {
+            username,
+            channel_id,
+        } => {
+            if Some(username.as_str()) == me {
+                access.viewable.remove(channel_id);
+                access.floors.remove(channel_id);
+                access.who.forget();
+            }
         }
         WsEvent::ServerDeleted { name } => {
             access.topics_dirty |= access.held(name);
@@ -848,6 +857,10 @@ pub(super) fn wants(
             message_id: _,
         }
         | WsEvent::BulkDeleteProgress { username, job: _ }
+        | WsEvent::StaffViewOpened {
+            username,
+            channel_id: _,
+        }
         | WsEvent::FriendRequestAdded {
             username,
             request: _,

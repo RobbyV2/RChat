@@ -114,7 +114,7 @@ async fn leaving_a_locked_server_drops_its_subscription() {
     .await;
     let mut nora = Access::new(Some(s("nora")), false, set(&["home", "open"]));
     nora.subs.insert(s("open"));
-    nora.viewable = HashMap::from([(general, (s("open"), true))]);
+    nora.viewable = HashMap::from([(general, (s("open"), true, None))]);
     for left in [
         WsEvent::MemberLeft {
             server: s("open"),

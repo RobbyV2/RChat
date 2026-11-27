@@ -27,7 +27,7 @@ export function ReAuthPrompt({
   ways = ['password', 'idp', 'phrase'],
   onBody,
 }: {
-  purpose: 'set' | 'remove' | 'link_idp' | 'set_password'
+  purpose: 'set' | 'remove' | 'link_idp' | 'set_password' | 'staff_view'
   context?: string
   links: LinkedProvider[]
   ways?: Way[]

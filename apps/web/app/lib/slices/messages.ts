@@ -101,6 +101,13 @@ import type {
   UserRef,
   WsEvent,
 } from '../types'
+import {
+  staffAsked,
+  staffEnded,
+  staffOpened,
+  staffReasonHeader,
+  staffViewChannel,
+} from '../staff_view'
 import { type Nav, type View, threadKey, viewKey } from '../view'
 import {
   WINDOW_MAX,
@@ -511,8 +518,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         askP2p(list)
         set({ pins: { key, list, failed: false } })
       },
-      () => {
-        if (current()) set(s => (s.pins ? { pins: { ...s.pins, failed: true } } : {}))
+      (e: unknown) => {
+        if (!current()) return
+        const staff = staffViewChannel(e)
+        if (staff !== null) set(s => staffAsked(s, staff))
+        set(s => (s.pins ? { pins: { ...s.pins, failed: true } } : {}))
       }
     )
   }
@@ -891,6 +901,24 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   const setOlder = (key: string, state: OlderState) =>
     set(s => ({ older: { ...s.older, [key]: state } }))
 
+  // When each channel the site admin opened as staff closes again.
+  const staffEnds = new Map<number, ReturnType<typeof setTimeout>>()
+
+  const endStaffView = (channel: number, seconds: number) => {
+    clearTimeout(staffEnds.get(channel))
+    const ended = inSession(() => {
+      staffEnds.delete(channel)
+      const shut = staffEnded(get(), channel)
+      const { panel } = get()
+      const thread =
+        shut.staffShut !== undefined &&
+        panel?.kind === 'thread' &&
+        panel.root.channel_id === channel
+      set(thread ? { ...shut, panel: null } : shut)
+    })
+    staffEnds.set(channel, setTimeout(ended, seconds * 1000))
+  }
+
   const fetchPage = async (key: string, page: PageOpts): Promise<Message[]> => {
     const id = Number(key.slice(1))
     const before = get().view
@@ -903,6 +931,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           (get().panel as typeof thread).root.id === id))
     try {
       if (key[0] !== 'd' && before?.kind === 'channel') {
+        if (before === get().staffShut) throw new Ended()
         if (labelsOffline()) await get().discoverChannels(before.server, true)
         const target = instanceTarget(get(), before.server, before.channelId)
         if (
@@ -927,6 +956,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         }
       }
     } catch (e) {
+      const channel = staffViewChannel(e)
+      if (channel !== null) {
+        if (visible()) set(s => staffAsked(s, channel))
+        throw new Ended()
+      }
       const { servers, view } = get()
       const server =
         key[0] === 'c'
@@ -1523,6 +1557,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     | 'jumpTo'
     | 'jumpToUnread'
     | 'jumpToPresent'
+    | 'confirmStaffView'
+    | 'closeStaffAsk'
+    | 'askStaffView'
     | 'dismissUnread'
     | 'clearFocus'
     | 'openResult'
@@ -1988,6 +2025,22 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         firstPage(key, msgs, { id: null, flash: false })
         askP2p(msgs)
       }),
+
+    confirmStaffView: async (reauth, reason) => {
+      const channel = get().staffAsk
+      if (channel === null) return
+      const { remaining } = await live(api.staffView(channel, reauth, staffReasonHeader(reason)))
+      endStaffView(channel, remaining)
+      set(s => staffOpened(s, channel))
+      const { view, panel } = get()
+      if (view?.kind !== 'channel' || view.channelId !== channel) return
+      void get().jumpToPresent(viewKey(view))
+      if (panel?.kind === 'thread') void get().jumpToPresent(threadKey(panel.root.id))
+    },
+
+    closeStaffAsk: () => set({ staffAsk: null }),
+
+    askStaffView: channel => set(s => staffAsked(s, channel)),
 
     dismissUnread: key => {
       clearAnchor(key)

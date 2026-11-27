@@ -138,8 +138,9 @@ pub(super) async fn channel_access(
 
 /// Which of `usernames` are live members of `server` who can view the channel: the rules of
 /// `channel_access` evaluated for all of them with one query each for members, overrides and
-/// roles. With `readable` (a message's `created_at`), also only those who can read that message:
-/// members without read history only see messages from their join on. Order is kept.
+/// roles, a site admin counting as a plain member. With `readable` (a message's `created_at`),
+/// also only those who can read that message: members without read history only see messages
+/// from their join on. Order is kept.
 pub(super) async fn channel_viewers(
     db: &Db,
     server: &str,
@@ -151,7 +152,7 @@ pub(super) async fn channel_viewers(
         return Ok(Vec::new());
     }
     let sql = format!(
-        "SELECT m.username, m.is_admin, m.perms, u.is_site_admin, m.joined_at FROM members m JOIN users u ON u.username = m.username WHERE m.server = $1 AND u.password_hash <> '!purging' AND m.username IN ({})",
+        "SELECT m.username, m.is_admin, m.perms, m.joined_at FROM members m JOIN users u ON u.username = m.username WHERE m.server = $1 AND u.password_hash <> '!purging' AND m.username IN ({})",
         crate::api::placeholders(2, usernames.len())
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
@@ -160,14 +161,9 @@ pub(super) async fn channel_viewers(
     }
     let mut members = std::collections::HashMap::new();
     for r in query.fetch_all(db).await? {
-        let (name, is_admin, perms, site_admin, joined_at): (String, i64, i64, i64, i64) = (
-            r.try_get(0)?,
-            r.try_get(1)?,
-            r.try_get(2)?,
-            r.try_get(3)?,
-            r.try_get(4)?,
-        );
-        members.insert(name, (is_admin != 0, perms, site_admin != 0, joined_at));
+        let (name, is_admin, perms, joined_at): (String, i64, i64, i64) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
+        members.insert(name, (is_admin != 0, perms, joined_at));
     }
     if members.is_empty() {
         return Ok(Vec::new());
@@ -197,13 +193,9 @@ pub(super) async fn channel_viewers(
     }
     Ok(listed
         .filter(|name| {
-            let (is_admin, perms, site_admin, joined_at) = members[*name];
+            let (is_admin, perms, joined_at) = members[*name];
             let (role_subjects, role_perms) = roles.get(*name).cloned().unwrap_or_default();
-            let effective = match site_admin {
-                true => ALL_PERMS,
-                false => perm_bits(is_admin, perms, role_perms),
-            };
-            let manages = effective & Perm::ManageChannels as i64 != 0;
+            let manages = perm_bits(is_admin, perms, role_perms) & Perm::ManageChannels as i64 != 0;
             let mut subjects = vec![format!("u:{name}")];
             subjects.extend(role_subjects);
             let access = fold_access(&overrides, &subjects, manages, restrict);

@@ -17,6 +17,9 @@ const SCHEMA_LOCK: i64 = 0x7263_6861_7400;
 
 static READERS: LazyLock<Mutex<HashMap<String, Db>>> = LazyLock::new(Default::default);
 
+/// The writing pool of each database that has a separate reader.
+static WRITERS: LazyLock<Mutex<HashMap<String, Db>>> = LazyLock::new(Default::default);
+
 static CONFIG_STARTS: LazyLock<Mutex<HashMap<String, ConfigStart>>> =
     LazyLock::new(Default::default);
 
@@ -129,6 +132,16 @@ pub(super) fn separate_reader(db: &Db) -> Option<Db> {
         .and_then(|readers| readers.get(&pool_key(db)).cloned())
 }
 
+/// The pool that writes to the database `db` reads: `db` itself unless it is the separate
+/// reader of a local database.
+pub(crate) fn writer(db: &Db) -> Db {
+    WRITERS
+        .lock()
+        .ok()
+        .and_then(|writers| writers.get(&pool_key(db)).cloned())
+        .unwrap_or_else(|| db.clone())
+}
+
 pub async fn close(db: &Db) {
     if let Ok(mut peppers) = PEPPERS.lock() {
         peppers.remove(&pool_key(db));
@@ -139,6 +152,9 @@ pub async fn close(db: &Db) {
     }
     if let Ok(mut sync) = SYNC_LIGHT.lock() {
         sync.remove(&pool_key(db));
+    }
+    if let Ok(mut writers) = WRITERS.lock() {
+        writers.remove(&pool_key(db));
     }
     let read = READERS
         .lock()
@@ -392,6 +408,9 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
                 let read = open_reader(&url, readers, limits.acquire_timeout_secs()).await?;
                 if let Ok(mut map) = READERS.lock() {
                     map.insert(pool_key(&pool), read);
+                }
+                if let Ok(mut map) = WRITERS.lock() {
+                    map.insert(pool_key(&pool), pool.clone());
                 }
             }
         }

@@ -7,6 +7,7 @@ use sqlx::Row;
 
 use super::*;
 use crate::api::Authed;
+use crate::api::access::resolve_message;
 use crate::api::test_util::{add_member, done, mem_user, temp_state};
 
 fn who(name: &str) -> Authed {
@@ -609,6 +610,70 @@ async fn jobs_cancel_resume_and_fail_cleanly() {
     assert_eq!(
         listed.iter().map(|j| j.id).collect::<Vec<_>>(),
         vec![doomed, stale, id]
+    );
+    done(c.state, c.path).await;
+}
+
+#[tokio::test]
+async fn a_site_admin_s_job_keeps_going_once_their_confirmation_ends() {
+    let c = club("bulk_staff_open").await;
+    let state = &c.state;
+    let db = &state.db;
+    let secret = num(
+        db,
+        "INSERT INTO channels(server, name, restrict_view, created_at) VALUES('club', 'secret', 1, 0) RETURNING id",
+    )
+    .await;
+    exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({secret}, 'u:carol', 1, 1, 1)")).await;
+    for _ in 0..300 {
+        post(db, secret, "carol", 1000).await;
+    }
+    let scope = format!("c{secret}");
+    let count = json!({ "scope": scope, "all": true, "dry_run": true });
+    assert_eq!(
+        call(state, "root", count.clone()).await.err(),
+        Some((403, crate::api::staff_audit::CONFIRM_FIRST.to_string())),
+        "starting one asks to confirm"
+    );
+    crate::api::staff_audit::tests::confirmed(db, "root", "club", secret).await;
+    assert_eq!(
+        call(state, "root", count).await.expect("count").deletable,
+        300
+    );
+    let id = insert_job(db, "root", &scope, Some(secret), now()).await;
+    assert!(step(state, id).await.expect("step"));
+    exec(
+        db,
+        &format!(
+            "UPDATE instance_audit SET at = at - {} WHERE action = 'staff.view_channel'",
+            crate::api::staff_audit::CHANNEL_OPEN_SECS + 1
+        ),
+    )
+    .await;
+    assert_eq!(
+        call(
+            state,
+            "root",
+            json!({ "scope": scope, "all": true, "dry_run": true })
+        )
+        .await
+        .err(),
+        Some((403, crate::api::staff_audit::CONFIRM_FIRST.to_string()))
+    );
+    run_job(state, id).await;
+    let job = load_job(db, id).await.expect("load").expect("job");
+    assert_eq!((job.status, job.deleted), (JobStatus::Done, 300));
+    assert_eq!(
+        num(db, "SELECT COUNT(*) FROM messages WHERE author = 'carol'").await,
+        0
+    );
+    let logged = audits(db).await;
+    assert_eq!(
+        logged
+            .iter()
+            .map(|(_, staff, _)| *staff)
+            .collect::<Vec<_>>(),
+        vec![1]
     );
     done(c.state, c.path).await;
 }

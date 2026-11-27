@@ -167,3 +167,51 @@ test('the default servers are server names, so their values are marked', () => {
   expect(text(list)).toBe('root changed default_servers from rchat to rchat,lounge')
   expect(names(list)).toEqual(['root', 'rchat', 'rchat,lounge'])
 })
+
+const staff = (action: string, target: string | null, detail: unknown) =>
+  entry({ action, target, detail })
+
+test('staff views read as sentences with ids and counts, and only names are names', () => {
+  const server = staff('staff.view_server', 'club', {})
+  expect(text(server)).toBe('root opened club as staff')
+  expect(names(server)).toEqual(['root', 'club'])
+  expect(text(staff('staff.view_channel', 'club', { channel: 12 }))).toBe(
+    'root opened private channel 12 of club'
+  )
+  expect(text(staff('staff.view_channel', null, {}))).toBe(
+    'root opened a private channel of a deleted server'
+  )
+  expect(text(staff('staff.search', null, { hits: 1, channels: [12] }))).toBe(
+    'root found 1 message in 1 private channel by search'
+  )
+  expect(text(staff('staff.search', null, { hits: 7, channels: [12, 15] }))).toBe(
+    'root found 7 messages in 2 private channels by search'
+  )
+  expect(text(staff('staff.search', null, {}))).toBe('root searched private channels')
+  expect(text(staff('staff.media', 'club', { channel: 12, message: 40, media: 'abc' }))).toBe(
+    'root opened a file in channel 12 of club as staff'
+  )
+  expect(text(staff('report.view', 'club', {}))).toBe('root read the reports of club as staff')
+})
+
+test('a purge of held P2P data shows its counts and who it was for', () => {
+  const purge = staff('staff.p2p_data', 'bob', { op: 'purge', backups: 2, identities: 1 })
+  expect(text(purge)).toBe('root removed the P2P data held for bob (2 backups, 1 identity)')
+  expect(names(purge)).toEqual(['root', 'bob'])
+  expect(text(staff('staff.p2p_data', null, { op: 'purge', backups: 1, identities: 0 }))).toBe(
+    'root removed the P2P data held for a deleted user (1 backup, 0 identities)'
+  )
+  expect(text(staff('staff.p2p_data', 'bob', { op: 'view' }))).toBe(
+    'root viewed the P2P data held for bob'
+  )
+})
+
+test('a staff entry shows the reason it was given, and other entries never do', () => {
+  expect(text(staff('staff.view_channel', 'club', { channel: 12, reason: 'Report 12' }))).toBe(
+    'root opened private channel 12 of club. Reason: Report 12'
+  )
+  expect(names(staff('staff.view_server', 'club', { reason: 'club' }))).toEqual(['root', 'club'])
+  expect(text(entry({ detail: { key: 'p2p', from: 'on', to: 'off', reason: 'x' } }))).toBe(
+    'root changed p2p from on to off'
+  )
+})

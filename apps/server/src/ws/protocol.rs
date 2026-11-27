@@ -18,7 +18,7 @@ pub(super) enum Refused {
     AfterJoin(Box<Refused>),
     Error {
         message: String,
-        reason: Option<Reason>,
+        reason: Option<Box<Reason>>,
     },
 }
 
@@ -27,7 +27,7 @@ impl Refused {
         match self {
             Self::NoSharedVoice => ("No shared voice session".into(), None),
             Self::AfterJoin(refusal) => refusal.into_parts(),
-            Self::Error { message, reason } => (message, reason),
+            Self::Error { message, reason } => (message, reason.map(|r| *r)),
         }
     }
 

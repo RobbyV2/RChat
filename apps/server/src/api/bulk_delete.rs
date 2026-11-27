@@ -12,8 +12,8 @@ use utoipa::ToSchema;
 
 use crate::api::access::perms::Perm;
 use crate::api::access::{
-    MsgScope, Proof, ResolvedChannel, ResolvedMessage, not_found, resolve_channel, resolve_dm,
-    resolve_message, typing_scope,
+    MsgScope, Proof, ResolvedChannel, ResolvedMessage, StaffUse, not_found, resolve_channel_for,
+    resolve_dm, resolve_message_for, typing_scope,
 };
 use crate::api::audit;
 use crate::api::budget::slow_down;
@@ -259,20 +259,28 @@ fn parse_scope(scope: &str) -> Result<(&str, i64), ApiError> {
     }
 }
 
-async fn resolve_place(db: &Db, scope: &str, user: &User) -> Result<Place, ApiError> {
+/// The place `scope` names, through the gate for `user`. A job that already runs deletes with
+/// `StaffUse::Delete`, so a site admin's job keeps going once their confirmation of the
+/// channel ends.
+async fn resolve_place(
+    db: &Db,
+    scope: &str,
+    user: &User,
+    used: StaffUse,
+) -> Result<Place, ApiError> {
     let (kind, id) = parse_scope(scope)?;
-    let hide = |e: ApiError| match e.failed() {
+    let hide = |e: ApiError| match e.failed() || crate::api::staff_audit::asks_to_confirm(&e) {
         true => e,
         false => not_found(),
     };
     match kind {
         "c" => Ok(Place::Channel(Box::new(
-            resolve_channel(db, id, Some(user), &Proof::none())
+            resolve_channel_for(db, id, Some(user), &Proof::none(), used)
                 .await
                 .map_err(hide)?,
         ))),
         "t" => {
-            let root = resolve_message(db, id, Some(user), &Proof::none())
+            let root = resolve_message_for(db, id, Some(user), &Proof::none(), used)
                 .await
                 .map_err(hide)?;
             root.thread_channel().map_err(hide)?;
@@ -289,8 +297,15 @@ enum Verdict {
     Allowed(Box<ResolvedMessage>),
 }
 
-async fn judge(db: &Db, user: &User, place: &Place, id: i64) -> Result<Verdict, ApiError> {
-    let Some(message) = allowed(resolve_message(db, id, Some(user), &Proof::none()).await)? else {
+async fn judge(
+    db: &Db,
+    user: &User,
+    place: &Place,
+    id: i64,
+    used: StaffUse,
+) -> Result<Verdict, ApiError> {
+    let resolved = resolve_message_for(db, id, Some(user), &Proof::none(), used).await;
+    let Some(message) = allowed(resolved)? else {
         return Ok(Verdict::Missing);
     };
     if !place.holds(message.scope()) {
@@ -730,7 +745,7 @@ pub(crate) async fn bulk_delete(
     ) {
         return Err(slow_down());
     }
-    let place = resolve_place(&state.db, &scope, &user).await?;
+    let place = resolve_place(&state.db, &scope, &user, StaffUse::Open).await?;
     match ids {
         Some(ids) => delete_ids(&state, &user, &place, &dedup(&ids), dry_run).await,
         None => {
@@ -757,7 +772,7 @@ async fn delete_ids(
     let (mut others, mut missing) = (0, 0);
     let mut chosen = Vec::new();
     for id in ids {
-        match judge(db, user, place, *id).await? {
+        match judge(db, user, place, *id, StaffUse::Open).await? {
             Verdict::Missing => missing += 1,
             Verdict::Others => others += 1,
             Verdict::Allowed(m) => chosen.push((*id, m)),
@@ -1192,7 +1207,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
         gone(GONE).await?;
         return Ok(false);
     };
-    let place = match resolve_place(db, &scope, &user).await {
+    let place = match resolve_place(db, &scope, &user, StaffUse::Delete).await {
         Ok(place) => place,
         Err(e) if e.failed() => return Err(e),
         Err(_) => {
@@ -1229,7 +1244,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
     };
     let mut picked = Vec::new();
     for mid in candidates.iter().copied().filter(|m| !except.contains(m)) {
-        match judge(db, &user, &place, mid).await? {
+        match judge(db, &user, &place, mid, StaffUse::Delete).await? {
             Verdict::Missing | Verdict::Others => skipped += 1,
             Verdict::Allowed(m) => picked.push(pick(db, &user, mid, &m, &mut batch).await?),
         }

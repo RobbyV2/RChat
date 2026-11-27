@@ -184,7 +184,7 @@ async fn channel_events_need_the_owning_server() {
     let mut bob = Access::new(Some(s("bob")), false, set(&["b"]));
     let mut guest = Access::new(None, false, HashSet::new());
     assert_eq!(channel_gate(&state, &mut bob, "a", text).await, Some(false));
-    assert_eq!(bob.viewable.get(&text), Some(&(s("b"), true)));
+    assert_eq!(bob.viewable.get(&text), Some(&(s("b"), true, None)));
     assert_eq!(channel_gate(&state, &mut bob, "b", text).await, Some(true));
     assert_eq!(channel_gate(&state, &mut bob, "a", text).await, Some(false));
     assert_eq!(channel_gate(&state, &mut bob, "b", talk).await, Some(true));
@@ -1082,7 +1082,7 @@ async fn a_non_member_viewer_loses_live_events_with_access() {
     let db = &state.db;
     let conn = state.hub.next_conn();
     let mut nora = Access::new(Some(s("nora")), false, set(&["home"]));
-    nora.viewable = HashMap::from([(general, (s("open"), true))]);
+    nora.viewable = HashMap::from([(general, (s("open"), true, None))]);
 
     look(&state, conn, &mut nora, Some(s("open"))).await;
     exec(
@@ -1117,7 +1117,7 @@ async fn a_non_member_viewer_loses_live_events_with_access() {
     .await;
 
     look(&state, conn, &mut nora, Some(s("open"))).await;
-    nora.viewable = HashMap::from([(general, (s("open"), true))]);
+    nora.viewable = HashMap::from([(general, (s("open"), true, None))]);
     assert_eq!(
         on_event(&state, conn, &mut nora, &post_in("open", general)).await,
         Some(true)

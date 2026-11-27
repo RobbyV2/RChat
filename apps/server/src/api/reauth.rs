@@ -139,6 +139,7 @@ pub enum Purpose {
     LinkIdp { provider: String },
     SetPassword,
     P2pData { ik: String },
+    StaffView { channel: String },
 }
 
 impl Purpose {
@@ -149,6 +150,7 @@ impl Purpose {
             Purpose::LinkIdp { .. } => "link_idp",
             Purpose::SetPassword => "set_password",
             Purpose::P2pData { .. } => "p2p-data",
+            Purpose::StaffView { .. } => "staff_view",
         }
     }
 
@@ -158,6 +160,7 @@ impl Purpose {
             Purpose::RemovePhrase | Purpose::SetPassword => "",
             Purpose::LinkIdp { provider } => provider,
             Purpose::P2pData { ik } => ik,
+            Purpose::StaffView { channel } => channel,
         }
     }
 
@@ -167,6 +170,7 @@ impl Purpose {
             | Purpose::RemovePhrase
             | Purpose::P2pData { .. }
             | Purpose::LinkIdp { .. }
+            | Purpose::StaffView { .. }
             | Purpose::SetPassword => false,
         }
     }

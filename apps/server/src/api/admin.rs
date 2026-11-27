@@ -17,6 +17,7 @@ use crate::api::policy::{
     TEMP_PASSWORD_HOURS, TEMP_PASSWORD_HOURS_MAX, TempChange,
 };
 use crate::api::reports::forms::{self, Form, ReportForms};
+use crate::api::staff_audit;
 use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, ProfanityTarget, PublicSettings,
     STRICT_FILE_NAMES, ServerSummaryLite, UserRef, bad, brand, check_profanity, decode_cursor,
@@ -1220,6 +1221,11 @@ pub(crate) struct HiddenUser {
 }
 
 impl HiddenUser {
+    /// Whether the account was hidden here, which starts its purge.
+    pub(crate) fn starts_purge(&self) -> bool {
+        self.servers.is_some()
+    }
+
     async fn recount(&self, state: &AppState) {
         for server in self.servers.iter().flatten() {
             if let Err(e) = recount_members(&state.db, server).await {
@@ -1244,6 +1250,9 @@ impl HiddenUser {
     }
 }
 
+/// Hides the account `key` in a transaction of its own and recounts its servers, without the
+/// sign-out and the purge: the servers it was in, or `None` when it was hidden before.
+#[cfg(test)]
 pub(crate) async fn hide_user_rows(
     state: &AppState,
     key: &str,
@@ -1365,11 +1374,21 @@ pub(crate) async fn ban_in(
     hide_user_in(tx, key, PurgeKind::Ban).await
 }
 
-async fn hide_user(state: &AppState, key: &str, kind: PurgeKind) -> Result<(), ApiError> {
-    let Some(servers) = hide_user_rows(state, key, kind).await? else {
-        return Ok(());
-    };
-    announce_hidden(state, key, kind, servers);
+/// Hides the account `key` for the site admin `admin`, noting in the same transaction what its
+/// purge removes of the P2P data the instance holds when this starts it.
+async fn hide_user(
+    state: &AppState,
+    admin: &str,
+    key: &str,
+    kind: PurgeKind,
+) -> Result<(), ApiError> {
+    let mut tx = state.db.begin().await?;
+    let hidden = hide_user_in(&mut tx, key, kind).await?;
+    if hidden.starts_purge() {
+        staff_audit::p2p_purge_in(&mut tx, admin, key, now()).await?;
+    }
+    tx.commit().await?;
+    hidden.finish(state).await;
     Ok(())
 }
 
@@ -1692,7 +1711,7 @@ pub(crate) async fn ban_user(
     if key == user.username {
         return Err(bad(BAN_SELF));
     }
-    hide_user(&state, &key, PurgeKind::Ban).await?;
+    hide_user(&state, &user.username, &key, PurgeKind::Ban).await?;
     Ok(ok())
 }
 
@@ -1735,7 +1754,7 @@ pub(crate) async fn delete_user(
     if key == user.username {
         return Err(bad("Cannot delete yourself"));
     }
-    hide_user(&state, &key, PurgeKind::User).await?;
+    hide_user(&state, &user.username, &key, PurgeKind::User).await?;
     Ok(ok())
 }
 
@@ -1990,7 +2009,8 @@ mod tests {
                 retry_after,
                 field,
                 until: _,
-            } = reason.expect("a reason");
+                channel: _,
+            } = *reason.expect("a reason");
             assert_eq!(
                 (kind, control, retry_after, field.as_deref()),
                 (crate::api::ReasonKind::Invalid, None, None, Some(key)),

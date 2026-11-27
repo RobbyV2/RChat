@@ -34,7 +34,7 @@ async fn reauthorize_drops_revoked_access() {
     let mut alice = Access::new(Some("alice".to_string()), false, HashSet::new());
     alice.subs = set(&["vault", "open", "gone"]);
     alice.viewing = Some("vault".to_string());
-    alice.viewable = HashMap::from([(1, ("vault".to_string(), true))]);
+    alice.viewable = HashMap::from([(1, ("vault".to_string(), true, None))]);
     assert!(reauthorize(&state, &mut alice).await.unwrap());
     assert_eq!(alice.member_servers, set(&["vault"]));
     assert_eq!(alice.subs, set(&["vault", "open"]));
@@ -69,7 +69,7 @@ async fn failed_reauthorization_holds_back_scoped_events() {
     alice.subs = set(&["vault", "open"]);
     alice.grants = HashMap::from([(s("open"), s("g"))]);
     alice.viewing = Some(s("vault"));
-    alice.viewable = HashMap::from([(1, (s("vault"), true))]);
+    alice.viewable = HashMap::from([(1, (s("vault"), true, None))]);
     let presence = WsEvent::PresenceChanged {
         server: s("vault"),
         username: s("bob"),
@@ -267,7 +267,7 @@ async fn rename_recheck_survives_races_and_errors() {
     assert_eq!(bob.viewing, None);
 
     let mut carol = Access::new(Some(s("carol")), false, set(&["d", "rchat"]));
-    carol.viewable = HashMap::from([(1, (s("rchat"), true))]);
+    carol.viewable = HashMap::from([(1, (s("rchat"), true, None))]);
     assert_eq!(
         on_event(&state, conn, &mut carol, &renamed("x", "y")).await,
         Some(false)
@@ -440,7 +440,7 @@ async fn a_ban_drops_live_subscriptions() {
     let mut carol = Access::new(Some(s("carol")), false, set(&["rchat"]));
     carol.subs = set(&["open", "other"]);
     carol.viewing = Some(s("open"));
-    carol.viewable = HashMap::from([(7, (s("open"), true))]);
+    carol.viewable = HashMap::from([(7, (s("open"), true, None))]);
     assert_eq!(
         on_event(&state, conn, &mut carol, &post("open")).await,
         Some(true)
@@ -478,7 +478,7 @@ async fn a_ban_drops_live_subscriptions() {
     );
     let mut bert = Access::new(Some(s("bert")), false, set(&["open"]));
     bert.subs = set(&["open"]);
-    bert.viewable = HashMap::from([(7, (s("open"), true))]);
+    bert.viewable = HashMap::from([(7, (s("open"), true, None))]);
     let kicked = WsEvent::MemberKicked {
         server: s("open"),
         username: s("bert"),
@@ -515,6 +515,82 @@ async fn channel_gate_holds_on_database_errors() {
     assert!(bob.viewable.is_empty());
     bob.retry.since = Instant::now().checked_sub(REAUTH_GIVE_UP);
     assert_eq!(channel_gate(&state, &mut bob, "rchat", 1).await, None);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_staff_view_is_cached_until_it_closes_and_reopens_on_its_event() {
+    let (state, path) = crate::api::test_util::temp_state("ws_staff_view").await;
+    let db = &state.db;
+    crate::db::NewUser::plain("alice").add(db).await;
+    crate::db::NewUser::plain("root").admin(true).add(db).await;
+    exec(
+        db,
+        "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'Club', 1)",
+    )
+    .await;
+    exec(db, "INSERT INTO members(server, username, joined_at) VALUES('club', 'alice', 1), ('club', 'root', 1)").await;
+    let hidden: i64 = sqlx::query("INSERT INTO channels(server, name, restrict_view, created_at) VALUES('club', 'hidden', 1, 1) RETURNING id")
+        .fetch_one(db)
+        .await
+        .expect("channel")
+        .try_get(0)
+        .expect("id");
+    sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 1)")
+        .bind(hidden)
+        .execute(db)
+        .await
+        .expect("perm");
+    let mut root = Access::new(Some(s("root")), true, set(&["club"]));
+    assert_eq!(
+        channel_gate(&state, &mut root, "club", hidden).await,
+        Some(false)
+    );
+    assert_eq!(root.viewable.get(&hidden), Some(&(s("club"), false, None)));
+    crate::api::staff_audit::tests::confirmed(db, "root", "club", hidden).await;
+    assert_eq!(
+        channel_gate(&state, &mut root, "club", hidden).await,
+        Some(false),
+        "a closed channel is answered from the cache"
+    );
+    let other = WsEvent::StaffViewOpened {
+        username: s("sage"),
+        channel_id: hidden,
+    };
+    on_event(&state, 1, &mut root, &other).await;
+    assert!(root.viewable.contains_key(&hidden));
+    let opened = WsEvent::StaffViewOpened {
+        username: s("root"),
+        channel_id: hidden,
+    };
+    assert_eq!(on_event(&state, 1, &mut root, &opened).await, Some(true));
+    assert!(!root.viewable.contains_key(&hidden));
+    assert_eq!(
+        channel_gate(&state, &mut root, "club", hidden).await,
+        Some(true)
+    );
+    let until = match root.viewable.get(&hidden) {
+        Some((owner, true, Some(until))) if owner == "club" => *until,
+        other => panic!("{other:?}"),
+    };
+    let open = crate::api::staff_audit::CHANNEL_OPEN_SECS;
+    assert!((now() + open - 5..=now() + open).contains(&until));
+    sqlx::query("UPDATE instance_audit SET at = at - $1")
+        .bind(open + 1)
+        .execute(db)
+        .await
+        .expect("age");
+    assert_eq!(
+        channel_gate(&state, &mut root, "club", hidden).await,
+        Some(true),
+        "open until its end"
+    );
+    root.viewable.insert(hidden, (s("club"), true, Some(now())));
+    assert_eq!(
+        channel_gate(&state, &mut root, "club", hidden).await,
+        Some(false)
+    );
+    assert_eq!(root.viewable.get(&hidden), Some(&(s("club"), false, None)));
     crate::api::test_util::done(state, path).await;
 }
 

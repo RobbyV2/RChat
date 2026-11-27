@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 /// An error answer: its status, its `error` text and, when it has one, its `reason`. A denial
 /// about a server, channel or message the caller can't open never has a reason.
 #[derive(Debug)]
-pub struct ApiError(pub StatusCode, pub String, pub Option<Reason>);
+pub struct ApiError(pub StatusCode, pub String, pub Option<Box<Reason>>);
 
 /// What kind of error it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -39,6 +39,9 @@ pub enum ReasonKind {
     Unavailable,
     /// A moderator locked it. `until` is when the lock ends.
     Locked,
+    /// Refused until the caller confirms. `control` is what to confirm and `channel` the
+    /// channel it opens.
+    Confirm,
 }
 
 /// Why a request was refused, for programs. An error without one is a denial about a server,
@@ -49,7 +52,7 @@ pub struct Reason {
     /// The kind of error.
     pub kind: ReasonKind,
     /// The setting or limit that refused: a key of `GET /api/v1/settings`, or a limit's name
-    /// such as `upload_max_mib`.
+    /// such as `upload_max_mib`. For `confirm`, what to confirm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(example = "server_search")]
     pub control: Option<String>,
@@ -63,6 +66,9 @@ pub struct Reason {
     /// moderator lifts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<i64>,
+    /// The channel a `confirm` refusal opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<i64>,
 }
 
 impl Reason {
@@ -73,6 +79,7 @@ impl Reason {
             retry_after: None,
             field: None,
             until: None,
+            channel: None,
         }
     }
 
@@ -117,7 +124,7 @@ impl ApiError {
     }
 
     fn because(status: StatusCode, error: impl Into<String>, reason: Reason) -> ApiError {
-        ApiError(status, error.into(), Some(reason))
+        ApiError(status, error.into(), Some(Box::new(reason)))
     }
 
     /// Refused because the setting `control` is off for the whole site.
@@ -206,6 +213,20 @@ impl ApiError {
         ApiError::because(StatusCode::FORBIDDEN, error, reason)
     }
 
+    /// Refused until the caller confirms `control` for `channel`.
+    pub fn confirm(
+        status: StatusCode,
+        error: impl Into<String>,
+        control: &str,
+        channel: i64,
+    ) -> ApiError {
+        let reason = Reason {
+            channel: Some(channel),
+            ..Reason::by(ReasonKind::Confirm, control)
+        };
+        ApiError::because(status, error, reason)
+    }
+
     /// 503: the server can't do it right now.
     pub fn unavailable(error: impl Into<String>, retry_after: Option<u64>) -> ApiError {
         let reason = Reason {
@@ -225,6 +246,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let ApiError(status, error, reason) = self;
         let wait = reason.as_ref().and_then(|r| r.retry_after);
+        let reason = reason.map(|r| *r);
         let mut res = (status, axum::Json(ApiErrorBody { error, reason })).into_response();
         if let Some(secs) = wait {
             res.headers_mut().insert(header::RETRY_AFTER, secs.into());
@@ -411,10 +433,11 @@ mod tests {
             (ApiError::sign_in("a"), "sign_in"),
             (ApiError::unavailable("a", None), "unavailable"),
             (ApiError::locked("a", 9), "locked"),
+            (ApiError::confirm(forbidden, "a", "calls", 7), "confirm"),
         ];
         let mut kinds = Vec::new();
         for (ApiError(status, error, reason), kind) in made {
-            let reason = reason.expect(kind);
+            let reason = *reason.expect(kind);
             let wire = serde_json::to_value(&reason).expect("json");
             assert_eq!(wire["kind"], json!(kind));
             assert_eq!(error, "a");
@@ -426,10 +449,16 @@ mod tests {
                     | ReasonKind::OffApp
                     | ReasonKind::Limit
                     | ReasonKind::Capacity
+                    | ReasonKind::Confirm
             );
             assert_eq!(
                 reason.control.as_deref(),
                 controlled.then_some("calls"),
+                "{kind}"
+            );
+            assert_eq!(
+                reason.channel,
+                (reason.kind == ReasonKind::Confirm).then_some(7),
                 "{kind}"
             );
             assert_eq!(
@@ -455,7 +484,8 @@ mod tests {
                 | ReasonKind::App
                 | ReasonKind::Limit
                 | ReasonKind::Capacity
-                | ReasonKind::Conflict => None,
+                | ReasonKind::Conflict
+                | ReasonKind::Confirm => None,
             };
             if let Some(fixed) = fixed {
                 assert_eq!(status, fixed, "{kind}");
@@ -466,7 +496,7 @@ mod tests {
         }
         kinds.sort();
         kinds.dedup();
-        assert_eq!(kinds.len(), 13);
+        assert_eq!(kinds.len(), 14);
     }
 
     #[test]
@@ -569,7 +599,7 @@ mod tests {
                 (StatusCode::SERVICE_UNAVAILABLE, SERVER_BUSY),
                 "{shown}"
             );
-            let reason = reason.expect("a reason");
+            let reason = *reason.expect("a reason");
             assert_eq!(reason.kind, ReasonKind::Unavailable);
             assert_eq!(
                 (reason.control, reason.field, reason.retry_after),

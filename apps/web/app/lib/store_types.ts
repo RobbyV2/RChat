@@ -412,6 +412,13 @@ export interface RChatState {
   editing: Editing | null
   search: SearchState
   error: string | null
+  // The channel the site admin is asked to confirm before it opens; null without a question.
+  staffAsk: number | null
+  // The channel view a site admin has not opened as staff (not confirmed, cancelled, or its
+  // confirmation ran out): it shows a button to confirm instead of its messages.
+  staffShut: View | null
+  // The channels the site admin opened as staff, while they are open.
+  staffOpen: number[]
   adminOverview: AdminOverview | null
   // The open place of the site administration page; null while it is closed. Only the site
   // admin's session ever sets it.
@@ -645,6 +652,10 @@ export interface RChatState {
   jumpTo: (key: string, id: number, flash?: boolean) => Promise<void>
   jumpToUnread: () => Promise<void>
   jumpToPresent: (key: string) => Promise<void>
+  confirmStaffView: (reauth: import('./types').ReAuthBody, reason: string) => Promise<void>
+  closeStaffAsk: () => void
+  // Asks the site admin to confirm opening `channel`.
+  askStaffView: (channel: number) => void
   dismissUnread: (key: string) => void
   clearFocus: (key: string) => void
   openResult: (result: SearchResult) => Promise<void>

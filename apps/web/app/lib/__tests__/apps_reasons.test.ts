@@ -39,6 +39,7 @@ const KINDS: Record<ReasonKind, true> = {
   unavailable: true,
   locked: true,
   app: true,
+  confirm: true,
 }
 
 const ascii = (s: string) => /^[\x20-\x7e]+$/.test(s)
@@ -264,7 +265,7 @@ describe('the shape', () => {
     const kinds = [...body('ReasonKind').matchAll(/^ {4}(\w+),$/gm)].map(m => snake(m[1]))
     expect(kinds.sort()).toEqual(Object.keys(KINDS).sort())
     const fields = [...body('Reason').matchAll(/^ {4}pub (\w+):/gm)].map(m => m[1])
-    expect(fields.sort()).toEqual(['control', 'field', 'kind', 'retry_after', 'until'])
+    expect(fields.sort()).toEqual(['channel', 'control', 'field', 'kind', 'retry_after', 'until'])
     const ours = new Set(
       [
         invalid('f', 'x'),
@@ -274,7 +275,9 @@ describe('the shape', () => {
         locked(9, 'x'),
       ].flatMap(r => Object.keys(r.reason ?? {}))
     )
-    for (const field of fields) expect(ours.has(field)).toBe(true)
+    const serverOnly = ['channel']
+    for (const field of fields.filter(f => !serverOnly.includes(f)))
+      expect(ours.has(field)).toBe(true)
     expect([...ours].filter(k => !fields.includes(k)).sort()).toEqual([
       'app',
       'cap',

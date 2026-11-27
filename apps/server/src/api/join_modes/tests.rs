@@ -186,6 +186,7 @@ fn invalid(text: &str, field: &str) -> (StatusCode, String, Option<Reason>) {
             retry_after: None,
             field: Some(field.to_string()),
             until: None,
+            channel: None,
         }),
     )
 }
@@ -200,6 +201,7 @@ fn off_site(status: StatusCode, text: &str, control: &str) -> (StatusCode, Strin
             retry_after: None,
             field: None,
             until: None,
+            channel: None,
         }),
     )
 }
@@ -207,7 +209,7 @@ fn off_site(status: StatusCode, text: &str, control: &str) -> (StatusCode, Strin
 fn refusal<T>(res: Result<T, ApiError>) -> (StatusCode, String, Option<Reason>) {
     match res {
         Ok(_) => panic!("expected a refusal"),
-        Err(ApiError(status, text, reason)) => (status, text, reason),
+        Err(ApiError(status, text, reason)) => (status, text, reason.map(|r| *r)),
     }
 }
 

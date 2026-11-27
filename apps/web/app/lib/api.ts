@@ -973,6 +973,13 @@ export const endpoints = (c: ApiClient) => ({
   adminUserServers: (username: string, cursor: string | null = null) =>
     c.page<ServerSummaryLite>(withCursor(`/admin/users/${seg(username)}/servers`, cursor)),
   adminDeleteMessage: (id: number) => c.req<unknown>('DELETE', `/admin/messages/${id}`),
+  staffView: (channel: number, reauth: ReAuthBody, reason: Record<string, string> | null) =>
+    c.req<{ until: number; remaining: number }>(
+      'POST',
+      `/admin/channels/${channel}/staff_view`,
+      { reauth },
+      reason ?? {}
+    ),
   banUser: (username: string) => c.req<unknown>('POST', '/admin/ban', { username }),
   instance: (cache?: RequestCache) => c.discovery(undefined, cache),
   identityAssertion: (aud: string, nonce?: string) =>

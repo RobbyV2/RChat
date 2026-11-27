@@ -785,7 +785,7 @@ pub(super) fn join(access: &mut Access, server: String) {
 
 pub(super) fn forget_server(access: &mut Access, server: &str) {
     access.layouts.remove(server);
-    access.viewable.retain(|_, (owner, _)| owner != server);
+    access.viewable.retain(|_, (owner, _, _)| owner != server);
     access.floors.clear();
     access.who.forget();
 }

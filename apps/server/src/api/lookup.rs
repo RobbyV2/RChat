@@ -800,7 +800,8 @@ mod tests {
             retry_after,
             field,
             until: _,
-        } = reason.expect("a reason");
+            channel: _,
+        } = *reason.expect("a reason");
         assert_eq!(
             (kind, control, field),
             (ReasonKind::Rate, None, None),
@@ -1047,7 +1048,8 @@ mod tests {
             retry_after,
             field: named,
             until: _,
-        } = reason.expect("a reason");
+            channel: _,
+        } = *reason.expect("a reason");
         assert_eq!(
             (kind, control, retry_after, named.as_deref()),
             (ReasonKind::Invalid, None, None, Some(field)),

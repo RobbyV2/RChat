@@ -799,6 +799,24 @@ export function HeaderMore({ scope, search }: { scope: string | null; search: bo
   )
 }
 
+// A channel the site admin has not opened as staff, in place of its messages.
+function StaffShut({ channel }: { channel: number }) {
+  const ask = useStore(s => s.askStaffView)
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-on-surface-variant">
+      <Lock size={32} />
+      <span className="text-lg font-semibold">Confirm to open this channel</span>
+      <button
+        type="button"
+        onClick={() => ask(channel)}
+        className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90"
+      >
+        Open channel
+      </button>
+    </div>
+  )
+}
+
 export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembers: () => void }) {
   const identity = useP2pApp()
   const p2pMarkAll = identity?.p2pMarkAll
@@ -808,6 +826,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
   const view = useStore(s => s.view)
+  const shut = useStore(s => s.staffShut !== null && s.staffShut === s.view)
   const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : undefined))
   const dm = useStore(s => {
     const v = s.view
@@ -1150,7 +1169,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           )}
         </div>
       </header>
-      {isVoice && view?.kind === 'channel' ? (
+      {shut && view?.kind === 'channel' ? (
+        <StaffShut channel={view.channelId} />
+      ) : isVoice && view?.kind === 'channel' ? (
         <VoiceGrid key={`c${view.channelId}`} channelId={view.channelId} />
       ) : (
         <>

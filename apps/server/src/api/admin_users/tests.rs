@@ -232,7 +232,7 @@ async fn an_account_is_made_with_a_temporary_password_and_its_servers() {
             .iter()
             .map(|r| (r.try_get(0).expect("actor"), r.try_get(1).expect("action"), r.try_get(2).expect("target"), r.try_get(3).expect("detail")))
             .collect();
-        assert_eq!(audit.len(), 1, "{audit:?}");
+        assert_eq!(audit.len(), 2, "{audit:?}");
         assert_eq!(
             (
                 audit[0].0.as_str(),
@@ -240,6 +240,16 @@ async fn an_account_is_made_with_a_temporary_password_and_its_servers() {
                 audit[0].2.as_str()
             ),
             ("root", "user.create", "dana")
+        );
+        assert_eq!(
+            (
+                audit[1].0.as_str(),
+                audit[1].1.as_str(),
+                audit[1].2.as_str(),
+                audit[1].3.as_str()
+            ),
+            ("root", "staff.view_server", "club", "{}"),
+            "adding the account to a server the admin is not in opens it with instance powers"
         );
         assert_eq!(
             serde_json::from_str::<Value>(&audit[0].3).expect("detail"),

@@ -51,6 +51,7 @@ pub mod scim;
 pub mod sealed;
 pub mod search_limits;
 pub mod servers;
+pub mod staff_audit;
 pub mod system_messages;
 pub mod temp_passwords;
 pub mod timeouts;
@@ -259,7 +260,7 @@ pub(crate) fn split_list(raw: &str) -> Vec<String> {
 
 pub const NEXT_CURSOR: &str = "x-next-cursor";
 
-pub const CORS_REQUEST_HEADERS: [&str; 16] = [
+pub const CORS_REQUEST_HEADERS: [&str; 17] = [
     "content-type",
     "authorization",
     "accept",
@@ -276,6 +277,7 @@ pub const CORS_REQUEST_HEADERS: [&str; 16] = [
     "x-trust-client",
     "if-none-match",
     BACKGROUND,
+    staff_audit::REASON_HEADER,
 ];
 
 pub const CORS_RESPONSE_HEADERS: [&str; 8] = [
@@ -2243,7 +2245,12 @@ pub fn routes(
                 )
                 .route_layer(invite()),
         );
-        router = router.merge(api_routes(state, strict_routes, invite_routes, swagger_ui));
+        router = router.merge(api_routes(
+            state.clone(),
+            strict_routes,
+            invite_routes,
+            swagger_ui,
+        ));
     }
     if roles.gateway {
         router = router.route(
@@ -2264,12 +2271,14 @@ pub fn routes(
             .route("/search", get(messages::search))
             .route("/server_search", get(servers::search_servers));
     }
-    router.layer(from_fn(move |req: Request, next: Next| {
-        let ip = key
-            .extract(&req)
-            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-        budget::with_client(ip, req, next)
-    }))
+    router
+        .layer(from_fn_with_state(state, staff_audit::with_request))
+        .layer(from_fn(move |req: Request, next: Next| {
+            let ip = key
+                .extract(&req)
+                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+            budget::with_client(ip, req, next)
+        }))
 }
 
 fn api_routes(
@@ -2608,6 +2617,10 @@ fn api_routes(
             delete(admin::remove_phrase),
         )
         .route("/admin/audit", get(instance_audit::list))
+        .route(
+            "/admin/channels/{id}/staff_view",
+            post(staff_audit::staff_view),
+        )
         .route("/admin/messages/{id}", delete(admin::delete_message))
         .route("/admin/ban", post(admin::ban_user))
         .merge(strict_routes)

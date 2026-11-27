@@ -2760,11 +2760,27 @@ async fn search_screened(
         (_, _) => scope,
     };
     let fts = has_fts(db);
-    state
+    let found = state
         .replica(async |reader| {
             search_page(reader, db, &scope, sq.clone(), resume.clone(), fts).await
         })
-        .await
+        .await?;
+    if let Some(admin) = user {
+        let mut channels: Vec<i64> = Vec::new();
+        let mut hits = 0;
+        for id in found.0.iter().filter_map(|r| r.message.channel_id) {
+            if scope.staff.contains(&id) {
+                hits += 1;
+                if !channels.contains(&id) {
+                    channels.push(id);
+                }
+            }
+        }
+        if hits > 0 {
+            crate::api::staff_audit::search(&state.db, admin, hits, &channels).await?;
+        }
+    }
+    Ok(found)
 }
 
 async fn search_page(
@@ -3537,6 +3553,8 @@ struct Scope {
     binds: Vec<Bind>,
     /// The placeholders of the channel ids a search of one server reads, when it names one.
     channels: Option<String>,
+    /// The channels a site admin reads only because they opened them with instance powers.
+    staff: Vec<i64>,
 }
 
 impl Scope {
@@ -3571,6 +3589,7 @@ async fn search_scope(
     let mut floor = None;
     let mut since = None;
     let mut binds: Vec<Bind> = Vec::new();
+    let mut staff: Vec<i64> = Vec::new();
     match user {
         Some(u) => {
             binds.push(Bind::S(u.username.clone()));
@@ -3578,35 +3597,48 @@ async fn search_scope(
                 "c.server IN (SELECT server FROM members WHERE username = ${})",
                 binds.len()
             ));
-            if !u.is_site_admin {
-                let mut ph = Vec::new();
-                for subject in perm_subjects(db, None, &u.username).await? {
-                    binds.push(Bind::S(subject));
-                    ph.push(format!("${}", binds.len()));
-                }
-                let mut managed = Vec::new();
-                for server in channel_manager_servers(db, u).await? {
-                    binds.push(Bind::S(server));
-                    managed.push(format!("${}", binds.len()));
-                }
-                let bypass = match managed.is_empty() {
-                    true => String::new(),
-                    false => format!("c.server IN ({}) OR ", managed.join(", ")),
-                };
-                let mine = ph.join(", ");
-                place.push(format!(
-                    "({bypass}(c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.subject IN ({mine}))) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view != 0 AND cp.subject IN ({mine})))"
-                ));
-                let history = format!(
-                    "{bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.subject IN ({mine})) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_read_history != 0 AND cp.subject IN ({mine}))"
-                );
-                let joined = "(SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1)";
-                row.push(format!(
-                    "({history} OR (m.created_at >= {joined} AND COALESCE((SELECT rt.created_at FROM messages rt WHERE rt.id = m.thread_root_id), m.created_at) >= {joined}))"
-                ));
-                floor = Some(format!("({history} OR m.created_at >= {joined})"));
-                since = Some(format!("CASE WHEN {history} THEN NULL ELSE {joined} END"));
+            let mut ph = Vec::new();
+            for subject in perm_subjects(db, None, &u.username).await? {
+                binds.push(Bind::S(subject));
+                ph.push(format!("${}", binds.len()));
             }
+            let member = User {
+                is_site_admin: false,
+                ..u.clone()
+            };
+            let mut managed = Vec::new();
+            for server in channel_manager_servers(db, &member).await? {
+                binds.push(Bind::S(server));
+                managed.push(format!("${}", binds.len()));
+            }
+            let mut bypass = match managed.is_empty() {
+                true => String::new(),
+                false => format!("c.server IN ({}) OR ", managed.join(", ")),
+            };
+            if u.is_site_admin {
+                staff = crate::api::staff_audit::open_channels(db, &u.username).await?;
+            }
+            if !staff.is_empty() {
+                let mut opened = Vec::with_capacity(staff.len());
+                for id in &staff {
+                    binds.push(Bind::I(*id));
+                    opened.push(format!("${}", binds.len()));
+                }
+                bypass.push_str(&format!("c.id IN ({}) OR ", opened.join(", ")));
+            }
+            let mine = ph.join(", ");
+            place.push(format!(
+                "({bypass}(c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.subject IN ({mine}))) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view != 0 AND cp.subject IN ({mine})))"
+            ));
+            let history = format!(
+                "{bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.subject IN ({mine})) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_read_history != 0 AND cp.subject IN ({mine}))"
+            );
+            let joined = "(SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1)";
+            row.push(format!(
+                "({history} OR (m.created_at >= {joined} AND COALESCE((SELECT rt.created_at FROM messages rt WHERE rt.id = m.thread_root_id), m.created_at) >= {joined}))"
+            ));
+            floor = Some(format!("({history} OR m.created_at >= {joined})"));
+            since = Some(format!("CASE WHEN {history} THEN NULL ELSE {joined} END"));
         }
         None => {
             place.push("c.restrict_view = 0".to_string());
@@ -3650,6 +3682,7 @@ async fn search_scope(
         since,
         binds,
         channels: None,
+        staff,
     }))
 }
 
@@ -6383,6 +6416,7 @@ mod tests {
             ("rchat", "alice"),
             ("rchat", "bob"),
             ("rchat", "root"),
+            ("rchat", "sage"),
             ("locked", "alice"),
         ] {
             add_member(db, server, name, 0, 0, t).await;
@@ -6408,6 +6442,9 @@ mod tests {
             .await
             .expect("history perm");
         crate::api::test_util::restrict_ruled(db).await;
+        for opened in [private, history] {
+            crate::api::staff_audit::tests::confirmed(db, "sage", "rchat", opened).await;
+        }
         sqlx::query(
             "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'locked', 0, 4000000000)",
         )
@@ -6471,7 +6508,13 @@ mod tests {
                     Some(mem_user("root", true)),
                     HeaderMap::new(),
                     query(q),
-                    expect(&["general", "private", "roled", "old", "new"]),
+                    expect(&["general"]),
+                ),
+                (
+                    Some(mem_user("sage", true)),
+                    HeaderMap::new(),
+                    query(q),
+                    expect(&["general", "private", "old", "new"]),
                 ),
                 (
                     Some(mem_user("zed", false)),
@@ -7722,9 +7765,48 @@ mod tests {
         fill(db, staff, "alice", "weekly staff notes", 10).await;
         let root = mem_user("root", true);
         let sq = query(Some("notes"));
+        let noted = async || {
+            let rows = sqlx::query(
+                "SELECT detail FROM instance_audit WHERE action = 'staff.search' ORDER BY id",
+            )
+            .fetch_all(db)
+            .await
+            .expect("entries");
+            rows.iter()
+                .map(|r| {
+                    let detail: String = r.try_get(0).expect("detail");
+                    serde_json::from_str::<serde_json::Value>(&detail).expect("json")
+                })
+                .collect::<Vec<_>>()
+        };
+        let closed = pages(state, Some(&root), &sq).await;
+        let names = |pages: &[serde_json::Value]| {
+            pages
+                .iter()
+                .flat_map(|p| p["results"].as_array().expect("results").clone())
+                .map(|r| r["channel_name"].as_str().expect("name").to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&closed).len(), 30);
+        assert!(names(&closed).iter().all(|n| n == "general"));
+        assert!(noted().await.is_empty());
+        crate::api::staff_audit::tests::confirmed(db, "root", "rchat", staff).await;
         let without = pages(state, Some(&root), &sq).await;
         assert_eq!(without[0]["results"][0]["channel_name"], "staff");
         assert_eq!(first_ids(&without).len(), SEARCH_PAGE as usize);
+        let found = names(&without).iter().filter(|n| *n == "staff").count();
+        assert_eq!(found, 10);
+        let entries = noted().await;
+        assert!(!entries.is_empty());
+        let hits: i64 = entries
+            .iter()
+            .map(|e| e["hits"].as_i64().expect("hits"))
+            .sum();
+        assert_eq!(hits, 10);
+        for entry in &entries {
+            assert_eq!(entry["channels"], serde_json::json!([staff]));
+            assert_eq!(entry.as_object().map(|o| o.len()), Some(2), "{entry}");
+        }
         add_server(db, "club", None).await;
         let lounge = channel_in(db, "club", "lounge").await;
         add_member(db, "club", "alice", 0, 0, 0).await;
@@ -7739,6 +7821,77 @@ mod tests {
         done(state, path).await;
         if let Some((state, pg)) = crate::api::test_util::pg_state("search_admin_hidden").await {
             site_admin_search(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    async fn roled_admin_search(state: &AppState) {
+        let db = &state.db;
+        let general = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        add_member(db, "rchat", "root", 0, 0, 0).await;
+        let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'kick', '#ffffff', $1) RETURNING id")
+            .bind(Perm::Kick as i64)
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+        sqlx::query(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'root', $1)",
+        )
+        .bind(role)
+        .execute(db)
+        .await
+        .expect("assign role");
+        fill(db, general, "alice", "weekly notes", 3).await;
+        let staff = add_channel(db, "staff", "text").await;
+        perm(db, staff, "u:alice", 1).await;
+        fill(db, staff, "alice", "weekly staff notes", 3).await;
+        let root = mem_user("root", true);
+        let sq = query(Some("notes"));
+        let found = async || {
+            let mut names: Vec<String> = pages(state, Some(&root), &sq)
+                .await
+                .iter()
+                .flat_map(|p| p["results"].as_array().expect("results").clone())
+                .map(|r| r["channel_name"].as_str().expect("name").to_string())
+                .collect();
+            names.sort();
+            names.dedup();
+            names
+        };
+        let noted = async || {
+            sqlx::query(
+                "SELECT detail FROM instance_audit WHERE action = 'staff.search' ORDER BY id",
+            )
+            .fetch_all(db)
+            .await
+            .expect("entries")
+            .iter()
+            .map(|r| {
+                let detail: String = r.try_get(0).expect("detail");
+                serde_json::from_str::<serde_json::Value>(&detail).expect("json")
+            })
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(found().await, vec!["general"]);
+        assert!(noted().await.is_empty());
+        crate::api::staff_audit::tests::confirmed(db, "root", "rchat", staff).await;
+        assert_eq!(found().await, vec!["general", "staff"]);
+        assert_eq!(
+            noted().await,
+            vec![serde_json::json!({"hits": 3, "channels": [staff]})]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_site_admin_s_role_opens_no_private_channel_to_search() {
+        let (state, path) = temp_state("search_admin_roled").await;
+        roled_admin_search(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("search_admin_roled").await {
+            roled_admin_search(&state).await;
             crate::api::test_util::pg_done(state, pg).await;
         }
     }
@@ -10805,6 +10958,10 @@ mod tests {
                 let Some(user) = crate::db::get_user(db, name).await.expect("user") else {
                     continue;
                 };
+                let user = User {
+                    is_site_admin: false,
+                    ..user
+                };
                 if member
                     && channel_access(db, "rchat", cid, Some(&user))
                         .await
@@ -10824,7 +10981,8 @@ mod tests {
                 .viewers_among(db, &wanted, None)
                 .await
                 .expect("viewers"),
-            vec!["site", "rolled", "granted", "manager", "admin"]
+            vec!["rolled", "granted", "manager", "admin"],
+            "a site admin is pinged only where their membership sees the channel"
         );
         assert!(
             channel
@@ -10859,6 +11017,10 @@ mod tests {
                     let Some(user) = crate::db::get_user(db, name).await.expect("user") else {
                         continue;
                     };
+                    let user = User {
+                        is_site_admin: false,
+                        ..user
+                    };
                     if name != "outside"
                         && name != "gone"
                         && channel_access(db, "rchat", cid, Some(&user))
@@ -10871,7 +11033,7 @@ mod tests {
                 }
                 assert_eq!(got, expected, "channel {cid} view {view} send {send}");
                 if cid == bare && view == 1 {
-                    assert_eq!(got, vec!["site", "manager", "admin"]);
+                    assert_eq!(got, vec!["manager", "admin"]);
                 }
             }
         }

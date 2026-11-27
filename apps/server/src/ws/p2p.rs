@@ -15,7 +15,7 @@ use super::{
 use crate::api::Settings;
 use crate::api::access::{
     user_scope, ws_appear_offline, ws_channel_read_since, ws_dm_between, ws_hosted_messages,
-    ws_member_servers, ws_p2p_message,
+    ws_member_servers, ws_p2p_message, ws_staff_file,
 };
 use crate::db::{Db, now};
 use crate::hub::P2pDrop;
@@ -228,7 +228,8 @@ pub(super) fn p2p_refused(message_id: i64, error: &str) -> WsEvent {
 // The answer to `p2p_peer`: the peer id of the hoster's tab that has the attachment of
 // `message_id`, and a token for it, only for a signed-in user who can read that message. The
 // hoster must be online (not appearing offline) and still host the file, and neither of the two
-// may have blocked the other. Requests are rate
+// may have blocked the other. A site admin also reads it through the access gate, which notes a
+// read that only instance powers allow before the token goes out. Requests are rate
 // limited per user, whatever the answer.
 pub(super) async fn p2p_release(
     state: &AppState,
@@ -278,6 +279,9 @@ pub(super) async fn p2p_release(
     else {
         return deny(NOT_AVAILABLE);
     };
+    if access.site_admin && !ws_staff_file(&state.db, &me, message_id, &media_id).await {
+        return deny(NOT_AVAILABLE);
+    }
     let exp = now + crate::p2p::TOKEN_TTL;
     let grant = crate::p2p::Grant {
         v: 1,
@@ -395,9 +399,8 @@ async fn row_readable(
                 }
             };
             let hidden = access
-                .viewable
-                .get(&cid)
-                .is_some_and(|(owner, view)| !*view || *owner != server);
+                .seen(cid)
+                .is_some_and(|(owner, view)| !view || owner != server);
             let since = match (hidden, cache.channels.get(&cid)) {
                 (true, _) => None,
                 (false, Some(since)) => *since,

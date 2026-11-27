@@ -4676,7 +4676,7 @@ mod tests {
         };
         let full = |r: Result<(), ApiError>| match r {
             Ok(()) => (StatusCode::OK, String::new(), None),
-            Err(ApiError(status, error, reason)) => (status, error, reason),
+            Err(ApiError(status, error, reason)) => (status, error, reason.map(|r| *r)),
         };
         let off = || {
             (
@@ -4688,6 +4688,7 @@ mod tests {
                     retry_after: None,
                     field: None,
                     until: None,
+                    channel: None,
                 }),
             )
         };

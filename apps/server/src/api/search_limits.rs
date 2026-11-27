@@ -311,7 +311,7 @@ mod tests {
     fn refusal<T>(answer: Result<T, ApiError>) -> (StatusCode, String, Reason) {
         match answer {
             Ok(_) => panic!("the search ran"),
-            Err(ApiError(status, text, reason)) => (status, text, reason.expect("a reason")),
+            Err(ApiError(status, text, reason)) => (status, text, *reason.expect("a reason")),
         }
     }
 
@@ -322,6 +322,7 @@ mod tests {
             retry_after: Some(wait),
             field: None,
             until: None,
+            channel: None,
         }
     }
 
@@ -805,6 +806,7 @@ mod tests {
                 retry_after: Some(2),
                 field: None,
                 until: None,
+                channel: None,
             }
         );
         assert!(

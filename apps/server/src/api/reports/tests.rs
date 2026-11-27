@@ -4079,7 +4079,7 @@ async fn writes_need_the_member_permission() {
         )],
         "logged under their name as a member, not as staff"
     );
-    assert!(w.instance_audit().await.is_empty());
+    assert_eq!(w.instance_audit().await, ["report.view|root|s|{}"]);
     done(w.state, path).await;
 }
 
@@ -4324,6 +4324,7 @@ async fn server_reports_can_delete_the_server_or_ban_its_owner() {
         (400, "They don't own this server".to_string()),
         "a plain member is not an owner"
     );
+    exec(db, "INSERT INTO p2p_identities(username, ik, record, updated_at) VALUES('zed', 'ik-zed', '{}', 0)").await;
     let row = w
         .patch(
             "root",
@@ -4353,7 +4354,9 @@ async fn server_reports_can_delete_the_server_or_ban_its_owner() {
                 r#"report.status|root|report:{about_worse}|{{"action":"ban_owner","status":"resolved"}}"#
             ),
             format!(r#"user.ban|root|-|{{"report":{about_worse},"server":"worse"}}"#),
-        ]
+            r#"staff.p2p_data|root|-|{"backups":0,"identities":1,"op":"purge"}"#.to_string(),
+        ],
+        "the removal of the P2P data it holds commits with the ban"
     );
 
     assert_eq!(
@@ -4444,6 +4447,7 @@ async fn refused_server_actions_say_which_value_is_wrong() {
             retry_after: None,
             field: Some(field.to_string()),
             until: None,
+            channel: None,
         })
     };
     let ApiError(status, text, reason) = w
@@ -4455,7 +4459,7 @@ async fn refused_server_actions_say_which_value_is_wrong() {
         .await
         .expect_err("the admin's own account");
     assert_eq!(
-        (status.as_u16(), text.as_str(), reason),
+        (status.as_u16(), text.as_str(), reason.map(|r| *r)),
         (400, "Cannot ban yourself", invalid("owner"))
     );
     let ApiError(status, text, reason) = w
@@ -4467,7 +4471,7 @@ async fn refused_server_actions_say_which_value_is_wrong() {
         .await
         .expect_err("a default server");
     assert_eq!(
-        (status.as_u16(), text.as_str(), reason),
+        (status.as_u16(), text.as_str(), reason.map(|r| *r)),
         (
             400,
             "The rchat server is a default server. Take it off the default servers first",
@@ -5004,7 +5008,10 @@ async fn an_export_holds_what_the_list_shows() {
     );
     assert_eq!(
         w.instance_audit().await,
-        [r#"report.export|root|-|{"count":1,"format":"csv"}"#]
+        [
+            "report.view|root|s|{}",
+            r#"report.export|root|-|{"count":1,"format":"csv"}"#
+        ]
     );
     let mo = who(db, "mo").await;
     let refused = admin::export_reports(
@@ -5050,7 +5057,7 @@ async fn a_member_reading_through_the_instances_powers_exports_as_staff() {
         [r#"report.export|-|1|-|-|-|{"count":2,"format":"json"}"#],
         "logged as the unnamed staff, so the log never shows a member exporting without the permission"
     );
-    assert!(w.instance_audit().await.is_empty());
+    assert_eq!(w.instance_audit().await, ["report.view|root|s|{}"]);
     done(w.state, path).await;
 }
 

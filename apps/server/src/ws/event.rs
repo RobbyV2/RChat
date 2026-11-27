@@ -528,6 +528,12 @@ pub enum WsEvent {
         username: String,
         job: crate::api::bulk_delete::BulkJob,
     },
+    /// The site admin `username` confirmed opening channel `channel_id` as staff; to their own
+    /// connections only, so they deliver its events until it closes.
+    StaffViewOpened {
+        username: String,
+        channel_id: i64,
+    },
     /// A friend request between `username` and `request.user` was sent or arrived; to
     /// `username`'s connections only.
     FriendRequestAdded {

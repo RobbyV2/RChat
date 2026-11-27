@@ -671,6 +671,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_site_admin_s_purge_reaches_private_channels_without_a_confirmation() {
+        for (state, temp) in each_db("ban_purge_staff").await {
+            let db = &state.db;
+            let (general, _) = club(db).await;
+            crate::db::NewUser::plain("root").admin(true).add(db).await;
+            add_member(db, "club", "root", 0, 0, 1).await;
+            let secret: i64 = sqlx::query("INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('club', 'secret', 'text', 1, 1) RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("channel")
+                .try_get(0)
+                .expect("id");
+            exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({secret}, 'u:bob', 1, 1, 1)")).await;
+            let t = now();
+            post(db, general, None, "bob", t - 60).await;
+            let root = post(db, secret, None, "alice", t - 90).await;
+            post(db, secret, None, "bob", t - 60).await;
+            post(db, secret, Some(root), "bob", t - 30).await;
+            let admin = crate::db::get_user(db, "root")
+                .await
+                .expect("root")
+                .expect("root");
+            let asked = crate::api::access::resolve_channel(
+                db,
+                secret,
+                Some(&admin),
+                &crate::api::access::Proof::none(),
+            )
+            .await;
+            assert!(
+                asked.is_err_and(|e| crate::api::staff_audit::asks_to_confirm(&e)),
+                "the channel itself stays closed"
+            );
+            assert_eq!(
+                may_delete_in(db, &admin, secret, "bob")
+                    .await
+                    .expect("gate"),
+                Some(true)
+            );
+            let done = ban_member(
+                State(state.clone()),
+                Authed(mem_user("root", true)),
+                Path("club".to_string()),
+                Json(
+                    serde_json::from_value(
+                        serde_json::json!({"username": "bob", "purge_hours": 1}),
+                    )
+                    .expect("body"),
+                ),
+            )
+            .await
+            .expect("ban")
+            .0;
+            assert_eq!(
+                (done.purge_places, done.purge_skipped, done.purge_busy),
+                (3, 0, 0)
+            );
+            let mut left = -1;
+            for _ in 0..400 {
+                left = count(db, "SELECT COUNT(*) FROM messages WHERE author = 'bob'").await;
+                if left == 0 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            assert_eq!(left, 0, "every message of bob is gone");
+            assert_eq!(
+                (
+                    count(db, "SELECT COUNT(*) FROM audit_log WHERE action = 'message.bulk_delete' AND staff = 1").await,
+                    count(db, "SELECT COUNT(*) FROM audit_log WHERE action = 'message.bulk_delete' AND staff = 0").await,
+                ),
+                (3, 0),
+                "each place names the staff as the deleter"
+            );
+            assert_eq!(
+                count(
+                    db,
+                    "SELECT COUNT(*) FROM instance_audit WHERE action = 'staff.view_channel'"
+                )
+                .await,
+                0
+            );
+            temp.done(state).await;
+        }
+    }
+
+    #[tokio::test]
     async fn the_ban_list_pages_over_bans_in_force() {
         for (state, temp) in each_db("ban_list_live").await {
             let db = &state.db;

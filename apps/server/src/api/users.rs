@@ -596,7 +596,7 @@ mod tests {
 
     fn refusal<T>(res: Result<T, ApiError>) -> Option<(StatusCode, String, Option<Reason>)> {
         res.err()
-            .map(|ApiError(code, text, reason)| (code, text, reason))
+            .map(|ApiError(code, text, reason)| (code, text, reason.map(|r| *r)))
     }
 
     /// A 400 whose reason says the request value `field` is wrong.
@@ -607,6 +607,7 @@ mod tests {
             retry_after: None,
             field: Some(field.to_string()),
             until: None,
+            channel: None,
         };
         (StatusCode::BAD_REQUEST, text.to_string(), Some(reason))
     }
@@ -1172,12 +1173,14 @@ mod tests {
     }
 
     /// What `GET /users/search` answers: the usernames, or the refusal.
+    type SearchRefusal = Box<(StatusCode, String, Option<Reason>)>;
+
     async fn searched(
         state: &AppState,
         ask: Ask<'_>,
         q: &str,
         limit: Option<i64>,
-    ) -> Result<Vec<String>, (StatusCode, String, Option<Reason>)> {
+    ) -> Result<Vec<String>, SearchRefusal> {
         let res = search(
             State(state.clone()),
             MaybeAuthed(ask.viewer.map(|name| mem_user(name, ask.admin))),
@@ -1189,7 +1192,7 @@ mod tests {
             }),
         )
         .await
-        .map_err(|ApiError(code, text, reason)| (code, text, reason))?;
+        .map_err(|ApiError(code, text, reason)| Box::new((code, text, reason.map(|r| *r))))?;
         let res = res.into_response();
         assert_eq!(res.headers()[header::CACHE_CONTROL], "private, max-age=15");
         let body = axum::body::to_bytes(res.into_body(), usize::MAX)
@@ -1398,9 +1401,7 @@ mod tests {
             Ok(names(&["pa_pub"])),
             "a guest finds a public server's members with it named"
         );
-        let refused = |res: Result<Vec<String>, (StatusCode, String, Option<Reason>)>| {
-            res.expect_err("refused")
-        };
+        let refused = |res: Result<Vec<String>, SearchRefusal>| *res.expect_err("refused");
         let short = invalid("Search text needs at least 2 characters", "q");
         for q in ["p", " p ", "", "  "] {
             assert_eq!(
@@ -1594,7 +1595,7 @@ mod tests {
             );
             assert_eq!(
                 searched(&state, *ask, "pa_lo", None).await,
-                Err(off.clone()),
+                Err(Box::new(off.clone())),
                 "{who}"
             );
         }

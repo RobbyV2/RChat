@@ -86,17 +86,19 @@ enum Answer {
 fn answer<T>(res: Result<T, ApiError>) -> Answer {
     match res {
         Ok(_) => Answer::Answered(StatusCode::OK),
-        Err(ApiError(
-            StatusCode::TOO_MANY_REQUESTS,
-            text,
-            Some(Reason {
-                kind: ReasonKind::Rate,
-                control: None,
-                retry_after: Some(wait),
-                field: None,
-                until: None,
-            }),
-        )) if text == TOO_OFTEN => Answer::Refused(wait),
+        Err(ApiError(StatusCode::TOO_MANY_REQUESTS, text, Some(reason))) if text == TOO_OFTEN => {
+            match *reason {
+                Reason {
+                    kind: ReasonKind::Rate,
+                    control: None,
+                    retry_after: Some(wait),
+                    field: None,
+                    until: None,
+                    channel: None,
+                } => Answer::Refused(wait),
+                _ => Answer::Answered(StatusCode::TOO_MANY_REQUESTS),
+            }
+        }
         Err(ApiError(code, _, _)) => Answer::Answered(code),
     }
 }

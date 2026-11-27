@@ -533,6 +533,185 @@ async fn p2p_peer_ids_go_only_to_readers_of_the_message_with_a_token() {
     crate::api::test_util::done(state, path).await;
 }
 
+#[tokio::test]
+async fn p2p_files_reach_a_site_admin_through_instance_powers_only_while_open_and_noted() {
+    let (state, path) = crate::api::test_util::temp_state("p2p_staff").await;
+    let db = &state.db;
+    add_user_row(db, "alice").await;
+    for name in ["root", "sage"] {
+        crate::db::NewUser::plain(name)
+            .hash("x")
+            .admin(true)
+            .add(db)
+            .await;
+    }
+    exec(
+        db,
+        "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('club', 'Club', 'alice', 'hash', 1)",
+    )
+    .await;
+    exec(db, "INSERT INTO members(server, username, joined_at) VALUES('club', 'alice', 1), ('club', 'root', 100)").await;
+    let general = insert_id(
+        db,
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 1) RETURNING id",
+    )
+    .await;
+    let hidden = insert_id(db, "INSERT INTO channels(server, name, restrict_view, created_at) VALUES('club', 'hidden', 1, 1) RETURNING id").await;
+    let notes = insert_id(
+        db,
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'notes', 1) RETURNING id",
+    )
+    .await;
+    for (channel, subject, history) in [(hidden, "u:alice", 1), (notes, "u:root", 0)] {
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, 1, 1, $3)")
+            .bind(channel)
+            .bind(subject)
+            .bind(history)
+            .execute(db)
+            .await
+            .expect("perm");
+    }
+    let mut ids = HashMap::new();
+    for (name, channel, at) in [
+        ("open", general, 150),
+        ("secret", hidden, 150),
+        ("old", notes, 50),
+    ] {
+        let id: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_kind, media_hoster, created_at) VALUES($1, 'alice', '', $2, 'p2p', 'alice', $3) RETURNING id")
+            .bind(channel)
+            .bind(name)
+            .bind(at)
+            .fetch_one(db)
+            .await
+            .expect("p2p message")
+            .try_get(0)
+            .expect("id");
+        ids.insert(name, id);
+    }
+    state.hub.set_p2p(
+        "alice",
+        1,
+        s("peer-a"),
+        ["open", "secret", "old"].map(s).to_vec(),
+    );
+    let member = |me: &str| match me {
+        "root" => set(&["club"]),
+        _ => set(&[]),
+    };
+    let ask = |me: &'static str, file: &'static str, seen: Option<(i64, Option<i64>)>| {
+        let mut access = Access::new(Some(s(me)), true, member(me));
+        if let Some((cid, until)) = seen {
+            access.viewable.insert(cid, (s("club"), true, until));
+        }
+        let state = state.clone();
+        let id = ids[file];
+        async move {
+            matches!(
+                p2p_release(&state, &access, id, "peer-b").await,
+                WsEvent::P2pPeer { token: Some(_), .. }
+            )
+        }
+    };
+    let listed = |me: &'static str| {
+        let mut access = Access::new(Some(s(me)), true, member(me));
+        let state = state.clone();
+        async move {
+            let mut ids = p2p_visible(&state, &mut access, me, "alice")
+                .await
+                .unwrap_or_default();
+            ids.sort();
+            ids
+        }
+    };
+    let noted = |action: &'static str| {
+        let db = db.clone();
+        async move {
+            sqlx::query("SELECT target, detail FROM instance_audit WHERE action = $1 ORDER BY id")
+                .bind(action)
+                .fetch_all(&db)
+                .await
+                .expect("entries")
+                .iter()
+                .map(|r| {
+                    (
+                        r.try_get::<Option<String>, _>(0).expect("target"),
+                        r.try_get::<String, _>(1).expect("detail"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    assert!(ask("root", "open", None).await, "their own membership");
+    assert!(!ask("root", "secret", None).await, "closed");
+    assert!(!ask("root", "old", None).await, "before their join, closed");
+    assert!(
+        !ask("root", "secret", Some((hidden, Some(now() + 600)))).await,
+        "a cached open view the log does not have"
+    );
+    assert_eq!(listed("root").await, [s("open")]);
+    assert_eq!(noted("staff.media").await, vec![]);
+
+    for channel in [hidden, notes] {
+        crate::api::staff_audit::tests::confirmed(db, "root", "club", channel).await;
+    }
+    assert!(ask("root", "secret", None).await, "open");
+    assert!(ask("root", "secret", None).await, "open again");
+    assert!(ask("root", "old", None).await, "the whole history, open");
+    let mut shown = listed("root").await;
+    shown.sort();
+    assert_eq!(shown, [s("old"), s("open"), s("secret")]);
+    assert_eq!(
+        noted("staff.media").await,
+        vec![
+            (
+                Some(s("club")),
+                format!(
+                    r#"{{"channel":{hidden},"media":"secret","message":{}}}"#,
+                    ids["secret"]
+                )
+            ),
+            (
+                Some(s("club")),
+                format!(
+                    r#"{{"channel":{notes},"media":"old","message":{}}}"#,
+                    ids["old"]
+                )
+            ),
+        ],
+        "once an hour per file, ids only"
+    );
+
+    assert!(
+        ask("sage", "open", None).await,
+        "an open channel of a server they are not in"
+    );
+    assert_eq!(
+        noted("staff.view_server").await,
+        vec![(Some(s("club")), s("{}"))]
+    );
+    assert_eq!(noted("staff.media").await.len(), 3);
+    assert!(
+        !ask("sage", "secret", None).await,
+        "root's view is not theirs"
+    );
+
+    sqlx::query("UPDATE instance_audit SET at = at - $1 WHERE action = 'staff.view_channel'")
+        .bind(crate::api::staff_audit::CHANNEL_OPEN_SECS + 1)
+        .execute(db)
+        .await
+        .expect("age");
+    assert!(!ask("root", "secret", None).await, "ended");
+    assert!(!ask("root", "old", None).await, "ended");
+    assert!(
+        !ask("root", "secret", Some((hidden, Some(now())))).await,
+        "an ended view in the cache"
+    );
+    assert!(ask("root", "open", None).await);
+    assert_eq!(listed("root").await, [s("open")]);
+    assert_eq!(noted("staff.media").await.len(), 3);
+    crate::api::test_util::done(state, path).await;
+}
+
 #[test]
 fn p2p_who_is_paced_and_merged_per_connection() {
     let mut who = Who::new();
