@@ -384,6 +384,7 @@ export class Mono {
     return {
       channel: ch => this.Fr.channel(ch),
       overwrite: (ch, subj) => this.Fr.overwrite(ch, subj),
+      rows: subj => this.Fr.overwritesOf(subj),
     }
   }
   ctx(): AuthCtx {

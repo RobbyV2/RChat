@@ -22,8 +22,8 @@ pub(crate) use channel_index::tests::without_channel_index;
 pub(crate) use channel_index::{Tokenizer, has_long_span, term_bucket};
 pub use channel_index::{build_channel_index, has_channel_index};
 pub use indexes::{Built, build_online};
-pub(crate) use migrate::PINNED;
 pub use migrate::{ConfigChange, ConfigStart, SCHEMA_VERSION, trigger_version};
+pub(crate) use migrate::{PINNED, ROLE_ORDER_INIT};
 #[cfg(test)]
 pub(crate) use pool::open_started;
 pub(crate) use pool::pool_key;

@@ -45,6 +45,9 @@ pub enum Action {
     RoleDelete,
     RoleAssign,
     RoleUnassign,
+    RoleReorder,
+    RoleOrderConfirm,
+    RoleOrderInit,
     ChannelCreate,
     ChannelUpdate,
     ChannelDelete,
@@ -105,6 +108,9 @@ pub const ACTIONS: &[Action] = &[
     Action::RoleDelete,
     Action::RoleAssign,
     Action::RoleUnassign,
+    Action::RoleReorder,
+    Action::RoleOrderConfirm,
+    Action::RoleOrderInit,
     Action::ChannelCreate,
     Action::ChannelUpdate,
     Action::ChannelDelete,
@@ -172,6 +178,9 @@ impl Action {
             Action::RoleDelete => "role.delete",
             Action::RoleAssign => "role.assign",
             Action::RoleUnassign => "role.unassign",
+            Action::RoleReorder => "role.reorder",
+            Action::RoleOrderConfirm => "role.order_confirm",
+            Action::RoleOrderInit => crate::db::ROLE_ORDER_INIT,
             Action::ChannelCreate => "channel.create",
             Action::ChannelUpdate => "channel.update",
             Action::ChannelDelete => "channel.delete",
@@ -686,7 +695,10 @@ pub struct AuditEntry {
     /// `unban`, `timeout`, `untimeout`, `profile_name` (a member's own server name),
     /// `profile_reset` and `profile_unlock` (of a member's server profile), `voice_disconnect`,
     /// `voice_mute`, `voice_unmute` (of a guest in voice), `admin_grant`, `admin_revoke`, `admin_transfer`, `admin_perms`. `role`: `create`,
-    /// `update`, `delete`, `assign`, `unassign`. `channel`: `create`, `update` (name, topic, slow
+    /// `update`, `delete`, `assign`, `unassign`, `reorder` (`roles` in the details names up to
+    /// 20 roles that changed place, `more_roles` counts the rest), `order_confirm` (the role
+    /// order now decides who may moderate whom), `order_init` (the instance ranked the roles of
+    /// a server that had no order; `ranked` is their number). `channel`: `create`, `update` (name, topic, slow
     /// mode, restrictions), `delete`, `perm_set`, `perm_clear`, `reorder`, `category_create`,
     /// `category_update`, `category_delete`. `server`: `update` (name and colors),
     /// `system_messages`. `access`: `mode` (password protection and the permanent password, never

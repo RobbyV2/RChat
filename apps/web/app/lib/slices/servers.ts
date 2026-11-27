@@ -861,6 +861,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'createRole'
     | 'updateRole'
     | 'deleteRole'
+    | 'setRoleOrder'
     | 'assignRole'
     | 'unassignRole'
     | 'setChannelPerm'
@@ -1129,6 +1130,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     updateRole: (server, id, patch) =>
       act(async () => void (await api.updateRole(server, id, patch))),
     deleteRole: (server, id) => act(async () => void (await api.deleteRole(server, id))),
+    setRoleOrder: (server, order, version) =>
+      act(async () => void (await api.setRoleOrder(server, order, version))),
     assignRole: (server, id, username) =>
       act(async () => void (await api.assignRole(server, id, username))),
     unassignRole: (server, id, username) =>

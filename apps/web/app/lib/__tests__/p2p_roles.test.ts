@@ -106,6 +106,22 @@ describe('role positions', () => {
     expect(mod.some(m => m.role === 'top')).toBe(false)
   })
 
+  test('roles at or above our rank keep their places when one is dropped among them', () => {
+    const roles = [role('top', 900), role('mine', 500), role('a', 300), role('b', 200)]
+    const me: [number, string] = [500, 'mine']
+    // Dropped above the roles we may not move: it lands right below them, in one move.
+    for (const index of [0, 1]) {
+      const moves = placeRole(roles, 'b', index, me)
+      expect(moves.length).toBe(1)
+      expect(moves[0].pos).toBeLessThan(500)
+      expect(apply(roles, moves).join(' ')).toBe('top mine b a')
+    }
+    expect(placeRole(roles, 'a', 0, me)).toEqual([])
+    // A role that is not below us does not move.
+    expect(placeRole(roles, 'top', 3, me)).toEqual([])
+    expect(placeRole(roles, 'mine', 3, me)).toEqual([])
+  })
+
   test('a respace posted one move at a time never swaps two other roles on the way', () => {
     // Owners: every role from the top range down to small positions, the dragged one in a gap.
     const roles = [

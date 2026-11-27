@@ -10,7 +10,7 @@ import type { ChannelView, MemberView, RoleView, ServerView } from '../p2p/serve
 import type { PaletteGroup } from '../palette'
 import type { ChannelCan } from '../channel_perms'
 import type { RChatState } from '../store_types'
-import type { Category, Channel, DmSummary, Message, UserRef } from '../types'
+import type { Category, Channel, DmSummary, Message, Role, UserRef } from '../types'
 
 export type Scope =
   | 'global'
@@ -62,6 +62,17 @@ export type Target =
   | { kind: 'folder'; folder: Folder; p2p?: boolean }
   | { kind: 'channel'; server: string; channel: Channel }
   | { kind: 'category'; server: string; category: Category }
+  // A row of a server's role list: `order` every role id, the highest first, as of the order's
+  // `version`; `movable` the ones the viewer may move. `after` runs once a change is saved.
+  | {
+      kind: 'role'
+      server: string
+      role: Role
+      order: number[]
+      movable: number[]
+      version: number
+      after?(): void
+    }
   | { kind: 'dm'; dm: DmSummary; where: 'sidebar' | 'home' }
   // The rail's home button and the instance badge.
   | { kind: 'home' }

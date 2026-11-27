@@ -187,8 +187,9 @@ pub(crate) fn clean_reason(reason: Option<String>) -> Result<Option<String>, Api
 /// react, start or reply in threads, pin or unpin, vote, type, or join voice channels; when they
 /// are in a voice channel they are muted there until the timeout ends. DMs are not affected.
 /// Leaving and rejoining the server does not end it. Requires the Timeout members permission,
-/// and the member's server permissions must be a strict subset of yours (so you can't time out
-/// yourself, the owner or admins above you). Logged in the audit log as `member.timeout`. Emits
+/// and you must rank above the member, or while the role order is unconfirmed their server
+/// permissions must be a strict subset of yours (see `ServerDetail.roles_order_confirmed`). So
+/// you can't time out yourself, the owner or admins above you. Logged in the audit log as `member.timeout`. Emits
 /// `member_timeout` to the member and to members who hold Timeout members, and `voice_muted`
 /// when they are in voice. General rate-limit bucket.
 #[utoipa::path(
@@ -201,7 +202,7 @@ pub(crate) fn clean_reason(reason: Option<String>) -> Result<Option<String>, Api
         (status = 200, description = "The running timeout", body = MemberTimeout),
         (status = 400, description = "`seconds` outside 1 to 2419200, a reason over 300 characters, or `You can't time out yourself`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Timeout members permission, or the member's server permissions are not a strict subset of yours", body = ApiErrorBody),
+        (status = 403, description = "Missing the Timeout members permission, or you do not rank above the member (`You can't moderate this member`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member (`Not a member`)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
@@ -292,7 +293,7 @@ pub(crate) async fn set_timeout(
         (status = 200, description = "No timeout is running any more", body = OkResp),
         (status = 400, description = "`You can't remove your own timeout`", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Timeout members permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
+        (status = 403, description = "Missing the Timeout members permission, or you do not rank above the user (`You can't moderate this member`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),

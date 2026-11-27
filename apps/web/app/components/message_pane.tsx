@@ -53,6 +53,7 @@ import type { Target } from '../lib/actions/types'
 import {
   byUsername,
   confirmDeleteMessage,
+  myRank,
   roleColor,
   userRefFor,
   useStore,
@@ -62,6 +63,7 @@ import {
   type ContextMenuOptions,
   type Outgoing,
 } from '../lib/store'
+import { outranksKnown } from '../lib/hierarchy'
 import type { CallLog, Member, Message, UserRef } from '../lib/types'
 import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
@@ -1045,8 +1047,13 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     )
   )
 
+  const rank = useStore(useShallow(s => (memberServer ? myRank(s, memberServer) : undefined)))
   const canDelete = (m: Message) =>
-    me !== null && (m.author.username === me.username || (view?.kind === 'channel' && can.manage))
+    me !== null &&
+    (m.author.username === me.username ||
+      (view?.kind === 'channel' &&
+        can.manage &&
+        outranksKnown(rank, memberFor(m.author.username), detail?.roles)))
 
   const canEdit = (m: Message) => canWrite && ownEditable(m, me?.username)
 

@@ -65,6 +65,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'member':
     case 'server':
     case 'category':
+    case 'role':
     case 'voice_guest': {
       const open = openPlace(s)
       const same = open.server !== null && open.server === t.server
@@ -127,6 +128,7 @@ const memberOf = (s: RChatState, t: Target) => {
       return s.profile?.user ?? null
     case 'voice_guest':
     case 'file':
+    case 'role':
     case 'p2p_contact':
     case 'p2p_server':
     case 'p2p_channel':
@@ -162,6 +164,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'server':
     case 'folder':
     case 'category':
+    case 'role':
     case 'rail_account':
     case 'home':
     case 'dm_list':
@@ -257,6 +260,10 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
       const all = s.servers[t.server]?.categories
       const category = all?.find(c => c.id === t.category.id)
       return !all ? t : category ? { ...t, category } : null
+    }
+    case 'role': {
+      const all = s.servers[t.server]?.roles
+      return !all || all.some(r => r.id === t.role.id) ? t : null
     }
     case 'dm':
     case 'call': {

@@ -1,0 +1,93 @@
+import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { ctxFor } from '../actions/ctx'
+import { registerAppActions } from '../actions/index'
+import { menuItems } from '../actions/menu'
+import type { Target } from '../actions/types'
+import { resetSessionCaches, useStore } from '../store'
+import { drain, me, memoryStorage, role, serverDetail } from './fixtures'
+
+const initial = useStore.getState()
+
+beforeAll(registerAppActions)
+
+afterEach(() => {
+  useStore.setState(initial, true)
+  memoryStorage.clear()
+})
+
+afterAll(resetSessionCaches)
+
+const roles = [1, 2, 3, 4].map(id => ({ ...role(id, '#123456', 0), position: 5 - id }))
+const order = roles.map(r => r.id)
+
+const at = (id: number, movable: number[], after?: () => void): Target => ({
+  kind: 'role',
+  server: 's',
+  role: roles[id - 1],
+  order,
+  movable,
+  version: 7,
+  after,
+})
+
+const state = (list = roles) =>
+  useStore.setState({
+    token: 'tok',
+    me: me('alice'),
+    servers: { s: serverDetail('s', { roles: list, roles_version: 7 }) },
+  })
+
+const items = (t: Target) => menuItems(ctxFor(useStore.getState(), t, 'menu'))
+const labels = (t: Target) => items(t).map(i => i.label)
+
+test('a role row moves the role among those you may move', () => {
+  state()
+  expect(labels(at(3, [2, 3, 4]))).toEqual(['Move Up', 'Move Down'])
+  expect(labels(at(2, [2, 3, 4]))).toEqual(['Move Down'])
+  expect(labels(at(4, [2, 3, 4]))).toEqual(['Move Up'])
+  expect(labels(at(1, [2, 3, 4]))).toEqual([])
+  expect(labels(at(3, [3]))).toEqual([])
+})
+
+test('a move saves the new order with the version it was made from', async () => {
+  state()
+  const calls: unknown[][] = []
+  let after = 0
+  useStore.setState({
+    setRoleOrder: (...a: unknown[]) => {
+      calls.push(a)
+      return Promise.resolve()
+    },
+  })
+  for (const [label, id] of [
+    ['Move Up', 4],
+    ['Move Down', 2],
+  ] as const) {
+    items(at(id, [2, 4], () => after++))
+      .find(i => i.label === label)
+      ?.action?.()
+    await drain()
+  }
+  expect(calls).toEqual([
+    ['s', [1, 4, 3, 2], 7],
+    ['s', [1, 4, 3, 2], 7],
+  ])
+  expect(after).toBe(2)
+})
+
+test('a role deleted while its menu is open does not move', async () => {
+  state()
+  const calls: unknown[][] = []
+  useStore.setState({
+    setRoleOrder: (...a: unknown[]) => {
+      calls.push(a)
+      return Promise.resolve()
+    },
+  })
+  const up = items(at(4, [2, 3, 4])).find(i => i.label === 'Move Up')
+  expect(typeof up?.action).toBe('function')
+  state(roles.slice(0, 3))
+  up?.action?.()
+  await drain()
+  expect(calls).toEqual([])
+})

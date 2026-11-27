@@ -134,7 +134,12 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
       )}
       <ServerAppearance server={name} detail={detail} refresh={() => void refresh()} />
       <p className={sectionCls}>Roles</p>
-      <RolesEditor server={name} roles={detail.roles} refresh={refresh} />
+      <RolesEditor
+        server={name}
+        roles={detail.roles}
+        version={detail.roles_version}
+        refresh={refresh}
+      />
       <p className={sectionCls}>Channels</p>
       {detail.channels.map(c => {
         const deletable = canDeleteChannel(detail.channels, c)

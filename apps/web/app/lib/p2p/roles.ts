@@ -3,6 +3,7 @@ import type { OverSum } from './acl/summary'
 import { actParts, roleMoveWarns } from './flows'
 import { type MemberView, type RoleView, type ServerView } from './server'
 import { LOCAL, type Local } from './limits'
+import { reorder } from '../perms'
 
 // Roles and channel permissions of P2P servers as the settings and the member list show them:
 // the permission toggles, where a dragged role lands, the member list grouped by
@@ -71,7 +72,7 @@ export const permItems = (v: Pick<ServerView, 'timeouts'>, everyone = false) => 
   ...(everyone ? EVERYONE_ITEMS.slice(PERM_ITEMS.length) : []),
 ]
 
-export const ROLE_LOCKED = 'Only someone with a higher role can change this role.'
+export { ROLE_NOT_BELOW as ROLE_LOCKED } from '../rules'
 
 // A line of the Re-apply list: the act, whom it is about and the role it names.
 export const reapplyLine = (
@@ -99,9 +100,11 @@ export interface Move {
   pos: number
 }
 
-// Where `id` lands when dropped at `index` of the list without it (highest first): a position
-// strictly between its new neighbours, else the movable roles spaced out again, in the new order.
-// `top`: our rank; every role we move stays strictly below it. New gaps are `server.roleStep`.
+// Where `id` lands when dropped at `index` of the list without it (highest first). The roles
+// at or above our rank (`top`) keep their places and the ones below it fill the others in the
+// order asked for, as the shared rules place them. The moves: a position strictly between its
+// new neighbours, else the movable roles spaced out again, in the new order. Every role we move
+// stays strictly below `top`. New gaps are `server.roleStep`.
 export function placeRole(
   roles: RoleView[],
   id: string,
@@ -111,10 +114,19 @@ export function placeRole(
 ): Move[] {
   const gap = lim.roleStep
   const self = roles.find(r => r.id === id)
-  if (!self) return []
+  if (!self || cmp(top, rankOf(self)) <= 0) return []
   const rest = roles.filter(r => r.id !== id)
-  const above = rest[index - 1]
-  const below = rest[index]
+  const at = new Map(roles.map((r, i) => [r.id, i]))
+  const slots = (list: RoleView[]) => list.map(r => at.get(r.id)!)
+  const order = reorder(
+    slots(roles),
+    slots([...rest.slice(0, index), self, ...rest.slice(index)]),
+    slots(roles.filter(r => cmp(top, rankOf(r)) > 0))
+  ).map(i => roles[i])
+  if (order.every((r, i) => r === roles[i])) return []
+  const place = order.indexOf(self)
+  const above = order[place - 1]
+  const below = order[place + 1]
   const cap = Number.isFinite(top[0]) ? top[0] : Infinity
   const hi = above ? Math.min(above.pos, cap) : cap === Infinity ? null : cap
   const lo = below ? below.pos : -1
@@ -129,7 +141,6 @@ export function placeRole(
   if (pick > lo && (hi === null || pick < hi) && pick >= 0)
     return pick === self.pos ? [] : [{ role: id, pos: pick }]
   // No room: the roles below us, in the new order, spaced out under our rank.
-  const order = [...rest.slice(0, index), self, ...rest.slice(index)]
   const movable = order.filter(r => cmp(top, rankOf(r)) > 0)
   const room = cap === Infinity ? gap * (movable.length + 1) : cap
   const step = Math.floor(room / (movable.length + 1))

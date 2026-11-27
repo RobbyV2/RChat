@@ -1,14 +1,16 @@
 import { bytesOf } from './canonical'
-import { bit, fromWire, hasBit, maskAnd, maskNot, maskOr } from '../perms'
+import { bit, fromWire, hasBit, maskAnd, maskNot, maskOr, outranks as above } from '../perms'
 import {
   channelPerms,
   textOnlyChannel,
   cmp,
   EVERYONE,
+  managesAt,
   permsQ,
   RULES_NEXT,
   rulesOf,
   skipsSlowMode,
+  tiered,
   P as ACL_P,
   resetBit,
   type AclContent,
@@ -110,7 +112,11 @@ export const rankOf = (s: Summary, ik: string): Rank => s.members[ik]?.rank ?? [
 
 // Whether `ik` outranks `other` (acting on a member needs it).
 export const outranks = (s: Summary, ik: string, other: string) =>
-  cmp(rankOf(s, ik), rankOf(s, other)) > 0
+  above(tiered(rankOf(s, ik)), tiered(rankOf(s, other)))
+
+// Whether `ik` manages role `id`: Manage roles and a rank above the role.
+export const managesRoleOf = (s: Summary, ik: string, id: string) =>
+  managesAt(permsOf(s, ik), rankOf(s, ik), roleRank(s, id), rulesOf(s.rules))
 
 // Whether `ik` may reset the room profile of `other`, or lift its lock: an owner, or a member
 // with the bit the room's rules ask for who outranks them. Never one's own, never an owner's.

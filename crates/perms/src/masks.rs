@@ -27,6 +27,7 @@ pub const SEND: Mask = value("SendMessages");
 pub const HISTORY: Mask = value("ReadHistory");
 pub const MANAGE_CHANNELS: Mask = value("ManageChannels");
 pub const MANAGE_ROLES: Mask = value("ManageRoles");
+pub const ASSIGN_ROLES: Mask = value("AssignRoles");
 
 /// What @everyone holds unless the server says otherwise.
 pub const BASE: Mask = pick(Some(true), None);

@@ -906,10 +906,11 @@ async fn open_member<'a>(
 /// Puts the listed parts of the server profile of `username` back to the account's values, and
 /// with `lock_secs` locks the profile so the member can't edit it until the lock ends or is
 /// lifted. A moderator can only clear what a member set, never set it. Requires the Reset
-/// server profiles permission, and the member's server permissions must be a strict subset of
-/// yours. The lock ends when the member leaves or is removed. Logged in the audit log as
-/// `member.profile_reset`. Emits `member_profile` to the server and the member when something
-/// changed. General rate-limit bucket.
+/// server profiles permission, and you must rank above the member, or while the role order is
+/// unconfirmed their server permissions must be a strict subset of yours (see
+/// `ServerDetail.roles_order_confirmed`). The lock ends when the member leaves or is removed.
+/// Logged in the audit log as `member.profile_reset`. Emits `member_profile` to the server and the
+/// member when something changed. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/members/{username}/profile/reset",
@@ -920,7 +921,7 @@ async fn open_member<'a>(
         (status = 200, description = "The parts are reset and the lock is set", body = OkResp),
         (status = 400, description = "`Choose what to reset` (no field and no lock), `Invalid lock` (`lock_secs` is not one of the four choices), a reason over 300 characters, or `You can't reset your own server profile`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Reset server profiles permission, `You are timed out in this server`, or the member's server permissions are not a strict subset of yours (`You can't moderate this member`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Reset server profiles permission, `You are timed out in this server`, or you do not rank above the member (`You can't moderate this member`)", body = ApiErrorBody),
         (status = 404, description = "`Not found`: the `server_profiles` switch is off, or the user is not a member. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
@@ -1020,7 +1021,7 @@ pub(crate) async fn reset_member_profile(
         (status = 200, description = "The server profile is not locked any more", body = OkResp),
         (status = 400, description = "`You can't unlock your own server profile`", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Reset server profiles permission, `You are timed out in this server`, or the member's server permissions are not a strict subset of yours (`You can't moderate this member`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Reset server profiles permission, `You are timed out in this server`, or you do not rank above the member (`You can't moderate this member`)", body = ApiErrorBody),
         (status = 404, description = "`Not found`: the `server_profiles` switch is off, or the user is not a member. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),

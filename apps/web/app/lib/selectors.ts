@@ -23,8 +23,9 @@ import {
 } from './group_pings'
 import { lockState } from './profile_reset'
 import { CAN_ALL, canOf, hostedMask, type ChannelCan } from './channel_perms'
-import { maskAnd } from './perms'
-import { canChangeRole, memberPerms, rolePerms } from './rules'
+import { maskAnd, type Rank } from './perms'
+import { STAFF, memberRank, outranks, outranksKnown, roleRank } from './hierarchy'
+import { canChangeRole, memberPerms, rolePerms, type Order } from './rules'
 import { shownParts } from './server_profile'
 import type { ConfigSource } from './config_transfer'
 import { running, type Timeout } from './timeouts'
@@ -82,6 +83,28 @@ export const myRolePerms = (s: RChatState, server: string): number =>
 
 export const myPerms = (s: RChatState, server: string): number =>
   s.me?.is_site_admin ? ALL_PERMS : serverAdminPerms(s, server)
+
+// Your rank in `server`, when it orders its roles and your own roles are loaded.
+export const myRank = (s: RChatState, server: string): Rank | undefined => {
+  const detail = s.servers[server]
+  if (!s.me || detail?.roles_version === undefined) return undefined
+  if (s.me.is_site_admin) return STAFF
+  const mine = memberState(s, server, s.me.username)
+  return mine ? memberRank(mine, detail.roles) : undefined
+}
+
+// Your rank and that of `username` in `server`, once its role order decides who may moderate
+// whom. Someone whose roles are not loaded counts as outside the server; the server decides.
+export const orderWith = (s: RChatState, server: string, username: string): Order | undefined => {
+  const detail = s.servers[server]
+  const mine = myRank(s, server)
+  if (!detail?.roles_order_confirmed || !mine) return undefined
+  return { mine, theirs: memberRank(memberState(s, server, username), detail.roles) }
+}
+
+// Whether you rank above `username` in `server`, as far as the loaded roles say.
+export const outranksMember = (s: RChatState, server: string, username: string): boolean =>
+  outranksKnown(myRank(s, server), memberState(s, server, username), s.servers[server]?.roles)
 
 // What the viewer holds in a hosted channel. Outside a server (a DM) nothing is held back.
 export const channelCan = (
@@ -457,6 +480,8 @@ export const changeableRoles = (s: RChatState, server: string, username: string)
   const limits = s.servers[server]?.role_limits
   const grants = limits?.channel_grants ?? []
   const denies = limits?.channel_denies ?? []
+  const rank = myRank(s, server)
+  const order = orderWith(s, server, username)
   return roles.filter(r =>
     canChangeRole(
       perms,
@@ -465,7 +490,8 @@ export const changeableRoles = (s: RChatState, server: string, username: string)
       held.includes(r.id),
       self,
       target,
-      (held.includes(r.id) ? denies : grants).includes(r.id)
+      (held.includes(r.id) ? denies : grants).includes(r.id),
+      { below: !rank || outranks(rank, roleRank(r)), order }
     )
   )
 }

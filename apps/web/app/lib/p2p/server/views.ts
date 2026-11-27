@@ -1,9 +1,10 @@
+import { atLeast, outranks as above } from '../../perms'
 import {
   RULES_VERSION,
   everyoneSees,
-  gt,
   restricts,
   skipsSlowMode,
+  tiered,
   timedBans,
   timeouts,
   type Rank,
@@ -142,12 +143,16 @@ export function serverView(
       owner: owners.includes(m.ik),
       online: m.m === 'join' && online.has(m.ik),
       contact: env.contact(m.ik),
-      below: !!meRank && gt(meRank, m.rank as Rank),
+      below: !!meRank && above(tiered(meRank), tiered(m.rank as Rank)),
       // Waiting for a third member only while they are trying to join: linked with us, or
       // redeeming a code with us.
       waits: m.m === 'invite' && m.waits === true && env.trying(m.ik),
       myInvite: m.m === 'invite' && !!m.inviters?.length && m.inviters.every(x => x === env.me),
-      unban: m.m === 'ban' && banner && !!meRank && (!m.banRank || !gt(m.banRank, meRank)),
+      unban:
+        m.m === 'ban' &&
+        banner &&
+        !!meRank &&
+        (!m.banRank || atLeast(tiered(meRank), tiered(m.banRank))),
       ...(m.m === 'ban' && m.banUntil !== undefined
         ? {
             banUntil: m.banUntil,
@@ -209,7 +214,7 @@ export function serverView(
           pos: r.pos,
           bits: r.bits,
           holders: joined.filter(m => m.roles.includes(r.id)).length,
-          below: me === 'join' && !!meRank && gt(meRank, roleRank(s, r.id)),
+          below: me === 'join' && !!meRank && above(tiered(meRank), tiered(roleRank(s, r.id))),
           held: restricts(chanFactsOf(s), r.id),
         })),
     everyone: s.everyone,

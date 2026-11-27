@@ -1,4 +1,13 @@
-import { canChangeRole, canModerate, canPromote, canRevoke, canTransferTo } from './rules'
+import { outranks, roleRank } from './hierarchy'
+import type { Rank } from './perms'
+import {
+  canChangeRole,
+  canModerate,
+  canPromote,
+  canRevoke,
+  canTransferTo,
+  type Order,
+} from './rules'
 import { sessionMark } from './slices/ctx'
 import { Perm, hasPerm, type Profile, type Role, type UserRef } from './types'
 
@@ -169,6 +178,10 @@ export interface ActionInput {
   // The server shows server profiles, and a moderator's lock on this member's runs.
   profiles?: boolean
   profileLocked?: boolean
+  // Your rank where the server orders its roles, and yours with theirs once that order decides
+  // who may moderate whom.
+  rank?: Rank
+  order?: Order
 }
 
 export const profileActions = ({
@@ -184,28 +197,19 @@ export const profileActions = ({
   timedOut = false,
   profiles = false,
   profileLocked = false,
+  order,
 }: ActionInput): ProfileAction[] => {
   if (!signedIn) return []
   const out: ProfileAction[] = []
   if (inServer) {
-    const kick = hasPerm(perms, Perm.Kick) && !self && canModerate(perms, siteAdmin, targetPerms)
+    const over = canModerate(perms, siteAdmin, targetPerms, order)
+    const kick = hasPerm(perms, Perm.Kick) && !self && over
     const admins = hasPerm(perms, Perm.ManageAdmins)
     if (kick && member) out.push('kick')
     if (kick) out.push('server_ban')
-    if (
-      member &&
-      !self &&
-      hasPerm(perms, Perm.TimeoutMembers) &&
-      canModerate(perms, siteAdmin, targetPerms)
-    )
+    if (member && !self && hasPerm(perms, Perm.TimeoutMembers) && over)
       out.push(...(timedOut ? (['timeout', 'untimeout'] as const) : (['timeout'] as const)))
-    if (
-      profiles &&
-      member &&
-      !self &&
-      hasPerm(perms, Perm.ManageProfiles) &&
-      canModerate(perms, siteAdmin, targetPerms)
-    )
+    if (profiles && member && !self && hasPerm(perms, Perm.ManageProfiles) && over)
       out.push(
         ...(profileLocked
           ? (['profile_reset', 'profile_unlock'] as const)
@@ -225,8 +229,8 @@ export const canEditRoles = ({ signedIn, inServer, perms, member }: ActionInput)
   signedIn && inServer && member !== null && hasPerm(perms, Perm.AssignRoles)
 
 export const roleEditable = (
-  { self, siteAdmin, perms, targetPerms, channelLocked, channelDenies }: ActionInput,
-  role: Pick<Role, 'perms'> & { id?: number },
+  { self, siteAdmin, perms, targetPerms, channelLocked, channelDenies, rank, order }: ActionInput,
+  role: Pick<Role, 'perms' | 'position'> & { id?: number },
   held: boolean
 ) =>
   canChangeRole(
@@ -236,5 +240,12 @@ export const roleEditable = (
     held,
     self,
     targetPerms,
-    role.id !== undefined && ((held ? channelDenies : channelLocked)?.includes(role.id) ?? false)
+    role.id !== undefined && ((held ? channelDenies : channelLocked)?.includes(role.id) ?? false),
+    {
+      below:
+        !rank ||
+        role.id === undefined ||
+        outranks(rank, roleRank({ id: role.id, position: role.position })),
+      order,
+    }
   )

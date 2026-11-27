@@ -134,6 +134,8 @@ export class Ix {
   upgradeEv: number[] = []
   channelEv = new Map<string, number[]>()
   chpermEv = new Map<string, number[]>()
+  // The channels that have overwrite events for a subject.
+  chpermSubj = new Map<string, string[]>()
   proofEv: number[] = []
   deniesAt = new Map<string, number[]>()
   idOps: number[] = []
@@ -291,6 +293,8 @@ export class Ix {
         pushM(this.channelEv, c.id ?? '', i)
         break
       case 'chperm':
+        if (!this.chpermEv.has(`${c.ch}|${c.subj}`))
+          pushM(this.chpermSubj, c.subj ?? '', c.ch ?? '')
         pushM(this.chpermEv, `${c.ch}|${c.subj}`, i)
         break
       case 'proof':

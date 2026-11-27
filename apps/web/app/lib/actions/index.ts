@@ -19,6 +19,7 @@ import { p2pChatActions } from './p2p_chat'
 import { p2pContactActions } from './p2p_contact'
 import { p2pServerActions } from './p2p_server'
 import { placeActions } from './place'
+import { roleActions } from './role'
 import { defineAction } from './registry'
 import { selectionActions } from './selection'
 import { serverActions } from './server'
@@ -48,6 +49,7 @@ export const registerAppActions = () => {
     embedActions,
     fileActions,
     serverActions,
+    roleActions,
     channelActions,
     cardActions,
     voiceActions,

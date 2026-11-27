@@ -26,6 +26,7 @@ const ROWS: Record<Target['kind'], boolean> = {
   folder: true,
   channel: true,
   category: true,
+  role: false,
   dm: true,
   home: false,
   rail_account: true,

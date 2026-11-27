@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use sqlx::{AnyConnection, Row};
 use utoipa::ToSchema;
 
+use crate::api::access::ranks;
 use crate::api::access::{
     MsgScope, Proof, ResolvedChannel, ResolvedMessage, StaffUse, ThreadHome, not_found,
     resolve_channel_for, resolve_dm, resolve_message_for, typing_scope,
@@ -23,6 +24,7 @@ use crate::db::{Db, LIVE_AUTHOR, User, get_user, now, pool_key};
 use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 use crate::ws::WsEvent;
+use rchat_perms::hier::outranks;
 
 /// Most ids in one request.
 pub const IDS_MAX: usize = 200;
@@ -165,7 +167,8 @@ pub struct BulkDeleteResp {
     pub total: i64,
     /// How many of them you may delete.
     pub deletable: i64,
-    /// How many belong to others and need the Manage messages permission in the channel.
+    /// How many belong to others and need the Manage messages permission in the channel and a
+    /// rank above their author.
     pub others: i64,
     /// Ids that are unknown, unreadable or outside the scope.
     pub missing: i64,
@@ -663,6 +666,54 @@ async fn count_all(
     Ok((total.max(0), own.max(0)))
 }
 
+/// How many of the messages `bounds` covers in `place`, without the `except` ids, are by
+/// someone else the caller does not rank above: a moderator may not delete those.
+async fn outranked_by(
+    db: &Db,
+    place: &Place,
+    bounds: &Bounds,
+    except: &[i64],
+    username: &str,
+) -> Result<i64, ApiError> {
+    let Some(server) = place.channel().map(|c| c.server()) else {
+        return Ok(0);
+    };
+    let (sql, key) = scoped_sql(place, bounds, "m.author, COUNT(*)", "GROUP BY m.author");
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for r in bind_bounds(sqlx::query(sqlx::AssertSqlSafe(sql)), key, bounds)
+        .fetch_all(db)
+        .await?
+    {
+        counts.insert(r.try_get(0)?, r.try_get(1)?);
+    }
+    for chunk in except.chunks(IDS_MAX) {
+        let tail = format!(
+            "AND m.id IN ({})",
+            placeholders(next_bind(bounds), chunk.len())
+        );
+        let (sql, key) = scoped_sql(place, bounds, "m.author", &tail);
+        let mut q = bind_bounds(sqlx::query(sqlx::AssertSqlSafe(sql)), key, bounds);
+        for id in chunk {
+            q = q.bind(*id);
+        }
+        for r in q.fetch_all(db).await? {
+            if let Some(n) = counts.get_mut(&r.try_get::<String, _>(0)?) {
+                *n -= 1;
+            }
+        }
+    }
+    counts.remove(username);
+    let names: Vec<String> = counts.keys().cloned().collect();
+    let mine = server.rank(db).await?;
+    let mut conn = db.acquire().await?;
+    let theirs = ranks::ranks_in(&mut conn, server.name(), &names).await?;
+    Ok(counts
+        .iter()
+        .filter(|(name, _)| theirs.get(*name).is_none_or(|rank| !outranks(&mine, rank)))
+        .map(|(_, n)| (*n).max(0))
+        .sum())
+}
+
 fn next_bind(bounds: &Bounds) -> usize {
     4 + usize::from(bounds.floor.is_some()) + usize::from(bounds.author.is_some())
 }
@@ -693,7 +744,7 @@ fn dedup(ids: &[i64]) -> Vec<i64> {
 ///
 /// Deletes messages of one channel, thread or DM with the same rule as deleting one: your own
 /// messages always; in server channels others' with the Manage messages permission in the
-/// channel; in DMs only your own. Requires a bearer token. With `ids` (at most 200) it deletes
+/// channel when you rank above their author; in DMs only your own. Requires a bearer token. With `ids` (at most 200) it deletes
 /// now and answers what happened; unknown, unreadable and out-of-scope ids are counted as
 /// `missing`, others' messages you may not delete as `others`. With `all: true` it starts a background job for every message
 /// in the scope you can read and may delete (messages posted after the start are kept; on
@@ -880,7 +931,7 @@ async fn start_all(
     };
     let (total, own) = count_all(db, place, &bounds, &except, &user.username).await?;
     let deletable = match moderator {
-        true => total,
+        true => total - outranked_by(db, place, &bounds, &except, &user.username).await?,
         false => own,
     };
     let counts = |job: Option<BulkJob>| BulkDeleteResp {

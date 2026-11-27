@@ -1,9 +1,12 @@
 use rchat_perms::Mask;
 use rchat_perms::delta::check_bits_edit;
 use rchat_perms::eval::{Channel, Mode, Ow, Who, channel_mask};
-use rchat_perms::hier::{Rank, Tie, Tier, at_least, outranks};
+use rchat_perms::hier::{
+    Actor, Rank, Tie, Tier, at_least, manages_role, may_assign, may_moderate, may_unassign,
+    outranks,
+};
 use rchat_perms::masks::VOICE;
-use rchat_perms::rules::{P2P_V2, P2P_V4, Ruleset, from_wire, to_wire};
+use rchat_perms::rules::{P2P_V2, P2P_V4, Ruleset, from_wire, p2p, to_wire};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -220,7 +223,6 @@ const MEMBER_SUBJECT: u32 = 64;
 
 const KICK: u32 = 4;
 const BAN: u32 = 32;
-const ROLES: u32 = 16;
 const CHANNELS: u32 = 1;
 const MESSAGES: u32 = 2;
 const EVERY_WIRE_BIT: u32 = 0x7fff_ffff;
@@ -242,6 +244,13 @@ fn rank(s: &str) -> Rank<'_> {
     }
 }
 
+fn at_rank<'a>(rank: &Rank<'a>) -> Actor<'a> {
+    Actor {
+        rank: *rank,
+        bits: 0,
+    }
+}
+
 /// The authority decision of one recorded line (without its output), as P2P devices take it.
 fn decide(line: &str, rules: i64) -> bool {
     let f: Vec<&str> = line.split(' ').collect();
@@ -258,9 +267,17 @@ fn decide(line: &str, rules: i64) -> bool {
     let has = |bits: u32| held & from_wire(bits, rules) != 0 || wire & unknown(bits) != 0;
     let above = |r: &Rank| outranks(&me, r);
     let flag = |x: u32| flags & x != 0;
+    let actor = Actor {
+        rank: me,
+        bits: held,
+    };
+    let target = at_rank(&b);
+    let moderates = |need: u32| may_moderate(&actor, &target, from_wire(need, rules), false);
+    let manages = |role: &Rank| manages_role(&actor, role, None);
+    let ruleset = p2p(rules).expect("rules");
     mem && match t {
-        "kick" => has(KICK) && !flag(TO_OWNER) && above(&b),
-        "ban" => has(BAN) && !flag(TO_OWNER) && above(&b) && (!flag(WIPE) || has(MESSAGES)),
+        "kick" => !flag(TO_OWNER) && moderates(KICK),
+        "ban" => !flag(TO_OWNER) && moderates(BAN) && (!flag(WIPE) || has(MESSAGES)),
         "unban" => {
             has(BAN)
                 && f[7]
@@ -269,16 +286,19 @@ fn decide(line: &str, rules: i64) -> bool {
                     .all(|s| at_least(&me, &rank(s)))
         }
         "role_create" => {
-            has(ROLES)
-                && above(&a)
+            manages(&a)
                 && check_bits_edit(held, false, 0, from_wire(n, rules)).is_ok()
                 && unknown(n) & !wire == 0
         }
-        "role_move" => has(ROLES) && flag(ROLE_EXISTS) && above(&a) && above(&b),
-        "role_bits" => has(ROLES) && flag(ROLE_EXISTS) && above(&a) && (!flag(ON) || has(n)),
-        "role_del" => has(ROLES) && flag(ROLE_EXISTS) && above(&a),
-        "assign" => has(ROLES) && flag(ROLE_EXISTS) && above(&a) && !flag(TO_OWNER) && above(&b),
-        "revoke" => flag(SELF) || (has(ROLES) && above(&a) && above(&b)),
+        "role_move" => flag(ROLE_EXISTS) && manages(&a) && manages(&b),
+        "role_bits" => flag(ROLE_EXISTS) && manages(&a) && (!flag(ON) || has(n)),
+        "role_del" => flag(ROLE_EXISTS) && manages(&a),
+        "assign" => {
+            flag(ROLE_EXISTS)
+                && !flag(TO_OWNER)
+                && may_assign(&actor, &a, false, 0, true, Some(&target), ruleset)
+        }
+        "revoke" => flag(SELF) || may_unassign(&actor, &a, false, Some(&target)),
         "chperm" => {
             has(CHANNELS)
                 && match (flag(ROLE_SUBJECT), flag(MEMBER_SUBJECT)) {

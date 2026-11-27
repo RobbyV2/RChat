@@ -155,6 +155,8 @@ export interface Role {
   perms: number
   // anyone who can send may mention it
   mentionable?: boolean
+  // Place in the server's role order: higher ranks higher.
+  position?: number
 }
 
 export interface ChannelPerm {
@@ -343,6 +345,9 @@ export interface ServerDetail {
   layout_version?: number
   read_only?: number[]
   roles: Role[]
+  // The version of the role order, and whether that order decides who may moderate whom.
+  roles_version?: number
+  roles_order_confirmed?: boolean
   // What everyone in the server holds, and what you hold.
   everyone_perms?: number
   my_perms?: number

@@ -11,7 +11,7 @@ import { messageLinkUrl } from './message_links'
 import { canPin, isPinned } from './pins'
 import { chunked } from './reads'
 import { sharing } from './platform'
-import { channelCan, messageServer } from './selectors'
+import { channelCan, messageServer, outranksMember } from './selectors'
 import {
   EXPORT_VERSION,
   clear,
@@ -106,8 +106,19 @@ export const moderates = (s: RChatState, scope: string) => {
   return !dm && server !== null && channelCan(s, server, channelId).manage
 }
 
-export const canDeleteIn = (s: RChatState, scope: string, m: Message) =>
-  s.me !== null && !s.guest && (m.author.username === s.me.username || moderates(s, scope))
+// Whether the viewer may delete `m` in `scope`: their own message, or as a moderator one whose
+// author they rank above.
+export const canDeleteIn = (s: RChatState, scope: string, m: Message) => {
+  if (s.me === null || s.guest) return false
+  if (m.author.username === s.me.username) return true
+  const { server, channelId, dm } = scopePlace(s, scope)
+  return (
+    !dm &&
+    server !== null &&
+    channelCan(s, server, channelId).manage &&
+    outranksMember(s, server, m.author.username)
+  )
+}
 
 export const canPinIn = (s: RChatState, scope: string) => {
   if (!s.me || s.guest || scope.startsWith('t')) return false

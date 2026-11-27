@@ -43,21 +43,23 @@ export interface PermsModule {
   perms_outranks(...ranks: [...RankArgs, ...RankArgs]): boolean
   perms_at_least(...ranks: [...RankArgs, ...RankArgs]): boolean
   perms_may_moderate(...args: [...RankArgs, number, ...RankArgs, number, number, boolean]): boolean
-  perms_manages_role(...args: [...RankArgs, number, number, number, Tie, number]): boolean
+  perms_manages_role(...args: [...RankArgs, number, ...RankArgs, number]): boolean
   perms_may_assign(
     ...args: [
       ...RankArgs,
       number,
-      number,
-      number,
-      Tie,
-      number,
+      ...RankArgs,
+      boolean,
       number,
       boolean,
       boolean,
       ...RankArgs,
       number,
+      number,
     ]
+  ): boolean
+  perms_may_unassign(
+    ...args: [...RankArgs, number, ...RankArgs, boolean, boolean, ...RankArgs, number]
   ): boolean
   perms_granted(bAllow: number, bDeny: number, aAllow: number, aDeny: number): number
   perms_denied(bAllow: number, bDeny: number, aAllow: number, aDeny: number): number
@@ -297,44 +299,45 @@ export const mayModerate = (a: Actor, t: Actor, need: number, guard: boolean) =>
 const held = (heldAbove: boolean | undefined) => (heldAbove === undefined ? 0 : heldAbove ? 2 : 1)
 
 // `heldAbove` is the extra test of the order guard: leave it out when the guard is off.
-export const managesRole = (a: Actor, role: Rank, heldAbove?: boolean) => {
-  const [, pos, tieInt, tieStr] = rankArgs(role)
-  return rules().perms_manages_role(
-    ...rankArgs(a.rank),
-    a.bits,
-    pos,
-    tieInt,
-    tieStr,
-    held(heldAbove)
-  )
-}
+export const managesRole = (a: Actor, role: Rank, heldAbove?: boolean) =>
+  rules().perms_manages_role(...rankArgs(a.rank), a.bits, ...rankArgs(role), held(heldAbove))
 
-// `target` is left out when the actor assigns the role to itself; `heldAbove` is as for
-// `managesRole`.
+const NOBODY: Actor = { rank: { tier: 'outside' }, bits: 0 }
+
+// `target` is left out when the actor gives the role to itself; `guard` is the order guard.
 export const mayAssign = (
   a: Actor,
   role: Rank,
   roleBits: number,
   allowsOk: boolean,
-  target: Rank | undefined,
+  target: Actor | undefined,
   ruleset: number,
-  heldAbove?: boolean
-) => {
-  const [, pos, tieInt, tieStr] = rankArgs(role)
-  return rules().perms_may_assign(
+  guard = false
+) =>
+  rules().perms_may_assign(
     ...rankArgs(a.rank),
     a.bits,
-    pos,
-    tieInt,
-    tieStr,
-    held(heldAbove),
+    ...rankArgs(role),
+    guard,
     roleBits,
     allowsOk,
     target !== undefined,
-    ...rankArgs(target ?? { tier: 'outside' }),
+    ...rankArgs((target ?? NOBODY).rank),
+    (target ?? NOBODY).bits,
     ruleset
   )
-}
+
+// `target` is left out when the actor drops its own role.
+export const mayUnassign = (a: Actor, role: Rank, target: Actor | undefined, guard = false) =>
+  rules().perms_may_unassign(
+    ...rankArgs(a.rank),
+    a.bits,
+    ...rankArgs(role),
+    guard,
+    target !== undefined,
+    ...rankArgs((target ?? NOBODY).rank),
+    (target ?? NOBODY).bits
+  )
 
 const NONE: Ow = { allow: 0, deny: 0 }
 export const granted = (before: Ow = NONE, after: Ow = NONE) =>

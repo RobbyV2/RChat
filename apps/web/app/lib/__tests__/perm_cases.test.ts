@@ -18,7 +18,10 @@ import {
   maskNot,
   maskOr,
   maskXor,
+  managesRole,
   mayAssign,
+  mayModerate,
+  mayUnassign,
   moved,
   outranks,
   ready,
@@ -529,12 +532,38 @@ for (const [name, build] of builds)
       expect(serverBits({ kind: 'admin', mask: kick, roles: 2 + view }, 0, 0)).toBe(kick + view)
       const manager: Actor = {
         rank: { tier: 'role', pos: 3, tie: 1 },
-        bits: bit('ManageRoles') + kick,
+        bits: bit('ManageRoles') + bit('AssignRoles') + kick,
       }
       const mid: Rank = { tier: 'role', pos: 2, tie: 1 }
+      const low: Actor = { rank: { tier: 'role', pos: 1, tie: 1 }, bits: kick }
+      const plain: Actor = { rank: { tier: 'plain' }, bits: 0 }
+      expect(managesRole(manager, mid)).toBe(true)
+      expect(managesRole(manager, manager.rank)).toBe(false)
+      expect(managesRole(manager, mid, false)).toBe(false)
+      expect(managesRole({ ...manager, bits: kick }, mid)).toBe(false)
+      expect(
+        managesRole({ rank: { tier: 'owner' }, bits: bit('ManageRoles') }, { tier: 'owner' })
+      ).toBe(false)
+      expect(mayModerate(manager, low, kick, false)).toBe(true)
+      expect(mayModerate(low, manager, kick, false)).toBe(false)
+      expect(mayModerate(manager, low, kick, true)).toBe(true)
+      expect(mayModerate(manager, { ...low, bits: manager.bits }, kick, true)).toBe(false)
       expect(mayAssign(manager, mid, kick, true, undefined, 0)).toBe(true)
-      expect(mayAssign(manager, mid, kick, true, undefined, 0, false)).toBe(false)
-      expect(mayAssign(manager, mid, kick, true, undefined, 0, true)).toBe(true)
+      expect(mayAssign(manager, mid, kick, true, plain, 0)).toBe(true)
+      expect(mayAssign(manager, manager.rank, kick, true, plain, 0)).toBe(false)
+      expect(mayAssign(manager, mid, bit('ManageChannels'), true, plain, 0)).toBe(false)
+      expect(mayAssign(manager, mid, kick, false, plain, 0)).toBe(false)
+      expect(mayAssign(manager, mid, kick, true, { ...low, bits: manager.bits }, 0)).toBe(true)
+      expect(mayAssign(manager, mid, kick, true, { ...low, bits: manager.bits }, 0, true)).toBe(
+        false
+      )
+      expect(mayAssign({ ...manager, bits: bit('ManageRoles') }, mid, 0, true, plain, 0)).toBe(
+        false
+      )
+      expect(mayUnassign(low, manager.rank, undefined)).toBe(true)
+      expect(mayUnassign(manager, mid, low)).toBe(true)
+      expect(mayUnassign(manager, manager.rank, low)).toBe(false)
+      expect(mayUnassign(low, mid, manager)).toBe(false)
       expect(checkOverwriteEdit(view, false, undefined, { allow: view, deny: 0 }, true)).toBe(null)
       expect(checkOverwriteEdit(view, false, undefined, { allow: send, deny: 0 }, true)).toBe(
         'grants'

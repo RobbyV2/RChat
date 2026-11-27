@@ -304,7 +304,8 @@ pub fn perms_may_moderate(
     )
 }
 
-/// `held_above` is 0 without the order guard, 1 when its test fails and 2 when it passes.
+/// The role is a rank of its own. `held_above` is 0 without the order guard, 1 when its test
+/// fails and 2 when it passes.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn perms_manages_role(
@@ -314,9 +315,11 @@ pub fn perms_manages_role(
     a_tie_str: Option<String>,
     a_mask: f64,
     a_bits: f64,
+    role_tier: u8,
     role_pos: f64,
     role_tie_int: f64,
     role_tie_str: Option<String>,
+    role_mask: f64,
     held_above: u8,
 ) -> bool {
     hier::manages_role(
@@ -324,13 +327,13 @@ pub fn perms_manages_role(
             rank: rank(a_tier, a_pos, a_tie_int, &a_tie_str, a_mask),
             bits: mask(a_bits),
         },
-        &rank(2, role_pos, role_tie_int, &role_tie_str, 0.0),
+        &rank(role_tier, role_pos, role_tie_int, &role_tie_str, role_mask),
         held(held_above),
     )
 }
 
-/// The role ranks as a role at its position and tie (the @everyone role is position -1 with an
-/// empty tie). `held_above` is as for `perms_manages_role`.
+/// The role is a rank of its own (the @everyone role ranks as a member without roles).
+/// `guard` is the order guard.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn perms_may_assign(
@@ -340,10 +343,12 @@ pub fn perms_may_assign(
     a_tie_str: Option<String>,
     a_mask: f64,
     a_bits: f64,
+    role_tier: u8,
     role_pos: f64,
     role_tie_int: f64,
     role_tie_str: Option<String>,
-    held_above: u8,
+    role_mask: f64,
+    guard: bool,
     role_bits: f64,
     allows_ok: bool,
     has_target: bool,
@@ -352,6 +357,7 @@ pub fn perms_may_assign(
     t_tie_int: f64,
     t_tie_str: Option<String>,
     t_mask: f64,
+    t_bits: f64,
     rules: i32,
 ) -> bool {
     let Some(r) = ruleset(rules) else {
@@ -359,19 +365,58 @@ pub fn perms_may_assign(
     };
     let target = Actor {
         rank: rank(t_tier, t_pos, t_tie_int, &t_tie_str, t_mask),
-        bits: 0,
+        bits: mask(t_bits),
     };
     hier::may_assign(
         &Actor {
             rank: rank(a_tier, a_pos, a_tie_int, &a_tie_str, a_mask),
             bits: mask(a_bits),
         },
-        &rank(2, role_pos, role_tie_int, &role_tie_str, 0.0),
-        held(held_above),
+        &rank(role_tier, role_pos, role_tie_int, &role_tie_str, role_mask),
+        guard,
         mask(role_bits),
         allows_ok,
         has_target.then_some(&target),
         r,
+    )
+}
+
+/// As `perms_may_assign`, for taking the role away.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn perms_may_unassign(
+    a_tier: u8,
+    a_pos: f64,
+    a_tie_int: f64,
+    a_tie_str: Option<String>,
+    a_mask: f64,
+    a_bits: f64,
+    role_tier: u8,
+    role_pos: f64,
+    role_tie_int: f64,
+    role_tie_str: Option<String>,
+    role_mask: f64,
+    guard: bool,
+    has_target: bool,
+    t_tier: u8,
+    t_pos: f64,
+    t_tie_int: f64,
+    t_tie_str: Option<String>,
+    t_mask: f64,
+    t_bits: f64,
+) -> bool {
+    let target = Actor {
+        rank: rank(t_tier, t_pos, t_tie_int, &t_tie_str, t_mask),
+        bits: mask(t_bits),
+    };
+    hier::may_unassign(
+        &Actor {
+            rank: rank(a_tier, a_pos, a_tie_int, &a_tie_str, a_mask),
+            bits: mask(a_bits),
+        },
+        &rank(role_tier, role_pos, role_tie_int, &role_tie_str, role_mask),
+        guard,
+        has_target.then_some(&target),
     )
 }
 

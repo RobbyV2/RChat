@@ -7,7 +7,9 @@ import {
   maskAnd,
   maskNot,
   maskOr,
+  type Rank,
 } from './perms'
+import { outranks, roleRank } from './hierarchy'
 import {
   ALL_PERMS,
   ChannelPermBit,
@@ -159,11 +161,25 @@ export const memberPerms = (
 
 const without = (bits: number, held: number) => maskAnd(bits, maskNot(held))
 
-export const canModerate = (perms: number, siteAdmin: boolean, target: number) =>
-  siteAdmin || (without(target, perms) === 0 && target !== perms)
+// Your rank and theirs on a server whose role order decides who may moderate whom.
+export interface Order {
+  mine: Rank
+  theirs: Rank
+}
+
+// Whether you may act on a member: you rank above them (`order`), or on a server whose role
+// order is unconfirmed their permissions are a strict subset of yours.
+export const canModerate = (perms: number, siteAdmin: boolean, target: number, order?: Order) =>
+  siteAdmin ||
+  (order ? outranks(order.mine, order.theirs) : without(target, perms) === 0 && target !== perms)
 
 export const canGrant = (perms: number, siteAdmin: boolean, granted: number) =>
   siteAdmin || without(maskAnd(granted, ALL_PERMS), perms) === 0
+
+// Whether you may set a role's permissions from `current` to `next`: once the role order is
+// confirmed only the permissions it gains must be yours, before that all of them.
+export const canSetRoleBits = (perms: number, current: number, next: number, confirmed: boolean) =>
+  canGrant(perms, false, confirmed ? without(next, current) : next)
 
 export const adminMask = (stored: number) => (stored === 0 ? ALL_PERMS : maskAnd(stored, ALL_PERMS))
 
@@ -191,20 +207,34 @@ export const canTransferTo = (
 export const canSetAdminPerms = (perms: number, siteAdmin: boolean, stored: number, next: number) =>
   (adminMask(next) & ~adminMask(stored)) === 0 || canGrant(perms, siteAdmin, adminMask(next))
 
+// How you and a role's holder rank: `below` says the role ranks below you, `order` is as for
+// `canModerate`.
+export interface RoleStanding {
+  below: boolean
+  order?: Order
+}
+
+const NO_STANDING: RoleStanding = { below: true }
+
 const canAssignRole = (
   perms: number,
   siteAdmin: boolean,
   rolePerms: number,
-  channelLocked = false
-) => canGrant(perms, siteAdmin, rolePerms) && (siteAdmin || !channelLocked)
+  channelLocked: boolean,
+  standing: RoleStanding
+) => siteAdmin || (canGrant(perms, false, rolePerms) && standing.below && !channelLocked)
 
 const canUnassignRole = (
   perms: number,
   siteAdmin: boolean,
   self: boolean,
   targetPerms: number,
-  channelLocked = false
-) => (self || canModerate(perms, siteAdmin, targetPerms)) && (siteAdmin || !channelLocked)
+  channelLocked: boolean,
+  standing: RoleStanding
+) =>
+  siteAdmin ||
+  ((self || (standing.below && canModerate(perms, false, targetPerms, standing.order))) &&
+    !channelLocked)
 
 export const canChangeRole = (
   perms: number,
@@ -213,11 +243,12 @@ export const canChangeRole = (
   held: boolean,
   self: boolean,
   targetPerms: number,
-  channelLocked = false
+  channelLocked = false,
+  standing: RoleStanding = NO_STANDING
 ) =>
   held
-    ? canUnassignRole(perms, siteAdmin, self, targetPerms, channelLocked)
-    : canAssignRole(perms, siteAdmin, rolePerms, channelLocked)
+    ? canUnassignRole(perms, siteAdmin, self, targetPerms, channelLocked, standing)
+    : canAssignRole(perms, siteAdmin, rolePerms, channelLocked, standing)
 
 const NO_ROLE_LIMITS: RoleLimits = {
   held_above: [],
@@ -225,27 +256,56 @@ const NO_ROLE_LIMITS: RoleLimits = {
   channel_denies: [],
 }
 
+export const ROLE_NOT_BELOW = 'Only someone with a higher role can change this role.'
+
+// Why you can't change a role, or null. `rank` is yours when the server orders its roles;
+// `confirmed` says that order alone decides who manages a role.
 export const roleEditBlock = (
   perms: number,
   siteAdmin: boolean,
-  role: Pick<Role, 'id' | 'perms'>,
-  limits: RoleLimits = NO_ROLE_LIMITS
+  role: Pick<Role, 'id' | 'perms' | 'position'>,
+  limits: RoleLimits = NO_ROLE_LIMITS,
+  rank?: Rank,
+  confirmed = false
 ) => {
   if (siteAdmin) return null
-  if (!canGrant(perms, false, role.perms))
+  if (rank && !outranks(rank, roleRank(role))) return ROLE_NOT_BELOW
+  if (!confirmed && !canGrant(perms, false, role.perms))
     return "This role has permissions you don't have, so you can't change it."
   if (limits.held_above.includes(role.id))
-    return "Someone you can't moderate has this role, so you can't change it."
+    return confirmed
+      ? ROLE_NOT_BELOW
+      : "Someone you can't moderate has this role, so you can't change it."
   return null
 }
+
+// The ids of the roles you may move: with Manage roles, those you may change. No `perms`: site
+// staff, who move every role.
+export const movableRoles = (
+  roles: Pick<Role, 'id' | 'perms' | 'position'>[],
+  perms: number | undefined,
+  limits?: RoleLimits,
+  rank?: Rank,
+  confirmed = false
+) =>
+  roles
+    .filter(
+      r =>
+        perms === undefined ||
+        (hasBit(perms, Perm.ManageRoles) &&
+          roleEditBlock(perms, false, r, limits, rank, confirmed) === null)
+    )
+    .map(r => r.id)
 
 export const roleDeleteBlock = (
   perms: number,
   siteAdmin: boolean,
-  role: Pick<Role, 'id' | 'perms'>,
-  limits: RoleLimits = NO_ROLE_LIMITS
+  role: Pick<Role, 'id' | 'perms' | 'position'>,
+  limits: RoleLimits = NO_ROLE_LIMITS,
+  rank?: Rank,
+  confirmed = false
 ) =>
-  roleEditBlock(perms, siteAdmin, role, limits) ??
+  roleEditBlock(perms, siteAdmin, role, limits, rank, confirmed) ??
   (!siteAdmin && limits.channel_denies.includes(role.id)
     ? 'This role limits access to a channel. Deleting it would widen that access, so it needs Manage channels.'
     : null)

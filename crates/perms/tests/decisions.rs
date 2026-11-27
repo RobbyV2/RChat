@@ -5,11 +5,12 @@ use rchat_perms::eval::{
     Channel, DEFAULT_EVERYONE, Mode, Ow, Who, channel_mask, derived_row, server_bits, visitor_mask,
 };
 use rchat_perms::hier::{
-    Actor, Rank, Tie, Tier, at_least, manages_role, may_assign, may_moderate, outranks,
+    Actor, Rank, Tie, Tier, at_least, manages_role, may_assign, may_moderate, may_unassign,
+    outranks,
 };
 use rchat_perms::masks::{
-    ALL, BASE, HISTORY, MANAGE_CHANNELS, MANAGE_ROLES, MANAGER_PASS, MGMT, SEND, SEND_GROUP,
-    TIMED_OUT_KEEP, VIEW,
+    ALL, ASSIGN_ROLES, BASE, HISTORY, MANAGE_CHANNELS, MANAGE_ROLES, MANAGER_PASS, MGMT, SEND,
+    SEND_GROUP, TIMED_OUT_KEEP, VIEW,
 };
 use rchat_perms::order::{moved, reorder};
 use rchat_perms::registry::value;
@@ -224,91 +225,120 @@ fn moderation_needs_the_bit_and_the_rank_or_a_strict_superset_under_the_guard() 
 }
 
 #[test]
-fn role_management_and_assignment() {
+fn role_management_needs_manage_roles_and_a_rank_above_the_role() {
+    let actor = |rank, bits| Actor { rank, bits };
+    let (hi, mid) = (role(3, Tie::Int(0)), role(2, Tie::Int(0)));
+    let manager = actor(hi, MANAGE_ROLES | 4);
+    assert!(manages_role(&manager, &mid, None));
+    assert!(!manages_role(&manager, &hi, None));
+    assert!(!manages_role(&manager, &mid, Some(false)));
+    assert!(manages_role(&manager, &mid, Some(true)));
+    assert!(!manages_role(&actor(hi, ASSIGN_ROLES | 4), &mid, None));
+    let owner = Rank::of(Tier::Owner);
+    assert!(manages_role(&actor(owner, ALL), &hi, Some(false)));
+    assert!(!manages_role(&actor(owner, 0), &hi, None));
+    assert!(
+        !manages_role(&actor(owner, ALL), &owner, None),
+        "an owner does not outrank a role ranked as an owner"
+    );
+    assert!(manages_role(
+        &actor(Rank::of(Tier::Staff), 0),
+        &owner,
+        Some(false)
+    ));
+}
+
+#[test]
+fn assignment_needs_assign_roles_the_rank_and_under_a_grant_check_the_bits() {
     let actor = |rank, bits| Actor { rank, bits };
     let (hi, mid, lo) = (
         role(3, Tie::Int(0)),
         role(2, Tie::Int(0)),
         role(1, Tie::Int(0)),
     );
-    let manager = actor(hi, MANAGE_ROLES | 4);
-    assert!(manages_role(&manager, &mid, None));
-    assert!(!manages_role(&manager, &hi, None));
-    assert!(!manages_role(&manager, &mid, Some(false)));
-    assert!(!manages_role(&actor(hi, 4), &mid, None));
-    assert!(manages_role(
-        &actor(Rank::of(Tier::Owner), 0),
-        &hi,
-        Some(false)
-    ));
+    let giver = actor(hi, ASSIGN_ROLES | 4);
     let target = actor(lo, 0);
-    assert!(may_assign(
-        &manager,
+    let gives = |a: &Actor, role: &Rank, bits, allows, t: Option<&Actor>, r| {
+        may_assign(a, role, false, bits, allows, t, r)
+    };
+    assert!(gives(&giver, &mid, 4, true, Some(&target), &HOSTED));
+    assert!(gives(&giver, &mid, 4, true, None, &HOSTED));
+    assert!(!gives(&giver, &hi, 4, true, None, &HOSTED));
+    assert!(!gives(
+        &actor(hi, MANAGE_ROLES | 4),
         &mid,
-        None,
         4,
         true,
-        Some(&target),
+        None,
         &HOSTED
     ));
-    assert!(may_assign(&manager, &mid, None, 4, true, None, &HOSTED));
-    assert!(!may_assign(
-        &manager,
-        &mid,
-        None,
-        1,
-        true,
-        Some(&target),
+    assert!(!gives(&giver, &mid, 1, true, Some(&target), &HOSTED));
+    assert!(!gives(&giver, &mid, 4, false, Some(&target), &P2P_V5));
+    assert!(gives(&giver, &mid, 1, false, Some(&target), &P2P_V4));
+    assert!(!gives(&giver, &mid, 4, true, Some(&actor(hi, 0)), &HOSTED));
+    let owner = actor(Rank::of(Tier::Owner), ALL);
+    assert!(gives(&owner, &mid, ALL, false, Some(&target), &HOSTED));
+    assert!(gives(
+        &actor(Rank::of(Tier::Staff), 0),
+        &hi,
+        ALL,
+        false,
+        Some(&owner),
         &HOSTED
     ));
-    assert!(!may_assign(
-        &manager,
-        &mid,
-        None,
-        4,
-        false,
-        Some(&target),
-        &P2P_V5
-    ));
+    let wide = actor(lo, ASSIGN_ROLES | 4 | 1);
+    let narrow = actor(hi, 4);
+    assert!(
+        !may_assign(
+            &giver,
+            &mid,
+            true,
+            4,
+            true,
+            Some(&actor(lo, ASSIGN_ROLES | 4)),
+            &HOSTED
+        ),
+        "under the order guard the target must hold strictly less"
+    );
     assert!(may_assign(
-        &manager,
+        &giver,
         &mid,
-        None,
-        1,
-        false,
-        Some(&target),
-        &P2P_V4
-    ));
-    assert!(!may_assign(
-        &manager,
-        &mid,
-        None,
+        true,
         4,
         true,
-        Some(&actor(hi, 0)),
+        Some(&target),
         &HOSTED
     ));
     assert!(
-        !may_assign(&manager, &mid, Some(false), 4, true, None, &HOSTED),
-        "the order guard applies to assignment"
+        !may_assign(&wide, &mid, true, 4, true, Some(&narrow), &HOSTED),
+        "the guard does not replace the rank above the role"
     );
-    assert!(may_assign(
-        &manager,
+}
+
+#[test]
+fn taking_a_role_needs_assign_roles_and_the_ranks_unless_it_is_your_own() {
+    let actor = |rank, bits| Actor { rank, bits };
+    let (hi, mid, lo) = (
+        role(3, Tie::Int(0)),
+        role(2, Tie::Int(0)),
+        role(1, Tie::Int(0)),
+    );
+    let giver = actor(hi, ASSIGN_ROLES);
+    assert!(may_unassign(&actor(lo, 0), &hi, false, None));
+    assert!(may_unassign(&giver, &mid, false, Some(&actor(lo, 0))));
+    assert!(!may_unassign(&giver, &hi, false, Some(&actor(lo, 0))));
+    assert!(!may_unassign(&giver, &mid, false, Some(&actor(hi, 0))));
+    assert!(!may_unassign(
+        &actor(hi, MANAGE_ROLES),
         &mid,
-        Some(true),
-        4,
-        true,
-        None,
-        &HOSTED
-    ));
-    assert!(may_assign(
-        &actor(Rank::of(Tier::Owner), 0),
-        &mid,
-        Some(false),
-        ALL,
         false,
-        Some(&target),
-        &HOSTED
+        Some(&actor(lo, 0))
+    ));
+    assert!(!may_unassign(
+        &giver,
+        &mid,
+        true,
+        Some(&actor(lo, ASSIGN_ROLES))
     ));
 }
 

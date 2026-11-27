@@ -541,6 +541,9 @@ pub struct Role {
     /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
     /// with the Mention everyone permission can.
     pub mentionable: bool,
+    /// Place in the server's role order: a higher position ranks higher, and between two roles
+    /// at one position the one with the lower id. A member ranks by the highest role they hold.
+    pub position: i64,
 }
 
 /// Roles the caller can't edit, delete or assign because of who holds them or of the channel
@@ -548,11 +551,14 @@ pub struct Role {
 /// Assign roles.
 #[derive(Clone, Default, Serialize, ToSchema)]
 pub struct RoleLimits {
-    /// Roles held by another member whose server permissions are not a strict subset of yours.
-    /// You can't edit or delete them.
+    /// Roles you can't edit, delete, give or take away because they do not rank below your
+    /// highest role. While the role order is unconfirmed (`ServerDetail.roles_order_confirmed`),
+    /// also the roles held by another member whose server permissions are not a strict subset
+    /// of yours: you can't edit or delete those.
     pub held_above: Vec<i64>,
     /// Roles whose channel permission rules allow something you don't hold in that channel. You
-    /// can't assign them. Always empty when you have Manage channels.
+    /// can't assign them. With Manage channels only the moderation permissions of a channel
+    /// (Manage messages, Mention everyone, Pin messages) can be missing.
     pub channel_grants: Vec<i64>,
     /// Roles with a channel permission rule that denies something the channel gives everyone who
     /// views it. Deleting one or taking it away from anyone, yourself included, would widen
@@ -709,8 +715,19 @@ pub struct ServerDetail {
     /// or add reactions (their own reactions can still be removed). Empty for non-members, who
     /// cannot send anywhere.
     pub read_only: Vec<i64>,
-    /// Every role of the server, oldest first.
+    /// Every role of the server, the highest in the role order first.
     pub roles: Vec<Role>,
+    /// Version of the role order, for `PUT /api/v1/servers/{name}/roles/order` and
+    /// `POST /api/v1/servers/{name}/roles/order/confirm`.
+    pub roles_version: i64,
+    /// Whether the role order decides who may moderate whom: you can kick, ban, time out or
+    /// change the roles of a member only when you rank above them, and manage a role only when
+    /// it ranks below your highest role. While `false`, moderating a member instead needs their
+    /// server permissions to be a strict subset of yours, and editing or deleting a role also
+    /// needs its permissions within yours and every other holder to be someone you could
+    /// moderate. Anyone with Manage roles turns it on with
+    /// `POST /api/v1/servers/{name}/roles/order/confirm`.
+    pub roles_order_confirmed: bool,
     /// The permission bits every member holds (the bits of
     /// `PATCH /api/v1/servers/{name}/everyone`). Roles add to them.
     pub everyone_perms: i64,
@@ -2497,6 +2514,11 @@ fn api_routes(
         .route(
             "/servers/{name}/everyone",
             patch(servers::set_everyone_perms),
+        )
+        .route("/servers/{name}/roles/order", put(servers::reorder_roles))
+        .route(
+            "/servers/{name}/roles/order/confirm",
+            post(servers::confirm_role_order),
         )
         .route(
             "/servers/{name}/roles/{id}",

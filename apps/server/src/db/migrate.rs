@@ -124,6 +124,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "channel_perms",
         "mode TEXT NOT NULL DEFAULT 'override' CHECK(mode IN ('override','merge'))",
     ),
+    ("roles", "position {INT} NOT NULL DEFAULT 0"),
+    ("servers", "roles_version {INT} NOT NULL DEFAULT 0"),
+    ("servers", "roles_order_confirmed {INT} NOT NULL DEFAULT 0"),
     ("tokens", "sso_sid TEXT"),
     ("servers", "upload_expiry {INT}"),
     ("media", "ttl {INT}"),
@@ -278,14 +281,20 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 53: the indexes of thread replies by channel and by DM (`idx_messages_channel_threads`,
 /// `idx_messages_dm_threads`), for the thread lists.
 /// 54: the Pin messages and Bypass slow mode permission bits.
-pub const SCHEMA_VERSION: i64 = 54;
+/// 55: the rank order of a server's roles.
+pub const SCHEMA_VERSION: i64 = 55;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
+/// The schema version whose init gives Pin messages and Bypass slow mode to their holders.
+pub(super) const SPLIT_BITS_VERSION: i64 = 54;
+/// The schema version whose init ranks the roles of every server.
+pub(super) const ROLE_ORDER_VERSION: i64 = 55;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 19] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 20] {
     [
+        "CREATE INDEX IF NOT EXISTS idx_roles_position ON roles(server, position)",
         "CREATE INDEX IF NOT EXISTS idx_tokens_sso ON tokens(sso_provider, sso_sid) WHERE sso_sid IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key_alt ON users(username_key_alt)",
@@ -691,12 +700,15 @@ pub(super) async fn init_schema(
     if version < MANAGE_PROFILES_SINCE {
         grant_manage_profiles(conn).await?;
     }
-    if version < 54 {
+    if version < SPLIT_BITS_VERSION {
         grant_split_bits(conn).await?;
+    }
+    if version < ROLE_ORDER_VERSION {
+        order_roles(conn).await?;
     }
     if stored_setting(conn, BUILTIN_STATE).await?.is_none() {
         let t = now();
-        sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
+        sqlx::query("INSERT INTO servers(name, display_name, creator, created_at, roles_order_confirmed) VALUES('rchat', 'RChat', NULL, $1, 1) ON CONFLICT(name) DO NOTHING")
             .bind(t)
             .execute(&mut *conn)
             .await?;
@@ -724,6 +736,60 @@ pub(super) async fn init_schema(
     }
     store_setting(conn, "schema_version", &SCHEMA_VERSION.to_string()).await?;
     Ok(started)
+}
+
+/// The audit action of the entry `order_roles` leaves in each server it orders.
+pub const ROLE_ORDER_INIT: &str = "role.order_init";
+
+/// The rank order of roles that have none: more permissions rank higher, so a role whose
+/// permissions include another's ranks above it, and among equal permissions the older role
+/// ranks higher. Positions run from 1 at the bottom.
+pub fn initial_order(mut roles: Vec<(i64, i64)>) -> Vec<i64> {
+    roles.sort_by_key(|(id, perms)| (perms.count_ones(), *perms, std::cmp::Reverse(*id)));
+    roles.into_iter().map(|(id, _)| id).collect()
+}
+
+/// Ranks the roles of every server whose roles have no positions yet, and notes it in the
+/// server's audit log.
+async fn order_roles(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    let rows = sqlx::query("SELECT r.server, r.id, r.perms FROM roles r WHERE NOT EXISTS(SELECT 1 FROM roles o WHERE o.server = r.server AND o.position <> 0) ORDER BY r.server, r.id")
+        .fetch_all(&mut *conn)
+        .await?;
+    let mut servers: Vec<(String, Vec<(i64, i64)>)> = Vec::new();
+    for r in &rows {
+        let server: String = r.try_get(0)?;
+        let role = (r.try_get(1)?, r.try_get(2)?);
+        match servers.last_mut() {
+            Some((name, roles)) if *name == server => roles.push(role),
+            Some(_) | None => servers.push((server, vec![role])),
+        }
+    }
+    let n = servers.len();
+    for (server, roles) in servers {
+        let order = initial_order(roles);
+        for (i, id) in order.iter().enumerate() {
+            sqlx::query("UPDATE roles SET position = $1 WHERE id = $2")
+                .bind(i as i64 + 1)
+                .bind(id)
+                .execute(&mut *conn)
+                .await?;
+        }
+        sqlx::query("UPDATE servers SET roles_version = roles_version + 1 WHERE name = $1")
+            .bind(&server)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("INSERT INTO audit_log(server, actor, staff, action, details, created_at) VALUES($1, NULL, 1, $2, $3, $4)")
+            .bind(&server)
+            .bind(ROLE_ORDER_INIT)
+            .bind(serde_json::json!({ "ranked": order.len() }).to_string())
+            .bind(now())
+            .execute(&mut *conn)
+            .await?;
+    }
+    if n > 0 {
+        tracing::info!("ranked the roles of {n} servers");
+    }
+    Ok(())
 }
 
 /// Gives Pin messages to every admin permission set and role that includes Manage messages, and

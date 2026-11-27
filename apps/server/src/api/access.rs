@@ -26,6 +26,7 @@ pub mod overwrite_sql;
 #[cfg(test)]
 mod overwrite_tests;
 pub mod perms;
+pub mod ranks;
 mod rules;
 pub mod subjects;
 #[cfg(test)]
@@ -33,9 +34,10 @@ mod subjects_walk;
 
 use overwrite_sql::{denied_to_some_sql, everyone_stage_sql, overwrite_sql, private_sql};
 use perms::{
-    ChannelAccess, Perm, PermRow, Restrict, Standing, VISITOR_CAPS, can_grant, can_moderate,
-    channel_mask, everyone_mask, held, perm_columns, perm_row,
+    ChannelAccess, Perm, PermRow, Restrict, Standing, VISITOR_CAPS, can_grant, channel_mask,
+    everyone_mask, held, perm_columns, perm_row,
 };
+use rchat_perms::hier::{self, Rank, Tier};
 use rchat_perms::{Mask, masks};
 use rules::{
     channel_access, channel_access_of, channel_viewable, channel_viewers, effective_perms,
@@ -1257,10 +1259,72 @@ impl ServerAccess {
         }
     }
 
+    /// Whether the order of this server's roles is unconfirmed (see `ranks::guard_in`).
+    pub(crate) async fn order_guard(&self, db: &Db) -> Result<bool, ApiError> {
+        Ok(ranks::guard_in(db, self.name()).await?)
+    }
+
+    /// The viewer's rank: staff for a site admin, else their own as a member.
+    pub(crate) async fn rank(&self, db: &Db) -> Result<Rank<'static>, ApiError> {
+        match &self.user {
+            Some(user) if user.is_site_admin => Ok(Rank::of(Tier::Staff)),
+            Some(user) => self.member_rank(db, &user.username).await,
+            None => Ok(Rank::of(Tier::Outside)),
+        }
+    }
+
+    /// The rank of `username` as a member of this server.
+    pub(crate) async fn member_rank(
+        &self,
+        db: &Db,
+        username: &str,
+    ) -> Result<Rank<'static>, ApiError> {
+        let mut conn = db.acquire().await?;
+        Ok(ranks::rank_in(&mut conn, self.name(), username).await?)
+    }
+
+    /// The viewer as the hierarchy reads them: their rank and the permissions they act with.
+    pub(crate) async fn actor(&self, db: &Db) -> Result<hier::Actor<'static>, ApiError> {
+        Ok(hier::Actor {
+            rank: self.rank(db).await?,
+            bits: self.perms(db).await? as Mask,
+        })
+    }
+
+    /// `username` as the hierarchy reads them.
+    pub(crate) async fn member_actor(
+        &self,
+        db: &Db,
+        username: &str,
+    ) -> Result<hier::Actor<'static>, ApiError> {
+        Ok(hier::Actor {
+            rank: self.member_rank(db, username).await?,
+            bits: self.member_perms(db, username).await? as Mask,
+        })
+    }
+
+    /// Whether the viewer ranks above `username`, which is what acting on them needs once the
+    /// role order is confirmed. Until then their permissions must be a strict subset of the
+    /// viewer's.
+    pub(crate) async fn moderates(&self, db: &Db, username: &str) -> Result<bool, ApiError> {
+        Ok(hier::may_moderate(
+            &self.actor(db).await?,
+            &self.member_actor(db, username).await?,
+            0,
+            self.order_guard(db).await?,
+        ))
+    }
+
+    /// Whether the viewer ranks above `username`, whatever the order guard says.
+    pub(crate) async fn outranks(&self, db: &Db, username: &str) -> Result<bool, ApiError> {
+        Ok(hier::outranks(
+            &self.rank(db).await?,
+            &self.member_rank(db, username).await?,
+        ))
+    }
+
     pub async fn require_moderate(&self, db: &Db, target: &str) -> Result<(), ApiError> {
-        let mine = self.perms(db).await?;
-        let theirs = self.member_perms(db, target).await?;
-        match can_moderate(mine, self.site_admin(), theirs) {
+        match self.moderates(db, target).await? {
             true => Ok(()),
             false => Err(forbidden("You can't moderate this member")),
         }
@@ -2252,11 +2316,16 @@ impl ResolvedMessage {
         }
     }
 
+    /// Your own message, or one in a channel where you hold Manage messages whose author you
+    /// rank above.
     pub async fn require_can_delete(&self, db: &Db) -> Result<(), ApiError> {
         let own = self.own();
         let allowed = own
             || match &self.channel {
-                Some(channel) => channel.moderates_messages(db).await?,
+                Some(channel) => {
+                    channel.moderates_messages(db).await?
+                        && channel.server.outranks(db, &self.scope.author).await?
+                }
                 None => false,
             };
         match allowed {

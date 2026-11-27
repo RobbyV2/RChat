@@ -1,5 +1,5 @@
 use crate::Mask;
-use crate::masks::{MANAGE_ROLES, MGMT};
+use crate::masks::{ASSIGN_ROLES, MANAGE_ROLES, MGMT};
 use crate::rules::Ruleset;
 use std::cmp::Ordering;
 
@@ -107,30 +107,43 @@ pub fn may_moderate(a: &Actor, t: &Actor, need: Mask, guard: bool) -> bool {
         }
 }
 
-/// Whether `a` manages a role. `held_above_ok` is the extra test of the order guard.
+/// Whether `a` manages a role: staff always, anyone else with Manage roles and a rank above the
+/// role. `held_above_ok` is the extra test of the order guard, which owners skip.
 pub fn manages_role(a: &Actor, role: &Rank, held_above_ok: Option<bool>) -> bool {
+    let ranked = a.bits & MANAGE_ROLES != 0 && outranks(&a.rank, role);
     match a.rank.tier {
-        Tier::Staff | Tier::Owner => true,
+        Tier::Staff => true,
+        Tier::Owner => ranked,
         Tier::Outside | Tier::Plain | Tier::Role | Tier::Admin => {
-            a.bits & MANAGE_ROLES != 0 && outranks(&a.rank, role) && held_above_ok.unwrap_or(true)
+            ranked && held_above_ok.unwrap_or(true)
         }
     }
 }
 
-/// Whether `a` may give a role to `target` (`None` is `a` itself). `held_above_ok` is as for
-/// `manages_role`; `allows_ok` says the role's overwrite allows are within the channel masks of
-/// `a`.
+fn hands_out(a: &Actor, role: &Rank) -> bool {
+    a.rank.tier == Tier::Staff || (a.bits & ASSIGN_ROLES != 0 && outranks(&a.rank, role))
+}
+
+/// Whether `a` may give a role to `target` (`None` is `a` itself): Assign roles and a rank above
+/// the role, a target `a` may moderate, and under rules with a grant check the role's bits
+/// within those of `a`. `allows_ok` says the role's overwrite allows are within the channel
+/// masks of `a`.
 pub fn may_assign(
     a: &Actor,
     role: &Rank,
-    held_above_ok: Option<bool>,
+    guard: bool,
     role_bits: Mask,
     allows_ok: bool,
     target: Option<&Actor>,
     r: &Ruleset,
 ) -> bool {
     let exempt = matches!(a.rank.tier, Tier::Staff | Tier::Owner);
-    manages_role(a, role, held_above_ok)
-        && target.is_none_or(|t| outranks(&a.rank, &t.rank))
+    hands_out(a, role)
+        && target.is_none_or(|t| may_moderate(a, t, 0, guard))
         && (!r.grant_check || exempt || (role_bits & r.known & !a.bits == 0 && allows_ok))
+}
+
+/// Whether `a` may take a role from `target` (`None` is `a` itself, who may always drop it).
+pub fn may_unassign(a: &Actor, role: &Rank, guard: bool, target: Option<&Actor>) -> bool {
+    target.is_none_or(|t| hands_out(a, role) && may_moderate(a, t, 0, guard))
 }

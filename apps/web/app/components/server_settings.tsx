@@ -3,7 +3,15 @@
 import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type SyntheticEvent,
+} from 'react'
 import {
   Ban,
   Hash,
@@ -26,10 +34,12 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { Page } from '../lib/lists'
-import { openChoiceMenu } from '../lib/actions/menu'
+import { registerAppActions } from '../lib/actions'
+import { openActionMenu, openChoiceMenu } from '../lib/actions/menu'
 import {
   changeableRoles,
   errorText,
+  myRank,
   serverAdminPerms,
   useStore,
   type ConfirmRequest,
@@ -41,12 +51,14 @@ import {
   canGrant,
   canPromote,
   canSetAdminPerms,
+  canSetRoleBits,
   REVOKE_RAISES,
   canRevoke,
   passwordDone,
   passwordPrompt,
   EVERYONE_SUBJECT,
   ROLE_DENY_HINT,
+  movableRoles,
   roleDeleteBlock,
   roleDenyEscapes,
   roleEditBlock,
@@ -73,6 +85,7 @@ import type {
   ServerDetail,
 } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { longPress } from './context_menu'
 import {
   ColorSwatch,
   PermChecks,
@@ -298,42 +311,76 @@ function LockedNote() {
   )
 }
 
+// Keeps a press on a field of a role row from opening the row's menu.
+const stop = (e: SyntheticEvent) => e.stopPropagation()
+const keepPress = { onPointerDown: stop, onTouchStart: stop, onContextMenu: stop }
+
 function RoleRow({
   server,
   role,
+  roles,
+  version,
   refresh,
   limit,
   limits,
 }: {
   server: string
   role: Role
+  roles: Role[]
+  version?: number
   refresh?: () => void
   limit?: number
   limits?: RoleLimits
 }) {
+  const acct = useAccount()
   const {
     lifetime: { inSession },
-  } = useAccount()
+  } = acct
   const updateRole = useStore(s => s.updateRole)
   const deleteRole = useStore(s => s.deleteRole)
   const after = () => refresh?.()
-  const locked = limit === undefined ? null : roleEditBlock(limit, false, role, limits)
-  const noDelete = limit === undefined ? null : roleDeleteBlock(limit, false, role, limits)
+  const confirmed = useStore(s => s.servers[server]?.roles_order_confirmed === true)
+  const menu = (x: number, y: number) => {
+    if (version === undefined) return
+    registerAppActions()
+    const rank = myRank(acct.store.getState(), server)
+    const movable = movableRoles(roles, limit, limits, rank, confirmed)
+    const order = roles.map(r => r.id)
+    openActionMenu(
+      x,
+      y,
+      { kind: 'role', server, role, order, movable, version, after },
+      undefined,
+      acct
+    )
+  }
+  const locked = useStore(s =>
+    limit === undefined
+      ? null
+      : roleEditBlock(limit, false, role, limits, myRank(s, server), confirmed)
+  )
+  const noDelete = useStore(s =>
+    limit === undefined
+      ? null
+      : roleDeleteBlock(limit, false, role, limits, myRank(s, server), confirmed)
+  )
   const noMention =
     !role.mentionable && limit !== undefined && !hasPerm(limit, Perm.MentionEveryone)
   return (
-    <div className="space-y-1.5 rounded-xl bg-surface-container p-2">
+    <div {...longPress(menu)} className="space-y-1.5 rounded-xl bg-surface-container p-2">
       <div className="flex items-center gap-2">
-        <ColorSwatch
-          initial={role.color}
-          locked={locked}
-          onCommit={color => void updateRole(server, role.id, { color }).then(inSession(after))}
-        />
-        <RoleNameForm
-          initial={role.name}
-          locked={locked}
-          onRename={name => void updateRole(server, role.id, { name }).then(inSession(after))}
-        />
+        <span {...keepPress} className="flex min-w-0 flex-1 items-center gap-2">
+          <ColorSwatch
+            initial={role.color}
+            locked={locked}
+            onCommit={color => void updateRole(server, role.id, { color }).then(inSession(after))}
+          />
+          <RoleNameForm
+            initial={role.name}
+            locked={locked}
+            onRename={name => void updateRole(server, role.id, { name }).then(inSession(after))}
+          />
+        </span>
         <span title={noDelete ?? `Delete ${role.name}`} className="shrink-0">
           <button
             onClick={() => void deleteRole(server, role.id).then(inSession(after))}
@@ -350,7 +397,9 @@ function RoleRow({
         items={PERM_ITEMS}
         value={role.perms}
         locked={locked}
-        allowed={limit === undefined ? undefined : v => canGrant(limit, false, v)}
+        allowed={
+          limit === undefined ? undefined : v => canSetRoleBits(limit, role.perms, v, confirmed)
+        }
         onChange={v => void updateRole(server, role.id, { perms: v }).then(inSession(after))}
       />
       <label
@@ -385,12 +434,14 @@ function RoleRow({
 export function RolesEditor({
   server,
   roles,
+  version,
   refresh,
   limit,
   limits,
 }: {
   server: string
   roles: Role[]
+  version?: number
   refresh?: () => void
   limit?: number
   limits?: RoleLimits
@@ -402,6 +453,8 @@ export function RolesEditor({
           key={r.id}
           server={server}
           role={r}
+          roles={roles}
+          version={version}
           refresh={refresh}
           limit={limit}
           limits={limits}
@@ -1582,7 +1635,13 @@ function Settings({ server, section }: { server: string; section: ServerSettings
         />
       ),
     roles: () => (
-      <RolesEditor server={server} roles={detail.roles} limit={limit} limits={detail.role_limits} />
+      <RolesEditor
+        server={server}
+        roles={detail.roles}
+        version={detail.roles_version}
+        limit={limit}
+        limits={detail.role_limits}
+      />
     ),
     channels: () => (
       <>

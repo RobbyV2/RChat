@@ -773,6 +773,7 @@ export interface RChatState {
     patch: { name?: string; color?: string; perms?: number; mentionable?: boolean }
   ) => Promise<void>
   deleteRole: (server: string, id: number) => Promise<void>
+  setRoleOrder: (server: string, order: number[], version: number) => Promise<void>
   assignRole: (server: string, id: number, username: string) => Promise<void>
   unassignRole: (server: string, id: number, username: string) => Promise<void>
   setChannelPerm: (id: number, perm: ChannelPermInput) => Promise<void>

@@ -96,6 +96,9 @@ const FIELD_LABELS: Record<string, string> = {
   upload_expiry: 'File expiry',
   profiles_mode: 'Server profiles',
   lock_until: 'Locked until',
+  roles: 'Roles moved',
+  more_roles: 'More roles moved',
+  ranked: 'Roles ranked',
 }
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
@@ -136,6 +139,8 @@ export function valueText(field: string, v: unknown): string {
         return `${str(o?.name) ?? 'Deleted user'}${n}`
       })
       .join(', ')
+  if (field === 'roles' && Array.isArray(v))
+    return v.map(r => str(obj(r)?.name) ?? 'Deleted role').join(', ')
   if (typeof v === 'boolean') {
     if (RULE_FIELDS.has(field)) return v ? 'Allowed' : 'Denied'
     return v ? 'On' : 'Off'
@@ -180,14 +185,16 @@ const FACTS = [
   'count',
   'authors',
   'more_authors',
+  'roles',
+  'more_roles',
+  'ranked',
 ]
 
 // Extra facts of an entry next to its changes, as label and value.
 export const factsOf = (entry: AuditEntry): [string, string][] =>
-  FACTS.filter(k => k in entry.details && !(k === 'more_authors' && !entry.details[k])).map(k => [
-    fieldLabel(k),
-    valueText(k, entry.details[k]),
-  ])
+  FACTS.filter(
+    k => k in entry.details && !((k === 'more_authors' || k === 'more_roles') && !entry.details[k])
+  ).map(k => [fieldLabel(k), valueText(k, entry.details[k])])
 
 // Facts whose value names people (streamer blur).
 export const isNameFact = (label: string) => label === FIELD_LABELS.authors
@@ -424,6 +431,12 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(' gave '), ...user, t(` ${roleText(entry)}`)]
     case 'role.unassign':
       return [...actor, t(` removed ${roleText(entry)} from `), ...user]
+    case 'role.reorder':
+      return [...actor, t(' changed the role order')]
+    case 'role.order_confirm':
+      return [...actor, t(' confirmed the role order')]
+    case 'role.order_init':
+      return [t('Roles were put in order by their permissions')]
     case 'channel.create':
       return [...actor, t(` created ${ch()}`)]
     case 'channel.update':

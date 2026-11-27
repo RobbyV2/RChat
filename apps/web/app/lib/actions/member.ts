@@ -27,6 +27,7 @@ import {
   profileLockedFor,
   profilesShown,
   myRolePerms,
+  orderWith,
   type ContextMenuItem,
 } from '../store'
 import type { RChatState } from '../store_types'
@@ -146,7 +147,12 @@ const seatOf = (ctx: ActionCtx): Seat | null => {
     siteAdmin,
     row,
     left: memberState(s, server, user.username) === null,
-    over: canModerate(perms, siteAdmin, memberPerms(row, s.servers[server]?.roles ?? [])),
+    over: canModerate(
+      perms,
+      siteAdmin,
+      memberPerms(row, s.servers[server]?.roles ?? []),
+      orderWith(s, server, user.username)
+    ),
   }
 }
 

@@ -11,13 +11,12 @@ use crate::api::PermMode;
 use crate::api::access::overwrite_sql::private_sql;
 use crate::api::access::perms::{
     ALL_PERMS, ChannelAccess, EVERYONE, EVERYONE_BITS, PRE_DELEGATION_PERMS, PRE_REPORT_PERMS,
-    Perm, PermRow, ROLE_BITS, Restrict, can_grant, can_moderate, channel_mask, everyone_mask,
-    perm_bits, perm_columns, perm_row, reflag, row_flags, rule_narrows, update_bits,
-    update_role_bits,
+    Perm, PermRow, ROLE_BITS, Restrict, can_grant, channel_mask, everyone_mask, perm_bits,
+    perm_columns, perm_row, reflag, row_flags, rule_narrows, update_bits, update_role_bits,
 };
 use crate::api::access::{
     BANNED, Caller, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden,
-    is_member, member_role, resolve_channel, resolve_invite, resolve_join, resolve_reading,
+    is_member, member_role, ranks, resolve_channel, resolve_invite, resolve_join, resolve_reading,
     resolve_server, seen_among,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
@@ -56,6 +55,8 @@ use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, voice_rules_changed};
 use rchat_perms::delta::{self, Refusal};
 use rchat_perms::eval::{self, Mode, Ow, Who};
+use rchat_perms::hier::{self, Actor, Rank, Tier};
+use rchat_perms::order;
 use rchat_perms::rules::HOSTED;
 use rchat_perms::{Mask, masks};
 
@@ -158,8 +159,8 @@ pub struct JoinReq {
 }
 
 /// What happens to the other members when a server password is set, changed or cleared:
-/// `keep` (default) keeps everyone; `remove` removes every other member whose server
-/// permissions are a strict subset of the caller's, as if kicked.
+/// `keep` (default) keeps everyone; `remove` removes every other member the caller could kick
+/// (see `ServerDetail.roles_order_confirmed`).
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PasswordMembers {
@@ -1045,7 +1046,7 @@ pub(crate) async fn build_member(
 
 pub(crate) async fn server_roles(db: &Db, server: &str) -> Result<Vec<Role>, ApiError> {
     let rows = sqlx::query(
-        "SELECT id, name, color, perms, mentionable FROM roles WHERE server = $1 ORDER BY id",
+        "SELECT id, name, color, perms, mentionable, position FROM roles WHERE server = $1 ORDER BY position DESC, id",
     )
     .bind(server)
     .fetch_all(db)
@@ -1058,9 +1059,23 @@ pub(crate) async fn server_roles(db: &Db, server: &str) -> Result<Vec<Role>, Api
             color: r.try_get(2)?,
             perms: r.try_get(3)?,
             mentionable: r.try_get::<i64, _>(4)? != 0,
+            position: r.try_get(5)?,
         });
     }
     Ok(roles)
+}
+
+/// The version of the role order of `server` and whether the order is confirmed.
+async fn role_order_state<'e, E>(ex: E, server: &str) -> Result<(i64, bool), ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    let row =
+        sqlx::query("SELECT roles_version, roles_order_confirmed FROM servers WHERE name = $1")
+            .bind(server)
+            .fetch_one(ex)
+            .await?;
+    Ok((row.try_get(0)?, row.try_get::<i64, _>(1)? != 0))
 }
 
 /// Text channels among `channels` where the caller, a member, may look but not send (no
@@ -1202,6 +1217,7 @@ async fn server_detail(
     let settings = crate::api::Settings::cached(db).await;
     let everyone = access.everyone(db).await?;
     let my_perms = eval::server_bits(&access.standing(db).await?.who, everyone, &HOSTED);
+    let (roles_version, roles_order_confirmed) = role_order_state(db, &name).await?;
     Ok(ServerDetail {
         name: name.clone(),
         display_name,
@@ -1222,6 +1238,8 @@ async fn server_detail(
         layout_version,
         read_only,
         roles: server_roles(db, &name).await?,
+        roles_version,
+        roles_order_confirmed,
         everyone_perms: everyone as i64,
         my_perms: my_perms as i64,
         role_limits: role_limits(db, access).await?,
@@ -2121,7 +2139,7 @@ async fn found_server(
     lock_account(&mut tx, member).await?;
     room_for_account(&mut tx, &state.limits, member).await?;
     sqlx::query(
-        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at, join_mode, listed, public_read, join_messages, leave_messages, upload_expiry, upload_expiry_by) VALUES($1, $2, $3, $4, 1, $5, $6, $7, $8, $9, $9, $10, $11)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at, join_mode, listed, public_read, join_messages, leave_messages, upload_expiry, upload_expiry_by, roles_order_confirmed) VALUES($1, $2, $3, $4, 1, $5, $6, $7, $8, $9, $9, $10, $11, 1)",
     )
     .bind(&key)
     .bind(&display)
@@ -3233,8 +3251,8 @@ pub(crate) async fn leave_server(
 /// `rchat` (a new name changes only its display name); its colors, `public_read`,
 /// `members_visible` and the guest participation opt-ins may change.
 ///
-/// When `password` is present, `members: remove` removes every other member whose server
-/// permissions are a strict subset of yours (their roles are dropped, as if kicked) and existing
+/// When `password` is present, `members: remove` removes every other member you could kick
+/// (their roles are dropped, as if kicked; see `ServerDetail.roles_order_confirmed`) and existing
 /// guest grants are revoked unless `keep_guests` is true with `members: keep`. The response
 /// carries `removed` and `kept` counts. Making the server public, or changing its lowercase
 /// name, revokes every extra password (extra password lookups are bound to the name, and invite
@@ -3863,16 +3881,41 @@ async fn purge_members(
     let mut removed = Vec::new();
     let mut kept = 0;
     let mut bypassed = own.is_some_and(|o| o & Perm::Kick as i64 == 0);
+    let guard = ranks::guard_in(&mut **tx, server).await?;
+    let mut names = Vec::with_capacity(rows.len());
     for r in &rows {
-        let username: String = r.try_get(0)?;
-        let theirs = perm_bits(
-            r.try_get::<i64, _>(1)? != 0,
-            r.try_get(2)?,
-            roles.get(&username).copied().unwrap_or(0),
-        );
-        match can_moderate(mine, actor.is_site_admin, theirs) {
+        names.push(r.try_get::<String, _>(0)?);
+    }
+    let placed = ranks::ranks_in(tx, server, &names).await?;
+    let member = ranks::rank_in(tx, server, &actor.username).await?;
+    let me = Actor {
+        rank: match actor.is_site_admin {
+            true => Rank::of(Tier::Staff),
+            false => member,
+        },
+        bits: mine as Mask,
+    };
+    let plain = own.map(|bits| Actor {
+        rank: member,
+        bits: bits as Mask,
+    });
+    for (r, username) in rows.iter().zip(names) {
+        let them = Actor {
+            rank: placed
+                .get(&username)
+                .copied()
+                .unwrap_or(Rank::of(Tier::Outside)),
+            bits: perm_bits(
+                r.try_get::<i64, _>(1)? != 0,
+                r.try_get(2)?,
+                roles.get(&username).copied().unwrap_or(0),
+            ) as Mask,
+        };
+        match hier::may_moderate(&me, &them, 0, guard) {
             true => {
-                bypassed |= own.is_some_and(|o| !can_moderate(o, false, theirs));
+                bypassed |= plain
+                    .as_ref()
+                    .is_some_and(|p| !hier::may_moderate(p, &them, 0, guard));
                 removed.push(username);
             }
             false => kept += 1,
@@ -4420,8 +4463,10 @@ pub(crate) async fn delete_channel(
 /// Kick a member
 ///
 /// Removes `username` from the server and drops their role assignments. Requires the Kick server
-/// permission, and the target's server permissions must be a strict subset of yours (so you can't
-/// kick yourself or someone with the same permissions). Kicked users may rejoin. Posts a `leave`
+/// permission, and you must rank above the target, or while the role order is unconfirmed their
+/// server permissions must be a strict subset of yours (see
+/// `ServerDetail.roles_order_confirmed`). So you can't kick yourself or someone at your own
+/// rank. Kicked users may rejoin. Posts a `leave`
 /// system message like leaving does (no reason shown). Emits `member_kicked` (with
 /// `banned: false`) to the server and the kicked user, who goes offline in the server. General
 /// rate-limit bucket.
@@ -4435,7 +4480,7 @@ pub(crate) async fn delete_channel(
         (status = 200, description = "Member removed from the server and their roles dropped", body = OkResp),
         (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Kick permission, or the member's server permissions are not a strict subset of yours", body = ApiErrorBody),
+        (status = 403, description = "Missing the Kick permission, or you do not rank above the member (`You can't moderate this member`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
@@ -4494,7 +4539,7 @@ pub(crate) async fn kick_member(
 /// only where you may delete that user's messages. `purge_skipped` and `purge_busy` count the
 /// places left alone.
 /// Banning someone already banned replaces the ban's end and reason. Requires the Kick server
-/// permission, and the target's server permissions must be a strict subset of yours. Banning a
+/// permission, and you must rank above the target as for a kick. Banning a
 /// member posts a `leave` system message like leaving does (no reason shown). Emits
 /// `member_kicked` (with `banned: true`) to the server and the user when they were a member,
 /// otherwise `server_banned` to the user. A name with no account is banned like an account that
@@ -4512,7 +4557,7 @@ pub(crate) async fn kick_member(
         (status = 200, description = "User banned", body = BanResp),
         (status = 400, description = "You can't ban yourself, `duration_secs` outside 60 to 63072000, `purge_hours` outside 0 to 168, a reason over 300 characters, or `Invalid username` (reason `invalid`, field `username`) for a name no account could have (blank, longer than 100 characters, or with `@`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Kick permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
+        (status = 403, description = "Missing the Kick permission, or you do not rank above the user (`You can't moderate this member`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "`Too many bans of people outside this server. Try again later.` with a `Retry-After` header (JSON, reason `rate`): a ban of someone who is not a member after the caller's misses for the hour (`LOOKUP_MISSES_PER_HOUR`). Or too many requests in the general bucket", body = ApiErrorBody)
@@ -5171,6 +5216,14 @@ pub(crate) async fn set_admin_perms(
     Ok(ok())
 }
 
+async fn bump_roles_version(conn: &mut AnyConnection, server: &str) -> sqlx::Result<()> {
+    sqlx::query("UPDATE servers SET roles_version = roles_version + 1 WHERE name = $1")
+        .bind(server)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Lock the authorized role version and return its other fields for the audit entry.
 async fn lock_role_version(
     conn: &mut AnyConnection,
@@ -5277,9 +5330,10 @@ async fn channel_limits(
     let Some(actor) = access.viewer() else {
         return Ok(out);
     };
-    if actor.is_site_admin || mine & Perm::ManageChannels as i64 != 0 {
+    if actor.is_site_admin {
         return Ok(out);
     }
+    let manager = mine & Perm::ManageChannels as i64 != 0;
     let server = access.name();
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT cp.channel_id, {}, c.restrict_view, c.restrict_send, c.kind FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1",
@@ -5320,7 +5374,7 @@ async fn channel_limits(
             if rule.evaluated().0.allow & !have != 0 {
                 out.grants.insert(id);
             }
-            if rule_narrows(rule, rules, everyone, *restrict) {
+            if !manager && rule_narrows(rule, rules, everyone, *restrict) {
                 out.denies.insert(id);
             }
         }
@@ -5342,13 +5396,34 @@ async fn role_limits(db: &Db, access: &ServerAccess) -> Result<RoleLimits, ApiEr
         ids
     };
     let ChannelLimits { grants, denies } = channel_limits(db, access, mine, None).await?;
+    let mut locked = match access.order_guard(db).await? {
+        true => held_above(db, access, mine, None).await?,
+        false => HashSet::new(),
+    };
+    let rank = access.rank(db).await?;
+    let rows = sqlx::query("SELECT id, position FROM roles WHERE server = $1")
+        .bind(access.name())
+        .fetch_all(db)
+        .await?;
+    for r in &rows {
+        let id: i64 = r.try_get(0)?;
+        if !hier::outranks(&rank, &ranks::role_rank(r.try_get(1)?, id)) {
+            locked.insert(id);
+        }
+    }
     Ok(RoleLimits {
-        held_above: sorted(held_above(db, access, mine, None).await?),
+        held_above: sorted(locked),
         channel_grants: sorted(grants),
         channel_denies: sorted(denies),
     })
 }
 
+const ROLE_NOT_BELOW: &str = "You can't change a role that is not below your highest role";
+const ROLE_HELD_ABOVE: &str = "You can't change a role held by a member you can't moderate";
+
+/// Refuses a caller who does not manage role `id`: it must rank below them. While the role
+/// order is unconfirmed, its permissions must also be within theirs and every other holder
+/// must be someone they could moderate.
 async fn require_role_change(
     db: &Db,
     access: &ServerAccess,
@@ -5356,41 +5431,88 @@ async fn require_role_change(
     role_perms: i64,
 ) -> Result<i64, ApiError> {
     let mine = access.perms(db).await?;
-    if !can_grant(mine, access.site_admin(), role_perms) {
-        return Err(forbidden(
-            "You can't change a role that has permissions you don't have",
-        ));
+    if access.order_guard(db).await? {
+        if !can_grant(mine, access.site_admin(), role_perms) {
+            return Err(forbidden(
+                "You can't change a role that has permissions you don't have",
+            ));
+        }
+        if !held_above(db, access, mine, Some(id)).await?.is_empty() {
+            return Err(forbidden(ROLE_HELD_ABOVE));
+        }
     }
-    if !held_above(db, access, mine, Some(id)).await?.is_empty() {
-        return Err(forbidden(
-            "You can't change a role held by a member you can't moderate",
-        ));
+    let role = ranks::role_rank_in(db, access.name(), id)
+        .await?
+        .ok_or_else(|| not_found("Role not found"))?;
+    match hier::manages_role(&access.actor(db).await?, &role, None) {
+        true => Ok(mine),
+        false => Err(forbidden(ROLE_NOT_BELOW)),
     }
-    Ok(mine)
 }
 
+/// The role edit as it stands once the role is locked: `adds` are the permissions the role is
+/// to hold and `also` what the edit needs besides. Answers whether only instance powers let it
+/// pass.
 async fn check_locked_role_edit(
     conn: &mut AnyConnection,
     access: &ServerAccess,
     id: i64,
-    needed: i64,
+    current: i64,
+    adds: i64,
+    also: i64,
 ) -> Result<bool, ApiError> {
     let (mine, own) = access.role_authority_in(conn, Perm::ManageRoles).await?;
+    let guard = ranks::guard_in(&mut *conn, access.name()).await?;
+    let needed = also
+        | match guard {
+            true => current | adds,
+            false => adds & !current,
+        };
     if !can_grant(mine, access.site_admin(), needed) {
         return Err(forbidden("You can't grant permissions you don't have"));
     }
     let member = access.as_member();
-    let held = !held_above(conn, member.as_ref().unwrap_or(access), own, Some(id))
+    let held = guard
+        && !held_above(&mut *conn, member.as_ref().unwrap_or(access), own, Some(id))
+            .await?
+            .is_empty();
+    let rank = match access.viewer() {
+        Some(user) => ranks::rank_in(conn, access.name(), &user.username).await?,
+        None => Rank::of(Tier::Outside),
+    };
+    let role = ranks::role_rank_in(&mut *conn, access.name(), id)
         .await?
-        .is_empty();
-    if held && !access.site_admin() {
-        return Err(forbidden(
-            "You can't change a role held by a member you can't moderate",
-        ));
+        .ok_or_else(|| not_found("Role not found"))?;
+    let below = hier::manages_role(
+        &Actor {
+            rank,
+            bits: own as Mask,
+        },
+        &role,
+        None,
+    );
+    match (access.site_admin(), held, below) {
+        (false, true, _) => return Err(forbidden(ROLE_HELD_ABOVE)),
+        (false, false, false) => return Err(forbidden(ROLE_NOT_BELOW)),
+        (true, _, _) | (false, false, true) => {}
     }
     Ok(access.site_admin()
         && (held
+            || !below
             || own & (needed | Perm::ManageRoles as i64) != (needed | Perm::ManageRoles as i64)))
+}
+
+const ROLE_ABOVE: &str = "You can't give or take a role that is not below your highest role";
+
+/// Refuses a caller whose rank is not above role `id`.
+async fn require_below(db: &Db, access: &ServerAccess, id: i64) -> Result<(), ApiError> {
+    let role = ranks::role_rank_in(db, access.name(), id)
+        .await?
+        .ok_or_else(|| not_found("Role not found"))?;
+    match hier::outranks(&access.rank(db).await?, &role) {
+        true => Ok(()),
+        false => Err(forbidden(ROLE_ABOVE)),
+    }
 }
 
 const MENTIONABLE_NEEDS: &str =
@@ -5413,7 +5535,9 @@ fn check_color(color: &str) -> Result<(), ApiError> {
 /// Create a role
 ///
 /// Adds a role to the server. A server can have at most 250 roles by default (`SERVER_ROLES_MAX`).
-/// The role's permissions must be a subset of yours (equal is fine). Requires the Manage roles server permission. Emits
+/// The role's permissions must be a subset of yours (equal is fine). The new role goes to the
+/// bottom of the role order (`position` 1; the others move up). Requires the Manage roles server
+/// permission. Emits
 /// `roles_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     post,
@@ -5466,8 +5590,13 @@ pub(crate) async fn create_role(
     let mut tx = state.db.begin().await?;
     crate::db::lock_server(&mut tx, &key).await?;
     let most = state.limits.server_roles_max;
+    sqlx::query("UPDATE roles SET position = position + 1 WHERE server = $1")
+        .bind(&key)
+        .execute(&mut *tx)
+        .await?;
+    bump_roles_version(&mut tx, &key).await?;
     let id: i64 = sqlx::query(
-        "INSERT INTO roles(server, name, color, perms, mentionable) SELECT $1, $2, $3, $4, $5 WHERE (SELECT COUNT(*) FROM roles WHERE server = $1) < $6 RETURNING id",
+        "INSERT INTO roles(server, name, color, perms, mentionable, position) SELECT $1, $2, $3, $4, $5, 1 WHERE (SELECT COUNT(*) FROM roles WHERE server = $1) < $6 RETURNING id",
     )
     .bind(&key)
     .bind(&role_name)
@@ -5506,6 +5635,7 @@ pub(crate) async fn create_role(
         color: req.color,
         perms,
         mentionable: req.mentionable,
+        position: 1,
     }))
 }
 
@@ -5513,10 +5643,11 @@ pub(crate) async fn create_role(
 ///
 /// Changes the name, color or permissions of a role. Omitted fields stay the same. All fields are
 /// checked before anything is saved, so a rejected request changes nothing. Every edit, also a
-/// rename or recolor, needs the current role permissions to be a subset of yours. Every other
-/// member with the role must have server permissions that are a strict subset of yours (the kick
-/// and ban rule; see `role_limits.held_above` in the server detail). New permissions must be a
-/// subset of yours (equal is fine). Requires the Manage roles permission. Emits `roles_changed`
+/// rename or recolor, needs the role to rank below your highest role (see
+/// `role_limits.held_above` in the server detail). Permissions you add must be ones you hold.
+/// While the role order is unconfirmed (`ServerDetail.roles_order_confirmed`), the role's
+/// current and new permissions must also be a subset of yours, and every other member with the
+/// role must be someone you could kick. Requires the Manage roles permission. Emits `roles_changed`
 /// to the server and removes users from voice channels they can no longer view. General
 /// rate-limit bucket.
 #[utoipa::path(
@@ -5529,7 +5660,7 @@ pub(crate) async fn create_role(
         (status = 200, description = "The updated role", body = Role),
         (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter) or color; nothing is saved. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Nothing is saved. Missing the Manage roles permission; the role has permissions you don't have (`You can't change a role that has permissions you don't have`); another holder of the role does not have fewer permissions than you (`You can't change a role held by a member you can't moderate`); or the new permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
+        (status = 403, description = "Nothing is saved. Missing the Manage roles permission; the role does not rank below your highest role (`You can't change a role that is not below your highest role`); the new permissions include some you don't have (`You can't grant permissions you don't have`); or, while the role order is unconfirmed, the role has permissions you don't have (`You can't change a role that has permissions you don't have`) or another holder of the role is someone you could not kick (`You can't change a role held by a member you can't moderate`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it", body = ApiErrorBody),
         (status = 409, description = "Role permissions or mention settings changed during this request", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
@@ -5572,8 +5703,12 @@ pub(crate) async fn update_role(
         check_color(color)?;
     }
     let perms = perms.map(|p| update_role_bits(current, p, mask.unwrap_or(PRE_DELEGATION_PERMS)));
-    if let Some(perms) = perms {
-        access.require_grant(&state.db, perms).await?;
+    let asked = match access.order_guard(&state.db).await? {
+        true => perms,
+        false => perms.map(|p| p & !current),
+    };
+    if let Some(asked) = asked {
+        access.require_grant(&state.db, asked).await?;
     }
     let was_on = sqlx::query("SELECT mentionable FROM roles WHERE id = $1")
         .bind(id)
@@ -5587,8 +5722,8 @@ pub(crate) async fn update_role(
     let bypassed = access
         .bypassed(|m| async move {
             require_role_change(db, &m, id, current).await?;
-            if let Some(perms) = perms {
-                m.require_grant(db, perms).await?;
+            if let Some(asked) = asked {
+                m.require_grant(db, asked).await?;
             }
             require_mentionable(db, &m, on).await
         })
@@ -5601,8 +5736,13 @@ pub(crate) async fn update_role(
     lock_server(&mut tx, &key).await?;
     let (was_name, was_color, was_mentionable) =
         lock_role_version(&mut tx, &key, id, current, Some(was_on)).await?;
-    let needed = current | perms.unwrap_or(0) | if on { Perm::MentionEveryone as i64 } else { 0 };
-    let actor = actor.staff_if(check_locked_role_edit(&mut tx, &access, id, needed).await?);
+    let also = match on {
+        true => Perm::MentionEveryone as i64,
+        false => 0,
+    };
+    let adds = perms.unwrap_or(current);
+    let actor =
+        actor.staff_if(check_locked_role_edit(&mut tx, &access, id, current, adds, also).await?);
     if let Some(bits) = perms {
         sqlx::query("UPDATE roles SET perms = $1 WHERE id = $2")
             .bind(bits)
@@ -5663,16 +5803,18 @@ pub(crate) async fn update_role(
         .await?;
     }
     tx.commit().await?;
-    let row = sqlx::query("SELECT name, color, perms, mentionable FROM roles WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?;
+    let row =
+        sqlx::query("SELECT name, color, perms, mentionable, position FROM roles WHERE id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
     let role = Role {
         id,
         name: row.try_get(0)?,
         color: row.try_get(1)?,
         perms: row.try_get(2)?,
         mentionable: row.try_get::<i64, _>(3)? != 0,
+        position: row.try_get(4)?,
     };
     state.hub.broadcast(WsEvent::RolesChanged {
         server: key.clone(),
@@ -5684,8 +5826,9 @@ pub(crate) async fn update_role(
 /// Delete a role
 ///
 /// Deletes the role, unassigns it from everyone and removes the channel permission rules that
-/// name it. The role's permissions must be a subset of yours, and every other member who holds it
-/// must have server permissions that are a strict subset of yours (the kick and ban rule). If one
+/// name it. The role must rank below your highest role. While the role order is unconfirmed
+/// (`ServerDetail.roles_order_confirmed`), its permissions must also be a subset of yours and
+/// every other member who holds it must be someone you could kick. If one
 /// of the role's channel rules denies something its channel gives everyone who views it (see
 /// `role_limits.channel_denies`), deleting it would widen access, so you also need Manage
 /// channels. Requires the Manage roles server permission.
@@ -5700,7 +5843,7 @@ pub(crate) async fn update_role(
         (status = 200, description = "Role deleted and removed from channel permission rules", body = OkResp),
         (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage roles permission; the role has permissions you don't have (`You can't change a role that has permissions you don't have`); another holder of the role does not have fewer permissions than you (`You can't change a role held by a member you can't moderate`); or the role limits access to a channel and you lack Manage channels (`This role limits access to a channel, so deleting it would widen that access. That needs Manage channels`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage roles permission; the role does not rank below your highest role (`You can't change a role that is not below your highest role`); while the role order is unconfirmed, the role has permissions you don't have (`You can't change a role that has permissions you don't have`) or another holder of the role is someone you could not kick (`You can't change a role held by a member you can't moderate`); or the role limits access to a channel and you lack Manage channels (`This role limits access to a channel, so deleting it would widen that access. That needs Manage channels`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -5751,6 +5894,7 @@ pub(crate) async fn delete_role(
         .execute(&mut *tx)
         .await?;
     if let Some(gone) = &gone {
+        bump_roles_version(&mut tx, &key).await?;
         let (name, color, perms): (String, String, i64) =
             (gone.try_get(0)?, gone.try_get(1)?, gone.try_get(2)?);
         audit::record(
@@ -5776,11 +5920,12 @@ pub(crate) async fn delete_role(
 
 /// Assign a role
 ///
-/// Gives the role to the member `username`, yourself or a member whose server permissions are a
-/// strict subset of yours (the kick and ban rule); assigning a role they already hold succeeds
-/// without changes. The role's permissions must be a subset of yours (equal is fine). Without
-/// Manage channels, the channel permission rules that name the role must not give anything you
-/// don't have in that channel (see `role_limits.channel_grants` in the server detail). Requires
+/// Gives the role to the member `username`, yourself or a member you could kick (see
+/// `ServerDetail.roles_order_confirmed`); assigning a role they already hold succeeds without
+/// changes. The role must rank below your highest role, and its permissions must be a subset
+/// of yours (equal is fine). The channel permission rules that name the role must not allow
+/// anything you don't have in that channel (see `role_limits.channel_grants` in the server
+/// detail). Requires
 /// the Assign roles server permission. Emits `roles_changed` to the server and removes users
 /// from voice channels they can no longer view. General rate-limit bucket.
 #[utoipa::path(
@@ -5793,7 +5938,7 @@ pub(crate) async fn delete_role(
         (status = 200, description = "Role assigned to the member", body = OkResp),
         (status = 400, description = "A non-integer `id`, malformed JSON or a missing `Content-Type` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Assign roles permission, the member does not have fewer permissions than you (`You can't moderate this member`), the role has permissions you don't have (`You can't grant permissions you don't have`), or its channel rules give access you don't have (`This role gives channel access you don't have`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Assign roles permission, the role does not rank below your highest role (`You can't give or take a role that is not below your highest role`), you could not kick the member (`You can't moderate this member`), the role has permissions you don't have (`You can't grant permissions you don't have`), or its channel rules give access you don't have (`This role gives channel access you don't have`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it, or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 409, description = "Role permissions changed during assignment", body = ApiErrorBody),
@@ -5815,6 +5960,7 @@ pub(crate) async fn assign_role(
     if !is_member(&state.db, &key, &target).await? {
         return Err(not_found("Not a member"));
     }
+    require_below(&state.db, &access, id).await?;
     if target != user.username {
         access.require_moderate(&state.db, &target).await?;
     }
@@ -5830,6 +5976,7 @@ pub(crate) async fn assign_role(
     let (db, who, me) = (&state.db, target.as_str(), user.username.as_str());
     let bypassed = access
         .bypassed(|m| async move {
+            require_below(db, &m, id).await?;
             if who != me {
                 m.require_moderate(db, who).await?;
             }
@@ -5857,17 +6004,38 @@ pub(crate) async fn assign_role(
         .member_perms_in(&mut tx, &target)
         .await?
         .ok_or_else(|| not_found("Not a member"))?;
-    if !can_grant(mine, access.site_admin(), role_perms)
-        || target != user.username && !can_moderate(mine, access.site_admin(), theirs)
-    {
+    let guard = ranks::guard_in(&mut *tx, &key).await?;
+    let role = ranks::role_rank_in(&mut *tx, &key, id)
+        .await?
+        .ok_or_else(|| not_found("Role not found"))?;
+    let member = ranks::rank_in(&mut tx, &key, &user.username).await?;
+    let them = Actor {
+        rank: ranks::rank_in(&mut tx, &key, &target).await?,
+        bits: theirs as Mask,
+    };
+    let other = (target != user.username).then_some(&them);
+    let gives = |rank: Rank<'static>, bits: i64| {
+        hier::may_assign(
+            &Actor {
+                rank,
+                bits: bits as Mask,
+            },
+            &role,
+            guard,
+            (role_perms & ALL_PERMS) as Mask,
+            true,
+            other,
+            &HOSTED,
+        )
+    };
+    let rank = match access.site_admin() {
+        true => Rank::of(Tier::Staff),
+        false => member,
+    };
+    if !gives(rank, mine) {
         return Err(forbidden("You can't assign this role to this member"));
     }
-    let actor = actor.staff_if(
-        access.site_admin()
-            && (own & Perm::AssignRoles as i64 == 0
-                || !can_grant(own, false, role_perms)
-                || target != user.username && !can_moderate(own, false, theirs)),
-    );
+    let actor = actor.staff_if(access.site_admin() && !gives(member, own));
     let added = grant_role(&mut tx, &key, &target, id).await?;
     if added > 0 {
         record_role_member(
@@ -5887,9 +6055,9 @@ pub(crate) async fn assign_role(
 
 /// Unassign a role
 ///
-/// Takes the role away from `username`. When `username` is someone else, their server
-/// permissions must be a strict subset of yours (the kick and ban rule); the role's own
-/// permissions don't matter. If one of the role's channel rules denies something its channel gives
+/// Takes the role away from `username`. When `username` is someone else, the role must rank
+/// below your highest role and they must be someone you could kick (see
+/// `ServerDetail.roles_order_confirmed`); the role's own permissions don't matter. If one of the role's channel rules denies something its channel gives
 /// everyone who views it (see `role_limits.channel_denies`), removing it would widen
 /// access, so you also need Manage channels, even for yourself. Requires the Assign roles server
 /// permission.
@@ -5904,7 +6072,7 @@ pub(crate) async fn assign_role(
         (status = 200, description = "Role removed from the member", body = OkResp),
         (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Assign roles permission, the member does not have fewer permissions than you (`You can't moderate this member`), or the role limits access to a channel and you lack Manage channels (`This role limits access to a channel, so removing it would widen that access. That needs Manage channels`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Assign roles permission, the role does not rank below your highest role (`You can't give or take a role that is not below your highest role`), you could not kick the member (`You can't moderate this member`), or the role limits access to a channel and you lack Manage channels (`This role limits access to a channel, so removing it would widen that access. That needs Manage channels`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it, or the user does not hold the role", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -5921,6 +6089,7 @@ pub(crate) async fn unassign_role(
     let key = access.name().to_string();
     require_role(&state.db, &key, id).await?;
     if target != user.username {
+        require_below(&state.db, &access, id).await?;
         access.require_moderate(&state.db, &target).await?;
     }
     let mine = access.perms(&state.db).await?;
@@ -5935,6 +6104,7 @@ pub(crate) async fn unassign_role(
     let bypassed = access
         .bypassed(|m| async move {
             if who != me {
+                require_below(db, &m, id).await?;
                 m.require_moderate(db, who).await?;
             }
             let mine = m.perms(db).await?;
@@ -6626,6 +6796,271 @@ pub(crate) async fn clear_channel_perm(
             Ok(ok())
         }
     }
+}
+
+/// Request body for a new role order.
+#[derive(Deserialize, ToSchema)]
+pub struct RoleOrderReq {
+    /// Every role id of the server once, the highest first.
+    order: Vec<i64>,
+    /// The `roles_version` the order was made from (see `ServerDetail.roles_version`).
+    version: i64,
+}
+
+/// The role order of a server.
+#[derive(Serialize, ToSchema)]
+pub struct RoleOrder {
+    /// Every role id of the server, the highest first.
+    pub order: Vec<i64>,
+    /// The version of this order, for the next change.
+    pub version: i64,
+}
+
+/// Request body for confirming the role order.
+#[derive(Deserialize, ToSchema)]
+pub struct RoleOrderConfirmReq {
+    /// The `roles_version` of the order being confirmed (see `ServerDetail.roles_version`).
+    version: i64,
+}
+
+/// The answer to confirming the role order.
+#[derive(Serialize, ToSchema)]
+pub struct RoleOrderConfirmed {
+    /// Always `true`: the role order now decides who may moderate whom.
+    pub confirmed: bool,
+}
+
+/// Most roles the audit entry of one reorder names.
+const REORDER_NAMED: usize = 20;
+const ORDER_STALE: &str = "The role order changed. Refresh and try again.";
+const MOVE_NOT_BELOW: &str = "You can't move a role that is not below your highest role";
+const MOVE_NOT_WITHIN: &str = "You can't move a role that has permissions you don't have";
+const MOVE_HELD_ABOVE: &str = "You can't move a role held by a member you can't moderate";
+
+fn order_stale() -> ApiError {
+    ApiError(StatusCode::CONFLICT, ORDER_STALE.to_string(), None)
+}
+
+/// The roles of `server` a caller with the permissions `bits` at `rank` may move: those below
+/// their rank, and while the order is unconfirmed (`guard`) only those whose permissions are
+/// within theirs and that nobody they could not moderate holds (`held`).
+fn movable(
+    roles: &[(i64, i64, i64)],
+    rank: Rank<'static>,
+    bits: i64,
+    guard: bool,
+    held: &HashSet<i64>,
+) -> HashSet<i64> {
+    let actor = Actor {
+        rank,
+        bits: bits as Mask,
+    };
+    roles
+        .iter()
+        .filter(|(id, position, perms)| {
+            hier::manages_role(&actor, &ranks::role_rank(*position, *id), None)
+                && (!guard
+                    || rank.tier == Tier::Staff
+                    || (can_grant(bits, false, *perms) && !held.contains(id)))
+        })
+        .map(|(id, _, _)| *id)
+        .collect()
+}
+
+/// Reorder roles
+///
+/// Sets the rank order of the server's roles. `order` lists every role once, the highest first.
+/// You can move only the roles you manage: those below your highest role (while the role order
+/// is unconfirmed, also only those you could edit; see `role_limits.held_above` in the server
+/// detail). The roles you can't move must stay where they are. `version` is the
+/// `roles_version` the order was made from; a role created, deleted or moved since then makes
+/// it stale. Requires the Manage roles server permission. Emits `roles_changed` to the server.
+/// General rate-limit bucket.
+#[utoipa::path(
+    put,
+    path = "/api/v1/servers/{name}/roles/order",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = RoleOrderReq,
+    responses(
+        (status = 200, description = "The order as saved and its new version", body = RoleOrder),
+        (status = 400, description = "`order` does not list every role of the server exactly once (`List every role once`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage roles permission, or the order moves a role you can't manage: one that does not rank below your highest role (`You can't move a role that is not below your highest role`), or while the role order is unconfirmed one with permissions you don't have (`You can't move a role that has permissions you don't have`) or one held by a member you can't moderate (`You can't move a role held by a member you can't moderate`)", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 409, description = "`version` is not the current one (`The role order changed. Refresh and try again.`)", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn reorder_roles(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Json(req): Json<RoleOrderReq>,
+) -> Result<Json<RoleOrder>, ApiError> {
+    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let key = access.name().to_string();
+    let RoleOrderReq {
+        order: asked,
+        version,
+    } = req;
+    let actor = access.audit_actor(&state.db, Perm::ManageRoles).await?;
+    let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
+    let (stored, confirmed) = role_order_state(&mut *tx, &key).await?;
+    if stored != version {
+        return Err(order_stale());
+    }
+    let (mine, own) = access.role_authority_in(&mut tx, Perm::ManageRoles).await?;
+    let rows = sqlx::query(
+        "SELECT id, position, perms, name FROM roles WHERE server = $1 ORDER BY position DESC, id",
+    )
+    .bind(&key)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut roles = Vec::with_capacity(rows.len());
+    let mut names = HashMap::new();
+    for r in &rows {
+        let id: i64 = r.try_get(0)?;
+        roles.push((id, r.try_get(1)?, r.try_get(2)?));
+        names.insert(id, r.try_get::<String, _>(3)?);
+    }
+    let current: Vec<i64> = roles.iter().map(|(id, _, _)| *id).collect();
+    let listed: HashSet<i64> = asked.iter().copied().collect();
+    if asked.len() != current.len()
+        || listed.len() != current.len()
+        || current.iter().any(|id| !listed.contains(id))
+    {
+        return Err(bad("List every role once"));
+    }
+    let guard = !confirmed;
+    let member = access.as_member();
+    let held = match guard {
+        true => held_above(&mut *tx, member.as_ref().unwrap_or(&access), own, None).await?,
+        false => HashSet::new(),
+    };
+    let plain = match access.viewer() {
+        Some(viewer) => ranks::rank_in(&mut tx, &key, &viewer.username).await?,
+        None => Rank::of(Tier::Outside),
+    };
+    let rank = match access.site_admin() {
+        true => Rank::of(Tier::Staff),
+        false => plain,
+    };
+    let place = |can: HashSet<i64>| order::reorder(&current, &asked, &|id| can.contains(&id));
+    let next = place(movable(&roles, rank, mine, guard, &held));
+    if next != asked {
+        let none = HashSet::new();
+        let reason = match (
+            place(movable(&roles, rank, mine, false, &none)) == asked,
+            place(movable(&roles, rank, mine, guard, &none)) == asked,
+        ) {
+            (false, _) => MOVE_NOT_BELOW,
+            (true, false) => MOVE_NOT_WITHIN,
+            (true, true) => MOVE_HELD_ABOVE,
+        };
+        return Err(forbidden(reason));
+    }
+    if next == current {
+        return Ok(Json(RoleOrder {
+            order: next,
+            version,
+        }));
+    }
+    let actor = actor
+        .staff_if(access.site_admin() && place(movable(&roles, plain, own, guard, &held)) != asked);
+    let top = next.len() as i64;
+    for (i, id) in next.iter().enumerate() {
+        sqlx::query("UPDATE roles SET position = $1 WHERE id = $2 AND position <> $1")
+            .bind(top - i as i64)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    bump_roles_version(&mut tx, &key).await?;
+    let moved = order::moved(&current, &next);
+    let named: Vec<serde_json::Value> = moved
+        .iter()
+        .take(REORDER_NAMED)
+        .map(|id| serde_json::json!({ "id": id, "name": names.get(id) }))
+        .collect();
+    audit::record(
+        &mut tx,
+        Entry::new(&key, &actor, audit::Action::RoleReorder).details(
+            Details::new().set("roles", named).set(
+                "more_roles",
+                moved.len().saturating_sub(REORDER_NAMED) as i64,
+            ),
+        ),
+    )
+    .await?;
+    tx.commit().await?;
+    state.hub.broadcast(WsEvent::RolesChanged { server: key });
+    Ok(Json(RoleOrder {
+        order: next,
+        version: version + 1,
+    }))
+}
+
+/// Confirm the role order
+///
+/// Makes the role order decide who may moderate whom and manage which role (see
+/// `ServerDetail.roles_order_confirmed`). It stays on. `version` is the `roles_version` of the
+/// order you looked at; a role created, deleted or moved since then makes it stale. Confirming an
+/// order that is already confirmed changes nothing. Requires the Manage roles server permission.
+/// Emits `roles_changed` to the server. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/v1/servers/{name}/roles/order/confirm",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = RoleOrderConfirmReq,
+    responses(
+        (status = 200, description = "The role order is confirmed", body = RoleOrderConfirmed),
+        (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage roles permission", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 409, description = "`version` is not the current one (`The role order changed. Refresh and try again.`)", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn confirm_role_order(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Json(req): Json<RoleOrderConfirmReq>,
+) -> Result<Json<RoleOrderConfirmed>, ApiError> {
+    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let key = access.name().to_string();
+    let actor = access.audit_actor(&state.db, Perm::ManageRoles).await?;
+    let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
+    let (stored, confirmed) = role_order_state(&mut *tx, &key).await?;
+    if stored != req.version {
+        return Err(order_stale());
+    }
+    access.role_authority_in(&mut tx, Perm::ManageRoles).await?;
+    if !confirmed {
+        sqlx::query("UPDATE servers SET roles_order_confirmed = 1 WHERE name = $1")
+            .bind(&key)
+            .execute(&mut *tx)
+            .await?;
+        audit::record(
+            &mut tx,
+            Entry::new(&key, &actor, audit::Action::RoleOrderConfirm),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    if !confirmed {
+        state.hub.broadcast(WsEvent::RolesChanged { server: key });
+    }
+    Ok(Json(RoleOrderConfirmed { confirmed: true }))
 }
 
 /// Request body for changing what everyone in a server may do.
@@ -11347,6 +11782,8 @@ mod tests {
             .expect("role id")
     }
 
+    /// A server `club` of alice with `names` as members. Its role order is confirmed, as on
+    /// every new server.
     async fn club_with(state: &AppState, names: &[&str]) {
         let db = &state.db;
         let _ = make_server(state, "club").await.expect("club");
@@ -11602,6 +12039,7 @@ mod tests {
         let (state, path) = temp_state("assignment_elevation_lock").await;
         let db = &state.db;
         club_with(&state, &["bob", "carol"]).await;
+        order_guard(&state.db, true).await;
         let editor = Perm::ManageRoles as i64 | KICK;
         give_role(db, "club", "bob", editor).await;
         give_role(db, "club", "carol", editor).await;
@@ -11618,7 +12056,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            check_locked_role_edit(&mut tx, &access, id, KICK).await,
+            check_locked_role_edit(&mut tx, &access, id, 0, KICK, 0).await,
             Err(ApiError(StatusCode::FORBIDDEN, _, _))
         ));
         tx.rollback().await.unwrap();
@@ -11717,6 +12155,7 @@ mod tests {
         let (state, path) = temp_state("role_escalation").await;
         let db = &state.db;
         club_with(&state, &["bob", "carol", "erin"]).await;
+        order_guard(&state.db, true).await;
         set_admin_row(db, "bob", MA | KICK).await;
         set_admin_row(db, "erin", MA | KICK).await;
         let bob = || mem_user("bob", false);
@@ -11959,6 +12398,7 @@ mod tests {
         let (state, path) = temp_state("role_reports_above").await;
         let db = &state.db;
         club_with(&state, &["bob", "carol"]).await;
+        order_guard(&state.db, true).await;
         set_admin_row(db, "bob", MA | KICK).await;
         let low = new_role(db, "low", KICK).await;
         let reports = new_role(db, "reports", Perm::ManageReports as i64).await;
@@ -11980,6 +12420,7 @@ mod tests {
         let (state, path) = temp_state("role_bits_above").await;
         let db = &state.db;
         club_with(&state, &["bob", "carol"]).await;
+        order_guard(&state.db, true).await;
         set_admin_row(db, "bob", MA | KICK).await;
         for bit in (0..i64::BITS).map(|i| 1i64 << i) {
             if ALL_PERMS & bit == 0 {
@@ -12073,6 +12514,7 @@ mod tests {
         let (state, path) = temp_state("role_holders").await;
         let db = &state.db;
         club_with(&state, &["bob", "carol", "dave", "erin", "fay", "gina"]).await;
+        order_guard(&state.db, true).await;
         set_admin_row(db, "bob", MA | KICK).await;
         set_admin_row(db, "erin", MA | KICK).await;
         set_admin_row(db, "gina", 0).await;
@@ -14066,5 +14508,683 @@ mod tests {
             assert_eq!(dangling, 0, "a channel never lands in a deleted category");
         }
         done(state, path).await;
+    }
+
+    async fn ranked(db: &Db, name: &str, perms: i64, position: i64) -> i64 {
+        let id = new_role(db, name, perms).await;
+        sqlx::query("UPDATE roles SET position = $1 WHERE id = $2")
+            .bind(position)
+            .bind(id)
+            .execute(db)
+            .await
+            .expect("position");
+        id
+    }
+
+    async fn order_guard(db: &Db, on: bool) {
+        sqlx::query("UPDATE servers SET roles_order_confirmed = $1 WHERE name = 'club'")
+            .bind(i64::from(!on))
+            .execute(db)
+            .await
+            .expect("guard");
+    }
+
+    async fn role_order(db: &Db) -> Vec<i64> {
+        sqlx::query("SELECT id FROM roles WHERE server = 'club' ORDER BY position DESC, id")
+            .fetch_all(db)
+            .await
+            .expect("order")
+            .iter()
+            .map(|r| r.try_get(0).expect("id"))
+            .collect()
+    }
+
+    async fn one(db: &Db, sql: &str) -> i64 {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .fetch_one(db)
+            .await
+            .expect(sql)
+            .try_get(0)
+            .expect("number")
+    }
+
+    async fn order_version(db: &Db) -> i64 {
+        one(db, "SELECT roles_version FROM servers WHERE name = 'club'").await
+    }
+
+    async fn reorder(
+        state: &AppState,
+        actor: User,
+        order: &[i64],
+        version: i64,
+    ) -> Result<(Vec<i64>, i64), (StatusCode, String)> {
+        reorder_roles(
+            State(state.clone()),
+            Authed(actor),
+            Path("club".to_string()),
+            Json(RoleOrderReq {
+                order: order.to_vec(),
+                version,
+            }),
+        )
+        .await
+        .map(|Json(RoleOrder { order, version })| (order, version))
+        .map_err(|ApiError(code, msg, _)| (code, msg))
+    }
+
+    async fn confirm(
+        state: &AppState,
+        actor: User,
+        version: i64,
+    ) -> Result<(), (StatusCode, String)> {
+        code(
+            confirm_role_order(
+                State(state.clone()),
+                Authed(actor),
+                Path("club".to_string()),
+                Json(RoleOrderConfirmReq { version }),
+            )
+            .await,
+        )
+    }
+
+    async fn make_role(state: &AppState, name: &str) -> Role {
+        create_role(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("club".to_string()),
+            Json(RoleReq {
+                name: name.to_string(),
+                color: "#123456".to_string(),
+                perms: 0,
+                mentionable: false,
+            }),
+        )
+        .await
+        .expect("role")
+        .0
+    }
+
+    const MANAGER: i64 = Perm::ManageRoles as i64 | Perm::AssignRoles as i64 | KICK;
+
+    #[tokio::test]
+    async fn a_new_server_ranks_its_roles_and_puts_new_ones_at_the_bottom() {
+        let (state, path) = temp_state("role_order_new").await;
+        let db = &state.db;
+        club_with(&state, &[]).await;
+        let detail = detail_as(&state, "club", Some(&mem_user("alice", false)))
+            .await
+            .expect("detail");
+        assert!(
+            detail.roles_order_confirmed,
+            "a new server starts confirmed"
+        );
+        assert_eq!(detail.roles_version, 0);
+        let first = make_role(&state, "first").await;
+        let second = make_role(&state, "second").await;
+        let third = make_role(&state, "third").await;
+        assert_eq!((first.position, second.position, third.position), (1, 1, 1));
+        let detail = detail_as(&state, "club", Some(&mem_user("alice", false)))
+            .await
+            .expect("detail");
+        let listed: Vec<(i64, i64)> = detail.roles.iter().map(|r| (r.id, r.position)).collect();
+        assert_eq!(
+            listed,
+            [(first.id, 3), (second.id, 2), (third.id, 1)],
+            "the highest role comes first and a new role starts lowest"
+        );
+        assert_eq!(detail.roles_version, 3);
+        drop_role(&state, mem_user("alice", false), second.id)
+            .await
+            .expect("delete");
+        assert_eq!(order_version(db).await, 4);
+        assert_eq!(role_order(db).await, [first.id, third.id]);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn reordering_moves_only_the_roles_below_you() {
+        let (state, path) = temp_state("role_reorder").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol"]).await;
+        let top = ranked(db, "top", 0, 4).await;
+        let mgr = ranked(db, "mgr", MANAGER, 3).await;
+        let mid = ranked(db, "mid", 0, 2).await;
+        let low = ranked(db, "low", 0, 1).await;
+        hold(db, "bob", mgr).await;
+        let (bob, alice, root) = (
+            || mem_user("bob", false),
+            || mem_user("alice", false),
+            || mem_user("root", true),
+        );
+        let above = Err((
+            StatusCode::FORBIDDEN,
+            "You can't move a role that is not below your highest role".to_string(),
+        ));
+        let stale = Err((
+            StatusCode::CONFLICT,
+            "The role order changed. Refresh and try again.".to_string(),
+        ));
+        let partial = Err((StatusCode::BAD_REQUEST, "List every role once".to_string()));
+        assert_eq!(
+            reorder(&state, bob(), &[mgr, top, mid, low], 0).await,
+            above
+        );
+        assert_eq!(
+            reorder(&state, bob(), &[top, mid, mgr, low], 0).await,
+            above
+        );
+        assert_eq!(
+            reorder(&state, bob(), &[top, mgr, low, mid], 7).await,
+            stale
+        );
+        for wrong in [
+            vec![top, mgr, low],
+            vec![top, mgr, low, low],
+            vec![top, mgr, low, mid, 999_999],
+            vec![top, mgr, low, 999_999],
+        ] {
+            assert_eq!(
+                reorder(&state, bob(), &wrong, 0).await,
+                partial,
+                "{wrong:?}"
+            );
+        }
+        assert_eq!(
+            reorder(&state, mem_user("carol", false), &[top, mgr, low, mid], 0)
+                .await
+                .map_err(|(code, _)| code),
+            Err(StatusCode::FORBIDDEN),
+            "reordering needs Manage roles"
+        );
+        assert_eq!(role_order(db).await, [top, mgr, mid, low]);
+        assert_eq!(
+            reorder(&state, bob(), &[top, mgr, mid, low], 0).await,
+            Ok((vec![top, mgr, mid, low], 0)),
+            "the same order changes nothing"
+        );
+        assert_eq!(
+            one(
+                db,
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'role.reorder'"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            reorder(&state, bob(), &[top, mgr, low, mid], 0).await,
+            Ok((vec![top, mgr, low, mid], 1))
+        );
+        assert_eq!(role_order(db).await, [top, mgr, low, mid]);
+        assert_eq!(
+            one(
+                db,
+                "SELECT COUNT(*) FROM roles WHERE server = 'club' AND position BETWEEN 1 AND 4"
+            )
+            .await,
+            4,
+            "positions stay dense"
+        );
+        let entry = sqlx::query(
+            "SELECT actor, staff, details FROM audit_log WHERE action = 'role.reorder' ORDER BY id",
+        )
+        .fetch_all(db)
+        .await
+        .expect("audit");
+        assert_eq!(entry.len(), 1);
+        assert_eq!(
+            entry[0].try_get::<Option<String>, _>(0).expect("actor"),
+            Some("bob".to_string())
+        );
+        let details: serde_json::Value =
+            serde_json::from_str(&entry[0].try_get::<String, _>(2).expect("details"))
+                .expect("json");
+        assert_eq!(
+            details["roles"],
+            serde_json::json!([{ "id": mid, "name": "mid" }]),
+            "only the role that changed place is named"
+        );
+        assert_eq!(details["more_roles"], 0);
+        assert_eq!(
+            reorder(&state, bob(), &[top, mgr, mid, low], 0).await,
+            stale
+        );
+        assert_eq!(
+            reorder(&state, alice(), &[low, mid, mgr, top], 1).await,
+            Ok((vec![low, mid, mgr, top], 2)),
+            "an owner moves every role"
+        );
+        assert_eq!(
+            reorder(&state, bob(), &[mid, low, mgr, top], 2).await,
+            above,
+            "roles moved above yours are out of reach"
+        );
+        assert_eq!(
+            reorder(&state, bob(), &[low, mid, top, mgr], 2).await,
+            above,
+            "your own highest role does not move"
+        );
+        assert_eq!(
+            reorder(&state, root(), &[top, low, mid, mgr], 2).await,
+            Ok((vec![top, low, mid, mgr], 3))
+        );
+        assert_eq!(
+            one(db, "SELECT COUNT(*) FROM audit_log WHERE action = 'role.reorder' AND staff = 1 AND actor IS NULL").await,
+            1,
+            "a site admin who is not a member reorders as the unnamed staff"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn an_unconfirmed_order_also_keeps_roles_you_could_not_edit_in_place() {
+        let (state, path) = temp_state("role_reorder_guard").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol"]).await;
+        order_guard(db, true).await;
+        let mgr = ranked(db, "mgr", MANAGER, 4).await;
+        let peer = ranked(db, "peer", KICK, 3).await;
+        let wide = ranked(db, "wide", Perm::DeleteServer as i64, 2).await;
+        let low = ranked(db, "low", 0, 1).await;
+        hold(db, "bob", mgr).await;
+        set_admin_row(db, "carol", Perm::DeleteMessages as i64).await;
+        hold(db, "carol", peer).await;
+        let bob = || mem_user("bob", false);
+        let forbid = |msg: &str| Err((StatusCode::FORBIDDEN, msg.to_string()));
+        assert_eq!(
+            reorder(&state, bob(), &[mgr, low, wide, peer], 0).await,
+            forbid("You can't move a role held by a member you can't moderate"),
+            "a role held by an admin stays"
+        );
+        assert_eq!(
+            reorder(&state, bob(), &[mgr, peer, low, wide], 0).await,
+            forbid("You can't move a role that has permissions you don't have"),
+            "a role with permissions you lack stays"
+        );
+        assert_eq!(
+            reorder(&state, bob(), &[peer, mgr, wide, low], 0).await,
+            forbid("You can't move a role that is not below your highest role"),
+            "your own highest role does not move"
+        );
+        order_guard(db, false).await;
+        assert_eq!(
+            reorder(&state, bob(), &[mgr, low, wide, peer], 0).await,
+            Ok((vec![mgr, low, wide, peer], 1)),
+            "once the order is confirmed rank alone decides"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn confirming_the_order_makes_rank_decide_moderation() {
+        let (state, path) = temp_state("role_order_confirm").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol", "dave", "erin"]).await;
+        order_guard(db, true).await;
+        let high = ranked(db, "high", KICK, 2).await;
+        let low = ranked(db, "low", Perm::DeleteMessages as i64 | KICK, 1).await;
+        hold(db, "carol", high).await;
+        hold(db, "erin", high).await;
+        hold(db, "dave", low).await;
+        let (carol, dave, alice) = (
+            || mem_user("carol", false),
+            || mem_user("dave", false),
+            || mem_user("alice", false),
+        );
+        let denied = Err((
+            StatusCode::FORBIDDEN,
+            "You can't moderate this member".to_string(),
+        ));
+        let detail = detail_as(&state, "club", Some(&alice()))
+            .await
+            .expect("detail");
+        assert!(!detail.roles_order_confirmed);
+        assert_eq!(moderate(&state, carol(), "dave", false).await, denied);
+        moderate(&state, dave(), "erin", false)
+            .await
+            .expect("with the order unconfirmed, more permissions moderate fewer");
+        join(&state, "erin", "club").await.expect("erin rejoins");
+        hold(db, "erin", high).await;
+        assert_eq!(
+            confirm(&state, alice(), 5).await,
+            Err((
+                StatusCode::CONFLICT,
+                "The role order changed. Refresh and try again.".to_string()
+            ))
+        );
+        assert_eq!(
+            confirm(&state, carol(), 0).await.map_err(|(code, _)| code),
+            Err(StatusCode::FORBIDDEN),
+            "confirming needs Manage roles"
+        );
+        assert_eq!(
+            one(
+                db,
+                "SELECT roles_order_confirmed FROM servers WHERE name = 'club'"
+            )
+            .await,
+            0
+        );
+        confirm(&state, alice(), 0).await.expect("confirm");
+        confirm(&state, alice(), 0)
+            .await
+            .expect("confirming twice is fine");
+        assert_eq!(
+            one(db, "SELECT COUNT(*) FROM audit_log WHERE action = 'role.order_confirm' AND actor = 'alice'").await,
+            1
+        );
+        assert_eq!(
+            order_version(db).await,
+            0,
+            "confirming keeps the order's version"
+        );
+        let detail = detail_as(&state, "club", Some(&alice()))
+            .await
+            .expect("detail");
+        assert!(detail.roles_order_confirmed);
+        assert_eq!(moderate(&state, dave(), "erin", false).await, denied);
+        assert_eq!(
+            moderate(&state, carol(), "erin", false).await,
+            denied,
+            "members at one rank never moderate each other"
+        );
+        assert_eq!(moderate(&state, carol(), "alice", false).await, denied);
+        moderate(&state, carol(), "dave", true)
+            .await
+            .expect("the higher role bans the lower one");
+        moderate(&state, carol(), "bob", false)
+            .await
+            .expect("a member without roles ranks below every role");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_order_manages_roles_by_rank_alone() {
+        let (state, path) = temp_state("role_rank_manage").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol", "dave"]).await;
+        let top = ranked(db, "top", 0, 5).await;
+        let mgr = ranked(db, "mgr", MANAGER, 4).await;
+        let big = ranked(db, "big", Perm::DeleteServer as i64, 3).await;
+        let held = ranked(db, "held", 0, 2).await;
+        let low = ranked(db, "low", 0, 1).await;
+        hold(db, "bob", mgr).await;
+        hold(db, "dave", top).await;
+        hold(db, "dave", held).await;
+        let bob = || mem_user("bob", false);
+        let not_below = forbid("You can't change a role that is not below your highest role");
+        let not_given = forbid("You can't give or take a role that is not below your highest role");
+        assert_eq!(limits_of(&state, bob()).await.0, {
+            let mut ids = vec![top, mgr];
+            ids.sort_unstable();
+            ids
+        });
+        for role in [top, mgr] {
+            assert_eq!(edit(&state, bob(), role, Some("x"), None).await, not_below);
+            assert_eq!(drop_role(&state, bob(), role).await, not_below);
+            assert_eq!(assign(&state, bob(), role, "carol").await, not_given);
+        }
+        assert_eq!(unassign(&state, bob(), top, "dave").await, not_given);
+        edit(&state, bob(), big, Some("renamed"), None)
+            .await
+            .expect("a role below you with permissions you lack can be renamed");
+        assert_eq!(
+            edit(
+                &state,
+                bob(),
+                big,
+                None,
+                Some(Perm::DeleteServer as i64 | 1)
+            )
+            .await,
+            no_grant(),
+            "added permissions must be yours"
+        );
+        edit(
+            &state,
+            bob(),
+            big,
+            None,
+            Some(Perm::DeleteServer as i64 | KICK),
+        )
+        .await
+        .expect("adding a permission you hold keeps the ones you lack");
+        edit(&state, bob(), held, Some("still held"), None)
+            .await
+            .expect("who holds a role below you does not matter");
+        assert_eq!(assign(&state, bob(), big, "carol").await, no_grant());
+        assign(&state, bob(), low, "carol").await.expect("assign");
+        assert_eq!(
+            assign(&state, bob(), low, "dave").await,
+            forbid("You can't moderate this member"),
+            "dave ranks above bob"
+        );
+        unassign(&state, bob(), low, "carol").await.expect("take");
+        unassign(&state, bob(), mgr, "bob")
+            .await
+            .expect("your own role can always be dropped");
+        drop_role(&state, mem_user("alice", false), top)
+            .await
+            .expect("an owner manages every role");
+        order_guard(db, true).await;
+        hold(db, "bob", mgr).await;
+        assert_eq!(
+            edit(&state, bob(), big, Some("y"), None).await,
+            forbid("You can't change a role that has permissions you don't have"),
+            "an unconfirmed order keeps the permission test"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_channel_manager_gives_no_role_that_allows_moderation_they_lack() {
+        let (state, path) = temp_state("role_allow_manager").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol"]).await;
+        let giver = ranked(
+            db,
+            "giver",
+            Perm::AssignRoles as i64 | Perm::ManageChannels as i64,
+            3,
+        )
+        .await;
+        let mods = ranked(db, "mods", 0, 2).await;
+        let chatty = ranked(db, "chatty", 0, 1).await;
+        hold(db, "bob", giver).await;
+        let cid = one(db, "SELECT id FROM channels WHERE server = 'club'").await;
+        for (role, allow) in [
+            (mods, Perm::DeleteMessages as i64),
+            (chatty, masks::SEND as i64),
+        ] {
+            sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history, allow, deny) VALUES($1, $2, 1, 1, 1, $3, 0)")
+                .bind(cid)
+                .bind(format!("r:{role}"))
+                .bind(allow)
+                .execute(db)
+                .await
+                .expect("rule");
+        }
+        let bob = || mem_user("bob", false);
+        assert_eq!(
+            assign(&state, bob(), mods, "carol").await,
+            forbid("This role gives channel access you don't have")
+        );
+        assert_eq!(limits_of(&state, bob()).await.1, [mods]);
+        assign(&state, bob(), chatty, "carol")
+            .await
+            .expect("Manage channels covers what everyone can hold in a channel");
+        sqlx::query("UPDATE roles SET perms = perms | $1 WHERE id = $2")
+            .bind(Perm::DeleteMessages as i64)
+            .bind(giver)
+            .execute(db)
+            .await
+            .expect("holds it");
+        assign(&state, bob(), mods, "carol")
+            .await
+            .expect("allowed once the giver holds Manage messages");
+        done(state, path).await;
+    }
+
+    fn bits_of(held: usize, roles: &[(i64, i64, i64)]) -> i64 {
+        roles
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| held & (1 << i) != 0)
+            .fold(0, |acc, (_, (_, _, perms))| acc | perms)
+    }
+
+    fn top_of(held: usize, roles: &[(i64, i64, i64)]) -> Option<(i64, i64)> {
+        roles
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| held & (1 << i) != 0)
+            .map(|(_, (id, position, _))| (*position, *id))
+            .max()
+    }
+
+    /// Every set of up to three roles over the bits `pool` and of four roles over its first
+    /// three bits, each role with a position of its own (role `i` at position `i + 1`), and two
+    /// members holding any subsets of them.
+    fn role_worlds(pool: &[i64], mut each: impl FnMut(&[(i64, i64, i64)], usize, usize)) {
+        let masks: Vec<i64> = (0..1usize << pool.len())
+            .map(|m| {
+                pool.iter()
+                    .enumerate()
+                    .filter(|(i, _)| m & (1 << i) != 0)
+                    .fold(0, |acc, (_, bit)| acc | bit)
+            })
+            .collect();
+        for count in 1..=4usize {
+            let masks = match count {
+                4 => &masks[..masks.len() / 2],
+                _ => &masks[..],
+            };
+            let mut picks = vec![0usize; count];
+            loop {
+                let roles: Vec<(i64, i64, i64)> = picks
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| (i as i64 + 1, i as i64 + 1, masks[*m]))
+                    .collect();
+                for a in 0..1usize << count {
+                    for t in 0..1usize << count {
+                        each(&roles, a, t);
+                    }
+                }
+                let Some(i) = picks.iter().rposition(|m| *m + 1 < masks.len()) else {
+                    break;
+                };
+                picks[i] += 1;
+                for later in picks.iter_mut().skip(i + 1) {
+                    *later = 0;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_order_guard_keeps_moderation_and_only_narrows_role_management() {
+        let pool = [
+            KICK,
+            Perm::ManageRoles as i64,
+            Perm::DeleteMessages as i64,
+            Perm::ManageChannels as i64,
+        ];
+        let mut checked = 0u64;
+        role_worlds(&pool, |roles, a, t| {
+            let (mine, theirs) = (bits_of(a, roles), bits_of(t, roles));
+            let me = Actor {
+                rank: ranks::member_rank(false, 0, top_of(a, roles)),
+                bits: mine as Mask,
+            };
+            let them = Actor {
+                rank: ranks::member_rank(false, 0, top_of(t, roles)),
+                bits: theirs as Mask,
+            };
+            let strictly_more = theirs & !mine == 0 && theirs != mine;
+            assert_eq!(
+                hier::may_moderate(&me, &them, 0, true),
+                strictly_more,
+                "{roles:?} {a} {t}"
+            );
+            let held: HashSet<i64> = roles
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| t & (1 << i) != 0 && !strictly_more)
+                .map(|(_, (id, _, _))| *id)
+                .collect();
+            let can = movable(roles, me.rank, mine, true, &held);
+            for (id, _, perms) in roles {
+                let before = mine & Perm::ManageRoles as i64 != 0
+                    && perms & !mine == 0
+                    && !held.contains(id);
+                assert!(
+                    !can.contains(id) || before,
+                    "{roles:?} {a} {t}: role {id} is managed only where it was before"
+                );
+            }
+            checked += 1;
+        });
+        assert!(checked > 100_000, "{checked}");
+    }
+
+    #[test]
+    fn a_confirmed_order_decides_as_rooms_do() {
+        let pool = [
+            KICK,
+            Perm::ManageRoles as i64,
+            Perm::DeleteMessages as i64,
+            Perm::ManageChannels as i64,
+        ];
+        let room_rank = |held: usize, roles: &[(i64, i64, i64)]| -> (i64, String) {
+            roles
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| held & (1 << i) != 0)
+                .map(|(_, (id, position, _))| (*position, format!("r{id}")))
+                .max()
+                .unwrap_or((-1, String::new()))
+        };
+        role_worlds(&pool, |roles, a, t| {
+            let (mine, theirs) = (bits_of(a, roles), bits_of(t, roles));
+            let me = Actor {
+                rank: ranks::member_rank(false, 0, top_of(a, roles)),
+                bits: mine as Mask,
+            };
+            let them = Actor {
+                rank: ranks::member_rank(false, 0, top_of(t, roles)),
+                bits: theirs as Mask,
+            };
+            let (room_me, room_them) = (room_rank(a, roles), room_rank(t, roles));
+            assert_eq!(
+                hier::may_moderate(&me, &them, KICK as Mask, false),
+                mine & KICK != 0 && room_me > room_them,
+                "{roles:?} {a} {t}"
+            );
+            let can = movable(roles, me.rank, mine, false, &HashSet::new());
+            for (id, position, _) in roles {
+                assert_eq!(
+                    can.contains(id),
+                    mine & Perm::ManageRoles as i64 != 0 && room_me > (*position, format!("r{id}")),
+                    "{roles:?} {a}: role {id}"
+                );
+            }
+        });
+        let owner = Actor {
+            rank: ranks::member_rank(true, 0, None),
+            bits: ALL_PERMS as Mask,
+        };
+        let admin = Actor {
+            rank: ranks::member_rank(true, KICK, Some((9, 1))),
+            bits: KICK as Mask,
+        };
+        let role = Actor {
+            rank: ranks::member_rank(false, 0, Some((9, 1))),
+            bits: KICK as Mask,
+        };
+        assert!(hier::may_moderate(&owner, &admin, 0, false));
+        assert!(hier::may_moderate(&admin, &role, 0, false));
+        assert!(!hier::may_moderate(&owner, &owner, 0, false));
+        assert!(!hier::may_moderate(&role, &admin, 0, false));
     }
 }

@@ -19,12 +19,11 @@ import type { EvalResult } from './acl/facts'
 import type { Drop } from './acl/storage'
 import {
   canView,
-  gt,
   idOp,
   introduces,
   mayPin,
+  outranksIn,
   poster,
-  rank,
   rkey,
   knownRules,
   aclContentOk,
@@ -1017,7 +1016,7 @@ export class AclRoom {
   // Whether `ik` outranks `other` in the current state (the page's kick and ban buttons).
   outranks(ik: string, other: string) {
     const F = this.r.state().facts
-    return gt(rank(F, ik), rank(F, other))
+    return outranksIn(F, ik, other)
   }
 
   // ----- Flows -----

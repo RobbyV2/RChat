@@ -2501,10 +2501,10 @@ pub(crate) async fn send_dm_message(
 /// its replies. Pings on the deleted messages are removed; each affected user gets
 /// `ping_count` with the scope's new unseen count. Requires a bearer token. The author may
 /// always delete their own message; in servers, members with the Manage messages permission in
-/// the channel may delete anyone's. Emits `message_deleted` (with `thread_root_id` for replies) to clients
-/// in the server that can see the channel, or to both DM participants. General rate-limit
-/// bucket.
-#[utoipa::path(delete, path = "/api/v1/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the channel (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+/// the channel may delete the messages of anyone they rank above (see `Role.position`). Emits
+/// `message_deleted` (with `thread_root_id` for replies) to clients in the server that can see
+/// the channel, or to both DM participants. General rate-limit bucket.
+#[utoipa::path(delete, path = "/api/v1/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author, and no Manage messages permission in the channel or no rank above the author (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,

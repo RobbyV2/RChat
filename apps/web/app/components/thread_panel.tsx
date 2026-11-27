@@ -9,7 +9,9 @@ import { ReactionBar } from './reactions'
 import { useChannelPerms } from '../lib/client/use_channel_perms'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { openActionMenu } from '../lib/actions/menu'
-import { roleColor, threadKey, useStore } from '../lib/store'
+import { myRank, roleColor, threadKey, useStore } from '../lib/store'
+import { outranksKnown } from '../lib/hierarchy'
+import { useShallow } from 'zustand/react/shallow'
 import type { Message } from '../lib/types'
 import type { Outgoing } from '../lib/store_types'
 import { findById } from '../lib/window'
@@ -152,6 +154,7 @@ export default function ThreadPanel() {
     return dm && s.blocked[dm.other.username] ? dm.other : null
   })
   const memberFor = useMemberLookup(server)
+  const rank = useStore(useShallow(s => (server ? myRank(s, server) : undefined)))
   const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
   useAuthorMembers(server, usePeopleKey(people))
   const key = useStore(s => (s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : null))
@@ -245,7 +248,10 @@ export default function ThreadPanel() {
 
   if (!root || !key) return null
   const positioned = scroll.positioned
-  const canDelete = (m: Message) => me !== null && (m.author.username === me.username || can.manage)
+  const canDelete = (m: Message) =>
+    me !== null &&
+    (m.author.username === me.username ||
+      (can.manage && outranksKnown(rank, memberFor(m.author.username), roles)))
 
   const onScroll = () => {
     scroll.onScroll()

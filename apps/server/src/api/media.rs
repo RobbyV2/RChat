@@ -1205,11 +1205,12 @@ pub(crate) async fn save_within(
 /// `p2p_who` stops offering it, the app of the hoster stops serving it (also on its next
 /// `p2p_hosting`, answered by `p2p_hosted`), and recipients drop their copies. A modified client
 /// that has the file can still share it with people who know its id. The server cannot prevent
-/// this. The author can always do this. In a server channel, members with Manage messages can
-/// too. Emits `media_removed` to all who can see the message. Forwarded copies keep their own
+/// this. The author can always do this. In a server channel, members with Manage messages in
+/// the channel and a rank above the author (see `Role.position`) can too. Emits
+/// `media_removed` to all who can see the message. Forwarded copies keep their own
 /// reference to the file (and so the file). Moderators of the destination use this endpoint on
 /// the copy. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/v1/messages/{id}/media", tag = "Media", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Removed; the body is `{\"ok\": true}`", body = OkResp), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses; or it has no attachment (`No attachment`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/messages/{id}/media", tag = "Media", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Removed; the body is `{\"ok\": true}`", body = OkResp), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "Not the author, and no Manage messages permission in the channel or no rank above the author", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses; or it has no attachment (`No attachment`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn delete_media(
     State(state): State<AppState>,
     Path(id): Path<i64>,

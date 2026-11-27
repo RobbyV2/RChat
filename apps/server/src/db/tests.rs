@@ -1965,7 +1965,7 @@ async fn audit_log_is_added_to_an_old_database() {
             count(&db, "SELECT COUNT(*) FROM audit_log WHERE actor IS NULL AND staff = 0 AND target_staff = 0 AND details = '{}' AND target_kind IS NULL").await,
             1
         );
-        sqlx::query("INSERT INTO audit_channels(entry_id, channel_id) SELECT id, 5 FROM audit_log")
+        sqlx::query("INSERT INTO audit_channels(entry_id, channel_id) SELECT id, 5 FROM audit_log WHERE action = 'member.kick'")
             .execute(&db)
             .await
             .expect("channel refs");
@@ -8204,7 +8204,7 @@ async fn pin_and_slow_mode_bits_are_granted_to_an_old_database() {
         );
         let previous = format!(
             "UPDATE settings SET value = '{}' WHERE key = 'schema_version'",
-            SCHEMA_VERSION - 1
+            super::migrate::SPLIT_BITS_VERSION - 1
         );
         for sql in [plain, previous] {
             sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
@@ -8245,6 +8245,107 @@ async fn pin_and_slow_mode_bits_are_granted_to_an_old_database() {
                     .execute(&db)
                     .await
                     .expect("taken away by hand");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn roles_of_an_old_database_are_ranked_once() {
+    on_each_database("role_order_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        assert_eq!(
+            count(&db, "SELECT roles_order_confirmed FROM servers WHERE name = 'rchat'").await,
+            1,
+            "the server of a new database starts with its role order confirmed"
+        );
+        let (kick, messages, channels) = (
+            Perm::Kick as i64,
+            Perm::DeleteMessages as i64,
+            Perm::ManageChannels as i64,
+        );
+        let roles = [
+            ("wide", kick | messages | channels),
+            ("kick", kick),
+            ("none", 0),
+            ("pair", kick | messages),
+            ("twin", kick),
+            ("chan", channels),
+        ];
+        let mut setup = vec![
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'Club', 1), ('bare', 'Bare', 1)".to_string(),
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'owner', 1, 0, 1), ('club', 'mod', 0, 0, 1)".to_string(),
+        ];
+        for (name, perms) in roles {
+            setup.push(format!(
+                "INSERT INTO roles(server, name, color, perms) VALUES('club', '{name}', '#ffffff', {perms})"
+            ));
+        }
+        setup.extend([
+            "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'lone', '#ffffff', 4)".to_string(),
+            "INSERT INTO user_roles(server, username, role_id) SELECT 'club', 'mod', id FROM roles WHERE name = 'pair'".to_string(),
+            "DROP INDEX idx_roles_position".to_string(),
+            "ALTER TABLE roles DROP COLUMN position".to_string(),
+            "ALTER TABLE servers DROP COLUMN roles_version".to_string(),
+            "ALTER TABLE servers DROP COLUMN roles_order_confirmed".to_string(),
+            format!(
+                "UPDATE settings SET value = '{}' WHERE key = 'schema_version'",
+                super::migrate::ROLE_ORDER_VERSION - 1
+            ),
+        ]);
+        for sql in setup {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&db)
+                .await
+                .expect(&sql);
+        }
+        close(&db).await;
+        let position = |name: &'static str| format!("SELECT position FROM roles WHERE name = '{name}'");
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            let want = match round {
+                0 => [("none", 1), ("chan", 2), ("twin", 3), ("kick", 4), ("pair", 5), ("wide", 6)],
+                _ => [("none", 1), ("chan", 2), ("twin", 3), ("kick", 9), ("pair", 5), ("wide", 6)],
+            };
+            for (name, at) in want {
+                assert_eq!(count(&db, &position(name)).await, at, "{round}: {name}");
+            }
+            assert_eq!(count(&db, &position("lone")).await, 1, "{round}");
+            for (server, version) in [("club", 1), ("rchat", 1), ("bare", 0)] {
+                assert_eq!(
+                    count(&db, &format!("SELECT roles_version FROM servers WHERE name = '{server}'")).await,
+                    version,
+                    "{round}: {server}"
+                );
+                assert_eq!(
+                    count(&db, &format!("SELECT roles_order_confirmed FROM servers WHERE name = '{server}'")).await,
+                    0,
+                    "{round}: the order of {server} waits for someone to confirm it"
+                );
+                assert_eq!(
+                    count(&db, &format!("SELECT COUNT(*) FROM audit_log WHERE server = '{server}' AND action = 'role.order_init' AND staff = 1 AND actor IS NULL")).await,
+                    version,
+                    "{round}: {server}"
+                );
+            }
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM audit_log WHERE action = 'role.order_init' AND details = '{\"ranked\":6}'").await,
+                1,
+                "{round}"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE r.name = 'pair' AND ur.username = 'mod' AND r.perms = 6 AND r.color = '#ffffff'").await,
+                1,
+                "{round}: roles keep their holders and fields"
+            );
+            if round == 0 {
+                sqlx::query("UPDATE roles SET position = 9 WHERE name = 'kick'")
+                    .execute(&db)
+                    .await
+                    .expect("moved by hand");
             }
             close(&db).await;
         }

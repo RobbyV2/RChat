@@ -55,6 +55,8 @@ const PLAIN: Record<string, string> = {
   p2p_server_remove_from_folder: 'moves a P2P server out of a folder on your own rail',
   p2p_role_up: 'moves a role one step; a move that takes rights away asks first',
   p2p_role_down: 'moves a role one step; a move that takes rights away asks first',
+  role_up: 'moves a role one step; Move Down puts it back',
+  role_down: 'moves a role one step; Move Up puts it back',
 }
 
 test('every action that changes standing or cannot be undone is marked as danger', () => {

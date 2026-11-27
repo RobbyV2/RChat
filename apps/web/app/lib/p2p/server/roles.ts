@@ -1,16 +1,9 @@
-import {
-  BAN_REASON_MAX,
-  gt,
-  skipsSlowMode,
-  timedBans,
-  timeouts,
-  TIMEOUT_MAX_MS,
-} from '../acl/rules'
+import { BAN_REASON_MAX, skipsSlowMode, timedBans, timeouts, TIMEOUT_MAX_MS } from '../acl/rules'
 import { cacheKey, countOf, moveCounts, storedSize } from '../dag'
 import { CANT_TEXT } from '../flows'
 import { cleanName } from '../keys'
 import { memberExtras } from '../../profile_fields'
-import { can, chanFactsOf, channelsOf, memberOf, membershipOf, P, rankOf, roleRank } from '../state'
+import { chanFactsOf, channelsOf, managesRoleOf, memberOf, membershipOf, rankOf } from '../state'
 import { unindexRoom } from '../search'
 import type { ServerCtx } from './context'
 import { ServerError, NO_ROOM_TEXT, newRolePos } from './types'
@@ -49,8 +42,7 @@ export async function editRole(
 ) {
   // Admitted by the generic rule: one we may not make would show nothing.
   const s = cx.sumOf(room)
-  if (!can(s, cx.me, P.ManageRoles) || !s.roles[role] || !gt(rankOf(s, cx.me), roleRank(s, role)))
-    throw new ServerError(CANT_TEXT)
+  if (!s.roles[role] || !managesRoleOf(s, cx.me, role)) throw new ServerError(CANT_TEXT)
   const name = clip(meta.name.trim(), cx.local.server.roleNameMax)
   return cx.emit(room, 'role_meta', () => ({
     role,

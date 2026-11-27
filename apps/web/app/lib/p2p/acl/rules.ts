@@ -10,8 +10,15 @@ import {
   checkOverwriteEdit,
   fromWire,
   hasBit,
+  managesRole,
+  maskAnd,
+  maskNot,
+  mayAssign,
+  mayModerate,
+  mayUnassign,
   outranks as above,
   toWire,
+  type Actor,
   type Rank as PermRank,
 } from '../../perms'
 
@@ -239,10 +246,17 @@ export interface AuthCtx {
 export interface ChanReader {
   channel: (ch: string) => AclContent | undefined
   overwrite: (ch: string, subj: string) => AclContent | undefined
+  // The overwrites of `subj`, each with its channel.
+  rows: (subj: string) => [string, AclContent][]
 }
 const readerOf = (F: Partial<Pick<Facts, 'overwrites' | 'channels'>>): ChanReader => ({
   channel: ch => F.channels?.get(ch),
   overwrite: (ch, subj) => F.overwrites?.get(ch)?.get(subj),
+  rows: subj =>
+    [...(F.overwrites ?? [])].flatMap(([ch, rows]): [string, AclContent][] => {
+      const o = rows.get(subj)
+      return o ? [[ch, o]] : []
+    }),
 })
 export const simpleCtx = (F: FactsQ, a: string): AuthCtx => ({
   Fr: F,
@@ -261,7 +275,7 @@ export const CONTENT_REDACT = 'c:redact'
 export const CONTENT_PIN = 'c:pin'
 
 // A rank as the shared permission rules read it.
-const tiered = (r: Rank): PermRank =>
+export const tiered = (r: Rank): PermRank =>
   r[0] === Infinity
     ? { tier: 'owner' }
     : r[0] === -Infinity
@@ -287,8 +301,9 @@ const splitOf = (wire: number, rules: number) => {
   return s
 }
 
-// The shared permission rules decide whether a mask holds a bit and whether a rank is above
-// another. Wire bits they do not know are compared bit for bit.
+// The shared permission rules decide whether a mask holds a bit, whether a rank is above
+// another, who moderates whom, who manages a role and who may give or take one. Wire bits they
+// do not know are compared bit for bit.
 export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolean {
   const a = e.a
   const c = e.c
@@ -309,6 +324,27 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
     )
   }
   const outranks = (r: Rank) => above(tiered(x.me), tiered(r))
+  const actor = (): Actor => ({ rank: tiered(x.me), bits: held().mask })
+  const at = (r: Rank): Actor => ({ rank: tiered(r), bits: 0 })
+  const moderates = (need: number, to: string) =>
+    mayModerate(actor(), at(x.rankT(to)), fromWire(need, rules), false)
+  const manages = (r: Rank) => managesRole(actor(), tiered(r))
+  // Whether every overwrite of a live channel that allows something to `role` allows only what
+  // the author holds in that channel.
+  const allowsWithin = (role: string) => {
+    const chan = x.chan ?? readerOf({})
+    const live = (ch: string) => {
+      const c = chan.channel(ch)
+      return c !== undefined && c.gone !== true
+    }
+    return chan
+      .rows(`r:${role}`)
+      .every(
+        ([ch, o]) =>
+          !live(ch) ||
+          maskAnd(fromWire(o.allow ?? 0, rules), maskNot(maskIn(Fr, chan, a, ch, rules))) === 0
+      )
+  }
   const codeLive = (cid: string) => Fr.codeOk.has(cid) && !Fo.codeDead.has(cid)
   switch (e.t) {
     case 'genesis':
@@ -328,14 +364,10 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
           ))
       )
     case 'kick':
-      return isMem && has(KICK) && !Fr.owners.has(c.to) && outranks(x.rankT(c.to))
+      return isMem && !Fr.owners.has(c.to) && moderates(KICK, c.to)
     case 'ban':
       return (
-        isMem &&
-        has(BAN) &&
-        !Fr.owners.has(c.to) &&
-        outranks(x.rankT(c.to)) &&
-        (c.wipe !== true || has(MESSAGES))
+        isMem && !Fr.owners.has(c.to) && moderates(BAN, c.to) && (c.wipe !== true || has(MESSAGES))
       )
     case 'unban':
       return (
@@ -347,38 +379,37 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
       if (!atNext(Fr.rules)) return isMem
       return isMem && has(TIMEOUT) && !Fr.owners.has(c.to) && outranks(x.rankT(c.to))
     case 'role_create':
-      return isMem && has(ROLES) && outranks([c.pos, e.id]) && within(c.bits)
+      return isMem && manages([c.pos, e.id]) && within(c.bits)
     case 'role_move':
-      return (
-        isMem &&
-        has(ROLES) &&
-        Fr.roles.has(c.role) &&
-        outranks(x.rankOf(c.role)) &&
-        outranks([c.pos, c.role])
-      )
+      return isMem && Fr.roles.has(c.role) && manages(x.rankOf(c.role)) && manages([c.pos, c.role])
     case 'role_bits':
       return (
         isMem &&
-        has(ROLES) &&
         (c.role === EVERYONE || Fr.roles.has(c.role)) &&
-        outranks(x.rankOf(c.role)) &&
+        manages(x.rankOf(c.role)) &&
         (!c.on || has(c.bit))
       )
     case 'role_del':
-      return isMem && has(ROLES) && Fr.roles.has(c.role) && outranks(x.rankOf(c.role))
-    case 'assign':
-      return (
-        isMem &&
-        has(ROLES) &&
-        Fr.roles.has(c.role) &&
-        outranks(x.rankOf(c.role)) &&
-        !Fr.owners.has(c.to) &&
-        outranks(x.rankT(c.to))
+      return isMem && Fr.roles.has(c.role) && manages(x.rankOf(c.role))
+    case 'assign': {
+      if (!isMem || !Fr.roles.has(c.role) || Fr.owners.has(c.to)) return false
+      const role = tiered(x.rankOf(c.role))
+      const target = at(x.rankT(c.to))
+      if (rules < RULES_NEXT) return mayAssign(actor(), role, 0, true, target, rules)
+      // The role's permissions and what its overwrites allow must be within the author's.
+      return mayAssign(
+        actor(),
+        role,
+        fromWire(Fr.bits.get(c.role) ?? 0, rules),
+        allowsWithin(c.role),
+        c.to === a ? undefined : target,
+        rules
       )
+    }
     case 'revoke':
       return (
         isMem &&
-        (c.to === a || (has(ROLES) && outranks(x.rankOf(c.role)) && outranks(x.rankT(c.to))))
+        mayUnassign(actor(), tiered(x.rankOf(c.role)), c.to === a ? undefined : at(x.rankT(c.to)))
       )
     case 'code':
       return isMem && has(INVITE)
@@ -681,6 +712,14 @@ export const authorizeFull = (e: AclEv, F: FactsQ) => deviceOk(e, F) && authorit
 
 export const admissible = (e: AclEv, F: Facts, L: Agreed) => authorizeFull(e, F) && guards(e, F, L)
 
+// Whether a holder of the wire permissions `wire` at rank `me` manages a role at rank `role`.
+export const managesAt = (wire: number, me: Rank, role: Rank, rules: number) =>
+  managesRole({ rank: tiered(me), bits: fromWire(wire, rules) }, tiered(role))
+
+// Whether `a` outranks `b` in state F.
+export const outranksIn = (F: FactsQ, a: string, b: string) =>
+  above(tiered(rank(F, a)), tiered(rank(F, b)))
+
 // role_meta has no case in authCore, guards or
 // classify: it is admitted, cut and live by the generic rule, as a client that doesn't know the
 // type reads it, so every version holds the same events and agrees on their liveness. Its
@@ -695,7 +734,13 @@ export const roleMetaOk = (e: AclEv, St: FactsQ) =>
       (e.c.color as number) <= 0xffffff)) &&
   St.roles.has(e.c.role) &&
   (St.owners.has(e.a) ||
-    (St.mem.has(e.a) && (permsQ(St, e.a) & ROLES) !== 0 && gt(rank(St, e.a), rankOf(St, e.c.role))))
+    (St.mem.has(e.a) &&
+      managesAt(
+        permsQ(St, e.a),
+        rank(St, e.a),
+        rankOf(St, e.c.role),
+        rulesOf((St as Partial<Facts>).rules)
+      )))
 
 // profile_mode is a register on the role_meta pattern: admitted, cut and live by the generic
 // rule, with its Authority read only at display. A write counts when its mode is one of the

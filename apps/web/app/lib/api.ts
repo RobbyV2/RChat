@@ -823,6 +823,16 @@ export const endpoints = (c: ApiClient) => ({
       perms,
       mask,
     }),
+  // `order` lists every role id, the highest first; `version` is the detail's `roles_version`.
+  setRoleOrder: (server: string, order: number[], version: number) =>
+    c.req<{ order: number[]; version: number }>('PUT', `/servers/${seg(server)}/roles/order`, {
+      order,
+      version,
+    }),
+  confirmRoleOrder: (server: string, version: number) =>
+    c.req<{ confirmed: boolean }>('POST', `/servers/${seg(server)}/roles/order/confirm`, {
+      version,
+    }),
   clearChannelPerm: (id: number, subject: string) =>
     c.req<unknown>('DELETE', `/channels/${id}/perms/${seg(subject)}`),
   channelMessages: (id: number, page: PageOpts = {}) =>

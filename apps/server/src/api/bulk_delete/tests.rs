@@ -192,7 +192,7 @@ async fn every_message_follows_the_single_delete_rule() {
         table,
         [
             "alice:DDDDDD",
-            "mo:DDDDDD",
+            "mo:DDDoDD",
             "tim:oooDoo",
             "bob:DoDooo",
             "carol:oDoooo",
@@ -202,6 +202,45 @@ async fn every_message_follows_the_single_delete_rule() {
         ]
         .map(|s| s.to_string())
     );
+    done(c.state, c.path).await;
+}
+
+#[tokio::test]
+async fn a_moderator_counts_and_deletes_only_what_members_below_them_wrote() {
+    let c = club("bulk_rank").await;
+    let db = &c.state.db;
+    exec(
+        db,
+        "DELETE FROM member_timeouts WHERE server = 'club' AND username = 'tim'",
+    )
+    .await;
+    let bobs = post(db, c.general, "bob", 1000).await;
+    let tims = post(db, c.general, "tim", 1000).await;
+    let mos = post(db, c.general, "mo", 1000).await;
+    let alices = post(db, c.general, "alice", 1000).await;
+    let all = json!({ "scope": format!("c{}", c.general), "all": true, "dry_run": true });
+    let mo = call(&c.state, "mo", all.clone()).await.expect("mo");
+    assert_eq!(
+        (mo.total, mo.deletable, mo.others),
+        (4, 2, 2),
+        "tim holds the same role and alice owns the server"
+    );
+    let skipping = json!({ "scope": format!("c{}", c.general), "all": true, "dry_run": true, "except": [tims, bobs] });
+    let mo = call(&c.state, "mo", skipping).await.expect("mo");
+    assert_eq!((mo.total, mo.deletable, mo.others), (2, 1, 1));
+    let alice = call(&c.state, "alice", all).await.expect("alice");
+    assert_eq!((alice.total, alice.deletable, alice.others), (4, 4, 0));
+    let picked = call(
+        &c.state,
+        "mo",
+        json!({ "scope": format!("c{}", c.general), "ids": [bobs, tims, mos, alices] }),
+    )
+    .await
+    .expect("mo deletes");
+    assert_eq!((picked.deleted, picked.others), (2, 2));
+    let mut gone = picked.ids.clone();
+    gone.sort_unstable();
+    assert_eq!(gone, [bobs, mos]);
     done(c.state, c.path).await;
 }
 

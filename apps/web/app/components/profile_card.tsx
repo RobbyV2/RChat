@@ -34,6 +34,7 @@ import { InstanceChip } from './instance_badge'
 import {
   memberState,
   myPerms,
+  myRank,
   myRolePerms,
   type ProfileTarget,
   useMask,
@@ -63,6 +64,8 @@ import {
 import { lockState } from '../lib/profile_reset'
 import { memberPerms, rolePerms } from '../lib/rules'
 import { shownBanner, shownBio, shownUser } from '../lib/server_profile'
+import { memberRank } from '../lib/hierarchy'
+import { useShallow } from 'zustand/react/shallow'
 import { limitsOf } from '../lib/instance_limits'
 import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
@@ -248,6 +251,8 @@ function Card({ target }: { target: ProfileTarget }) {
       : null
   )
   const perms = useStore(s => (server ? myPerms(s, server) : 0))
+  const rank = useStore(useShallow(s => (server ? myRank(s, server) : undefined)))
+  const ranked = useStore(s => (server ? s.servers[server]?.roles_order_confirmed === true : false))
   const timeout = useMemberTimeout(server, username)
   const coarse = useMedia(COARSE_QUERY)
   const small = useMedia(SHEET_QUERY)
@@ -431,6 +436,11 @@ function Card({ target }: { target: ProfileTarget }) {
     timedOut: timeout !== null,
     profiles,
     profileLocked: lockState(lockedUntil, Math.floor(Date.now() / 1000)).locked,
+    rank,
+    order:
+      ranked && rank
+        ? { mine: rank, theirs: memberRank(member, serverRoles ?? fetched?.roles ?? []) }
+        : undefined,
   }
   const actions = known ? profileActions(input) : []
   const editRoles = known && canEditRoles(input) && serverRoles !== undefined

@@ -36,7 +36,7 @@ import { canQuote } from '../replies'
 import { canEdit as ownEditable } from '../sed'
 import { selectable } from '../selection'
 import { canDeleteIn } from '../selection_store'
-import { channelCan, messageServer, myPerms, myTimeoutEnds } from '../store'
+import { channelCan, messageServer, myPerms, myTimeoutEnds, outranksMember } from '../store'
 import type { RChatState } from '../store_types'
 import { isNotice } from '../system_messages'
 import { messageStampToken } from '../timestamps'
@@ -93,7 +93,10 @@ export const messageRights = (s: RChatState, m: Message, list: string): MessageR
       replies.thread &&
       (m.reply_count > 0 || !member || can.threads),
     forward: signed && canForward(m),
-    delete: signed && (m.author.username === me?.username || (server !== null && can.manage)),
+    delete:
+      signed &&
+      (m.author.username === me?.username ||
+        (server !== null && can.manage && outranksMember(s, server, m.author.username))),
     pin:
       signed &&
       !list.startsWith('t') &&

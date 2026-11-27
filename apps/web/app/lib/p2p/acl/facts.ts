@@ -21,12 +21,13 @@ import {
   introduces,
   NEG,
   roleMetaOk,
+  managesAt,
   profileModeOk,
   profileResetOk,
   rank,
   resetBit,
   aboutOk,
-  ROLES,
+  rulesOf,
   SERVER,
   timeoutEnd,
   timeoutEnds,
@@ -808,9 +809,7 @@ export abstract class View {
   roleMetaOf(R: string): AclContent | undefined {
     const ix = this.ix
     const ws = (ix.roleMetaEv.get(R) ?? EMPTY).filter(
-      x =>
-        roleMetaOk(ix.ev[x], ix.rec[x].local.facts) &&
-        !this.metaDenied(x, ROLES, [ix.rec[x].local.facts.pos.get(R) ?? -1, R])
+      x => roleMetaOk(ix.ev[x], ix.rec[x].local.facts) && !this.roleMetaDenied(x)
     )
     const r = this.register(ws)
     return r && ix.ev[r.win].c
@@ -895,10 +894,33 @@ export abstract class View {
   // Whether the denies concurrent with the write `w` take from its author what its Authority
   // needs: the permission `bit`, and a rank above `over` when one is given.
   private metaDenied(w: number, bit: number, over?: Rank): boolean {
+    const held = this.heldAfterDenies(w)
+    return held !== null && ((held.perms & bit) === 0 || (over !== undefined && !gt(held.me, over)))
+  }
+  // Whether the denies concurrent with the role_meta write `w` take from its author the
+  // management of its role.
+  private roleMetaDenied(w: number): boolean {
+    const held = this.heldAfterDenies(w)
     const ix = this.ix
     const e = ix.ev[w]
     const St = ix.rec[w].local.facts
-    if (St.owners.has(e.a)) return false
+    return (
+      held !== null &&
+      !managesAt(
+        held.perms,
+        held.me,
+        [St.pos.get(e.c.role) ?? -1, e.c.role],
+        rulesOf(ix.ev[ix.genesis]?.c.rules)
+      )
+    )
+  }
+  // What the author of the write `w` holds once the denies concurrent with it count: their
+  // permissions and their rank. Null for an owner.
+  private heldAfterDenies(w: number): { perms: number; me: Rank } | null {
+    const ix = this.ix
+    const e = ix.ev[w]
+    const St = ix.rec[w].local.facts
+    if (St.owners.has(e.a)) return null
     const conc = (d: number) => this.effIn(d) && !ix.before(d, w) && !ix.before(w, d)
     const held = [...(St.holds.get(e.a) ?? [])]
     const lost = new Set<string>()
@@ -923,7 +945,7 @@ export abstract class View {
       const r: Rank = [Math.min(St.pos.get(X) ?? -1, down.get(X) ?? Infinity), X]
       if (gt(r, me)) me = r
     }
-    return (perms & bit) === 0 || (over !== undefined && !gt(me, over))
+    return { perms, me }
   }
   overwrite(ch: string, subj: string): AclContent | undefined {
     const r = this.register(this.ix.chpermEv.get(`${ch}|${subj}`) ?? EMPTY)
@@ -931,6 +953,14 @@ export abstract class View {
     let deny = 0
     for (const x of r.maxes) deny |= this.ix.ev[x].c.deny ?? 0
     return { ...this.ix.ev[r.win].c, deny }
+  }
+
+  // The overwrites of `subj` in this view, each with its channel.
+  overwritesOf(subj: string): [string, AclContent][] {
+    return (this.ix.chpermSubj.get(subj) ?? []).flatMap((ch): [string, AclContent][] => {
+      const o = this.overwrite(ch, subj)
+      return o ? [[ch, o]] : []
+    })
   }
 
   private lf?: FactsQ

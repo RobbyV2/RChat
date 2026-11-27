@@ -202,7 +202,7 @@ impl IntoResponse for Names {
 
 async fn member_roles(db: &Db, server: &str, username: &str) -> Result<Vec<Role>, ApiError> {
     let rows = sqlx::query(
-        "SELECT r.id, r.name, r.color, r.perms, r.mentionable FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2 ORDER BY r.id",
+        "SELECT r.id, r.name, r.color, r.perms, r.mentionable, r.position FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2 ORDER BY r.position DESC, r.id",
     )
     .bind(server)
     .bind(username)
@@ -216,6 +216,7 @@ async fn member_roles(db: &Db, server: &str, username: &str) -> Result<Vec<Role>
             color: r.try_get(2)?,
             perms: r.try_get(3)?,
             mentionable: r.try_get::<i64, _>(4)? != 0,
+            position: r.try_get(5)?,
         });
     }
     Ok(roles)
@@ -1666,7 +1667,7 @@ mod tests {
                     "is_creator": false,
                     "perms": 0,
                     "role_ids": [role],
-                    "roles": [{"id": role, "name": "mods", "color": "#ff0000", "perms": 4, "mentionable": false}],
+                    "roles": [{"id": role, "name": "mods", "color": "#ff0000", "perms": 4, "mentionable": false, "position": 0}],
                     "joined_at": 200,
                     "online": false,
                 },
