@@ -4,6 +4,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
+import spacing from './apps/web/eslint/spacing.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
 
@@ -25,6 +26,10 @@ const excluded = () => {
   const file = dir && join(dir, 'info', 'exclude')
   return file && existsSync(file) ? [includeIgnoreFile(file, 'git info/exclude')] : []
 }
+
+// Screens that take all their spacing from the layout boxes: hand-written spacing classes there
+// fail the lint.
+const LAID_OUT = []
 
 export default tseslint.config(
   ...excluded(),
@@ -49,6 +54,15 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
     },
   },
+  ...(LAID_OUT.length
+    ? [
+        {
+          files: LAID_OUT,
+          plugins: { rchat: { rules: { spacing } } },
+          rules: { 'rchat/spacing': 'error' },
+        },
+      ]
+    : []),
   {
     files: ['apps/web/app/**/*.{ts,tsx}'],
     ignores: [
