@@ -38,6 +38,7 @@ import { home } from './home_instance'
 import { InstanceRegistry } from '../client/instance_registry'
 import { ApiClient, createApi } from '../api'
 import type { InstanceInfo } from '../types'
+import { Secret } from '../secret'
 
 const info = (over: Partial<InstanceInfo> = {}): InstanceInfo => ({
   software: 'rchat',
@@ -686,7 +687,7 @@ describe('instance registry', () => {
     expect(registry.remove('other.example')).toBe(true)
     expect(registry.get('other.example')).toBeNull()
 
-    conn.api.setToken('secret')
+    conn.api.setToken(Secret.of('secret'))
     const moved = registry.setHome('http://127.0.0.1:3811', info({ name: 'Local' }))
     expect(moved).toBe(conn)
     expect(conn.isDefault).toBe(false)
@@ -703,7 +704,7 @@ describe('instance registry', () => {
   test('re-homing drops the old token so it never reaches another instance', async () => {
     const conn = new InstanceConnection(fixed('https://page.example'), null, true)
     const registry = new InstanceRegistry(conn, () => fixed('https://page.example'))
-    conn.api.setToken('page-token')
+    conn.api.setToken(Secret.of('page-token'))
     registry.setHome('https://other.example', info())
     const sent: Headers[] = []
     const real = globalThis.fetch

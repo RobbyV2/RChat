@@ -35,6 +35,7 @@ import { scopePings } from '../pings'
 import { context, headline, type Piece } from '../notices'
 import type { GroupMention, Message, Unread, WsEvent } from '../types'
 import { me, member, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -75,7 +76,7 @@ beforeEach(() => {
     me: me('bob', {
       servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
     }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     view: { kind: 'channel', server: 's', channelId: 2 },
     servers: {

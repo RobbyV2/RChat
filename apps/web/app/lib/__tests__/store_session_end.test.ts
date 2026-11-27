@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -22,7 +23,7 @@ let refuse = false
 const signedIn = (name: string) =>
   useStore.setState({
     me: me(name, { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
-    token: `t-${name}`,
+    token: Secret.of(`t-${name}`),
     guest: false,
     error: null,
     toast: null,

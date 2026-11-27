@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { useStore, resetSessionCaches } from '../store'
 import { drain, me, memoryStorage, serverDetail } from './fixtures'
 import { installPrimaryAccount } from './home_instance'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -87,7 +88,7 @@ afterEach(() => {
 const signIn = (admin: boolean) =>
   useStore.setState({
     me: me('bob', { is_site_admin: admin }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     view: null,

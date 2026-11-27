@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'b
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
 import { textChannel, advance, drain, me, msg, serverDetail, until, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -39,7 +40,7 @@ beforeEach(() => {
   }) as typeof fetch
   useStore.setState({
     me: me('bob'),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     view: { kind: 'channel', server: 's', channelId: 1 },

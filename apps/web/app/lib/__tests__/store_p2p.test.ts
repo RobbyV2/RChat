@@ -13,6 +13,7 @@ import { DENIED_CALL } from '../relays'
 import type { CallRelays, MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { DEFAULT_FEATURES } from '../features'
+import { Secret } from '../secret'
 
 const { files: p2p, relays: relayBook } = getHomeSession()
 
@@ -60,7 +61,7 @@ beforeEach(() => {
     new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown as typeof fetch
   useStore.setState({
     me: me('bob'),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     view: { kind: 'channel', server: 's', channelId: 1 },

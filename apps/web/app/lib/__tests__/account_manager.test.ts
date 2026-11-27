@@ -9,6 +9,8 @@ import { client } from '../client/client'
 import { memoryStorage, msg, me, drain } from './fixtures'
 import { testAccount } from './test_account'
 import type { AccountSession } from '../client/session'
+import { Secret } from '../secret'
+import { plain } from './helpers/secret'
 
 test('live budget, lock handover, lite trimming, owner-specific polling and storage removal', async () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'window')
@@ -258,7 +260,7 @@ test('reconciliation creates pinned sessions, keeps a guest distinct, and ignore
     expect(next).not.toBe(bob)
     const opened: string[] = []
     next.conn.ws.start = token => {
-      if (token) opened.push(token)
+      if (token) opened.push(plain(token)!)
     }
     pending.resolve(Response.json(me('bob')))
     await drain()
@@ -302,7 +304,7 @@ test('a shown account retires its credential and resumes only the newest replace
   }
   const opened: string[] = []
   shown.conn.ws.start = token => {
-    if (token) opened.push(token)
+    if (token) opened.push(plain(token)!)
   }
   const stale = Promise.withResolvers<Response>()
   const newest = Promise.withResolvers<Response>()
@@ -327,7 +329,7 @@ test('a shown account retires its credential and resumes only the newest replace
         null
       )
       memoryStorage.setItem(tokenKey(a), origin)
-      a.store.setState({ token: origin, drafts: { d1: origin } })
+      a.store.setState({ token: Secret.of(origin), drafts: { d1: origin } })
     }
     memoryStorage.setItem('rchat_book', JSON.stringify(book))
     client.book.setState(book, true)
@@ -377,9 +379,9 @@ test('a shown account retires its credential and resumes only the newest replace
     await drain()
     expect(shown.store.getState()).toMatchObject({
       signedOut: false,
-      token: 'newest',
       me: { username: 'sam', display_name: 'New session' },
     })
+    expect(plain(shown.store.getState().token)).toBe('newest')
     expect(opened).toEqual(['newest'])
     expect(memoryStorage.getItem(tokenKey(shown))).toBe('newest')
     expect(memoryStorage.getItem(tokenKey(other))).toBe(other.conn.origin)

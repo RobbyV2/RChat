@@ -23,6 +23,7 @@ import { AccountProvider } from '../../client/react'
 import { AccountSession } from '../../client/session'
 import { endpointsFrom, InstanceConnection } from '../../instances'
 import type { Me } from '../../types'
+import { Secret } from '../../secret'
 
 const shown = client.shown()
 const owner = new AccountSession(new InstanceConnection(endpointsFrom('https://owner.test', null)))
@@ -45,8 +46,8 @@ const me: Me = {
 }
 shown.store.setState({ me, view: { kind: 'channel', server: 'garden', channelId: 1 } })
 owner.store.setState({ me, view: { kind: 'channel', server: 'garden', channelId: 1 } })
-shown.api.setToken('shown-token')
-owner.api.setToken('owner-token')
+shown.api.setToken(Secret.of('shown-token'))
+owner.api.setToken(Secret.of('owner-token'))
 for (const account of [shown, owner]) {
   account.store.setState(s => ({ guest: false, settings: { ...s.settings, p2p: true } }))
   account.identities.setAccount(me.username)
@@ -215,7 +216,7 @@ if (location.pathname === '/sso/') {
       )
     })
 } else if (location.search === '?enrollment') {
-  shown.store.setState({ token: 'fixture-token' })
+  shown.store.setState({ token: Secret.of('fixture-token') })
   const origin = shown.conn.origin
   void Promise.resolve(
     client.updateBook(book =>

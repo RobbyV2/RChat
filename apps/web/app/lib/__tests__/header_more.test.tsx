@@ -10,6 +10,7 @@ import { resetSessionCaches, useStore, type ContextMenuItem } from '../store'
 import type { RChatState } from '../store_types'
 import { HEADER_MORE, HeaderMore } from '../../components/message_pane'
 import { drain, me, msg } from './fixtures'
+import { Secret } from '../secret'
 
 // Server rendering reads the store's initial state, and a click reads the current one, so the
 // test state goes into both.
@@ -66,7 +67,7 @@ const PINS = row('Pinned Messages', Pin)
 const THREADS = row('Threads', MessagesSquare)
 const SEARCH = row('Search', Search)
 
-const signedIn = () => put({ token: 'tok', me: me('alice'), guest: false })
+const signedIn = () => put({ token: Secret.of('tok'), me: me('alice'), guest: false })
 const asGuest = () => put({ token: null, me: null, guest: true })
 
 describe('header More button', () => {

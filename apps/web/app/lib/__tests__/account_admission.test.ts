@@ -4,6 +4,7 @@ import { client } from '../client/client'
 import { accountStorage } from '../client/keys'
 import { testAccount } from './test_account'
 import { me, memoryStorage } from './fixtures'
+import { plain } from './helpers/secret'
 
 test('the last slot is checked at commit and signed-out rows retain their identities', async () => {
   const conn = testAccount('new-user', 'https://account-limit.example')
@@ -47,7 +48,7 @@ test('the last slot is checked at commit and signed-out rows retain their identi
     expect(starts).toBe(0)
     conn.api.send = async () => Response.json({ token: 'existing-test', user: me('a0') })
     await conn.store.getState().login({ username: 'a0', password: 'fixture' })
-    expect(conn.store.getState().token).toBe('existing-test')
+    expect(plain(conn.store.getState().token)).toBe('existing-test')
     conn.store.getState().logout()
     const retained = parseBook(memoryStorage.getItem('rchat_book')).instances[0].accounts[0]
     expect(retained.primary).toBe(true)

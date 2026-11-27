@@ -10,6 +10,7 @@ import { arrangeDms, dmListPrefs } from '../dm_list'
 import { home } from './home_instance'
 import type { DmSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 beforeAll(registerAppActions)
@@ -86,7 +87,7 @@ beforeEach(() => {
   }
   g.document = { cookie: '', querySelectorAll: () => [] }
   useStore.setState({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('alice'),
     guest: false,
     view: null,

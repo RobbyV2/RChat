@@ -7,6 +7,7 @@ import { resetSessionCaches, useStore } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
 import type { MessageMedia } from '../types'
 import { me, msg } from './fixtures'
+import { Secret } from '../secret'
 
 describe('link preview images', () => {
   test('only this preview path on the instance is accepted', () => {
@@ -98,7 +99,7 @@ describe('link preview images', () => {
 
   test("an account on the page's own API gets media and previews by address", () => {
     api.setBase('/api')
-    api.setToken('tok')
+    api.setToken(Secret.of('tok'))
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
       value: { cookie: 'rchat_token=tok' },
@@ -123,7 +124,7 @@ describe('link preview images', () => {
     Object.defineProperty(globalThis, 'window', { configurable: true, value: page })
     Object.defineProperty(globalThis, 'document', { configurable: true, value: document })
     api.setBase('/api')
-    api.setToken('alice-token')
+    api.setToken(Secret.of('alice-token'))
     const md = (url: string) =>
       renderToStaticMarkup(<MarkdownMessage message={msg(5, { content: `![pic](${url})` })} />)
     const absolute = home.origin + '/api/v1/media/f1'
@@ -176,7 +177,7 @@ describe('link preview images', () => {
 
   test('an account on an API at another origin never loads them by address', () => {
     api.setBase('https://chat.b.com/api')
-    api.setToken('tok')
+    api.setToken(Secret.of('tok'))
     const preview = render('/api/messages/5/embeds/0/image?v=0123456789abcdef')
     expect(preview).toContain('Page')
     expect(preview.includes('<img')).toBe(false)

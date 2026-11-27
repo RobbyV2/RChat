@@ -1,5 +1,6 @@
 // State and UI types of the store; store.ts re-exports them.
 
+import type { Secret as Sealed } from './secret'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { LoginRequest, PollReq, RegisterRequest, SendOpts } from './api'
@@ -285,7 +286,7 @@ export interface Paged<T> {
 
 export interface RChatState {
   signInChoices?: { mark: object; username: string; links: import('./types').LinkedProvider[] }
-  token: string | null
+  token: Sealed | null
   me: Me | null
   guest: boolean
   guestPosting: Record<number, 'ready' | 'paused' | 'unavailable'>

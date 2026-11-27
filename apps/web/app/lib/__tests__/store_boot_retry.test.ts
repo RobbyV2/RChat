@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'b
 import { BOOT_RETRY_MS, useStore, resetSessionCaches } from '../store'
 import { advance, me, memoryStorage, msg, serverDetail } from './fixtures'
 import { installPrimaryAccount } from './home_instance'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -65,7 +66,7 @@ beforeEach(() => {
   }) as typeof fetch
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     view: null,

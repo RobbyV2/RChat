@@ -19,6 +19,7 @@ import { registerAppActions } from '../actions/index'
 import { itemFor } from '../actions/menu'
 import type { Friend, FriendRequest, Ping, Profile, UserRef, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -81,7 +82,7 @@ beforeEach(() => {
   }
   g.document = { cookie: '', visibilityState: 'visible' }
   useStore.setState({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('alice'),
     guest: false,
     panel: null,

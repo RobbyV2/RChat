@@ -12,6 +12,7 @@ import { scopePings } from '../pings'
 import { headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
 import { me, member, msg, serverDetail, until, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -64,7 +65,7 @@ beforeEach(() => {
   }) as typeof fetch
   useStore.setState({
     me: me('bob'),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     view: { kind: 'channel', server: 's', channelId: 2 },
     servers: {

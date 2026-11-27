@@ -5,6 +5,7 @@ import { api } from './home_instance'
 import { resetSessionCaches, useStore } from '../store'
 import { temporaryNotice } from '../temp_password'
 import { me } from './fixtures'
+import { Secret } from '../secret'
 
 const realChange = api.changePassword
 const initial = useStore.getInitialState()
@@ -51,7 +52,7 @@ test('an account with a temporary password sees the notice until a toast or an e
 test('choosing a password ends the notice', async () => {
   api.changePassword = async () => ({ ok: true })
   useStore.setState({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('dana', { password_temporary: { expires_at: null, change: 'required' } }),
   })
   expect(

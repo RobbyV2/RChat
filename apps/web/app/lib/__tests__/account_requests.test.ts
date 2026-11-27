@@ -7,6 +7,8 @@ import { accountStorage } from '../client/keys'
 import { testAccount } from './test_account'
 import type { MeUpdated } from '../api'
 import type { InstanceInfo, Me, SiteSettings } from '../types'
+import { Secret } from '../secret'
+import { plain } from './helpers/secret'
 
 test('authentication completing after disposal cannot start the socket or install credentials', async () => {
   for (const action of ['login', 'register'] as const) {
@@ -98,13 +100,13 @@ test('authentication cannot commit between a completed response and a queued dis
       queueMicrotask(() => {
         disposed = true
         account.store.dispose()
-        tokenAtDisposal = account.store.getState().token
+        tokenAtDisposal = plain(account.store.getState().token)
       })
     )
     await pending
     expect(disposed).toBe(true)
     expect(lateStarts).toBe(0)
-    expect(account.store.getState().token).toBe(tokenAtDisposal)
+    expect(plain(account.store.getState().token)).toBe(tokenAtDisposal)
   }
 })
 
@@ -116,7 +118,7 @@ test('a secondary connection never writes the home media cookie', () => {
     Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
     for (const ownOrigin of [false, true]) {
       account.conn.isDefault = ownOrigin
-      setMediaCookie(account.conn, 'secondary')
+      setMediaCookie(account.conn, Secret.of('secondary'))
       setMediaCookie(account.conn, null)
     }
     expect(doc.cookie).toBe('rchat_token=home')
@@ -195,7 +197,7 @@ test('instance discovery finishing after sign-in keeps the authenticated connect
   globalThis.fetch = (() => response.promise) as typeof fetch
   try {
     const pending = account.store.getState().switchInstance('https://second.test')
-    account.store.setState({ token: 'signed-in' })
+    account.store.setState({ token: Secret.of('signed-in') })
     response.resolve(
       Response.json({
         software: 'rchat',
@@ -211,7 +213,7 @@ test('instance discovery finishing after sign-in keeps the authenticated connect
     )
     expect(await pending).toBe('Log out before switching instances')
     expect(account.conn.host).toBe('first.test')
-    expect(account.store.getState().token).toBe('signed-in')
+    expect(plain(account.store.getState().token)).toBe('signed-in')
   } finally {
     globalThis.fetch = originalFetch
     account.store.dispose()
@@ -258,8 +260,8 @@ for (const stage of ['discovery', 'settings'] as const) {
     try {
       callback.store.setState({ me: null })
       sibling.credentialTarget = 'alice'
-      sibling.store.setState({ token: 'prior' })
-      sibling.api.setToken('prior')
+      sibling.store.setState({ token: Secret.of('prior') })
+      sibling.api.setToken(Secret.of('prior'))
       memoryStorage.setItem(qualified, 'prior')
       memoryStorage.setItem(alias, 'prior')
       callback.api.ssoExchange = async () => ({
@@ -269,7 +271,7 @@ for (const stage of ['discovery', 'settings'] as const) {
         end_session: false,
       })
       sibling.api.logout = async token => {
-        revoked.push(token)
+        revoked.push(plain(token)!)
         return { ok: true }
       }
       sibling.api.instance = async () => {
@@ -290,7 +292,7 @@ for (const stage of ['discovery', 'settings'] as const) {
         .getState()
         .ssoExchange({ code: 'fixture', verifier: 'fixture' }, () => current)
       await started.promise
-      expect(sibling.store.getState().token).toBe('prior')
+      expect(plain(sibling.store.getState().token)).toBe('prior')
       if (stage === 'discovery') callback.store.dispose()
       else current = false
       held.resolve()
@@ -299,7 +301,7 @@ for (const stage of ['discovery', 'settings'] as const) {
       expect(settingsReads).toBe(stage === 'discovery' ? 0 : 1)
       if (stage === 'discovery') expect(sibling.store.getState().instance).toBe(before.instance)
       expect(sibling.store.getState().settings).toBe(before.settings)
-      expect(sibling.store.getState().token).toBe('prior')
+      expect(plain(sibling.store.getState().token)).toBe('prior')
       expect(memoryStorage.getItem(qualified)).toBe('prior')
       expect(memoryStorage.getItem(alias)).toBe('prior')
       expect(client.book.getState()).toBe(book)

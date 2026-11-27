@@ -15,6 +15,7 @@ import { resetSessionCaches, useStore } from '../store'
 import type { AdminPlace } from '../store_types'
 import { ADMIN_SECTIONS } from '../view'
 import { me, paged, user } from './fixtures'
+import { Secret } from '../secret'
 
 const initial = useStore.getInitialState()
 const saved = { ...initial }
@@ -170,11 +171,15 @@ test('only the site admin has the palette command that opens the page', () => {
   for (const who of [
     { token: null, me: null, guest: false },
     { token: null, me: null, guest: true },
-    { token: 'tok', me: me('alice'), guest: false },
+    { token: Secret.of('tok'), me: me('alice'), guest: false },
   ]) {
     useStore.setState(who)
     expect(listed()).toBe(false)
   }
-  useStore.setState({ token: 'tok', me: me('root', { is_site_admin: true }), guest: false })
+  useStore.setState({
+    token: Secret.of('tok'),
+    me: me('root', { is_site_admin: true }),
+    guest: false,
+  })
   expect(listed()).toBe(true)
 })

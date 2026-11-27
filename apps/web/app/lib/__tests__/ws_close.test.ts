@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { CLOSE_TOO_MANY, WS_MESSAGE_MAX, WsClient, mayConnectEarly, reconnectsAfter } from '../ws'
+import { Secret } from '../secret'
 
 type Fake = {
   readyState: number
@@ -44,7 +45,7 @@ const openClient = () => {
   const statuses: string[] = []
   const client = new WsClient(ends)
   client.onStatus = s => statuses.push(s)
-  client.start('token')
+  client.start(Secret.of('token'))
   const ws = sockets[sockets.length - 1]
   ws.readyState = 1
   ws.onopen?.()
@@ -85,7 +86,7 @@ describe('realtime reconnects', () => {
         ...ends,
         timings: () => timings,
       })
-      client.start('token')
+      client.start(Secret.of('token'))
       const ws = sockets[sockets.length - 1]
       ws.readyState = 3
       ws.onclose?.({ code: 1006 })
@@ -128,7 +129,7 @@ describe('realtime close codes', () => {
     expect(prompted).toBe(true)
     client.ensureConnected()
     expect(sockets.length).toBe(1)
-    client.start('token')
+    client.start(Secret.of('token'))
     expect(sockets.length).toBe(2)
     client.stop()
   })

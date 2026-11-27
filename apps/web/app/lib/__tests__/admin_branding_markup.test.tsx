@@ -7,6 +7,7 @@ import { resetSessionCaches, useStore } from '../store'
 import type { AdminConfig, Brand, ConfigControl } from '../types'
 import { adminPath, parsePath } from '../view'
 import { me } from './fixtures'
+import { Secret } from '../secret'
 
 const initial = useStore.getInitialState()
 const saved = { ...initial }
@@ -149,7 +150,7 @@ test('the pictures show what is uploaded, with a way to replace or remove it', (
 })
 
 test('a brand change from the instance reaches the app', () => {
-  useStore.setState({ token: 'tok', me: me('bob') })
+  useStore.setState({ token: Secret.of('tok'), me: me('bob') })
   expect(useStore.getState().brand).toBeNull()
   useStore.getState().applyWsEvent({
     type: 'brand_changed',

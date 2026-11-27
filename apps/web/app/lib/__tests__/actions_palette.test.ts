@@ -23,6 +23,7 @@ import { resetSessionCaches, useStore, type ConfirmRequest } from '../store'
 import type { RChatState } from '../store_types'
 import { Perm } from '../types'
 import { drain, me, member, msg, paged, role, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 const real = Object.fromEntries(
   Object.entries(useStore.getState()).filter(([, v]) => typeof v === 'function')
@@ -92,7 +93,7 @@ const noP2p = () => {
 const reset = (over: Partial<RChatState> = {}) => {
   noP2p()
   useStore.setState({
-    token: 'tok',
+    token: Secret.of('tok'),
     guest: false,
     me: me('alice', {
       servers: [

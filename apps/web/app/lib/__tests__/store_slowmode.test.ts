@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -17,7 +18,7 @@ const tick = async () => {
 const setup = (slowmode: number, admin = false) =>
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: admin }] }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     view: { kind: 'channel', server: 's', channelId: 77 },

@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef } from 'react'
 import { client } from '../../lib/client/client'
 import { useAccount, useStore } from '../../lib/client/react'
+import { sameSecret } from '../../lib/secret'
 
 // Capture the specific account, session and settings dialog before any async work.
 export function useConfirmation() {
@@ -25,7 +26,7 @@ export function useConfirmation() {
       client.shownVersion() === shownVersion &&
       !!username &&
       !s.guest &&
-      s.token === token &&
+      sameSecret(s.token, token) &&
       s.me?.username === username &&
       mark === acct.lifetime.sessionMark() &&
       dialog === s.activeDialog

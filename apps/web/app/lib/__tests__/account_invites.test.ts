@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { Ended } from '../slices/ctx'
 import { testAccount } from './test_account'
 import type { Invite } from '../types'
+import { Secret } from '../secret'
 
 const invite: Invite = {
   server: { name: 'club', display_name: 'Club', creator: null, has_password: false },
@@ -103,7 +104,7 @@ test('an open invite drops visible metadata and a pending message body when its 
       )
     ).toBe(true)
     const second = seen
-    b.store.setState({ token: 'another-token' })
+    b.store.setState({ token: Secret.of('another-token') })
     expect(seen === second).toBe(false)
     expect(second.current()).toBe(false)
     const third = seen

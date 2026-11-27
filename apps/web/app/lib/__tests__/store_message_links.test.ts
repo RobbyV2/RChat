@@ -3,6 +3,8 @@ import { useStore, resetSessionCaches } from '../store'
 import type { MessageLocation, WsEvent } from '../types'
 import { home, installPrimaryAccount } from './home_instance'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
+import { plain } from './helpers/secret'
 
 afterAll(resetSessionCaches)
 
@@ -117,7 +119,7 @@ beforeEach(() => {
   }) as typeof fetch
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     toast: null,
@@ -277,7 +279,7 @@ describe('link cards', () => {
     try {
       await st().login({ username: 'bob', password: 'x' } as never)
       expect(st().error).toBeNull()
-      expect(st().token).toBe('t2')
+      expect(plain(st().token)).toBe('t2')
       expect(st().linkCards).toEqual({})
     } finally {
       home.ws.stop()

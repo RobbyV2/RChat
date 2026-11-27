@@ -3,6 +3,7 @@ import { useStore, resetSessionCaches } from '../store'
 import { messagePlaces } from '../message_groups'
 import { clockSample } from '../send_clock'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -40,7 +41,7 @@ const gate = () => {
 const setup = (mineAt: number) =>
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     view: { kind: 'channel', server: 's', channelId: 77 },

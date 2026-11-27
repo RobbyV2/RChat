@@ -28,6 +28,7 @@ import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem
 import type { RChatState } from '../store_types'
 import { Perm, type DmSummary, type Member, type UserRef } from '../types'
 import { drain, me, member, msg, paged, role, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 const realSharing = sharing()
 const g = globalThis as { window?: unknown }
@@ -73,7 +74,7 @@ const state = (o: State = {}) => {
     { ...role(3, '#00f', 0), name: 'Helper' },
   ]
   useStore.setState({
-    token: o.guest ? null : 'tok',
+    token: o.guest ? null : Secret.of('tok'),
     guest: !!o.guest,
     me: o.guest
       ? null

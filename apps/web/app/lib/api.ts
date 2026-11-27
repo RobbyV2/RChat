@@ -80,6 +80,7 @@ import type { LayoutOrder } from './categories'
 import type { Page } from './lists'
 import type { UnreadCount } from './unread_banner'
 import { retrySeconds } from './rate_limit'
+import { TO_REQUEST, type Secret as Sealed } from './secret'
 import type { Privacy, Relation, RequestStatus } from './friends'
 import type { Secret } from './password'
 import type {
@@ -210,8 +211,8 @@ export const inboxParams = (q: InboxQuery) => {
 }
 
 export class ApiClient {
-  private token: string | null = null
-  private grants: Record<string, string> = {}
+  private token: Sealed | null = null
+  private grants: Record<string, Sealed> = {}
   private root = ''
   // Set from the instance's discovery document (see `api_version.ts`).
   prefix: ApiPrefix = 'unversioned'
@@ -281,11 +282,11 @@ export class ApiClient {
     return (await fetch(url, { credentials: 'omit' })).ok
   }
 
-  setToken(token: string | null) {
+  setToken(token: Sealed | null) {
     this.token = token
   }
 
-  setGrants(grants: Record<string, string>) {
+  setGrants(grants: Record<string, Sealed>) {
     this.grants = grants
   }
 
@@ -295,13 +296,13 @@ export class ApiClient {
 
   private credentials(as: SendOptions['as'] = 'session'): Record<string, string> {
     if (as === 'nobody') return {}
-    if (this.token) return { Authorization: `Bearer ${this.token}` }
+    if (this.token) return { Authorization: `Bearer ${this.token.reveal(TO_REQUEST)}` }
     if (as === 'session') {
-      const grants = Object.values(this.grants)
+      const grants = Object.values(this.grants).map(g => g.reveal(TO_REQUEST))
       return grants.length ? { 'X-Guest-Grant': grants.join(',') } : {}
     }
     const grant = as.file === undefined ? undefined : this.grants[as.file]
-    return grant ? { 'X-Guest-Grant': grant } : {}
+    return grant ? { 'X-Guest-Grant': grant.reveal(TO_REQUEST) } : {}
   }
 
   // Every request to this instance leaves here. A GET is sent again after a network failure, and
@@ -392,8 +393,8 @@ export class ApiClient {
     return `${this.base}/media/${seg(id)}`
   }
 
-  hasToken(candidate: string) {
-    return this.token !== null && this.token === candidate
+  hasToken(candidate: Sealed | null) {
+    return this.token !== null && this.token.same(candidate)
   }
 
   signedIn() {
@@ -650,12 +651,12 @@ export const endpoints = (c: ApiClient) => ({
   register: (body: RegisterRequest) =>
     c.req<AuthResponse>('POST', '/auth/register', body).then(localAuth),
   login: (body: LoginRequest) => c.req<AuthResponse>('POST', '/auth/login', body).then(localAuth),
-  logout: (token: string) =>
+  logout: (token: Sealed) =>
     c.req<{ ok: boolean; end_session_url?: string | null }>(
       'POST',
       '/auth/logout',
       undefined,
-      { Authorization: `Bearer ${token}` },
+      { Authorization: `Bearer ${token.reveal(TO_REQUEST)}` },
       true,
       3000
     ),

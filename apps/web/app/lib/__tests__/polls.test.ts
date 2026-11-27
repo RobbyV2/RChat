@@ -25,6 +25,7 @@ import { canQuote } from '../replies'
 import type { Message, Poll, ServerDetail, WsEvent } from '../types'
 import { managesPoll } from '../actions/message'
 import { advance, me, msg, serverDetail } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -256,7 +257,7 @@ describe('poll store', () => {
     }) as typeof fetch
     useStore.setState({
       me: me('bob'),
-      token: 't',
+      token: Secret.of('t'),
       guest: false,
       error: null,
       view: { kind: 'channel', server: 's', channelId: 1 },

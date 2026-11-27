@@ -11,6 +11,7 @@ import { keyId, newKeyPair } from '../../p2p/keys'
 import { p2pKey } from '../../p2p/app/store'
 import type { ServerView } from '../../p2p/server'
 import type { Me } from '../../types'
+import { Secret } from '../../secret'
 
 const self = keyId(newKeyPair().pk)
 const contact = keyId(newKeyPair().pk)
@@ -137,7 +138,7 @@ for (const account of accounts) {
     },
   }))
   if (account === shown) {
-    account.store.setState({ me, dms: [dm], token: host })
+    account.store.setState({ me, dms: [dm], token: Secret.of(host) })
     account.identities.setAccount(username)
   }
 }

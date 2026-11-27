@@ -12,6 +12,7 @@ import {
 } from './instances'
 import { hostOf } from './qualified'
 import type { Invite } from './types'
+import { sameSecret } from './secret'
 
 const INFO_TTL = 5 * 60 * 1000
 const INVITE_TTL = 30 * 1000
@@ -90,7 +91,7 @@ export function createInviteCache(account: AccountSession) {
       const state = session.store.getState()
       return (
         mark === session.lifetime.sessionMark() &&
-        token === state.token &&
+        sameSecret(token, state.token) &&
         guestGrants === state.guestGrants
       )
     }

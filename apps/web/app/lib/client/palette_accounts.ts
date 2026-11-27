@@ -12,6 +12,8 @@ import { canAddInstance } from './adding'
 import { accountStorage } from './keys'
 import { client } from './client'
 import type { AccountSession } from './session'
+import { readToken } from './credentials'
+import { sameSecret } from '../secret'
 
 interface Target {
   account: AccountSession
@@ -34,7 +36,7 @@ function admitted(account: AccountSession, actor: AccountSession) {
     !!name &&
     instance.accounts.some(row => row.username === name && row.connect) &&
     !!s.token &&
-    readLocal(keys.token(name)) === s.token
+    s.token.same(readToken(keys.token(name)))
   )
 }
 
@@ -189,7 +191,7 @@ export function accountPaletteSections(
       account.conn.origin === origin &&
       account.lifetime.sessionMark() === mark &&
       account.store.getState().me?.username === username &&
-      account.store.getState().token === token &&
+      sameSecret(account.store.getState().token, token) &&
       admitted(account, actor) &&
       (!peer ||
         (account.store.getState().settings.p2p &&

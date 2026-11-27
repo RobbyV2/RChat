@@ -10,6 +10,7 @@ import type { RChatState } from '../store_types'
 import { client } from './client'
 import { accountStorage } from './keys'
 import type { AccountSession } from './session'
+import { readToken } from './credentials'
 
 interface Counts {
   incoming: number
@@ -172,7 +173,7 @@ export function createAccountCounts(account: AccountSession) {
       return
     const keyset = accountStorage(account.conn)
     const tokenKey = keyset.token(owner)
-    const token = readLocal(tokenKey)
+    const token = readToken(tokenKey)
     if (!token) return
     const mark = account.lifetime.sessionMark()
     const api = createApi(account.conn.apiBase, 'omit')
@@ -183,7 +184,7 @@ export function createAccountCounts(account: AccountSession) {
       username(account) === owner &&
       account.conn.origin === origin &&
       client.live().includes(account) &&
-      readLocal(tokenKey) === token
+      token.same(readToken(tokenKey))
     const snapshotKey = countsKey(account, owner)
     const atStart = readLocal(snapshotKey)
     const initial = account.store.getState()

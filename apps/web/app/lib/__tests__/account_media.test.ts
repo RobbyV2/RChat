@@ -4,6 +4,7 @@ import { client } from '../client/client'
 import { testAccount } from './test_account'
 import type { Decision } from '../relays'
 import type { IceServers, VoiceMsg } from '../types'
+import { Secret } from '../secret'
 
 const turn = (credential: string): IceServers => ({
   ice_servers: [{ urls: ['turn:relay.example:3478'], username: 'user', credential }],
@@ -130,8 +131,8 @@ test('identical media paths on one origin use separate credentials, blobs and ab
       })
       return String(url).endsWith('/pending') ? late.promise : image()
     }) as typeof fetch
-    a.api.setGrants({ room: 'a-grant' })
-    b.api.setToken('b-token')
+    a.api.setGrants({ room: Secret.of('a-grant') })
+    b.api.setToken(Secret.of('b-token'))
     const path = a.api.mediaUrl('same')
     expect(b.api.mediaUrl('same')).toBe(path)
     expect(a.media.mediaModeFor('room')).toBe('blob')

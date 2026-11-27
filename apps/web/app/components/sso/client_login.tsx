@@ -10,6 +10,7 @@ import { errorText } from '../../lib/sso'
 import type { AuthInfo } from '../../lib/types'
 import { NAME_MAX } from '../../lib/rules'
 import { ApiError } from '../../lib/api'
+import { sameSecret, Secret } from '../../lib/secret'
 export function ClientLogin({
   account,
   providers,
@@ -108,7 +109,9 @@ export function ClientLogin({
       const signedIn = client
         .live()
         .find(
-          a => a.conn.origin === account.conn.origin && a.store.getState().token === result.token
+          a =>
+            a.conn.origin === account.conn.origin &&
+            sameSecret(a.store.getState().token, Secret.from(result.token))
         )
       releaseTemporary()
       if (signedIn) onSuccess(signedIn)

@@ -18,6 +18,7 @@ import {
 } from '../config_transfer'
 import type { DmSummary, ServerSummary } from '../types'
 import { me, memoryStorage, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -137,7 +138,7 @@ describe('export never carries secrets', () => {
     notify = setMute(notify, { kind: 'dm', id: 5 }, 'forever')
     useStore.setState({
       me: me('alice', { appear_offline: true, servers: [srv('rchat'), srv('club')] }),
-      token: SECRETS[0],
+      token: Secret.of(SECRETS[0]),
       guest: false,
       theme: 'light',
       streamer: true,
@@ -235,7 +236,7 @@ describe('applying', () => {
   beforeEach(() => {
     useStore.setState({
       me: me('bob', { servers: [srv('rchat'), srv('club')] }),
-      token: 'bob-token',
+      token: Secret.of('bob-token'),
       guest: false,
       dms: [dm(4, 'bob', true), dm(5, 'carol')],
       dmsMore: false,

@@ -19,6 +19,8 @@ import { me, memoryStorage } from './fixtures'
 import { client } from '../client/client'
 import { accountStorage } from '../client/keys'
 import { testAccount } from './test_account'
+import { Secret } from '../secret'
+import { plain } from './helpers/secret'
 
 const alpha = 'https://alpha.test'
 const beta = 'https://beta.test'
@@ -123,12 +125,12 @@ test('signing out a parked account revokes its own credential and retains both b
     data.set(ka.token('alice'), 'alpha-fixture')
     data.set(kb.token('alice'), 'beta-fixture')
     data.set(kb.key('rchat_token'), 'beta-fixture')
-    a.store.setState({ token: 'alpha-fixture' })
+    a.store.setState({ token: Secret.of('alpha-fixture') })
     b.store.setState({ me: null, token: null })
     b.credentialTarget = 'alice'
     b.mode = 'parked'
     b.api.logout = async token => {
-      sent.push(token)
+      sent.push(plain(token)!)
       return { ok: true }
     }
     client.book.setState(book, true)
@@ -177,7 +179,7 @@ test('a delayed parent bootstrap cannot select an earlier sibling or reopen its 
   const selected: string[] = []
   try {
     client.book.setState(book, true)
-    a.store.setState({ me: null, token: 'token', bootstrap: () => wait.promise })
+    a.store.setState({ me: null, token: Secret.of('token'), bootstrap: () => wait.promise })
     const rows = liveSwitcherRows().groups[0].rows
     const pending = switchActor(rows[1], a, () => selected.push('main'))
     a.store.setState({ me: me('alice'), settings: { ...a.store.getState().settings, p2p: true } })
@@ -226,7 +228,7 @@ test('incoming requests stay on their identity across parking and clear on resol
     client.show(a, 'none')
     for (const owner of [a, b]) {
       owner.store.setState({
-        token: 'token',
+        token: Secret.of('token'),
         settings: { ...owner.store.getState().settings, p2p: true },
       })
       owner.identities.setAccount('alice')

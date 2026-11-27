@@ -152,7 +152,7 @@ test('a mismatched pinned user is never entered, and a late exchange cannot reac
   }
   const revoked: string[] = []
   acct.api.logout = async token => {
-    if (token) revoked.push(token)
+    if (token) revoked.push(plain(token)!)
     return { ok: true }
   }
   acct.api.ssoExchange = async () => result
@@ -188,11 +188,11 @@ test('cancelling an issued login while book admission waits revokes only its tok
   let current = true
   try {
     actor.store.setState({
-      token: 'kept-on-issuer',
+      token: Secret.of('kept-on-issuer'),
       loadInstance: async () => true,
       loadSettings: async () => {},
     })
-    neighbor.store.setState({ token: 'kept-elsewhere' })
+    neighbor.store.setState({ token: Secret.of('kept-elsewhere') })
     actor.api.ssoExchange = async () => ({
       kind: 'session',
       user: me('alice'),
@@ -200,7 +200,7 @@ test('cancelling an issued login while book admission waits revokes only its tok
       end_session: false,
     })
     actor.api.logout = async token => {
-      revoked.push(token)
+      revoked.push(plain(token)!)
       return { ok: true }
     }
     client.updateBook = async apply => {
@@ -213,12 +213,12 @@ test('cancelling an issued login while book admission waits revokes only its tok
       .ssoExchange({ code: 'fixture', verifier: newVerifier() }, () => current)
     await entered.promise
     current = false
-    actor.store.setState({ token: 'newer-on-issuer' })
+    actor.store.setState({ token: Secret.of('newer-on-issuer') })
     proceed.resolve()
     await assert.rejects(login, /expired/)
     expect(revoked).toEqual(['abandoned'])
-    expect(actor.store.getState().token).toBe('newer-on-issuer')
-    expect(neighbor.store.getState().token).toBe('kept-elsewhere')
+    expect(plain(actor.store.getState().token)).toBe('newer-on-issuer')
+    expect(plain(neighbor.store.getState().token)).toBe('kept-elsewhere')
     expect(client.book.getState()).toBe(book)
   } finally {
     client.updateBook = original
@@ -294,17 +294,17 @@ test('logout preference is versioned and belongs to the admitted credential', as
   const flag = (name: string) =>
     parseLogoutFlag(localStorage.getItem(accountStorage(conn).key(SSO_LOGOUT_KEY + ':' + name)))
   try {
-    confirmCredential(conn, me('alice'), 'old', false, true)
-    confirmCredential(conn, me('bob'), 'neighbor', false, true)
-    confirmCredential(conn, me('alice'), 'old', true)
+    confirmCredential(conn, me('alice'), Secret.of('old'), false, true)
+    confirmCredential(conn, me('bob'), Secret.of('neighbor'), false, true)
+    confirmCredential(conn, me('alice'), Secret.of('old'), true)
     expect(flag('alice')).toBe(true)
-    confirmCredential(conn, me('alice'), 'new', false, true)
-    forgetCredential(conn, 'alice', 'old')
+    confirmCredential(conn, me('alice'), Secret.of('new'), false, true)
+    forgetCredential(conn, 'alice', Secret.of('old'))
     expect(flag('alice')).toBe(true)
-    confirmCredential(conn, me('alice'), 'password', false)
+    confirmCredential(conn, me('alice'), Secret.of('password'), false)
     expect(flag('alice')).toBe(false)
     expect(flag('bob')).toBe(true)
-    forgetCredential(conn, 'bob', 'neighbor')
+    forgetCredential(conn, 'bob', Secret.of('neighbor'))
     expect(flag('bob')).toBe(false)
   } finally {
     actor.store.dispose()
@@ -331,11 +331,11 @@ test('only the originating foreground session follows its logout response', asyn
     for (const mode of ['background', 'switched', 'replaced', 'foreground']) {
       client.shown = () => (mode === 'background' ? neighbor : owner)
       const token = 'fixture-' + mode
-      confirmCredential(owner.conn, me('alice'), token, false, true)
-      owner.store.setState({ me: me('alice'), token })
+      confirmCredential(owner.conn, me('alice'), Secret.of(token), false, true)
+      owner.store.setState({ me: me('alice'), token: Secret.of(token) })
       const response = Promise.withResolvers<{ ok: boolean; end_session_url: string }>()
       owner.api.logout = received => {
-        expect(received).toBe(token)
+        expect(plain(received)).toBe(token)
         return response.promise
       }
       const done = owner.store.getState().logout()
@@ -442,6 +442,8 @@ test('sign-in commands target their account and require a member and configured 
 import { registerAppActions } from '../actions'
 import { ctxFor } from '../actions/ctx'
 import { menuItems } from '../actions/menu'
+import { Secret } from '../secret'
+import { plain } from './helpers/secret'
 test('a linked sign-in row menu unlinks it only while another sign-in stays', async () => {
   registerAppActions()
   const owner = testAccount('alice')
@@ -479,7 +481,7 @@ test('an interrupted foreground confirmation pins a new login and discards the o
   try {
     client.shown = () => account
     account.store.setState({
-      token: 'old',
+      token: Secret.of('old'),
       instance: { auth: { confirm_login: true } } as import('../types').InstanceInfo,
     })
     let discarded = false
@@ -523,7 +525,7 @@ test('recent provider proof belongs to the admitted actor, token and session and
   }
   try {
     client.shown = () => account
-    account.store.setState({ token: 'new' })
+    account.store.setState({ token: Secret.of('new') })
     acceptRecentConfirmation(account, 'bob', 'new', 'work', proof)
     acceptRecentConfirmation(account, 'alice', 'old', 'work', proof)
     acceptRecentConfirmation(account, 'alice', 'new', 'work', { ...proof, expires_at: 1 })
@@ -575,7 +577,7 @@ for (const sibling of [false, true])
           return reply.promise
         }
         owner.api.logout = async token => {
-          revoked.push(token)
+          revoked.push(plain(token)!)
           return { ok: true }
         }
         const pending = owner.store
@@ -585,7 +587,7 @@ for (const sibling of [false, true])
         await target.store.getState().enterSsoSession(response('newer'), () => true)
         reply.resolve(response('late'))
         await assert.rejects(pending, /expired/)
-        expect(target.store.getState().token).toBe('newer')
+        expect(plain(target.store.getState().token)).toBe('newer')
         expect(target.store.getState().activeDialog).toBeNull()
         expect(target.store.getState().providerConfirmation).toBeUndefined()
         expect(revoked).toEqual(['late'])

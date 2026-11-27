@@ -3,6 +3,7 @@ import { previewServer, useStore, resetSessionCaches } from '../store'
 import { clipOf, forwardKey } from '../forward'
 import type { Message } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -78,7 +79,7 @@ beforeEach(() => {
   }) as typeof fetch
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     toast: null,

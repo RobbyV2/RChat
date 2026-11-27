@@ -8,6 +8,7 @@ export { privateHost }
 import { WsClient, wsUrlFrom } from './ws'
 import { shellInfo } from './platform/desktop'
 import type { InstanceInfo } from './types'
+import { Secret, TO_REQUEST } from './secret'
 
 import { DEFAULT_INSTANCE_NAME } from './instance_label'
 import { limitsOf } from './instance_limits'
@@ -533,19 +534,19 @@ export function ownsMediaCookie(connection: InstanceConnection): boolean {
       .split(';')
       .map(part => part.trim())
       .find(part => part.startsWith('rchat_token='))
-    return !!pair && connection.api.hasToken(pair.slice('rchat_token='.length))
+    return !!pair && connection.api.hasToken(Secret.from(pair.slice('rchat_token='.length)))
   } catch {
     return false
   }
 }
 
 // Same-origin private media loads with the home connection's cookie.
-export function setMediaCookie(connection: InstanceConnection, token: string | null) {
+export function setMediaCookie(connection: InstanceConnection, token: Secret | null) {
   if (!connection.isHome || !connection.isDefault) return
   const attrs = `path=/; SameSite=Strict${window.location.protocol === 'https:' ? '; Secure' : ''}`
   try {
     document.cookie = token
-      ? `rchat_token=${token}; ${attrs}; max-age=31536000`
+      ? `rchat_token=${token.reveal(TO_REQUEST)}; ${attrs}; max-age=31536000`
       : `rchat_token=; ${attrs}; max-age=0`
   } catch {
     // Header-authenticated media remains available when the browser blocks cookies.

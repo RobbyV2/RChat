@@ -5,6 +5,7 @@ import { menuItems } from '../actions/menu'
 import type { Target } from '../actions/types'
 import { resetSessionCaches, useStore } from '../store'
 import { drain, me, memoryStorage, role, serverDetail } from './fixtures'
+import { Secret } from '../secret'
 
 const initial = useStore.getState()
 
@@ -40,7 +41,7 @@ const at = (
 
 const state = (list = roles) =>
   useStore.setState({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('alice'),
     servers: { s: serverDetail('s', { roles: list, roles_version: 7 }) },
   })

@@ -8,7 +8,7 @@ import {
   type BookAccount,
 } from './book'
 import { client } from './client'
-import { forgetCredential } from './credentials'
+import { forgetCredential, readToken } from './credentials'
 import { requestBadge, requestBadgePrefix } from './request_badge'
 import { accountStorage } from './keys'
 import { createSavedSession, savedConnection } from './saved_session'
@@ -363,7 +363,7 @@ export function signOutSwitcherAccount(origin: string, username: string | null) 
   if (state?.guest || state?.token) {
     state.logout()
   } else if (username !== null) {
-    const token = readLocal(accountStorage(conn).token(username))
+    const token = readToken(accountStorage(conn).token(username))
     if (token) {
       if (forgetCredential(conn, username, token)) setMediaCookie(conn, null)
       void conn.api.logout(token).catch(() => {})

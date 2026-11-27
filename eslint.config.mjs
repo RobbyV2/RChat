@@ -31,6 +31,34 @@ const excluded = () => {
 // fail the lint.
 const LAID_OUT = []
 
+const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
+
+// Each secret sink may be imported only by the modules that are that sink.
+const sinkRule = allowed => ({
+  'no-restricted-imports': [
+    'error',
+    {
+      patterns: [
+        {
+          group: ['**/secret'],
+          importNames: SINKS.filter(name => !allowed.includes(name)),
+          message: 'Only the module that sends, stores or shows a secret may reveal it.',
+        },
+      ],
+    },
+  ],
+})
+
+const REQUEST_SINKS = [
+  'apps/web/app/lib/api.ts',
+  'apps/web/app/lib/api/**',
+  'apps/web/app/lib/ws.ts',
+  'apps/web/app/lib/instances.ts',
+]
+const STORE_SINKS = ['apps/web/app/lib/client/credentials.ts']
+const SCREEN_SINKS = ['apps/web/app/components/**', 'apps/web/app/**/page.tsx']
+const TEST_FILES = ['apps/web/app/**/__tests__/**', 'apps/web/app/**/*.test.{ts,tsx}']
+
 export default tseslint.config(
   ...excluded(),
   eslint.configs.recommended,
@@ -96,6 +124,14 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ['apps/web/app/**/*.{ts,tsx}'],
+    ignores: [...REQUEST_SINKS, ...STORE_SINKS, ...SCREEN_SINKS, ...TEST_FILES],
+    rules: sinkRule([]),
+  },
+  { files: REQUEST_SINKS, rules: sinkRule(['TO_REQUEST']) },
+  { files: STORE_SINKS, rules: sinkRule(['TO_STORE']) },
+  { files: SCREEN_SINKS, ignores: TEST_FILES, rules: sinkRule(['TO_SCREEN']) },
   {
     files: ['apps/web/public/sw.js'],
     languageOptions: {

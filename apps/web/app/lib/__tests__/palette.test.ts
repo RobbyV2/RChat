@@ -29,6 +29,7 @@ import type { RChatState } from '../store_types'
 
 import { writeUserLimits } from '../p2p/user_limits'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -213,7 +214,7 @@ describe('sections', () => {
     }
     registerAppActions()
     useStore.setState({
-      token: 'tok',
+      token: Secret.of('tok'),
       me: me('alice', {
         servers: [{ name: 's', display_name: 'Space', creator: null, is_admin: false }],
       }),

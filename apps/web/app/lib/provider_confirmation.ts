@@ -2,6 +2,7 @@ import { storedCredential } from './client/credentials'
 import { client } from './client/client'
 import type { AccountSession } from './client/session'
 import type { ProviderConfirmation } from './types'
+import { sameSecret, Secret } from './secret'
 
 // The expired popup supplies only a login hint. Its verifier, code and Settings
 // operation are discarded before the next sign-in can start.
@@ -109,7 +110,7 @@ export function acceptRecentConfirmation(
   const state = account.store.getState()
   if (
     !client.canWritePage(account) ||
-    state.token !== token ||
+    !sameSecret(state.token, Secret.from(token)) ||
     state.me?.username !== username ||
     proof?.provider !== provider ||
     typeof proof.code !== 'string' ||
@@ -135,7 +136,7 @@ export function recentConfirmation(account: AccountSession, provider: string) {
   return saved &&
     saved.proof.provider === provider &&
     saved.proof.expires_at > Date.now() / 1000 &&
-    state.token === saved.token &&
+    sameSecret(state.token, Secret.from(saved.token)) &&
     state.me?.username === saved.username &&
     saved.mark === account.lifetime.sessionMark() &&
     saved.foreground === client.shownVersion() &&

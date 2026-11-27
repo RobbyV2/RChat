@@ -25,6 +25,7 @@ import { endpointsFrom, InstanceConnection } from '../../instances'
 import type { Contact } from '../../p2p/contacts'
 import { keyId, newKeyPair } from '../../p2p/keys'
 import type { Me } from '../../types'
+import { Secret } from '../../secret'
 
 const me: Me = {
   username: 'sam',
@@ -205,7 +206,7 @@ async function dockFixture(voice: boolean, background: boolean) {
   })
   shown.store.setState(s => ({
     me,
-    token: 'fixture',
+    token: Secret.of('fixture'),
     bootstrap: async () => {},
     home: false,
     view: { kind: 'dm', dmId: 1 },

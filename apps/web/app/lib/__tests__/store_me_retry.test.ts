@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { getHomeSession, resetSessionCaches, useStore } from '../store'
 import { advance, me, memoryStorage } from './fixtures'
+import { plain } from './helpers/secret'
 
 afterAll(resetSessionCaches)
 
@@ -79,7 +80,7 @@ describe('account load at boot', () => {
   test('server errors and network failures keep the session and retry until it loads', async () => {
     answers = [503, 500, 'down', 502]
     await st().bootstrap()
-    expect(st().token).toBe('tok')
+    expect(plain(st().token)).toBe('tok')
     expect(st().authExpired).toBe(false)
     expect(st().me).toBeNull()
     expect(st().bootError).not.toBeNull()

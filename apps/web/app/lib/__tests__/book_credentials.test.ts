@@ -10,6 +10,8 @@ import {
 import { addInstance, parseBook } from '../client/book'
 import { createBookStore } from '../client/book_store'
 import { createInstanceRegistry } from '../client/instance_registry'
+import { Secret } from '../secret'
+import { plain } from './helpers/secret'
 
 const origin = 'https://alpha.example'
 const connection = (url = origin, own = false) =>
@@ -34,31 +36,31 @@ for (const own of [true, false])
         )
         let book = parseBook(null)
         expect(storedCredential(conn, book, 'alice')).toBeNull()
-        expect(storedCredential(conn, book)?.token).toBe('first')
+        expect(plain(storedCredential(conn, book)?.token)).toBe('first')
         expect(storage.getItem('rchat_token:alice' + suffix)).toBeNull()
-        confirmCredential(conn, me('alice'), 'first', true)
+        confirmCredential(conn, me('alice'), Secret.of('first'), true)
         book = accountUpdate(conn, me('alice'))(book)
         expect(storage.getItem('rchat_token:alice' + suffix)).toBe('first')
         expect(storage.getItem('rchat_last_dm:alice' + suffix)).toBe('17')
         expect(book.instances[0].accounts[0].identities.length).toBe(Number(enabled))
-        confirmCredential(conn, me('bob'), 'second', false)
+        confirmCredential(conn, me('bob'), Secret.of('second'), false)
         expect(storage.getItem('rchat_token' + suffix)).toBe('first')
-        expect(storedCredential(conn, book, 'bob')?.token).toBe('second')
+        expect(plain(storedCredential(conn, book, 'bob')?.token)).toBe('second')
         expect(storedCredential(conn, book, null)).toBeNull()
-        expect(forgetCredential(conn, 'bob', 'second')).toBe(false)
+        expect(forgetCredential(conn, 'bob', Secret.of('second'))).toBe(false)
         expect(storage.getItem('rchat_token' + suffix)).toBe('first')
-        expect(forgetCredential(conn, 'alice', 'first')).toBe(true)
+        expect(forgetCredential(conn, 'alice', Secret.of('first'))).toBe(true)
       }
     )
 test('same authority with a different origin cannot borrow a credential', () => {
   const first = connection(),
     second = connection('http://alpha.example')
-  confirmCredential(first, me('alice'), 'a', false)
+  confirmCredential(first, me('alice'), Secret.of('a'), false)
   expect(storedCredential(second, parseBook(null))).toBeNull()
-  confirmCredential(second, me('alice'), 'b', false)
-  expect(storedCredential(first, parseBook(null), 'alice')?.token).toBe('a')
-  forgetCredential(second, 'alice', 'b')
-  expect(storedCredential(first, parseBook(null))?.token).toBe('a')
+  confirmCredential(second, me('alice'), Secret.of('b'), false)
+  expect(plain(storedCredential(first, parseBook(null), 'alice')?.token)).toBe('a')
+  forgetCredential(second, 'alice', Secret.of('b'))
+  expect(plain(storedCredential(first, parseBook(null))?.token)).toBe('a')
 })
 test('storage events and local edits re-read the latest persisted book', () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window')
@@ -89,11 +91,11 @@ test('unbound remote alias requires previous exact-origin evidence and a new sco
   const other = connection('http://alpha.example')
   expect(storedCredential(other, parseBook(null))).toBeNull()
   storage.setItem('rchat_home', origin)
-  expect(storedCredential(connection(), parseBook(null))?.token).toBe('historical')
-  confirmCredential(other, me('alice'), 'new', false)
+  expect(plain(storedCredential(connection(), parseBook(null))?.token)).toBe('historical')
+  confirmCredential(other, me('alice'), Secret.of('new'), false)
   storage.removeItem('rchat_home')
   storage.removeItem('rchat_instances')
-  expect(storedCredential(other, parseBook(null), 'alice')?.token).toBe('new')
+  expect(plain(storedCredential(other, parseBook(null), 'alice')?.token)).toBe('new')
   expect(storage.getItem('rchat_token:alice@http://alpha.example')).toBe('new')
   expect(storage.getItem('rchat_token@alpha.example')).toBe('historical')
 })
@@ -131,14 +133,14 @@ test('transferring an empty token alias never transfers the signed-out user’s 
   const book = parseBook(null)
   storage.setItem('rchat_token', 'alice-fixture')
   storage.setItem('rchat_last_dm', '17')
-  confirmCredential(conn, me('alice'), 'alice-fixture', true)
-  expect(forgetCredential(conn, 'alice', 'alice-fixture')).toBe(true)
+  confirmCredential(conn, me('alice'), Secret.of('alice-fixture'), true)
+  expect(forgetCredential(conn, 'alice', Secret.of('alice-fixture'))).toBe(true)
   expect(storage.getItem('rchat_last_dm:alice')).toBe('17')
   expect(storage.getItem('rchat_last_dm')).toBeNull()
-  confirmCredential(conn, me('bob'), 'bob-fixture', false)
+  confirmCredential(conn, me('bob'), Secret.of('bob-fixture'), false)
   const saved = storedCredential(conn, book)
-  expect(saved?.token).toBe('bob-fixture')
-  confirmCredential(conn, me('bob'), 'bob-fixture', true)
+  expect(plain(saved?.token)).toBe('bob-fixture')
+  confirmCredential(conn, me('bob'), Secret.of('bob-fixture'), true)
   expect(storage.getItem('rchat_last_dm:bob')).toBeNull()
 })
 
@@ -210,7 +212,7 @@ test('client-only home requires a credential scoped to the selected remote or a 
     for (const key of ['rchat_token@alpha.example', 'rchat_token:alice@alpha.example']) {
       const home = homeWith({ [key]: 'offline-token' })
       expect(home.origin).toBe(origin)
-      expect(storedCredential(home, book)?.token).toBe('offline-token')
+      expect(plain(storedCredential(home, book)?.token)).toBe('offline-token')
       expect(
         homeWith({ [key]: 'token', 'rchat_auth_origin@alpha.example': 'http://alpha.example' })
           .isDefault
@@ -220,7 +222,12 @@ test('client-only home requires a credential scoped to the selected remote or a 
       const key = 'rchat_token:' + username + '@alpha.example'
       const home = homeWith({ [key]: 'qualified-token' })
       expect(home.origin).toBe(origin)
-      expect(storedCredential(home, book)).toEqual({ token: 'qualified-token', username, key })
+      const saved = storedCredential(home, book)
+      expect({ ...saved, token: plain(saved?.token) }).toEqual({
+        token: 'qualified-token',
+        username,
+        key,
+      })
       const verified = accountUpdate(home, me(username))(book)
       expect(parseBook(JSON.stringify(verified)).instances[0]?.accounts[0]?.username).toBe(username)
     }

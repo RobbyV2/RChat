@@ -3,6 +3,7 @@ import { useStore, resetSessionCaches } from '../store'
 import type { RChatState } from '../store_types'
 import type { Message, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -33,7 +34,7 @@ const live = (m: Message): WsEvent => ({
 const setup = () =>
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     view: { kind: 'channel', server: 's', channelId: 77 },

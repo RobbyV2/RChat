@@ -7,6 +7,7 @@ import { RtcManager, JoinAborted } from './rtc'
 import { voiceStatus, voiceStatusText, type SeatAudio } from './voice_status'
 import type { MessageLocation, VoiceMsg, WsEvent } from './types'
 import { parentOrigin, type WidgetMode, type WidgetRoom, type WidgetRoomMetadata } from './widgets'
+import { Secret } from './secret'
 
 type Event =
   | WsEvent
@@ -108,8 +109,8 @@ export class WidgetConnection {
       if (this.stopped) return
       this.ticket = session.ticket
       this.mode = session.mode
-      this.api.setToken(this.token)
-      this.api.setGrants(this.grant ? { widget: this.grant } : {})
+      this.api.setToken(Secret.from(this.token))
+      this.api.setGrants(this.grant ? { widget: Secret.of(this.grant) } : {})
       await this.refresh()
       if (!this.stopped) this.interval = setInterval(() => void this.refresh(), 30000)
     } catch {
@@ -500,7 +501,7 @@ export class WidgetConnection {
     )
     this.grant = grant
     writeLocal(this.storageKey + ':grant', grant)
-    this.api.setGrants(grant ? { widget: grant } : {})
+    this.api.setGrants(grant ? { widget: Secret.of(grant) } : {})
     await this.refresh()
   }
   async login(username: string, password: string) {
@@ -516,7 +517,7 @@ export class WidgetConnection {
     this.heldDraft = null
     if (readLocal(this.storageKey) === token) writeLocal(this.storageKey, null)
     void this.useSession(null, null)
-    if (token) void this.api.logout(token).catch(() => {})
+    if (token) void this.api.logout(Secret.of(token)).catch(() => {})
   }
   // Other copies of this widget under the same embedding origin share its saved sign-in.
   syncLogin = (event: StorageEvent) => {
@@ -590,8 +591,8 @@ export class WidgetConnection {
     this.account = account
     // A queued guest send keeps the credentials it started with.
     this.api = createApi(location.origin + '/api', 'omit')
-    this.api.setToken(token)
-    this.api.setGrants(this.grant ? { widget: this.grant } : {})
+    this.api.setToken(Secret.from(token))
+    this.api.setGrants(this.grant ? { widget: Secret.of(this.grant) } : {})
     this.metadata = null
     this.hideContent()
     if (this.ticket) return this.refresh()

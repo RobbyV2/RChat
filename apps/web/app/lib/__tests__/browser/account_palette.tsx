@@ -17,6 +17,7 @@ import { historyKey, historyValue, type HistoryEntry } from '../../openapi'
 import { palettePrefsKey, paletteValue } from '../../palette'
 import { channelTarget } from '../../viewing'
 import type { Me } from '../../types'
+import { Secret } from '../../secret'
 
 const shown = client.shown()
 const owner = new AccountSession(new InstanceConnection(endpointsFrom('https://owner.test', null)))
@@ -163,7 +164,7 @@ if (grouped) {
   for (const account of accounts) {
     const token = 'fixture-' + account.conn.host
     localStorage.setItem(accountStorage(account.conn).token(me.username), token)
-    account.store.setState({ token })
+    account.store.setState({ token: Secret.of(token) })
   }
 }
 if (results) {

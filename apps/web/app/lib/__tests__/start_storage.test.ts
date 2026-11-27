@@ -7,6 +7,7 @@ import { useStore, resetSessionCaches } from '../store'
 import { keptSession, restoreStreamer, restoreTheme, startApp } from '../start'
 import { drain, me, memoryStorage } from './fixtures'
 import { client } from '../client/client'
+import { plain } from './helpers/secret'
 
 afterAll(resetSessionCaches)
 
@@ -180,12 +181,12 @@ for (const [browser, storage] of BROWSERS)
     test('signing in starts the app signed in for this tab', async () => {
       install(storage)
       await st().login({ username: 'bob', password: 'x' } as never)
-      expect([st().token, st().me?.username, st().error]).toEqual(['tok', 'bob', null])
+      expect([plain(st().token), st().me?.username, st().error]).toEqual(['tok', 'bob', null])
       let toLogin = 0
       await startApp(() => (toLogin += 1))
       await drain()
       expect(toLogin).toBe(0)
-      expect([st().token, st().me?.username, st().error]).toEqual(['tok', 'bob', null])
+      expect([plain(st().token), st().me?.username, st().error]).toEqual(['tok', 'bob', null])
       st().openLastDm()
       expect(warned).toBeGreaterThan(0)
     })

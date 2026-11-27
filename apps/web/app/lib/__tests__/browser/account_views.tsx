@@ -9,6 +9,7 @@ import { client } from '../../client/client'
 import { AccountSession } from '../../client/session'
 import { endpointsFrom, InstanceConnection } from '../../instances'
 import type { ServerDetail } from '../../types'
+import { Secret } from '../../secret'
 
 const shown = client.shown()
 const owner = new AccountSession(new InstanceConnection(endpointsFrom('https://owner.test', null)))
@@ -26,7 +27,7 @@ const club: ServerDetail = {
   online_count: 0,
 }
 for (const account of [shown, owner]) {
-  account.api.setToken(account.conn.host)
+  account.api.setToken(Secret.of(account.conn.host))
   const mark = account.lifetime.sessionMark()
   rememberProfile(
     profileKey('peer', 'club'),

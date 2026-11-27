@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { useStore, resetSessionCaches } from '../store'
 import type { DmSummary, Message, WsEvent } from '../types'
 import { me, msg, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -139,7 +140,7 @@ describe('view cache', () => {
 
 describe('read coalescing', () => {
   test('a burst of messages while watching sends one /read on leaving', async () => {
-    useStore.setState({ token: 't', messages: { c1: range(1, 10) } })
+    useStore.setState({ token: Secret.of('t'), messages: { c1: range(1, 10) } })
     for (let id = 11; id <= 30; id += 1) dispatch(live(id))
     await Promise.resolve()
     expect(reads()).toHaveLength(0)
@@ -153,7 +154,10 @@ describe('read coalescing', () => {
   })
 
   test('a channel that is not on screen is not marked read', async () => {
-    useStore.setState({ token: 't', view: { kind: 'channel', server: 's', channelId: 2 } })
+    useStore.setState({
+      token: Secret.of('t'),
+      view: { kind: 'channel', server: 's', channelId: 2 },
+    })
     for (let id = 11; id <= 15; id += 1) dispatch(live(id))
     expect(st().reads.c1.lastRead).toBe(10)
     expect(st().reads.c1.latest).toBe(15)

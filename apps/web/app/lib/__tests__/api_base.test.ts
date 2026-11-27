@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createApi, resolveApiBase } from '../api'
 import { wsUrlFrom } from '../ws'
+import { Secret } from '../secret'
 
 describe('resolveApiBase', () => {
   test('NEXT_PUBLIC_API_URL set, trailing slashes stripped', () => {
@@ -63,7 +64,7 @@ describe('mediaUrl', () => {
 
   test('a guest grant never goes into the URL; guests fetch with the header', async () => {
     const client = createApi('/api')
-    client.setGrants({ s: 'g1', t: 'g2' })
+    client.setGrants({ s: Secret.of('g1'), t: Secret.of('g2') })
     expect(client.mediaUrl('m')).toBe('/api/media/m')
     expect(client.guestMedia('s')).toBe(true)
     expect(client.guestMedia('u')).toBe(false)
@@ -80,7 +81,7 @@ describe('mediaUrl', () => {
       globalThis.fetch = real
     }
     expect(seen).toEqual([['/api/media/m', { 'X-Guest-Grant': 'g1' }]])
-    client.setToken('tok')
+    client.setToken(Secret.of('tok'))
     expect(client.guestMedia('s')).toBe(false)
   })
 
@@ -104,8 +105,8 @@ describe('mediaUrl', () => {
   test('an account fetches media and previews with its token, on any API origin', async () => {
     const client = createApi('https://chat.b.com/api')
     expect(client.signedIn()).toBe(false)
-    client.setToken('tok')
-    client.setGrants({ s: 'g1' })
+    client.setToken(Secret.of('tok'))
+    client.setGrants({ s: Secret.of('g1') })
     expect(client.signedIn()).toBe(true)
     const preview = client.previewUrl('/messages/7/embeds/0/image?v=ab')
     const seen = await fetched(async () => {
@@ -153,7 +154,7 @@ describe('mediaUrl', () => {
   test('on API v1 a media address with or without the version names the file', async () => {
     const v1 = createApi('https://chat.b.com/api')
     v1.prefix = 'v1'
-    v1.setToken('tok')
+    v1.setToken(Secret.of('tok'))
     expect(v1.mediaUrl('m')).toBe('https://chat.b.com/api/v1/media/m')
     expect(v1.mediaId('https://chat.b.com/api/media/abc')).toBe('abc')
     expect(v1.mediaId('https://chat.b.com/api/v1/media/abc')).toBe('abc')
@@ -190,9 +191,9 @@ describe('mediaUrl', () => {
 
   test('a fetch that carries the token or a grant never follows a redirect', async () => {
     const client = createApi('https://chat.b.com/api')
-    client.setToken('tok')
+    client.setToken(Secret.of('tok'))
     const guest = createApi('https://chat.b.com/api')
-    guest.setGrants({ s: 'g1' })
+    guest.setGrants({ s: Secret.of('g1') })
     const real = globalThis.fetch
     const seen: [string, RequestRedirect | undefined][] = []
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -220,8 +221,8 @@ describe('mediaUrl', () => {
 
   test('the token and grants never go to an address outside the API', async () => {
     const client = createApi('https://chat.b.com/api')
-    client.setToken('tok')
-    client.setGrants({ s: 'g1' })
+    client.setToken(Secret.of('tok'))
+    client.setGrants({ s: Secret.of('g1') })
     for (const url of [
       'https://evil.example/api/media/m',
       'https://chat.b.com.evil.example/api/media/m',
@@ -236,7 +237,7 @@ describe('mediaUrl', () => {
       expect([url, seen, refused]).toEqual([url, [], 'Could not load the file'])
     }
     const own = createApi('/api')
-    own.setGrants({ s: 'g1' })
+    own.setGrants({ s: Secret.of('g1') })
     for (const url of ['https://evil.example/api/media/m', '//evil.example/api/media/m']) {
       let refused: string | null = null
       const seen = await fetched(() => own.authedBlob(url, 's').catch(e => (refused = text(e))))

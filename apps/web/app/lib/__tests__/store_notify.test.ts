@@ -26,6 +26,7 @@ import type { Ping, WsEvent } from '../types'
 import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 import { keyId, newKeyPair } from '../p2p/keys'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 pinEmptyBook()
@@ -119,7 +120,7 @@ beforeEach(() => {
   settingsBefore = st().settings
   useStore.setState({
     me: me('bob'),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     view: { kind: 'channel', server: 's', channelId: 2 },
     servers: {

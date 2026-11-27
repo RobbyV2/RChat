@@ -30,6 +30,7 @@ import { SettingSwitch } from './settings_fields'
 import { Button, Cover, IconButton } from './controls'
 import { useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
+import { TO_SCREEN } from '../lib/secret'
 
 const METHOD_CLS: Record<Method, string> = {
   GET: 'bg-secondary-container text-on-secondary-container',
@@ -322,7 +323,7 @@ function CurlButton({ op, values }: { op: Operation; values: Values }) {
     const request = withToken ? built.request : hideSecrets(op, values, built.request)
     const url = requestUrl(new URL(api.base, window.location.href).href, request)
     if (!url) return
-    const token = withToken ? store.getState().token : null
+    const token = withToken ? (store.getState().token?.reveal(TO_SCREEN) ?? null) : null
     void sharing()
       .copyText(toCurl(url, request, token))
       .then(ok => (ok ? flash() : store.getState().setError('Could not copy to the clipboard')))

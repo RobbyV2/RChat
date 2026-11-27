@@ -34,6 +34,7 @@ import { setSharing, type Sharing } from '../platform'
 import { webSharing } from '../platform/web_sharing'
 import type { BulkJob, Message, WsEvent } from '../types'
 import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 beforeAll(registerAppActions)
 afterAll(resetSessionCaches)
@@ -292,7 +293,7 @@ describe('selection store', () => {
       print: async () => false,
     } as Sharing)
     useStore.setState({
-      token: 'tok',
+      token: Secret.of('tok'),
       me: me('alice', {
         servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
       }),

@@ -21,6 +21,7 @@ import {
 } from '../store'
 import { Perm, type Channel, type DmSummary } from '../types'
 import { drain, me, member, memoryStorage, paged, role, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 const realSharing = sharing()
 const g = globalThis as { window?: unknown }
@@ -69,7 +70,7 @@ const railState = (o: State = {}) => {
     { name: 'b', display_name: 'Base', creator: null, is_admin: false },
   ]
   useStore.setState({
-    token: o.guest ? null : 'tok',
+    token: o.guest ? null : Secret.of('tok'),
     guest: !!o.guest,
     me: o.guest ? null : me('alice', { servers: joined }),
     guestServers: o.guest ? ['s', 'rchat'] : [],

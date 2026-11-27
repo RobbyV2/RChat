@@ -2,6 +2,7 @@ import { nextAttempt, reconnectDelay, type ReconnectTimings } from './backoff'
 import { DEFAULT_LIMITS } from './instance_limits'
 import type { VoiceMsg, WsEvent, WsStatus } from './types'
 import type { TypingMsg } from './typing'
+import { TO_REQUEST, type Secret } from './secret'
 
 const secure = (protocol: string) => protocol === 'https:' || protocol === 'wss:'
 
@@ -64,10 +65,10 @@ export interface WsEndpoints {
 
 export class WsClient {
   private ws: WebSocket | null = null
-  private token: string | null = null
+  private token: Secret | null = null
   private viewing: string | null = null
   private subs = new Set<string>()
-  private grants: Record<string, string> = {}
+  private grants: Record<string, Secret> = {}
   private stopped = true
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private connectTimer: ReturnType<typeof setTimeout> | null = null
@@ -88,7 +89,7 @@ export class WsClient {
     this.endpoints = endpoints
   }
 
-  start(token: string | null) {
+  start(token: Secret | null) {
     this.stop()
     this.stopped = false
     this.token = token
@@ -150,7 +151,7 @@ export class WsClient {
     this.send({ type: 'viewing', server })
   }
 
-  setGrants(grants: Record<string, string>) {
+  setGrants(grants: Record<string, Secret>) {
     this.grants = grants
   }
 
@@ -168,7 +169,10 @@ export class WsClient {
   }
 
   private sendSubscribe() {
-    this.send({ type: 'subscribe', servers: [...this.subs], grants: this.grants })
+    const grants = Object.fromEntries(
+      Object.entries(this.grants).map(([server, grant]) => [server, grant.reveal(TO_REQUEST)])
+    )
+    this.send({ type: 'subscribe', servers: [...this.subs], grants })
   }
 
   sendVoice(msg: VoiceMsg): boolean {
@@ -200,7 +204,7 @@ export class WsClient {
       this.connectTimer = null
       this.openedAt = Date.now()
       this.limited = false
-      this.send({ type: 'auth', token: this.token })
+      this.send({ type: 'auth', token: this.token?.reveal(TO_REQUEST) ?? null })
       if (this.token) this.send({ type: 'viewing', server: this.viewing })
       if (this.subs.size) this.sendSubscribe()
       this.finishGap(true)

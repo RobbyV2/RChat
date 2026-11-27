@@ -7,6 +7,7 @@ import { resetSessionCaches, useStore } from '../store'
 import type { RChatState } from '../store_types'
 import type { DmSummary } from '../types'
 import { me, user } from './fixtures'
+import { Secret } from '../secret'
 
 const initial = useStore.getInitialState()
 const saved = { ...initial }
@@ -37,7 +38,7 @@ const NONE = 'No conversations match'
 const sidebar = (list: Partial<DmListPrefs>, over: Partial<RChatState> = {}) => {
   const dms = [dm(1, 'alice', { is_self: true }), dm(2, 'bob'), dm(3, 'carol')]
   seed({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('alice'),
     view: { kind: 'dm', dmId: 1 },
     dms,

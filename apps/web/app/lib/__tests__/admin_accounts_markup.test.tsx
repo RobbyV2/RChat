@@ -14,6 +14,7 @@ import { api } from './home_instance'
 import { resetSessionCaches, useStore } from '../store'
 import type { ActiveDialog } from '../store_types'
 import { drain, me, paged, user } from './fixtures'
+import { Secret } from '../secret'
 
 const realSignOut = api.adminSignOut
 const initial = useStore.getInitialState()
@@ -166,7 +167,7 @@ test('signing an account out says so', async () => {
     asked.push(username)
     return {}
   }
-  useStore.setState({ token: 'tok', me: me('root', { is_site_admin: true }) })
+  useStore.setState({ token: Secret.of('tok'), me: me('root', { is_site_admin: true }) })
   await useStore.getState().adminSignOut('dana')
   expect(asked).toEqual(['dana'])
   expect(useStore.getState().toast?.text).toBe('Signed out everywhere')
@@ -189,7 +190,7 @@ test('only the site admin gets the account tools on a row of the accounts, never
   for (const who of [
     { token: null, me: null, guest: false },
     { token: null, me: null, guest: true },
-    { token: 'tok', me: me('alice'), guest: false },
+    { token: Secret.of('tok'), me: me('alice'), guest: false },
   ]) {
     useStore.setState(who)
     expect(labels()).toEqual([])
@@ -199,7 +200,11 @@ test('only the site admin gets the account tools on a row of the accounts, never
     }
   }
   expect(useStore.getState().activeDialog).toBe(null)
-  useStore.setState({ token: 'tok', me: me('root', { is_site_admin: true }), guest: false })
+  useStore.setState({
+    token: Secret.of('tok'),
+    me: me('root', { is_site_admin: true }),
+    guest: false,
+  })
   expect(labels()).toEqual([
     'Open account',
     'New temporary password',

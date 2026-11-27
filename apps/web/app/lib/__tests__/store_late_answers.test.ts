@@ -41,6 +41,7 @@ import {
   serverDetail,
   user,
 } from './fixtures'
+import { Secret } from '../secret'
 
 const { files: p2p, relays: relayBook, rtc } = getHomeSession()
 
@@ -123,10 +124,10 @@ const answer: Reply = (who, method, path, body) => {
 
 const signedIn = (name: string, over: Partial<RChatState> = {}) => {
   current = name
-  api.setToken(`t-${name}`)
+  api.setToken(Secret.of(`t-${name}`))
   useStore.setState({
     me: me(name, { servers: [summary] }),
-    token: `t-${name}`,
+    token: Secret.of(`t-${name}`),
     guest: false,
     error: null,
     toast: null,

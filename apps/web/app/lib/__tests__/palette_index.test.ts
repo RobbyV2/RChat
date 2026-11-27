@@ -17,6 +17,7 @@ import { openPalette, openPollFromPalette, usePaletteUi } from '../palette_store
 import { resetSessionCaches, useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -159,7 +160,7 @@ describe('following the app', () => {
   const tick = () => new Promise(r => setTimeout(r, 0))
 
   const state = () => ({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('alice', {
       servers: [
         { name: 's', display_name: 'S', creator: null, is_admin: false },
@@ -414,7 +415,7 @@ describe('following the app', () => {
     useStore.setState({ me: null, token: null })
     expect(usePaletteUi.getState()).toMatchObject({ open: false, text: '', poll: null })
     openPollFromPalette({ kind: 'channel', id: 1 })
-    useStore.setState({ token: 'tok', me: me('bob') })
+    useStore.setState({ token: Secret.of('tok'), me: me('bob') })
     expect(usePaletteUi.getState().poll).toBeNull()
   })
 
@@ -435,7 +436,7 @@ describe('following the app', () => {
     useStore.setState({ me: null, token: null })
     await __sync.settled()
     expect(aliceKeys()).toEqual([])
-    useStore.setState({ token: 'tok', me: me('bob') })
+    useStore.setState({ token: Secret.of('tok'), me: me('bob') })
     await __sync.settled()
     for (let i = 0; i < 5; i++) await tick()
     expect(aliceKeys()).toEqual([])

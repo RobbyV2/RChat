@@ -3,6 +3,7 @@ import { useStore, resetSessionCaches } from '../store'
 import { parseSed } from '../sed'
 import type { EditStub, Message, MessageMedia, ReplyRef, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -67,7 +68,7 @@ beforeEach(() => {
   }) as typeof fetch
   useStore.setState({
     me: me('bob'),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     error: null,
     confirm: null,

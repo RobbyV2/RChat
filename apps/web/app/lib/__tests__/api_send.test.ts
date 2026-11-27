@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { ApiClient, ApiError, RETRY_AFTER_MS, type Pace } from '../api'
+import { Secret } from '../secret'
 
 interface Sent {
   url: string
@@ -162,12 +163,12 @@ describe('asked waits', () => {
 describe('credentials', () => {
   test('the session token goes with a request, and guest grants only without one', async () => {
     const c = client()
-    c.setGrants({ club: 'g1', den: 'g2' })
+    c.setGrants({ club: Secret.of('g1'), den: Secret.of('g2') })
     let sent = serve(ok())
     await c.send('GET', '/me')
     expect(header(sent[0], 'X-Guest-Grant')).toBe('g1,g2')
     expect(sent[0].url).toBe('https://chat.example/api/v1/me')
-    c.setToken('tok')
+    c.setToken(Secret.of('tok'))
     sent = serve(ok())
     await c.send('GET', '/me')
     expect(header(sent[0], 'Authorization')).toBe('Bearer tok')
@@ -177,8 +178,8 @@ describe('credentials', () => {
 
   test('discovery carries no credentials and is asked once', async () => {
     const c = client()
-    c.setToken('tok')
-    c.setGrants({ club: 'g1' })
+    c.setToken(Secret.of('tok'))
+    c.setGrants({ club: Secret.of('g1') })
     const sent = serve(DOWN, ok())
     await fails(c.discovery())
     expect(sent.length).toBe(1)
@@ -190,7 +191,7 @@ describe('credentials', () => {
 
   test('the sign-in exchange carries no token and no cookie', async () => {
     const c = client()
-    c.setToken('tok')
+    c.setToken(Secret.of('tok'))
     const sent = serve(ok())
     await c.ssoExchange({ code: 'c' } as Parameters<ApiClient['ssoExchange']>[0])
     expect(sent[0].url).toBe('https://chat.example/api/auth/oidc/exchange')
@@ -203,7 +204,7 @@ describe('credentials', () => {
 
   test('a file goes out with the token and no cookie, never following a redirect', async () => {
     const c = client()
-    c.setToken('tok')
+    c.setToken(Secret.of('tok'))
     const sent = serve(new Response('abc'))
     const blob = await c.authedBlob('https://chat.example/api/v1/media/m%201?w=64', 'club')
     expect(await blob.text()).toBe('abc')
@@ -216,7 +217,7 @@ describe('credentials', () => {
 
   test('a guest file carries only the grant for its server', async () => {
     const c = client()
-    c.setGrants({ club: 'g1', den: 'g2' })
+    c.setGrants({ club: Secret.of('g1'), den: Secret.of('g2') })
     let sent = serve(new Response('abc'))
     await c.mediaStart('m1', 'den', 2)
     expect(sent[0].url).toBe('https://chat.example/api/v1/media/m1')
@@ -229,7 +230,7 @@ describe('credentials', () => {
 
   test('an address outside the API is refused without a request', async () => {
     const c = client()
-    c.setToken('tok')
+    c.setToken(Secret.of('tok'))
     const sent = serve(ok())
     for (const url of ['https://other.example/api/v1/media/m1', 'https://chat.example/media/m1'])
       expect((await fails(c.authedBlob(url))).message).toBe('Could not load the file')
@@ -256,7 +257,7 @@ describe('sockets and probes', () => {
     } as unknown as typeof WebSocket
     try {
       const c = client()
-      c.setToken('tok')
+      c.setToken(Secret.of('tok'))
       c.socket('wss://chat.example/api/v1/ws')
       expect(opened).toEqual(['wss://chat.example/api/v1/ws'])
     } finally {
@@ -266,7 +267,7 @@ describe('sockets and probes', () => {
 
   test('the health probe carries no credentials', async () => {
     const c = client()
-    c.setToken('tok')
+    c.setToken(Secret.of('tok'))
     const sent = serve(ok())
     expect(await c.reachable('https://chat.example/api/v1/health')).toBe(true)
     expect(sent[0].init.credentials).toBe('omit')

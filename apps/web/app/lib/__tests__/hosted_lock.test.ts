@@ -23,6 +23,7 @@ import { createBookStore } from '../client/book_store'
 import { addInstance, parseBook } from '../client/book'
 import { accountStorage } from '../client/keys'
 import { readLocal, writeLocal, ownInstance } from '../instances'
+import { Secret } from '../secret'
 
 const own = ownInstance()!.origin
 const beta = 'https://beta.example'
@@ -123,9 +124,12 @@ test('a locked account relinquishes its live session and call while own accounts
   const previous = readLocal(key)
   try {
     writeLocal(key, 'fixture-login')
-    remote.api.setToken('fixture-login')
-    remote.api.setGrants({ garden: 'fixture-grant' })
-    remote.store.setState({ token: 'fixture-login', guestGrants: { garden: 'fixture-grant' } })
+    remote.api.setToken(Secret.of('fixture-login'))
+    remote.api.setGrants({ garden: Secret.of('fixture-grant') })
+    remote.store.setState({
+      token: Secret.of('fixture-login'),
+      guestGrants: { garden: 'fixture-grant' },
+    })
 
     expect(client.show(remote, 'none')).toBe(true)
     const claim = await client.calls.request(
@@ -141,7 +145,7 @@ test('a locked account relinquishes its live session and call while own accounts
     expect(client.show(remote, 'none')).toBe(false)
     expect(claim?.current()).toBe(false)
     expect(left).toBe(true)
-    expect(remote.api.hasToken('fixture-login')).toBe(false)
+    expect(remote.api.hasToken(Secret.of('fixture-login'))).toBe(false)
     expect(remote.api.guestMedia('garden')).toBe(false)
     expect(remote.store.getState().token).toBeNull()
     expect(remote.store.getState().guestGrants).toEqual({})
@@ -214,7 +218,7 @@ test('a locked remote invite preview uses anonymous discovery and metadata, inde
   const previous = globalThis.fetch
   const calls: string[] = []
   try {
-    saved.api.setToken('fixture-only')
+    saved.api.setToken(Secret.of('fixture-only'))
     acceptHostedPolicy(own, false)
     globalThis.fetch = (async (url, init) => {
       const path = new URL(String(url)).pathname

@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Friend, FriendRequest, Message, WsEvent } from '../types'
 import { me, msg, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -27,7 +28,7 @@ const request = (name: string, incoming: boolean): FriendRequest => ({
 beforeEach(() => {
   useStore.setState({
     me: me('bob'),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     view: { kind: 'channel', server: 's', channelId: 1 },
     servers: { s: serverDetail('s') },

@@ -4,6 +4,7 @@ import { emptyLayout, type Layout } from '../nav_layout'
 import { home } from './home_instance'
 import type { DmSummary, WsEvent } from '../types'
 import { me, memoryStorage, until, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -55,7 +56,7 @@ beforeEach(() => {
   }
   g.document = { cookie: '' }
   useStore.setState({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('alice'),
     guest: false,
     view: null,
@@ -135,7 +136,7 @@ describe('closing dms', () => {
   test('closed dms end with the session, so the next one reopens nothing', async () => {
     await st().closeDm(3)
     resetSessionCaches()
-    useStore.setState({ token: 'tok', me: me('alice'), dms: [dm(1, 'alice', true)] })
+    useStore.setState({ token: Secret.of('tok'), me: me('alice'), dms: [dm(1, 'alice', true)] })
     calls = []
     await st().openDm(3)
     await tick()

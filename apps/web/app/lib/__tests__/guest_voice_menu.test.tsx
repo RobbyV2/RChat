@@ -12,6 +12,7 @@ import type { RChatState } from '../store_types'
 import { Perm } from '../types'
 import { useGuestMenu, useGuestMenuOpen } from '../../components/guest_voice_menu'
 import { drain, me, member, paged, role, serverDetail } from './fixtures'
+import { Secret } from '../secret'
 
 // Server rendering reads the store's initial state, and a menu reads the current one, so the
 // test state goes into both.
@@ -38,7 +39,7 @@ const GUEST = '@guest:3f9a1c2b00000000'
 // in voice channel 3.
 const staff = (perms: number, hushed = false, over: Partial<RChatState> = {}) =>
   put({
-    token: 'tok',
+    token: Secret.of('tok'),
     guest: false,
     me: me('alice', {
       servers: [{ name: 's', display_name: 'Space', creator: null, is_admin: false }],

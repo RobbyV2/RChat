@@ -25,6 +25,7 @@ import { routeOwnerFor } from '../lib/client/account_paths'
 import { ApiError } from '../lib/api'
 import { NAME_MAX } from '../lib/rules'
 import type { ExchangeResponse } from '../lib/types'
+import { sameSecret, Secret } from '../lib/secret'
 export default function SsoPage() {
   const [fragment, setFragment] = useState<string | null>(null)
   useEffect(() => {
@@ -100,7 +101,11 @@ function LocalReturn() {
       releaseTemporary()
       const signedIn = client
         .live()
-        .find(a => a.conn.origin === i.origin && a.store.getState().token === result.token)
+        .find(
+          a =>
+            a.conn.origin === i.origin &&
+            sameSecret(a.store.getState().token, Secret.from(result.token))
+        )
       if (signedIn && client.show(signedIn, 'none')) {
         if (i.confirm && i.username && i.username === signedIn.store.getState().me?.username) {
           acceptRecentConfirmation(

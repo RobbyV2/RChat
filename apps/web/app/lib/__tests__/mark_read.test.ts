@@ -13,6 +13,7 @@ import type { Pings } from '../pings'
 import { EMPTY_NOTIFY } from '../notify'
 import type { ReadMark } from '../lists'
 import { advance, me, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -69,7 +70,7 @@ beforeEach(() => {
         { name: 'other', display_name: 'other', creator: null, is_admin: false },
       ] as never,
     }),
-    token: 't',
+    token: Secret.of('t'),
     guest: false,
     view: null,
     servers: {

@@ -12,6 +12,7 @@ import type { ServerView } from '../../p2p/server'
 import { NO_ABOUT } from '../../server_about'
 import type { RChatState } from '../../store_types'
 import type { Me, Member } from '../../types'
+import { Secret } from '../../secret'
 
 // The settings dialogs of one signed-in account over a stand-in app. The hash picks what opens:
 // `settings[/section]`, `focus` (a button that opens Settings at the bio), `server` (as the owner),
@@ -52,7 +53,7 @@ const me: Me = {
   dms_cursor: null,
 }
 document.documentElement.style.setProperty('--safe-top', '32px')
-shown.api.setToken('reader-token')
+shown.api.setToken(Secret.of('reader-token'))
 shown.store.setState(s => ({
   me,
   guest: false,

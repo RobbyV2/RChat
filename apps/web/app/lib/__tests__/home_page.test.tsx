@@ -13,6 +13,7 @@ import { HomePage } from '../../components/home'
 import type { Contact } from '../p2p/contacts'
 import type { Channel, DmSummary } from '../types'
 import { me, memoryStorage, serverDetail, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -108,7 +109,7 @@ beforeEach(() => {
   g.document = { cookie: '' }
   restoreBook = installPrimaryAccount('alice')
   useStore.setState({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('alice', { display_name: 'Alice A' }),
     guest: false,
     streamer: false,

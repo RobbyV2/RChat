@@ -22,7 +22,9 @@ import {
   rememberLastDm,
   instanceDescriptor,
   storedCredential,
+  readToken,
 } from '../client/credentials'
+import { sameSecret, Secret } from '../secret'
 import { accountStorage } from '../client/keys'
 import { client } from '../client/client'
 import type { P2pApp } from '../p2p/app/runtime'
@@ -676,7 +678,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   let restoring: ReturnType<typeof storedCredential> = null
   const authenticated = async (
     me: Me,
-    token: string,
+    token: Secret,
     restore: boolean,
     currentIntent = () => true
   ) => {
@@ -684,7 +686,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     const mark = sessionMark()
     const changed = () =>
       (expected && expected !== me.username) ||
-      (restore && restoring && readLocal(restoring.key) !== token)
+      (restore && restoring && !token.same(readToken(restoring.key)))
     const save = accountUpdate(home, me)
     let readOnly = false
     const current = await client.updateBook(
@@ -775,7 +777,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   const refetchMe = (background = false) => {
     const at = sessionMark()
     const token = get().token
-    const current = () => at === sessionMark() && token === get().token
+    const current = () => at === sessionMark() && sameSecret(token, get().token)
     return api
       .me(background)
       .then(me => {
@@ -1130,8 +1132,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   const persistGrants = (grants: Record<string, string>) => {
     dropLinkCards()
     writeLocal(LS.guestGrants, JSON.stringify(grants))
-    api.setGrants(grants)
-    home.ws.setGrants(grants)
+    const sealed = Object.fromEntries(
+      Object.entries(grants).map(([server, grant]) => [server, Secret.of(grant)])
+    )
+    api.setGrants(sealed)
+    home.ws.setGrants(sealed)
     set({ guestGrants: grants })
   }
 
@@ -1407,7 +1412,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   const issuedTokenCleanup = () => {
     const base = api.base,
       prefix = api.prefix
-    return (token: string) => {
+    return (token: Secret) => {
       const issuer = api.base === base ? api : createApi(base, 'omit')
       if (issuer !== api) issuer.prefix = prefix
       return issuer.logout(token).catch(() => undefined)
@@ -1420,37 +1425,37 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     endSessionEnabled = false
   ) => {
     const mark = sessionMark()
+    const token = Secret.of(res.token)
     dropLinkCards()
     const revoke = issuedTokenCleanup()
     try {
       if (
-        !(await authenticated(res.user, res.token, false, currentIntent)) ||
+        !(await authenticated(res.user, token, false, currentIntent)) ||
         mark !== sessionMark() ||
         !currentIntent()
       ) {
-        revoke(res.token)
+        revoke(token)
         return
       }
     } catch (error) {
-      revoke(res.token)
+      revoke(token)
       throw error
     }
-    confirmCredential(home, res.user, res.token, false, endSessionEnabled)
-    if (readLocal(accountStorage(home).key('rchat_token')) === res.token)
-      setMediaCookie(home, res.token)
+    confirmCredential(home, res.user, token, false, endSessionEnabled)
+    if (token.same(readToken(accountStorage(home).key('rchat_token')))) setMediaCookie(home, token)
     if (get().guest) {
       writeLocal(LS.guest, null)
       recordGuest(false)
     }
     clearConfirmationHint(acct)
-    api.setToken(res.token)
+    api.setToken(token)
     applyMe(res.user, false)
     // A fresh login gets fresh history even when the expired session ended
     // before bootstrap could recover its username.
     sessionStore.removeItem(inviteHistoryKey())
     inviteHistory = null
     set({
-      token: res.token,
+      token,
       providerConfirmation: undefined,
       guest: false,
       signedOut: false,
@@ -1909,13 +1914,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           me = await api.me()
           if (mark !== sessionMark()) return
         } catch (e) {
-          if (mark !== sessionMark() || !restoring || readLocal(restoring.key) !== token) return
+          if (mark !== sessionMark() || !restoring || !token.same(readToken(restoring.key))) return
           if (endsSession(e)) {
             fail(e)
             expireSession()
             return
           }
-          if (readLocal(accountStorage(home).key('rchat_token')) === token)
+          if (token.same(readToken(accountStorage(home).key('rchat_token'))))
             setMediaCookie(home, token)
           set({ token, guest: false })
           startWs()
@@ -1924,7 +1929,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           return
         }
         if (!(await authenticated(me, token, true)) || mark !== sessionMark()) return
-        if (readLocal(accountStorage(home).key('rchat_token')) === token)
+        if (token.same(readToken(accountStorage(home).key('rchat_token'))))
           setMediaCookie(home, token)
         applyMe(me, false)
         set({ token, guest: false, bootError: null })
@@ -2007,7 +2012,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     enterSsoSession: async (res, current) => {
       const mark = sessionMark()
       const previousToken = get().token
-      const pending = () => current() && mark === sessionMark() && get().token === previousToken
+      const pending = () =>
+        current() && mark === sessionMark() && sameSecret(get().token, previousToken)
       const revoke = issuedTokenCleanup()
       try {
         const pin = acct.credentialTarget ?? get().me?.username
@@ -2018,11 +2024,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         if (pending()) await get().loadSettings(false, pending)
         if (!pending()) throw new Error('That sign-in expired. Try again.')
       } catch (error) {
-        revoke(res.token)
+        revoke(Secret.of(res.token))
         throw error
       }
       await enter(res, pending, res.end_session)
-      if (get().token !== res.token)
+      if (!get().token?.same(Secret.of(res.token)))
         throw new Error(get().error || 'That sign-in expired. Try again.')
     },
     ssoExchange: async (body, current) => {
@@ -2044,13 +2050,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         throw new Error('Confirmation sign-in is unavailable. Sign in again.')
       const response = await api.ssoExchange(body)
       if (!valid()) {
-        if (response.kind === 'session') revoke(response.token)
+        if (response.kind === 'session') revoke(Secret.of(response.token))
         throw new Error('That sign-in expired. Try again.')
       }
       if (response.kind === 'session') {
         const pin = acct.credentialTarget ?? get().me?.username
         if (pin && pin !== response.user.username) {
-          revoke(response.token)
+          revoke(Secret.of(response.token))
           throw new Error('Sign in with the saved username for this link.')
         }
         const target =
@@ -2076,8 +2082,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       const guest = get().guest
       if (
         username &&
-        (!readLocal(accountStorage(home).token(username)) ||
-          readLocal(accountStorage(home).token(username)) === localToken)
+        (!readToken(accountStorage(home).token(username)) ||
+          sameSecret(readToken(accountStorage(home).token(username)), localToken))
       ) {
         writeLocal(home.scoped(secretsKey(username)), null)
         writeLocal(home.scoped(forwardKey(username)), null)
@@ -2094,7 +2100,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         ownsPage() &&
         token &&
         credentialKey &&
-        readLocal(credentialKey) === token &&
+        token.same(readToken(credentialKey)) &&
         parseLogoutFlag(readLocal(keys.key(SSO_LOGOUT_KEY + ':' + username)))
       const shown = client.shownVersion()
       const deadline = Date.now() + 3000

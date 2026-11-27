@@ -21,6 +21,7 @@ import { resetSessionCaches, useStore } from '../store'
 import type { RChatState } from '../store_types'
 import { me, member, msg, paged, serverDetail, textChannel } from './fixtures'
 import { testAccount } from './test_account'
+import { Secret } from '../secret'
 
 // Markup renders with the store's initial state.
 const initial = useStore.getInitialState()
@@ -109,7 +110,7 @@ describe('skeleton placeholders', () => {
 describe('where skeletons show', () => {
   const channelView = { kind: 'channel' as const, server: 'club', channelId: 1 }
   const club = serverDetail('club', { channels: [textChannel(1)], member_count: 3 })
-  const signedIn = { token: 'tok', me: me('alice'), guest: false }
+  const signedIn = { token: Secret.of('tok'), me: me('alice'), guest: false }
 
   test('a channel list loads with placeholders until the server arrives', () => {
     put({ ...signedIn, view: channelView, servers: {} })

@@ -5,6 +5,7 @@ import { MessagePane } from '../../components/message_pane'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
 import { textChannel, serverDetail, me, msg, until, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -204,7 +205,10 @@ describe('unread state from the server', () => {
   }
 
   test('a read made locally is not undone by an older /unreads response', async () => {
-    useStore.setState({ token: 't', reads: { c41: { lastRead: 10, latest: 30, server: 's' } } })
+    useStore.setState({
+      token: Secret.of('t'),
+      reads: { c41: { lastRead: 10, latest: 30, server: 's' } },
+    })
     st().markRead('c41', 30)
     unreads([{ scope: 'c41', server: 's', last_read: 10, latest: 30 }])
     dispatch({ type: 'banned', username: 'dave' })

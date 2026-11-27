@@ -7,6 +7,7 @@ import { routeOwnerFor } from '../client/account_paths'
 import { client } from '../client/client'
 import { stashInvite } from '../invite'
 import { testAccount } from './test_account'
+import { plain } from './helpers/secret'
 
 function historyFixture() {
   const a = testAccount('reader', 'https://first.test')
@@ -150,7 +151,7 @@ test('a new login retires the previous history nonce after bootstrap expires bef
     await reload.store.getState().bootstrap()
     reload.api.send = async () => Response.json({ token: 'new', user: me('reader') })
     await reload.store.getState().login({ username: 'reader', password: 'password' })
-    expect(reload.store.getState().token).toBe('new')
+    expect(plain(reload.store.getState().token)).toBe('new')
     history.replaceState(oldEntry, '', '/invite/club/')
     reload.store.getState().syncInvite()
     expect(reload.store.getState().invite?.password).toBeNull()

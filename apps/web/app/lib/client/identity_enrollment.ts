@@ -6,6 +6,7 @@ import { accountStorage, peerStorage } from './keys'
 import { readLocal } from '../instances'
 import { CHANGED } from '../p2p/transfer'
 import { cleanName } from '../p2p/keys'
+import { sameSecret } from '../secret'
 
 export function identityRecords(book: Book, origin: string, username: string) {
   return book.instances.find(i => i.origin === origin)?.accounts.find(a => a.username === username)
@@ -25,7 +26,7 @@ function sessionOwner(account: AccountSession, username: string) {
       account.conn.origin === origin &&
       state.me?.username === username &&
       !state.guest &&
-      state.token === token &&
+      sameSecret(state.token, token) &&
       readLocal(key) === credential
     )
   }

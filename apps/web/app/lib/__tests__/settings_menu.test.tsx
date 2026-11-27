@@ -14,6 +14,7 @@ import type { ActiveDialog, RChatState } from '../store_types'
 import type { P2pState } from '../p2p/app/store'
 import { settingsRows, settingsSections, type SettingsSection } from '../settings_sections'
 import { me } from './fixtures'
+import { Secret } from '../secret'
 
 const alicePeerFlag = () => peerStorage(home, 'alice').scoped(p2pKey('alice'))
 const initial = useStore.getInitialState()
@@ -48,7 +49,7 @@ const signedIn = (dialog: ActiveDialog, p2pAccount: string | null = 'alice', kep
     {
       me: me('alice', { display_name: 'Alice A' }),
       guest: false,
-      token: 'tok',
+      token: Secret.of('tok'),
       settings: { ...saved.settings, p2p: p2pAccount !== null },
       instance: INSTANCE,
       instanceHost: 'chat.a.test',

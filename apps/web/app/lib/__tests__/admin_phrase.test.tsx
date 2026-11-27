@@ -12,6 +12,7 @@ import { instanceAuditLine } from '../instance_audit'
 import { resetSessionCaches, useStore } from '../store'
 import type { InstanceAuditEntry } from '../types'
 import { drain, me, msg, paged, user } from './fixtures'
+import { Secret } from '../secret'
 
 const realRemove = api.adminRemovePhrase
 const initial = useStore.getInitialState()
@@ -101,7 +102,7 @@ test('removing a phrase says whether one was set', async () => {
     asked.push(username)
     return { removed }
   }
-  useStore.setState({ token: 'tok', me: me('root', { is_site_admin: true }) })
+  useStore.setState({ token: Secret.of('tok'), me: me('root', { is_site_admin: true }) })
   await useStore.getState().adminRemovePhrase('bob')
   expect(useStore.getState().toast?.text).toBe('Backup phrase removed')
   removed = false
@@ -126,7 +127,7 @@ test('only the site admin gets Remove backup phrase on a person, never in the ba
   for (const who of [
     { token: null, me: null, guest: false },
     { token: null, me: null, guest: true },
-    { token: 'tok', me: me('alice'), guest: false },
+    { token: Secret.of('tok'), me: me('alice'), guest: false },
   ]) {
     useStore.setState(who)
     expect(a?.available(onRow())).toBe(false)
@@ -134,7 +135,11 @@ test('only the site admin gets Remove backup phrase on a person, never in the ba
   }
   expect(await runAction('admin_remove_phrase', onRow())).toBe(false)
   expect(useStore.getState().activeDialog).toBe(null)
-  useStore.setState({ token: 'tok', me: me('root', { is_site_admin: true }), guest: false })
+  useStore.setState({
+    token: Secret.of('tok'),
+    me: me('root', { is_site_admin: true }),
+    guest: false,
+  })
   expect(labels()).toContain('Remove backup phrase')
   expect(a?.available(onMessage())).toBe(true)
   expect(paletteCommands(paletteCtx(useStore.getState())).some(r => r.id === a?.id)).toBe(false)

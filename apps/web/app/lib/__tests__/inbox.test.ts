@@ -31,6 +31,7 @@ import { seenGroupMessages } from '../group_pings'
 import { EMPTY_NOTIFY, setLevel, setSuppress } from '../notify'
 import type { InboxItem, WsEvent } from '../types'
 import { me, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -361,7 +362,7 @@ describe('group_pings_seen', () => {
       me: me('bob', {
         servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
       }),
-      token: 't',
+      token: Secret.of('t'),
       guest: false,
       reads: { c1: { lastRead: 0, latest: 9, server: 's' } },
       pings: {},

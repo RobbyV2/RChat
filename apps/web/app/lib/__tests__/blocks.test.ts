@@ -5,6 +5,7 @@ import { blockedLabel, blockedRuns, blockedSet, matchesBlockQuery, withoutTypers
 import { typerNames } from '../typing'
 import type { BlockedUser, WsEvent } from '../types'
 import { me, memoryStorage, msg, user } from './fixtures'
+import { Secret } from '../secret'
 
 afterAll(resetSessionCaches)
 
@@ -43,7 +44,7 @@ beforeEach(() => {
   }
   g.document = { cookie: '' }
   useStore.setState({
-    token: 'tok',
+    token: Secret.of('tok'),
     me: me('alice'),
     guest: false,
     blocked: {},

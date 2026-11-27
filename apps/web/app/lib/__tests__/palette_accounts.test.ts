@@ -10,6 +10,7 @@ import { channelTarget } from '../viewing'
 import { registerAppActions } from '../actions'
 import { testAccount } from './test_account'
 import { me, member, memoryStorage, msg, serverDetail, textChannel } from './fixtures'
+import { Secret } from '../secret'
 
 const ctx: ResultCtx = {
   usage: {},
@@ -63,7 +64,7 @@ test('a palette keeps identical destinations under their owners, rechecks consen
     for (const account of owners) {
       memoryStorage.setItem(token(account), 'fixture-' + account.renderKey)
       account.store.setState({
-        token: 'fixture-' + account.renderKey,
+        token: Secret.of('fixture-' + account.renderKey),
         me: roles,
         servers: { club: serverDetail('club', { channels: [channel] }) },
         openChannel: async () => {
