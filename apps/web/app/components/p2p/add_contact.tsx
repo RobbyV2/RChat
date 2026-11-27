@@ -1,4 +1,5 @@
 'use client'
+import { Button, Tab } from '../controls'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -10,7 +11,7 @@ import { useStore } from '../../lib/store'
 import { looksLikeCard, type Card } from '../../lib/p2p/card'
 import { fingerprint } from '../../lib/p2p/keys'
 import { CopyButton, QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
+import { Dialog, FieldError, fieldCls, Masked } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { QrScan } from './qr_scan'
 
@@ -24,14 +25,10 @@ function MyCodeBody() {
   if (!card) return <p className="text-sm text-on-surface-variant">Preparing your code…</p>
   if (streamer && !shown)
     return (
-      <button
-        type="button"
-        onClick={() => setShown(true)}
-        className={`${textBtn} flex items-center gap-1.5`}
-      >
+      <Button onClick={() => setShown(true)}>
         <Eye size={16} />
         Show code
-      </button>
+      </Button>
     )
   return (
     <div className="flex flex-col items-start gap-3">
@@ -58,7 +55,7 @@ function MyCodeBody() {
   )
 }
 
-type Tab = 'scan' | 'paste' | 'mine'
+type ContactTab = 'scan' | 'paste' | 'mine'
 
 function Preview({ card }: { card: Card }) {
   return (
@@ -81,14 +78,14 @@ function AddContactDialogBody({
   code: given = '',
   routed,
 }: {
-  initial?: Tab
+  initial?: ContactTab
   code?: string
   routed?: { close(): void; valid(): boolean; finish(): void }
 }) {
   const identity = useP2pApp()!
   const { p2p } = identity
 
-  const [tab, setTab] = useState<Tab>(initial)
+  const [tab, setTab] = useState<ContactTab>(initial)
   const [code, setCode] = useState(given)
   const [intro, setIntro] = useState('')
   const [card, setCard] = useState<Card | null>(null)
@@ -139,7 +136,7 @@ function AddContactDialogBody({
     p2p.openDialog({ kind: 'contact', ik: res.contact.ik })
   }
 
-  const tabs: [Tab, string][] = [
+  const tabs: [ContactTab, string][] = [
     ['scan', 'Scan'],
     ['paste', 'Paste'],
     ['mine', 'My code'],
@@ -149,19 +146,9 @@ function AddContactDialogBody({
     <Dialog title="Add a P2P contact" onClose={close} full>
       <div role="tablist" className="mb-4 flex gap-1">
         {tabs.map(([key, label]) => (
-          <button
-            key={key}
-            role="tab"
-            aria-selected={tab === key}
-            onClick={() => setTab(key)}
-            className={`rounded-full px-3 py-1.5 text-sm ${
-              tab === key
-                ? 'bg-secondary-container text-on-secondary-container'
-                : 'text-on-surface-variant hover:bg-surface-container-highest'
-            }`}
-          >
+          <Tab key={key} selected={tab === key} onClick={() => setTab(key)}>
             {label}
-          </button>
+          </Tab>
         ))}
       </div>
       {tab === 'mine' ? (
@@ -207,12 +194,12 @@ function AddContactDialogBody({
             </>
           )}
           <div className="mt-2 flex justify-end gap-2">
-            <button onClick={close} className={textBtn}>
+            <Button size="md" onClick={close}>
               Cancel
-            </button>
-            <button onClick={() => void add()} disabled={!card || busy} className={filledBtn}>
+            </Button>
+            <Button variant="filled" size="md" onClick={() => void add()} disabled={!card || busy}>
               Send request
-            </button>
+            </Button>
           </div>
         </div>
       )}

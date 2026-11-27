@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../controls'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -19,7 +20,7 @@ import {
   type P2pSection,
 } from '../../lib/p2p/transfer'
 import { fmtSize } from '../../lib/bytes'
-import { dangerBtn, FieldError, fieldCls, filledBtn, textBtn } from '../ui'
+import { FieldError, fieldCls } from '../ui'
 
 // The P2P part of Sync config: an encrypted copy of the identity and history for moving to a
 // new device, and its import.
@@ -278,16 +279,14 @@ function P2pImportBody({
           <p role="status" className="text-sm text-on-surface">
             {done}
           </p>
-          <button
-            type="button"
+          <Button
             onClick={() => {
               closeDialog()
               p2p.openHome()
             }}
-            className={textBtn}
           >
             Open P2P
-          </button>
+          </Button>
         </div>
       ) : !unlocked ? (
         <form
@@ -306,17 +305,15 @@ function P2pImportBody({
             aria-label="Passphrase for the P2P data"
             className={`${fieldCls} min-w-48 flex-1`}
           />
-          <button type="submit" disabled={!pass || busy !== null} className={filledBtn}>
+          <Button type="submit" variant="filled" size="md" disabled={!pass || busy !== null}>
             {busy !== 'unlock'
               ? 'Unlock'
               : part === null
                 ? 'Unlocking…'
                 : `Unlocking ${percent(part)}`}
-          </button>
+          </Button>
           {busy === 'unlock' && part !== null && part < 1 && (
-            <button type="button" onClick={() => stop.current?.abort()} className={textBtn}>
-              Cancel
-            </button>
+            <Button onClick={() => stop.current?.abort()}>Cancel</Button>
           )}
           {busy === 'unlock' && part !== null && late && (
             <div className="w-full">
@@ -339,17 +336,15 @@ function P2pImportBody({
           {elsewhere ? (
             <div role="status" className="flex flex-wrap items-center gap-3 text-sm">
               <p>P2P is open in another tab. Use it here to import.</p>
-              <button type="button" onClick={() => p2p.useHere()} className={textBtn}>
-                Use here
-              </button>
+              <Button onClick={() => p2p.useHere()}>Use here</Button>
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
+              <Button
+                variant={unlocked.kind === 'replace' ? 'danger' : 'filled'}
+                size="md"
                 disabled={busy !== null}
                 onClick={() => confirmApply(unlocked)}
-                className={unlocked.kind === 'replace' ? dangerBtn : filledBtn}
               >
                 {busy === 'apply'
                   ? read > 0
@@ -360,15 +355,10 @@ function P2pImportBody({
                     : unlocked.kind === 'replace'
                       ? 'Replace'
                       : 'Import'}
-              </button>
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => setUnlocked(null)}
-                className={textBtn}
-              >
+              </Button>
+              <Button disabled={busy !== null} onClick={() => setUnlocked(null)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           )}
         </div>

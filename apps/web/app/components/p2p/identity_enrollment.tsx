@@ -1,5 +1,6 @@
 'use client'
 
+import { Button } from '../controls'
 import { useEffect, useRef, useState } from 'react'
 import { AccountProvider, useAccount, useLiveSessions } from '../../lib/client/react'
 import { client } from '../../lib/client/client'
@@ -16,7 +17,7 @@ import { FILE_LIMITS, decodeConfig, splitFile } from '../../lib/config_transfer'
 import { filesHead, type P2pSection } from '../../lib/p2p/transfer'
 import type { FilesPart } from '../../lib/p2p/app'
 import { P2pImport } from './p2p_transfer'
-import { fieldCls, filledBtn, textBtn } from '../ui'
+import { fieldCls } from '../ui'
 
 type Slot = Awaited<ReturnType<typeof reserveIdentity>>
 export type ImportedSection = { section: P2pSection; files: FilesPart | null }
@@ -113,9 +114,9 @@ export function IdentityEnrollment({
               shellInfo() || typeof window === 'undefined' ? null : window.location.host
             )}
           </p>
-          <button className={filledBtn} onClick={() => trust(true)}>
+          <Button variant="filled" size="md" onClick={() => trust(true)}>
             I trust this app
-          </button>
+          </Button>
         </>
       ) : !named ? (
         <>
@@ -142,8 +143,9 @@ export function IdentityEnrollment({
               onChange={e => setName(e.target.value)}
             />
           </label>
-          <button
-            className={filledBtn}
+          <Button
+            variant="filled"
+            size="md"
             disabled={!name.trim() || !eligible.includes(target)}
             onClick={() => {
               owner.current = identityOwner(target)
@@ -151,7 +153,7 @@ export function IdentityEnrollment({
             }}
           >
             Continue
-          </button>
+          </Button>
         </>
       ) : pending ? (
         <AccountProvider session={target}>
@@ -181,26 +183,27 @@ export function IdentityEnrollment({
                 Install the app to keep it longer.
               </p>
               {choices.map(choice => (
-                <button
+                <Button
+                  variant="filled"
+                  size="md"
                   key={choice}
                   disabled={busy}
-                  className={filledBtn}
                   onClick={() => void submit(false)}
                 >
                   Create without a recovery phrase
-                </button>
+                </Button>
               ))}
             </>
           )}
-          <button disabled={busy} className={textBtn} onClick={() => void submit(true)}>
+          <Button disabled={busy} onClick={() => void submit(true)}>
             Import {imported ? 'this identity' : 'a .rchat file'}
-          </button>
+          </Button>
         </>
       )}
       {error && <p role="alert">{error}</p>}
-      <button disabled={busy} className={textBtn} onClick={cancel}>
+      <Button disabled={busy} onClick={cancel}>
         Cancel
-      </button>
+      </Button>
     </div>
   )
 }

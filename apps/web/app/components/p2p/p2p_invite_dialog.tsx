@@ -1,4 +1,5 @@
 'use client'
+import { Button, Tab } from '../controls'
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -13,7 +14,7 @@ import { displayName } from '../../lib/p2p/contacts'
 import { P } from '../../lib/p2p/state'
 import { fieldMax } from '../../lib/p2p/event_v2'
 import { CopyButton, QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
+import { Dialog, FieldError, fieldCls, Masked } from '../ui'
 import { FolderColorField } from '../folder_dialog'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { QrScan } from './qr_scan'
@@ -60,14 +61,10 @@ export function CodeBox({ text }: { text: string }) {
   const [shown, setShown] = useState(false)
   if (streamer && !shown)
     return (
-      <button
-        type="button"
-        onClick={() => setShown(true)}
-        className={`${textBtn} flex items-center gap-1.5`}
-      >
+      <Button onClick={() => setShown(true)}>
         <Eye size={16} />
         Show code
-      </button>
+      </Button>
     )
   return (
     <div className="flex flex-col items-start gap-3">
@@ -138,15 +135,13 @@ function CodeListBody({ room, version }: { room: string; version: number }) {
                 </p>
               </div>
               {live && c.text && (
-                <button
-                  onClick={() => setOpen(open === c.hash ? null : c.hash)}
-                  className={textBtn}
-                >
+                <Button onClick={() => setOpen(open === c.hash ? null : c.hash)}>
                   {open === c.hash ? 'Hide' : 'Show'}
-                </button>
+                </Button>
               )}
               {live && (mine || manage) && (
-                <button
+                <Button
+                  variant="danger"
                   onClick={() =>
                     ownerAccount.store.getState().askConfirm({
                       title: 'Revoke Invite',
@@ -164,10 +159,9 @@ function CodeListBody({ room, version }: { room: string; version: number }) {
                           ),
                     })
                   }
-                  className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
                 >
                   Revoke
-                </button>
+                </Button>
               )}
             </div>
             {live && c.paused && (
@@ -250,9 +244,9 @@ function ServerInviteDialogBody({ room }: { room: string }) {
                 className={fieldCls}
               />
             </label>
-            <button onClick={() => void make()} disabled={busy} className={filledBtn}>
+            <Button variant="filled" size="md" onClick={() => void make()} disabled={busy}>
               Create invite
-            </button>
+            </Button>
           </div>
           <p className="text-xs text-on-surface-variant">{CODE_DEATH_TEXT}</p>
           {code && <CodeBox text={code} />}
@@ -276,17 +270,16 @@ function ServerInviteDialogBody({ room }: { room: string }) {
                     <span className="streamer min-w-0 flex-1 truncate text-sm">
                       <Masked text={displayName(c)} />
                     </span>
-                    <button
+                    <Button
                       disabled={pending}
                       onClick={() =>
                         void p2pServer.invite(room, c.ik).then(r => {
                           if (r !== null) setInvited(s => new Set(s).add(c.ik))
                         })
                       }
-                      className={textBtn}
                     >
                       {pending ? 'Invited' : 'Invite'}
-                    </button>
+                    </Button>
                   </li>
                 )
               })}
@@ -368,9 +361,9 @@ function ServerNewDialogBody({
           <p className="text-sm text-on-surface-variant">
             Turn on peer-to-peer first: P2P servers live on their members&apos; devices.
           </p>
-          <button onClick={() => p2p.openDialog({ kind: 'enable' })} className={filledBtn}>
+          <Button variant="filled" size="md" onClick={() => p2p.openDialog({ kind: 'enable' })}>
             Turn on P2P
-          </button>
+          </Button>
         </div>
       ) : (
         <>
@@ -383,22 +376,16 @@ function ServerNewDialogBody({
             )
               .filter(([key]) => !routed || key === 'join')
               .map(([key, label]) => (
-                <button
+                <Tab
                   key={key}
-                  role="tab"
-                  aria-selected={tab === key}
+                  selected={tab === key}
                   onClick={() => {
                     setTab(key)
                     setError(null)
                   }}
-                  className={`rounded-full px-3 py-1.5 text-sm ${
-                    tab === key
-                      ? 'bg-secondary-container text-on-secondary-container'
-                      : 'text-on-surface-variant hover:bg-surface-container-highest'
-                  }`}
                 >
                   {label}
-                </button>
+                </Tab>
               ))}
           </div>
           <CoOwnerAsks />
@@ -434,16 +421,17 @@ function ServerNewDialogBody({
               )}
               <FieldError message={error} />
               <div className="flex justify-end gap-2">
-                <button onClick={routed?.close ?? p2p.closeDialog} className={textBtn}>
+                <Button size="md" onClick={routed?.close ?? p2p.closeDialog}>
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="filled"
+                  size="md"
                   onClick={() => void create()}
                   disabled={!name.trim() || busy}
-                  className={filledBtn}
                 >
                   Create
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
@@ -470,9 +458,9 @@ function ServerNewDialogBody({
                   className={`${areaCls} streamer`}
                 />
               )}
-              <button onClick={() => setScan(s => !s)} className={`${textBtn} self-start`}>
+              <Button onClick={() => setScan(s => !s)} place="self-start">
                 {scan ? 'Paste instead' : 'Scan a QR code'}
-              </button>
+              </Button>
               {code.trim() && !peek && (
                 <FieldError message="This isn't a P2P server invite code." />
               )}
@@ -497,16 +485,17 @@ function ServerNewDialogBody({
               <p className="text-xs text-on-surface-variant">{IP_NOTE}</p>
               <FieldError message={error} />
               <div className="flex justify-end gap-2">
-                <button onClick={routed?.close ?? p2p.closeDialog} className={textBtn}>
+                <Button size="md" onClick={routed?.close ?? p2p.closeDialog}>
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="filled"
+                  size="md"
                   onClick={() => void join()}
                   disabled={!peek || busy || !ready}
-                  className={filledBtn}
                 >
                   {busy ? 'Joining…' : 'Join'}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -545,12 +534,12 @@ function P2pFolderDialogBody({ id, colorFirst = false }: { id: string; colorFirs
       />
       <FolderColorField color={color} onColor={setColor} tone="tertiary" />
       <div className="mt-6 flex justify-end gap-2">
-        <button onClick={p2p.closeDialog} className={textBtn}>
+        <Button size="md" onClick={p2p.closeDialog}>
           Cancel
-        </button>
-        <button onClick={save} className={filledBtn}>
+        </Button>
+        <Button variant="filled" size="md" onClick={save}>
           Save
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

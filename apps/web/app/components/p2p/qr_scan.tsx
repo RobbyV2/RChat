@@ -1,9 +1,9 @@
 'use client'
 
+import { Button } from '../controls'
 import { useEffect, useRef, useState } from 'react'
 import { Camera, ImageUp } from 'lucide-react'
 import { scanner } from '../../lib/platform'
-import { textBtn } from '../ui'
 
 const FRAME_MS = 250
 const MAX_SIDE = 1024
@@ -110,30 +110,20 @@ export function QrScan({ onCode, label }: { onCode: (text: string) => void; labe
             aria-label={label}
             className="aspect-square w-full max-w-72 rounded-2xl bg-black object-cover"
           />
-          <button type="button" onClick={() => setStream(null)} className={textBtn}>
-            Stop camera
-          </button>
+          <Button onClick={() => setStream(null)}>Stop camera</Button>
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
           {scanner().canUseCamera() && (
-            <button
-              type="button"
-              onClick={() => void start()}
-              className={`${textBtn} flex items-center gap-1.5`}
-            >
+            <Button onClick={() => void start()}>
               <Camera size={16} />
               Scan with camera
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
-            onClick={() => file.current?.click()}
-            className={`${textBtn} flex items-center gap-1.5`}
-          >
+          <Button onClick={() => file.current?.click()}>
             <ImageUp size={16} />
             Scan a picture
-          </button>
+          </Button>
           <input
             ref={file}
             type="file"

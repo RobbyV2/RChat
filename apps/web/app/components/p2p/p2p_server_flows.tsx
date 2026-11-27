@@ -1,4 +1,5 @@
 'use client'
+import { Button, IconButton, ListRow, LinkButton } from '../controls'
 import { client } from '../../lib/client/client'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -36,7 +37,7 @@ import {
 import { reapplyLine } from '../../lib/p2p/roles'
 import type { ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
-import { Dialog, dangerBtn, filledBtn, Masked, textBtn } from '../ui'
+import { Dialog, Masked } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { andMore, fewOf, nextPage, page, PAGE } from '../../lib/paging'
 
@@ -77,23 +78,13 @@ function NameList({ room, iks }: { room: string; iks: string[] }) {
       {!open && more > 0 && (
         <>
           {' '}
-          <button
-            onClick={() => setOpen(true)}
-            className="font-medium text-primary hover:underline"
-          >
-            {andMore(more)}
-          </button>
+          <LinkButton onClick={() => setOpen(true)}>{andMore(more)}</LinkButton>
         </>
       )}
       {list.more && (
         <>
           {' '}
-          <button
-            onClick={() => setShown(n => nextPage(n, iks.length))}
-            className="font-medium text-primary hover:underline"
-          >
-            Show more
-          </button>
+          <LinkButton onClick={() => setShown(n => nextPage(n, iks.length))}>Show more</LinkButton>
         </>
       )}
     </span>
@@ -111,12 +102,11 @@ function Capped({ items }: { items: ReactNode[] }) {
       {list.items}
       {((!open && more > 0) || list.more) && (
         <li>
-          <button
+          <LinkButton
             onClick={() => (open ? setShown(n => nextPage(n, items.length)) : setOpen(true))}
-            className="font-medium text-primary hover:underline"
           >
             {open ? 'Show more' : andMore(more)}
-          </button>
+          </LinkButton>
         </li>
       )}
     </>
@@ -149,12 +139,12 @@ function ModNote({ v, m }: { v: ServerView; m: ServerView['mods'][number] }) {
         </span>
       </span>
       <span className="flex gap-1">
-        <button onClick={() => p2pServer.cancelMod(v.id, m.id)} className={textBtn}>
+        <Button size="md" onClick={() => p2pServer.cancelMod(v.id, m.id)}>
           Cancel
-        </button>
-        <button onClick={() => p2pServer.applyAnyway(v.id, m.id)} className={filledBtn}>
+        </Button>
+        <Button variant="filled" size="md" onClick={() => p2pServer.applyAnyway(v.id, m.id)}>
           {APPLY_ANYWAY}
-        </button>
+        </Button>
       </span>
     </div>
   )
@@ -171,17 +161,16 @@ function ReachedNote({ v, r }: { v: ServerView; r: ServerView['reached'][number]
         <NameList room={v.id} iks={r.lost} />
       </span>
       <span className="flex items-center gap-1">
-        <button onClick={() => void p2pServer.inviteAgain(v.id, r.by)} className={filledBtn}>
+        <Button variant="filled" size="md" onClick={() => void p2pServer.inviteAgain(v.id, r.by)}>
           {INVITE_AGAIN}
-        </button>
-        <button
-          title="Dismiss"
-          aria-label="Dismiss"
+        </Button>
+        <IconButton
+          icon={X}
+          label="Dismiss"
+          tone="inherit"
+          size="sm"
           onClick={() => p2pServer.dismissReached(v.id, r.by)}
-          className="rounded-full p-1.5 hover:bg-surface-container-highest"
-        >
-          <X size={16} />
-        </button>
+        />
       </span>
     </div>
   )
@@ -220,9 +209,9 @@ function ReapplyNote({ v }: { v: ServerView }) {
           />
         </ul>
       </span>
-      <button onClick={() => void p2pServer.reapply(v.id)} className={filledBtn}>
+      <Button variant="filled" size="md" onClick={() => void p2pServer.reapply(v.id)}>
         Re-apply
-      </button>
+      </Button>
     </div>
   )
 }
@@ -239,9 +228,9 @@ function ConflictNote() {
     >
       <CircleAlert size={16} className="shrink-0" aria-hidden />
       <span className="min-w-48 flex-1">{CONFLICT_TEXT}</span>
-      <button onClick={() => void p2pServer.newDevice()} className={dangerBtn}>
+      <Button variant="danger" onClick={() => void p2pServer.newDevice()}>
         Set up as a new device
-      </button>
+      </Button>
     </div>
   )
 }
@@ -267,16 +256,19 @@ function DisputedNote({ v }: { v: ServerView }) {
       </span>
       <span className="flex flex-wrap gap-1">
         {(list ?? []).map(x => (
-          <button
+          <ListRow
+            wrap
             key={x.id}
             onClick={() => void p2pServer.followTo(v.id, x.g)}
             disabled={v.next === x.id}
-            aria-current={v.next === x.id ? 'true' : undefined}
+            current={v.next === x.id}
             title={v.next === x.id ? 'The copy you follow' : 'Follow this copy'}
-            className={`${textBtn} disabled:cursor-default disabled:text-on-surface-variant disabled:hover:bg-transparent`}
-          >
-            Owned by <Who room={v.id} ik={x.owner} />, from <Who room={v.id} ik={x.by} />
-          </button>
+            label={
+              <>
+                Owned by <Who room={v.id} ik={x.owner} />, from <Who room={v.id} ik={x.by} />
+              </>
+            }
+          />
         ))}
       </span>
     </div>
@@ -305,9 +297,9 @@ function CarryNote({ v }: { v: ServerView }) {
           : carryWaitText(c.why ?? undefined)}
       </span>
       {c.state === 'failed' && (
-        <button onClick={() => p2pServer.retryCarry(v.id)} className={filledBtn}>
+        <Button variant="filled" size="md" onClick={() => p2pServer.retryCarry(v.id)}>
           Try again
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -409,15 +401,16 @@ function TransferAsksBody({ room }: { room?: string }) {
             )}
           </p>
           <span className="ml-auto flex gap-1">
-            <button onClick={() => void p2pServer.answerTransfer(a.key, false)} className={textBtn}>
+            <Button size="md" onClick={() => void p2pServer.answerTransfer(a.key, false)}>
               Decline
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="filled"
+              size="md"
               onClick={() => void p2pServer.answerTransfer(a.key, true)}
-              className={filledBtn}
             >
               {a.kind === 'take' ? 'Take it' : 'Approve'}
-            </button>
+            </Button>
           </span>
         </li>
       ))}
@@ -461,12 +454,16 @@ function CoOwnerAsksBody() {
                 .
               </p>
               <span className="ml-auto flex gap-1">
-                <button onClick={() => p2pServer.answerCoOwner(a.key, false)} className={textBtn}>
+                <Button size="md" onClick={() => p2pServer.answerCoOwner(a.key, false)}>
                   Decline
-                </button>
-                <button onClick={() => p2pServer.answerCoOwner(a.key, true)} className={filledBtn}>
+                </Button>
+                <Button
+                  variant="filled"
+                  size="md"
+                  onClick={() => p2pServer.answerCoOwner(a.key, true)}
+                >
                   Agree
-                </button>
+                </Button>
               </span>
             </li>
           )
@@ -586,24 +583,21 @@ function DevicesSectionBody() {
               </p>
             </div>
             {d.dk !== mine && (
-              <button
+              <Button
+                variant="danger"
                 onClick={() => openOver(identity)({ kind: 'lost_device', dk: d.dk })}
-                className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
               >
                 Lost or stolen
-              </button>
+              </Button>
             )}
           </li>
         ))}
       </ul>
       {others.length > 0 && (
-        <button
-          onClick={() => openOver(identity)({ kind: 'recover' })}
-          className={`${textBtn} flex items-center gap-1.5 self-start`}
-        >
+        <Button onClick={() => openOver(identity)({ kind: 'recover' })} place="self-start">
           <ShieldCheck size={16} />
           Recover with your recovery key
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -668,9 +662,9 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
         </label>
         <div className="-mt-2 flex flex-wrap gap-1">
           {times.map(o => (
-            <button key={o.ms} onClick={() => setT(at - o.ms)} className={textBtn}>
+            <Button key={o.ms} onClick={() => setT(at - o.ms)}>
               {o.label}
-            </button>
+            </Button>
           ))}
         </div>
         <p data-p2p-lost-text className="text-sm">
@@ -762,16 +756,10 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
           </ul>
         )}
         <div className="flex justify-end gap-2">
-          <button onClick={p2p.closeDialog} className={textBtn}>
-            Cancel
-          </button>
-          <button
-            onClick={() => void remove()}
-            disabled={busy || !list?.length}
-            className={dangerBtn}
-          >
+          <Button onClick={p2p.closeDialog}>Cancel</Button>
+          <Button variant="danger" onClick={() => void remove()} disabled={busy || !list?.length}>
             Remove device
-          </button>
+          </Button>
         </div>
       </div>
     </Dialog>
@@ -820,12 +808,10 @@ function RecoverDialogBody() {
           <p className="px-2 text-xs text-on-surface-variant">This device stays.</p>
         </fieldset>
         <div className="flex justify-end gap-2">
-          <button onClick={p2p.closeDialog} className={textBtn}>
-            Cancel
-          </button>
-          <button onClick={() => void run()} disabled={busy} className={dangerBtn}>
+          <Button onClick={p2p.closeDialog}>Cancel</Button>
+          <Button variant="danger" onClick={() => void run()} disabled={busy}>
             Sign out the others
-          </button>
+          </Button>
         </div>
       </div>
     </Dialog>

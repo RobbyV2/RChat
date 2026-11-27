@@ -1,4 +1,5 @@
 'use client'
+import { Button, Tab } from '../controls'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -11,7 +12,7 @@ import { displayName, shieldOf, warningText } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
 import { safetyGroups } from '../../lib/p2p/safety'
 import { QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
+import { Dialog, FieldError, fieldCls, Masked } from '../ui'
 import { ContactShield, shieldText } from './p2p_badge'
 import { QrScan } from './qr_scan'
 
@@ -69,33 +70,23 @@ function VerifyDialogBody({ ik }: { ik: string }) {
               ['scan', 'Scan their code'],
             ] as [Mode, string][]
           ).map(([key, label]) => (
-            <button
+            <Tab
               key={key}
-              role="tab"
-              aria-selected={mode === key}
+              selected={mode === key}
               onClick={() => {
                 setMode(key)
                 setResult(null)
               }}
-              className={`rounded-full px-3 py-1.5 text-sm ${
-                mode === key
-                  ? 'bg-secondary-container text-on-secondary-container'
-                  : 'text-on-surface-variant hover:bg-surface-container-highest'
-              }`}
             >
               {label}
-            </button>
+            </Tab>
           ))}
         </div>
         {hidden && mode !== 'scan' ? (
-          <button
-            type="button"
-            onClick={() => setShown(true)}
-            className={`${textBtn} flex w-fit items-center gap-1.5`}
-          >
+          <Button onClick={() => setShown(true)} place="w-fit">
             <Eye size={16} />
             Show code
-          </button>
+          </Button>
         ) : mode === 'number' ? (
           <div className="flex flex-col gap-2">
             <p className="text-sm text-on-surface-variant">
@@ -146,13 +137,9 @@ function VerifyDialogBody({ ik }: { ik: string }) {
                 aria-label="Verification code"
                 className={`${fieldCls} font-mono text-xs md:text-xs`}
               />
-              <button
-                onClick={() => void scanned(paste)}
-                disabled={!paste.trim()}
-                className={textBtn}
-              >
+              <Button onClick={() => void scanned(paste)} disabled={!paste.trim()}>
                 Check
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -165,19 +152,18 @@ function VerifyDialogBody({ ik }: { ik: string }) {
             <FieldError message={result.text} />
           ))}
         <div className="mt-2 flex flex-wrap justify-end gap-2">
-          <button onClick={p2p.closeDialog} className={textBtn}>
-            Close
-          </button>
+          <Button onClick={p2p.closeDialog}>Close</Button>
           {!contact.verified && (
-            <button
+            <Button
+              variant="filled"
+              size="md"
               onClick={() => {
                 void p2p.markVerified(ik)
                 setResult({ ok: true, text: 'Verified' })
               }}
-              className={filledBtn}
             >
               Mark as verified
-            </button>
+            </Button>
           )}
         </div>
       </div>
