@@ -331,7 +331,7 @@ export function FolderEntry({
     <div
       data-drag-box
       style={style}
-      className="folder-group flex w-14 shrink-0 flex-col items-center rounded-[20px] py-1"
+      className="folder-group flex w-14 shrink-0 flex-col items-center rounded-group py-1"
     >
       <button {...header} className={`${tile} folder-icon`}>
         <FolderOpen size={22} />
@@ -614,7 +614,7 @@ export function ServerRail() {
         {(groupedPeers ? peerTiles.length > 0 : p2pOn) && (
           <div
             data-rail="p2p"
-            className="flex shrink-0 flex-col items-center gap-2 rounded-[1.25rem] border-2 border-dashed border-tertiary/70 p-[3px]"
+            className="flex shrink-0 flex-col items-center gap-2 rounded-group border-2 border-dashed border-tertiary/70 p-[3px]"
           >
             {groupedPeers ? (
               <>

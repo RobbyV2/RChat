@@ -606,7 +606,7 @@ function Frame({
       ref={ref}
       className={
         big
-          ? 'w-full max-w-md rounded-[28px] bg-surface-container-low p-6 text-center shadow-elevation-3 sm:p-8'
+          ? 'w-full max-w-md rounded-hero bg-surface-container-low p-6 text-center shadow-elevation-3 sm:p-8'
           : '@container mt-1.5 w-full max-w-md rounded-2xl border border-outline-variant bg-surface-container p-3 sm:p-4'
       }
     >

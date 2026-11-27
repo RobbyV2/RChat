@@ -349,7 +349,7 @@ export function LiveBadge({
   return (
     <span
       title={title}
-      className={`flex shrink-0 items-center rounded-[4px] bg-danger font-bold tracking-wide text-on-danger ${
+      className={`flex shrink-0 items-center rounded-sm bg-danger font-bold tracking-wide text-on-danger ${
         size === 'sm' ? 'px-1 py-px text-3xs leading-3' : 'px-1.5 py-0.5 text-2xs leading-4'
       }`}
     >
@@ -467,7 +467,7 @@ export function Tile({
       {speaking && !screen && (
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-xl shadow-[inset_0_0_0_3px_var(--color-status-green)] motion-safe:animate-speak"
+          className="pointer-events-none absolute inset-0 rounded-xl inset-ring-3 inset-ring-status-green motion-safe:animate-speak"
         />
       )}
       <button

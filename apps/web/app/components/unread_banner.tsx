@@ -51,7 +51,7 @@ export function UnreadDivider() {
       className="my-2 flex items-center px-4 select-none"
     >
       <div className="h-px flex-1 bg-danger/80" />
-      <span className="shrink-0 rounded-[4px] bg-danger px-1.5 py-0.5 text-3xs leading-none font-bold tracking-wider text-on-danger uppercase">
+      <span className="shrink-0 rounded-sm bg-danger px-1.5 py-0.5 text-3xs leading-none font-bold tracking-wider text-on-danger uppercase">
         New
       </span>
     </div>
