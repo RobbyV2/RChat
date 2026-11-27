@@ -4,7 +4,7 @@ import { badgeState } from '../p2p/badge'
 import { shieldOf } from '../p2p/contacts'
 import { serversLoading } from '../p2p/conversations'
 import { VOUCH_INVITER_TEXT } from '../p2p/flows'
-import { hex, lookOfMember, memberGroups } from '../p2p/roles'
+import { hex, lookOfMember, memberGroups, viewCan } from '../p2p/roles'
 import type { MemberView } from '../p2p/server'
 import { ownsP2pServer } from '../p2p/server/types'
 import { P } from '../p2p/state'
@@ -345,7 +345,7 @@ const peer = ({
     const [v, me, contacts, badges, loading] = parts.get()
     if (!v) return { ...plain(loading ? 'loading' : 'none', room), byIdentity: true }
     const now = time().now()
-    const sees = (v.perms & P.TimeoutMembers) !== 0
+    const sees = viewCan(v, P.TimeoutMembers)
     const paged = pageGroups(memberGroups(v.members, v.roles, me), count)
     const items: MemberItem[] = []
     for (const g of paged.groups) {

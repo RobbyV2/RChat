@@ -9,6 +9,10 @@ import { groupOf, hoistGroups, lookOf, onlineFirst, p2pShown, type Look } from '
 // the permission toggles, where a dragged role lands, the member list grouped by
 // top role, and the allow-list rows of a channel.
 
+// Whether we hold `bit` in the server as a joined member.
+export const viewCan = (v: Pick<ServerView, 'me' | 'perms'>, bit: number) =>
+  v.me === 'join' && (v.perms & bit) !== 0
+
 // Whether we may take role `r` from member `m`: ours we may always drop, others' with Manage roles
 // above both; a role a channel's overwrites hold its holders back with only with Manage channels
 // too (the instance rule).
@@ -18,7 +22,7 @@ export const mayTakeRole = (
   r: Pick<RoleView, 'id' | 'below' | 'held'>,
   me: string | null
 ) => {
-  const can = (bit: number) => v.me === 'join' && (v.perms & bit) !== 0
+  const can = (bit: number) => viewCan(v, bit)
   if (!m.roles.includes(r.id) || (r.held && !can(P.ManageChannels))) return false
   return m.ik === me || (can(P.ManageRoles) && r.below && m.below)
 }
