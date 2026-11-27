@@ -352,7 +352,7 @@ describe('join audit sentences', () => {
 
 describe('audit values and filters', () => {
   test('values read naturally', () => {
-    expect(valueText('perms', Perm.Kick | Perm.ViewAuditLog)).toBe('Kick, View audit log')
+    expect(valueText('perms', Perm.Kick | Perm.ViewAuditLog)).toBe('Kick and ban, View audit log')
     expect(permNames(0)).toBe('None')
     expect(valueText('can_send', false)).toBe('Denied')
     expect(valueText('join_messages', true)).toBe('On')

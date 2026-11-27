@@ -268,7 +268,7 @@
     "display.name": [100, 32, 1024],
     "display.topic": [1024, 64, 16384],
     "display.label": [64, 16, 1024],
-    "display.reason": [200, 32, 4096],
+    "display.reason": [300, 32, 4096],
     "display.codeTtl": [2592000000, 86400000, 31536000000],
     "contacts.introMax": [500, 0, 4000],
     "contacts.introsMax": [3, 1, 64],

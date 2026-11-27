@@ -137,10 +137,11 @@ export function menuActions(
       title: 'Kick Member',
       body: 'Kick this member? They are removed from the server but can join again.',
       confirm: 'Kick',
-      action: () =>
+      reason: true,
+      action: (_choice, reason) =>
         void store
           .getState()
-          .kickMember(server, username)
+          .kickMember(server, username, reason)
           .then(after && inSession(after)),
     })
 

@@ -17,12 +17,14 @@ import type { ServerCtx } from './context'
 import { ServerError, NO_ROOM_TEXT, newRolePos, type Outgoing, type Retired } from './types'
 import { ROLE_LOOKS, type RoleSum } from '../acl/summary'
 import { clip } from '../rate'
+import { reasonField } from '../../audit_format'
 
 // A new role goes to the bottom of the list.
 export async function createRole(
   cx: ServerCtx,
   room: string,
-  role: { name: string; color: number | null; bits: number }
+  role: { name: string; color: number | null; bits: number },
+  reason?: string
 ) {
   const s = cx.sumOf(room)
   const me = rankOf(s, cx.me)
@@ -40,6 +42,7 @@ export async function createRole(
     ...(name ? { name } : {}),
     ...(role.color !== null ? { color: role.color } : {}),
     hoist: false,
+    ...reasonField(reason),
   }))
 }
 
@@ -91,27 +94,39 @@ export async function editRole(cx: ServerCtx, room: string, role: string, patch:
   )
 }
 
-export function moveRole(cx: ServerCtx, room: string, role: string, pos: number) {
-  return cx.emit(room, 'role_move', () => ({ role, pos }))
+export function moveRole(cx: ServerCtx, room: string, role: string, pos: number, reason?: string) {
+  return cx.emit(room, 'role_move', () => ({ role, pos, ...reasonField(reason) }))
 }
 
 // `role` may be `everyone`.
-export function setRoleBit(cx: ServerCtx, room: string, role: string, bit: number, on: boolean) {
-  return cx.emit(room, 'role_bits', () => ({ role, bit, on }))
+export function setRoleBit(
+  cx: ServerCtx,
+  room: string,
+  role: string,
+  bit: number,
+  on: boolean,
+  reason?: string
+) {
+  return cx.emit(room, 'role_bits', () => ({ role, bit, on, ...reasonField(reason) }))
 }
 
-export function deleteRole(cx: ServerCtx, room: string, role: string) {
-  return cx.emit(room, 'role_del', () => ({ role }))
+export function deleteRole(cx: ServerCtx, room: string, role: string, reason?: string) {
+  return cx.emit(room, 'role_del', () => ({ role, ...reasonField(reason) }))
 }
 
-export function assignRole(cx: ServerCtx, room: string, ik: string, role: string) {
-  return cx.emit(room, 'assign', () => ({ to: ik, role }))
+export function assignRole(cx: ServerCtx, room: string, ik: string, role: string, reason?: string) {
+  return cx.emit(room, 'assign', () => ({ to: ik, role, ...reasonField(reason) }))
 }
 
 // Taking a role from someone else carries the watermark of a removal.
-export function revokeRole(cx: ServerCtx, room: string, ik: string, role: string) {
-  if (ik === cx.me) return cx.emit(room, 'revoke', () => ({ to: ik, role }))
-  return cx.emit(room, 'revoke', plan => ({ to: ik, role, seen: plan.seen ?? {} }), { to: ik })
+export function revokeRole(cx: ServerCtx, room: string, ik: string, role: string, reason?: string) {
+  if (ik === cx.me) return cx.emit(room, 'revoke', () => ({ to: ik, role, ...reasonField(reason) }))
+  return cx.emit(
+    room,
+    'revoke',
+    plan => ({ to: ik, role, seen: plan.seen ?? {}, ...reasonField(reason) }),
+    { to: ik }
+  )
 }
 
 // How long until we may post in `ch` again (slow mode): 0 when it's off or leaves us
@@ -125,10 +140,17 @@ export async function slowLeft(cx: ServerCtx, room: string, ch: string) {
 }
 
 // Kicking someone invited withdraws the invite.
-export function kick(cx: ServerCtx, room: string, ik: string) {
+export function kick(cx: ServerCtx, room: string, ik: string, reason?: string) {
   if (membershipOf(cx.sumOf(room), ik) === 'invite')
-    return cx.emit(room, 'uninvite', () => ({ to: ik }))
-  return cx.emit(room, 'kick', plan => ({ to: ik, seen: plan.seen ?? {} }), { to: ik })
+    return cx.emit(room, 'uninvite', () => ({ to: ik, ...reasonField(reason) }))
+  return cx.emit(
+    room,
+    'kick',
+    plan => ({ to: ik, seen: plan.seen ?? {}, ...reasonField(reason) }),
+    {
+      to: ik,
+    }
+  )
 }
 
 // `wipe`: "Also hide all their messages" (needs Manage messages).
@@ -150,7 +172,7 @@ export function ban(
     plan => ({
       to: ik,
       seen: plan.seen ?? {},
-      ...(reason ? { reason: [...reason].slice(0, BAN_REASON_MAX).join('') } : {}),
+      ...reasonField(reason),
       ...(wipe ? { wipe: true } : {}),
       ...(next && terms.seconds !== undefined
         ? { until: Math.max(cx.clock.now(), plan.ts) + terms.seconds * 1000 }

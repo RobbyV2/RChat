@@ -1,4 +1,8 @@
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::HeaderValue;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use rchat_perms::registry::{BITS, State as BitState};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sqlx::{AnyConnection, Row};
@@ -19,6 +23,66 @@ pub const PAGE_MAX: i64 = 50;
 pub const DETAILS_MAX: usize = 4096;
 /// Longest text value kept in `details`, in characters.
 const TEXT_MAX: usize = 300;
+/// Longest reason a request may give for what it does, in characters.
+pub const REASON_MAX: usize = TEXT_MAX;
+/// The request header that gives the reason, percent-encoded UTF-8.
+pub const REASON_HEADER: &str = "x-audit-reason";
+pub const REASON_TOO_LONG: &str = "The audit reason is too long";
+pub const REASON_INVALID: &str = "The audit reason must be percent-encoded text";
+
+tokio::task_local! {
+    static REASON: Option<String>;
+}
+
+/// The reason the request being handled gives for what it does, kept with every entry it writes.
+pub fn reason() -> Option<String> {
+    REASON.try_with(Clone::clone).ok().flatten()
+}
+
+/// Reads `X-Audit-Reason`: percent-encoded UTF-8 without control characters, at most
+/// `REASON_MAX` characters once trimmed. None when it is absent or blank.
+pub fn parse_reason(header: Option<&HeaderValue>) -> Result<Option<String>, ApiError> {
+    let Some(header) = header else {
+        return Ok(None);
+    };
+    let raw = header.to_str().map_err(|_| bad(REASON_INVALID))?;
+    let text = percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .map_err(|_| bad(REASON_INVALID))?;
+    let text = text.trim();
+    if text.chars().any(char::is_control) {
+        return Err(bad(REASON_INVALID));
+    }
+    if text.chars().count() > REASON_MAX {
+        return Err(bad(REASON_TOO_LONG));
+    }
+    Ok((!text.is_empty()).then(|| text.to_string()))
+}
+
+/// Runs a request that changes something with the reason it gives, or answers 400 when the
+/// reason can't be read.
+pub async fn with_reason(req: Request, next: Next) -> Response {
+    if req.method().is_safe() {
+        return next.run(req).await;
+    }
+    match parse_reason(req.headers().get(REASON_HEADER)) {
+        Ok(reason) => REASON.scope(reason, next.run(req)).await,
+        Err(e) => e.into_response(),
+    }
+}
+
+/// Runs `work` (a request's work that goes on in the background) with `reason`.
+pub async fn as_reason<F: std::future::Future>(reason: Option<String>, work: F) -> F::Output {
+    REASON.scope(reason, work).await
+}
+
+/// The registry names of the live permissions in `bits` (`ManageRoles`).
+fn perm_names(bits: i64) -> Vec<&'static str> {
+    BITS.iter()
+        .filter(|b| b.hosted == BitState::Live && (bits as rchat_perms::Mask) & b.value != 0)
+        .map(|b| b.name)
+        .collect()
+}
 const TARGET_QUERY_MAX: usize = 100;
 
 /// What happened. Stored as the dotted name; the part before the dot is the group.
@@ -161,6 +225,12 @@ pub const GROUPS: &[&str] = &[
 ];
 
 impl Action {
+    /// Whether an entry of this action keeps the reason its request gave: every moderation and
+    /// management action, not a member's own joining.
+    pub fn takes_reason(self) -> bool {
+        !matches!(self, Action::MemberJoin)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Action::MemberJoin => "member.join",
@@ -423,6 +493,29 @@ impl Details {
         self
     }
 
+    /// `set`, when there is a value.
+    pub fn set_some(self, key: &str, value: Option<impl Into<Value>>) -> Self {
+        match value {
+            Some(value) => self.set(key, value),
+            None => self,
+        }
+    }
+
+    /// The permissions a set gains and loses, by registry name (`perms_diff {added, removed}`),
+    /// unless `before` equals `after`.
+    pub fn perms_diff(self, before: i64, after: i64) -> Self {
+        match before == after {
+            true => self,
+            false => self.set(
+                "perms_diff",
+                json!({
+                    "added": perm_names(after & !before),
+                    "removed": perm_names(before & !after),
+                }),
+            ),
+        }
+    }
+
     /// The channel the action happened in.
     pub fn channel(self, channel: &ChannelRef) -> Self {
         self.mention(channel).set("channel", channel.value())
@@ -450,8 +543,10 @@ impl Details {
             false => {
                 let mut short = Map::new();
                 short.insert("truncated".to_string(), Value::Bool(true));
-                if let Some(channel) = map.get("channel") {
-                    short.insert("channel".to_string(), channel.clone());
+                for kept in ["channel", "reason"] {
+                    if let Some(value) = map.get(kept) {
+                        short.insert(kept.to_string(), value.clone());
+                    }
                 }
                 Value::Object(short).to_string()
             }
@@ -528,8 +623,14 @@ pub(crate) async fn record_id(conn: &mut AnyConnection, entry: Entry) -> sqlx::R
         actor,
         action,
         target,
-        details: Details { map, channels },
+        details: Details { mut map, channels },
     } = entry;
+    if action.takes_reason()
+        && !map.contains_key("reason")
+        && let Some(reason) = reason()
+    {
+        map.insert("reason".to_string(), Value::String(reason));
+    }
     let (kind, id, name) = match target {
         Some(Target { kind, id, name }) => (Some(kind), id, name),
         None => (None, None, None),
@@ -564,12 +665,33 @@ pub(crate) async fn record_id(conn: &mut AnyConnection, entry: Entry) -> sqlx::R
 }
 
 /// Replaces the details of entry `id` (written by `record_id` for the same place) with those of
-/// `entry`, for an action that is logged as it goes. The actor only ever turns into Staff, so a
-/// name `forget_user` removed never comes back.
+/// `entry`, for an action that is logged as it goes, keeping the reason it was written with. The
+/// actor only ever turns into Staff, so a name `forget_user` removed never comes back.
 pub(crate) async fn rewrite(conn: &mut AnyConnection, id: i64, entry: Entry) -> sqlx::Result<()> {
     let staff = i64::from(matches!(entry.actor, Actor::Staff));
+    let mut map = entry.details.map;
+    if !map.contains_key("reason")
+        && entry.action.takes_reason()
+        && let Some(reason) = reason()
+    {
+        map.insert("reason".to_string(), Value::String(reason));
+    }
+    if !map.contains_key("reason") {
+        let was: Option<String> = sqlx::query("SELECT details FROM audit_log WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .map(|r| r.try_get(0))
+            .transpose()?;
+        let kept = was
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|v| v.get("reason").cloned());
+        if let Some(reason) = kept {
+            map.insert("reason".to_string(), reason);
+        }
+    }
     sqlx::query("UPDATE audit_log SET details = $1, staff = CASE WHEN $2 = 1 THEN 1 ELSE staff END, actor = CASE WHEN $2 = 1 THEN NULL ELSE actor END WHERE id = $3")
-        .bind(Details::encode(entry.details.map))
+        .bind(Details::encode(map))
         .bind(staff)
         .bind(id)
         .execute(&mut *conn)

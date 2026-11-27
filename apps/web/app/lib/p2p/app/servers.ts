@@ -868,6 +868,8 @@ export function createServersPart(
     ) => withServers(s => s.setCategoryOverwrite(room, cat, subj, o.allow, o.deny)),
     syncChannel: (room: string, ch: string) => withServers(s => s.syncChannel(room, ch)),
     syncWidens: (room: string, ch: string) => withServers(async s => s.syncWidens(room, ch)),
+    moderationLog: (room: string, before: number | null = null) =>
+      withServers(s => s.moderationLog(room, before)),
     // Roles. Taking a role from someone is a removal: it waits for sync too.
     createRole: (room: string, role: { name: string; color: number | null; bits: number }) =>
       withServers(s => s.createRole(room, role)),
@@ -920,8 +922,8 @@ export function createServersPart(
       withServers(s => s.editChannel(room, id, { gone: true })),
     // Moderation waits for sync: signed after a fresh heads exchange with a member, or
     // once Apply anyway is chosen.
-    kick: (room: string, ik: string) =>
-      withServers(s => s.moderate(room, { act: 'Kick', who: ik }, () => s.kick(room, ik))),
+    kick: (room: string, ik: string, reason?: string) =>
+      withServers(s => s.moderate(room, { act: 'Kick', who: ik }, () => s.kick(room, ik, reason))),
     withdraw: (room: string, ik: string) =>
       withServers(s =>
         s.moderate(room, { act: 'Withdraw the invite of', who: ik }, () => s.kick(room, ik))

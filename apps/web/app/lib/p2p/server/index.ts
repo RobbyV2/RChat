@@ -73,6 +73,7 @@ import * as receive from './receive'
 import * as serve from './serve'
 import * as emitter from './emit'
 import * as roles from './roles'
+import * as modlog from './modlog'
 import * as categories from './categories'
 import * as moderation from './moderation'
 
@@ -1359,8 +1360,15 @@ export class Servers {
     return emitter.editChannel(ctx(this), room, id, patch)
   }
 
-  setOverwrite(room: string, ch: string, subj: string, allow: number, deny: number) {
-    return categories.setChannelOverwrite(ctx(this), room, ch, subj, { allow, deny })
+  setOverwrite(
+    room: string,
+    ch: string,
+    subj: string,
+    allow: number,
+    deny: number,
+    reason?: string
+  ) {
+    return categories.setChannelOverwrite(ctx(this), room, ch, subj, { allow, deny }, reason)
   }
 
   // ----- Categories -----
@@ -1390,8 +1398,15 @@ export class Servers {
     return categories.placeChannel(ctx(this), room, ch, cat)
   }
 
-  setCategoryOverwrite(room: string, cat: string, subj: string, allow: number, deny: number) {
-    return categories.setCategoryOverwrite(ctx(this), room, cat, subj, { allow, deny })
+  setCategoryOverwrite(
+    room: string,
+    cat: string,
+    subj: string,
+    allow: number,
+    deny: number,
+    reason?: string
+  ) {
+    return categories.setCategoryOverwrite(ctx(this), room, cat, subj, { allow, deny }, reason)
   }
 
   syncChannel(room: string, ch: string) {
@@ -1402,42 +1417,50 @@ export class Servers {
     return categories.syncWidens(ctx(this), room, ch)
   }
 
+  moderationLog(room: string, before: number | null, limit?: number) {
+    return modlog.moderationLog(ctx(this), room, before, limit)
+  }
+
   // ----- Roles -----
 
-  createRole(room: string, role: { name: string; color: number | null; bits: number }) {
-    return roles.createRole(ctx(this), room, role)
+  createRole(
+    room: string,
+    role: { name: string; color: number | null; bits: number },
+    reason?: string
+  ) {
+    return roles.createRole(ctx(this), room, role, reason)
   }
 
   editRole(room: string, role: string, patch: roles.RoleMetaPatch) {
     return roles.editRole(ctx(this), room, role, patch)
   }
 
-  moveRole(room: string, role: string, pos: number) {
-    return roles.moveRole(ctx(this), room, role, pos)
+  moveRole(room: string, role: string, pos: number, reason?: string) {
+    return roles.moveRole(ctx(this), room, role, pos, reason)
   }
 
-  setRoleBit(room: string, role: string, bit: number, on: boolean) {
-    return roles.setRoleBit(ctx(this), room, role, bit, on)
+  setRoleBit(room: string, role: string, bit: number, on: boolean, reason?: string) {
+    return roles.setRoleBit(ctx(this), room, role, bit, on, reason)
   }
 
-  deleteRole(room: string, role: string) {
-    return roles.deleteRole(ctx(this), room, role)
+  deleteRole(room: string, role: string, reason?: string) {
+    return roles.deleteRole(ctx(this), room, role, reason)
   }
 
-  assignRole(room: string, ik: string, role: string) {
-    return roles.assignRole(ctx(this), room, ik, role)
+  assignRole(room: string, ik: string, role: string, reason?: string) {
+    return roles.assignRole(ctx(this), room, ik, role, reason)
   }
 
-  revokeRole(room: string, ik: string, role: string) {
-    return roles.revokeRole(ctx(this), room, ik, role)
+  revokeRole(room: string, ik: string, role: string, reason?: string) {
+    return roles.revokeRole(ctx(this), room, ik, role, reason)
   }
 
   slowLeft(room: string, ch: string) {
     return roles.slowLeft(ctx(this), room, ch)
   }
 
-  kick(room: string, ik: string) {
-    return roles.kick(ctx(this), room, ik)
+  kick(room: string, ik: string, reason?: string) {
+    return roles.kick(ctx(this), room, ik, reason)
   }
 
   ban(

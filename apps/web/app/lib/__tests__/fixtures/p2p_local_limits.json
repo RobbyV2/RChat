@@ -266,7 +266,7 @@
   "display.name": 100,
   "display.topic": 1024,
   "display.label": 64,
-  "display.reason": 200,
+  "display.reason": 300,
   "display.codeTtl": 2592000000,
   "contacts.introMax": 500,
   "contacts.introsMax": 3,

@@ -1098,8 +1098,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       }
     },
     deleteChannel: id => act(async () => void (await api.deleteChannel(id))),
-    kickMember: (server, username) =>
-      act(async () => void (await api.kickMember(server, username))),
+    kickMember: (server, username, reason) =>
+      act(async () => void (await api.kickMember(server, username, reason))),
     timeoutMember: async (server, username, seconds, reason) => {
       try {
         const t = await live(api.timeoutMember(server, username, seconds, reason.trim() || null))

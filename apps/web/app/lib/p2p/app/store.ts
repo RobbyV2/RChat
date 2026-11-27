@@ -48,6 +48,7 @@ export type ServerTab =
   | 'history'
   | 'members'
   | 'bans'
+  | 'modlog'
   | 'leave'
 
 // One conversation in the list.

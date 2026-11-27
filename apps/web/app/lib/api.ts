@@ -1,4 +1,5 @@
 import type { Announcement, AnnouncementFeed } from './announcements'
+import { reasonOf } from './reasons'
 import { apiRoot, versionedBase, type ApiPrefix } from './api_version'
 import { localUntil, type TimeoutWire } from './timeouts'
 import { DEFAULT_DM_QUERY, queryParams, type DmQuery } from './dm_list'
@@ -191,6 +192,11 @@ export const withCursor = (path: string, cursor: string | null) =>
 const seg = encodeURIComponent
 
 const threadsQuery = (q: string) => (q.trim() ? `?q=${seg(q.trim())}` : '')
+// Why a moderator does something, for the server's audit log (percent-encoded).
+export const reasonHeader = (reason?: string): Record<string, string> => {
+  const text = reasonOf(reason)
+  return text ? { 'X-Audit-Reason': encodeURIComponent(text) } : {}
+}
 
 export interface InboxQuery {
   unread?: boolean
@@ -850,8 +856,8 @@ export const endpoints = (c: ApiClient) => ({
     }
   ) => c.req<Channel>('PATCH', `/channels/${id}`, patch),
   deleteChannel: (id: number) => c.req<unknown>('DELETE', `/channels/${id}`),
-  kickMember: (server: string, username: string) =>
-    c.req<unknown>('POST', `/servers/${seg(server)}/kick`, { username }),
+  kickMember: (server: string, username: string, reason?: string) =>
+    c.req<unknown>('POST', `/servers/${seg(server)}/kick`, { username }, reasonHeader(reason)),
   banMember: (
     server: string,
     username: string,

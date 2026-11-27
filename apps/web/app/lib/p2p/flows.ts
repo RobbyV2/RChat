@@ -214,6 +214,8 @@ export const actParts = (t: string, to?: string, ends = false): { act: string; w
     chperm: 'Change who may use a channel',
     category: 'Change a category',
     chcat: 'Move a channel to a category',
+    upgrade: 'Move the server to a new copy',
+    migrate: 'Carry the server over to a new copy',
     settings: 'Change the server settings',
     about: 'Change the server description and icon',
     profile: 'Change their profile',

@@ -466,7 +466,7 @@ const DEFAULTS = {
     name: 100,
     topic: 1024,
     label: 64,
-    reason: 200,
+    reason: 300,
     // How far past its own time a code may say it expires (the admitting device clamps to this).
     codeTtl: 30 * DAY,
   },

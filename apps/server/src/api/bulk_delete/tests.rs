@@ -920,6 +920,28 @@ async fn a_job_is_logged_with_every_batch_even_if_its_requester_is_purged() {
 }
 
 #[tokio::test]
+async fn a_job_keeps_the_reason_its_request_gave_with_every_batch() {
+    let c = club("bulk_reason").await;
+    let state = &c.state;
+    let db = &state.db;
+    let scope = format!("c{}", c.general);
+    for _ in 0..300 {
+        post(db, c.general, "carol", 1000).await;
+    }
+    let id = insert_job(db, "mo", &scope, Some(c.general), now()).await;
+    let first = audit::as_reason(Some("cleanup".to_string()), step(state, id)).await;
+    assert!(first.expect("step"));
+    assert_eq!(audits(db).await[0].2["reason"], json!("cleanup"));
+    while step(state, id).await.expect("resumed without it") {}
+    let logged = audits(db).await;
+    assert_eq!(
+        (logged[0].2["reason"].clone(), logged[0].2["count"].clone()),
+        (json!("cleanup"), json!(300))
+    );
+    done(c.state, c.path).await;
+}
+
+#[tokio::test]
 async fn an_author_purged_mid_job_is_never_named() {
     let c = club("bulk_purged_author").await;
     let state = &c.state;

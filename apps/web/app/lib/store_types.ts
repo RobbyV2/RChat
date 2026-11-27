@@ -124,8 +124,10 @@ export interface ConfirmRequest {
   title: string
   body: string
   confirm: string
-  action: (choice: string) => void
+  // `reason`: what the moderator wrote in the optional Reason field (asked when `reason` is set).
+  action: (choice: string, reason?: string) => void
   choices?: ConfirmChoice[]
+  reason?: boolean
 }
 
 // A ban dialog for one member of a hosted server or a P2P room: what that side supports and how
@@ -736,7 +738,7 @@ export interface RChatState {
     patch: { restrict_view?: boolean; restrict_send?: boolean }
   ) => Promise<void>
   deleteChannel: (id: number) => Promise<void>
-  kickMember: (server: string, username: string) => Promise<void>
+  kickMember: (server: string, username: string, reason?: string) => Promise<void>
   banMember: (
     server: string,
     username: string,

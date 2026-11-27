@@ -5367,7 +5367,11 @@ pub(crate) async fn set_admin_perms(
             &mut tx,
             Entry::new(&key, &actor, audit::Action::AdminPerms)
                 .target(Target::user(&target))
-                .details(Details::new().change("perms", old, new)),
+                .details(
+                    Details::new()
+                        .change("perms", old, new)
+                        .perms_diff(old, new),
+                ),
         )
         .await?;
     }
@@ -6005,6 +6009,7 @@ pub(crate) async fn update_role(
             color.as_deref().unwrap_or(&was_color),
         )
         .change("perms", was_perms, perms.unwrap_or(was_perms))
+        .perms_diff(was_perms, perms.unwrap_or(was_perms))
         .change(
             "mentionable",
             was_mentionable,
@@ -7865,11 +7870,11 @@ pub(crate) async fn set_everyone_perms(
         }
         audit::record(
             &mut tx,
-            Entry::new(&key, &actor, audit::Action::ServerUpdate).details(Details::new().change(
-                "everyone_perms",
-                before,
-                after,
-            )),
+            Entry::new(&key, &actor, audit::Action::ServerUpdate).details(
+                Details::new()
+                    .change("everyone_perms", before, after)
+                    .perms_diff(before, after),
+            ),
         )
         .await?;
         tx.commit().await?;

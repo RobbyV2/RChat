@@ -1,8 +1,9 @@
 use axum::Json;
 use axum::Router;
 use axum::routing::get;
+use utoipa::openapi::path::{ParameterBuilder, ParameterIn};
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
-use utoipa::openapi::{ContentBuilder, Ref, RefOr, ResponseBuilder};
+use utoipa::openapi::{ContentBuilder, ObjectBuilder, Ref, RefOr, Required, ResponseBuilder, Type};
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -10,6 +11,74 @@ use super::oidc::ExchangeDiscriminator;
 use crate::state::AppState;
 
 struct Bearer;
+
+/// Documents `X-Audit-Reason` on every operation that changes something (the header is read on
+/// those only): the reason is kept with each audit log entry the request writes.
+struct AuditReason;
+
+const AUDIT_REASON: &str = "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes";
+const AUDIT_REASON_BAD: &str = "an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)";
+
+impl Modify for AuditReason {
+    fn modify(&self, doc: &mut utoipa::openapi::OpenApi) {
+        for (path, item) in doc.paths.paths.iter_mut() {
+            if !path.starts_with("/api/v1/") {
+                continue;
+            }
+            let operations = [
+                &mut item.put,
+                &mut item.post,
+                &mut item.delete,
+                &mut item.patch,
+            ];
+            for operation in operations.into_iter().flatten() {
+                let header = ParameterBuilder::new()
+                    .name("X-Audit-Reason")
+                    .parameter_in(ParameterIn::Header)
+                    .required(Required::False)
+                    .description(Some(AUDIT_REASON))
+                    .schema(Some(ObjectBuilder::new().schema_type(Type::String).build()))
+                    .build();
+                operation
+                    .parameters
+                    .get_or_insert_with(Vec::new)
+                    .push(RefOr::T(header));
+                match operation.responses.responses.get_mut("400") {
+                    Some(RefOr::T(listed)) => {
+                        listed.description =
+                            format!("{}; or {AUDIT_REASON_BAD}", listed.description);
+                        listed
+                            .content
+                            .entry("application/json".to_string())
+                            .or_insert_with(|| {
+                                RefOr::T(
+                                    ContentBuilder::new()
+                                        .schema(Some(Ref::from_schema_name("ApiErrorBody")))
+                                        .build(),
+                                )
+                            });
+                    }
+                    Some(RefOr::Ref(_)) => {}
+                    None => {
+                        let bad = ResponseBuilder::new()
+                            .description(format!("Malformed request: {AUDIT_REASON_BAD}"))
+                            .content(
+                                "application/json",
+                                ContentBuilder::new()
+                                    .schema(Some(Ref::from_schema_name("ApiErrorBody")))
+                                    .build(),
+                            )
+                            .build();
+                        operation
+                            .responses
+                            .responses
+                            .insert("400".to_string(), RefOr::T(bad));
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Adds the 503 a busy database gives to every operation that reads or writes it.
 struct Busy;
@@ -367,7 +436,7 @@ impl Modify for Bearer {
         super::pings::GroupPing
     )),
     servers((url = "/", description = "The instance serving this document")),
-    modifiers(&Bearer, &Busy, &ExchangeDiscriminator),
+    modifiers(&Bearer, &Busy, &AuditReason, &ExchangeDiscriminator),
     info(
         title = "RChat API",
         version = env!("CARGO_PKG_VERSION"),
@@ -376,6 +445,8 @@ impl Modify for Bearer {
 **Versions.** `/api/v1/...` is version 1. `/api/...` without a version uses the latest version.
 
 **Authentication.** Register or log in to get a session token and send it as `Authorization: Bearer <token>`. Endpoints marked with an optional security requirement also work without a token for guests, when the instance has guest access turned on (`guests_enabled` in `GET /api/v1/settings`); otherwise they answer 401. On endpoints that need a token, `401 Unauthorized` means the token is missing or unknown. When the token cannot be checked (the database is unavailable), any endpoint that reads it answers `503 {\"error\": \"Cannot check your session right now. Try again soon\"}`: keep the token and retry. Servers may opt in to guest text and voice when enabled by the site. Password-protected servers additionally need a guest grant from `POST /api/v1/servers/{name}/guest_access`, sent in the `X-Guest-Grant` header (comma-separated, up to 100 grants).
+
+**Audit reasons.** A request that changes something may say why in an `X-Audit-Reason` header (percent-encoded UTF-8, at most 300 characters). Every server audit log entry the request writes keeps it as `reason` in its details.
 
 **Names.** Server names and usernames are case-insensitive: they are matched by their lowercase form, and responses carry the lowercase `name`/`username` alongside `display_name`: a server's name in its original case, or the name a user shows, which starts as the username as registered and can change. Only usernames are used for mentions and sign-in.
 

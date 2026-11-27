@@ -43,6 +43,7 @@ import { Dialog, Masked, Sentinel, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
 import { Grid, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
+import { usePermissionRules } from './use_permission_rules'
 
 const TEXT_DEBOUNCE = 300
 const SUGGESTIONS = 5
@@ -89,6 +90,7 @@ function AuditLog({ server }: { server: string }) {
   } = useAccount()
   const openDialog = useStore(s => s.openDialog)
   const setError = useStore(s => s.setError)
+  usePermissionRules()
   const [group, setGroup] = useState<AuditGroup | ''>('')
   const [actor, setActor] = useState('')
   const [targetText, setTargetText] = useState('')

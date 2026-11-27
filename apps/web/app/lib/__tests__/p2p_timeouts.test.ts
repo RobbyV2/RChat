@@ -284,7 +284,7 @@ describe('the summary of a timed-out member', () => {
   })
 })
 
-const viewOf = (s: Summary, me: string) =>
+const viewOf = (s: Summary, me: string, lim = LOCAL) =>
   serverView('room', { missing: [], lastSeq: 0, full: false } as unknown as RoomRecord, s, null, {
     me,
     online: () => new Set<string>(),
@@ -295,7 +295,7 @@ const viewOf = (s: Summary, me: string) =>
     frozen: () => false,
     voice: () => ({}),
     syncing: () => false,
-    lim: LOCAL,
+    lim,
     now: () => Date.now(),
   })
 
@@ -322,8 +322,8 @@ describe('the view of a room with timeouts', () => {
     const { w } = room()
     const reason = 'é'.repeat(TIMEOUT_REASON_MAX)
     out(w, 'M1', 'U', 10 * MIN, { reason })
-    expect(LOCAL.display.reason).toBeLessThan(TIMEOUT_REASON_MAX)
-    expect(viewOf(summary(w), 'M').members.find(m => m.ik === 'U')?.timeoutReason).toBe(reason)
+    const lim = { ...LOCAL, display: { ...LOCAL.display, reason: 32 } }
+    expect(viewOf(summary(w), 'M', lim).members.find(m => m.ik === 'U')?.timeoutReason).toBe(reason)
   })
 
   test('a member without the permission sees the end, never the reason', () => {

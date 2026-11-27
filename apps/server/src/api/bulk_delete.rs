@@ -981,7 +981,7 @@ async fn start_all(
     let job = match inserted {
         Some(r) => {
             let id: i64 = r.try_get(0)?;
-            spawn_job(state, id);
+            spawn_job(state, id, audit::reason());
             load_job(db, id).await?
         }
         None => running_job(db, &user.username, scope).await?,
@@ -1095,10 +1095,13 @@ static BATCHES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 /// Times a batch that hit an error is tried again before the job fails.
 const RETRIES: u32 = 3;
 
-/// Runs job `id` in the background unless this process already runs it.
-pub fn spawn_job(state: &AppState, id: i64) {
+/// Runs job `id` in the background unless this process already runs it, with the reason the
+/// request that started it gave.
+pub fn spawn_job(state: &AppState, id: i64, reason: Option<String>) {
     let state = state.clone();
-    tokio::spawn(async move { run_job(&state, id).await });
+    tokio::spawn(audit::as_reason(reason, async move {
+        run_job(&state, id).await
+    }));
 }
 
 /// Runs job `id` to its end (or until another runner took it over).
@@ -1385,7 +1388,7 @@ pub async fn resume_jobs(state: &AppState) -> sqlx::Result<u64> {
             .await?
             .rows_affected();
         if won == 1 {
-            spawn_job(state, id);
+            spawn_job(state, id, None);
             taken += 1;
         }
     }

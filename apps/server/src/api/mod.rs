@@ -266,7 +266,7 @@ pub(crate) fn split_list(raw: &str) -> Vec<String> {
 
 pub const NEXT_CURSOR: &str = "x-next-cursor";
 
-pub const CORS_REQUEST_HEADERS: [&str; 17] = [
+pub const CORS_REQUEST_HEADERS: [&str; 18] = [
     "content-type",
     "authorization",
     "accept",
@@ -282,6 +282,7 @@ pub const CORS_REQUEST_HEADERS: [&str; 17] = [
     "x-trust-token",
     "x-trust-client",
     "if-none-match",
+    audit::REASON_HEADER,
     BACKGROUND,
     staff_audit::REASON_HEADER,
 ];
@@ -2387,6 +2388,7 @@ pub fn routes(
     }
     router
         .layer(from_fn_with_state(state, staff_audit::with_request))
+        .layer(from_fn(audit::with_reason))
         .layer(from_fn(move |req: Request, next: Next| {
             let ip = key
                 .extract(&req)
@@ -2774,6 +2776,9 @@ fn api_routes(
         .merge(invite_routes)
         .merge(openapi::routes(swagger_ui).route_layer(from_fn_with_state(state, require_token)))
 }
+
+#[cfg(test)]
+mod audit_reason_tests;
 
 #[cfg(test)]
 pub(crate) mod test_util {

@@ -151,7 +151,10 @@ export const peerServer = identityActions(identity => {
     title: 'Kick Member',
     body: `Kick ${who(m.name, acct)}? They can come back with a new invite.`,
     confirm: 'Kick',
-    action: identity().inIdentity(() => void identity().p2pServer.kick(v.id, m.ik)),
+    reason: true,
+    action: identity().inIdentity(
+      (_choice: string, reason?: string) => void identity().p2pServer.kick(v.id, m.ik, reason)
+    ),
   })
 
   // Role names in our own server are our own text, never masked.

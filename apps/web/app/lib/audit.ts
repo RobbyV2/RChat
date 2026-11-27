@@ -2,7 +2,9 @@ import { ICON_KINDS } from './server_about'
 import { guestLabel } from './guest_voice'
 import { MODE_LABELS, isProfilesMode } from './profile_fields'
 import { FOREVER, RESET_FIELDS, RESET_LABELS, isResetField } from './profile_reset'
-import { hasBit } from './perms'
+import { diffFacts, permsDiffOf } from './audit_format'
+import { HOSTED, hasBit, loaded } from './perms'
+import { permItems } from './perm_source'
 import { PERM_ITEMS } from './rules'
 import { slowLabel } from './slowmode'
 import { durationText } from './timeouts'
@@ -53,6 +55,9 @@ const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 
 const FIELD_LABELS: Record<string, string> = {
   name: 'Name',
+  allow: 'Allowed',
+  deny: 'Denied',
+  everyone_perms: 'Everyone',
   topic: 'Topic',
   slowmode_seconds: 'Slow mode',
   text_only: 'Text only',
@@ -113,6 +118,10 @@ export const permNames = (bits: number) => {
 
 const RULE_FIELDS = new Set(['can_view', 'can_send', 'can_read_history'])
 
+// Masks of a channel rule or of what everyone holds, named (like role and admin permissions) by
+// the shared rules once they are loaded.
+const MASK_FIELDS = new Set(['allow', 'deny', 'everyone_perms'])
+
 const PASSWORD_MODES: Record<string, string> = {
   set: 'Set',
   changed: 'Changed',
@@ -151,6 +160,10 @@ export function valueText(field: string, v: unknown): string {
   if (typeof v === 'number') {
     if (field === 'slowmode_seconds') return slowLabel(v)
     if (field === 'upload_expiry') return durationText(v)
+    if ((field === 'perms' || MASK_FIELDS.has(field)) && loaded()) {
+      const named = permItems(HOSTED).filter(i => hasBit(v, i.bit))
+      return named.length ? named.map(i => i.label).join(', ') : 'None'
+    }
     if (field === 'perms') return permNames(v)
     if (field === 'lock_until' && v >= FOREVER) return 'Until unlocked'
     if (field === 'expires_at' || field === 'until' || field === 'lock_until')
@@ -194,10 +207,16 @@ const FACTS = [
 ]
 
 // Extra facts of an entry next to its changes, as label and value.
-export const factsOf = (entry: AuditEntry): [string, string][] =>
-  FACTS.filter(
-    k => k in entry.details && !((k === 'more_authors' || k === 'more_roles') && !entry.details[k])
-  ).map(k => [fieldLabel(k), valueText(k, entry.details[k])])
+export const factsOf = (entry: AuditEntry): [string, string][] => {
+  const diff = permsDiffOf(entry.details.perms_diff, loaded() ? permItems(HOSTED) : [])
+  return [
+    ...FACTS.filter(
+      k =>
+        k in entry.details && !((k === 'more_authors' || k === 'more_roles') && !entry.details[k])
+    ).map((k): [string, string] => [fieldLabel(k), valueText(k, entry.details[k])]),
+    ...(diff ? diffFacts(diff) : []),
+  ]
+}
 
 // Facts whose value names people (streamer blur).
 export const isNameFact = (label: string) => label === FIELD_LABELS.authors

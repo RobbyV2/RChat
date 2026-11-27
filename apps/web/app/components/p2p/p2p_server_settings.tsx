@@ -6,7 +6,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Ban,
   Clock,
@@ -17,6 +17,7 @@ import {
   Lock,
   LogOut,
   MessageSquare,
+  ScrollText,
   Shield,
   Ticket,
   Trash2,
@@ -62,6 +63,11 @@ import {
 } from '../../lib/member_filters'
 import { MemberFilterBar, MemberTable, MemberTableRow } from '../member_table'
 import { AboutEditor } from '../server_about'
+import { logLines } from '../../lib/audit_format'
+import { permItems } from '../../lib/perm_source'
+import { relativeTime } from '../../lib/timestamps'
+import type { LogPage } from '../../lib/p2p/server/modlog'
+import { usePermissionRules } from '../use_permission_rules'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
@@ -95,6 +101,12 @@ const TABS: { tab: ServerTab; label: string; icon: LucideIcon; keywords: string[
   },
   { tab: 'members', label: 'Members', icon: Users, keywords: ['member', 'kick', 'roles'] },
   { tab: 'bans', label: 'Bans', icon: Ban, keywords: ['banned', 'unban'] },
+  {
+    tab: 'modlog',
+    label: 'Moderation log',
+    icon: ScrollText,
+    keywords: ['audit', 'reason', 'kick', 'ban', 'roles'],
+  },
   {
     tab: 'leave',
     label: 'Leave',
@@ -672,6 +684,131 @@ function Bans({ v }: { v: ServerView }) {
   )
 }
 
+// The server's moderation log: who changed what, to whom, why, and what changed, newest first.
+function ModerationLog({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer, p2p, memberName } = identity
+  const me = useP2p(s => s.me)
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const streamer = useStore(s => s.streamer)
+  const mask = useMask()
+  const maskRole = useMask(own)
+  const ready = usePermissionRules()
+  const [pages, setPages] = useState<LogPage[]>([])
+  const [loading, setLoading] = useState(false)
+  // Bumped whenever the log starts over: a page asked for before that is dropped.
+  const generation = useRef(0)
+  const seq = v.seq
+  const paged = pages.length > 1
+  useEffect(() => {
+    if (paged) return
+    let live = true
+    const mine = ++generation.current
+    void p2pServer.moderationLog(v.id).then(page => {
+      if (live && page && generation.current === mine) setPages([page])
+    })
+    return () => {
+      live = false
+    }
+  }, [p2pServer, v.id, seq, paged])
+  if (!ready) return null
+  const events = pages.flatMap(p => p.events)
+  const next = pages[pages.length - 1]?.next ?? null
+  const roleNames = pages[pages.length - 1]?.roleNames ?? {}
+  const more = () => {
+    if (next === null || loading) return
+    const mine = generation.current
+    setLoading(true)
+    void p2pServer.moderationLog(v.id, next).then(page => {
+      setLoading(false)
+      if (page && generation.current === mine) setPages(ps => [...ps, page])
+    })
+  }
+  const latest = () => {
+    generation.current += 1
+    setPages(ps => ps.slice(0, 1))
+  }
+  const name = (ik: string) =>
+    streamer ? 'a member' : ik === me ? memberName(v.id, ik) : mask(memberName(v.id, ik))
+  const lines = logLines(events, {
+    member: name,
+    role: id => {
+      const named = v.roles.find(r => r.id === id)?.name ?? roleNames[id]
+      return named === undefined ? null : maskRole(named)
+    },
+    channel: id => {
+      const c = v.channels.find(x => x.id === id)
+      if (c) return c.kind === 'voice' ? maskRole(c.name) : `#${maskRole(c.name)}`
+      const cat = v.categories.find(x => x.id === id)
+      return cat ? maskRole(cat.name) : null
+    },
+    text: maskRole,
+    items: permItems(v.rules),
+    reasonMax: p2p.limits().display.reason,
+  })
+  const now = Date.now()
+  return (
+    <div data-p2p-modlog className="flex flex-col gap-2">
+      {lines.length === 0 && pages.length > 0 && <Note>Nothing yet.</Note>}
+      <ul aria-label="Moderation log" className="flex flex-col gap-1">
+        {lines.map(l => (
+          <li
+            key={l.id}
+            data-p2p-log={l.act}
+            className="flex flex-col gap-0.5 rounded-xl bg-surface-container px-3 py-2"
+          >
+            <div className="flex min-w-0 items-start gap-2">
+              <MemberAvatar members={v.members} ik={l.a} size={20} />
+              <span className="min-w-0 flex-1 text-sm break-words">
+                <span className="streamer font-medium">
+                  <Masked text={memberName(v.id, l.a)} own={l.a === me} />
+                </span>{' '}
+                <span className="text-on-surface-variant">{l.act}</span>
+                {l.target && (
+                  <>
+                    {' '}
+                    <span className={l.targetKind === 'member' ? 'streamer' : ''}>{l.target}</span>
+                  </>
+                )}
+              </span>
+              <time
+                dateTime={new Date(l.at).toISOString()}
+                title={new Date(l.at).toLocaleString()}
+                className="shrink-0 text-xs text-on-surface-variant"
+              >
+                {relativeTime(l.at, now)}
+              </time>
+            </div>
+            {l.undone && <p className="pl-7 text-xs text-on-surface-variant">Not in force</p>}
+            {l.reason && (
+              <p className="pl-7 text-xs text-on-surface-variant">
+                Reason: <Masked text={l.reason} own={l.a === me} />
+              </p>
+            )}
+            {l.facts.map(([k, val]) => (
+              <p key={k} className="pl-7 text-xs text-on-surface-variant">
+                {k}: <span className={k === 'For' ? 'streamer' : ''}>{val}</span>
+              </p>
+            ))}
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap gap-2">
+        {next !== null && (
+          <button onClick={more} disabled={loading} className={textBtn}>
+            Show more
+          </button>
+        )}
+        {paged && (
+          <button onClick={latest} className={textBtn}>
+            Back to the newest
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Leave({ v }: { v: ServerView }) {
   const identity = useP2pApp()!
   const { p2pServer, p2p } = identity
@@ -742,6 +879,7 @@ function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: ServerTab
       {tab === 'history' && <History v={v} />}
       {tab === 'members' && <Members v={v} />}
       {tab === 'bans' && <Bans v={v} />}
+      {tab === 'modlog' && <ModerationLog v={v} />}
       {tab === 'leave' && <Leave v={v} />}
     </div>
   )

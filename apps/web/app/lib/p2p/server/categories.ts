@@ -97,7 +97,8 @@ export async function setCategoryOverwrite(
   room: string,
   cat: string,
   subj: string,
-  o: OverSum
+  o: OverSum,
+  reason?: string
 ) {
   categoryOf(cx, room, cat)
   const adds = o.allow !== 0 || o.deny !== 0
@@ -106,7 +107,7 @@ export async function setCategoryOverwrite(
     if (adds && !ov[subj] && Object.keys(ov).length >= AGREED.overwrites)
       throw new ServerError(FULL_TEXT)
   }
-  await setOverwrite(cx, room, cat, subj, o.allow, o.deny)
+  await setOverwrite(cx, room, cat, subj, o.allow, o.deny, reason)
   for (const ch of copiesOf(cx, room, cat))
     if (!sameOver(cx.sumOf(room).overwrites?.[ch]?.[subj], o))
       await setOverwrite(cx, room, ch, subj, o.allow, o.deny)
@@ -118,9 +119,10 @@ export async function setChannelOverwrite(
   room: string,
   ch: string,
   subj: string,
-  o: OverSum
+  o: OverSum,
+  reason?: string
 ) {
-  await setOverwrite(cx, room, ch, subj, o.allow, o.deny)
+  await setOverwrite(cx, room, ch, subj, o.allow, o.deny, reason)
   const cur = cx.sumOf(room).chcats?.[ch]
   if (cur?.sync)
     await cx.emit(room, 'chcat', () => ({ ...cur.extra, ch, cat: cur.cat, sync: false }))

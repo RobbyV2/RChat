@@ -1,3 +1,4 @@
+import { reasonField } from '../../audit_format'
 import { isRecord } from '../../bytes'
 import { deviceCertOk, genesisBundle, genesisSrv } from '../acl/binding'
 import { aclContentOk, knownRules, RULES_VERSION } from '../acl/rules'
@@ -424,7 +425,8 @@ export function setOverwrite(
   ch: string,
   subj: string,
   allow: number,
-  deny: number
+  deny: number,
+  reason?: string
 ) {
-  return cx.emit(room, 'chperm', () => ({ ch, subj, allow, deny }))
+  return cx.emit(room, 'chperm', () => ({ ch, subj, allow, deny, ...reasonField(reason) }))
 }

@@ -260,7 +260,7 @@ pub(crate) async fn set_timeout(
                 Details::new()
                     .change("until", before_until, until)
                     .set("duration", seconds)
-                    .set("reason", reason.clone()),
+                    .set_some("reason", reason.clone()),
             ),
     )
     .await?;
@@ -340,7 +340,7 @@ pub(crate) async fn remove_timeout(
                     Details::new()
                         .change("until", *until, None::<i64>)
                         .set("remaining", (*until - t).max(0))
-                        .set("reason", reason.clone()),
+                        .set_some("timeout_reason", reason.clone()),
                 ),
         )
         .await?;

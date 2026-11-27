@@ -39,6 +39,7 @@ import { ctxFor } from '../lib/actions/ctx'
 import type { Target } from '../lib/actions/types'
 import { baseBits, maskXor } from '../lib/perms'
 import { droppedOrder } from '../lib/hierarchy'
+import { REASON_MAX } from '../lib/reasons'
 import { HOSTED } from '../lib/perms'
 import { NO_GRANT, bitsBlock, everyoneItems, permItems } from '../lib/perm_source'
 import { PermGroups } from './perm_groups'
@@ -1233,6 +1234,7 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
   const { title, body, confirm, action, choices } = request
   const name = useId()
   const [choice, setChoice] = useState(choices?.[0]?.value ?? '')
+  const [reason, setReason] = useState('')
   const [optionOn, setOptionOn] = useState(false)
   const picked: OptionChoice | undefined = choices?.find(c => c.value === choice)
   const danger = picked?.danger ?? true
@@ -1287,6 +1289,19 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
           ))}
         </fieldset>
       )}
+      {request.reason && (
+        <label className="mt-4 block text-sm text-on-surface-variant">
+          Reason
+          <input
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            maxLength={REASON_MAX}
+            placeholder="Optional"
+            aria-label="Reason"
+            className={`${fieldCls} mt-1 w-full`}
+          />
+        </label>
+      )}
       <div className="mt-6 flex justify-end gap-2">
         <button autoFocus onClick={onClose} className={textBtn}>
           Cancel
@@ -1294,7 +1309,10 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
         <button
           onClick={() => {
             onClose()
-            action(optionOn && picked?.option ? `${choice}${WITH_OPTION}` : choice)
+            action(
+              optionOn && picked?.option ? `${choice}${WITH_OPTION}` : choice,
+              request.reason ? reason.trim() || undefined : undefined
+            )
           }}
           className={danger ? filledDangerBtn : filledBtn}
         >
