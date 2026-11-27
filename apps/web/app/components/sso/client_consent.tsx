@@ -1,5 +1,6 @@
 'use client'
 import { Button } from '../controls'
+import { Row, Surface } from '../layout'
 import { useEffect, useRef, useState } from 'react'
 import { CLIENT_SSO, decideClientConsent, type ConsentResult } from '../../lib/client_sso'
 import { errorText, parseReturn } from '../../lib/sso'
@@ -84,32 +85,34 @@ export function ClientConsent({ fragment }: { fragment: string }) {
     }
   }
   return (
-    <main className="mx-auto mt-12 flex max-w-md flex-col gap-4 rounded-2xl bg-surface-container-low p-5">
-      {error ? (
-        <p role="alert">{error}</p>
-      ) : details ? (
-        <>
-          <h1 className="text-xl font-medium">
-            Sign in to {location.host} for the app at {details.origin}?
-          </h1>
-          <p>This app will be able to read and send messages as your account.</p>
-          <div className="flex justify-end gap-3">
-            <Button size="md" disabled={busy} onClick={() => void decide(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="filled"
-              size="md"
-              disabled={!ready || busy}
-              onClick={() => void decide(true)}
-            >
-              Allow
-            </Button>
-          </div>
-        </>
-      ) : (
-        <p>Checking sign-in…</p>
-      )}
-    </main>
+    <Surface tone="plain" radius="none" pad="xl">
+      <Surface as="main" tone="low" pad="lg" gap="lg" place="mx-auto w-full max-w-md">
+        {error ? (
+          <p role="alert">{error}</p>
+        ) : details ? (
+          <>
+            <h1 className="text-xl font-medium">
+              Sign in to {location.host} for the app at {details.origin}?
+            </h1>
+            <p>This app will be able to read and send messages as your account.</p>
+            <Row gap="md" justify="end">
+              <Button size="md" disabled={busy} onClick={() => void decide(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="filled"
+                size="md"
+                disabled={!ready || busy}
+                onClick={() => void decide(true)}
+              >
+                Allow
+              </Button>
+            </Row>
+          </>
+        ) : (
+          <p>Checking sign-in…</p>
+        )}
+      </Surface>
+    </Surface>
   )
 }

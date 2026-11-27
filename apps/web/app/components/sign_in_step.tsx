@@ -1,5 +1,6 @@
 'use client'
 import { Button } from './controls'
+import { Stack, Surface } from './layout'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { useAccount, useStore } from '../lib/client/react'
@@ -192,9 +193,9 @@ export function SignInStep({
         />
       )}
       {passwordEnabled && (!owner || owner.username !== null) && (
-        <form onSubmit={submit} className="flex flex-col gap-4">
-          <div className="flex flex-col">
-            <label className="flex flex-col gap-1">
+        <Stack as="form" gap="lg" onSubmit={submit}>
+          <Stack gap="none">
+            <Stack as="label" gap="2xs">
               <span className="text-sm text-on-surface-variant">Username</span>
               <input
                 readOnly={!!owner}
@@ -209,12 +210,12 @@ export function SignInStep({
                 aria-describedby={nameError ? nameId : undefined}
                 className={nameError ? `${inputBase} border-error` : inputCls}
               />
-            </label>
+            </Stack>
             <FieldError id={nameId} message={nameError} />
-          </div>
+          </Stack>
           <PassSwitch value={passKind} onChange={setPassKind} />
           {passKind === 'text' ? (
-            <label className="flex flex-col gap-1">
+            <Stack as="label" gap="2xs">
               <span className="text-sm text-on-surface-variant">Password</span>
               <input
                 type="password"
@@ -223,7 +224,7 @@ export function SignInStep({
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 className={inputCls}
               />
-            </label>
+            </Stack>
           ) : words.length ? (
             <WordGrid words={words} selected={selected} onChange={setSelected} />
           ) : (
@@ -241,15 +242,17 @@ export function SignInStep({
             />
           )}
           {error && (
-            <p className="rounded-lg bg-error-container px-3 py-2 text-sm text-on-error-container">
-              {adding && <span className="streamer">{account.conn.host}: </span>}
-              {error}
-            </p>
+            <Surface as="p" tone="error" radius="md" pad="md">
+              <span className="text-sm">
+                {adding && <span className="streamer">{account.conn.host}: </span>}
+                {error}
+              </span>
+            </Surface>
           )}
           <Button type="submit" variant="filled" size="md" disabled={busy}>
             {mode === 'login' ? 'Log in' : 'Create account'}
           </Button>
-        </form>
+        </Stack>
       )}
       {(!owner || owner.username === null) && guestsEnabled && !missing && (
         <Button

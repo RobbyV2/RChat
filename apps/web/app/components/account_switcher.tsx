@@ -36,6 +36,7 @@ import { useAddingAllowed } from './add_instance'
 import { longPress, useMedia } from './context_menu'
 import { RailInstance } from './instance_badge'
 import { Button, IconButton, ListRow } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Masked, Sheet, useEscape } from './ui'
 import { obj, opt, parseJson, str, type Schema } from '../lib/schema'
 
@@ -110,11 +111,11 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection | 
   if (rows.length < 2) return null
   const current = rows.find(({ row }) => switcherSession(row) === owner)
   return (
-    <label className="flex min-w-28 flex-col gap-1 text-xs text-on-surface-variant">
-      Settings for
+    <Stack as="label" gap="2xs">
+      <span className="text-xs text-on-surface-variant">Settings for</span>
       <select
         value={current ? keyOf(current.row) : ''}
-        className="streamer max-w-full rounded-lg bg-surface-container-high px-2 py-1 text-sm text-on-surface"
+        className="streamer min-w-28 max-w-full rounded-lg bg-surface-container-high px-2 py-1 text-sm text-on-surface"
         onChange={e => {
           const next = rows.find(({ row }) => keyOf(row) === e.target.value)?.row
           if (!next) return
@@ -131,7 +132,7 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection | 
           </option>
         ))}
       </select>
-    </label>
+    </Stack>
   )
 }
 
@@ -313,34 +314,40 @@ function AccountList({
     if (target) return <IdentityEnrollment account={target} cancel={() => setAdding(null)} />
   }
   return (
-    <div ref={list} onKeyDown={keys} className="flex min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto py-1">
+    <Stack gap="none" ref={list} onKeyDown={keys} place="min-h-0">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {model.groups.map((g, gi) => {
           const accounts = g.rows.filter(r => r.local === null && r.username !== null)
           return (
             <section key={g.origin} aria-label={g.name}>
               {(model.groups.length > 1 || manage) && (
-                <div
-                  className="sticky top-0 z-raised flex min-h-10 items-center gap-2 bg-surface-container px-3 py-1"
+                <Surface
+                  tone="base"
+                  radius="none"
+                  pad="md"
+                  inset="bar"
+                  place="sticky top-0 z-raised"
                   {...drag({ origin: g.origin }, gi)}
                 >
-                  <InstanceTag origin={g.origin} name={g.name} />
-                  <span className="streamer min-w-0 flex-1 truncate text-sm font-semibold">
-                    <Masked text={g.name} />{' '}
-                    <small className="font-normal text-on-surface-variant">
-                      <Masked text={g.host} />
-                    </small>
-                  </span>
-                  {manage && model.groups.length > 1 && (
-                    <OrderHandle
-                      label={g.name}
-                      target={{ origin: g.origin }}
-                      index={gi}
-                      order={model.groups}
-                      reorder={reorder}
-                    />
-                  )}
-                </div>
+                  <Row gap="sm">
+                    <InstanceTag origin={g.origin} name={g.name} />
+                    <span className="streamer min-w-0 flex-1 truncate text-sm font-semibold">
+                      <Masked text={g.name} />{' '}
+                      <small className="font-normal text-on-surface-variant">
+                        <Masked text={g.host} />
+                      </small>
+                    </span>
+                    {manage && model.groups.length > 1 && (
+                      <OrderHandle
+                        label={g.name}
+                        target={{ origin: g.origin }}
+                        index={gi}
+                        order={model.groups}
+                        reorder={reorder}
+                      />
+                    )}
+                  </Row>
+                </Surface>
               )}
               {g.rows.map(r => {
                 const key = keyOf(r),
@@ -362,120 +369,128 @@ function AccountList({
                     className={r.local ? 'pl-5' : ''}
                     {...(manage && own && r.saved ? drag(target, index) : {})}
                   >
-                    <div className="flex min-h-12 items-center gap-1 px-1">
-                      <button
-                        type="button"
-                        data-account-row={key}
-                        aria-current={r.active ? 'true' : undefined}
-                        {...longPress(() => setActions(key))}
-                        onClick={() => select(r)}
-                        className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-lg px-2 text-left hover:bg-surface-container-highest"
-                      >
-                        <ActorAvatar row={r} size={r.local ? 24 : 32} />
-                        <span className="min-w-0 flex-1">
-                          <span className="streamer block truncate text-sm font-medium">
-                            <Masked text={r.display} />{' '}
-                            {!r.local && r.username && (
-                              <small className="font-normal text-on-surface-variant">
-                                @<Masked text={r.username} />
-                              </small>
-                            )}
+                    <Surface tone="plain" radius="none" pad="2xs" inset="bar">
+                      <Row gap="2xs">
+                        <button
+                          type="button"
+                          data-account-row={key}
+                          aria-current={r.active ? 'true' : undefined}
+                          {...longPress(() => setActions(key))}
+                          onClick={() => select(r)}
+                          className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-lg px-2 text-left hover:bg-surface-container-highest"
+                        >
+                          <ActorAvatar row={r} size={r.local ? 24 : 32} />
+                          <span className="min-w-0 flex-1">
+                            <span className="streamer block truncate text-sm font-medium">
+                              <Masked text={r.display} />{' '}
+                              {!r.local && r.username && (
+                                <small className="font-normal text-on-surface-variant">
+                                  @<Masked text={r.username} />
+                                </small>
+                              )}
+                            </span>
+                            <span className="block text-xs text-on-surface-variant">
+                              {r.local ? 'P2P · ' : ''}
+                              {r.status}
+                            </span>
                           </span>
-                          <span className="block text-xs text-on-surface-variant">
-                            {r.local ? 'P2P · ' : ''}
-                            {r.status}
-                          </span>
-                        </span>
-                        {r.status === 'Signed out' && (
-                          <span className="text-xs text-primary">Sign in</span>
+                          {r.status === 'Signed out' && (
+                            <span className="text-xs text-primary">Sign in</span>
+                          )}
+                          {r.badge > 0 && (
+                            <span className="rounded-full bg-secondary-container px-2 text-xs text-on-secondary-container">
+                              {r.badge}
+                            </span>
+                          )}
+                          {r.unread && (
+                            <span aria-label="Unread" className="size-2 rounded-full bg-primary" />
+                          )}
+                          {r.active && <Check size={16} aria-label="Acting as" />}
+                        </button>
+                        {manage && own && r.saved && ordered.length > 1 && (
+                          <OrderHandle
+                            label={r.display}
+                            target={target}
+                            index={index}
+                            order={ordered.map(row => ({
+                              origin: row.origin,
+                              username: row.username!,
+                              local: row.local ?? undefined,
+                            }))}
+                            reorder={reorder}
+                          />
                         )}
-                        {r.badge > 0 && (
-                          <span className="rounded-full bg-secondary-container px-2 text-xs text-on-secondary-container">
-                            {r.badge}
-                          </span>
+                        {(manage || opened) && (
+                          <IconButton
+                            icon={MoreHorizontal}
+                            label="Account actions"
+                            size="lg"
+                            shape="square"
+                            aria-expanded={opened}
+                            onClick={() => setActions(opened ? null : key)}
+                          />
                         )}
-                        {r.unread && (
-                          <span aria-label="Unread" className="size-2 rounded-full bg-primary" />
-                        )}
-                        {r.active && <Check size={16} aria-label="Acting as" />}
-                      </button>
-                      {manage && own && r.saved && ordered.length > 1 && (
-                        <OrderHandle
-                          label={r.display}
-                          target={target}
-                          index={index}
-                          order={ordered.map(row => ({
-                            origin: row.origin,
-                            username: row.username!,
-                            local: row.local ?? undefined,
-                          }))}
-                          reorder={reorder}
-                        />
-                      )}
-                      {(manage || opened) && (
-                        <IconButton
-                          icon={MoreHorizontal}
-                          label="Account actions"
-                          size="lg"
-                          shape="square"
-                          aria-expanded={opened}
-                          onClick={() => setActions(opened ? null : key)}
-                        />
-                      )}
-                    </div>
+                      </Row>
+                    </Surface>
                     {opened && (
-                      <div className="mx-2 mb-2 flex flex-wrap gap-1 rounded-xl bg-surface-container-high p-1">
-                        {own && (
-                          <ListRow
-                            tone="primary"
-                            role="switch"
-                            aria-checked={r.background}
-                            label={r.local ? 'Run in the background' : 'Keep connected'}
-                            onClick={() =>
-                              void client.updateBook(b =>
-                                r.local
-                                  ? setIdentityBackground(
-                                      b,
-                                      r.origin,
-                                      r.username!,
-                                      r.local,
-                                      !r.background
-                                    )
-                                  : setConnected(b, r.origin, r.username!, !r.background)
-                              )
-                            }
-                          />
-                        )}
-                        {r.local ? (
-                          <ListRow
-                            tone="primary"
-                            label="Remove identity"
-                            onClick={() => removePeer(r)}
-                          />
-                        ) : (
-                          <>
-                            {own &&
-                              switcherSession(r)?.store.getState().settings.p2p &&
-                              r.status !== 'Signed out' && (
+                      <Surface tone="plain" radius="none" pad="sm">
+                        <Surface tone="high" radius="lg" pad="2xs" gap="2xs">
+                          {own && (
+                            <ListRow
+                              tone="primary"
+                              role="switch"
+                              aria-checked={r.background}
+                              label={r.local ? 'Run in the background' : 'Keep connected'}
+                              onClick={() =>
+                                void client.updateBook(b =>
+                                  r.local
+                                    ? setIdentityBackground(
+                                        b,
+                                        r.origin,
+                                        r.username!,
+                                        r.local,
+                                        !r.background
+                                      )
+                                    : setConnected(b, r.origin, r.username!, !r.background)
+                                )
+                              }
+                            />
+                          )}
+                          {r.local ? (
+                            <ListRow
+                              tone="primary"
+                              label="Remove identity"
+                              onClick={() => removePeer(r)}
+                            />
+                          ) : (
+                            <>
+                              {own &&
+                                switcherSession(r)?.store.getState().settings.p2p &&
+                                r.status !== 'Signed out' && (
+                                  <ListRow
+                                    tone="primary"
+                                    label="Add a P2P identity"
+                                    onClick={() => {
+                                      setAdding(r)
+                                    }}
+                                  />
+                                )}
+                              {r.status !== 'Signed out' && (
                                 <ListRow
                                   tone="primary"
-                                  label="Add a P2P identity"
-                                  onClick={() => {
-                                    setAdding(r)
-                                  }}
+                                  label="Sign out"
+                                  onClick={() => signOut(r)}
                                 />
                               )}
-                            {r.status !== 'Signed out' && (
-                              <ListRow tone="primary" label="Sign out" onClick={() => signOut(r)} />
-                            )}
-                          </>
-                        )}
-                      </div>
+                            </>
+                          )}
+                        </Surface>
+                      </Surface>
                     )}
                   </div>
                 )
               })}
-              <div className="px-1">
+              <Surface tone="plain" radius="none" pad="2xs">
                 <ListRow
                   tone="primary"
                   icon={Plus}
@@ -491,43 +506,49 @@ function AccountList({
                     </>
                   }
                 />
-              </div>
+              </Surface>
             </section>
           )
         })}
       </div>
-      {manage && !canAdd && <p className="px-3 text-sm">{hostedLockMessage()}</p>}
-      <footer className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-outline-variant p-2">
-        {canAdd && (
-          <Button
-            icon={Plus}
-            onClick={() => owner.store.getState().openDialog({ kind: 'add_instance' })}
-          >
-            Add an instance
-          </Button>
-        )}
-        {modeChange && (
-          <Button
-            icon={manage ? ChevronLeft : Settings}
-            onClick={() => {
-              modeChange(!manage)
-              setActions(null)
-            }}
-          >
-            {manage ? 'Back to accounts' : 'Manage accounts'}
-          </Button>
-        )}
-      </footer>
-    </div>
+      {manage && !canAdd && (
+        <Surface tone="plain" radius="none" pad="md" inset="bar">
+          <p className="text-sm">{hostedLockMessage()}</p>
+        </Surface>
+      )}
+      <Surface as="footer" tone="plain" radius="none" border="top" pad="sm" place="shrink-0">
+        <div className="flex flex-wrap justify-between gap-1">
+          {canAdd && (
+            <Button
+              icon={Plus}
+              onClick={() => owner.store.getState().openDialog({ kind: 'add_instance' })}
+            >
+              Add an instance
+            </Button>
+          )}
+          {modeChange && (
+            <Button
+              icon={manage ? ChevronLeft : Settings}
+              onClick={() => {
+                modeChange(!manage)
+                setActions(null)
+              }}
+            >
+              {manage ? 'Back to accounts' : 'Manage accounts'}
+            </Button>
+          )}
+        </div>
+      </Surface>
+    </Stack>
   )
 }
 
 export function ManageAccounts() {
   return (
-    <section aria-label="Accounts on this device">
-      <h3 className="mb-2 text-sm font-semibold">Accounts on this device</h3>
+    <Stack as="section" gap="sm" aria-label="Accounts on this device">
+      <h3 className="text-sm font-semibold">Accounts on this device</h3>
       <AccountList manage />
-    </section>
+    </Stack>
   )
 }
 
@@ -548,26 +569,28 @@ export function SwitcherDialog({ initialManage }: { initialManage: boolean }) {
       onClose={close}
       aria-label={manage ? 'Manage accounts' : 'Switch account'}
     >
-      <header className="flex items-center justify-between gap-2 px-4 py-2">
-        <h2 className="font-semibold">
-          {manage ? (
-            'Manage accounts'
-          ) : actor && group ? (
-            <span className="inline-flex items-center gap-1">
-              Acting as <AccountTag row={actor} name={group.name} />
-            </span>
-          ) : (
-            'Switch account'
-          )}
-        </h2>
-        <IconButton
-          icon={X}
-          label="Close account switcher"
-          size="lg"
-          shape="square"
-          onClick={close}
-        />
-      </header>
+      <Surface as="header" tone="plain" radius="none" pad="lg" inset="bar">
+        <Row gap="sm" justify="between">
+          <h2 className="font-semibold">
+            {manage ? (
+              'Manage accounts'
+            ) : actor && group ? (
+              <Row as="span" gap="2xs" place="inline-flex">
+                Acting as <AccountTag row={actor} name={group.name} />
+              </Row>
+            ) : (
+              'Switch account'
+            )}
+          </h2>
+          <IconButton
+            icon={X}
+            label="Close account switcher"
+            size="lg"
+            shape="square"
+            onClick={close}
+          />
+        </Row>
+      </Surface>
       <AccountList manage={manage} modeChange={setManage} />
     </Sheet>
   )

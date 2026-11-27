@@ -87,7 +87,7 @@ test('the username shows next to a display name that differs', () => {
 
 // The display name truncates; the username keeps its place and its streamer class.
 const USERNAME_AFTER = (display: string, username: string) =>
-  `<span class="inline-flex max-w-full min-w-0 items-baseline"><span class="min-w-0 truncate">${display}</span><span class="streamer max-w-full shrink-0 truncate pl-1 text-on-surface-variant">(${username})</span></span>`
+  `<span class="min-w-0 flex-nowrap gap-(--space-2xs) items-baseline justify-start inline-flex max-w-full"><span class="min-w-0 truncate">${display}</span><span class="streamer max-w-full shrink-0 truncate text-on-surface-variant">(${username})</span></span>`
 
 // In a narrow row: the display name truncates first, and a username with no room left wraps
 // out of sight (it stays in the title and for screen readers).

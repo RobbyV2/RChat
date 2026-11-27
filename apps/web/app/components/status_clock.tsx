@@ -1,6 +1,7 @@
 'use client'
 
 import { IconButton } from './controls'
+import { Row } from './layout'
 import { useAccount } from '../lib/client/react'
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
@@ -48,8 +49,11 @@ export default function StatusClock({ timeCls = '' }: { timeCls?: string }) {
     return () => clearInterval(id)
   }, [])
   return (
-    <div className="flex items-center gap-2 text-sm tabular-nums text-on-surface-variant">
-      <span title="Local time" className={`min-w-16 text-right ${timeCls}`}>
+    <Row gap="sm">
+      <span
+        title="Local time"
+        className={`min-w-16 text-right text-sm tabular-nums text-on-surface-variant ${timeCls}`}
+      >
         {time}
       </span>
       {live && (
@@ -58,6 +62,6 @@ export default function StatusClock({ timeCls = '' }: { timeCls?: string }) {
           className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotClass[wsStatus]}`}
         />
       )}
-    </div>
+    </Row>
   )
 }

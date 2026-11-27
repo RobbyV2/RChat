@@ -72,6 +72,7 @@ import { UserAvatar } from './user_avatar'
 import { Button, IconButton, ListRow, LinkButton } from './controls'
 import { Masked, fieldCls, useOwnServer } from './ui'
 import { RowsSkeleton } from './skeletons'
+import { Row, Stack, Surface } from './layout'
 import { type P2pState } from '../lib/p2p/app'
 import type { P2pDialog } from '../lib/p2p/app/store'
 import { cardRows, homeCard, onlineText, p2pEntry, type CardState } from '../lib/p2p/home_card'
@@ -102,7 +103,23 @@ function showOwner(account: AccountSession, peer?: P2pApp | null) {
   if (peer && account.identities.viewed() !== peer) account.identities.show(peer)
 }
 
-const card = 'flex min-w-0 flex-col gap-1 rounded-3xl bg-surface-container-low p-4'
+// A line of a card, inset like the card's heading.
+function Line({ children }: { children: ReactNode }) {
+  return (
+    <Surface tone="plain" radius="none" pad="sm" inset="bar">
+      {children}
+    </Surface>
+  )
+}
+
+// A card's controls under its text, inset like its heading.
+function Controls({ children }: { children: ReactNode }) {
+  return (
+    <Surface tone="plain" radius="none" pad="sm" align="start">
+      {children}
+    </Surface>
+  )
+}
 
 function Card({
   title,
@@ -119,21 +136,34 @@ function Card({
 }) {
   const id = `home-${title.toLowerCase().replace(/[^a-z]+/g, '-')}`
   return (
-    <section aria-labelledby={id} className={`${card} ${className}`}>
-      <div className="flex min-h-9 items-center gap-2 px-2">
-        <span className="text-on-surface-variant">{icon}</span>
-        <h2 id={id} className="font-medium text-on-surface">
-          {title}
-        </h2>
-        <span className="ml-auto flex items-center">{action}</span>
-      </div>
-      {children}
+    <section
+      aria-labelledby={id}
+      className={`min-w-0 rounded-3xl bg-surface-container-low ${className}`}
+    >
+      <Surface tone="plain" radius="none" pad="lg" gap="2xs">
+        <Line>
+          <Row gap="sm">
+            <span className="text-on-surface-variant">{icon}</span>
+            <h2 id={id} className="font-medium text-on-surface">
+              {title}
+            </h2>
+            <Row as="span" gap="none" place="ml-auto">
+              {action}
+            </Row>
+          </Row>
+        </Line>
+        {children}
+      </Surface>
     </section>
   )
 }
 
 function Empty({ children }: { children: ReactNode }) {
-  return <p className="px-2 py-3 text-sm text-on-surface-variant">{children}</p>
+  return (
+    <Surface tone="plain" radius="none" pad="md">
+      <p className="text-sm text-on-surface-variant">{children}</p>
+    </Surface>
+  )
 }
 
 // A pinned DM's end: typing dots before its ping count, else its unread mark.
@@ -141,10 +171,10 @@ function DmEnd({ id, unread, pings }: { id: number; unread: boolean; pings: numb
   const typers = useHostedTypers([`d${id}`], null)
   if (!typers.length) return <UnreadMark unread={unread} pings={pings} />
   return (
-    <span className="ml-auto flex shrink-0 items-center gap-1.5">
+    <Row as="span" gap="xs" place="ml-auto shrink-0">
       <TypingEllipsis names={typers} />
       <PingBadge count={pings} />
-    </span>
+    </Row>
   )
 }
 
@@ -167,7 +197,7 @@ function Greeting({ total, accounts = 1 }: { total?: number; accounts?: number }
   const pings = useInboxCount()
   const [hour] = useState(() => new Date().getHours())
   return (
-    <div className="flex flex-col gap-1 px-1">
+    <Surface tone="plain" radius="none" pad="2xs" gap="2xs">
       <h1 className="text-2xl font-semibold text-on-surface sm:text-3xl">
         {streamer || !me ? (
           'Welcome back'
@@ -187,7 +217,7 @@ function Greeting({ total, accounts = 1 }: { total?: number; accounts?: number }
             ? `You have ${pingLabel(total ?? pings)}.`
             : "You're all caught up."}
       </p>
-    </div>
+    </Surface>
   )
 }
 
@@ -197,25 +227,29 @@ function Tips() {
   const tips = shownTips(prefs)
   if (!tips.length) return null
   return (
-    <ul aria-label="Tips" className="flex flex-col gap-2">
+    <Stack as="ul" gap="sm" aria-label="Tips">
       {tips.map(t => (
         <li
           key={t.id}
           data-tip={t.id}
-          className="flex items-center gap-3 rounded-2xl bg-tertiary-container py-2 pr-2 pl-4 text-sm text-on-tertiary-container"
+          className="rounded-2xl bg-tertiary-container text-sm text-on-tertiary-container"
         >
-          <Lightbulb size={16} className="shrink-0" />
-          <span className="min-w-0 flex-1">{t.text}</span>
-          <IconButton
-            icon={X}
-            label="Dismiss tip"
-            tone="inherit"
-            size="sm"
-            onClick={() => acct.home.hideTip(t.id)}
-          />
+          <Surface tone="plain" radius="none" pad="lg" inset="bar">
+            <Row gap="md">
+              <Lightbulb size={16} className="shrink-0" />
+              <span className="min-w-0 flex-1">{t.text}</span>
+              <IconButton
+                icon={X}
+                label="Dismiss tip"
+                tone="inherit"
+                size="sm"
+                onClick={() => acct.home.hideTip(t.id)}
+              />
+            </Row>
+          </Surface>
         </li>
       ))}
-    </ul>
+    </Stack>
   )
 }
 
@@ -332,7 +366,7 @@ function QuickActions({
     void routed.account.store.getState().startDm(routed.name)
   }
   return (
-    <section aria-label="Quick actions" className="flex flex-col gap-2">
+    <Stack as="section" gap="sm" aria-label="Quick actions">
       {as}
       <div
         className={`grid grid-cols-2 gap-2 ${palette && !p2pOn ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}
@@ -418,8 +452,10 @@ function QuickActions({
         </p>
       )}
       {asking && (
-        <form
-          className="flex gap-2"
+        <Row
+          as="form"
+          gap="sm"
+          align="stretch"
           onSubmit={e => {
             e.preventDefault()
             submit()
@@ -446,9 +482,9 @@ function QuickActions({
           <Button type="submit" variant="filled" size="md" disabled={!name.trim()}>
             Message
           </Button>
-        </form>
+        </Row>
       )}
-    </section>
+    </Stack>
   )
 }
 
@@ -522,10 +558,10 @@ function RecentItem({
         </span>
       }
       description={
-        <span className="flex min-w-0 items-center gap-1.5">
+        <Row as="span" gap="xs">
           <span className="streamer truncate">{where}</span>
           {p2p && <P2pBadge />}
-        </span>
+        </Row>
       }
       trailing={<UnreadMark unread={unread} pings={pings} />}
     />
@@ -757,7 +793,7 @@ function JumpBackIn({ recents, action }: { recents: Recent[]; action?: ReactNode
       {shown.length === 0 ? (
         <Empty>Channels and DMs you open show up here.</Empty>
       ) : (
-        <div className="flex flex-col">
+        <Stack gap="none">
           {shown.map(r =>
             r.kind === 'p2p' ? (
               <P2pProvider
@@ -770,7 +806,7 @@ function JumpBackIn({ recents, action }: { recents: Recent[]; action?: ReactNode
               <RecentRow key={recentKey(r)} recent={r} />
             )
           )}
-        </div>
+        </Stack>
       )}
     </Card>
   )
@@ -810,7 +846,8 @@ function UnreadRow({
   }
 
   return (
-    <div
+    <Row
+      gap="2xs"
       data-unread-server={id}
       {...longPress((x, y) =>
         openActionMenu(
@@ -822,23 +859,22 @@ function UnreadRow({
           p2p ? identity : undefined
         )
       )}
-      className="flex min-w-0 items-center gap-1"
     >
       <ListRow
         onClick={navigate}
         leading={glyph}
         label={
-          <span className="flex min-w-0 items-center gap-1.5">
+          <Row as="span" gap="xs">
             <span className={`truncate font-semibold ${streamer ? 'streamer' : ''}`}>{name}</span>
             {p2p && <P2pBadge />}
-          </span>
+          </Row>
         }
         description={detail}
         trailing={<PingBadge count={pings} className="ml-auto" />}
         place="flex-1"
       />
       <IconButton icon={CheckCheck} label={markLabel} tooltip="Mark as read" onClick={mark} />
-    </div>
+    </Row>
   )
 }
 
@@ -1028,7 +1064,7 @@ function UnreadSummary() {
       ) : !any ? (
         <Empty>Nothing unread.</Empty>
       ) : (
-        <div className="flex flex-col">
+        <Stack gap="none">
           {dms && <DmUnreadRow pings={summary.dms.pings} />}
           {p2pDms && <P2pDmUnreadRow pings={p2pRows.dms.pings} />}
           {rows}
@@ -1037,7 +1073,7 @@ function UnreadSummary() {
               {all ? 'Show less' : `Show ${servers.length - UNREAD_SHOWN} more`}
             </Button>
           )}
-        </div>
+        </Stack>
       )}
     </Card>
   )
@@ -1148,123 +1184,143 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
             }
           : undefined
       }
-      className="flex min-w-0 flex-col gap-1 rounded-3xl border-2 border-dashed border-tertiary/70 bg-surface-container-low p-[calc(1rem-2px)]"
+      className="min-w-0 rounded-3xl border-2 border-dashed border-tertiary/70 bg-surface-container-low"
     >
-      <div className="flex min-h-9 min-w-0 items-center gap-2 px-2">
-        <Waypoints size={18} className="shrink-0 text-tertiary" />
-        <h2 id={heading} className="min-w-0 truncate font-medium text-on-surface">
-          {actor ? <AccountTag row={actor.row} name={actor.instance} /> : 'Peer-to-peer'}
-        </h2>
-        <P2pBadge />
-        <Button onClick={() => p2p?.openHome()} place="ml-auto shrink-0">
-          Open
-        </Button>
-      </div>
-      {card.state === 'off' ? (
-        <>
-          <p className="px-2 text-sm text-on-surface-variant">
-            P2P is off. Turn it on to message contacts directly, device to device.
-          </p>
-          {error && (
-            <p role="alert" className="px-2 text-sm text-error">
-              <LabelText text={error} />
-            </p>
-          )}
-          <Button
-            variant="filled"
-            size="md"
-            onClick={() => p2p?.openDialog({ kind: 'enable' })}
-            place="mx-2 mt-2 self-start"
-          >
-            Turn on P2P
-          </Button>
-        </>
-      ) : card.state === 'elsewhere' ? (
-        <ElsewhereNotice />
-      ) : (
-        <>
-          <p
-            data-p2p-home-status={card.state}
-            className="px-2 text-sm break-words text-on-surface-variant"
-          >
-            <span className="font-medium text-on-surface">
-              <LabelText text={card.status} />
-            </span>
-            {card.state === 'online' && ` \u00b7 ${onlineText(card.online)}`}
-          </p>
-          {card.note && (
-            <p data-p2p-home-note className="px-2 text-sm break-words text-on-surface-variant">
-              {card.note}
-            </p>
-          )}
-          {cardRows(card).map(row => {
-            const Icon = P2P_ROW_ICONS[row.id]
-            return (
-              <ListRow
-                key={row.id}
-                data-p2p-home-row={row.id}
-                onClick={() => p2p?.openHome()}
-                leading={
-                  <PlaceGlyph p2p>
-                    <Icon size={16} className="text-on-surface" />
-                  </PlaceGlyph>
-                }
-                label={<span className="font-semibold">{row.text}</span>}
-              />
-            )
-          })}
-          {card.top.length > 0 && (
-            <ul aria-label="Online contacts" className="flex flex-wrap gap-2 px-2 py-1">
-              {card.top.map(c => {
-                const label = streamer ? 'Message contact' : `Message ${mask(displayName(c))}`
-                return (
-                  <li key={c.ik} className="flex">
-                    <button
-                      type="button"
-                      data-p2p-home-contact={c.ik}
-                      title={label}
-                      aria-label={label}
-                      onClick={() => void p2pDm?.openDm(c.ik)}
-                      {...longPress((x, y) =>
-                        openActionMenu(x, y, { kind: 'p2p_contact', c, me }, {}, acct, identity)
-                      )}
-                      className="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-primary"
-                    >
-                      <KeyAvatar ik={c.ik} />
-                      <PresenceDot presence="online" />
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          {card.state !== 'starting' && (
-            <div className="flex flex-wrap gap-2 px-2 pt-2">
+      <Surface tone="plain" radius="none" pad="lg" gap="2xs">
+        <Line>
+          <Row gap="sm">
+            <Waypoints size={18} className="shrink-0 text-tertiary" />
+            <h2 id={heading} className="min-w-0 truncate font-medium text-on-surface">
+              {actor ? <AccountTag row={actor.row} name={actor.instance} /> : 'Peer-to-peer'}
+            </h2>
+            <P2pBadge />
+            <Button onClick={() => p2p?.openHome()} place="ml-auto shrink-0">
+              Open
+            </Button>
+          </Row>
+        </Line>
+        {card.state === 'off' ? (
+          <>
+            <Line>
+              <p className="text-sm text-on-surface-variant">
+                P2P is off. Turn it on to message contacts directly, device to device.
+              </p>
+            </Line>
+            {error && (
+              <Line>
+                <p role="alert" className="text-sm text-error">
+                  <LabelText text={error} />
+                </p>
+              </Line>
+            )}
+            <Controls>
               <Button
-                icon={UserPlus}
-                data-peer-code
-                onClick={() =>
-                  identity && openPeerLink(acct, { kind: 'contact' }, identity, client.shown())
-                }
+                variant="filled"
+                size="md"
+                onClick={() => p2p?.openDialog({ kind: 'enable' })}
               >
-                Add contact
+                Turn on P2P
               </Button>
-              <Button icon={QrCode} onClick={() => p2p?.openDialog({ kind: 'add', tab: 'mine' })}>
-                Show my code
-              </Button>
-              <Button
-                icon={Waypoints}
-                data-peer-code
-                onClick={() =>
-                  identity && openPeerLink(acct, { kind: 'invite' }, identity, client.shown())
-                }
+            </Controls>
+          </>
+        ) : card.state === 'elsewhere' ? (
+          <ElsewhereNotice />
+        ) : (
+          <>
+            <Line>
+              <p
+                data-p2p-home-status={card.state}
+                className="text-sm break-words text-on-surface-variant"
               >
-                Join P2P server
-              </Button>
-            </div>
-          )}
-        </>
-      )}
+                <span className="font-medium text-on-surface">
+                  <LabelText text={card.status} />
+                </span>
+                {card.state === 'online' && ` \u00b7 ${onlineText(card.online)}`}
+              </p>
+            </Line>
+            {card.note && (
+              <Line>
+                <p data-p2p-home-note className="text-sm break-words text-on-surface-variant">
+                  {card.note}
+                </p>
+              </Line>
+            )}
+            {cardRows(card).map(row => {
+              const Icon = P2P_ROW_ICONS[row.id]
+              return (
+                <ListRow
+                  key={row.id}
+                  data-p2p-home-row={row.id}
+                  onClick={() => p2p?.openHome()}
+                  leading={
+                    <PlaceGlyph p2p>
+                      <Icon size={16} className="text-on-surface" />
+                    </PlaceGlyph>
+                  }
+                  label={<span className="font-semibold">{row.text}</span>}
+                />
+              )
+            })}
+            {card.top.length > 0 && (
+              <Line>
+                <ul aria-label="Online contacts" className="flex flex-wrap gap-2">
+                  {card.top.map(c => {
+                    const label = streamer ? 'Message contact' : `Message ${mask(displayName(c))}`
+                    return (
+                      <li key={c.ik} className="flex">
+                        <button
+                          type="button"
+                          data-p2p-home-contact={c.ik}
+                          title={label}
+                          aria-label={label}
+                          onClick={() => void p2pDm?.openDm(c.ik)}
+                          {...longPress((x, y) =>
+                            openActionMenu(x, y, { kind: 'p2p_contact', c, me }, {}, acct, identity)
+                          )}
+                          className="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-primary"
+                        >
+                          <KeyAvatar ik={c.ik} />
+                          <PresenceDot presence="online" />
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </Line>
+            )}
+            {card.state !== 'starting' && (
+              <Controls>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    icon={UserPlus}
+                    data-peer-code
+                    onClick={() =>
+                      identity && openPeerLink(acct, { kind: 'contact' }, identity, client.shown())
+                    }
+                  >
+                    Add contact
+                  </Button>
+                  <Button
+                    icon={QrCode}
+                    onClick={() => p2p?.openDialog({ kind: 'add', tab: 'mine' })}
+                  >
+                    Show my code
+                  </Button>
+                  <Button
+                    icon={Waypoints}
+                    data-peer-code
+                    onClick={() =>
+                      identity && openPeerLink(acct, { kind: 'invite' }, identity, client.shown())
+                    }
+                  >
+                    Join P2P server
+                  </Button>
+                </div>
+              </Controls>
+            )}
+          </>
+        )}
+      </Surface>
     </section>
   )
 }
@@ -1274,24 +1330,28 @@ function GetStarted({ className = '' }: { className?: string }) {
   const openFriends = useStore(s => s.openFriends)
   return (
     <Card title="Get started" icon={<House size={18} />} className={className}>
-      <p className="px-2 text-sm text-on-surface-variant">
-        Join a server to start chatting, or add a friend to message them.
-      </p>
-      <div className="flex flex-wrap gap-2 px-2 pt-2">
-        <Button
-          variant="filled"
-          size="md"
-          onClick={() => openDialog({ kind: 'add_server', tab: 'join' })}
-        >
-          Join a server
-        </Button>
-        <Button size="md" onClick={() => openDialog({ kind: 'add_server', tab: 'create' })}>
-          Create a server
-        </Button>
-        <Button size="md" onClick={() => openFriends('add')}>
-          Add a friend
-        </Button>
-      </div>
+      <Line>
+        <p className="text-sm text-on-surface-variant">
+          Join a server to start chatting, or add a friend to message them.
+        </p>
+      </Line>
+      <Controls>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="filled"
+            size="md"
+            onClick={() => openDialog({ kind: 'add_server', tab: 'join' })}
+          >
+            Join a server
+          </Button>
+          <Button size="md" onClick={() => openDialog({ kind: 'add_server', tab: 'create' })}>
+            Create a server
+          </Button>
+          <Button size="md" onClick={() => openFriends('add')}>
+            Add a friend
+          </Button>
+        </div>
+      </Controls>
     </Card>
   )
 }
@@ -1304,44 +1364,50 @@ function GuestHome() {
   const line = useStore(s => guestHomeLine(s.settings))
   const benefits = useStore(s => accountBenefits(s.settings))
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1 px-1">
+    <Stack gap="lg">
+      <Surface tone="plain" radius="none" pad="2xs" gap="2xs">
         <h1 className="text-2xl font-semibold text-on-surface sm:text-3xl">Welcome</h1>
         <p className="text-sm text-on-surface-variant">{line}</p>
-      </div>
+      </Surface>
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="Browse servers" icon={<Compass size={18} />}>
-          <p className="px-2 text-sm text-on-surface-variant">
-            Enter a server name to open it. The name is the invite code.
-          </p>
-          <Button
-            variant="filled"
-            size="md"
-            onClick={() => openDialog({ kind: 'add_server', tab: 'join' })}
-            place="mx-2 mt-2 self-start"
-          >
-            Find a server
-          </Button>
+          <Line>
+            <p className="text-sm text-on-surface-variant">
+              Enter a server name to open it. The name is the invite code.
+            </p>
+          </Line>
+          <Controls>
+            <Button
+              variant="filled"
+              size="md"
+              onClick={() => openDialog({ kind: 'add_server', tab: 'join' })}
+            >
+              Find a server
+            </Button>
+          </Controls>
         </Card>
         <Card title={signup ? 'Create an account' : 'Log in'} icon={<LogIn size={18} />}>
-          <p className="px-2 text-sm text-on-surface-variant">
-            {signup ? 'Sign up' : 'Log in'} to {benefits}
-          </p>
-          <Button
-            variant="filled"
-            size="md"
-            onClick={() => {
-              if (!client.show(loginAccount, 'none')) return
-              logoutForLogin(loginAccount)
-              router.replace(signup ? '/login?mode=register' : '/login')
-            }}
-            place="mx-2 mt-2 self-start"
-          >
-            {signup ? 'Sign up' : 'Log in'}
-          </Button>
+          <Line>
+            <p className="text-sm text-on-surface-variant">
+              {signup ? 'Sign up' : 'Log in'} to {benefits}
+            </p>
+          </Line>
+          <Controls>
+            <Button
+              variant="filled"
+              size="md"
+              onClick={() => {
+                if (!client.show(loginAccount, 'none')) return
+                logoutForLogin(loginAccount)
+                router.replace(signup ? '/login?mode=register' : '/login')
+              }}
+            >
+              {signup ? 'Sign up' : 'Log in'}
+            </Button>
+          </Controls>
         </Card>
       </div>
-    </div>
+    </Stack>
   )
 }
 
@@ -1402,28 +1468,32 @@ function GroupUnread({ actor }: { actor: HomeActor }) {
   if (!direct.pings && !direct.unread && !servers.length) return null
   return (
     <section data-home-unread-owner={actor.key}>
-      <h3 className="flex items-center gap-1 px-2 py-1">
-        <HomeActorLabel actor={actor} />
-        <IconButton
-          icon={CheckCheck}
-          label="Mark all as read"
-          size="sm"
-          place="ml-auto"
-          onClick={() => {
-            const state = actor.account.store.getState()
-            if (!actor.peer) state.askMarkAllRead()
-            else {
-              const extra = actor.peer.p2pMarkAll()
-              if (extra.pending)
-                state.askConfirm({
-                  title: 'Mark all as read?',
-                  body: 'Mark this identity’s unread messages as read.',
-                  confirm: 'Mark read',
-                  action: extra.mark,
-                })
-            }
-          }}
-        />
+      <h3>
+        <Surface as="span" tone="plain" radius="none" pad="sm" inset="bar">
+          <Row as="span" gap="2xs">
+            <HomeActorLabel actor={actor} />
+            <IconButton
+              icon={CheckCheck}
+              label="Mark all as read"
+              size="sm"
+              place="ml-auto"
+              onClick={() => {
+                const state = actor.account.store.getState()
+                if (!actor.peer) state.askMarkAllRead()
+                else {
+                  const extra = actor.peer.p2pMarkAll()
+                  if (extra.pending)
+                    state.askConfirm({
+                      title: 'Mark all as read?',
+                      body: 'Mark this identity’s unread messages as read.',
+                      confirm: 'Mark read',
+                      action: extra.mark,
+                    })
+                }
+              }}
+            />
+          </Row>
+        </Surface>
       </h3>
       {(direct.pings > 0 || direct.unread) &&
         (actor.peer ? (
@@ -1507,9 +1577,9 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
   )
   const total = accounts.reduce((n, a) => n + a.account.counts.value(), 0)
   return (
-    <div className="flex flex-col gap-4">
+    <Stack gap="lg">
       <Greeting total={total} accounts={accounts.length} />
-      <div aria-label="Accounts" className="flex gap-2 overflow-x-auto">
+      <Row gap="sm" align="stretch" aria-label="Accounts" place="overflow-x-auto">
         {actors.map(a => (
           <button
             type="button"
@@ -1518,9 +1588,9 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
             onClick={() => void switchActor(a.row, shown)}
             className="flex shrink-0 flex-col gap-1 rounded-xl bg-surface-container-low p-2 text-left outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container"
           >
-            <span className="flex items-center gap-1">
+            <Row as="span" gap="2xs">
               <HomeActorLabel actor={a} />
-            </span>
+            </Row>
             <span className="text-xs">
               {a.row.status} {a.row.badge > 0 && <PingBadge count={a.row.badge} />}
             </span>
@@ -1531,7 +1601,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
             Add an instance
           </Button>
         )}
-      </div>
+      </Row>
       <AccountProvider session={actor.account} key={actor.key}>
         {actor.row.username ? (
           <P2pProvider identity={identity}>
@@ -1546,7 +1616,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
       </AccountProvider>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         <Card title="Unread" icon={<Bell size={18} />}>
-          <div className="flex flex-col gap-1">
+          <Stack gap="2xs">
             {actors.map(a => (
               <ActorScope key={a.key} actor={a}>
                 <GroupUnread actor={a} />
@@ -1555,9 +1625,9 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
             <p className="hidden px-2 py-3 text-sm text-on-surface-variant only:block">
               Nothing unread.
             </p>
-          </div>
+          </Stack>
         </Card>
-        <div className="flex flex-col gap-3">
+        <Stack gap="md">
           {identities.map(a => (
             <ActorScope key={a.key} actor={a}>
               {identities.length < 3 ? (
@@ -1565,16 +1635,16 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
               ) : (
                 <details className="rounded-xl border border-dashed border-tertiary p-2">
                   <summary className="cursor-pointer">
-                    <span className="inline-flex items-center gap-1">
+                    <Row as="span" gap="2xs" place="inline-flex">
                       <HomeActorLabel actor={a} />
-                    </span>
+                    </Row>
                   </summary>
                   <P2pCard actor={a} />
                 </details>
               )}
             </ActorScope>
           ))}
-        </div>
+        </Stack>
         <AccountCard accounts={accounts} kind="recent" />
         <AccountCard accounts={accounts} kind="inbox" />
         <AccountCard accounts={accounts} kind="pinned" />
@@ -1582,7 +1652,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
           <FriendsSection max={5} />
         </Card>
       </div>
-    </div>
+    </Stack>
   )
 }
 function HomeContent({ member }: { member: boolean }) {
@@ -1628,7 +1698,7 @@ function MemberHome() {
     </Card>
   )
   return (
-    <div className="flex flex-col gap-4">
+    <Stack gap="lg">
       <Greeting />
       <Tips />
       <QuickActions />
@@ -1657,7 +1727,7 @@ function MemberHome() {
           {friends}
         </div>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -1681,16 +1751,16 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
             className="absolute -top-1 -right-1.5 border-2 border-surface"
           />
         </IconButton>
-        <span className="flex items-center gap-2 font-medium">
+        <Row as="span" gap="sm">
           <House size={18} className="text-on-surface-variant" />
-          Home
-        </span>
+          <span className="font-medium">Home</span>
+        </Row>
         <ViewActorTag header />
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <Row gap="sm" place="ml-auto shrink-0">
           <StatusClock />
           {signedIn && !guest && <InboxButton />}
           <PaletteButton />
-        </div>
+        </Row>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-5xl flex-col px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-6">

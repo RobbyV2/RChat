@@ -1,5 +1,6 @@
 'use client'
 import { IconButton } from './controls'
+import { Row, Surface } from './layout'
 import { useAccount, useStoreApi, useConn } from '../lib/client/react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { X } from 'lucide-react'
@@ -149,19 +150,25 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
       className="max-h-[25dvh] shrink-0 overflow-y-auto bg-secondary-container px-safe text-on-secondary-container"
     >
       {feed.announcements.map(a => (
-        <div
+        <Surface
           key={a.id}
-          className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-1 text-sm"
+          tone="plain"
+          radius="none"
+          pad="lg"
+          inset="bar"
+          place="mx-auto max-w-5xl"
         >
-          <span className="min-w-0 break-words">{a.message}</span>
-          <IconButton
-            icon={X}
-            label="Dismiss announcement"
-            tone="inherit"
-            size="lg"
-            onClick={() => void dismiss(a)}
-          />
-        </div>
+          <Row gap="lg" justify="between">
+            <span className="min-w-0 break-words text-sm">{a.message}</span>
+            <IconButton
+              icon={X}
+              label="Dismiss announcement"
+              tone="inherit"
+              size="lg"
+              onClick={() => void dismiss(a)}
+            />
+          </Row>
+        </Surface>
       ))}
     </section>
   )

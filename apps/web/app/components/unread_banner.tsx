@@ -1,6 +1,7 @@
 'use client'
 
 import { Check } from 'lucide-react'
+import { Row, Surface } from './layout'
 import { useMotionPlays } from '../lib/motion/use_motion'
 import { unreadBannerText, type UnreadSummary } from '../lib/unread_banner'
 
@@ -44,16 +45,21 @@ export function UnreadBanner({
 // The line above the first unread message, ending in a NEW tag.
 export function UnreadDivider() {
   return (
-    <div
+    <Surface
       data-divider
       role="separator"
       aria-label="New messages"
-      className="my-2 flex items-center px-4 select-none"
+      tone="plain"
+      radius="none"
+      pad="lg"
+      inset="bar"
     >
-      <div className="h-px flex-1 bg-danger/80" />
-      <span className="shrink-0 rounded-sm bg-danger px-1.5 py-0.5 text-3xs leading-none font-bold tracking-wider text-on-danger uppercase">
-        New
-      </span>
-    </div>
+      <Row gap="none">
+        <div className="h-px flex-1 bg-danger/80" />
+        <span className="shrink-0 rounded-sm bg-danger px-1.5 py-0.5 text-3xs leading-none font-bold tracking-wider text-on-danger uppercase select-none">
+          New
+        </span>
+      </Row>
+    </Surface>
   )
 }

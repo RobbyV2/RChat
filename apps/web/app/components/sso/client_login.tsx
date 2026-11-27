@@ -1,5 +1,6 @@
 'use client'
 import { Button } from '../controls'
+import { Stack } from '../layout'
 import { useEffect, useRef, useState } from 'react'
 import { clientLogin } from '../../lib/client_sso'
 import { createSavedSession } from '../../lib/client/saved_session'
@@ -132,8 +133,9 @@ export function ClientLogin({
   }
   if (reason)
     return (
-      <form
-        className="flex flex-col gap-3"
+      <Stack
+        as="form"
+        gap="md"
         onSubmit={e => {
           e.preventDefault()
           void submit()
@@ -155,7 +157,7 @@ export function ClientLogin({
         <Button type="submit" variant="filled" size="md" disabled={busy || !name.trim()}>
           Continue
         </Button>
-      </form>
+      </Stack>
     )
   return (
     <>

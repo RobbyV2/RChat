@@ -6,6 +6,7 @@ import { useAccount, useConn } from '../lib/client/react'
 import { accountNoticeLabel, instanceLabel, labelParts } from '../lib/instance_label'
 import { openActionMenu } from '../lib/actions/menu'
 import { longPress } from './context_menu'
+import { Row, Stack, Surface } from './layout'
 
 // What the copy calls this instance: its name, or its host when the name tells nothing.
 export function useInstanceLabel() {
@@ -90,12 +91,14 @@ export function RailInstance() {
   )
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex min-w-0 items-baseline justify-between gap-4 py-1.5">
-      <dt className="shrink-0 text-on-surface-variant">{label}</dt>
-      <dd className="min-w-0 truncate text-right text-on-surface">{children}</dd>
-    </div>
+    <Surface tone="plain" radius="none" pad="sm" inset="bar">
+      <Row gap="lg" align="baseline" justify="between">
+        <dt className="shrink-0 text-sm text-on-surface-variant">{label}</dt>
+        <dd className="min-w-0 truncate text-right text-sm text-on-surface">{children}</dd>
+      </Row>
+    </Surface>
   )
 }
 
@@ -103,25 +106,27 @@ export function InstanceDetails() {
   const info = useStore(s => s.instance)
   const { label, host } = useInstanceLabel()
   return (
-    <div className="flex flex-col gap-3">
-      <dl className="divide-y divide-outline-variant px-2 text-sm">
-        <Row label="Instance ID">
+    <Stack gap="md">
+      <Stack as="dl" gap="none" divided>
+        <DetailRow label="Instance ID">
           <span className="font-mono text-xs">{info?.id ?? 'Unknown'}</span>
-        </Row>
-        <Row label="Version">{info?.version ?? 'Unknown'}</Row>
-        <Row label="API version">{info?.api_version ?? 'Unknown'}</Row>
-      </dl>
-      <p className="px-2 text-xs text-on-surface-variant">
-        Your account, servers and DMs
-        {label === host ? null : (
-          <>
-            {' '}
-            on <span className="streamer">{label}</span>
-          </>
-        )}{' '}
-        live on <span className="streamer">{host}</span>. Other instances are run by other people;
-        what comes from them is marked with its instance.
-      </p>
-    </div>
+        </DetailRow>
+        <DetailRow label="Version">{info?.version ?? 'Unknown'}</DetailRow>
+        <DetailRow label="API version">{info?.api_version ?? 'Unknown'}</DetailRow>
+      </Stack>
+      <Surface tone="plain" radius="none" pad="sm" inset="bar">
+        <p className="text-xs text-on-surface-variant">
+          Your account, servers and DMs
+          {label === host ? null : (
+            <>
+              {' '}
+              on <span className="streamer">{label}</span>
+            </>
+          )}{' '}
+          live on <span className="streamer">{host}</span>. Other instances are run by other people;
+          what comes from them is marked with its instance.
+        </p>
+      </Surface>
+    </Stack>
   )
 }

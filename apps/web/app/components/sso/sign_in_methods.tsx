@@ -11,6 +11,7 @@ import { ReAuthPrompt } from '../backup_phrase/reauth_prompt'
 import { useConfirmation } from './use_confirmation'
 import { tabWrap } from '../../lib/settings_page'
 import { Button } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { CloseButton, FieldError, TopDialog } from '../ui'
 
 type Provider = { id: string; name: string }
@@ -82,7 +83,7 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
   }
   const available = links ? linkable(auth, links) : []
   return (
-    <section className="flex w-full min-w-0 flex-col gap-2">
+    <Stack as="section" gap="sm" place="w-full">
       <h3 className="text-sm font-medium">Sign-in methods</h3>
       {list.error && (
         <>
@@ -95,8 +96,11 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
         const unlink = (opener?: HTMLElement) =>
           pick('unlink', { id: l.provider, name: l.name }, opener)
         return (
-          <div
+          <Surface
             key={l.provider}
+            tone="base"
+            radius="lg"
+            pad="md"
             tabIndex={0}
             {...longPress(
               (x, y) =>
@@ -109,23 +113,24 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
                   acct
                 )
             )}
-            className="flex items-center justify-between gap-3 rounded-xl bg-surface-container p-3"
           >
-            <div className="min-w-0 break-words">
-              {l.name}
-              <p className="text-xs text-on-surface-variant">
-                Linked {new Date(l.linked_at * 1000).toLocaleDateString()}
-              </p>
-            </div>
-            <Button
-              variant="danger"
-              disabled={!allowed}
-              title={allowed ? undefined : 'Add a password or another sign-in first'}
-              onClick={e => unlink(e.currentTarget)}
-            >
-              Unlink
-            </Button>
-          </div>
+            <Row gap="md" justify="between">
+              <div className="min-w-0 break-words">
+                {l.name}
+                <p className="text-xs text-on-surface-variant">
+                  Linked {new Date(l.linked_at * 1000).toLocaleDateString()}
+                </p>
+              </div>
+              <Button
+                variant="danger"
+                disabled={!allowed}
+                title={allowed ? undefined : 'Add a password or another sign-in first'}
+                onClick={e => unlink(e.currentTarget)}
+              >
+                Unlink
+              </Button>
+            </Row>
+          </Surface>
         )
       })}
       {available.map(p => (
@@ -150,12 +155,13 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
               }}
             />
           ) : (
-            <>
-              <p className="mb-3">You will no longer be able to sign in with {op.p.name}.</p>
+            <Stack gap="md">
+              <p>You will no longer be able to sign in with {op.p.name}.</p>
               <FieldError message={error} />
               <Button
                 variant="filled"
                 size="md"
+                place="self-start"
                 disabled={busy || !canUnlink(me, links, op.p.id)}
                 onClick={async () => {
                   if (!current()) return
@@ -176,11 +182,11 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
               >
                 Unlink
               </Button>
-            </>
+            </Stack>
           )}
         </ProviderDialog>
       )}
-    </section>
+    </Stack>
   )
 }
 function ProviderDialog({
@@ -236,13 +242,15 @@ function ProviderDialog({
         }
       }}
     >
-      <div className="mb-4 flex items-center justify-between">
-        <h2 id={id} className="text-lg font-medium">
-          {title}
-        </h2>
-        <CloseButton onClick={onClose} compact />
-      </div>
-      {children}
+      <Stack gap="lg">
+        <Row gap="sm" justify="between">
+          <h2 id={id} className="text-lg font-medium">
+            {title}
+          </h2>
+          <CloseButton onClick={onClose} compact />
+        </Row>
+        {children}
+      </Stack>
     </TopDialog>
   )
 }

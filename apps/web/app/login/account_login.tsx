@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { Stack, Surface } from '../components/layout'
 import { confirmationHint } from '../lib/provider_confirmation'
 import { canAddInstance, hostedLockMessage } from '../lib/client/hosted_policy'
 import { ownInstance } from '../lib/instances'
@@ -23,18 +24,20 @@ export function SignedOutAccount({ account }: { account: AccountSession }) {
   const hint = confirmationHint(account)
   const SignInLink = hint ? Link : 'a'
   return (
-    <main className="flex h-app flex-col items-center justify-center gap-3 px-6 text-center">
-      <p>You’re signed out of this account.</p>
-      <SignInLink
-        className="text-primary underline"
-        href={loginHref(
-          pathname + search + hash,
-          hint ? { username: hint.username, host: account.conn.host } : routeOwnerFor(account)
-        )}
-      >
-        Sign in again
-      </SignInLink>
-    </main>
+    <Stack as="main" gap="none" justify="center" place="h-app">
+      <Surface tone="plain" radius="none" pad="xl" gap="md" align="center">
+        <p className="text-center">You’re signed out of this account.</p>
+        <SignInLink
+          className="text-primary underline"
+          href={loginHref(
+            pathname + search + hash,
+            hint ? { username: hint.username, host: account.conn.host } : routeOwnerFor(account)
+          )}
+        >
+          Sign in again
+        </SignInLink>
+      </Surface>
+    </Stack>
   )
 }
 
@@ -54,11 +57,15 @@ export function UnavailableAccount() {
         entry.rchatOrigin &&
         entry.rchatOrigin !== origin))
   return (
-    <main className="flex h-app flex-col items-center justify-center gap-3 px-6 text-center">
-      <p>{restricted ? hostedLockMessage() : 'This saved account is unavailable.'}</p>
-      <a className="text-primary underline" href="/">
-        Back to home
-      </a>
-    </main>
+    <Stack as="main" gap="none" justify="center" place="h-app">
+      <Surface tone="plain" radius="none" pad="xl" gap="md" align="center">
+        <p className="text-center">
+          {restricted ? hostedLockMessage() : 'This saved account is unavailable.'}
+        </p>
+        <a className="text-primary underline" href="/">
+          Back to home
+        </a>
+      </Surface>
+    </Stack>
   )
 }

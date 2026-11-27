@@ -46,6 +46,7 @@ import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MessageTime } from './timestamp'
 import { Button, Chip, IconButton, ListRow, Tab } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Masked, Sentinel, Sheet, useEscape, useOwnServer } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { NameWithUsername } from './display_name'
@@ -242,21 +243,21 @@ function Place({ entry }: { entry: InboxEntry }) {
   const own = useOwnServer(w.kind === 'channel' ? w.server : null)
   if (w.kind === 'dm')
     return (
-      <span className="flex min-w-0 items-center gap-1">
+      <Row as="span" gap="2xs">
         <MessageSquare size={12} className="shrink-0" />
         <span className="truncate">Direct message</span>
-      </span>
+      </Row>
     )
   if (w.kind === 'friends')
     return (
-      <span className="flex min-w-0 items-center gap-1">
+      <Row as="span" gap="2xs">
         <UserPlus size={12} className="shrink-0" />
         <span className="truncate">Friends</span>
-      </span>
+      </Row>
     )
   if (w.kind === 'other') return <span className="truncate">{w.label}</span>
   return (
-    <span className="flex min-w-0 items-center gap-1">
+    <Row as="span" gap="2xs">
       <Hash size={12} className="shrink-0" />
       <span className="streamer truncate">
         <Masked text={w.channel} own={own} />
@@ -266,7 +267,7 @@ function Place({ entry }: { entry: InboxEntry }) {
       <span className="streamer truncate">
         <Masked text={w.serverName} own={own} />
       </span>
-    </span>
+    </Row>
   )
 }
 
@@ -306,7 +307,7 @@ function useEntryLooks(entries: readonly InboxEntry[]) {
   }, [wanted, ensureMembers])
 }
 
-function Row({
+function EntryRow({
   adapter,
   entry,
   onOpen,
@@ -381,8 +382,8 @@ function Row({
           )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5 pr-8">
-          <span className="flex min-w-0 items-baseline gap-1.5 text-sm">
-            <span className="min-w-0 truncate">
+          <Row as="span" gap="xs" align="baseline">
+            <span className="min-w-0 truncate text-sm">
               <span className={`streamer ${entry.unread ? 'font-semibold' : 'font-medium'}`}>
                 <NameWithUsername user={actor} />
               </span>{' '}
@@ -397,7 +398,7 @@ function Row({
               ts={entry.created_at}
               className="ml-auto shrink-0 text-xs text-on-surface-variant"
             />
-          </span>
+          </Row>
           <span className="flex min-w-0 text-xs text-on-surface-variant">
             <Place entry={entry} />
           </span>
@@ -445,25 +446,43 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
   const empty = !loading && !failed && entries.length === 0 && !more
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
-        <Bell size={18} className="text-on-surface-variant" />
-        <span className="font-medium">Inbox</span>
-        <ViewActorTag header />
-        <IconButton
-          icon={CheckCheck}
-          label="Mark all as read"
-          disabled={!anyUnread}
-          onClick={readAll}
-          place="ml-auto"
-        />
-        {onClose && <IconButton icon={X} label="Close inbox" onClick={() => onClose(false)} />}
-      </header>
-      <div className="flex shrink-0 flex-col gap-2 border-b border-outline-variant px-3 py-2">
-        <div
+    <Stack gap="none" place="h-full min-h-0 w-full">
+      <Surface
+        as="header"
+        tone="plain"
+        radius="none"
+        border="bottom"
+        pad="lg"
+        inset="bar"
+        place="shrink-0"
+      >
+        <Row gap="sm">
+          <Bell size={18} className="text-on-surface-variant" />
+          <span className="font-medium">Inbox</span>
+          <ViewActorTag header />
+          <IconButton
+            icon={CheckCheck}
+            label="Mark all as read"
+            disabled={!anyUnread}
+            onClick={readAll}
+            place="ml-auto"
+          />
+          {onClose && <IconButton icon={X} label="Close inbox" onClick={() => onClose(false)} />}
+        </Row>
+      </Surface>
+      <Surface
+        tone="plain"
+        radius="none"
+        border="bottom"
+        pad="md"
+        inset="bar"
+        gap="sm"
+        place="shrink-0"
+      >
+        <Row
+          gap="2xs"
           role="tablist"
           aria-label="Inbox"
-          className="flex gap-1"
           onKeyDown={e => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
             e.preventDefault()
@@ -490,7 +509,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
               {label}
             </Tab>
           ))}
-        </div>
+        </Row>
         <div
           role="group"
           aria-label="Filter by kind"
@@ -523,30 +542,35 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
             ))}
           </select>
         )}
-      </div>
-      <div
+      </Surface>
+      <Surface
         id={panelId}
         role="tabpanel"
         aria-labelledby={tabId(view.unread)}
-        className="min-h-0 flex-1 overflow-y-auto p-1.5"
+        tone="plain"
+        radius="none"
+        pad="xs"
+        place="min-h-0 flex-1 overflow-y-auto"
       >
         {empty && (
-          <div className="flex flex-col items-center gap-2 px-6 py-10 text-center text-on-surface-variant">
-            <AtSign size={28} />
-            <span className="text-sm">
+          <Surface tone="plain" radius="none" pad="2xl" gap="sm" align="center">
+            <AtSign size={28} className="text-on-surface-variant" />
+            <span className="text-center text-sm text-on-surface-variant">
               {view.unread ? "You're all caught up." : 'No notifications yet.'}
             </span>
-          </div>
+          </Surface>
         )}
         {failed && (
-          <div className="flex flex-col items-center gap-2 px-6 py-6 text-center text-sm text-on-surface-variant">
-            <span>Couldn&apos;t load notifications.</span>
+          <Surface tone="plain" radius="none" pad="xl" gap="sm" align="center">
+            <span className="text-center text-sm text-on-surface-variant">
+              Couldn&apos;t load notifications.
+            </span>
             <Button onClick={reload}>Try again</Button>
-          </div>
+          </Surface>
         )}
         <ul aria-label={view.unread ? 'Unread notifications' : 'All notifications'}>
           {entries.map(e => (
-            <Row
+            <EntryRow
               key={e.key}
               adapter={adapterOf(e.adapter)}
               entry={e}
@@ -557,10 +581,12 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
         </ul>
         {more && !failed && !loading && <Sentinel key={entries.length} onVisible={loadMore} />}
         {loading && (entries.length === 0 || more) && (
-          <p className="px-3 py-2 text-center text-xs text-on-surface-variant">Loading</p>
+          <Surface tone="plain" radius="none" pad="md" inset="bar">
+            <p className="text-center text-xs text-on-surface-variant">Loading</p>
+          </Surface>
         )}
-      </div>
-    </div>
+      </Surface>
+    </Stack>
   )
 }
 
@@ -571,23 +597,29 @@ export function InboxPreview({ max = 5, beforeOpen }: { max?: number; beforeOpen
   const shown = entries.slice(0, max)
 
   return (
-    <div className="flex flex-col">
+    <Stack gap="none">
       {failed ? (
-        <div className="flex items-center gap-2 px-2 py-3 text-sm text-on-surface-variant">
-          <span>Couldn&apos;t load notifications.</span>
-          <Button onClick={reload}>Try again</Button>
-        </div>
+        <Surface tone="plain" radius="none" pad="md">
+          <Row gap="sm">
+            <span className="text-sm text-on-surface-variant">
+              Couldn&apos;t load notifications.
+            </span>
+            <Button onClick={reload}>Try again</Button>
+          </Row>
+        </Surface>
       ) : (loading || more) && shown.length === 0 ? (
         <RowsSkeleton rows={2} label="Loading notifications" />
       ) : shown.length === 0 ? (
-        <p className="flex items-center gap-2 px-2 py-3 text-sm text-on-surface-variant">
-          <AtSign size={16} className="shrink-0" />
-          You&apos;re all caught up.
-        </p>
+        <Surface tone="plain" radius="none" pad="md">
+          <Row as="p" gap="sm">
+            <AtSign size={16} className="shrink-0 text-on-surface-variant" />
+            <span className="text-sm text-on-surface-variant">You&apos;re all caught up.</span>
+          </Row>
+        </Surface>
       ) : (
         <ul aria-label="Unread notifications">
           {shown.map(e => (
-            <Row
+            <EntryRow
               key={e.key}
               adapter={adapterOf(e.adapter)}
               entry={e}
@@ -609,7 +641,7 @@ export function InboxPreview({ max = 5, beforeOpen }: { max?: number; beforeOpen
       >
         Open inbox
       </Button>
-    </div>
+    </Stack>
   )
 }
 

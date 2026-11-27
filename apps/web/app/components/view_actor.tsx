@@ -7,6 +7,7 @@ import { useP2p, useP2pApp } from '../lib/client/p2p_react'
 import { resolveViewActor } from '../lib/client/view_actor'
 import { useMask, useStore } from '../lib/store'
 import { AccountTag } from './account_tag'
+import { Row } from './layout'
 
 type ViewActor = ReturnType<typeof resolveViewActor>
 
@@ -47,12 +48,14 @@ export function ActorLabel({
     <span
       data-view-actor
       className={
-        'inline-flex min-w-0 items-center gap-1.5 text-xs text-on-surface-variant ' +
+        'inline-flex min-w-0 text-xs text-on-surface-variant ' +
         (header ? 'max-md:shrink-0 md:max-w-44' : 'max-w-full')
       }
     >
-      {seen && <span className="shrink-0">Seen as</span>}
-      <AccountTag {...actor} compactOnPhone={header} />
+      <Row as="span" gap="xs">
+        {seen && <span className="shrink-0">Seen as</span>}
+        <AccountTag {...actor} compactOnPhone={header} />
+      </Row>
     </span>
   )
 }

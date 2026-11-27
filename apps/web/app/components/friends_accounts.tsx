@@ -13,6 +13,7 @@ import { useStore } from '../lib/store'
 import { useAddingAllowed } from './add_instance'
 import { AccountTag, InstanceTag } from './account_tag'
 import { Masked } from './ui'
+import { Row, Stack, Surface } from './layout'
 import { ContactRow } from './p2p/p2p_home'
 
 export interface FriendAccount {
@@ -59,14 +60,18 @@ export function FriendGroups({
   return (
     <>
       {Array.from(groups, ([origin, accounts]) => (
-        <div key={origin}>
+        <Stack key={origin} gap="md">
           {groups.size > 1 && (
-            <h2 className="streamer mt-3 flex items-center gap-2 px-2 text-xs font-semibold">
-              <InstanceTag origin={origin} name={accounts[0].name} />
-              <Masked text={accounts[0].name} />{' '}
-              <span className="font-normal text-on-surface-variant">
-                <Masked text={accounts[0].account.conn.host} />
-              </span>
+            <h2 className="streamer text-xs font-semibold">
+              <Surface as="span" tone="plain" radius="none" pad="sm" inset="bar">
+                <Row as="span" gap="sm">
+                  <InstanceTag origin={origin} name={accounts[0].name} />
+                  <Masked text={accounts[0].name} />{' '}
+                  <span className="font-normal text-on-surface-variant">
+                    <Masked text={accounts[0].account.conn.host} />
+                  </span>
+                </Row>
+              </Surface>
             </h2>
           )}
           {accounts.map(entry => (
@@ -74,7 +79,7 @@ export function FriendGroups({
               {children(entry)}
             </FriendAccountSection>
           ))}
-        </div>
+        </Stack>
       ))}
     </>
   )
@@ -106,16 +111,22 @@ function SignedSection({ entry, children }: { entry: FriendAccount; children: Re
       aria-label={entry.row.username + ' on ' + entry.name}
       data-friends-owner={account.renderKey}
     >
-      <h3 className="mt-3 flex items-center gap-2 px-2 py-1 font-medium">
-        <AccountTag row={entry.row} name={entry.name} />
-        <span className="streamer text-xs text-on-surface-variant">
-          <Masked text={entry.name} />
-        </span>
+      <h3 className="font-medium">
+        <Surface as="span" tone="plain" radius="none" pad="sm" inset="bar">
+          <Row as="span" gap="sm">
+            <AccountTag row={entry.row} name={entry.name} />
+            <span className="streamer text-xs text-on-surface-variant">
+              <Masked text={entry.name} />
+            </span>
+          </Row>
+        </Surface>
       </h3>
       {username === entry.row.username ? (
         children
       ) : (
-        <p className="px-2 py-1 text-sm text-on-surface-variant">Loading account…</p>
+        <Surface tone="plain" radius="none" pad="sm" inset="bar">
+          <p className="text-sm text-on-surface-variant">Loading account…</p>
+        </Surface>
       )}
     </section>
   )
@@ -153,28 +164,30 @@ function PeerFriends({
   )
   return (
     <section
-      className="mt-3 rounded-xl border border-dashed border-tertiary px-2 pb-1"
+      className="rounded-xl border border-dashed border-tertiary"
       aria-label={row.display + ' P2P friends'}
     >
-      <h3 className="py-2">
-        <AccountTag row={row} name={entry.name} />
-      </h3>
-      <ul
-        onClickCapture={() => {
-          const app = entry.account.identities.get(row.local!)
-          if (app && (client.shown() === entry.account || client.show(entry.account)))
-            entry.account.identities.show(app)
-        }}
-      >
-        {friends.map(c => (
-          <ContactRow key={c.ik} c={c} presence={presence[c.ik] ?? 'offline'} />
-        ))}
-      </ul>
-      {!friends.length && (
-        <p className="pb-1 text-sm text-on-surface-variant">
-          {online ? 'No contacts online.' : 'No contacts.'}
-        </p>
-      )}
+      <Surface tone="plain" radius="none" pad="sm" gap="sm">
+        <h3>
+          <AccountTag row={row} name={entry.name} />
+        </h3>
+        <ul
+          onClickCapture={() => {
+            const app = entry.account.identities.get(row.local!)
+            if (app && (client.shown() === entry.account || client.show(entry.account)))
+              entry.account.identities.show(app)
+          }}
+        >
+          {friends.map(c => (
+            <ContactRow key={c.ik} c={c} presence={presence[c.ik] ?? 'offline'} />
+          ))}
+        </ul>
+        {!friends.length && (
+          <p className="text-sm text-on-surface-variant">
+            {online ? 'No contacts online.' : 'No contacts.'}
+          </p>
+        )}
+      </Surface>
     </section>
   )
 }

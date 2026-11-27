@@ -5,6 +5,7 @@ import { UserAvatar } from './user_avatar'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { useMask, useStore } from '../lib/store'
 import { Masked } from './ui'
+import { Row } from './layout'
 
 // The tag colors of globals.css (`--color-tag-1` to `-6`), one per instance by its origin.
 export const TAG_CLASSES = ['bg-tag-1', 'bg-tag-2', 'bg-tag-3', 'bg-tag-4', 'bg-tag-5', 'bg-tag-6']
@@ -70,20 +71,23 @@ export function AccountTag({
                 name
             )
       }
-      className="streamer inline-flex min-w-0 items-center gap-1.5 text-xs"
+      className="streamer inline-flex min-w-0 text-xs"
     >
-      <ActorAvatar row={row} size={16} />
-      <span className={compactOnPhone ? 'max-md:sr-only truncate' : 'truncate'}>
-        <Masked
-          text={row.local ? row.display + ' · P2P · ' + row.username : (row.username ?? 'Guest')}
-        />
-        {compactOnPhone && (
-          <span className="ml-1.5 hidden md:inline-flex">
+      <Row as="span" gap="xs">
+        <ActorAvatar row={row} size={16} />
+        <span className={compactOnPhone ? 'max-md:sr-only truncate' : 'truncate'}>
+          <Masked
+            text={row.local ? row.display + ' · P2P · ' + row.username : (row.username ?? 'Guest')}
+          />
+        </span>
+        {compactOnPhone ? (
+          <span className="hidden md:inline-flex">
             <InstanceTag origin={row.origin} name={name} />
           </span>
+        ) : (
+          <InstanceTag origin={row.origin} name={name} />
         )}
-      </span>
-      {!compactOnPhone && <InstanceTag origin={row.origin} name={name} />}
+      </Row>
     </span>
   )
 }

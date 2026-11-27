@@ -1,5 +1,6 @@
 'use client'
 import { Button } from '../components/controls'
+import { Stack, Surface } from '../components/layout'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { acceptRecentConfirmation, confirmationLoginGuard } from '../lib/provider_confirmation'
@@ -220,86 +221,91 @@ function LocalReturn() {
     if (!busy && name.trim()) void exchange(name.trim())
   }
   return (
-    <main className="mx-auto mt-12 flex max-w-md flex-col gap-4 p-4">
-      {picker ? (
-        <form onSubmit={submit} className="flex flex-col gap-3">
-          <h1>Pick a username</h1>
-          <p>
-            {picker.reason === 'taken' ? 'That name is taken.' : 'Choose a name for your account.'}
-          </p>
-          <label>
-            Username
-            <input
-              value={name}
-              maxLength={NAME_MAX}
-              onChange={e => setName(e.target.value)}
-              autoComplete="username"
-              required
-              className="block rounded border p-2"
-            />
-          </label>
-          <Button type="submit" variant="filled" size="md" disabled={busy || !name.trim()}>
-            Continue
+    <Surface tone="plain" radius="none" pad="xl">
+      <Stack as="main" gap="lg" place="mx-auto w-full max-w-md">
+        {picker ? (
+          <Stack as="form" gap="md" onSubmit={submit}>
+            <h1>Pick a username</h1>
+            <p>
+              {picker.reason === 'taken'
+                ? 'That name is taken.'
+                : 'Choose a name for your account.'}
+            </p>
+            <label>
+              Username
+              <input
+                value={name}
+                maxLength={NAME_MAX}
+                onChange={e => setName(e.target.value)}
+                autoComplete="username"
+                required
+                className="block rounded border p-2"
+              />
+            </label>
+            <Button type="submit" variant="filled" size="md" disabled={busy || !name.trim()}>
+              Continue
+            </Button>
+          </Stack>
+        ) : (
+          !error && <p>Signing in…</p>
+        )}
+        {error && <p role="alert">{error}</p>}
+        {retry && (
+          <Button
+            size="md"
+            disabled={busy}
+            onClick={async () => {
+              const owner = createSavedSession(retry.origin, retry.username ?? undefined)
+              setBusy(true)
+              try {
+                const signedOut =
+                  retry.confirm && retry.username
+                    ? confirmationLoginGuard(owner, retry.username)
+                    : undefined
+                const current = () =>
+                  mounted.current &&
+                  (!signedOut || (signedOut() && Date.now() - retry.at < INTENT_TTL_MS))
+                if (
+                  !current() ||
+                  (retry.confirm &&
+                    !(await owner.store.getState().loadInstance(current, 'no-store')))
+                )
+                  throw Error(errorText('expired'))
+                await beginLogin(
+                  owner,
+                  retry.provider,
+                  retry.back,
+                  retry.username,
+                  intent => {
+                    if (!current()) return false
+                    restarted.current = intent
+                    return true
+                  },
+                  retry.confirm
+                )
+              } catch (e) {
+                setError(e instanceof Error ? e.message : errorText('failed'))
+              } finally {
+                owner.store.dispose()
+                setBusy(false)
+              }
+            }}
+          >
+            Restart sign-in as {retry.username}
           </Button>
-        </form>
-      ) : (
-        !error && <p>Signing in…</p>
-      )}
-      {error && <p role="alert">{error}</p>}
-      {retry && (
-        <Button
-          size="md"
-          disabled={busy}
-          onClick={async () => {
-            const owner = createSavedSession(retry.origin, retry.username ?? undefined)
-            setBusy(true)
-            try {
-              const signedOut =
-                retry.confirm && retry.username
-                  ? confirmationLoginGuard(owner, retry.username)
-                  : undefined
-              const current = () =>
-                mounted.current &&
-                (!signedOut || (signedOut() && Date.now() - retry.at < INTENT_TTL_MS))
-              if (
-                !current() ||
-                (retry.confirm && !(await owner.store.getState().loadInstance(current, 'no-store')))
-              )
-                throw Error(errorText('expired'))
-              await beginLogin(
-                owner,
-                retry.provider,
-                retry.back,
-                retry.username,
-                intent => {
-                  if (!current()) return false
-                  restarted.current = intent
-                  return true
-                },
-                retry.confirm
-              )
-            } catch (e) {
-              setError(e instanceof Error ? e.message : errorText('failed'))
-            } finally {
-              owner.store.dispose()
-              setBusy(false)
-            }
-          }}
-        >
-          Restart sign-in as {retry.username}
-        </Button>
-      )}
-      {(error || picker) && (
-        <a
-          href="/login/"
-          onClick={() => {
-            if (restarted.current) clearIntent(restarted.current)
-            if (pending.current) clearIntent(pending.current.intent)
-          }}
-        >
-          Back to sign in
-        </a>
-      )}
-    </main>
+        )}
+        {(error || picker) && (
+          <a
+            href="/login/"
+            onClick={() => {
+              if (restarted.current) clearIntent(restarted.current)
+              if (pending.current) clearIntent(pending.current.intent)
+            }}
+          >
+            Back to sign in
+          </a>
+        )}
+      </Stack>
+    </Surface>
   )
 }

@@ -22,6 +22,7 @@ import { LightboxList, MediaLightbox } from '../components/media_lightbox'
 import { TextComposer } from '../components/text_composer'
 import { UserAvatar } from '../components/user_avatar'
 import { fieldCls, filledBtn, Masked, textBtn } from '../components/ui'
+import { Grid, Stack, Surface } from '../components/layout'
 import { audibleStreams, guestLabel, isGuestName } from '../lib/guest_voice'
 import { restoreStreamer } from '../lib/start'
 import { errorText } from '../lib/store'
@@ -77,7 +78,7 @@ function AccessForm({ client }: { client: WidgetConnection }) {
     }
   }
   return (
-    <div className="min-w-0 px-2 py-1">
+    <Surface tone="plain" radius="none" pad="sm" gap="2xs">
       <div className="flex flex-wrap gap-1">
         {client.signedIn ? (
           <button className={textBtn + ' cursor-pointer'} onClick={() => client.logout()}>
@@ -101,29 +102,31 @@ function AccessForm({ client }: { client: WidgetConnection }) {
         )}
       </div>
       {choice && (
-        <form onSubmit={submit} className="grid gap-2 py-1">
-          {choice === 'account' && (
+        <form onSubmit={submit}>
+          <Grid cols={1} gap="sm">
+            {choice === 'account' && (
+              <input
+                className={fieldCls}
+                name="username"
+                autoComplete="username"
+                aria-label="Username"
+                placeholder="Username"
+                required
+              />
+            )}
             <input
               className={fieldCls}
-              name="username"
-              autoComplete="username"
-              aria-label="Username"
-              placeholder="Username"
+              name="password"
+              type="password"
+              autoComplete={choice === 'account' ? 'current-password' : 'off'}
+              aria-label="Password"
+              placeholder="Password"
               required
             />
-          )}
-          <input
-            className={fieldCls}
-            name="password"
-            type="password"
-            autoComplete={choice === 'account' ? 'current-password' : 'off'}
-            aria-label="Password"
-            placeholder="Password"
-            required
-          />
-          <button className={filledBtn + ' cursor-pointer'} disabled={busy}>
-            {choice === 'account' ? 'Sign in to widget' : 'Open room'}
-          </button>
+            <button className={filledBtn + ' cursor-pointer'} disabled={busy}>
+              {choice === 'account' ? 'Sign in to widget' : 'Open room'}
+            </button>
+          </Grid>
         </form>
       )}
       {error && (
@@ -131,7 +134,7 @@ function AccessForm({ client }: { client: WidgetConnection }) {
           {error}
         </p>
       )}
-    </div>
+    </Surface>
   )
 }
 function ChatRow({
@@ -303,48 +306,52 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
   }, [last])
   return (
     <>
-      <div className="min-h-16 min-w-0 flex-1 overflow-auto p-3" aria-label="Messages">
-        <WidgetForwardAccess.Provider value={fwd => copyAccess(fwd, client)}>
-          <WidgetLinkCards.Provider value={client.linkCards}>
-            <LightboxList
-              rows={() => ({ ids: rows.map(m => m.id), places: groups })}
-              forward={() => null}
-            >
-              {rows.map((message, i) => (
-                <ChatRow
-                  key={message.id}
-                  message={message}
-                  place={groups[i]}
-                  client={client}
-                  reply={setReply}
-                />
-              ))}
-            </LightboxList>
-          </WidgetLinkCards.Provider>
-        </WidgetForwardAccess.Provider>
-        <div ref={bottom} />
+      <div className="min-h-16 min-w-0 flex-1 overflow-auto" aria-label="Messages">
+        <Surface tone="plain" radius="none" pad="md">
+          <WidgetForwardAccess.Provider value={fwd => copyAccess(fwd, client)}>
+            <WidgetLinkCards.Provider value={client.linkCards}>
+              <LightboxList
+                rows={() => ({ ids: rows.map(m => m.id), places: groups })}
+                forward={() => null}
+              >
+                {rows.map((message, i) => (
+                  <ChatRow
+                    key={message.id}
+                    message={message}
+                    place={groups[i]}
+                    client={client}
+                    reply={setReply}
+                  />
+                ))}
+              </LightboxList>
+            </WidgetLinkCards.Provider>
+          </WidgetForwardAccess.Provider>
+          <div ref={bottom} />
+        </Surface>
       </div>
       {client.canRestoreDraft ? (
-        <div className="flex min-w-0 flex-wrap items-center gap-1 p-2 text-sm">
-          <p className="w-full">
-            {client.draftExpired ? 'Your sign-in expired.' : 'Your sign-in changed.'} Your unsent
-            text is still here.
-          </p>
-          <button
-            type="button"
-            className={textBtn + ' cursor-pointer'}
-            onClick={() => client.recoverDraft(true)}
-          >
-            Restore draft
-          </button>
-          <button
-            type="button"
-            className={textBtn + ' cursor-pointer'}
-            onClick={() => client.recoverDraft(false)}
-          >
-            Discard draft
-          </button>
-        </div>
+        <Surface tone="plain" radius="none" pad="sm">
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
+            <p className="w-full text-sm">
+              {client.draftExpired ? 'Your sign-in expired.' : 'Your sign-in changed.'} Your unsent
+              text is still here.
+            </p>
+            <button
+              type="button"
+              className={textBtn + ' cursor-pointer'}
+              onClick={() => client.recoverDraft(true)}
+            >
+              Restore draft
+            </button>
+            <button
+              type="button"
+              className={textBtn + ' cursor-pointer'}
+              onClick={() => client.recoverDraft(false)}
+            >
+              Discard draft
+            </button>
+          </div>
+        </Surface>
       ) : client.canPost ? (
         <TextComposer
           initialText={draft.text}
@@ -360,9 +367,9 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
           }}
         />
       ) : (
-        <p className="p-3 text-sm text-on-surface-variant">
-          {client.heldNotice ?? 'Read-only chat'}
-        </p>
+        <Surface tone="plain" radius="none" pad="md">
+          <p className="text-sm text-on-surface-variant">{client.heldNotice ?? 'Read-only chat'}</p>
+        </Surface>
       )}
     </>
   )
@@ -475,21 +482,40 @@ export default function WidgetPage() {
     >
       {room && client ? (
         <>
-          <header className="flex shrink-0 flex-wrap items-center justify-between gap-1 border-b border-outline-variant px-3 py-2">
-            <h1 className="min-w-0 break-words font-medium">
-              {room.kind === 'text' ? '# ' : ''}
-              {room.name}
-            </h1>
-            {client.mode !== 'read_link' && client.mode !== 'public_read' && (
-              <AccessForm client={client} />
-            )}
-          </header>
+          <Surface
+            as="header"
+            tone="plain"
+            radius="none"
+            border="bottom"
+            pad="md"
+            inset="bar"
+            place="shrink-0"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-1">
+              <h1 className="min-w-0 break-words font-medium">
+                {room.kind === 'text' ? '# ' : ''}
+                {room.name}
+              </h1>
+              {client.mode !== 'read_link' && client.mode !== 'public_read' && (
+                <AccessForm client={client} />
+              )}
+            </div>
+          </Surface>
           {room.kind === 'text' ? (
             <WidgetChat key={target?.key} client={client} rows={room.messages} />
           ) : (
-            <section className="min-h-0 flex-1 space-y-3 overflow-auto p-3" aria-label="Voice room">
+            <Surface
+              as="section"
+              tone="plain"
+              radius="none"
+              pad="md"
+              gap="md"
+              align="start"
+              place="min-h-0 flex-1 overflow-auto"
+              aria-label="Voice room"
+            >
               <h2 className="text-sm font-medium">In voice</h2>
-              <ul className="space-y-1">
+              <Stack as="ul" gap="2xs">
                 {room.users.map(u => (
                   <li key={u} className="streamer break-words">
                     {isGuestName(u) ? guestLabel(u) : u}
@@ -497,7 +523,7 @@ export default function WidgetPage() {
                     {client.statusOf(u).map(text => ` · ${text}`)}
                   </li>
                 ))}
-              </ul>
+              </Stack>
               {client.inVoice ? (
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -527,14 +553,14 @@ export default function WidgetPage() {
               {audibleStreams(client.rtc.remoteStreams(), client.silenced, false).map(a => (
                 <Audio key={a.key} stream={a.stream} />
               ))}
-            </section>
+            </Surface>
           )}
         </>
       ) : gated && target ? (
-        <div className="p-3">
+        <Surface tone="plain" radius="none" pad="md">
           <p role="status">This channel is marked sensitive.</p>
           <button
-            className={textBtn + ' cursor-pointer'}
+            className={textBtn + ' cursor-pointer self-start'}
             onClick={() => void requestViewing(target)}
           >
             Open channel
@@ -542,9 +568,9 @@ export default function WidgetPage() {
           {client && client.mode !== 'public_read' && client.mode !== 'read_link' && (
             <AccessForm client={client} />
           )}
-        </div>
+        </Surface>
       ) : (
-        <div className="p-3">
+        <Surface tone="plain" radius="none" pad="md">
           <p role="status">
             {client?.loaded
               ? (client.heldNotice ?? 'This widget is unavailable.')
@@ -553,47 +579,59 @@ export default function WidgetPage() {
           {client?.mode && ['members', 'voice', 'public_chat'].includes(client.mode) && (
             <AccessForm client={client} />
           )}
-        </div>
+        </Surface>
       )}
       {client?.error && room && (
-        <p role="alert" className="shrink-0 px-3 py-1 text-sm text-error">
-          {client.error}
-        </p>
+        <Surface
+          as="p"
+          role="alert"
+          tone="plain"
+          radius="none"
+          pad="md"
+          inset="bar"
+          place="shrink-0"
+        >
+          <span className="text-sm text-error">{client.error}</span>
+        </Surface>
       )}
       {client && !client.storage && (
-        <p className="shrink-0 px-3 py-1 text-xs text-on-surface-variant">
-          This frame can remember you only while it is open.
-        </p>
+        <Surface as="p" tone="plain" radius="none" pad="md" inset="bar" place="shrink-0">
+          <span className="text-xs text-on-surface-variant">
+            This frame can remember you only while it is open.
+          </span>
+        </Surface>
       )}
       {target && (
-        <details className="shrink-0 border-t border-outline-variant px-3 py-1 text-xs">
-          <summary className="w-fit cursor-pointer py-1 text-on-surface-variant">
-            Viewing options
-          </summary>
-          <label className="flex min-h-8 w-fit cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              className="cursor-pointer"
-              checked={personallyMarked(target)}
-              onChange={e => {
-                prompted.current = target.key
-                markPersonally(target, e.target.checked)
-              }}
-            />
-            Mark sensitive on this device
-          </label>
-          {room && needsWarning(target) && (
-            <button
-              className={textBtn + ' cursor-pointer'}
-              onClick={() => {
-                prompted.current = target.key
-                forgetViewing(target)
-              }}
-            >
-              Hide channel
-            </button>
-          )}
-        </details>
+        <Surface tone="plain" radius="none" border="top" pad="md" inset="bar" place="shrink-0">
+          <details className="text-xs">
+            <summary className="w-fit cursor-pointer py-1 text-on-surface-variant">
+              Viewing options
+            </summary>
+            <label className="flex min-h-8 w-fit cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                className="cursor-pointer"
+                checked={personallyMarked(target)}
+                onChange={e => {
+                  prompted.current = target.key
+                  markPersonally(target, e.target.checked)
+                }}
+              />
+              Mark sensitive on this device
+            </label>
+            {room && needsWarning(target) && (
+              <button
+                className={textBtn + ' cursor-pointer'}
+                onClick={() => {
+                  prompted.current = target.key
+                  forgetViewing(target)
+                }}
+              >
+                Hide channel
+              </button>
+            )}
+          </details>
+        </Surface>
       )}
       <MediaLightbox />
       <ContextMenu />

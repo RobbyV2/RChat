@@ -1,5 +1,6 @@
 'use client'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useRef, useState, type HTMLAttributes } from 'react'
 import { displayNameError, maskedName, showsUsername } from '../lib/display_name'
@@ -51,14 +52,14 @@ export function NameWithUsername({
     )
   return (
     <MaskedTogether word={nameRevealKey(user.username)}>
-      <span className="inline-flex max-w-full min-w-0 items-baseline">
+      <Row as="span" gap="2xs" align="baseline" place="inline-flex max-w-full">
         <span className="min-w-0 truncate">
           <Masked text={user.display_name} by={by} own={own} />
         </span>
-        <span className="streamer max-w-full shrink-0 truncate pl-1 text-on-surface-variant">
+        <span className="streamer max-w-full shrink-0 truncate text-on-surface-variant">
           (<Masked text={user.username} by={by} own={own} />)
         </span>
-      </span>
+      </Row>
     </MaskedTogether>
   )
 }
@@ -131,17 +132,18 @@ export function DisplayNameField({ focus }: { focus: boolean }) {
   }
 
   return (
-    <form
+    <Stack
+      as="form"
+      gap="sm"
       onSubmit={e => {
         e.preventDefault()
         void save()
       }}
-      className="flex flex-col gap-2"
     >
       <label htmlFor={id} className="text-sm text-on-surface-variant">
         Display name
       </label>
-      <div className="flex gap-2">
+      <Row gap="sm" align="stretch">
         <input
           id={id}
           ref={ref}
@@ -167,12 +169,12 @@ export function DisplayNameField({ focus }: { focus: boolean }) {
         >
           Save
         </Button>
-      </div>
+      </Row>
       <p id={`${id}-hint`} className="text-xs text-on-surface-variant">
         You still sign in and get mentioned as <span className="streamer">@{username}</span>.
       </p>
       <FieldError id={`${id}-error`} message={error} />
       {done && !error && <p className="text-xs text-on-surface-variant">Saved</p>}
-    </form>
+    </Stack>
   )
 }

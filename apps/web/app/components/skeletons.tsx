@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useMotionPlays } from '../lib/motion/use_motion'
+import { Row, Stack, Surface } from './layout'
 import {
   channelShapes,
   dmShapes,
@@ -81,31 +82,38 @@ export function MessageListSkeleton({
     <Frame
       kind="messages"
       label={label}
-      className={`flex flex-col gap-4 overflow-hidden py-3 ${variant === 'pane' ? 'justify-end' : 'justify-start'} ${className}`}
+      className={`flex flex-col overflow-hidden ${variant === 'pane' ? 'justify-end' : 'justify-start'} ${className}`}
     >
-      {messageShapes(seed, variant !== 'search').map((m, i) => (
-        <div key={i} className="flex shrink-0 gap-3 px-4">
-          <Blob className={`${avatar} shrink-0 rounded-full ${strong}`} />
-          <div className="flex min-w-0 flex-1 flex-col gap-2 pt-0.5">
-            <div className="flex h-4 min-w-0 items-center gap-2">
-              <Blob
-                className={`h-3 max-w-[50%] rounded-full ${strong}`}
-                style={{ width: m.name }}
-              />
-              <Blob className={`h-2.5 shrink-0 rounded-full ${soft}`} style={{ width: m.time }} />
-            </div>
-            {m.lines.map((w, j) => (
-              <Blob key={j} className={`h-3 rounded-full ${strong}`} style={pct(w)} />
-            ))}
-            {m.media && (
-              <Blob
-                className={`mt-0.5 max-w-full rounded-xl ${soft}`}
-                style={{ width: m.media.w, height: m.media.h }}
-              />
-            )}
-          </div>
-        </div>
-      ))}
+      <Surface tone="plain" radius="none" pad="lg" inset="bar" gap="lg">
+        {messageShapes(seed, variant !== 'search').map((m, i) => (
+          <Row key={i} gap="md" align="stretch" place="shrink-0">
+            <Blob className={`${avatar} shrink-0 rounded-full ${strong}`} />
+            <Surface tone="plain" radius="none" pad="3xs" gap="sm" place="flex-1">
+              <div className="flex h-4 min-w-0 items-center">
+                <Row gap="sm" place="flex-1">
+                  <Blob
+                    className={`h-3 max-w-[50%] rounded-full ${strong}`}
+                    style={{ width: m.name }}
+                  />
+                  <Blob
+                    className={`h-2.5 shrink-0 rounded-full ${soft}`}
+                    style={{ width: m.time }}
+                  />
+                </Row>
+              </div>
+              {m.lines.map((w, j) => (
+                <Blob key={j} className={`h-3 rounded-full ${strong}`} style={pct(w)} />
+              ))}
+              {m.media && (
+                <Blob
+                  className={`max-w-full rounded-xl ${soft}`}
+                  style={{ width: m.media.w, height: m.media.h }}
+                />
+              )}
+            </Surface>
+          </Row>
+        ))}
+      </Surface>
     </Frame>
   )
 }
@@ -194,12 +202,12 @@ export function DmListSkeleton({
       {dmShapes(seed, rows).map((d, i) => (
         <div key={i} className="flex h-12 shrink-0 items-center gap-3 px-2">
           <Blob className={`size-8 shrink-0 rounded-full ${strong}`} />
-          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <Stack as="span" gap="xs" place="flex-1">
             <Blob className={`h-3 rounded-full ${strong}`} style={pct(d.name)} />
             {d.preview !== null && (
               <Blob className={`h-2.5 rounded-full ${soft}`} style={pct(d.preview)} />
             )}
-          </span>
+          </Stack>
         </div>
       ))}
     </Frame>
@@ -209,17 +217,15 @@ export function DmListSkeleton({
 // Server tiles in place of a rail list that is loading (`few`: 2 or 3).
 export function ServerRailSkeleton({ seed, few = false }: { seed: string; few?: boolean }) {
   return (
-    <Frame
-      kind="servers"
-      label="Loading servers"
-      className="flex shrink-0 flex-col items-center gap-2"
-    >
-      {railShapes(seed, few).map((t, i) => (
-        <Blob
-          key={i}
-          className={`size-12 shrink-0 ${t.round ? 'rounded-full' : 'rounded-2xl'} ${strong}`}
-        />
-      ))}
+    <Frame kind="servers" label="Loading servers" className="flex shrink-0 flex-col items-center">
+      <Stack gap="sm" align="center">
+        {railShapes(seed, few).map((t, i) => (
+          <Blob
+            key={i}
+            className={`size-12 shrink-0 ${t.round ? 'rounded-full' : 'rounded-2xl'} ${strong}`}
+          />
+        ))}
+      </Stack>
     </Frame>
   )
 }
@@ -227,16 +233,20 @@ export function ServerRailSkeleton({ seed, few = false }: { seed: string; few?: 
 // Rows of an avatar, a title and a line, for the sections of Home, Friends and the inbox.
 export function RowsSkeleton({ rows, label }: { rows: number; label: string }) {
   return (
-    <Frame kind="rows" label={label} className="flex flex-col gap-1">
-      {rowShapes(label, rows).map((r, i) => (
-        <div key={i} className="flex items-center gap-3 px-2 py-2">
-          <Blob className={`size-8 shrink-0 rounded-full ${strong}`} />
-          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <Blob className={`h-3 rounded-full ${strong}`} style={pct(r.title)} />
-            <Blob className={`h-2.5 rounded-full ${soft}`} style={pct(r.line)} />
-          </span>
-        </div>
-      ))}
+    <Frame kind="rows" label={label}>
+      <Stack gap="2xs">
+        {rowShapes(label, rows).map((r, i) => (
+          <Surface key={i} tone="plain" radius="none" pad="sm">
+            <Row gap="md">
+              <Blob className={`size-8 shrink-0 rounded-full ${strong}`} />
+              <Stack as="span" gap="xs" place="flex-1">
+                <Blob className={`h-3 rounded-full ${strong}`} style={pct(r.title)} />
+                <Blob className={`h-2.5 rounded-full ${soft}`} style={pct(r.line)} />
+              </Stack>
+            </Row>
+          </Surface>
+        ))}
+      </Stack>
     </Frame>
   )
 }

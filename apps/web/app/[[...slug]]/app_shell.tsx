@@ -66,6 +66,7 @@ import { DrawerClose } from '../components/drawer'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 import { useEscape } from '../components/ui'
+import { Stack, Surface } from '../components/layout'
 import { P2pDialogs, P2pHome } from '../components/p2p/p2p_home'
 import { P2pDmPane } from '../components/p2p/p2p_dm_pane'
 import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p2p/p2p_server_view'
@@ -442,10 +443,16 @@ function Chat() {
     return (
       <>
         {!invite && !configLink && (
-          <div className="flex h-app flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant">
-            <span>Loading RChat</span>
-            {bootError && <span className="text-sm">{bootError}. Retrying…</span>}
-          </div>
+          <Stack gap="none" justify="center" place="h-app">
+            <Surface tone="plain" radius="none" pad="xl" gap="2xs" align="center">
+              <span className="text-center text-on-surface-variant">Loading RChat</span>
+              {bootError && (
+                <span className="text-center text-sm text-on-surface-variant">
+                  {bootError}. Retrying…
+                </span>
+              )}
+            </Surface>
+          </Stack>
         )}
         <InvitePage />
         <ConfigLinkPage />

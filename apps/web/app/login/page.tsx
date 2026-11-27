@@ -1,5 +1,6 @@
 'use client'
 import { Button } from '../components/controls'
+import { Row, Stack, Surface } from '../components/layout'
 import { watchPagePolicy } from '../lib/client/hosted_policy'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -92,60 +93,67 @@ function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) 
   }, [authed, account, adding, next, owner, router])
   return (
     <div className="flex min-h-app flex-col items-center px-safe-3 sm:px-safe-4">
-      <header className="flex w-full shrink-0 items-center justify-between py-2">
-        <ThemeToggle />
-        <StatusClock />
-      </header>
-      <main className="my-auto flex w-full max-w-md flex-col gap-5 rounded-2xl bg-surface-container-low p-4 shadow-elevation-2 sm:p-6">
-        <h1 className="flex justify-center">
-          <img src="/rchat_logo.png" alt="RChat" className="h-16 w-auto" />
-        </h1>
-        {(allowed && (adding || welcome)) || (welcome && awaitingInstance(account.conn)) ? (
-          <>
-            {welcome && (
-              <>
-                <h2 className="text-xl font-medium">Connect to an RChat instance</h2>
-                <p>Instances are run by different people. You can add more later.</p>
-              </>
-            )}
-            <AddInstanceFlow
-              onCancel={welcome ? undefined : () => setAdding(false)}
-              onDone={session => {
-                client.show(session, 'none')
-                router.replace(accountPath('/', routeOwnerFor(session)))
-              }}
-            />
-          </>
-        ) : (
-          <>
-            <div className="rounded-xl bg-surface-container px-3 py-2">
-              <p className="text-xs">Instance</p>
-              <span className="streamer">
-                {info?.name ?? account.conn.name} · {account.conn.host}
-              </span>
-            </div>
-            {!owner && allowed && (
-              <Button onClick={() => setAdding(true)} place="self-start">
-                Use another instance
-              </Button>
-            )}
-            <SignInStep
-              back={next}
-              owner={owner}
-              missing={missing}
-              onSuccess={signedIn => {
-                if (!client.canWritePage(account) || adding) return
-                if (signedIn.conn.origin !== account.conn.origin || !client.show(signedIn, 'none'))
-                  return
-                router.replace(accountPath(next, routeOwnerFor(signedIn)))
-              }}
-            />
-          </>
-        )}
-        <div className="flex flex-col items-center gap-1">
-          <InstallButton />
-          <IosInstallHint />
-        </div>
+      <Surface as="header" tone="plain" radius="none" pad="sm" place="w-full shrink-0">
+        <Row gap="sm" justify="between">
+          <ThemeToggle />
+          <StatusClock />
+        </Row>
+      </Surface>
+      <main className="my-auto w-full max-w-md rounded-2xl shadow-elevation-2">
+        <Surface tone="low" pad="lg" gap="lg">
+          <h1 className="flex justify-center">
+            <img src="/rchat_logo.png" alt="RChat" className="h-16 w-auto" />
+          </h1>
+          {(allowed && (adding || welcome)) || (welcome && awaitingInstance(account.conn)) ? (
+            <>
+              {welcome && (
+                <>
+                  <h2 className="text-xl font-medium">Connect to an RChat instance</h2>
+                  <p>Instances are run by different people. You can add more later.</p>
+                </>
+              )}
+              <AddInstanceFlow
+                onCancel={welcome ? undefined : () => setAdding(false)}
+                onDone={session => {
+                  client.show(session, 'none')
+                  router.replace(accountPath('/', routeOwnerFor(session)))
+                }}
+              />
+            </>
+          ) : (
+            <>
+              <Surface tone="base" radius="lg" pad="md">
+                <p className="text-xs">Instance</p>
+                <span className="streamer">
+                  {info?.name ?? account.conn.name} · {account.conn.host}
+                </span>
+              </Surface>
+              {!owner && allowed && (
+                <Button onClick={() => setAdding(true)} place="self-start">
+                  Use another instance
+                </Button>
+              )}
+              <SignInStep
+                back={next}
+                owner={owner}
+                missing={missing}
+                onSuccess={signedIn => {
+                  if (!client.canWritePage(account) || adding) return
+                  if (
+                    signedIn.conn.origin !== account.conn.origin ||
+                    !client.show(signedIn, 'none')
+                  )
+                    return
+                  router.replace(accountPath(next, routeOwnerFor(signedIn)))
+                }}
+              />
+            </>
+          )}
+          <Stack gap="2xs" align="center">
+            <InstallButton />
+            <IosInstallHint />
+          </Stack>
+        </Surface>
       </main>
     </div>
   )

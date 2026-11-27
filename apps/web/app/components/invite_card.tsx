@@ -54,6 +54,7 @@ import { openMessageLink } from '../lib/link_open'
 import { AboutLine } from './server_about'
 import { aboutText } from '../lib/server_about'
 import { Button } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Dialog, fieldCls, FieldError, LinkPage, Masked, useOwn } from './ui'
 import { SpoilerLine } from './replies'
 import { PreviewFilename, RevealChannelPreview } from './preview_reveal'
@@ -264,7 +265,9 @@ function PasswordDialog({
   return createPortal(
     <div {...isolate}>
       <Dialog title="Server password" onClose={onClose}>
-        <form
+        <Stack
+          as="form"
+          gap="lg"
           onSubmit={async e => {
             e.preventDefault()
             const pw = password.trim()
@@ -290,25 +293,27 @@ function PasswordDialog({
               </>
             )}
           </p>
-          <input
-            autoFocus
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            placeholder="Server password"
-            aria-invalid={error !== null}
-            className={`${fieldCls} mt-4 w-full`}
-          />
-          <FieldError message={error} />
-          <div className="mt-5 flex justify-end gap-2">
+          <Stack gap="none">
+            <input
+              autoFocus
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="Server password"
+              aria-invalid={error !== null}
+              className={`${fieldCls} w-full`}
+            />
+            <FieldError message={error} />
+          </Stack>
+          <Row gap="sm" justify="end">
             <Button size="md" onClick={onClose}>
               Cancel
             </Button>
             <Button type="submit" variant="filled" size="md" disabled={busy || !password.trim()}>
               {unlock ? (busy ? 'Checking…' : 'Continue') : busy ? 'Joining…' : 'Join'}
             </Button>
-          </div>
-        </form>
+          </Row>
+        </Stack>
       </Dialog>
     </div>,
     document.body
@@ -360,14 +365,14 @@ function Counts({ invite, center }: { invite: Invite; center: boolean }) {
         center ? 'justify-center' : ''
       }`}
     >
-      <span className="flex items-center gap-1.5">
+      <Row as="span" gap="xs">
         <span className="size-2 rounded-full bg-status-green" />
         {online_count} Online
-      </span>
-      <span className="flex items-center gap-1.5">
+      </Row>
+      <Row as="span" gap="xs">
         <span className="size-2 rounded-full bg-outline" />
         {member_count} {member_count === 1 ? 'Member' : 'Members'}
-      </span>
+      </Row>
     </div>
   )
 }
@@ -377,7 +382,7 @@ function TicketNote({ invite, now, center }: { invite: Invite; now: number; cent
   if (ends === null && left === null) return null
   return (
     <p
-      className={`flex flex-wrap gap-x-2 pt-0.5 text-xs text-on-surface-variant ${center ? 'justify-center' : ''}`}
+      className={`flex flex-wrap gap-x-2 text-xs text-on-surface-variant ${center ? 'justify-center' : ''}`}
     >
       {ends !== null && <span title={absoluteTime(ends)}>{countdown(ends, now)}</span>}
       {ends !== null && left !== null && <span aria-hidden>·</span>}
@@ -416,7 +421,7 @@ export function PreviewLine({
   const own = useOwn(host || message.webhook ? null : author.username)
   const parts = previewParts(plainStamps(content))
   return (
-    <div className="flex min-w-0 items-start gap-2">
+    <Row gap="sm" align="start">
       <UserAvatar
         username={author.username}
         avatarKind={author.avatar_kind}
@@ -457,7 +462,7 @@ export function PreviewLine({
           )}
         </span>
       </p>
-    </div>
+    </Row>
   )
 }
 
@@ -545,7 +550,11 @@ function Preview({
   if (!target || !preview_channel) return null
   if (!allowed)
     return (
-      <Button size="md" onClick={() => void requestViewing(target)}>
+      <Button
+        size="md"
+        onClick={() => void requestViewing(target)}
+        place={big ? 'self-center' : 'self-start'}
+      >
         Open channel preview
       </Button>
     )
@@ -553,15 +562,15 @@ function Preview({
   const preview = loaded.data
   if (preview_channel === null || (preview.length === 0 && !big)) return null
   return (
-    <div
-      className={`rounded-xl bg-surface-container-high ${big ? 'mt-5 p-3' : 'mt-3 px-2.5 py-2'}`}
-    >
-      <p className="flex min-w-0 items-center gap-1 text-xs font-medium text-on-surface-variant">
-        <Hash size={12} className="shrink-0" />
-        <span className="truncate">{preview_channel}</span>
+    <Surface tone="high" radius="lg" pad={big ? 'md' : 'sm'} gap={big ? 'sm' : 'xs'}>
+      <p className="min-w-0 text-xs font-medium text-on-surface-variant">
+        <Row as="span" gap="2xs">
+          <Hash size={12} className="shrink-0" />
+          <span className="truncate">{preview_channel}</span>
+        </Row>
       </p>
       {preview.length ? (
-        <div className={`flex flex-col ${big ? 'mt-2 gap-2' : 'mt-1.5 gap-1'}`}>
+        <Stack gap={big ? 'sm' : '2xs'}>
           {preview.map(m => (
             <PreviewLine
               key={m.id}
@@ -572,11 +581,11 @@ function Preview({
               remote={remote}
             />
           ))}
-        </div>
+        </Stack>
       ) : (
-        <p className="mt-1.5 text-left text-xs text-on-surface-variant">No messages yet</p>
+        <p className="text-left text-xs text-on-surface-variant">No messages yet</p>
       )}
-    </div>
+    </Surface>
   )
 }
 
@@ -601,22 +610,23 @@ function Frame({
   children: ReactNode
   heading?: ReactNode
 }) {
+  if (big)
+    return (
+      <div ref={ref} className="w-full max-w-md rounded-hero text-center shadow-elevation-3">
+        <Surface tone="low" radius="hero" pad="xl">
+          {children}
+        </Surface>
+      </div>
+    )
   return (
-    <div
-      ref={ref}
-      className={
-        big
-          ? 'w-full max-w-md rounded-hero bg-surface-container-low p-6 text-center shadow-elevation-3 sm:p-8'
-          : '@container mt-1.5 w-full max-w-md rounded-2xl border border-outline-variant bg-surface-container p-3 sm:p-4'
-      }
-    >
-      {!big && (
-        <p className="mb-2 text-2xs font-semibold tracking-wide text-on-surface-variant uppercase">
+    <div ref={ref} className="@container mt-1.5 w-full max-w-md">
+      <Surface tone="base" border pad="md" gap="sm">
+        <p className="text-2xs font-semibold tracking-wide text-on-surface-variant uppercase">
           {heading ??
             (invalid ? "You've received an invite, but…" : "You've been invited to join a server")}
         </p>
-      )}
-      {children}
+        {children}
+      </Surface>
     </div>
   )
 }
@@ -633,29 +643,45 @@ function Layout({
 }: Body & { big: boolean; invalid: boolean; stack?: boolean }) {
   if (big)
     return (
-      <>
-        <div className="flex justify-center">{icon}</div>
-        {!invalid && (
-          <p className="mt-5 text-sm text-on-surface-variant">You&apos;ve been invited to join</p>
-        )}
-        <h1
-          className={`flex min-w-0 items-center justify-center gap-2 text-2xl font-semibold ${invalid ? 'mt-5' : 'mt-1'}`}
-        >
-          {title}
-        </h1>
-        <div className="mt-2">{sub}</div>
-        {extra}
-        {actions && <div className="mt-6 flex flex-col gap-2">{actions}</div>}
-      </>
+      <Stack gap="xl">
+        <Stack gap="md">
+          <Stack gap="lg">
+            <Row gap="none" justify="center">
+              {icon}
+            </Row>
+            <Stack gap="sm">
+              <Stack gap="2xs">
+                {!invalid && (
+                  <p className="text-sm text-on-surface-variant">
+                    You&apos;ve been invited to join
+                  </p>
+                )}
+                <h1 className="min-w-0 text-2xl font-semibold">
+                  <Row as="span" gap="sm" justify="center">
+                    {title}
+                  </Row>
+                </h1>
+              </Stack>
+              <div>{sub}</div>
+            </Stack>
+          </Stack>
+          {extra}
+        </Stack>
+        {actions && <Stack gap="sm">{actions}</Stack>}
+      </Stack>
     )
   return (
-    <>
+    <Stack gap="md">
       <div className="flex flex-wrap items-center gap-3">
         {icon}
-        <div className="min-w-0 flex-1">
-          <p className="flex min-w-0 items-center gap-1.5 font-semibold">{title}</p>
-          <div className="mt-0.5">{sub}</div>
-        </div>
+        <Stack gap="3xs" place="flex-1">
+          <p className="min-w-0 font-semibold">
+            <Row as="span" gap="xs">
+              {title}
+            </Row>
+          </p>
+          <div>{sub}</div>
+        </Stack>
         {actions && (
           <div
             className={`flex w-full flex-wrap gap-1.5 ${stack ? '' : '@sm:w-auto @sm:shrink-0 @sm:flex-col @sm:items-end'}`}
@@ -665,27 +691,36 @@ function Layout({
         )}
       </div>
       {extra}
-    </>
+    </Stack>
   )
 }
 
 function Skeleton({ big }: { big: boolean }) {
+  const lines = (
+    <>
+      <span className="h-4 w-36 max-w-full rounded-full bg-surface-container-highest" />
+      <span className="h-3 w-24 rounded-full bg-surface-container-highest" />
+    </>
+  )
   return (
-    <div
-      aria-busy
-      aria-label="Loading invite"
-      className={`flex animate-pulse items-center gap-3 ${big ? 'flex-col' : ''}`}
-    >
-      <span
-        className={`shrink-0 bg-surface-container-highest ${big ? 'size-20 rounded-3xl' : 'size-12 rounded-2xl'}`}
-      />
-      <div className={`flex flex-col gap-2 ${big ? 'mt-3 w-full items-center' : 'flex-1'}`}>
-        <span className="h-4 w-36 max-w-full rounded-full bg-surface-container-highest" />
-        <span className="h-3 w-24 rounded-full bg-surface-container-highest" />
-      </div>
-      <span
-        className={`rounded-full bg-surface-container-highest ${big ? 'mt-4 h-10 w-full' : 'h-9 w-16 shrink-0'}`}
-      />
+    <div aria-busy aria-label="Loading invite" className="animate-pulse">
+      {big ? (
+        <Stack gap="md" align="center">
+          <span className="size-20 shrink-0 rounded-3xl bg-surface-container-highest" />
+          <Stack gap="sm" align="center" place="w-full">
+            {lines}
+          </Stack>
+          <span className="h-10 w-full rounded-full bg-surface-container-highest" />
+        </Stack>
+      ) : (
+        <Row gap="md">
+          <span className="size-12 shrink-0 rounded-2xl bg-surface-container-highest" />
+          <Stack gap="sm" place="flex-1">
+            {lines}
+          </Stack>
+          <span className="h-9 w-16 shrink-0 rounded-full bg-surface-container-highest" />
+        </Row>
+      )}
     </div>
   )
 }
@@ -863,7 +898,7 @@ export function InviteCard({
           </>
         ),
         extra: deniedAccess(error) && given && (
-          <p role="alert" className="mt-3 text-xs text-error">
+          <p role="alert" className="text-xs text-error">
             {errorText(error)}
           </p>
         ),
@@ -944,14 +979,14 @@ export function InviteCard({
         </>
       ),
       sub: (
-        <>
+        <Stack gap={big ? '2xs' : '3xs'}>
           <AboutLine
             text={aboutText(data.server.description)}
-            className={big ? 'mb-1 text-center' : 'mb-0.5'}
+            className={big ? 'text-center' : ''}
           />
           <Counts invite={data} center={big} />
           <TicketNote invite={data} now={now} center={big} />
-        </>
+        </Stack>
       ),
       actions: !authed ? (
         <>
@@ -996,17 +1031,15 @@ export function InviteCard({
       extra: (
         <>
           {status === 'banned' && (
-            <p role="status" className="mt-3 text-sm text-error">
+            <p role="status" className="text-sm text-error">
               You are banned from this server
             </p>
           )}
           {needs && (
-            <p className={`mt-3 text-xs text-on-surface-variant ${big ? 'text-center' : ''}`}>
-              {needs}
-            </p>
+            <p className={`text-xs text-on-surface-variant ${big ? 'text-center' : ''}`}>{needs}</p>
           )}
           {note && (
-            <p role="alert" className="mt-3 text-xs text-error">
+            <p role="alert" className="text-xs text-error">
               {note}
             </p>
           )}
@@ -1234,12 +1267,12 @@ export function RemoteInviteCard({
         ),
         title: <span className="streamer min-w-0 truncate">{invite.server}</span>,
         sub: (
-          <div className="flex flex-col items-start gap-1">
+          <Stack gap="2xs" align="start">
             {where}
             <p className="text-xs text-on-surface-variant">
               Enter the password to view this invite
             </p>
-          </div>
+          </Stack>
         ),
         actions: openBtn,
       }
@@ -1252,7 +1285,7 @@ export function RemoteInviteCard({
         ),
         title: invalid ? 'Invalid invite' : "Couldn't load this invite",
         sub: (
-          <div className="flex flex-col items-start gap-1">
+          <Stack gap="2xs" align="start">
             {where}
             <p className="text-xs text-on-surface-variant">
               {invalid
@@ -1271,7 +1304,7 @@ export function RemoteInviteCard({
                       )
                     : 'This link is not an RChat invite, or that site could not be reached.'}
             </p>
-          </div>
+          </Stack>
         ),
         actions:
           invalid || !rchat ? (
@@ -1303,11 +1336,11 @@ export function RemoteInviteCard({
         </>
       ),
       sub: (
-        <div className="flex flex-col items-start gap-1">
+        <Stack gap="2xs" align="start">
           {where}
           <AboutLine text={aboutText(data.server.description)} />
           <Counts invite={data} center={false} />
-        </div>
+        </Stack>
       ),
       actions: openBtn,
       extra: (

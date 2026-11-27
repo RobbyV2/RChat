@@ -28,6 +28,7 @@ import { passwordSignup, siteSettings } from '../lib/features'
 import { shellInfo } from '../lib/platform'
 import type { InstanceInfo, SiteSettings } from '../lib/types'
 import { Button } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Dialog } from './ui'
 import { SignInStep } from './sign_in_step'
 export { SignInStep } from './sign_in_step'
@@ -62,7 +63,7 @@ export function TrustNotice({
   const escaped = hosts.map(h => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
   const pattern = new RegExp('(' + escaped.join('|') + ')')
   return (
-    <section className="flex flex-col gap-4">
+    <Stack as="section" gap="lg">
       <Shield aria-hidden="true" />
       <h3 className="text-lg font-semibold">Only add instances in an app you trust</h3>
       <p>
@@ -76,15 +77,15 @@ export function TrustNotice({
           )
         )}
       </p>
-      <div className="flex justify-end gap-2">
+      <Row gap="sm" justify="end">
         <Button size="md" onClick={onCancel}>
           Cancel
         </Button>
         <Button variant="filled" size="md" autoFocus onClick={onTrust}>
           I trust this app
         </Button>
-      </div>
-    </section>
+      </Row>
+    </Stack>
   )
 }
 export function AddInstanceFlow({
@@ -224,16 +225,17 @@ export function AddInstanceFlow({
   }
   const cancel = onCancel ?? back
   return (
-    <div className="flex flex-col gap-4" data-add-instance-step={step}>
+    <Stack gap="lg" data-add-instance-step={step}>
       {step === 'address' && (
-        <form
-          className="flex flex-col gap-3"
+        <Stack
+          as="form"
+          gap="md"
           onSubmit={(e: FormEvent) => {
             e.preventDefault()
             void probe(address)
           }}
         >
-          <label className="flex flex-col gap-1">
+          <Stack as="label" gap="2xs">
             Instance address
             <input
               autoFocus
@@ -248,7 +250,7 @@ export function AddInstanceFlow({
               spellCheck={false}
               className="streamer rounded-lg border border-outline bg-transparent px-3 py-2"
             />
-          </label>
+          </Stack>
           {!streamer && !linkTarget && (
             <div className="flex flex-wrap gap-2">
               {knownInstances()
@@ -268,7 +270,7 @@ export function AddInstanceFlow({
                 ))}
             </div>
           )}
-          <div className="flex justify-end gap-2">
+          <Row gap="sm" justify="end">
             {onCancel && (
               <Button size="md" onClick={onCancel}>
                 Cancel
@@ -277,8 +279,8 @@ export function AddInstanceFlow({
             <Button type="submit" variant="filled" size="md" disabled={busy || !address.trim()}>
               {busy ? 'Checking…' : 'Connect'}
             </Button>
-          </div>
-        </form>
+          </Row>
+        </Stack>
       )}
       {error && (
         <p role="alert" className="streamer text-error">
@@ -286,8 +288,8 @@ export function AddInstanceFlow({
         </p>
       )}
       {target && (
-        <div className="rounded-xl bg-surface-container p-3">
-          <div className="flex items-center gap-3">
+        <Surface tone="base" radius="lg" pad="md" gap="sm">
+          <Row gap="md">
             <span aria-hidden="true" className="streamer rounded-lg bg-primary-container p-2">
               {target.info.name.slice(0, 1)}
             </span>
@@ -297,13 +299,13 @@ export function AddInstanceFlow({
                 {target.conn.host} · {target.info.version}
               </p>
             </div>
-          </div>
-          <p className="mt-2 text-xs">
+          </Row>
+          <p className="text-xs">
             {passwordSignup(target.settings) ? 'Sign-up open' : 'Sign-up closed'} ·{' '}
             {target.settings.guests_enabled ? 'Guests allowed' : 'Guests off'} ·{' '}
             {target.settings.p2p ? 'P2P on' : 'P2P off'}
           </p>
-        </div>
+        </Surface>
       )}
       {step === 'trust' && target && (
         <TrustNotice
@@ -315,7 +317,7 @@ export function AddInstanceFlow({
       {step === 'known' && target && (
         <>
           {signed.map(a => (
-            <div key={a.username} className="flex items-center justify-between gap-2">
+            <Row key={a.username} gap="sm" justify="between">
               <p>
                 You're signed in on <span className="streamer">{target.conn.host}</span> as{' '}
                 <span className="streamer">{a.username}</span>.
@@ -323,7 +325,7 @@ export function AddInstanceFlow({
               <Button size="md" onClick={() => useExisting(a.username)}>
                 Switch
               </Button>
-            </div>
+            </Row>
           ))}
           {guest && (
             <Button size="md" onClick={() => useExisting(null)}>
@@ -394,17 +396,17 @@ export function AddInstanceFlow({
       {step === 'done' && session && (
         <>
           <p>Added. Switch now?</p>
-          <div className="flex gap-2">
+          <Row gap="sm">
             <Button variant="filled" size="md" onClick={() => onDone(session)}>
               Switch
             </Button>
             <Button size="md" onClick={onCancel}>
               Later
             </Button>
-          </div>
+          </Row>
         </>
       )}
-    </div>
+    </Stack>
   )
 }
 export function AddInstanceDialog({

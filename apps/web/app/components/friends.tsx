@@ -56,6 +56,7 @@ import { PingBadge } from './ping_badge'
 import { Button, IconButton, ListRow, Chip, Tab, LinkButton } from './controls'
 import { Dialog, fieldCls, FieldError, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { RowsSkeleton } from './skeletons'
+import { Row, Stack, Surface } from './layout'
 
 // The unseen friend pings (requests and accepted requests), for badges.
 export const useFriendPings = () => useStore(s => scopePings(badgePings(s), FRIENDS_SCOPE))
@@ -87,7 +88,7 @@ function Avatar({ user, online, size = 32 }: { user: UserRef; online?: boolean; 
 
 function Name({ user, sub }: { user: UserRef; sub?: string }) {
   return (
-    <span className="flex min-w-0 flex-1 flex-col">
+    <Stack as="span" gap="none" place="flex-1">
       <span className="streamer truncate text-sm text-on-surface">
         <Masked text={user.display_name} by={user.username} />
       </span>
@@ -95,11 +96,11 @@ function Name({ user, sub }: { user: UserRef; sub?: string }) {
         <span className="streamer">@{user.username}</span>
         {sub ? ` · ${sub}` : ''}
       </span>
-    </span>
+    </Stack>
   )
 }
 
-const rowCls = 'group flex min-h-12 items-center gap-3 rounded-lg px-3 py-2 hover:bg-on-surface/8'
+const rowCls = 'group rounded-lg hover:bg-on-surface/8'
 
 const friendAt = (user: UserRef): Target => ({
   kind: 'member',
@@ -119,36 +120,41 @@ export function FriendRow({ friend }: { friend: Friend }) {
       {...longPress((x, y) => openActionMenu(x, y, friendAt(user), undefined, acct))}
       className={rowCls}
     >
-      <div
-        {...profileTrigger(store, user, null)}
-        onClickCapture={() => {
-          if (client.shown() !== acct) client.show(acct)
-        }}
-        onKeyDownCapture={e => {
-          if ((e.key === 'Enter' || e.key === ' ') && client.shown() !== acct) client.show(acct)
-        }}
-        className="flex min-w-0 flex-1 items-center gap-3"
-      >
-        <Avatar user={user} online={online} />
-        <Name user={user} sub={online ? 'Online' : 'Offline'} />
-      </div>
-      <IconButton
-        icon={MessageCircle}
-        label={`Message ${user.display_name}`}
-        tooltip="Message"
-        size="lg"
-        onClick={() => messageFriend(user, acct)}
-      />
-      <IconButton
-        icon={MoreVertical}
-        label={`More for ${user.display_name}`}
-        tooltip="More"
-        size="lg"
-        onClick={e => {
-          const r = e.currentTarget.getBoundingClientRect()
-          openActionMenu(r.left, r.bottom, friendAt(user), undefined, acct)
-        }}
-      />
+      <Surface tone="plain" radius="none" pad="md" inset="bar">
+        <Row gap="md">
+          <Row
+            gap="md"
+            place="flex-1"
+            {...profileTrigger(store, user, null)}
+            onClickCapture={() => {
+              if (client.shown() !== acct) client.show(acct)
+            }}
+            onKeyDownCapture={e => {
+              if ((e.key === 'Enter' || e.key === ' ') && client.shown() !== acct) client.show(acct)
+            }}
+          >
+            <Avatar user={user} online={online} />
+            <Name user={user} sub={online ? 'Online' : 'Offline'} />
+          </Row>
+          <IconButton
+            icon={MessageCircle}
+            label={`Message ${user.display_name}`}
+            tooltip="Message"
+            size="lg"
+            onClick={() => messageFriend(user, acct)}
+          />
+          <IconButton
+            icon={MoreVertical}
+            label={`More for ${user.display_name}`}
+            tooltip="More"
+            size="lg"
+            onClick={e => {
+              const r = e.currentTarget.getBoundingClientRect()
+              openActionMenu(r.left, r.bottom, friendAt(user), undefined, acct)
+            }}
+          />
+        </Row>
+      </Surface>
     </div>
   )
 }
@@ -175,60 +181,71 @@ export function RequestRow({ request }: { request: FriendRequest }) {
       )}
       className={rowCls}
     >
-      <div
-        {...profileTrigger(store, user, null)}
-        onClickCapture={() => {
-          if (client.shown() !== acct) client.show(acct)
-        }}
-        onKeyDownCapture={e => {
-          if ((e.key === 'Enter' || e.key === ' ') && client.shown() !== acct) client.show(acct)
-        }}
-        className="flex min-w-0 flex-1 items-center gap-3"
-      >
-        <Avatar user={user} />
-        <Name user={user} sub={incoming ? 'Incoming request' : 'Outgoing request'} />
-      </div>
-      {incoming ? (
-        <>
-          <IconButton
-            icon={Check}
-            label={`Accept ${user.display_name}`}
-            tooltip="Accept"
-            tone="primary"
-            size="lg"
-            onClick={() => void acceptFriend(user)}
-          />
-          <IconButton
-            icon={X}
-            label={`Deny ${user.display_name}`}
-            tooltip="Deny"
-            tone="error"
-            size="lg"
-            onClick={() => void denyFriend(user.username)}
-          />
-        </>
-      ) : (
-        <IconButton
-          icon={X}
-          label={`Cancel request to ${user.display_name}`}
-          tooltip="Cancel request"
-          size="lg"
-          onClick={() => void cancelFriendRequest(user.username)}
-        />
-      )}
+      <Surface tone="plain" radius="none" pad="md" inset="bar">
+        <Row gap="md">
+          <Row
+            gap="md"
+            place="flex-1"
+            {...profileTrigger(store, user, null)}
+            onClickCapture={() => {
+              if (client.shown() !== acct) client.show(acct)
+            }}
+            onKeyDownCapture={e => {
+              if ((e.key === 'Enter' || e.key === ' ') && client.shown() !== acct) client.show(acct)
+            }}
+          >
+            <Avatar user={user} />
+            <Name user={user} sub={incoming ? 'Incoming request' : 'Outgoing request'} />
+          </Row>
+          {incoming ? (
+            <>
+              <IconButton
+                icon={Check}
+                label={`Accept ${user.display_name}`}
+                tooltip="Accept"
+                tone="primary"
+                size="lg"
+                onClick={() => void acceptFriend(user)}
+              />
+              <IconButton
+                icon={X}
+                label={`Deny ${user.display_name}`}
+                tooltip="Deny"
+                tone="error"
+                size="lg"
+                onClick={() => void denyFriend(user.username)}
+              />
+            </>
+          ) : (
+            <IconButton
+              icon={X}
+              label={`Cancel request to ${user.display_name}`}
+              tooltip="Cancel request"
+              size="lg"
+              onClick={() => void cancelFriendRequest(user.username)}
+            />
+          )}
+        </Row>
+      </Surface>
     </div>
   )
 }
 
 function Empty({ children }: { children: ReactNode }) {
-  return <p className="px-2 py-6 text-center text-sm text-on-surface-variant">{children}</p>
+  return (
+    <Surface tone="plain" radius="none" pad="xl">
+      <p className="text-center text-sm text-on-surface-variant">{children}</p>
+    </Surface>
+  )
 }
 
 function Heading({ children }: { children: ReactNode }) {
   return (
-    <p className="px-2 pt-4 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase first:pt-1">
-      {children}
-    </p>
+    <Surface tone="plain" radius="none" pad="sm" inset="bar">
+      <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+        {children}
+      </p>
+    </Surface>
   )
 }
 
@@ -244,32 +261,36 @@ function FriendList({ online, add }: { online: boolean; add?: () => void }) {
   const more = useCallback(() => void load(q), [q, load])
   const empty = !page.loading && !page.hasMore && page.list.length === 0
   return (
-    <>
-      <input
-        value={q}
-        onChange={e => setQ(e.target.value)}
-        placeholder="Search friends"
-        aria-label="Search friends"
-        className={`${fieldCls} mx-2 mb-2 w-[calc(100%-1rem)] flex-none`}
-      />
-      <Heading>
-        {online ? 'Online' : 'All friends'}
-        {!page.hasMore && page.list.length > 0 ? ` · ${page.list.length}` : ''}
-      </Heading>
-      {page.list.map(f => (
-        <FriendRow key={f.user.username} friend={f} />
-      ))}
-      {page.hasMore && <Sentinel key={page.list.length} onVisible={more} />}
-      {empty &&
-        (q.trim() ? (
-          <Empty>No friends match.</Empty>
-        ) : (
-          <Empty>
-            {online ? 'No friends are online.' : 'No friends yet.'}{' '}
-            <LinkButton onClick={add ?? (() => setTab('add'))}>Add friend</LinkButton>
-          </Empty>
+    <Stack gap="sm">
+      <Surface tone="plain" radius="none" pad="sm">
+        <input
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="Search friends"
+          aria-label="Search friends"
+          className={`${fieldCls} flex-none`}
+        />
+      </Surface>
+      <Stack gap="none">
+        <Heading>
+          {online ? 'Online' : 'All friends'}
+          {!page.hasMore && page.list.length > 0 ? ` · ${page.list.length}` : ''}
+        </Heading>
+        {page.list.map(f => (
+          <FriendRow key={f.user.username} friend={f} />
         ))}
-    </>
+        {page.hasMore && <Sentinel key={page.list.length} onVisible={more} />}
+        {empty &&
+          (q.trim() ? (
+            <Empty>No friends match.</Empty>
+          ) : (
+            <Empty>
+              {online ? 'No friends are online.' : 'No friends yet.'}{' '}
+              <LinkButton onClick={add ?? (() => setTab('add'))}>Add friend</LinkButton>
+            </Empty>
+          ))}
+      </Stack>
+    </Stack>
   )
 }
 
@@ -282,13 +303,13 @@ function RequestList({ incoming }: { incoming: boolean }) {
   const more = useCallback(() => void load(incoming), [incoming, load])
   if (!page.loading && !page.hasMore && page.list.length === 0) return null
   return (
-    <>
+    <Stack gap="none">
       <Heading>{incoming ? 'Received' : 'Sent'}</Heading>
       {page.list.map(r => (
         <RequestRow key={r.user.username} request={r} />
       ))}
       {page.hasMore && <Sentinel key={page.list.length} onVisible={more} />}
-    </>
+    </Stack>
   )
 }
 
@@ -296,13 +317,13 @@ function Pending() {
   const counts = useStore(s => s.friendCounts)
   const loading = useStore(s => s.incomingRequests.loading || s.outgoingRequests.loading)
   return (
-    <>
+    <Stack gap="md">
       <RequestList incoming />
       <RequestList incoming={false} />
       {!loading && counts.incoming === 0 && counts.outgoing === 0 && (
         <Empty>No pending friend requests.</Empty>
       )}
-    </>
+    </Stack>
   )
 }
 
@@ -327,8 +348,12 @@ export function AddFriendBox({
   const [unknown, setUnknown] = useState('')
   const [text, setText] = useState('')
   return (
-    <form
-      className="flex flex-col gap-2 px-2"
+    <Surface
+      as="form"
+      tone="plain"
+      radius="none"
+      pad="sm"
+      gap="sm"
       onSubmit={e => {
         e.preventDefault()
         if (!text.trim() || !account) return
@@ -355,10 +380,10 @@ export function AddFriendBox({
       }}
     >
       {(entries.length > 1 || !account) && (
-        <label className="flex items-center gap-2 text-sm">
-          As
+        <Row as="label" gap="sm">
+          <span className="text-sm">As</span>
           <select
-            className="streamer rounded-lg bg-surface-container px-2 py-1"
+            className="streamer rounded-lg bg-surface-container px-2 py-1 text-sm"
             value={account?.renderKey ?? ''}
             onChange={e => {
               setPicked(entries.find(x => String(x.account.renderKey) === e.target.value)!.account)
@@ -377,7 +402,7 @@ export function AddFriendBox({
               </option>
             ))}
           </select>
-        </label>
+        </Row>
       )}
       {hint && (
         <p role="alert" className="text-sm text-on-surface-variant">
@@ -396,7 +421,7 @@ export function AddFriendBox({
       <p className="text-sm text-on-surface-variant">
         Add friends by username. Separate several names with spaces.
       </p>
-      <div className="flex gap-2">
+      <Row gap="sm" align="stretch">
         <input
           autoFocus={autoFocus}
           value={text}
@@ -415,8 +440,8 @@ export function AddFriendBox({
         <Button type="submit" variant="filled" size="md" disabled={!text.trim() || !account}>
           Next
         </Button>
-      </div>
-    </form>
+      </Row>
+    </Surface>
   )
 }
 
@@ -439,18 +464,23 @@ function Tabs({ tab, entries }: { tab: FriendsTab; entries: FriendAccount[] }) {
     () => own
   )
   return (
-    <div
+    <Surface
       role="tablist"
       aria-label="Friends"
-      className="flex shrink-0 gap-1 overflow-x-auto px-2 py-2"
+      tone="plain"
+      radius="none"
+      pad="sm"
+      place="shrink-0 overflow-x-auto"
     >
-      {FRIEND_TABS.map(t => (
-        <Tab key={t.tab} selected={tab === t.tab} onClick={() => setTab(t.tab)} place="shrink-0">
-          {t.label}
-          {t.tab === 'pending' && <PingBadge count={incoming} />}
-        </Tab>
-      ))}
-    </div>
+      <Row gap="2xs">
+        {FRIEND_TABS.map(t => (
+          <Tab key={t.tab} selected={tab === t.tab} onClick={() => setTab(t.tab)} place="shrink-0">
+            {t.label}
+            {t.tab === 'pending' && <PingBadge count={incoming} />}
+          </Tab>
+        ))}
+      </Row>
+    </Surface>
   )
 }
 
@@ -474,7 +504,7 @@ export default function FriendsPanel() {
   }
   useEscape(closePanel, 'panel')
   return (
-    <div className="flex h-full flex-col">
+    <Stack gap="none" place="h-full">
       <PanelHeader
         actor={<ViewActorTag header />}
         icon={Users}
@@ -484,27 +514,32 @@ export default function FriendsPanel() {
       />
       <Tabs tab={tab} entries={visible} />
       {multi && tab !== 'add' && (
-        <div
+        <Surface
           role="group"
           aria-label="Filter by account"
-          className="flex shrink-0 flex-wrap gap-1 px-2 pb-2"
+          tone="plain"
+          radius="none"
+          pad="sm"
+          place="shrink-0"
         >
-          <Chip on={activeFilter === null} onClick={() => setFilter(null)}>
-            All
-          </Chip>
-          {entries.map(e => (
-            <Chip
-              key={e.account.renderKey}
-              on={activeFilter === e.account.renderKey}
-              aria-label={e.row.username + ' on ' + e.name}
-              onClick={() => setFilter(e.account.renderKey)}
-            >
-              <AccountTag row={e.row} name={e.name} />
+          <div className="flex flex-wrap gap-1">
+            <Chip on={activeFilter === null} onClick={() => setFilter(null)}>
+              All
             </Chip>
-          ))}
-        </div>
+            {entries.map(e => (
+              <Chip
+                key={e.account.renderKey}
+                on={activeFilter === e.account.renderKey}
+                aria-label={e.row.username + ' on ' + e.name}
+                onClick={() => setFilter(e.account.renderKey)}
+              >
+                <AccountTag row={e.row} name={e.name} />
+              </Chip>
+            ))}
+          </div>
+        </Surface>
       )}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-4">
+      <Surface tone="plain" radius="none" pad="sm" gap="md" place="min-h-0 flex-1 overflow-y-auto">
         {tab === 'add' ? (
           <AddFriendBox
             autoFocus
@@ -522,8 +557,8 @@ export default function FriendsPanel() {
           visible.map(e => (
             <PeerFriendGroups key={e.account.renderKey} entry={e} online={tab === 'online'} />
           ))}
-      </div>
-    </div>
+      </Surface>
+    </Stack>
   )
 }
 
@@ -596,23 +631,27 @@ function AccountFriendsSection({ max }: { max: number }) {
   const requests = incoming.list.slice(0, max)
   const friends = online.list.slice(0, max)
   return (
-    <section className="flex flex-col">
+    <Stack as="section" gap="sm">
       {requests.length > 0 && (
-        <>
+        <Stack gap="none">
           <Heading>Pending requests</Heading>
           {requests.map(r => (
             <RequestRow key={r.user.username} request={r} />
           ))}
-        </>
+        </Stack>
       )}
-      <Heading>Online friends</Heading>
-      {friends.length === 0 && loading ? (
-        <RowsSkeleton rows={2} label="Loading friends" />
-      ) : friends.length === 0 ? (
-        <p className="px-2 py-2 text-sm text-on-surface-variant">No friends online right now.</p>
-      ) : (
-        friends.map(f => <FriendRow key={f.user.username} friend={f} />)
-      )}
+      <Stack gap="none">
+        <Heading>Online friends</Heading>
+        {friends.length === 0 && loading ? (
+          <RowsSkeleton rows={2} label="Loading friends" />
+        ) : friends.length === 0 ? (
+          <Surface tone="plain" radius="none" pad="sm">
+            <p className="text-sm text-on-surface-variant">No friends online right now.</p>
+          </Surface>
+        ) : (
+          friends.map(f => <FriendRow key={f.user.username} friend={f} />)
+        )}
+      </Stack>
       <div className="flex flex-wrap gap-1">
         <Button
           onClick={() => {
@@ -631,7 +670,7 @@ function AccountFriendsSection({ max }: { max: number }) {
           Add friend
         </Button>
       </div>
-    </section>
+    </Stack>
   )
 }
 
@@ -677,8 +716,12 @@ export function FriendPreview({
 }) {
   if (!preview)
     return (
-      <div className="flex h-20 items-center rounded-2xl bg-surface-container px-4 text-sm text-on-surface-variant">
-        Loading <span className="streamer ml-1">@{name}</span>
+      <div className="flex h-20 items-center rounded-2xl bg-surface-container">
+        <Surface tone="plain" radius="none" pad="lg">
+          <p className="text-sm text-on-surface-variant">
+            Loading <span className="streamer">@{name}</span>
+          </p>
+        </Surface>
       </div>
     )
   const { profile, relation, hidden } = preview
@@ -690,24 +733,26 @@ export function FriendPreview({
   const statusLine = status && (
     <p
       role={result && !result.ok ? 'alert' : undefined}
-      className={`mt-1 text-xs ${result && !result.ok ? 'text-error' : 'text-primary'}`}
+      className={`text-xs ${result && !result.ok ? 'text-error' : 'text-primary'}`}
     >
       <span className="streamer">{status}</span>
     </p>
   )
   if (!profile && hidden)
     return (
-      <div data-preview={name} className="rounded-2xl bg-surface-container px-4 py-3">
+      <Surface data-preview={name} tone="base" pad="lg" gap="2xs">
         <p className="streamer truncate text-sm font-medium text-on-surface">@{name}</p>
-        <p className="mt-1 text-xs text-on-surface-variant">{HIDDEN_PREVIEW}</p>
+        <p className="text-xs text-on-surface-variant">{HIDDEN_PREVIEW}</p>
         {statusLine}
-      </div>
+      </Surface>
     )
   if (!profile)
     return (
-      <div className="flex items-center rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant">
-        Couldn&apos;t load <span className="streamer ml-1">@{name}</span>
-      </div>
+      <Surface tone="base" pad="lg">
+        <p className="text-sm text-on-surface-variant">
+          Couldn&apos;t load <span className="streamer">@{name}</span>
+        </p>
+      </Surface>
     )
   return (
     <div data-preview={name} className="overflow-hidden rounded-2xl bg-surface-container">
@@ -719,15 +764,15 @@ export function FriendPreview({
         <span className="-mt-4 rounded-full border-4 border-surface-container">
           <Avatar user={profile.user} size={40} />
         </span>
-        <div className="min-w-0 flex-1 pt-1">
+        <Surface tone="plain" radius="none" pad="2xs" gap="2xs" place="flex-1">
           <Name user={profile.user} />
           {profile.bio && (
-            <p className="mt-1 line-clamp-2 text-xs break-words text-on-surface-variant">
+            <p className="line-clamp-2 text-xs break-words text-on-surface-variant">
               {profile.bio}
             </p>
           )}
           {statusLine}
-        </div>
+        </Surface>
       </div>
     </div>
   )
@@ -769,29 +814,35 @@ function AddFriends({ dialog }: { dialog: Extract<ActiveDialog, { kind: 'add_fri
       : 'Send friend request'
   return (
     <Dialog title={single ? 'Add friend' : 'Add friends'} onClose={closeDialog}>
-      <div className="flex max-h-[50vh] flex-col gap-2 overflow-y-auto">
-        {names.map(n => (
-          <FriendPreview key={n} name={n} preview={previews[n]} result={results?.[n]} />
-        ))}
-      </div>
-      {ready && !targets.length && !results && (
-        <FieldError message="There is no one to send a request to." />
-      )}
-      <div className="mt-6 flex justify-end gap-2">
-        <Button size="md" onClick={closeDialog}>
-          {results ? 'Done' : 'Cancel'}
-        </Button>
-        {!results && (
-          <Button
-            variant="filled"
-            size="md"
-            onClick={() => void send()}
-            disabled={!ready || !targets.length || busy}
-          >
-            {confirm}
+      <Stack gap="xl">
+        <Stack gap="none">
+          <div className="max-h-[50vh] overflow-y-auto">
+            <Stack gap="sm">
+              {names.map(n => (
+                <FriendPreview key={n} name={n} preview={previews[n]} result={results?.[n]} />
+              ))}
+            </Stack>
+          </div>
+          {ready && !targets.length && !results && (
+            <FieldError message="There is no one to send a request to." />
+          )}
+        </Stack>
+        <Row gap="sm" justify="end">
+          <Button size="md" onClick={closeDialog}>
+            {results ? 'Done' : 'Cancel'}
           </Button>
-        )}
-      </div>
+          {!results && (
+            <Button
+              variant="filled"
+              size="md"
+              onClick={() => void send()}
+              disabled={!ready || !targets.length || busy}
+            >
+              {confirm}
+            </Button>
+          )}
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
@@ -853,7 +904,7 @@ export function Choice<T extends string>({
   onChange: (v: T) => void
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       <p className="text-sm text-on-surface">{label}</p>
       <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
         {options.map(o => (
@@ -868,7 +919,7 @@ export function Choice<T extends string>({
           </Chip>
         ))}
       </div>
-    </div>
+    </Stack>
   )
 }
 
@@ -882,7 +933,7 @@ function ProfileChoiceRow() {
   const line = profileChoiceLine(settings)
   if (!settings.profile_visibility) return null
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       {options.length > 0 ? (
         <Choice
           label={label}
@@ -897,7 +948,7 @@ function ProfileChoiceRow() {
       <p className="text-xs text-on-surface-variant">
         Your name still shows next to your messages.
       </p>
-    </div>
+    </Stack>
   )
 }
 
@@ -911,7 +962,7 @@ export function PrivacyChoices() {
     void loadPrivacy()
   }, [loadPrivacy])
   return (
-    <div className="flex flex-col gap-4">
+    <Stack gap="lg">
       <Choice
         label="Who can DM you"
         value={privacy?.dms}
@@ -929,6 +980,6 @@ export function PrivacyChoices() {
         only DM your friends.
       </p>
       <ProfileChoiceRow />
-    </div>
+    </Stack>
   )
 }

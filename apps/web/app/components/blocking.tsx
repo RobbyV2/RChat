@@ -9,6 +9,7 @@ import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { DateDivider } from './date_divider'
 import { Button, LinkButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { fieldCls, FieldError, Masked, Sentinel } from './ui'
 
 // Collapsed runs of blocked users' messages. A run opens with Show, or by itself when a jump
@@ -56,13 +57,17 @@ export function BlockedRow({
   return (
     <div data-blocked>
       {divider}
-      <div className="flex items-center gap-2 px-4 py-1 text-sm text-on-surface-variant">
-        <UserX size={14} aria-hidden className="shrink-0" />
-        <span>{blockedLabel(count)}</span>
-        <span aria-hidden>·</span>
-        <LinkButton onClick={onToggle} aria-expanded={open}>
-          {open ? 'Hide' : 'Show'}
-        </LinkButton>
+      <div className="text-sm text-on-surface-variant">
+        <Surface tone="plain" radius="none" pad="lg" inset="bar">
+          <Row gap="sm">
+            <UserX size={14} aria-hidden className="shrink-0" />
+            <span>{blockedLabel(count)}</span>
+            <span aria-hidden>·</span>
+            <LinkButton onClick={onToggle} aria-expanded={open}>
+              {open ? 'Hide' : 'Show'}
+            </LinkButton>
+          </Row>
+        </Surface>
       </div>
     </div>
   )
@@ -71,21 +76,20 @@ export function BlockedRow({
 // A quoted message (forward or message link) by someone you blocked, until Show opens it.
 export function BlockedQuote({ onShow }: { onShow: () => void }) {
   return (
-    <div
-      data-blocked-quote
-      className="flex min-w-0 items-center gap-1.5 text-sm text-on-surface-variant"
-    >
-      <UserX size={14} aria-hidden className="shrink-0" />
-      <span className="truncate italic">Blocked message</span>
-      <span aria-hidden>·</span>
-      <LinkButton
-        onClick={e => {
-          e.stopPropagation()
-          onShow()
-        }}
-      >
-        Show
-      </LinkButton>
+    <div data-blocked-quote className="min-w-0 text-sm text-on-surface-variant">
+      <Row gap="xs">
+        <UserX size={14} aria-hidden className="shrink-0" />
+        <span className="truncate italic">Blocked message</span>
+        <span aria-hidden>·</span>
+        <LinkButton
+          onClick={e => {
+            e.stopPropagation()
+            onShow()
+          }}
+        >
+          Show
+        </LinkButton>
+      </Row>
     </div>
   )
 }
@@ -204,7 +208,7 @@ function BlockByName() {
         void submit()
       }}
     >
-      <div className="flex gap-2">
+      <Row gap="sm" align="stretch">
         <input
           value={name}
           onChange={e => {
@@ -222,7 +226,7 @@ function BlockByName() {
         <Button type="submit" variant="filled" size="md" disabled={!name.trim() || busy}>
           Block
         </Button>
-      </div>
+      </Row>
       <FieldError message={error} />
     </form>
   )
@@ -240,7 +244,7 @@ export function BlockedUsersSection() {
   const more = useCallback(() => void loadBlockList(q), [q, loadBlockList])
   const empty = !page.loading && !page.hasMore && page.list.length === 0
   return (
-    <div className="flex flex-col gap-3">
+    <Stack gap="md">
       <p className="text-sm text-on-surface-variant">
         Blocked users can&apos;t message, call or ping you, and their messages are hidden. They are
         not told.
@@ -253,34 +257,33 @@ export function BlockedUsersSection() {
         aria-label="Search blocked users"
         className={fieldCls}
       />
-      <div className="space-y-1">
+      <Stack gap="2xs">
         {page.list.map(({ user }) => (
-          <div
-            key={user.username}
-            className="flex items-center gap-2 rounded-xl bg-surface-container px-2 py-1.5"
-          >
-            <UserAvatar
-              username={user.username}
-              avatarKind={user.avatar_kind}
-              avatarColor={user.avatar_color}
-              size={28}
-            />
-            <span className="min-w-0 flex-1 truncate text-sm">
-              <span className="streamer">
-                <Masked text={user.display_name} by={user.username} />
-              </span>{' '}
-              <span className="streamer text-on-surface-variant">@{user.username}</span>
-            </span>
-            <Button onClick={() => void unblockUser(user.username)}>Unblock</Button>
-          </div>
+          <Surface key={user.username} tone="base" radius="lg" pad="sm">
+            <Row gap="sm">
+              <UserAvatar
+                username={user.username}
+                avatarKind={user.avatar_kind}
+                avatarColor={user.avatar_color}
+                size={28}
+              />
+              <span className="min-w-0 flex-1 truncate text-sm">
+                <span className="streamer">
+                  <Masked text={user.display_name} by={user.username} />
+                </span>{' '}
+                <span className="streamer text-on-surface-variant">@{user.username}</span>
+              </span>
+              <Button onClick={() => void unblockUser(user.username)}>Unblock</Button>
+            </Row>
+          </Surface>
         ))}
         {page.hasMore && <Sentinel key={page.list.length} onVisible={more} />}
         {empty && (
-          <p className="py-2 text-sm text-on-surface-variant">
+          <p className="text-sm text-on-surface-variant">
             {q.trim() ? 'No blocked users match.' : 'You have not blocked anyone.'}
           </p>
         )}
-      </div>
-    </div>
+      </Stack>
+    </Stack>
   )
 }
