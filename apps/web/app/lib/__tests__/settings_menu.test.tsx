@@ -234,7 +234,7 @@ describe('the settings dialog', () => {
   test('is a large dialog that sits above full pages', () => {
     const html = signedIn({ kind: 'settings' })
     expect(html).toContain('md:w-[min(94vw,1120px)]')
-    expect(/^<div class="[^"]*\bz-50\b/.test(html)).toBe(true)
+    expect(/^<div class="[^"]*\bz-top\b/.test(html)).toBe(true)
   })
 
   test('the nav groups its entries under headings', () => {

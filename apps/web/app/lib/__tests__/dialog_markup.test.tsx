@@ -36,12 +36,12 @@ describe('Dialog', () => {
     expect(html).toContain('>Demo</h2>')
     expect(html).toContain('title="Close" aria-label="Close"')
     expect(html).toContain('max-w-lg')
-    expect(backdropOf(html)).toContain('z-40')
+    expect(backdropOf(html)).toContain('z-page')
   })
 
   test('compact and full keep their boxes', () => {
     expect(render({ compact: true })).toContain('max-w-sm rounded-3xl')
-    expect(backdropOf(render({ compact: true }))).toContain('z-50')
+    expect(backdropOf(render({ compact: true }))).toContain('z-top')
     expect(render({ full: true })).toContain('sm:max-w-lg')
     expect(render({ full: true })).toContain('sticky -top-6')
   })

@@ -91,7 +91,7 @@ export const dialogBlurs = (
   motionPlays: boolean
 ) => motionPlays && (asked ?? largeDialog(size))
 
-const STICKY = 'sticky -top-6 z-10 -mx-6 -mt-6 mb-4 bg-surface-container-high px-6 py-4'
+const STICKY = 'sticky -top-6 z-raised -mx-6 -mt-6 mb-4 bg-surface-container-high px-6 py-4'
 const FILL_PAD = 'pb-[max(1.5rem,env(safe-area-inset-bottom))]'
 
 export const dialogLayout = ({
@@ -104,7 +104,7 @@ export const dialogLayout = ({
 }: DialogFit): DialogLayout => {
   const asked = size ?? (compact ? 'sm' : 'md')
   const bare = chrome === 'bare'
-  const z = raised || compact ? 'z-50' : 'z-40'
+  const z = raised || compact ? 'z-top' : 'z-page'
   const base = `fixed inset-x-0 top-app ${z} flex h-app items-center justify-center bg-scrim/60`
   const veil = (at: string) =>
     blur ? { blur: `pointer-events-none fixed inset-x-0 top-app ${z} h-app ${at}` } : {}

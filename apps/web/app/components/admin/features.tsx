@@ -91,7 +91,6 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
             options={options}
             onChange={set}
             disabled={pinned}
-            touch
           />
           <p className="text-xs text-on-surface-variant">
             {options.find(o => o.value === value)?.line}

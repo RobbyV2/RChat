@@ -329,7 +329,6 @@ function SuggestionsControl() {
         value={shown.mode}
         options={MODES}
         onChange={mode => setDraft({ ...shown, mode })}
-        touch
       />
       {shown.list.length === 0 && <p className={lineCls}>No instances.</p>}
       {shown.list.map((s, i) => (

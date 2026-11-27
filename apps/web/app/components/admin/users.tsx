@@ -320,13 +320,7 @@ export function UsersSection() {
           className={`${fieldCls} streamer`}
         />
       </div>
-      <Chips
-        label="Show accounts"
-        value={filter}
-        options={ACCOUNT_FILTERS}
-        onChange={setFilter}
-        touch
-      />
+      <Chips label="Show accounts" value={filter} options={ACCOUNT_FILTERS} onChange={setFilter} />
       <div className="space-y-1">
         {list.length === 0 && !hasMore && !all && (
           <p className="text-sm text-on-surface-variant">

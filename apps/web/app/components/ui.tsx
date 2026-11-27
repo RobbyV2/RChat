@@ -27,21 +27,17 @@ import { useMask, useStore } from '../lib/store'
 import { useChatSource } from './chat_source'
 import { REVEAL_EVENT } from '../lib/masked_reveal'
 import { ThemeToggle } from './status_clock'
+import { Chip, IconButton } from './controls'
+import { buttonLook, iconButtonLook, sectionHeadingLook } from '../lib/controls'
 
 export const fieldCls =
-  'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm'
-export const filledBtn =
-  'rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90 disabled:opacity-40'
-export const filledDangerBtn =
-  'rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error hover:opacity-90'
-export const textBtn =
-  'rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest'
-export const dangerBtn =
-  'rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest disabled:opacity-40'
-export const iconBtn =
-  'rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-export const sectionCls =
-  'pb-2 pt-5 text-xs font-medium uppercase tracking-wide text-on-surface-variant first:pt-0'
+  'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm pointer-coarse:min-h-11'
+export const filledBtn = buttonLook('filled', 'md')
+export const filledDangerBtn = buttonLook('filled-danger', 'md')
+export const textBtn = buttonLook('text', 'sm')
+export const dangerBtn = buttonLook('danger', 'sm')
+export const iconBtn = `inline-flex ${iconButtonLook('plain', 'lg')}`
+export const sectionCls = sectionHeadingLook
 
 // One choice of a few, as chips.
 export function Chips<T extends string | number>({
@@ -50,36 +46,25 @@ export function Chips<T extends string | number>({
   options,
   onChange,
   disabled,
-  touch = false,
 }: {
   label: string
   value: T
   options: readonly { value: T; label: string }[]
   onChange: (v: T) => void
   disabled?: boolean
-  // 44 px high on touch screens.
-  touch?: boolean
 }) {
   return (
     <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
       {options.map(o => (
-        <button
+        <Chip
           key={String(o.value)}
-          type="button"
-          role="radio"
-          aria-checked={value === o.value}
+          radio
+          on={value === o.value}
           disabled={disabled}
           onClick={() => onChange(o.value)}
-          className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm disabled:cursor-default disabled:opacity-50 ${
-            touch ? 'min-h-11 md:min-h-0' : ''
-          } ${
-            value === o.value
-              ? 'border-transparent bg-secondary-container text-on-secondary-container'
-              : 'border-outline text-on-surface-variant hover:bg-surface-container-highest'
-          }`}
         >
           {o.label}
-        </button>
+        </Chip>
       ))}
     </div>
   )
@@ -183,17 +168,7 @@ export function CloseButton({
   onClick: () => void
   compact?: boolean
 }) {
-  return (
-    <button
-      type="button"
-      title="Close"
-      aria-label="Close"
-      onClick={onClick}
-      className={`rounded-full ${compact ? 'p-1' : 'p-1.5'} text-on-surface-variant hover:bg-surface-container-highest`}
-    >
-      <X size={18} />
-    </button>
-  )
+  return <IconButton icon={X} label="Close" size={compact ? 'sm' : 'md'} onClick={onClick} />
 }
 
 // The drag handle at the top of a bottom sheet.
@@ -222,13 +197,7 @@ export function PanelHeader({
       <Icon size={18} className="shrink-0 text-on-surface-variant" />
       <span className="min-w-0 truncate font-medium">{title}</span>
       {actor}
-      <button
-        title={closeTitle}
-        onClick={onClose}
-        className="ml-auto shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high"
-      >
-        <X size={18} />
-      </button>
+      <IconButton icon={X} label={closeTitle} onClick={onClose} place="ml-auto" />
     </header>
   )
 }
@@ -340,21 +309,12 @@ export function LinkPage({
 }) {
   const authed = useStore(s => s.me !== null || s.guest)
   return (
-    <div className="invite-backdrop fixed inset-x-0 top-app z-40 flex h-app flex-col overflow-y-auto px-safe-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+    <div className="invite-backdrop fixed inset-x-0 top-app z-page flex h-app flex-col overflow-y-auto px-safe-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
       <header className="flex shrink-0 items-center justify-between pt-3 pb-2">
         <img src="/rchat_logo.png" alt="RChat" className="h-9 w-auto" />
         <div className="flex items-center gap-1">
           <ThemeToggle />
-          {authed && (
-            <button
-              title={closeTitle}
-              aria-label={closeTitle}
-              onClick={onClose}
-              className={iconBtn}
-            >
-              <X size={20} />
-            </button>
-          )}
+          {authed && <IconButton icon={X} label={closeTitle} size="lg" onClick={onClose} />}
         </div>
       </header>
       <main className="my-auto flex w-full justify-center py-6">{children}</main>

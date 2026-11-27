@@ -166,7 +166,6 @@ export function AboutEditor({
               options={ICON_KINDS.map(k => ({ value: k.kind, label: k.label }))}
               onChange={k => edit(() => setIcon(k))}
               disabled={!editable}
-              touch
             />
           </div>
         </div>

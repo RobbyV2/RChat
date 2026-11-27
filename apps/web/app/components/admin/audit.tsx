@@ -55,7 +55,7 @@ export function AuditSection() {
   const auto = autoLoads(filtered, quietPages(pages ?? [], kind, person))
   return (
     <div className="space-y-2">
-      <Chips label="Kind" value={kind} options={AUDIT_KINDS} onChange={setKind} touch />
+      <Chips label="Kind" value={kind} options={AUDIT_KINDS} onChange={setKind} />
       <div className="flex">
         <input
           value={person}

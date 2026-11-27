@@ -35,6 +35,7 @@
   --color-inverse-on-surface: #322f35;
   --color-inverse-primary: #6750a4;
   --color-scrim: #000000;
+  --color-on-scrim: #ffffff;
   --color-spoiler: #34313a;
   --color-status-green: #7dd97b;
   --color-status-yellow: #ffd54f;
@@ -52,6 +53,20 @@
   --color-code-orange: #ffb59a;
   --font-sans: Roboto, 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', var(--font-sans);
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: calc(1 / 0.6875);
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: calc(0.875 / 0.625);
+  --radius-group: 1.25rem;
+  --radius-hero: 1.75rem;
+  --z-index-raised: 10;
+  --z-index-float: 20;
+  --z-index-popover: 30;
+  --z-index-page: 40;
+  --z-index-top: 50;
+  --z-index-banner: 60;
+  --z-index-drag: 70;
+  --z-index-chrome: 80;
   --shadow-elevation-1: 0 1px 3px 1px rgb(0 0 0 / 0.15), 0 1px 2px rgb(0 0 0 / 0.3);
   --shadow-elevation-2: 0 2px 6px 2px rgb(0 0 0 / 0.15), 0 1px 2px rgb(0 0 0 / 0.3);
   --shadow-elevation-3: 0 4px 8px 3px rgb(0 0 0 / 0.15), 0 1px 3px rgb(0 0 0 / 0.3);
@@ -483,7 +498,7 @@ body {
     content: '';
     position: fixed;
     inset: 0 0 auto;
-    z-index: 80;
+    z-index: var(--z-index-chrome);
     height: env(safe-area-inset-top, 0px);
     background: var(--color-inverse-surface);
     pointer-events: none;
@@ -521,6 +536,23 @@ body {
 }
 
 @custom-variant keyboard (&:where([data-keyboard], [data-keyboard] *));
+@custom-variant pressed (&[aria-pressed='true']);
+@custom-variant expanded (&[aria-expanded='true'][aria-haspopup]);
+@custom-variant current (&:is([aria-current='true'], [aria-current='page']));
+@custom-variant selected (&[aria-selected='true']);
+@custom-variant hover-idle {
+  @media (hover: hover) {
+    &:hover:not(
+        :disabled,
+        [aria-pressed='true'],
+        [aria-current='true'],
+        [aria-current='page'],
+        [aria-selected='true']
+      ) {
+      @slot;
+    }
+  }
+}
 
 [data-pressed] {
   -webkit-touch-callout: none;
@@ -565,7 +597,7 @@ body {
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 70;
+  z-index: var(--z-index-drag);
   pointer-events: none;
   background: var(--color-surface-container-highest);
   box-shadow:
@@ -689,7 +721,7 @@ body {
   position: fixed;
   top: -1.5px;
   left: 0;
-  z-index: 71;
+  z-index: calc(var(--z-index-drag) + 1);
   height: 3px;
   border-radius: 9999px;
   pointer-events: none;

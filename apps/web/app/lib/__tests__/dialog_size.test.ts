@@ -25,7 +25,7 @@ describe('named sizes', () => {
   test('without a size the dialog is the medium card', () => {
     const fit = dialogLayout({})
     has(fit.panel, 'max-w-lg', 'rounded-2xl', 'max-h-[min(85vh,100%)]', 'p-6', 'overflow-y-auto')
-    has(fit.backdrop, 'z-40', 'px-safe-4', 'py-4', 'bg-scrim/60')
+    has(fit.backdrop, 'z-page', 'px-safe-4', 'py-4', 'bg-scrim/60')
     has(fit.header, 'mb-4')
     lacks(fit.header, 'sticky')
     expect(fit.style).toBeUndefined()
@@ -35,9 +35,9 @@ describe('named sizes', () => {
   test('compact is the small card and sits above other dialogs', () => {
     const fit = dialogLayout({ compact: true })
     has(fit.panel, 'max-w-sm', 'rounded-3xl', 'max-h-full')
-    has(fit.backdrop, 'z-50')
+    has(fit.backdrop, 'z-top')
     expect(dialogLayout({ size: 'sm' }).panel).toBe(fit.panel)
-    has(dialogLayout({ size: 'sm' }).backdrop, 'z-40')
+    has(dialogLayout({ size: 'sm' }).backdrop, 'z-page')
   })
 
   test('lg and xl are wider cards', () => {
@@ -78,7 +78,7 @@ describe('named sizes', () => {
     has(dialogLayout({ size: 'settings', full: true }).panel, 'md:w-[min(94vw,1120px)]')
     const fit = dialogLayout({ size: 'xl', compact: true })
     has(fit.panel, 'max-w-4xl')
-    has(fit.backdrop, 'z-50')
+    has(fit.backdrop, 'z-top')
   })
 })
 
@@ -120,8 +120,8 @@ describe('chrome', () => {
   })
 
   test('raised sits above other dialogs and full pages', () => {
-    has(dialogLayout({ size: 'settings', raised: true }).backdrop, 'z-50')
-    has(dialogLayout({ size: 'settings' }).backdrop, 'z-40')
+    has(dialogLayout({ size: 'settings', raised: true }).backdrop, 'z-top')
+    has(dialogLayout({ size: 'settings' }).backdrop, 'z-page')
   })
 })
 

@@ -95,7 +95,7 @@ export function ConfigSection() {
         can&apos;t be changed here. {summaryLine(config)}.
       </p>
       <div className="flex flex-wrap items-center gap-2 pb-4">
-        <Chips label="Show" value={filter} options={CONFIG_FILTERS} onChange={setFilter} touch />
+        <Chips label="Show" value={filter} options={CONFIG_FILTERS} onChange={setFilter} />
         <span className="flex-1" />
         <button
           disabled={all.length === 0}

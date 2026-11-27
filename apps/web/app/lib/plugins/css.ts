@@ -29,6 +29,9 @@ export const APP_VARIABLES = [
   '--folder-',
   '--notice-',
   '--motion-',
+  '--text-',
+  '--radius-',
+  '--z-',
 ] as const
 
 // Font families of the app's own and Tailwind's stacks, and generic names, in lower case. A
