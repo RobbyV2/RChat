@@ -179,12 +179,21 @@ export const channelOf = (s: Summary, id: string) => {
   return c && c.gone !== true ? c : undefined
 }
 
-export const systemOf = (s: Summary, lim: Pick<DisplayLimits, 'name' | 'topic'>): SystemContent => {
+type DisplayNames = Pick<DisplayLimits, 'name' | 'topic'>
+
+// The text channel the server picked for its join and leave lines; null while none is picked
+// (or the picked one is gone) and they go to the first text channel.
+export const systemPick = (s: Summary, lim: DisplayNames): string | null => {
   const sys = s.settings?.system as Partial<SystemContent> | undefined
-  const texts = channelsOf(s, lim).filter(c => c.kind === 'text')
-  const pick = typeof sys?.ch === 'string' ? texts.find(c => c.id === sys.ch) : undefined
+  if (typeof sys?.ch !== 'string') return null
+  return channelsOf(s, lim).some(c => c.kind === 'text' && c.id === sys.ch) ? sys.ch : null
+}
+
+export const systemOf = (s: Summary, lim: DisplayNames): SystemContent => {
+  const sys = s.settings?.system as Partial<SystemContent> | undefined
+  const first = () => channelsOf(s, lim).find(c => c.kind === 'text')?.id ?? null
   return {
-    ch: (pick ?? texts[0])?.id ?? null,
+    ch: systemPick(s, lim) ?? first(),
     join: typeof sys?.join === 'boolean' ? sys.join : true,
     leave: typeof sys?.leave === 'boolean' ? sys.leave : true,
   }

@@ -105,6 +105,7 @@ export function createServersPart(
       profile: r.profile ?? {},
       profileLock: { locked: false },
       system: { ch: null, join: true, leave: true },
+      systemPick: null,
       channels: sum && me === 'join' ? channelViews(sum, ik, me, state.limits.display) : [],
       categories: sum && me === 'join' ? categoryViews(sum, state.limits.display) : [],
       roles: [],

@@ -48,6 +48,8 @@ import { MemberAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
 import { SettingSwitch } from '../settings_fields'
+import { SystemMessagesSection } from '../system_messages'
+import { useP2pRoom } from '../../lib/place/react'
 import { ServerProfilesMode } from './p2p_server_profile'
 import { ChannelAccess, MemberCard, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
@@ -421,53 +423,9 @@ function Channels({ v }: { v: ServerView }) {
   )
 }
 
-function System({ v }: { v: ServerView }) {
-  const identity = useP2pApp()!
-  const { p2pServer } = identity
-
-  const edit = can(v, P.ManageServer)
-  const texts = v.channels.filter(c => c.kind === 'text')
-  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
-  const set = (patch: Partial<ServerView['system']>) =>
-    void p2pServer.setSystem(v.id, { ...v.system, ...patch })
-  return (
-    <Stack gap="lg">
-      <Stack as="label" gap="2xs">
-        <span className="text-sm">Channel for join and leave messages</span>
-        <select
-          value={v.system.ch ?? ''}
-          disabled={!edit}
-          onChange={e => set({ ch: e.target.value || null })}
-          className={fieldCls}
-        >
-          {texts.map(c => (
-            <option key={c.id} value={c.id}>
-              #{mask(c.name)}
-            </option>
-          ))}
-        </select>
-      </Stack>
-      <Row as="label" gap="md">
-        <input
-          type="checkbox"
-          checked={v.system.join}
-          disabled={!edit}
-          onChange={e => set({ join: e.target.checked })}
-        />
-        <span className="text-sm">Show when someone joins</span>
-      </Row>
-      <Row as="label" gap="md">
-        <input
-          type="checkbox"
-          checked={v.system.leave}
-          disabled={!edit}
-          onChange={e => set({ leave: e.target.checked })}
-        />
-        <span className="text-sm">Show when someone leaves</span>
-      </Row>
-      <Note>Every member&apos;s device writes these lines itself from who joins and leaves.</Note>
-    </Stack>
-  )
+function System({ room }: { room: string }) {
+  const place = useP2pRoom(room)
+  return place && <SystemMessagesSection place={place} />
 }
 
 function History({ v }: { v: ServerView }) {
@@ -881,7 +839,7 @@ function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: ServerTab
       {tab === 'roles' && <RolesTab v={v} />}
       {tab === 'channels' && <Channels v={v} />}
       {tab === 'invites' && <CodeList room={room} version={0} />}
-      {tab === 'system' && <System v={v} />}
+      {tab === 'system' && <System room={room} />}
       {tab === 'history' && <History v={v} />}
       {tab === 'members' && <Members v={v} />}
       {tab === 'bans' && <Bans v={v} />}

@@ -882,6 +882,82 @@ describe('storage', () => {
 })
 
 describe('checks before storage', () => {
+  test('the join and leave channel changes only for owners and Manage Server holders', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create('Lines')
+    const first = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, c)
+    const made = async (name: string) => {
+      await a.servers.addChannel(room, name)
+      return a.servers.view(room)!.channels.find(x => x.name === name)!.id
+    }
+    const news = await made('news')
+    const hall = await made('hall')
+    const seenBy = (m: typeof a) => m.servers.view(room)?.system.ch
+    const agreed = (ch: string) =>
+      pump(clock, () => [a, b, c].every(m => seenBy(m) === ch), `everyone sends lines to ${ch}`)
+    await pump(clock, () => c.servers.view(room)?.channels.length === 3, 'carol has the channels')
+    expect(seenBy(a)).toBe(first)
+
+    // The owner.
+    await a.servers.setSystem(room, { ch: news, join: true, leave: true })
+    await agreed(news)
+    expect(a.servers.view(room)?.systemPick).toBe(news)
+
+    // A member whose role has Manage Server; every other permission together does not do.
+    const lead = await a.servers.createRole(room, {
+      name: 'Lead',
+      color: null,
+      bits: P.ManageServer,
+    })
+    const crew = await a.servers.createRole(room, {
+      name: 'Crew',
+      color: null,
+      bits: P.ManageChannels | P.ManageRoles | P.ManageMessages | P.Kick | P.Ban | P.Invite,
+    })
+    await a.servers.assignRole(room, b.node.ik, lead)
+    await a.servers.assignRole(room, c.node.ik, crew)
+    const holds = (m: typeof a, bit: number) => ((m.servers.view(room)?.perms ?? 0) & bit) !== 0
+    await pump(
+      clock,
+      () => holds(b, P.ManageServer) && holds(c, P.ManageChannels),
+      'the roles arrive'
+    )
+    await b.servers.setSystem(room, { ch: hall, join: true, leave: false })
+    await agreed(hall)
+    expect(a.servers.view(room)?.system).toEqual({ ch: hall, join: true, leave: false })
+
+    // Carol's own app refuses, and a write she signs anyway is refused by the rules where it
+    // arrives: not stored, no strike, the channel stays.
+    expect(holds(c, P.ManageServer)).toBe(false)
+    expect(
+      await failure(c.servers.setSystem(room, { ch: news, join: true, leave: true }))
+    ).not.toBe('ok')
+    const forced = await signed(c, room, 'settings', {
+      system: { ch: news, join: false, leave: false },
+    })
+    for (const m of [a, b])
+      expect(await deliver(m, room, forced.wire, clock.now())).toBe('rejected')
+    await clock.advance(5_000)
+    for (const m of [a, b, c]) {
+      expect(m.servers.view(room)?.system).toEqual({ ch: hall, join: true, leave: false })
+      for (const l of m.servers.sync.linksOf(room)) expect(l.session.strikes).toBe(0)
+    }
+
+    // The permission taken away again takes the write with it.
+    await a.servers.revokeRole(room, b.node.ik, lead)
+    await pump(clock, () => !holds(b, P.ManageServer), 'bob loses the role')
+    expect(
+      await failure(b.servers.setSystem(room, { ch: first, join: true, leave: true }))
+    ).not.toBe('ok')
+    expect(seenBy(a)).toBe(hall)
+  }, 60_000)
+
   test('malformed events cost a strike; refusals by the rules and missing parents do not', async () => {
     const clock = new ManualClock()
     const hub = new Hub()

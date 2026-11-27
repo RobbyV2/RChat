@@ -107,7 +107,8 @@ import { ColorField } from './color_field'
 import { AboutEditor } from './server_about'
 import { hostedAbout, hostedAboutPatch } from '../lib/server_about'
 import { ServerHeader } from './server_header'
-import { ServerSystemMessages } from './system_messages'
+import { SystemMessagesSection } from './system_messages'
+import { useHostedServer } from '../lib/place/react'
 import { ProfilesModeField } from './server_profile_dialog'
 import { NameWithUsername } from './display_name'
 import { useShownMembers } from './shown_user'
@@ -146,6 +147,11 @@ import {
   serverSettingsSections,
   type ServerSettingsSection,
 } from '../lib/server_settings_sections'
+
+function HostedSystemMessages({ server }: { server: string }) {
+  const place = useHostedServer(server)
+  return place && <SystemMessagesSection place={place} />
+}
 
 function LockedNote() {
   return (
@@ -1567,7 +1573,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
       </>
     ),
     widgets: () => <WidgetSettings server={server} channels={detail.channels} />,
-    messages: () => <ServerSystemMessages server={server} />,
+    messages: () => <HostedSystemMessages server={server} />,
     uploads: () => <ServerUploadExpiry server={server} />,
     profiles: () => <ServerProfilesSetting server={server} />,
     access: () =>

@@ -319,6 +319,8 @@ export interface ServerView {
   profile: RoomExtras
   profileLock: LockState
   system: SystemContent
+  // The channel picked for join and leave lines; null: the first text channel.
+  systemPick: string | null
   channels: ChannelView[]
   categories: CategoryView[]
   roles: RoleView[]

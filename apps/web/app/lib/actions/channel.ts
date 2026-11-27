@@ -10,6 +10,8 @@ import { myPerms } from '../store'
 import { Perm, hasPerm } from '../types'
 import { signedIn } from './global'
 import { notifySettings } from './notify'
+import { HostedServer } from '../place/place'
+import { systemChannelAction } from './system_channel'
 import type { Action, ActionCtx } from './types'
 
 const copy = (text: string) => void sharing().copyText(text)
@@ -82,6 +84,16 @@ export const channelActions: Action[] = [
           .setChannelTextOnly(at.server, at.channel.id, !at.channel.text_only)
     },
   },
+  systemChannelAction('channel_system_here', 'channel', ['channel'], 895, ctx => {
+    const at = channelOf(ctx)
+    return (
+      at && {
+        place: HostedServer.open(ctx.acct, at.server),
+        channel: at.channel.id,
+        text: at.channel.kind === 'text',
+      }
+    )
+  }),
   {
     id: 'channel_copy_id',
     title: 'Copy Channel ID',

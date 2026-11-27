@@ -40,6 +40,7 @@ import {
   rolesOf,
   searchBits,
   systemOf,
+  systemPick,
   topRoleOf,
   type Membership,
 } from '../state'
@@ -219,6 +220,7 @@ export function serverView(
     profile: r.profile ?? {},
     profileLock: roomLock(memberOf(s, env.me)?.reset, Math.floor(clock / 1000)),
     system: systemOf(s, env.lim.display),
+    systemPick: systemPick(s, env.lim.display),
     channels: readOnly ? [] : channelViews(s, env.me, me, env.lim.display),
     categories: readOnly ? [] : categoryViews(s, env.lim.display),
     roles: readOnly

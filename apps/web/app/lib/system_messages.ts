@@ -1,5 +1,5 @@
 import { nameWithUsername } from './display_name'
-import type { Channel, Message } from './types'
+import type { Message } from './types'
 
 export const JOIN_LINES = [
   '{name} joined the party.',
@@ -36,18 +36,30 @@ export const systemParts = (m: SystemRow): [string, string] => {
 export const systemText = (m: SystemRow & Pick<Message, 'author'>) =>
   template(m).replace('{name}', () => nameWithUsername(m.author))
 
+export const SYSTEM_CHANNEL_LABEL = 'Channel for join and leave messages'
+export const SYSTEM_DEFAULT_NOTE = 'The default channel is the first text channel.'
+export const SYSTEM_JOIN_LABEL = 'Show a message when someone joins'
+export const SYSTEM_LEAVE_LABEL = 'Show a message when someone leaves'
+export const SYSTEM_HERE_TITLE = 'Send join and leave messages here'
+export const SYSTEM_HERE_DONE = 'Join and leave messages go here now'
+
 export interface SystemChoice {
   value: string
   label: string
+  // The channel's name, where the choice is one: shown after a "#".
+  channel?: string
 }
 
 // Text channels the server has, after "Default channel". A saved channel the viewer can't
 // see stays selectable so saving other fields doesn't move it.
-export const systemChoices = (channels: Channel[], saved: number | null): SystemChoice[] => {
+export const systemChoices = (
+  channels: readonly { id: number | string; name: string; kind?: string }[],
+  saved: number | string | null
+): SystemChoice[] => {
   const text = channels.filter(c => c.kind === 'text')
   const list: SystemChoice[] = [{ value: '', label: DEFAULT_CHANNEL }]
-  for (const c of text) list.push({ value: String(c.id), label: `#${c.name}` })
-  if (saved !== null && !text.some(c => c.id === saved))
+  for (const c of text) list.push({ value: String(c.id), label: `#${c.name}`, channel: c.name })
+  if (saved !== null && !text.some(c => String(c.id) === String(saved)))
     list.push({ value: String(saved), label: 'Hidden channel' })
   return list
 }

@@ -151,9 +151,9 @@ async fn load(db: &Db, server: &str) -> Result<SystemMessages, ApiError> {
 
 /// Get join and leave message settings
 ///
-/// Returns where join and leave messages go and whether each kind is on. Requires the Delete
-/// server permission. `channel_id` can be a channel you cannot see (set by another admin);
-/// clients show it as "Hidden channel". General rate-limit bucket.
+/// Returns where join and leave messages go and whether each kind is on. Requires the Manage
+/// server settings permission. `channel_id` can be a channel you cannot see (set by another
+/// admin); clients show it as "Hidden channel". General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/v1/servers/{name}/system_messages",
@@ -718,6 +718,103 @@ mod tests {
         assert_eq!(
             names(&rows(db, "club").await).last().map(String::as_str),
             Some("join erin #general")
+        );
+        done(state, path).await;
+    }
+
+    async fn give_role(db: &Db, username: &str, perms: i64) {
+        let role = id_of(
+            db,
+            &format!("INSERT INTO roles(server, name, color, perms) VALUES('club', 'r-{username}', '#ffffff', {perms}) RETURNING id"),
+        )
+        .await;
+        exec(
+            db,
+            &format!("INSERT INTO user_roles(server, username, role_id) VALUES('club', '{username}', {role})"),
+        )
+        .await;
+    }
+
+    async fn patch_as(
+        state: &AppState,
+        user: User,
+        body: serde_json::Value,
+    ) -> Result<SystemMessages, ApiError> {
+        update_system_messages(
+            State(state.clone()),
+            Authed(user),
+            Path("club".to_string()),
+            Json(serde_json::from_value(body).expect("patch")),
+        )
+        .await
+        .map(|Json(s)| s)
+    }
+
+    #[tokio::test]
+    async fn every_holder_of_manage_server_moves_the_channel_and_nobody_else_does() {
+        let World {
+            state,
+            path,
+            voice: _,
+            general,
+            random,
+        } = world("system_holders").await;
+        let db = &state.db;
+        let others = Perm::ManageChannels as i64
+            | Perm::ManageRoles as i64
+            | Perm::ManageInvites as i64
+            | Perm::Kick as i64;
+        add_member(db, "club", "bob", 0, 0, 1).await;
+        give_role(db, "bob", Perm::ManageServer as i64).await;
+        add_member(db, "club", "carol", 0, 0, 1).await;
+        give_role(db, "carol", Perm::ManageServer as i64 | others).await;
+        add_member(db, "club", "erin", 0, others, 1).await;
+        give_role(db, "erin", others).await;
+        add_member(db, "club", "frank", 0, 0, 1).await;
+
+        let mut at = general;
+        for (who, user) in [
+            ("the admin", mem_user("alice", false)),
+            ("a member with the permission", mem_user("dora", false)),
+            ("a member whose role has it", mem_user("bob", false)),
+            (
+                "a member whose role has it among others",
+                mem_user("carol", false),
+            ),
+            ("a site admin outside the server", mem_user("zed", true)),
+        ] {
+            at = if at == general { random } else { general };
+            let set = patch_as(&state, user.clone(), json!({ "channel_id": at }))
+                .await
+                .unwrap_or_else(|ApiError(code, msg, _)| panic!("{who}: {code} {msg}"));
+            assert_eq!(set.channel_id, Some(at), "{who}");
+            assert_eq!(
+                load(db, "club").await.expect("load").channel_id,
+                Some(at),
+                "{who}"
+            );
+        }
+
+        for who in ["erin", "frank"] {
+            for body in [
+                json!({ "channel_id": general }),
+                json!({ "channel_id": null }),
+                json!({ "join_messages": false }),
+            ] {
+                match patch(&state, who, body).await {
+                    Err(ApiError(code, _, _)) => assert_eq!(code, StatusCode::FORBIDDEN, "{who}"),
+                    Ok(_) => panic!("{who} changed the settings"),
+                }
+            }
+        }
+        match patch(&state, "stranger", json!({ "channel_id": general })).await {
+            Err(ApiError(code, _, _)) => assert_ne!(code, StatusCode::OK),
+            Ok(_) => panic!("someone outside the server changed the settings"),
+        }
+        let kept = load(db, "club").await.expect("load");
+        assert_eq!(
+            (kept.channel_id, kept.join_messages, kept.leave_messages),
+            (Some(at), true, true)
         );
         done(state, path).await;
     }

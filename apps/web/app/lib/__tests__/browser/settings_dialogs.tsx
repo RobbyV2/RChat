@@ -107,6 +107,7 @@ const view: ServerView = {
   profile: {},
   profileLock: { locked: false },
   system: { ch: 'general', join: true, leave: true },
+  systemPick: null,
   channels: [
     {
       id: 'general',

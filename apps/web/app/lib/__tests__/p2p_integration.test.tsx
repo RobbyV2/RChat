@@ -182,6 +182,7 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   profile: {},
   profileLock: { locked: false },
   system: { ch: CH, join: true, leave: true },
+  systemPick: null,
   channels: [
     {
       id: CH,

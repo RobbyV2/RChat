@@ -93,9 +93,15 @@ describe('system messages', () => {
     const channels = [channel(1, 'lounge', 'voice'), channel(2, 'general'), channel(3, 'random')]
     expect(systemChoices(channels, null)).toEqual([
       { value: '', label: DEFAULT_CHANNEL },
-      { value: '2', label: '#general' },
-      { value: '3', label: '#random' },
+      { value: '2', label: '#general', channel: 'general' },
+      { value: '3', label: '#random', channel: 'random' },
     ])
+    const rooms = [
+      { id: 'c1', name: 'general', kind: 'text' },
+      { id: 'c2', name: 'lounge', kind: 'voice' },
+    ]
+    expect(systemChoices(rooms, 'c1').map(c => c.value)).toEqual(['', 'c1'])
+    expect(systemChoices(rooms, 'c9').at(-1)).toEqual({ value: 'c9', label: 'Hidden channel' })
     expect(systemChoices(channels, 9).at(-1)).toEqual({ value: '9', label: 'Hidden channel' })
     expect(systemChoices(channels, 3)).toHaveLength(3)
     expect(choiceId('')).toBeNull()

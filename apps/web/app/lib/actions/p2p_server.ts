@@ -45,6 +45,7 @@ import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx, ArgChoice, Target } from './types'
 import { identityActions } from './identity'
 import { time } from '../platform/time'
+import { systemChannelAction } from './system_channel'
 export const peerServer = identityActions(identity => {
   const copy = (text: string) => void sharing().copyText(text)
 
@@ -512,6 +513,16 @@ export const peerServer = identityActions(identity => {
         if (t) identity().p2p.openDialog({ kind: 'perms', room: t.v.id, ch: t.ch.id })
       },
     },
+    systemChannelAction('p2p_channel_system_here', 'p2p', ['p2p_channel'], 305, ctx => {
+      const t = channelOf(ctx)
+      return (
+        t && {
+          place: P2pRoom.open(identity(), t.v.id),
+          channel: t.ch.id,
+          text: t.ch.kind === 'text',
+        }
+      )
+    }),
     {
       id: 'p2p_channel_delete',
       title: 'Delete Channel',
