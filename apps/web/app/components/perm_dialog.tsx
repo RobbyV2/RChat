@@ -23,6 +23,7 @@ import { RuleEditor } from './rule_editor'
 import { RestrictionToggles } from './settings_fields'
 import { MemberPicker } from './member_search'
 import { usePermissionRules } from './use_permission_rules'
+import { Row, Surface } from './layout'
 import { Dialog, Masked, textBtn } from './ui'
 import { ViewActorTag } from './view_actor'
 import { staffChange, staffViewChannel } from '../lib/staff_view'
@@ -143,15 +144,17 @@ export function HostedRules({
   }, [server, members, ensureMembers])
   if (shut && channel)
     return (
-      <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-xl bg-surface-container-low p-2">
-        <Lock size={14} className="shrink-0 text-on-surface-variant" />
-        <span className="min-w-0 flex-1 text-xs text-on-surface-variant">
-          Confirm to open this channel
-        </span>
-        <button onClick={() => askStaffView(channel.id)} className={textBtn}>
-          Open channel
-        </button>
-      </div>
+      <Surface pad="sm" tone="low" radius="lg">
+        <Row gap="sm" wrap>
+          <Lock size={14} className="shrink-0 text-on-surface-variant" />
+          <span className="min-w-0 flex-1 text-xs text-on-surface-variant">
+            Confirm to open this channel
+          </span>
+          <button onClick={() => askStaffView(channel.id)} className={textBtn}>
+            Open channel
+          </button>
+        </Row>
+      </Surface>
     )
   if (!ready || !detail || !rows) return null
   const roles = detail.roles
@@ -273,11 +276,8 @@ export function HostedRules({
       {channel ? (
         <>
           {category && (
-            <div
-              data-sync
-              className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant"
-            >
-              <span className="min-w-0 flex-1">
+            <Row data-sync gap="sm" wrap>
+              <span className="min-w-0 flex-1 text-xs text-on-surface-variant">
                 {channel.perm_sync
                   ? `Synced with ${category.name}. Changing a rule here stops it.`
                   : `Not synced with ${category.name}.`}
@@ -298,7 +298,7 @@ export function HostedRules({
                   Sync now
                 </button>
               )}
-            </div>
+            </Row>
           )}
           <RestrictionToggles
             nobody="admins"

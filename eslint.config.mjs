@@ -31,6 +31,7 @@ const excluded = () => {
 // fail the lint.
 const LAID_OUT = [
   'apps/web/app/components/admin/{accounts,admin_host,admin_page,announcements,audit,danger,dialogs,encryption,overview,servers,source,staff_view,users}.tsx',
+  'apps/web/app/components/{category_dialog,instance_link_dialog,perm_dialog,role_looks_fields,server_members,server_profile_list,share_target,viewing_prompt}.tsx',
 ]
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']

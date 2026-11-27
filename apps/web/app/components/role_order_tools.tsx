@@ -3,6 +3,7 @@
 import type { KeyboardEvent, ReactNode } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { longPress } from './context_menu'
+import { Row, Surface } from './layout'
 import { textBtn } from './ui'
 
 // Pieces the Roles pages of hosted servers and P2P rooms share: the Role order and Display order
@@ -16,7 +17,7 @@ export function RoleTabs({ tab, onTab }: { tab: RolesTab; onTab: (tab: RolesTab)
     ['display', 'Display order'],
   ]
   return (
-    <div role="tablist" aria-label="Roles" className="flex gap-1">
+    <Row role="tablist" aria-label="Roles" gap="2xs">
       {tabs.map(([t, text]) => (
         <button
           key={t}
@@ -33,7 +34,7 @@ export function RoleTabs({ tab, onTab }: { tab: RolesTab; onTab: (tab: RolesTab)
           {text}
         </button>
       ))}
-    </div>
+    </Row>
   )
 }
 
@@ -79,20 +80,18 @@ export function ShownRow({
     </button>
   )
   return (
-    <div
-      {...menu}
-      data-shown-role
-      className="flex min-h-10 items-center gap-2 rounded-xl bg-surface-container px-2 py-1"
-    >
-      <span
-        aria-hidden
-        className="h-3 w-3 shrink-0 rounded-full"
-        style={{ backgroundColor: swatch ?? 'var(--color-outline)' }}
-      />
-      <span className="min-w-0 flex-1 truncate text-sm">{name}</span>
-      {btn(up, ChevronUp)}
-      {btn(down, ChevronDown)}
-    </div>
+    <Surface {...menu} data-shown-role pad="sm" inset="bar" tone="base" radius="lg">
+      <Row gap="sm">
+        <span
+          aria-hidden
+          className="h-3 w-3 shrink-0 rounded-full"
+          style={{ backgroundColor: swatch ?? 'var(--color-outline)' }}
+        />
+        <span className="min-w-0 flex-1 truncate text-sm">{name}</span>
+        {btn(up, ChevronUp)}
+        {btn(down, ChevronDown)}
+      </Row>
+    </Surface>
   )
 }
 

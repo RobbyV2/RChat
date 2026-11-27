@@ -16,6 +16,7 @@ import type { Look } from '../lib/role_looks'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Badge, profileTrigger } from './profile_card'
+import { Row, Surface } from './layout'
 import { Sentinel } from './ui'
 import { MemberListSkeleton } from './skeletons'
 import { FitName } from './display_name'
@@ -80,14 +81,14 @@ export const MemberName = ({
   color?: string
   icon?: Look['icon']
 }) => (
-  <span className="flex min-w-0 flex-1 items-center gap-1">
+  <Row as="span" gap="2xs" place="flex-1">
     <FitName
       user={user}
       style={color === undefined ? undefined : { color }}
       className="streamer min-w-0 truncate text-sm"
     />
     <RoleIcon emoji={icon?.emoji} role={icon?.role} />
-  </span>
+  </Row>
 )
 
 export function MemberTimeout({ server, username }: { server: string; username: string }) {
@@ -231,7 +232,9 @@ export default function MemberSidebar() {
     return (
       <aside className={asideCls}>
         <ViewActorTag header />
-        <p className="px-2 py-3 text-sm text-on-surface-variant">{MEMBERS_HIDDEN_LINE}</p>
+        <Surface pad="md" tone="plain" radius="none">
+          <p className="text-sm text-on-surface-variant">{MEMBERS_HIDDEN_LINE}</p>
+        </Surface>
       </aside>
     )
   if (detail.member_count > 0 && (!cache || (cache.loading && !cache.list.length)))

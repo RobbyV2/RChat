@@ -8,6 +8,7 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { DmRow } from '../../components/channel_sidebar'
 import { MemberName } from '../../components/member_sidebar'
+import { Row } from '../../components/layout'
 import type { Look } from '../role_looks'
 import { DisplayNameField, NameWithUsername, nameRevealKey } from '../../components/display_name'
 import { MaskedWords } from '../../components/ui'
@@ -99,7 +100,11 @@ test('a member list name fits its row, with the whole name in its title', async 
     renderToStaticMarkup(<MemberName user={u} color={color} icon={icon} />)
   const cls = 'class="streamer min-w-0 truncate text-sm"'
   const box = (inner: string) =>
-    `<span class="flex min-w-0 flex-1 items-center gap-1">${inner}</span>`
+    renderToStaticMarkup(
+      <Row as="span" gap="2xs" place="flex-1">
+        {'@'}
+      </Row>
+    ).replace('@', inner)
   expect(row(user('bob', { display_name: 'Robert' }))).toBe(
     box(`<span title="Robert (bob)" ${cls}>${FITTED('Robert', 'bob')}</span>`)
   )

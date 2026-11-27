@@ -6,6 +6,7 @@ import { errorText, useStore } from '../lib/store'
 import type { Member } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { useShownMembers } from './shown_user'
+import { Row, Stack, Surface } from './layout'
 import { Masked, fieldCls } from './ui'
 
 // Searching a hosted server's members: the paged search, its field, and a picker that adds one.
@@ -95,7 +96,7 @@ export function MemberSearchField({
   placeholder?: string
 }) {
   return (
-    <div className="mb-2 flex">
+    <Row gap="none">
       <input
         type="search"
         value={value}
@@ -103,7 +104,7 @@ export function MemberSearchField({
         placeholder={placeholder}
         className={fieldCls}
       />
-    </div>
+    </Row>
   )
 }
 
@@ -131,7 +132,7 @@ export function MemberPicker({
     more()
   }, [q, active, loading, hasMore, more, matching.length])
   return (
-    <div className="min-w-0 flex-1">
+    <Stack gap="2xs" place="flex-1">
       <input
         type="search"
         value={q}
@@ -141,7 +142,7 @@ export function MemberPicker({
         className={`${fieldCls} w-full`}
       />
       {found.active && (
-        <div className="mt-1 space-y-0.5">
+        <Stack gap="3xs">
           {hits.map(m => (
             <button
               key={m.username}
@@ -163,12 +164,14 @@ export function MemberPicker({
             </button>
           ))}
           {!found.loading && hits.length === 0 && (
-            <p className="px-2 py-1 text-xs text-on-surface-variant">
-              {found.hasMore ? 'Keep typing to narrow the search.' : 'No matching members.'}
-            </p>
+            <Surface pad="sm" inset="bar" tone="plain" radius="none">
+              <p className="text-xs text-on-surface-variant">
+                {found.hasMore ? 'Keep typing to narrow the search.' : 'No matching members.'}
+              </p>
+            </Surface>
           )}
-        </div>
+        </Stack>
       )}
-    </div>
+    </Stack>
   )
 }

@@ -23,6 +23,7 @@ import {
   type ShareOwner,
 } from '../lib/client/share_target'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 
 function Destinations({
@@ -90,7 +91,7 @@ function Destinations({
   return (
     <>
       {!owner.identity && content.files.length > 1 && (
-        <label className="flex flex-col gap-1">
+        <Stack as="label" gap="2xs">
           Choose one attachment for this draft
           <select
             className={fieldCls}
@@ -108,9 +109,9 @@ function Destinations({
               </option>
             ))}
           </select>
-        </label>
+        </Stack>
       )}
-      <label className="flex flex-col gap-1">
+      <Stack as="label" gap="2xs">
         Destination
         <select
           className={fieldCls}
@@ -127,7 +128,7 @@ function Destinations({
             </option>
           ))}
         </select>
-      </label>
+      </Stack>
       {!owner.identity &&
         joined
           .filter(s => !state.servers[s.name])
@@ -153,7 +154,7 @@ function Destinations({
         </Button>
       )}
       {error && <p role="alert">{error}</p>}
-      <div className="flex justify-end gap-2">
+      <Row gap="sm" justify="end">
         <Button size="md" onClick={close}>
           Cancel
         </Button>
@@ -165,7 +166,7 @@ function Destinations({
         >
           Open draft
         </Button>
-      </div>
+      </Row>
     </>
   )
 }
@@ -232,7 +233,7 @@ function Picker({
   }
   return (
     <Dialog title="Share to RChat" onClose={close}>
-      <div className="flex flex-col gap-3">
+      <Stack gap="md">
         {content.text && (
           <p className="max-h-20 overflow-y-auto whitespace-pre-wrap break-words">{content.text}</p>
         )}
@@ -241,7 +242,7 @@ function Picker({
         )}
         {owners.length ? (
           <>
-            <label className="flex flex-col gap-1">
+            <Stack as="label" gap="2xs">
               As
               <select
                 className={fieldCls}
@@ -271,7 +272,7 @@ function Picker({
                   </optgroup>
                 ))}
               </select>
-            </label>
+            </Stack>
             {ready ? (
               <AccountProvider session={ready.account}>
                 <P2pProvider identity={ready.identity}>
@@ -311,7 +312,7 @@ function Picker({
             <Button onClick={close}>Close</Button>
           </>
         )}
-      </div>
+      </Stack>
     </Dialog>
   )
 }

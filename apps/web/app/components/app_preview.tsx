@@ -15,6 +15,7 @@ import { savedPreviews } from '../lib/apps/preview_files'
 import type { Node } from '../lib/apps/ui/types'
 import { Button } from './controls'
 import { buttonLook } from '../lib/controls'
+import { Row, Stack, Surface } from './layout'
 import { CloseButton, fieldCls, Masked, TopDialog } from './ui'
 
 function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
@@ -26,14 +27,12 @@ function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
   switch (node.c) {
     case 'row':
     case 'stack':
-      return (
-        <div
-          className={
-            node.c === 'stack' ? 'flex min-w-0 flex-col gap-3' : 'flex min-w-0 flex-wrap gap-3'
-          }
-        >
+      return node.c === 'stack' ? (
+        <Stack gap="md">{children(node.children)}</Stack>
+      ) : (
+        <Row gap="md" wrap>
           {children(node.children)}
-        </div>
+        </Row>
       )
     case 'text':
       return (
@@ -62,23 +61,24 @@ function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
           setField(node.field, e.target.value),
       }
       return (
-        <label className="flex min-w-0 flex-col gap-1">
+        <Stack as="label" gap="2xs">
           <Masked text={node.label ?? node.field} />
           {node.kind === 'multiline' ? <textarea {...props} rows={3} /> : <input {...props} />}
-        </label>
+        </Stack>
       )
     }
     case 'form':
       return (
-        <form
-          className="flex flex-col gap-3"
+        <Stack
+          as="form"
+          gap="md"
           onSubmit={e => {
             e.preventDefault()
             if (node.on_done) previewStep(app, node.on_done)
           }}
         >
           {node.fields?.map(name => (
-            <label key={name} className="flex min-w-0 flex-col gap-1">
+            <Stack key={name} as="label" gap="2xs">
               {name}
               <input
                 className={fieldCls}
@@ -86,12 +86,12 @@ function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
                 value={values[name] ?? ''}
                 onChange={e => setField(name, e.target.value)}
               />
-            </label>
+            </Stack>
           ))}
           <Button type="submit" variant="filled" size="md">
             <Masked text={node.submit} />
           </Button>
-        </form>
+        </Stack>
       )
     default:
       return null
@@ -107,12 +107,15 @@ function AppDialog({ node, app }: { node: Extract<Node, { c: 'dialog' }>; app: L
     ;(el?.querySelector<HTMLElement>('input,textarea,button') ?? el)?.focus()
   }, [node])
   return (
-    <div
+    <Surface
       ref={pane}
       role="dialog"
       aria-labelledby="authored-dialog-title"
       tabIndex={-1}
-      className="flex min-w-0 flex-col gap-3 rounded-xl bg-surface-container-highest p-4"
+      pad="lg"
+      gap="md"
+      tone="highest"
+      radius="lg"
       onKeyDown={e => {
         if (e.key === 'Escape') {
           e.stopPropagation()
@@ -141,7 +144,7 @@ function AppDialog({ node, app }: { node: Extract<Node, { c: 'dialog' }>; app: L
       <Button size="md" onClick={close}>
         Close dialog
       </Button>
-    </div>
+    </Surface>
   )
 }
 
@@ -149,8 +152,8 @@ function AppDialog({ node, app }: { node: Extract<Node, { c: 'dialog' }>; app: L
 // author's name always shows as unverified.
 export function AppByline({ author }: { author: string }) {
   return (
-    <p className="mb-3 flex min-w-0 shrink-0 flex-wrap items-baseline gap-x-2 text-sm text-on-surface-variant">
-      <span className="line-clamp-2 min-w-0 break-words">
+    <Row as="p" gap="sm" align="baseline" wrap place="shrink-0">
+      <span className="line-clamp-2 min-w-0 break-words text-sm text-on-surface-variant">
         By <Masked text={author} />
       </span>
       <span
@@ -160,7 +163,7 @@ export function AppByline({ author }: { author: string }) {
       >
         Unverified
       </span>
-    </p>
+    </Row>
   )
 }
 
@@ -217,108 +220,111 @@ function Launcher({ where }: { where: string }) {
         }
       }}
     >
-      <div className="mb-3 flex shrink-0 items-center justify-between">
-        <h2 id="app-preview-title" className="text-lg font-medium">
-          App previews
-        </h2>
-        <CloseButton onClick={closePreview} />
-      </div>
-      {shown && (
-        <section
-          aria-label={`App: ${app.definition.name}`}
-          className="mb-3 flex min-h-0 min-w-0 flex-col rounded-xl border border-outline-variant bg-surface-container-low p-4"
-        >
-          <h3
-            ref={identity}
-            tabIndex={-1}
-            className="line-clamp-2 shrink-0 break-words font-medium"
+      <Stack gap="md" place="min-h-0">
+        <Row gap="sm" justify="between" place="shrink-0">
+          <h2 id="app-preview-title" className="text-lg font-medium">
+            App previews
+          </h2>
+          <CloseButton onClick={closePreview} />
+        </Row>
+        {shown && (
+          <Surface
+            as="section"
+            aria-label={`App: ${app.definition.name}`}
+            pad="lg"
+            gap="md"
+            tone="low"
+            radius="lg"
+            border
+            place="min-h-0"
           >
-            <Masked text={app.definition.name} />
-          </h3>
-          <AppByline author={app.definition.author} />
-          <div className="min-h-0 overflow-y-auto overscroll-contain">
-            <div hidden={!!modal}>
-              <Parts node={app.definition.view} app={app} />
-              {app.definition.actions.some(a => a.slash) && (
-                <p className="mt-3 break-words text-sm text-on-surface-variant">
-                  Chat actions:{' '}
-                  {app.definition.actions
-                    .filter(a => a.slash)
-                    .map(a => '/' + a.slash)
-                    .join(', ')}
-                </p>
-              )}
+            <Stack gap="none" place="shrink-0">
+              <h3 ref={identity} tabIndex={-1} className="line-clamp-2 break-words font-medium">
+                <Masked text={app.definition.name} />
+              </h3>
+              <AppByline author={app.definition.author} />
+            </Stack>
+            <div className="min-h-0 overflow-y-auto overscroll-contain">
+              <Stack hidden={!!modal} gap="md">
+                <Parts node={app.definition.view} app={app} />
+                {app.definition.actions.some(a => a.slash) && (
+                  <p className="break-words text-sm text-on-surface-variant">
+                    Chat actions:{' '}
+                    {app.definition.actions
+                      .filter(a => a.slash)
+                      .map(a => '/' + a.slash)
+                      .join(', ')}
+                  </p>
+                )}
+              </Stack>
+              {modal && <AppDialog node={modal} app={app} />}
             </div>
-            {modal && <AppDialog node={modal} app={app} />}
-          </div>
-        </section>
-      )}
-      {error && (
-        <p role="alert" className="my-2 text-sm text-error">
-          {error}
-        </p>
-      )}
-      {account && files.some(f => f.revision !== app?.source.revision) && (
-        <ul
-          aria-label="Saved app definitions"
-          className="mb-2 max-h-[18dvh] shrink-0 overflow-y-auto"
-        >
-          {files
-            .filter(f => f.revision !== app?.source.revision)
-            .map(f => (
-              <li key={f.revision} className="flex min-w-0 items-center gap-2">
-                <Button
-                  size="md"
-                  onClick={() =>
-                    void launchPreview(where, savedSource(account, where, f, owner.conn))
-                  }
-                  place="min-w-0"
-                >
-                  <span className="truncate">Open {f.name}</span>
-                </Button>
-                <Button
-                  size="md"
-                  aria-label={'Forget approval for ' + f.name}
-                  onClick={() => forgetSavedPreview(account, where, f)}
-                >
-                  Forget
-                </Button>
-              </li>
-            ))}
-        </ul>
-      )}
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {!shown && (
-          <Button
-            variant="filled"
-            size="md"
-            onClick={() => void launchPreview(where, app?.source ?? exampleSource)}
+          </Surface>
+        )}
+        {error && (
+          <p role="alert" className="text-sm text-error">
+            {error}
+          </p>
+        )}
+        {account && files.some(f => f.revision !== app?.source.revision) && (
+          <ul aria-label="Saved app definitions" className="max-h-[18dvh] shrink-0 overflow-y-auto">
+            {files
+              .filter(f => f.revision !== app?.source.revision)
+              .map(f => (
+                <Row key={f.revision} as="li" gap="sm">
+                  <Button
+                    size="md"
+                    onClick={() =>
+                      void launchPreview(where, savedSource(account, where, f, owner.conn))
+                    }
+                    place="min-w-0"
+                  >
+                    <span className="truncate">Open {f.name}</span>
+                  </Button>
+                  <Button
+                    size="md"
+                    aria-label={'Forget approval for ' + f.name}
+                    onClick={() => forgetSavedPreview(account, where, f)}
+                  >
+                    Forget
+                  </Button>
+                </Row>
+              ))}
+          </ul>
+        )}
+        <Row gap="sm" wrap place="shrink-0">
+          {!shown && (
+            <Button
+              variant="filled"
+              size="md"
+              onClick={() => void launchPreview(where, app?.source ?? exampleSource)}
+            >
+              {app ? 'Open preview' : 'Open Field notes example'}
+            </Button>
+          )}
+          <label
+            className={`relative inline-flex items-center overflow-hidden ${buttonLook('text', 'md')}`}
           >
-            {app ? 'Open preview' : 'Open Field notes example'}
-          </Button>
-        )}
-        <label
-          className={`relative inline-flex items-center overflow-hidden ${buttonLook('text', 'md')}`}
-        >
-          Choose app definition
-          <input
-            aria-label="Choose app definition"
-            type="file"
-            accept=".json,application/json"
-            className="absolute inset-0 w-full cursor-pointer opacity-0"
-            onChange={e => {
-              const file = e.target.files?.[0]
-              e.target.value = ''
-              if (file) void launchPreview(where, fileSource(file))
-            }}
-          />
-        </label>
-        {app && (
-          <Button size="md" onClick={forgetPreview}>
-            Forget app approval
-          </Button>
-        )}
-      </div>
+            Choose app definition
+            <input
+              aria-label="Choose app definition"
+              type="file"
+              accept=".json,application/json"
+              className="absolute inset-0 w-full cursor-pointer opacity-0"
+              onChange={e => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) void launchPreview(where, fileSource(file))
+              }}
+            />
+          </label>
+          {app && (
+            <Button size="md" onClick={forgetPreview}>
+              Forget app approval
+            </Button>
+          )}
+        </Row>
+      </Stack>
     </TopDialog>
   )
 }

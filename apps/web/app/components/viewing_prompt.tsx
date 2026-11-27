@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Masked, TopDialog } from './ui'
 
 export function ViewingPrompt() {
@@ -43,34 +44,40 @@ function Warning({
       onTop
       onCancel={() => prompt.answer(false, false)}
     >
-      <h2 id={title} className="text-lg font-medium">
-        {app ? 'Open this app?' : 'Open sensitive channel?'}
-      </h2>
-      <p id={description} className="my-3 text-sm text-on-surface-variant">
-        {app
-          ? 'This app shows content and forms created by its author. Open it if you trust the source.'
-          : 'This channel is marked sensitive. Open it to view its content.'}
-      </p>
-      <p className="break-words font-medium">
-        <Masked text={prompt.target.name} />
-      </p>
-      <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="cursor-pointer"
-          checked={remember}
-          onChange={e => setRemember(e.target.checked)}
-        />{' '}
-        Remember on this device
-      </label>
-      <div className="mt-4 flex justify-end gap-2">
-        <Button ref={back} size="md" onClick={() => prompt.answer(false, false)}>
-          Cancel
-        </Button>
-        <Button variant="filled" size="md" onClick={() => prompt.answer(true, remember)}>
-          Open
-        </Button>
-      </div>
+      <Stack gap="lg">
+        <Stack gap="md">
+          <h2 id={title} className="text-lg font-medium">
+            {app ? 'Open this app?' : 'Open sensitive channel?'}
+          </h2>
+          <p id={description} className="text-sm text-on-surface-variant">
+            {app
+              ? 'This app shows content and forms created by its author. Open it if you trust the source.'
+              : 'This channel is marked sensitive. Open it to view its content.'}
+          </p>
+          <p className="break-words font-medium">
+            <Masked text={prompt.target.name} />
+          </p>
+          <label className="flex min-h-11 cursor-pointer items-center text-sm">
+            <Row as="span" gap="sm">
+              <input
+                type="checkbox"
+                className="cursor-pointer"
+                checked={remember}
+                onChange={e => setRemember(e.target.checked)}
+              />
+              Remember on this device
+            </Row>
+          </label>
+        </Stack>
+        <Row gap="sm" justify="end">
+          <Button ref={back} size="md" onClick={() => prompt.answer(false, false)}>
+            Cancel
+          </Button>
+          <Button variant="filled" size="md" onClick={() => prompt.answer(true, remember)}>
+            Open
+          </Button>
+        </Row>
+      </Stack>
     </TopDialog>
   )
 }

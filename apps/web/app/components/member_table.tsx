@@ -19,6 +19,7 @@ import {
 } from '../lib/member_filters'
 import { longPress } from './context_menu'
 import { Button, Chip, IconButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { fieldCls } from './ui'
 
 // The member search of server settings, the same on hosted servers and P2P rooms: a search
@@ -57,9 +58,9 @@ function DayRange({
 }) {
   const id = useId()
   return (
-    <fieldset className="flex flex-col gap-1">
+    <Stack as="fieldset" gap="2xs">
       <legend className={label}>{what}</legend>
-      <div className="flex flex-wrap items-center gap-2">
+      <Row gap="sm" wrap>
         <label htmlFor={`${id}f`} className="text-xs text-on-surface-variant">
           From
         </label>
@@ -80,8 +81,8 @@ function DayRange({
           onChange={e => onChange(after, dayEnd(e.target.value))}
           className={`${fieldCls} max-w-40 flex-none py-1`}
         />
-      </div>
-    </fieldset>
+      </Row>
+    </Stack>
   )
 }
 
@@ -100,8 +101,8 @@ export function MemberFilterBar({
   const chips = chipsOf(value, { role: roleName, via: viaName, date: t => dayLabel(t) })
   const sorts = MEMBER_SORTS.filter(s => choices.created || !s.startsWith('created'))
   return (
-    <div data-member-filters className="mb-2 flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
+    <Stack data-member-filters gap="sm">
+      <Row gap="sm" wrap>
         <input
           type="search"
           value={value.q}
@@ -126,9 +127,9 @@ export function MemberFilterBar({
             </option>
           ))}
         </select>
-      </div>
+      </Row>
       {chips.length > 0 && (
-        <ul aria-label="Filters in use" className="flex flex-wrap gap-1.5">
+        <Row as="ul" aria-label="Filters in use" gap="xs" wrap>
           {chips.map(c => (
             <li
               key={`${c.kind}${c.id ?? ''}`}
@@ -144,14 +145,14 @@ export function MemberFilterBar({
               />
             </li>
           ))}
-        </ul>
+        </Row>
       )}
       {open && (
-        <div className="flex flex-col gap-3 rounded-2xl bg-surface-container px-3 py-3">
+        <Surface pad="md" gap="md" tone="base">
           {choices.roles.length > 0 && (
-            <div className="flex flex-col gap-1">
+            <Stack gap="2xs">
               <p className={label}>Roles</p>
-              <div className="flex flex-wrap gap-1.5">
+              <Row gap="xs" wrap>
                 {choices.roles.map(r => (
                   <Chip
                     key={r.id}
@@ -161,8 +162,8 @@ export function MemberFilterBar({
                     {r.name}
                   </Chip>
                 ))}
-              </div>
-            </div>
+              </Row>
+            </Stack>
           )}
           <DayRange
             what="Joined"
@@ -183,7 +184,7 @@ export function MemberFilterBar({
             />
           )}
           {choices.via && choices.via.length > 0 && (
-            <label className="flex flex-col gap-1">
+            <Stack as="label" gap="2xs">
               <span className={label}>Joined with</span>
               <select
                 value={value.via ?? ''}
@@ -197,16 +198,16 @@ export function MemberFilterBar({
                   </option>
                 ))}
               </select>
-            </label>
+            </Stack>
           )}
           {filtering({ ...value, q: '' }) && (
             <Button onClick={() => onChange({ ...value, ...clearedFilters })} place="self-start">
               Clear filters
             </Button>
           )}
-        </div>
+        </Surface>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -229,7 +230,7 @@ export function MemberTable({
   children: ReactNode
 }) {
   return (
-    <div role="table" aria-label={label} data-member-table className="flex flex-col">
+    <Stack role="table" aria-label={label} data-member-table gap="none">
       <div
         role="row"
         className={`hidden gap-x-3 px-2 pb-1 text-xs font-medium text-on-surface-variant sm:grid ${columns(created, joined)}`}
@@ -241,10 +242,10 @@ export function MemberTable({
           Actions
         </span>
       </div>
-      <div role="rowgroup" className="flex flex-col">
+      <Stack role="rowgroup" gap="none">
         {children}
-      </div>
-    </div>
+      </Stack>
+    </Stack>
   )
 }
 
@@ -285,17 +286,17 @@ export function MemberTableRow({
       {...longPress(menu)}
       className={`grid grid-cols-[minmax(0,1fr)_2.25rem] items-center gap-x-3 rounded-xl px-2 py-1.5 hover:bg-surface-container-highest ${columns(created, dated)}`}
     >
-      <div role="cell" className="flex min-w-0 items-center gap-2">
+      <Row role="cell" gap="sm">
         {avatar}
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
+          <Row gap="xs">
             {name}
             {badges}
-          </div>
+          </Row>
           {facts && <div className="truncate text-xs text-on-surface-variant">{facts}</div>}
           {narrow && <div className="text-xs text-on-surface-variant sm:hidden">{narrow}</div>}
         </div>
-      </div>
+      </Row>
       {dated && (
         <div role="cell" className="hidden text-xs text-on-surface-variant tabular-nums sm:block">
           {joined}
@@ -306,7 +307,7 @@ export function MemberTableRow({
           {made}
         </div>
       )}
-      <div role="cell" className="flex justify-end">
+      <Row role="cell" gap="none" justify="end">
         <IconButton
           icon={MoreVertical}
           label="Member actions"
@@ -315,7 +316,7 @@ export function MemberTableRow({
             menu(r.left, r.bottom)
           }}
         />
-      </div>
+      </Row>
     </div>
   )
 }

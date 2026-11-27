@@ -3,6 +3,7 @@ import { useRef, useState } from 'react'
 import { SmilePlus, X } from 'lucide-react'
 import { IconButton } from './controls'
 import { EmojiPicker } from './emoji_picker'
+import { Row } from './layout'
 
 export interface RoleLooksPatch {
   icon?: string | null
@@ -31,23 +32,22 @@ export function RoleLooksFields({
   const ref = useRef<HTMLButtonElement>(null)
   const iconTitle = locked ?? (icon ? `Change the icon of ${name}` : `Add an icon to ${name}`)
   const check = (checked: boolean, text: string, hint: string, flip: () => void) => (
-    <label
-      title={locked ?? hint}
-      className={`flex items-center gap-1.5 text-sm ${locked ? 'opacity-60' : ''}`}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={!!locked}
-        onChange={flip}
-        className="accent-primary"
-      />
-      {text}
+    <label title={locked ?? hint} className={`flex text-sm ${locked ? 'opacity-60' : ''}`}>
+      <Row as="span" gap="xs">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={!!locked}
+          onChange={flip}
+          className="accent-primary"
+        />
+        {text}
+      </Row>
     </label>
   )
   return (
-    <div data-role-looks className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-      <span className="flex items-center gap-1">
+    <Row data-role-looks gap="lg" wrap>
+      <Row as="span" gap="2xs">
         <button
           ref={ref}
           type="button"
@@ -68,7 +68,7 @@ export function RoleLooksFields({
             onClick={() => onChange({ icon: null })}
           />
         )}
-      </span>
+      </Row>
       {check(
         hoist,
         'Show members separately',
@@ -91,6 +91,6 @@ export function RoleLooksFields({
           onClose={() => setPicking(false)}
         />
       )}
-    </div>
+    </Row>
   )
 }

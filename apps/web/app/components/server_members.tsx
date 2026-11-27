@@ -25,6 +25,7 @@ import { passwordName } from './server_access'
 import { useShownMembers } from './shown_user'
 import { MemberFilterBar, MemberTable, MemberTableRow } from './member_table'
 import { Button } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Sentinel } from './ui'
 
 // Server settings' members of a hosted server: the search route with filters, for members who
@@ -168,25 +169,26 @@ export function HostedMembers({
     [roles, passwords, invites]
   )
   return (
-    <div data-hosted-members>
+    <Stack data-hosted-members gap="sm">
       <MemberFilterBar value={shown} onChange={setFilters} choices={choices} />
-      <MemberTable created label="Members">
-        {found.list.map(hit => (
-          <HitRow key={hit.username} server={server} hit={hit} roles={roles} />
-        ))}
-      </MemberTable>
-      {pagesNote(found) && (
-        <p
-          role="status"
-          className="flex flex-wrap items-center gap-2 px-2 text-sm text-on-surface-variant"
-        >
-          {pagesNote(found)}
-          {found.failed !== undefined && <Button onClick={found.again}>Try again</Button>}
-        </p>
-      )}
-      {found.next !== null && !found.loading && found.failed === undefined && (
-        <Sentinel key={found.next} onVisible={found.more} />
-      )}
-    </div>
+      <Stack gap="none">
+        <MemberTable created label="Members">
+          {found.list.map(hit => (
+            <HitRow key={hit.username} server={server} hit={hit} roles={roles} />
+          ))}
+        </MemberTable>
+        {pagesNote(found) && (
+          <Surface as="p" role="status" pad="sm" inset="bar" tone="plain" radius="none">
+            <Row as="span" gap="sm" wrap>
+              <span className="text-sm text-on-surface-variant">{pagesNote(found)}</span>
+              {found.failed !== undefined && <Button onClick={found.again}>Try again</Button>}
+            </Row>
+          </Surface>
+        )}
+        {found.next !== null && !found.loading && found.failed === undefined && (
+          <Sentinel key={found.next} onVisible={found.more} />
+        )}
+      </Stack>
+    </Stack>
   )
 }

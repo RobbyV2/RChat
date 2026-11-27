@@ -5,6 +5,7 @@ import { useStore } from '../lib/store'
 import { NAME_MAX } from '../lib/rules'
 import { enterKey } from '../lib/keys'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 
 function CategoryForm({ server, id, initial }: { server: string; id?: number; initial: string }) {
@@ -20,29 +21,33 @@ function CategoryForm({ server, id, initial }: { server: string; id?: number; in
   }
   return (
     <Dialog title={id === undefined ? 'Create category' : 'Rename category'} onClose={closeDialog}>
-      <input
-        autoFocus
-        value={name}
-        maxLength={NAME_MAX}
-        onChange={e => setName(e.target.value)}
-        onKeyDown={e => {
-          if (enterKey(e)) save()
-        }}
-        placeholder="Category name"
-        aria-label="Category name"
-        className={`${fieldCls} w-full`}
-      />
-      <p className="pt-1.5 text-xs text-on-surface-variant">
-        Text and voice channels can both go in a category.
-      </p>
-      <div className="mt-6 flex justify-end gap-2">
-        <Button size="md" onClick={closeDialog}>
-          Cancel
-        </Button>
-        <Button variant="filled" size="md" onClick={save} disabled={!trimmed}>
-          {id === undefined ? 'Create' : 'Save'}
-        </Button>
-      </div>
+      <Stack gap="xl">
+        <Stack gap="xs">
+          <input
+            autoFocus
+            value={name}
+            maxLength={NAME_MAX}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => {
+              if (enterKey(e)) save()
+            }}
+            placeholder="Category name"
+            aria-label="Category name"
+            className={`${fieldCls} w-full`}
+          />
+          <p className="text-xs text-on-surface-variant">
+            Text and voice channels can both go in a category.
+          </p>
+        </Stack>
+        <Row gap="sm" justify="end">
+          <Button size="md" onClick={closeDialog}>
+            Cancel
+          </Button>
+          <Button variant="filled" size="md" onClick={save} disabled={!trimmed}>
+            {id === undefined ? 'Create' : 'Save'}
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

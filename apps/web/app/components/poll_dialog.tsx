@@ -23,6 +23,7 @@ import { useStore } from '../lib/store'
 import type { PollKind, ShowResults } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
 import { Button, IconButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Chips, Dialog, FieldError, fieldCls } from './ui'
 
 const KINDS: PollKind[] = ['single', 'multiple', 'ranked', 'rating', 'yes_no']
@@ -35,10 +36,10 @@ const UNITS = [
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">{title}</p>
       {children}
-    </div>
+    </Stack>
   )
 }
 
@@ -54,17 +55,21 @@ function Toggle({
   onChange: (on: boolean) => void
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 py-1">
-      <input
-        type="checkbox"
-        checked={on}
-        onChange={e => onChange(e.target.checked)}
-        className="mt-0.5 size-4 shrink-0 accent-primary"
-      />
-      <span className="min-w-0">
-        <span className="block text-sm text-on-surface">{label}</span>
-        <span className="block text-xs text-on-surface-variant">{hint}</span>
-      </span>
+    <label className="flex cursor-pointer">
+      <Surface as="span" pad="2xs" tone="plain" radius="none" place="flex-1">
+        <Row as="span" gap="md" align="start">
+          <input
+            type="checkbox"
+            checked={on}
+            onChange={e => onChange(e.target.checked)}
+            className="mt-0.5 size-4 shrink-0 accent-primary"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm text-on-surface">{label}</span>
+            <span className="block text-xs text-on-surface-variant">{hint}</span>
+          </span>
+        </Row>
+      </Surface>
     </label>
   )
 }
@@ -105,8 +110,8 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
   }
   return (
     <Dialog title="Create poll" onClose={onClose} full>
-      <div className="flex flex-col gap-5">
-        <label className="flex flex-col gap-1.5">
+      <Stack gap="lg">
+        <Stack as="label" gap="xs">
           <span className="text-sm text-on-surface">Question</span>
           <input
             autoFocus
@@ -116,7 +121,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
             placeholder="What do you want to ask?"
             className={fieldCls}
           />
-        </label>
+        </Stack>
         <Section title="Kind">
           <Chips
             label="Kind"
@@ -127,9 +132,9 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
         </Section>
         {written && (
           <Section title="Options">
-            <ul className="flex flex-col gap-1.5">
+            <Stack as="ul" gap="xs">
               {d.options.map((o, i) => (
-                <li key={i} className="flex items-center gap-1.5">
+                <Row key={i} as="li" gap="xs">
                   <button
                     ref={el => {
                       anchors.current[i] = el
@@ -174,9 +179,9 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                     disabled={d.options.length <= 2}
                     onClick={() => patch({ options: d.options.filter((_, j) => j !== i) })}
                   />
-                </li>
+                </Row>
               ))}
-            </ul>
+            </Stack>
             {d.options.length < POLL_OPTIONS_MAX && (
               <Button
                 icon={Plus}
@@ -187,8 +192,8 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
               </Button>
             )}
             {d.kind === 'multiple' && (
-              <div className="flex flex-wrap items-center gap-2 text-sm text-on-surface">
-                <span>Pick from</span>
+              <Row gap="sm" wrap>
+                <span className="text-sm text-on-surface">Pick from</span>
                 <input
                   type="number"
                   min={1}
@@ -198,7 +203,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                   aria-label="Fewest choices"
                   className={`${fieldCls} w-16 flex-none py-1`}
                 />
-                <span>to</span>
+                <span className="text-sm text-on-surface">to</span>
                 <input
                   type="number"
                   min={1}
@@ -208,8 +213,8 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                   aria-label="Most choices"
                   className={`${fieldCls} w-16 flex-none py-1`}
                 />
-                <span className="text-on-surface-variant">options</span>
-              </div>
+                <span className="text-sm text-on-surface-variant">options</span>
+              </Row>
             )}
             {d.kind === 'ranked' && (
               <p className="text-xs text-on-surface-variant">
@@ -263,7 +268,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
             }}
           />
           {custom && (
-            <div className="flex items-center gap-2">
+            <Row gap="sm">
               <input
                 type="number"
                 min={1}
@@ -290,7 +295,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
               <span className="text-xs text-on-surface-variant">
                 up to {POLL_DURATION_MAX / 86400} days
               </span>
-            </div>
+            </Row>
           )}
         </Section>
         <Section title="Settings">
@@ -316,7 +321,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
           )}
         </Section>
         <FieldError message={error} />
-        <div className="flex justify-end gap-2">
+        <Row gap="sm" justify="end">
           <Button size="md" onClick={onClose}>
             Cancel
           </Button>
@@ -329,8 +334,8 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
           >
             Post poll
           </Button>
-        </div>
-      </div>
+        </Row>
+      </Stack>
       {picker !== null && (
         <EmojiPicker
           anchor={anchors.current[picker] ?? null}

@@ -23,6 +23,7 @@ import {
   type Tri,
 } from '../lib/perm_source'
 import { hasBit, type Ow } from '../lib/perms'
+import { Row, Stack, Surface } from './layout'
 import { fieldCls, textBtn } from './ui'
 
 // The rules of a channel or category, for hosted servers and P2P rooms alike: the subjects with a
@@ -175,85 +176,97 @@ export function RuleEditor({
   )
   const viewed = as && viewable.includes(as) ? as : null
   return (
-    <div data-rule-editor className="space-y-2 rounded-xl bg-surface-container-low p-2">
+    <Surface data-rule-editor pad="sm" gap="sm" tone="low" radius="lg">
       {children}
       {subjects.length === 0 && empty && <p className="text-xs text-on-surface-variant">{empty}</p>}
-      <ul aria-label="Rules" className="flex flex-col gap-1">
+      <Stack as="ul" aria-label="Rules" gap="2xs">
         {subjects.map(s => {
           const name = label(s)
           const block = clearBlock(view, s)
           return (
-            <li
+            <Surface
               key={s}
+              as="li"
               data-rule-subject={s}
               title={listed.has(s) && block ? block : undefined}
-              className={`flex items-center gap-1 rounded-xl ${s === current ? 'bg-secondary-container text-on-secondary-container' : ''}`}
+              pad="none"
+              tone={s === current ? 'secondary' : 'plain'}
+              radius="lg"
             >
-              <button
-                type="button"
-                aria-pressed={s === current}
-                onClick={() => setSelected(s)}
-                className="flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-xl px-2 text-left text-sm pointer-coarse:min-h-11"
-              >
-                {render(s)}
-              </button>
-              <button
-                type="button"
-                onClick={() => remove(s)}
-                disabled={listed.has(s) && !!block}
-                aria-label={`Remove ${name}`}
-                title={`Remove ${name}`}
-                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-error disabled:pointer-events-none disabled:opacity-40 pointer-coarse:size-11"
-              >
-                <X size={14} />
-              </button>
-            </li>
+              <Row gap="2xs">
+                <button
+                  type="button"
+                  aria-pressed={s === current}
+                  onClick={() => setSelected(s)}
+                  className="flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-xl px-2 text-left text-sm pointer-coarse:min-h-11"
+                >
+                  {render(s)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => remove(s)}
+                  disabled={listed.has(s) && !!block}
+                  aria-label={`Remove ${name}`}
+                  title={`Remove ${name}`}
+                  className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-error disabled:pointer-events-none disabled:opacity-40 pointer-coarse:size-11"
+                >
+                  <X size={14} />
+                </button>
+              </Row>
+            </Surface>
           )
         })}
-      </ul>
-      <div className="flex flex-wrap items-start gap-2">
+      </Stack>
+      <Row gap="sm" align="start" wrap>
         {choices.length > 0 && (
-          <span className="flex min-w-48 flex-1 gap-2">
-            <select
-              value={adding}
-              onChange={e => setAdding(e.target.value)}
-              title="Add role"
-              aria-label="Add role"
-              className={fieldCls}
-            >
-              <option value="">Add role…</option>
-              {choices.map(c => (
-                <option key={c.subject} value={c.subject}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => {
-                if (!adding) return
-                add(adding)
-                setAdding('')
-              }}
-              className={textBtn}
-            >
-              Add
-            </button>
+          <span className="flex min-w-48 flex-1">
+            <Row as="span" gap="sm" place="flex-1">
+              <select
+                value={adding}
+                onChange={e => setAdding(e.target.value)}
+                title="Add role"
+                aria-label="Add role"
+                className={fieldCls}
+              >
+                <option value="">Add role…</option>
+                {choices.map(c => (
+                  <option key={c.subject} value={c.subject}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!adding) return
+                  add(adding)
+                  setAdding('')
+                }}
+                className={textBtn}
+              >
+                Add
+              </button>
+            </Row>
           </span>
         )}
         {picker && <div className="flex min-w-48 flex-1">{picker}</div>}
-      </div>
+      </Row>
       {current && (
-        <section
+        <Surface
+          as="section"
           data-rule-for={current}
           aria-label={`Permissions for ${label(current)}`}
-          className="space-y-2 border-t border-outline-variant pt-2"
+          pad="sm"
+          gap="sm"
+          tone="plain"
+          radius="none"
+          border="top"
         >
           <p className="text-xs font-medium text-on-surface-variant">
             Permissions for <span className="streamer">{label(current)}</span>
           </p>
           {src.merges && subjectKind(current, src.everyone) === 'member' && (
-            <div role="group" aria-label="Member rule" className="flex flex-wrap gap-1">
+            <Row role="group" aria-label="Member rule" gap="2xs" wrap>
               {[false, true].map(merge => {
                 const on = (row?.merge ?? false) === merge
                 const text = merge ? 'Combines with their roles' : 'Overrides their roles'
@@ -278,7 +291,7 @@ export function RuleEditor({
                   </button>
                 )
               })}
-            </div>
+            </Row>
           )}
           {items.length > 6 && (
             <input
@@ -291,12 +304,12 @@ export function RuleEditor({
             />
           )}
           {shown.map(g => (
-            <div key={g.group} className="space-y-1">
+            <Stack key={g.group} gap="2xs">
               <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
                 {g.group}
               </p>
               {g.items.map(item => (
-                <div key={item.name} data-perm={item.name} className="flex items-center gap-2">
+                <Row key={item.name} data-perm={item.name} gap="sm">
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="text-sm">{item.label}</span>
                     {item.hint && (
@@ -309,18 +322,18 @@ export function RuleEditor({
                     blockOf={tri => triBlock(view, current, item.bit, tri)}
                     onPick={tri => pick(item.bit, tri)}
                   />
-                </div>
+                </Row>
               ))}
-            </div>
+            </Stack>
           ))}
           {shown.length === 0 && (
             <p className="text-xs text-on-surface-variant">No matching permissions.</p>
           )}
-        </section>
+        </Surface>
       )}
-      <div className="space-y-1 border-t border-outline-variant pt-2">
-        <label className="flex items-center gap-2 text-xs text-on-surface-variant">
-          View as
+      <Surface pad="sm" gap="2xs" tone="plain" radius="none" border="top">
+        <Row as="label" gap="sm">
+          <span className="text-xs text-on-surface-variant">View as</span>
           <select
             value={viewed ?? ''}
             onChange={e => setAs(e.target.value)}
@@ -334,17 +347,17 @@ export function RuleEditor({
               </option>
             ))}
           </select>
-        </label>
+        </Row>
         {viewed && <ViewAs src={view} subject={viewed} items={items} />}
-      </div>
-    </div>
+      </Surface>
+    </Surface>
   )
 }
 
 function ViewAs({ src, subject, items }: { src: RuleSource; subject: string; items: PermItem[] }) {
   const mask = viewAs(src, subject)
   return (
-    <ul aria-label="What they can do" data-view-as className="flex flex-wrap gap-1">
+    <Row as="ul" aria-label="What they can do" data-view-as gap="2xs" wrap>
       {items.map(item => {
         const can = hasBit(mask, src.canonical(item.bit))
         return (
@@ -359,6 +372,6 @@ function ViewAs({ src, subject, items }: { src: RuleSource; subject: string; ite
           </li>
         )
       })}
-    </ul>
+    </Row>
   )
 }

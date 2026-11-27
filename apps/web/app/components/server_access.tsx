@@ -56,6 +56,7 @@ import { WITH_OPTION, keepGuestsChoices } from './server_settings'
 import { SettingSwitch } from './settings_fields'
 import { GUEST_VOICE_OFF, GUEST_VOICE_ON } from '../lib/guest_voice'
 import { Button, IconButton } from './controls'
+import { Grid, Row, Stack, Surface } from './layout'
 import { Chips, Dialog, FieldError, fieldCls, useCopied } from './ui'
 
 const UNTITLED = 'Untitled password'
@@ -140,44 +141,48 @@ function PasswordRow({
   const live = status === 'live'
   const { label, expires_at, max_uses, uses, created_by } = password
   return (
-    <div className="rounded-xl px-2 py-1.5 hover:bg-surface-container-highest/50">
-      <div className="flex min-w-0 items-center gap-2">
-        <span
-          className={`min-w-0 flex-1 truncate text-sm ${label ? 'text-on-surface' : 'text-on-surface-variant italic'}`}
-        >
-          {passwordName(label)}
-        </span>
-        <Chip status={status} />
-        {live && (
-          <CopyButton
-            text={secret ? inviteUrl(server, secret, shareOrigin) : null}
-            label="Copy invite link"
-            why="The password is only kept on the device that created it"
-          />
-        )}
-        {(live || status === 'used_up') && (
-          <Button variant="danger" onClick={onRevoke}>
-            Revoke
-          </Button>
-        )}
-      </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-0.5 pt-0.5 text-xs text-on-surface-variant">
-        <span title={max_uses === null ? 'Unlimited uses' : `${max_uses - uses} left`}>
-          {usesText(uses, max_uses)}
-        </span>
-        {expires_at === null ? (
-          live && <span>No expiry</span>
-        ) : live ? (
-          <span title={absoluteTime(expires_at)}>{countdown(expires_at, now)}</span>
-        ) : (
-          status === 'expired' && <span>Expired {absoluteTime(expires_at)}</span>
-        )}
-        {created_by && (
-          <span>
-            by <span className="streamer">{created_by}</span>
+    <div className="rounded-xl hover:bg-surface-container-highest/50">
+      <Surface pad="sm" gap="3xs" tone="plain" radius="lg">
+        <Row gap="sm">
+          <span
+            className={`min-w-0 flex-1 truncate text-sm ${label ? 'text-on-surface' : 'text-on-surface-variant italic'}`}
+          >
+            {passwordName(label)}
           </span>
-        )}
-      </div>
+          <Chip status={status} />
+          {live && (
+            <CopyButton
+              text={secret ? inviteUrl(server, secret, shareOrigin) : null}
+              label="Copy invite link"
+              why="The password is only kept on the device that created it"
+            />
+          )}
+          {(live || status === 'used_up') && (
+            <Button variant="danger" onClick={onRevoke}>
+              Revoke
+            </Button>
+          )}
+        </Row>
+        <div className="text-xs text-on-surface-variant">
+          <Row gap="md" wrap>
+            <span title={max_uses === null ? 'Unlimited uses' : `${max_uses - uses} left`}>
+              {usesText(uses, max_uses)}
+            </span>
+            {expires_at === null ? (
+              live && <span>No expiry</span>
+            ) : live ? (
+              <span title={absoluteTime(expires_at)}>{countdown(expires_at, now)}</span>
+            ) : (
+              status === 'expired' && <span>Expired {absoluteTime(expires_at)}</span>
+            )}
+            {created_by && (
+              <span>
+                by <span className="streamer">{created_by}</span>
+              </span>
+            )}
+          </Row>
+        </div>
+      </Surface>
     </div>
   )
 }
@@ -241,9 +246,12 @@ function PermanentPassword({
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
   return (
-    <>
-      <p className="pt-3 pb-1.5 text-sm font-medium text-on-surface">Permanent password</p>
-      <form
+    <Stack gap="xs">
+      <p className="text-sm font-medium text-on-surface">Permanent password</p>
+      <Row
+        as="form"
+        gap="sm"
+        align="stretch"
         onSubmit={e => {
           e.preventDefault()
           const next = password.trim()
@@ -282,7 +290,6 @@ function PermanentPassword({
             },
           })
         }}
-        className="flex gap-2"
       >
         <input
           type="password"
@@ -299,19 +306,19 @@ function PermanentPassword({
         <Button type="submit" variant="filled" size="md" disabled={!password.trim() && !has}>
           {password.trim() ? (has ? 'Change' : 'Set') : has ? 'Remove' : 'Set'}
         </Button>
-      </form>
+      </Row>
       <FieldError message={error} />
       {done && (
-        <p role="status" className="pt-1.5 text-xs text-on-surface">
+        <p role="status" className="text-xs text-on-surface">
           {done}
         </p>
       )}
-      <p className="pt-1.5 text-xs text-on-surface-variant">
+      <p className="text-xs text-on-surface-variant">
         {has
           ? 'Works until you change or remove it.'
           : 'No permanent password. Only the passwords below let new people in.'}
       </p>
-    </>
+    </Stack>
   )
 }
 
@@ -390,40 +397,43 @@ function NewPasswordDialog({
   return (
     <Dialog title={created ? 'Password Created' : 'New Password'} onClose={onClose} layer="confirm">
       {created ? (
-        <div>
-          <p className="text-sm text-on-surface-variant">
-            Copy it now. It is not shown again, but this device remembers it for the invite link.
-          </p>
-          <div className="mt-3 flex items-center gap-2">
-            <input
-              readOnly
-              value={created.password}
-              aria-label="New password"
-              onFocus={e => e.currentTarget.select()}
-              className={`${fieldCls} streamer font-mono`}
-            />
-            <CopyButton text={created.password} label="Copy password" />
-            <CopyButton
-              text={inviteUrl(server, created.password, shareOrigin)}
-              label="Copy invite link"
-            />
-          </div>
-          <div className="mt-6 flex justify-end">
+        <Stack gap="xl">
+          <Stack gap="md">
+            <p className="text-sm text-on-surface-variant">
+              Copy it now. It is not shown again, but this device remembers it for the invite link.
+            </p>
+            <Row gap="sm">
+              <input
+                readOnly
+                value={created.password}
+                aria-label="New password"
+                onFocus={e => e.currentTarget.select()}
+                className={`${fieldCls} streamer font-mono`}
+              />
+              <CopyButton text={created.password} label="Copy password" />
+              <CopyButton
+                text={inviteUrl(server, created.password, shareOrigin)}
+                label="Copy invite link"
+              />
+            </Row>
+          </Stack>
+          <Row gap="none" justify="end">
             <Button variant="filled" size="md" autoFocus onClick={onClose}>
               Done
             </Button>
-          </div>
-        </div>
+          </Row>
+        </Stack>
       ) : (
-        <form
+        <Stack
+          as="form"
+          gap="lg"
           onSubmit={e => {
             e.preventDefault()
             submit()
           }}
-          className="space-y-4"
         >
-          <label className="block">
-            <span className="block pb-1 text-xs text-on-surface-variant">Label</span>
+          <Stack as="label" gap="2xs">
+            <span className="text-xs text-on-surface-variant">Label</span>
             <input
               value={label}
               onChange={e => setLabel(e.target.value)}
@@ -431,28 +441,30 @@ function NewPasswordDialog({
               placeholder="For example: Friends from school"
               className={`${fieldCls} w-full`}
             />
-          </label>
-          <fieldset>
+          </Stack>
+          <Stack as="fieldset" gap={custom ? 'sm' : '2xs'}>
             <legend className="pb-1 text-xs text-on-surface-variant">Password</legend>
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <Row gap="lg" wrap>
               {(
                 [
                   [false, 'Generate'],
                   [true, 'Custom'],
                 ] as const
               ).map(([value, text]) => (
-                <label key={text} className="flex cursor-pointer items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name={`${ids}pw`}
-                    checked={custom === value}
-                    onChange={() => setCustom(value)}
-                    className="accent-primary"
-                  />
-                  {text}
+                <label key={text} className="flex cursor-pointer text-sm">
+                  <Row as="span" gap="sm">
+                    <input
+                      type="radio"
+                      name={`${ids}pw`}
+                      checked={custom === value}
+                      onChange={() => setCustom(value)}
+                      className="accent-primary"
+                    />
+                    {text}
+                  </Row>
                 </label>
               ))}
-            </div>
+            </Row>
             {custom ? (
               <input
                 type={streamer ? 'password' : 'text'}
@@ -462,16 +474,16 @@ function NewPasswordDialog({
                 autoComplete={streamer ? 'new-password' : 'off'}
                 aria-label="Custom password"
                 placeholder="At least 8 characters"
-                className={`${fieldCls} streamer mt-2 w-full`}
+                className={`${fieldCls} streamer w-full`}
               />
             ) : (
-              <p className="pt-1 text-xs text-on-surface-variant">
+              <p className="text-xs text-on-surface-variant">
                 Four random words, shown once after you create it.
               </p>
             )}
-          </fieldset>
-          <label className="block">
-            <span className="block pb-1 text-xs text-on-surface-variant">Expires after</span>
+          </Stack>
+          <Stack as="label" gap="2xs">
+            <span className="text-xs text-on-surface-variant">Expires after</span>
             <select
               value={expiry}
               onChange={e => setExpiry(e.target.value as ExpiryChoice)}
@@ -485,7 +497,7 @@ function NewPasswordDialog({
               ))}
               <option value="custom">Custom date and time</option>
             </select>
-          </label>
+          </Stack>
           {expiry === 'custom' && (
             <input
               type="datetime-local"
@@ -497,8 +509,8 @@ function NewPasswordDialog({
               className={`${fieldCls} w-full`}
             />
           )}
-          <label className="block">
-            <span className="block pb-1 text-xs text-on-surface-variant">Max uses</span>
+          <Stack as="label" gap="2xs">
+            <span className="text-xs text-on-surface-variant">Max uses</span>
             <select
               value={uses}
               onChange={e => setUses(e.target.value as UsesChoice)}
@@ -512,7 +524,7 @@ function NewPasswordDialog({
               ))}
               <option value="custom">Custom</option>
             </select>
-          </label>
+          </Stack>
           {uses === 'custom' && (
             <input
               inputMode="numeric"
@@ -527,15 +539,15 @@ function NewPasswordDialog({
             Each join or guest visit uses it once. Previewing an invite does not.
           </p>
           <FieldError message={error} />
-          <div className="flex justify-end gap-2">
+          <Row gap="sm" justify="end">
             <Button size="md" onClick={onClose}>
               Cancel
             </Button>
             <Button type="submit" variant="filled" size="md" disabled={busy}>
               {busy ? 'Creating…' : 'Create'}
             </Button>
-          </div>
-        </form>
+          </Row>
+        </Stack>
       )}
     </Dialog>
   )
@@ -563,8 +575,8 @@ function PublicReading({
     )
   }
   return (
-    <div className="pt-4">
-      <p className="pb-1.5 text-sm font-medium text-on-surface">{label}</p>
+    <Stack gap="xs">
+      <p className="text-sm font-medium text-on-surface">{label}</p>
       <Chips
         label={label}
         value={shownChoice(option, settings)}
@@ -572,11 +584,11 @@ function PublicReading({
         onChange={pick}
         disabled={!publicReadingAllowed(settings)}
       />
-      <p className="pt-1.5 text-xs text-on-surface-variant">
+      <p className="text-xs text-on-surface-variant">
         {readingLine(option, hasPassword, settings)}
       </p>
       <FieldError message={error} />
-    </div>
+    </Stack>
   )
 }
 
@@ -597,7 +609,7 @@ export function GuestParticipation({ server }: { server: string }) {
       .finally(() => setBusy(false))
   }
   return (
-    <div className="pt-3">
+    <div>
       <div className="-mx-2">
         <SettingSwitch
           label="Guests can send messages"
@@ -646,17 +658,17 @@ function MemberPrivacy({ server, visible }: { server: string; visible: boolean }
       .finally(() => setBusy(false))
   }
   return (
-    <div className="-mx-2 pt-3">
-      <SettingSwitch
-        label={MEMBERS_VISIBLE_LABEL}
-        hint={membersVisibleLine(visible)}
-        value={visible}
-        onChange={flip}
-        disabled={busy}
-      />
-      <div className="px-2">
-        <FieldError message={error} />
+    <div>
+      <div className="-mx-2">
+        <SettingSwitch
+          label={MEMBERS_VISIBLE_LABEL}
+          hint={membersVisibleLine(visible)}
+          value={visible}
+          onChange={flip}
+          disabled={busy}
+        />
       </div>
+      <FieldError message={error} />
     </div>
   )
 }
@@ -771,9 +783,9 @@ export function ServerAccessSection({
           <p className="text-sm text-on-surface-variant">Loading…</p>
         )
       ) : (
-        <>
+        <Stack gap="md">
           {canSettings && (
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <Grid cols={{ base: 1, sm: 2 }} gap="sm">
               <Radio
                 name={name}
                 checked={!data.protected}
@@ -790,20 +802,17 @@ export function ServerAccessSection({
                 detail={protectedDetail(settings, readableNow(publicRead, true, settings))}
                 icon={<Lock size={14} />}
               />
-            </div>
+            </Grid>
           )}
           {data.protected && (
             <>
               {closed && (
-                <div
-                  role="status"
-                  className="mt-3 rounded-xl bg-error-container px-3 py-2 text-on-error-container"
-                >
+                <Surface role="status" pad="md" gap="3xs" tone="error" radius="lg">
                   <p className="text-sm font-medium">Closed: nobody new can join</p>
-                  <p className="pt-0.5 text-xs">
+                  <p className="text-xs">
                     Set a permanent password or add a password below to let people in.
                   </p>
-                </div>
+                </Surface>
               )}
               {canSettings && (
                 <PermanentPassword
@@ -814,8 +823,8 @@ export function ServerAccessSection({
                 />
               )}
               {canInvites && (
-                <>
-                  <div className="flex items-center gap-2 pt-4 pb-1.5">
+                <Stack gap="xs">
+                  <Row gap="sm">
                     <p className="flex-1 text-sm font-medium text-on-surface">
                       Passwords{' '}
                       <span className="text-xs font-normal text-on-surface-variant">
@@ -829,27 +838,31 @@ export function ServerAccessSection({
                     >
                       New password
                     </Button>
-                  </div>
+                  </Row>
                   {data.passwords.length ? (
-                    data.passwords.map(p => (
-                      <PasswordRow
-                        key={p.id}
-                        server={server}
-                        password={p}
-                        now={now}
-                        secret={secretFor(book, server, p.id)}
-                        onRevoke={() => revoke(p)}
-                      />
-                    ))
+                    <Stack gap="none">
+                      {data.passwords.map(p => (
+                        <PasswordRow
+                          key={p.id}
+                          server={server}
+                          password={p}
+                          now={now}
+                          secret={secretFor(book, server, p.id)}
+                          onRevoke={() => revoke(p)}
+                        />
+                      ))}
+                    </Stack>
                   ) : (
-                    <p className="px-2 text-sm text-on-surface-variant">
-                      No other passwords. Add temporary passwords or tickets with a use limit.
-                    </p>
+                    <Surface pad="sm" inset="bar" tone="plain" radius="none">
+                      <p className="text-sm text-on-surface-variant">
+                        No other passwords. Add temporary passwords or tickets with a use limit.
+                      </p>
+                    </Surface>
                   )}
-                  <p className="pt-1.5 text-xs text-on-surface-variant">
+                  <p className="text-xs text-on-surface-variant">
                     Renaming the server revokes these passwords.
                   </p>
-                </>
+                </Stack>
               )}
             </>
           )}
@@ -863,7 +876,7 @@ export function ServerAccessSection({
             </>
           )}
           <FieldError message={error} />
-        </>
+        </Stack>
       )}
       {creating && (
         <NewPasswordDialog

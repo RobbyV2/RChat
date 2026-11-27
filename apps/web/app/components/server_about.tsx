@@ -17,6 +17,7 @@ import {
 } from '../lib/server_about'
 import { iconLook } from '../lib/server_icon'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Chips, FieldError, Masked, fieldCls, sectionCls } from './ui'
 
 // One server icon for the rail, invite cards and search: the first letter of its name or a
@@ -150,8 +151,8 @@ export function AboutEditor({
   return (
     <>
       <p className={sectionCls}>About</p>
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-3">
+      <Stack gap="md">
+        <Row gap="md">
           <span
             aria-label="Icon preview"
             role="img"
@@ -159,7 +160,7 @@ export function AboutEditor({
           >
             <ServerIcon seed={seed} name={name} kind={icon} color={color} own={own} />
           </span>
-          <div className="flex min-w-0 flex-col gap-1.5">
+          <Stack gap="xs">
             <span className="text-sm text-on-surface">Icon</span>
             <Chips
               label="Icon"
@@ -168,11 +169,11 @@ export function AboutEditor({
               onChange={k => edit(() => setIcon(k))}
               disabled={!editable}
             />
-          </div>
-        </div>
+          </Stack>
+        </Row>
         {editable ? (
-          <label className="flex flex-col gap-1.5 text-sm text-on-surface">
-            Description
+          <Stack as="label" gap="xs">
+            <span className="text-sm text-on-surface">Description</span>
             <textarea
               value={text}
               rows={3}
@@ -181,10 +182,10 @@ export function AboutEditor({
               aria-invalid={tooLong !== null}
               className={`${fieldCls} streamer resize-y`}
             />
-          </label>
+          </Stack>
         ) : (
-          <div className="flex flex-col gap-1.5 text-sm text-on-surface">
-            Description
+          <Stack gap="xs">
+            <span className="text-sm text-on-surface">Description</span>
             {about.text ? (
               <p className="streamer text-sm break-words whitespace-pre-line text-on-surface-variant">
                 <Masked text={about.text} own={own} />
@@ -192,7 +193,7 @@ export function AboutEditor({
             ) : (
               <p className="text-sm text-on-surface-variant">No description.</p>
             )}
-          </div>
+          </Stack>
         )}
         {editable && (
           <p
@@ -204,7 +205,7 @@ export function AboutEditor({
           </p>
         )}
         {editable ? (
-          <div className="flex flex-wrap items-center gap-2">
+          <Row gap="sm" wrap>
             <Button
               variant="filled"
               size="md"
@@ -231,12 +232,12 @@ export function AboutEditor({
                 About saved.
               </span>
             )}
-          </div>
+          </Row>
         ) : (
           <p className="text-xs text-on-surface-variant">{locked}</p>
         )}
         <FieldError message={error ?? tooLong} />
-      </div>
+      </Stack>
     </>
   )
 }

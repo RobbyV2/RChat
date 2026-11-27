@@ -8,6 +8,7 @@ import { FOLDER_NAME_MAX, type Folder } from '../lib/nav_layout'
 import { enterKey } from '../lib/keys'
 import { ColorField } from './color_field'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 
 // The color choice of a folder with a preview of it open and closed. `tone` marks a P2P folder.
@@ -24,10 +25,10 @@ export function FolderColorField({
   const style = folderStyle(color, theme) as CSSProperties | undefined
   const p2p = tone === 'tertiary'
   return (
-    <div className="mt-4 flex flex-col gap-2">
+    <Stack gap="sm">
       <span className="text-sm text-on-surface-variant">Folder color</span>
-      <div className="flex items-start gap-4">
-        <div aria-hidden className="flex shrink-0 flex-col items-center gap-2">
+      <Row gap="lg" align="start">
+        <Stack aria-hidden gap="sm" align="center" place="shrink-0">
           <span
             style={style}
             className="folder-group flex size-12 items-center justify-center rounded-2xl"
@@ -62,7 +63,7 @@ export function FolderColorField({
               <FolderIcon size={9} strokeWidth={2.5} />
             </span>
           </span>
-        </div>
+        </Stack>
         <div className="min-w-0 flex-1">
           <ColorField
             label="Folder color"
@@ -74,8 +75,8 @@ export function FolderColorField({
             resetLabel="Use default"
           />
         </div>
-      </div>
-    </div>
+      </Row>
+    </Stack>
   )
 }
 
@@ -93,30 +94,36 @@ function EditFolder({ folder, colorFirst }: { folder: Folder; colorFirst: boolea
   }
   return (
     <Dialog title="Edit folder" onClose={closeDialog}>
-      <input
-        autoFocus={!colorFirst}
-        value={name}
-        maxLength={FOLDER_NAME_MAX}
-        onChange={e => setName(e.target.value)}
-        onKeyDown={e => {
-          if (enterKey(e)) save()
-        }}
-        placeholder={fallback}
-        aria-label="Folder name"
-        className={`${fieldCls} w-full`}
-      />
-      <p className="pt-1.5 text-xs text-on-surface-variant">
-        Shown when hovering the folder. Leave empty to list its servers.
-      </p>
-      <FolderColorField color={color} onColor={setColor} />
-      <div className="mt-6 flex justify-end gap-2">
-        <Button size="md" onClick={closeDialog}>
-          Cancel
-        </Button>
-        <Button variant="filled" size="md" onClick={save}>
-          Save
-        </Button>
-      </div>
+      <Stack gap="xl">
+        <Stack gap="lg">
+          <Stack gap="xs">
+            <input
+              autoFocus={!colorFirst}
+              value={name}
+              maxLength={FOLDER_NAME_MAX}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => {
+                if (enterKey(e)) save()
+              }}
+              placeholder={fallback}
+              aria-label="Folder name"
+              className={`${fieldCls} w-full`}
+            />
+            <p className="text-xs text-on-surface-variant">
+              Shown when hovering the folder. Leave empty to list its servers.
+            </p>
+          </Stack>
+          <FolderColorField color={color} onColor={setColor} />
+        </Stack>
+        <Row gap="sm" justify="end">
+          <Button size="md" onClick={closeDialog}>
+            Cancel
+          </Button>
+          <Button variant="filled" size="md" onClick={save}>
+            Save
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

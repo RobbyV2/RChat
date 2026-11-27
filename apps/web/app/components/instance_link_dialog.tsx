@@ -6,6 +6,7 @@ import { client } from '../lib/client/client'
 import type { InstanceLinkDialog } from '../lib/client/instance_links'
 import { AddInstanceFlow } from './add_instance'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 
 function Choose({ dialog, close }: { dialog: InstanceLinkDialog; close: () => void }) {
@@ -15,30 +16,37 @@ function Choose({ dialog, close }: { dialog: InstanceLinkDialog; close: () => vo
   const host = new URL(dialog.target.origin).host
   return (
     <Dialog title="Choose an account" compact onClose={close}>
-      <label className="flex flex-col gap-2">
-        Open this link as
-        <select autoFocus value={user} className={fieldCls} onChange={e => setUser(e.target.value)}>
-          {dialog.users.map((name, index) => (
-            <option key={name} value={name}>
-              {streamer ? `Account ${index + 1}` : `${name} · ${host}`}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="mt-4 flex items-center gap-2">
-        <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
-        {streamer
-          ? 'Remember my account for matching links'
-          : `Always use this account for links to ${host}`}
-      </label>
-      <div className="mt-5 flex justify-end gap-2">
-        <Button size="md" onClick={close}>
-          Cancel
-        </Button>
-        <Button variant="filled" size="md" onClick={() => dialog.accept(user, remember)}>
-          Open
-        </Button>
-      </div>
+      <Stack gap="lg">
+        <Stack as="label" gap="sm">
+          Open this link as
+          <select
+            autoFocus
+            value={user}
+            className={fieldCls}
+            onChange={e => setUser(e.target.value)}
+          >
+            {dialog.users.map((name, index) => (
+              <option key={name} value={name}>
+                {streamer ? `Account ${index + 1}` : `${name} · ${host}`}
+              </option>
+            ))}
+          </select>
+        </Stack>
+        <Row as="label" gap="sm">
+          <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+          {streamer
+            ? 'Remember my account for matching links'
+            : `Always use this account for links to ${host}`}
+        </Row>
+        <Row gap="sm" justify="end">
+          <Button size="md" onClick={close}>
+            Cancel
+          </Button>
+          <Button variant="filled" size="md" onClick={() => dialog.accept(user, remember)}>
+            Open
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

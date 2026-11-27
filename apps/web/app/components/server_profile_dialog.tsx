@@ -37,6 +37,7 @@ import { BannerPicker } from './settings_menu'
 import { useLook } from './shown_user'
 import { useNow } from './timeout_dialog'
 import { Button, Chip } from './controls'
+import { Grid, Row, Stack, Surface } from './layout'
 import { Dialog, FieldError, Masked, fieldCls } from './ui'
 import { UserAvatar } from './user_avatar'
 
@@ -87,12 +88,7 @@ function Preview({ source, draft }: { source: ProfileEditorSource; draft: Profil
     <Masked text={user.display_name} own />
   )
   return (
-    <div
-      data-profile-preview
-      aria-label="Preview"
-      role="group"
-      className="grid gap-3 sm:grid-cols-2"
-    >
+    <Grid data-profile-preview aria-label="Preview" role="group" cols={{ base: 1, sm: 2 }} gap="md">
       <div className="flex min-w-0 gap-3 rounded-2xl bg-surface p-3">
         <span className="shrink-0 pt-0.5">{source.avatar(user, 36)}</span>
         <div className="min-w-0">
@@ -112,7 +108,7 @@ function Preview({ source, draft }: { source: ProfileEditorSource; draft: Profil
           {bio ? <Masked text={bio} own /> : null}
         </p>
       </div>
-    </div>
+    </Grid>
   )
 }
 
@@ -189,32 +185,39 @@ export function ProfileEditor({
   }
   return (
     <Dialog title="Server profile" onClose={onClose} full>
-      <form
+      <Stack
+        as="form"
         data-server-profile
         onSubmit={e => {
           e.preventDefault()
           submit()
         }}
-        className="flex flex-col gap-5"
+        gap="lg"
       >
         {line && (
-          <p
+          <Surface
+            as="p"
             data-profile-locked
             role="status"
-            className="flex items-start gap-2 rounded-xl bg-error-container px-3 py-2 text-sm text-on-error-container"
+            pad="md"
+            inset="bar"
+            tone="error"
+            radius="lg"
           >
-            <Lock size={16} className="mt-0.5 shrink-0" aria-hidden />
-            {line}
-          </p>
+            <Row as="span" gap="sm" align="start">
+              <Lock size={16} className="mt-0.5 shrink-0" aria-hidden />
+              <span className="text-sm">{line}</span>
+            </Row>
+          </Surface>
         )}
         <Preview source={source} draft={shown} />
-        <fieldset disabled={locked || busy} className="flex min-w-0 flex-col gap-5">
+        <Stack as="fieldset" disabled={locked || busy} gap="lg">
           {source.names ? (
-            <div className="flex flex-col gap-2">
+            <Stack gap="sm">
               <label htmlFor={nameId} className={labelCls}>
                 Server name
               </label>
-              <div className="flex gap-2">
+              <Row gap="sm" align="stretch">
                 <input
                   id={nameId}
                   value={draft.name}
@@ -227,11 +230,11 @@ export function ProfileEditor({
                 {draft.name !== '' && (
                   <Button onClick={() => change({ name: '' })}>Use {origin} name</Button>
                 )}
-              </div>
+              </Row>
               <p className="text-xs text-on-surface-variant">
                 Only this server shows it. Leave it empty to use your {origin} name.
               </p>
-            </div>
+            </Stack>
           ) : (
             <p data-profile-no-names className="text-sm text-on-surface-variant">
               {source.mode === 'no_names'
@@ -239,9 +242,9 @@ export function ProfileEditor({
                 : 'Names are off on this site.'}
             </p>
           )}
-          <div className="flex flex-col gap-2">
+          <Stack gap="sm">
             {draft.avatar === null ? (
-              <div className="flex flex-wrap items-center gap-3">
+              <Row gap="md" wrap>
                 <span className={labelCls}>Avatar</span>
                 {source.avatar(account, 32)}
                 <span className="text-xs text-on-surface-variant">As on your {origin}</span>
@@ -257,7 +260,7 @@ export function ProfileEditor({
                 >
                   Change for this server
                 </Button>
-              </div>
+              </Row>
             ) : (
               <>
                 <AvatarPicker
@@ -282,7 +285,7 @@ export function ProfileEditor({
                 </Button>
               </>
             )}
-          </div>
+          </Stack>
           <BannerPicker
             username={account.username}
             displayName={picture.display_name}
@@ -295,7 +298,7 @@ export function ProfileEditor({
             defaultNote={`As on your ${origin}`}
             resetLabel={`Use ${origin} banner`}
           />
-          <div className="flex flex-col gap-2">
+          <Stack gap="sm">
             <label htmlFor={bioId} className={labelCls}>
               Description
             </label>
@@ -311,7 +314,7 @@ export function ProfileEditor({
                 left < 0 ? 'border-error' : 'border-outline focus:border-primary'
               }`}
             />
-            <div className="flex items-center justify-between gap-3">
+            <Row gap="md" justify="between">
               {draft.bio !== '' ? (
                 <Button onClick={() => change({ bio: '' })}>Use {origin} description</Button>
               ) : (
@@ -326,11 +329,11 @@ export function ProfileEditor({
                 </span>
                 <span aria-hidden>{left}</span>
               </span>
-            </div>
-          </div>
-        </fieldset>
+            </Row>
+          </Stack>
+        </Stack>
         <FieldError message={error ?? (changed ? invalid : null)} />
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <Row gap="sm" justify="between" wrap>
           <Button
             variant="danger"
             size="md"
@@ -339,7 +342,7 @@ export function ProfileEditor({
           >
             Reset all
           </Button>
-          <span className="flex gap-2">
+          <Row as="span" gap="sm">
             <Button size="md" onClick={onClose}>
               {locked ? 'Close' : 'Cancel'}
             </Button>
@@ -353,9 +356,9 @@ export function ProfileEditor({
                 Save
               </Button>
             )}
-          </span>
-        </div>
-      </form>
+          </Row>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
@@ -464,8 +467,8 @@ export function ProfileReset({
     setFields(cur => (cur.includes(f) ? cur.filter(x => x !== f) : [...cur, f]))
   return (
     <Dialog title="Reset server profile" onClose={onClose}>
-      <div data-profile-reset className="flex flex-col gap-4">
-        <div className="flex items-center gap-3">
+      <Stack data-profile-reset gap="lg">
+        <Row gap="md">
           {source.avatar(user, 36)}
           <div className="min-w-0">
             <p className="streamer truncate text-sm font-medium text-on-surface">
@@ -480,86 +483,96 @@ export function ProfileReset({
               </p>
             )}
           </div>
-        </div>
+        </Row>
         <p className="text-sm text-on-surface-variant">
           What you reset goes back to what their profile has outside this server.
         </p>
         {lock.locked && (
-          <div
-            data-profile-reset-locked
-            className="flex flex-wrap items-center gap-2 rounded-xl bg-error-container px-3 py-2 text-sm text-on-error-container"
-          >
-            <Lock size={16} className="shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1">
-              {lock.until === null ? 'Locked until unlocked' : `Locked until ${when(lock.until)}`}
-            </span>
-            <Button
-              variant="danger"
-              onClick={() => {
-                void source.unlock()
-                onClose()
-              }}
-            >
-              Unlock
-            </Button>
-          </div>
+          <Surface data-profile-reset-locked pad="md" inset="bar" tone="error" radius="lg">
+            <Row gap="sm" wrap>
+              <Lock size={16} className="shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 text-sm">
+                {lock.until === null ? 'Locked until unlocked' : `Locked until ${when(lock.until)}`}
+              </span>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  void source.unlock()
+                  onClose()
+                }}
+              >
+                Unlock
+              </Button>
+            </Row>
+          </Surface>
         )}
-        <fieldset className="flex flex-col gap-1">
+        <Stack as="fieldset" gap="2xs">
           <legend className="pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
             Reset
           </legend>
           {RESET_FIELDS.map(f => (
-            <label key={f} className="flex min-h-9 items-center gap-3 text-sm text-on-surface">
-              <input
-                type="checkbox"
-                checked={fields.includes(f)}
-                onChange={() => toggle(f)}
-                className="size-4 accent-primary"
-              />
-              <span className="min-w-0">
-                {RESET_LABELS[f]}
-                {f === 'name' && source.name !== null && (
-                  <span className="streamer text-on-surface-variant">
-                    {' '}
-                    (<Masked text={source.name} />)
-                  </span>
-                )}
-              </span>
+            <label key={f} className="flex min-h-9 items-center text-sm text-on-surface">
+              <Row as="span" gap="md">
+                <input
+                  type="checkbox"
+                  checked={fields.includes(f)}
+                  onChange={() => toggle(f)}
+                  className="size-4 accent-primary"
+                />
+                <span className="min-w-0">
+                  {RESET_LABELS[f]}
+                  {f === 'name' && source.name !== null && (
+                    <span className="streamer text-on-surface-variant">
+                      {' '}
+                      (<Masked text={source.name} />)
+                    </span>
+                  )}
+                </span>
+              </Row>
             </label>
           ))}
-        </fieldset>
-        <div>
+        </Stack>
+        <Stack gap="sm">
           <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
             Lock their server profile
           </p>
-          <div role="radiogroup" aria-label="Lock" className="mt-2 flex flex-wrap gap-2">
-            {LOCK_CHOICES.map(c => (
-              <Chip key={String(c.secs)} radio on={secs === c.secs} onClick={() => setSecs(c.secs)}>
-                {c.label}
-              </Chip>
-            ))}
-          </div>
-          <p className="pt-1.5 text-xs text-on-surface-variant">
-            While it is locked they can&apos;t change their server profile.
-          </p>
-        </div>
+          <Stack gap="xs">
+            <Row role="radiogroup" aria-label="Lock" gap="sm" wrap>
+              {LOCK_CHOICES.map(c => (
+                <Chip
+                  key={String(c.secs)}
+                  radio
+                  on={secs === c.secs}
+                  onClick={() => setSecs(c.secs)}
+                >
+                  {c.label}
+                </Chip>
+              ))}
+            </Row>
+            <p className="text-xs text-on-surface-variant">
+              While it is locked they can&apos;t change their server profile.
+            </p>
+          </Stack>
+        </Stack>
         {source.reasons && (
           <label className="block text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-            Reason
-            <input
-              value={reason}
-              maxLength={REASON_MAX}
-              onChange={e => setReason(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') void submit()
-              }}
-              placeholder="Optional, shown to moderators"
-              className={`${fieldCls} mt-1.5 w-full tracking-normal text-on-surface normal-case`}
-            />
+            <Stack as="span" gap="xs">
+              Reason
+              <input
+                value={reason}
+                maxLength={REASON_MAX}
+                onChange={e => setReason(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') void submit()
+                }}
+                placeholder="Optional, shown to moderators"
+                className={`${fieldCls} w-full tracking-normal text-on-surface normal-case`}
+              />
+            </Stack>
           </label>
         )}
         <FieldError message={error} />
-        <div className="flex justify-end gap-2">
+        <Row gap="sm" justify="end">
           <Button size="md" onClick={onClose}>
             Cancel
           </Button>
@@ -571,8 +584,8 @@ export function ProfileReset({
           >
             {fields.length ? 'Reset' : 'Lock'}
           </Button>
-        </div>
-      </div>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
@@ -662,19 +675,19 @@ export function ProfilesModeField({
       .finally(() => setBusy(false))
   }
   return (
-    <div data-profiles-mode className="flex flex-col gap-2">
-      <div role="radiogroup" aria-label="Server profiles" className="flex flex-wrap gap-2">
+    <Stack data-profiles-mode gap="sm">
+      <Row role="radiogroup" aria-label="Server profiles" gap="sm" wrap>
         {PROFILE_FIELDS.modes.map(m => (
           <Chip key={m} radio on={mode === m} disabled={disabled || busy} onClick={() => pick(m)}>
             {MODE_LABELS[m]}
           </Chip>
         ))}
-      </div>
+      </Row>
       <p className="text-xs text-on-surface-variant">
         Members can set a name, avatar, banner and description that only this server shows. Turning
         it off hides what they set; it comes back when you turn it on again.
       </p>
       <FieldError message={error} />
-    </div>
+    </Stack>
   )
 }

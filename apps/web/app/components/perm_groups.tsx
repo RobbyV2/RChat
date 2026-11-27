@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { groupItems, matchItems, type PermItem } from '../lib/perm_source'
 import { hasBit, maskXor } from '../lib/perms'
+import { Stack } from './layout'
 import { fieldCls } from './ui'
 
 // A role's or @everyone's permissions in groups, with a search: one switch each. `blockOf(next)`
@@ -23,7 +24,7 @@ export function PermGroups({
   const [q, setQ] = useState('')
   const groups = groupItems(matchItems(items, q))
   return (
-    <div data-perm-groups className="space-y-2">
+    <Stack data-perm-groups gap="sm">
       {items.length > 8 && (
         <input
           type="search"
@@ -35,7 +36,7 @@ export function PermGroups({
         />
       )}
       {groups.map(g => (
-        <div key={g.group} className="space-y-0.5">
+        <Stack key={g.group} gap="3xs">
           <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
             {g.group}
           </p>
@@ -75,11 +76,11 @@ export function PermGroups({
               </button>
             )
           })}
-        </div>
+        </Stack>
       ))}
       {groups.length === 0 && (
         <p className="text-xs text-on-surface-variant">No matching permissions.</p>
       )}
-    </div>
+    </Stack>
   )
 }

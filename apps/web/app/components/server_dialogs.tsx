@@ -20,6 +20,7 @@ import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { Button, ListRow, Tab } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog, FieldError, Masked } from './ui'
 import { ServerGlyph } from './server_rail'
 import { AboutLine } from './server_about'
@@ -174,100 +175,110 @@ function AddServerDialog({
 
   return (
     <Dialog compact title={guest ? 'Join a server' : 'Add a server'} onClose={closeDialog}>
-      {picker}
-      {!guest && (
-        <div role="tablist" className="mb-4 flex rounded-full bg-surface-container p-1">
-          {(['create', 'join'] as const).map(t => (
-            <Tab
-              key={t}
-              selected={tab === t}
-              onClick={() => {
-                setTab(t)
-                setStep('name')
-                setError(null)
-              }}
-              place="flex-1"
-            >
-              {t === 'create' ? 'Create' : 'Join'}
-            </Tab>
-          ))}
-        </div>
-      )}
-      <p className="mb-3 text-sm text-on-surface-variant">
-        {creating
-          ? 'The server name doubles as its invite code.'
-          : 'Enter a server name, or paste an invite link.'}
-      </p>
-      <input
-        autoFocus={step === 'name'}
-        value={name}
-        onChange={e => rename(e.target.value)}
-        onKeyDown={e => {
-          if (enterKey(e)) void submit()
-        }}
-        placeholder={joining ? 'server name or invite link' : 'server name'}
-        aria-label={joining ? 'Server name or invite link' : 'Server name'}
-        aria-invalid={nameTaken}
-        className="streamer w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
-      />
-      {nameTaken && <p className="mt-1 text-xs text-error">That name is taken</p>}
-      {joining && step === 'name' && suggestions.some(s => s.name !== id) && (
-        <div className="mt-2 flex flex-col gap-1">
-          {suggestions
-            .filter(s => s.name !== id)
-            .slice(0, 5)
-            .map(s => (
-              <ListRow
-                key={s.name}
-                tone="muted"
-                onClick={() => rename(s.name)}
-                data-server-match={s.name}
-                leading={
-                  <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container-highest text-sm font-semibold text-on-surface">
-                    <ServerGlyph name={s.name} displayName={s.display_name} look={s} />
-                  </span>
-                }
-                streamer
-                label={<Masked text={s.display_name} />}
-                description={<AboutLine text={aboutText(s.description)} oneLine />}
-              />
+      <Stack gap="lg">
+        {picker}
+        {!guest && (
+          <div role="tablist" className="flex rounded-full bg-surface-container p-1">
+            {(['create', 'join'] as const).map(t => (
+              <Tab
+                key={t}
+                selected={tab === t}
+                onClick={() => {
+                  setTab(t)
+                  setStep('name')
+                  setError(null)
+                }}
+                place="flex-1"
+              >
+                {t === 'create' ? 'Create' : 'Join'}
+              </Tab>
             ))}
-        </div>
-      )}
-      {(creating || step === 'password') && (
-        <input
-          autoFocus={step === 'password'}
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => {
-            if (enterKey(e)) void submit()
-          }}
-          placeholder={creating ? 'password (optional)' : 'password'}
-          aria-label={creating ? 'Password (optional)' : 'Server password'}
-          className="mt-3 w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
-        />
-      )}
-      {joining && <p className="mt-3 text-xs text-on-surface-variant">{JOIN_NOTE}</p>}
-      <FieldError message={error} />
-      <div className="mt-5 flex justify-end gap-2">
-        {joining && step === 'password' && (
-          <Button size="md" onClick={() => rename(name)} place="mr-auto">
-            Back
-          </Button>
+          </div>
         )}
-        <Button size="md" onClick={closeDialog}>
-          Cancel
-        </Button>
-        <Button
-          variant="filled"
-          size="md"
-          onClick={() => void submit()}
-          disabled={busy || selecting || !name.trim() || (step === 'password' && !password.trim())}
-        >
-          {creating ? 'Create' : 'Join'}
-        </Button>
-      </div>
+        <Stack gap="md">
+          <p className="text-sm text-on-surface-variant">
+            {creating
+              ? 'The server name doubles as its invite code.'
+              : 'Enter a server name, or paste an invite link.'}
+          </p>
+          <Stack gap="sm">
+            <Stack gap="2xs">
+              <input
+                autoFocus={step === 'name'}
+                value={name}
+                onChange={e => rename(e.target.value)}
+                onKeyDown={e => {
+                  if (enterKey(e)) void submit()
+                }}
+                placeholder={joining ? 'server name or invite link' : 'server name'}
+                aria-label={joining ? 'Server name or invite link' : 'Server name'}
+                aria-invalid={nameTaken}
+                className="streamer w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
+              />
+              {nameTaken && <p className="text-xs text-error">That name is taken</p>}
+            </Stack>
+            {joining && step === 'name' && suggestions.some(s => s.name !== id) && (
+              <Stack gap="2xs">
+                {suggestions
+                  .filter(s => s.name !== id)
+                  .slice(0, 5)
+                  .map(s => (
+                    <ListRow
+                      key={s.name}
+                      tone="muted"
+                      onClick={() => rename(s.name)}
+                      data-server-match={s.name}
+                      leading={
+                        <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container-highest text-sm font-semibold text-on-surface">
+                          <ServerGlyph name={s.name} displayName={s.display_name} look={s} />
+                        </span>
+                      }
+                      streamer
+                      label={<Masked text={s.display_name} />}
+                      description={<AboutLine text={aboutText(s.description)} oneLine />}
+                    />
+                  ))}
+              </Stack>
+            )}
+          </Stack>
+          {(creating || step === 'password') && (
+            <input
+              autoFocus={step === 'password'}
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => {
+                if (enterKey(e)) void submit()
+              }}
+              placeholder={creating ? 'password (optional)' : 'password'}
+              aria-label={creating ? 'Password (optional)' : 'Server password'}
+              className="w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
+            />
+          )}
+          {joining && <p className="text-xs text-on-surface-variant">{JOIN_NOTE}</p>}
+          <FieldError message={error} />
+        </Stack>
+        <Row gap="sm" justify="end">
+          {joining && step === 'password' && (
+            <Button size="md" onClick={() => rename(name)} place="mr-auto">
+              Back
+            </Button>
+          )}
+          <Button size="md" onClick={closeDialog}>
+            Cancel
+          </Button>
+          <Button
+            variant="filled"
+            size="md"
+            onClick={() => void submit()}
+            disabled={
+              busy || selecting || !name.trim() || (step === 'password' && !password.trim())
+            }
+          >
+            {creating ? 'Create' : 'Join'}
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
@@ -324,48 +335,50 @@ function AccountServerDialog({
   )
   const picker =
     !locked && (choices.length > 1 || allowed) ? (
-      <label className="mb-3 flex items-center gap-2 text-sm">
-        As{' '}
-        <select
-          aria-label="As"
-          value={(switching ?? acting).renderKey}
-          className="streamer min-w-0 flex-1 rounded-lg bg-surface-container px-2 py-1"
-          onChange={async e => {
-            const mark = ++selection.current
-            setSwitchError('')
-            setSwitching(null)
-            if (e.target.value === 'another') {
-              setAdding(true)
-              return
-            }
-            const next = choices.find(s => s.renderKey === Number(e.target.value))
-            if (!next || !allowsAccountOrigin(next.conn.origin)) return
-            setSwitching(next)
-            if (!next.store.getState().me && !next.store.getState().guest)
-              await next.store.getState().bootstrap()
-            if (mark !== selection.current) return
-            setSwitching(null)
-            if (
-              allowsAccountOrigin(next.conn.origin) &&
-              client.live().includes(next) &&
-              (next.store.getState().me || next.store.getState().guest)
-            )
-              setSelectedAs(next)
-            else setSwitchError('Sign in again to use that account.')
-          }}
-        >
-          {choices.map(a => (
-            <option key={a.renderKey} value={a.renderKey}>
-              {a.store.getState().me?.username ?? a.credentialTarget ?? 'Guest'} · {a.conn.host}
-            </option>
-          ))}
-          {allowed && <option value="another">Another instance…</option>}
-        </select>
-        {switchError && (
-          <span role="alert" className="text-error">
-            {switchError}
-          </span>
-        )}
+      <label className="flex text-sm">
+        <Row as="span" gap="sm" place="flex-1">
+          As
+          <select
+            aria-label="As"
+            value={(switching ?? acting).renderKey}
+            className="streamer min-w-0 flex-1 rounded-lg bg-surface-container px-2 py-1"
+            onChange={async e => {
+              const mark = ++selection.current
+              setSwitchError('')
+              setSwitching(null)
+              if (e.target.value === 'another') {
+                setAdding(true)
+                return
+              }
+              const next = choices.find(s => s.renderKey === Number(e.target.value))
+              if (!next || !allowsAccountOrigin(next.conn.origin)) return
+              setSwitching(next)
+              if (!next.store.getState().me && !next.store.getState().guest)
+                await next.store.getState().bootstrap()
+              if (mark !== selection.current) return
+              setSwitching(null)
+              if (
+                allowsAccountOrigin(next.conn.origin) &&
+                client.live().includes(next) &&
+                (next.store.getState().me || next.store.getState().guest)
+              )
+                setSelectedAs(next)
+              else setSwitchError('Sign in again to use that account.')
+            }}
+          >
+            {choices.map(a => (
+              <option key={a.renderKey} value={a.renderKey}>
+                {a.store.getState().me?.username ?? a.credentialTarget ?? 'Guest'} · {a.conn.host}
+              </option>
+            ))}
+            {allowed && <option value="another">Another instance…</option>}
+          </select>
+          {switchError && (
+            <span role="alert" className="text-error">
+              {switchError}
+            </span>
+          )}
+        </Row>
       </label>
     ) : null
   return (
