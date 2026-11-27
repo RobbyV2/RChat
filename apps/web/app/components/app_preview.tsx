@@ -15,7 +15,7 @@ import { savedPreviews } from '../lib/apps/preview_files'
 import type { Node } from '../lib/apps/ui/types'
 import { Button } from './controls'
 import { buttonLook } from '../lib/controls'
-import { CloseButton, fieldCls, Masked } from './ui'
+import { CloseButton, fieldCls, Masked, TopDialog } from './ui'
 
 function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
   const { usePreview, previewStep } = previewFor(useAccount())
@@ -184,17 +184,7 @@ function Launcher({ where }: { where: string }) {
     forgetSavedPreview,
     previewStep,
   } = previewFor(owner)
-  const frame = useRef<HTMLDialogElement>(null)
   const identity = useRef<HTMLHeadingElement>(null)
-  useLayoutEffect(() => {
-    const el = frame.current!
-    const opener = document.activeElement
-    el.showModal()
-    return () => {
-      el.close()
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true })
-    }
-  }, [])
   const { loaded, dialog, error } = usePreview()
   const account = useStore(s => s.me?.username)
   const revision = useViewing(s => s.revision)
@@ -216,21 +206,16 @@ function Launcher({ where }: { where: string }) {
     else closePreview()
   }
   return (
-    <dialog
-      ref={frame}
-      aria-labelledby="app-preview-title"
-      onCancel={e => {
-        e.preventDefault()
-        back()
-      }}
+    <TopDialog
+      labelledBy="app-preview-title"
+      wide
+      onCancel={back}
       onKeyDown={e => {
-        e.stopPropagation()
         if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
           e.preventDefault()
           back()
         }
       }}
-      className="fixed inset-0 m-auto max-h-[85dvh] w-[min(32rem,calc(100%-2rem))] max-w-full flex-col overflow-hidden rounded-2xl bg-surface-container-high p-4 text-on-surface shadow-elevation-3 open:flex backdrop:bg-scrim/60 sm:p-6"
     >
       <div className="mb-3 flex shrink-0 items-center justify-between">
         <h2 id="app-preview-title" className="text-lg font-medium">
@@ -334,6 +319,6 @@ function Launcher({ where }: { where: string }) {
           </Button>
         )}
       </div>
-    </dialog>
+    </TopDialog>
   )
 }

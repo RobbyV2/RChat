@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
+import { useId, useRef, useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { client } from '../lib/client/client'
 import { useAccount } from '../lib/client/react'
@@ -20,7 +20,7 @@ import {
 } from '../lib/relays'
 import { SettingSwitch } from './settings_fields'
 import { Button, IconButton } from './controls'
-import { CloseButton, useBackdrop, FieldError, fieldCls, sectionCls } from './ui'
+import { CloseButton, FieldError, TopDialog, fieldCls, sectionCls } from './ui'
 
 const relayLabel = (url: string) => displayHost(hostOf(url) ?? url)
 
@@ -248,54 +248,29 @@ function RelayConsent({ host }: { host: string }) {
   const owner = useAccount()
   const answer = useStore(s => s.answerRelayPrompt)
   const deny = () => answer('deny')
-  const backdrop = useBackdrop(deny)
-  const dialog = useRef<HTMLDialogElement>(null)
   const denyButton = useRef<HTMLButtonElement>(null)
   const title = useId()
-  useLayoutEffect(() => {
-    const element = dialog.current!
-    const opener = document.activeElement
-    element.showModal()
-    denyButton.current?.focus()
-    return () => {
-      element.close()
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true })
-    }
-  }, [])
   return (
-    <dialog
-      ref={dialog}
-      aria-labelledby={title}
-      aria-modal="true"
-      onCancel={event => {
-        event.preventDefault()
-        deny()
-      }}
-      onKeyDown={event => event.stopPropagation()}
-      className="fixed inset-0 m-auto max-h-[85dvh] w-[min(24rem,calc(100%-2rem))] rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
-      {...backdrop}
-    >
-      <div className="p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id={title} className="text-lg font-medium">
-            Unknown relay
-          </h2>
-          <CloseButton onClick={deny} compact />
-        </div>
-        {owner !== client.shown() && <AccountLabel />}
-        <p className="text-sm break-words text-on-surface-variant">{promptText(host)}</p>
-        <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <Button ref={denyButton} size="md" onClick={deny}>
-            Deny
-          </Button>
-          <Button size="md" onClick={() => answer('once')}>
-            Allow once
-          </Button>
-          <Button variant="filled" size="md" onClick={() => answer('always')}>
-            Always allow
-          </Button>
-        </div>
+    <TopDialog labelledBy={title} backdrop initialFocus={denyButton} onCancel={deny}>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 id={title} className="text-lg font-medium">
+          Unknown relay
+        </h2>
+        <CloseButton onClick={deny} compact />
       </div>
-    </dialog>
+      {owner !== client.shown() && <AccountLabel />}
+      <p className="text-sm break-words text-on-surface-variant">{promptText(host)}</p>
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <Button ref={denyButton} size="md" onClick={deny}>
+          Deny
+        </Button>
+        <Button size="md" onClick={() => answer('once')}>
+          Allow once
+        </Button>
+        <Button variant="filled" size="md" onClick={() => answer('always')}>
+          Always allow
+        </Button>
+      </div>
+    </TopDialog>
   )
 }

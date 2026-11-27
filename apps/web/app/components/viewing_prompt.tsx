@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 import { Button } from './controls'
-import { Masked } from './ui'
+import { Masked, TopDialog } from './ui'
 
 export function ViewingPrompt() {
   const sessions = useLiveSessions()
@@ -32,32 +32,16 @@ function Warning({
 }) {
   const title = useId()
   const description = useId()
-  const ref = useRef<HTMLDialogElement>(null)
   const back = useRef<HTMLButtonElement>(null)
   const [remember, setRemember] = useState(false)
   const app = prompt.target.kind === 'app'
-  useEffect(() => {
-    const el = ref.current!
-    const opener = document.activeElement
-    el.showModal()
-    back.current?.focus()
-    return () => {
-      el.close()
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true })
-    }
-  }, [])
   return (
-    <dialog
-      ref={ref}
-      aria-modal="true"
-      aria-labelledby={title}
-      aria-describedby={description}
-      onCancel={e => {
-        e.preventDefault()
-        prompt.answer(false, false)
-      }}
-      onKeyDown={e => e.stopPropagation()}
-      className="fixed inset-0 m-auto max-h-[85dvh] w-[min(24rem,calc(100%-2rem))] max-w-full overflow-y-auto rounded-3xl bg-surface-container-high p-6 text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
+    <TopDialog
+      labelledBy={title}
+      describedBy={description}
+      initialFocus={back}
+      onTop
+      onCancel={() => prompt.answer(false, false)}
     >
       <h2 id={title} className="text-lg font-medium">
         {app ? 'Open this app?' : 'Open sensitive channel?'}
@@ -87,6 +71,6 @@ function Warning({
           Open
         </Button>
       </div>
-    </dialog>
+    </TopDialog>
   )
 }

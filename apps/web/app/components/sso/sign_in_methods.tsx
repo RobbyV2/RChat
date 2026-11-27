@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { useAccount, useStore } from '../../lib/client/react'
 import { beginPopup, canUnlink, DEFAULT_AUTH, linkable } from '../../lib/sso'
 import { mayManageSignIns } from '../../lib/sso_actions'
@@ -11,7 +11,7 @@ import { ReAuthPrompt } from '../backup_phrase/reauth_prompt'
 import { useConfirmation } from './use_confirmation'
 import { tabWrap } from '../../lib/settings_page'
 import { Button } from '../controls'
-import { CloseButton, useBackdrop, FieldError } from '../ui'
+import { CloseButton, FieldError, TopDialog } from '../ui'
 
 type Provider = { id: string; name: string }
 export function useSignInLinks() {
@@ -192,47 +192,35 @@ function ProviderDialog({
   onClose(): void
   children: ReactNode
 }) {
-  const ref = useRef<HTMLDialogElement>(null)
   const id = useId()
-  const backdrop = useBackdrop(onClose)
-  useLayoutEffect(() => {
-    const el = ref.current!
-    const opener = document.activeElement
-    el.showModal()
-    // Disabling the active confirmation control can move focus to the document body.
-    const focusInside = () => {
-      if (el.open && !el.contains(document.activeElement)) el.querySelector('button')?.focus()
-    }
-    const onBlur = () => queueMicrotask(focusInside)
-    el.addEventListener('focusout', onBlur)
-    window.addEventListener('focus', focusInside)
-    window.addEventListener('rchat-sso-return', focusInside)
-    // Let the browser cancel the native modal even if the popup left the key targeted at body.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.isComposing && !el.contains(e.target as Node))
-        e.stopPropagation()
-    }
-    document.addEventListener('keydown', onKey, true)
-    return () => {
-      document.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('rchat-sso-return', focusInside)
-      window.removeEventListener('focus', focusInside)
-      el.removeEventListener('focusout', onBlur)
-      el.close()
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true })
-    }
-  }, [])
   return (
-    <dialog
-      ref={ref}
-      aria-modal="true"
-      aria-labelledby={id}
-      onCancel={e => {
-        e.preventDefault()
-        onClose()
+    <TopDialog
+      labelledBy={id}
+      backdrop
+      onCancel={onClose}
+      onOpen={el => {
+        // Disabling the active confirmation control can move focus to the document body.
+        const focusInside = () => {
+          if (el.open && !el.contains(document.activeElement)) el.querySelector('button')?.focus()
+        }
+        const onBlur = () => queueMicrotask(focusInside)
+        el.addEventListener('focusout', onBlur)
+        window.addEventListener('focus', focusInside)
+        window.addEventListener('rchat-sso-return', focusInside)
+        // Let the browser cancel the native modal even if the popup left the key targeted at body.
+        const onKey = (e: KeyboardEvent) => {
+          if (e.key === 'Escape' && !e.isComposing && !el.contains(e.target as Node))
+            e.stopPropagation()
+        }
+        document.addEventListener('keydown', onKey, true)
+        return () => {
+          document.removeEventListener('keydown', onKey, true)
+          window.removeEventListener('rchat-sso-return', focusInside)
+          window.removeEventListener('focus', focusInside)
+          el.removeEventListener('focusout', onBlur)
+        }
       }}
       onKeyDown={e => {
-        e.stopPropagation()
         if (e.key !== 'Tab' || e.defaultPrevented) return
         const controls = [
           ...e.currentTarget.querySelectorAll<HTMLElement>('button:enabled, input:enabled'),
@@ -247,19 +235,15 @@ function ProviderDialog({
           controls[to].focus()
         }
       }}
-      className="fixed inset-0 m-auto max-h-[85dvh] w-[min(24rem,calc(100%-2rem))] rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
-      {...backdrop}
     >
-      <div className="p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id={id} className="text-lg font-medium">
-            {title}
-          </h2>
-          <CloseButton onClick={onClose} compact />
-        </div>
-        {children}
+      <div className="mb-4 flex items-center justify-between">
+        <h2 id={id} className="text-lg font-medium">
+          {title}
+        </h2>
+        <CloseButton onClick={onClose} compact />
       </div>
-    </dialog>
+      {children}
+    </TopDialog>
   )
 }
 function LinkPrompt({

@@ -11,7 +11,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type RefObject,
   type SyntheticEvent,
 } from 'react'
 import { X, type LucideIcon } from 'lucide-react'
@@ -293,6 +295,78 @@ export function Dialog({
         {panel}
       </div>
     </>
+  )
+}
+
+// A question in the browser's top layer, above every other layer (dialogs, calls, full pages), that
+// must be answered before anything else goes on. It opens when mounted, focuses `initialFocus`, and
+// gives focus back when unmounted. Esc (and, with `backdrop`, a click beside it) calls `onCancel`.
+// `onOpen` adds behaviour to the open element and returns what undoes it. An `onTop` dialog opens
+// after everything else mounted with it, so it sits above another top dialog opened at once (a
+// consent prompt over the app it guards). A `wide` one lays its children out as a column.
+export function TopDialog({
+  labelledBy,
+  describedBy,
+  wide = false,
+  backdrop = false,
+  onTop = false,
+  initialFocus,
+  onCancel,
+  onKeyDown,
+  onOpen,
+  children,
+}: {
+  labelledBy: string
+  describedBy?: string
+  wide?: boolean
+  backdrop?: boolean
+  onTop?: boolean
+  initialFocus?: RefObject<HTMLElement | null>
+  onCancel: () => void
+  onKeyDown?: (e: ReactKeyboardEvent<HTMLDialogElement>) => void
+  onOpen?: (el: HTMLDialogElement) => (() => void) | void
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const beside = useBackdrop(onCancel)
+  const opened = useRef(onOpen)
+  const first = useRef(initialFocus)
+  const useOpen = useRef(onTop ? useEffect : useLayoutEffect).current
+  useOpen(() => {
+    const el = ref.current!
+    const opener = document.activeElement
+    el.showModal()
+    first.current?.current?.focus()
+    const undo = opened.current?.(el)
+    return () => {
+      undo?.()
+      el.close()
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true })
+    }
+  }, [])
+  return (
+    <dialog
+      ref={ref}
+      aria-modal="true"
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      onCancel={e => {
+        e.preventDefault()
+        onCancel()
+      }}
+      onKeyDown={e => {
+        e.stopPropagation()
+        onKeyDown?.(e)
+      }}
+      className={`fixed inset-0 m-auto max-h-[85dvh] max-w-full flex-col overflow-hidden rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 open:flex backdrop:bg-scrim/60 ${
+        wide ? 'w-[min(32rem,calc(100%-2rem))]' : 'w-[min(24rem,calc(100%-2rem))]'
+      }`}
+      {...(backdrop ? beside : {})}
+    >
+      <div className={`min-h-0 flex-1 overflow-y-auto p-6${wide ? ' flex flex-col' : ''}`}>
+        {children}
+      </div>
+    </dialog>
   )
 }
 
