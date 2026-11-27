@@ -1,3 +1,4 @@
+import { publicSettings } from '../api/public'
 import { ownInstance, readLocal, writeLocal } from '../instances'
 import { shellInfo } from '../platform/desktop'
 import type { Book } from './book'
@@ -58,10 +59,7 @@ export function createHostedPolicy() {
     const at = revision
     pending = (async () => {
       try {
-        const response = await fetch(site.api + '/v1/settings', {
-          cache: 'no-store',
-          signal: AbortSignal.timeout(5000),
-        })
+        const response = await publicSettings(site.api, 5000).send()
         if (!response.ok) return
         const settings = await response.json()
         if (settings && typeof settings === 'object' && at === revision)

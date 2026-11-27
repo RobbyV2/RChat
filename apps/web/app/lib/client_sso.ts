@@ -1,3 +1,4 @@
+import { clientConsent } from './api/public'
 import { apiRoot } from './api_version'
 import { challengeOf, errorText, INTENT_TTL_MS, newVerifier, parseReturn } from './sso'
 import { allowsAccountOrigin } from './client/hosted_policy'
@@ -81,15 +82,7 @@ export async function decideClientConsent(
   receipt: string,
   action: 'describe' | 'allow' | 'cancel'
 ): Promise<ConsentResult> {
-  const result = await fetch('/api/auth/oidc/client-consent', {
-    method: 'POST',
-    mode: 'same-origin',
-    credentials: 'omit',
-    cache: 'no-store',
-    redirect: 'error',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ receipt, action }),
-  })
+  const result = await clientConsent({ receipt, action }).send()
   if (!result.ok) throw Error(errorText('expired'))
   return result.json()
 }

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { ctxFor } from '../actions/ctx'
 import { allActions, defineAction, runAction } from '../actions/registry'
-import { getBasePath } from '../basePath'
+import { appAsset } from '../api/public'
 import { Sha256 } from '../sha256'
 import { client } from '../client/client'
 import type { AccountSession } from '../client/session'
@@ -37,10 +37,7 @@ export const exampleSource: PreviewSource = {
   revision: digest,
   name: 'Field notes',
   async read() {
-    const response = await fetch(getBasePath() + '/app-examples/field-notes.json', {
-      credentials: 'omit',
-      redirect: 'error',
-    })
+    const response = await appAsset('fieldNotes').send()
     if (!response.ok) throw new Error('The example could not be loaded.')
     const bytes = new Uint8Array(await response.arrayBuffer())
     if (new Sha256().update(bytes).hex() !== digest)

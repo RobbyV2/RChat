@@ -1,4 +1,5 @@
 import { createApi, isJson, resolveApiBase, type Api } from './api'
+import { instanceDocument } from './api/public'
 import { apiRoot, prefixOf, versionedUrl } from './api_version'
 import { getBasePath } from './basePath'
 import { hostOf, normalizeHost, privateHost } from './qualified'
@@ -288,21 +289,16 @@ export class InstanceError extends Error {
 
 export async function fetchInstance(
   origin: string,
-  fetcher: Fetcher = (input, init) => fetch(input, init),
+  fetcher?: Fetcher,
   timeoutMs = 8000
 ): Promise<InstanceInfo> {
   if (isClientHost(origin))
     throw new InstanceError('Enter the address of an RChat instance. This address serves the app.')
   const host = hostOf(origin) ?? origin
-  for (const path of ['/api/instance', '/.well-known/rchat']) {
+  for (const path of ['document', 'wellKnown'] as const) {
     let res: Response
     try {
-      res = await fetcher(`${origin}${path}`, {
-        signal: AbortSignal.timeout(timeoutMs),
-        credentials: 'omit',
-        redirect: 'manual',
-        headers: { Accept: 'application/json' },
-      })
+      res = await instanceDocument(origin, path, timeoutMs).send(fetcher)
     } catch {
       throw new InstanceError(`Can't reach ${host}`)
     }
