@@ -67,7 +67,8 @@ export async function transfer(cx: ServerCtx, room: string, to: string) {
   if (!g) throw new ServerError("They didn't take the transfer")
   const sigs: Record<string, string> = {}
   // Co-owners who never joined or have left may not hold the server: its genesis goes along.
-  const genesis = (await cx.db.get('events', room))?.wire
+  const held = await cx.db.get('events', room)
+  const genesis = held?.unreadable ? undefined : held?.wire
   for (const o of s.owners) {
     if (o === cx.me) continue
     // A co-owner who is a member is dialed for the room; one who left only as a contact.

@@ -76,6 +76,62 @@ pub(crate) async fn post_system(
         .transpose()
 }
 
+/// Posts a `storage` system message in the server's system channel (the configured text
+/// channel, else the first text channel): `word` is `on` or `off` for the switch `author`
+/// changed, `forced` or `unforced` with no author for the site's requirement. Never throttled.
+/// Returns the new message id; a server without a text channel gets none.
+pub(crate) async fn post_storage(
+    conn: &mut sqlx::AnyConnection,
+    server: &str,
+    author: &str,
+    word: &str,
+) -> sqlx::Result<Option<i64>> {
+    let sql = format!(
+        "INSERT INTO messages(channel_id, author, content, kind, created_at) SELECT x.ch, $2, $3, 'storage', $4 FROM (SELECT COALESCE({CONFIGURED}, {FALLBACK}) AS ch FROM servers s WHERE s.name = $1) x WHERE x.ch IS NOT NULL RETURNING id"
+    );
+    sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(server)
+        .bind(author)
+        .bind(word)
+        .bind(now())
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()
+}
+
+/// `post_storage` for a DM: the message goes into the DM itself.
+pub(crate) async fn post_storage_dm(
+    conn: &mut sqlx::AnyConnection,
+    dm_id: i64,
+    author: &str,
+    word: &str,
+) -> sqlx::Result<i64> {
+    sqlx::query("INSERT INTO messages(dm_id, author, content, kind, created_at) VALUES($1, $2, $3, 'storage', $4) RETURNING id")
+        .bind(dm_id)
+        .bind(author)
+        .bind(word)
+        .bind(now())
+        .fetch_one(&mut *conn)
+        .await?
+        .try_get(0)
+}
+
+/// Sends the `storage` system message `id` of a DM to its participants like any new message.
+pub(crate) async fn announce_storage_dm(state: &AppState, dm_id: i64, users: Vec<String>, id: i64) {
+    match load_broadcast(&state.db, id).await {
+        Ok(Some(row)) => state.hub.broadcast(WsEvent::Message {
+            server: None,
+            channel_id: None,
+            dm_id: Some(dm_id),
+            dm_users: Some(users),
+            message: Box::new(row),
+        }),
+        Ok(None) => {}
+        Err(ApiError(_, e, _)) => tracing::warn!("system message {id} not broadcast: {e}"),
+    }
+}
+
 /// Sends a system message posted by `post_system` to the server like any new message. The
 /// membership change is already committed, so a failed read only skips the broadcast.
 pub(crate) async fn announce_system(state: &AppState, server: &str, id: Option<i64>) {

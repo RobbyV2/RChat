@@ -28,6 +28,7 @@ import {
 } from '../state'
 import { indexEstimate } from '../search'
 import type { ServerCtx } from './context'
+import { followStore } from './sealing'
 import { heldBare, storeDue } from './storage'
 
 export const cachedSummary = (kept: ServerCache | null | undefined) =>
@@ -75,6 +76,8 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
     cur = await cur.continue()
   ) {
     const x = cur.value
+    // Stored sealed and it didn't open here: nothing to decide on until a peer sends it again.
+    if (x.unreadable) continue
     if (x.wire.ev.v === 1) {
       old = true
       break
@@ -177,6 +180,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
       rt.sum = before
       return cx.load(r, false)
     }
+    await followStore(cx, r.id)
     if (out.fresh.length) {
       const tx = cx.db.transaction('events', 'readwrite')
       for (const f of out.fresh) {
@@ -299,7 +303,8 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
   // In once a join of ours from after we set out is (not an old one the backfill brings
   // first); our own join clears it in postJoin.
   const mine = memberOf(cx.sumOf(room), cx.me)
-  if (now === 'join' && r?.joining && (mine?.joinTs ?? 0) > r.joining.at)
+  const back = r?.joining?.via === 'resync'
+  if (now === 'join' && r?.joining && (back || (mine?.joinTs ?? 0) > r.joining.at))
     await cx.updateRoom(room, cur => ({
       ...cur,
       joining: null,

@@ -130,6 +130,7 @@ export class Ix {
   profileResetBy = new Map<string, Set<string>>()
   categoryEv = new Map<string, number[]>()
   chcatEv = new Map<string, number[]>()
+  storeEv: number[] = []
   profileBy = new Map<string, number[]>()
   settingsEv: number[] = []
   aboutEv: number[] = []
@@ -259,6 +260,9 @@ export class Ix {
         break
       case 'chcat':
         if (typeof c.ch === 'string') pushM(this.chcatEv, c.ch, i)
+        break
+      case 'store':
+        this.storeEv.push(i)
         break
       case 'assign':
         pushM(this.assignEv, `${c.to}|${c.role}`, i)

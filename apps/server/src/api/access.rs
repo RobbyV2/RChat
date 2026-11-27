@@ -638,7 +638,7 @@ pub(crate) fn public_read(row: &AnyRow, idx: usize) -> sqlx::Result<Option<bool>
 }
 
 /// The `servers` columns that `lite_row` reads, in its order.
-pub(crate) const LITE_COLUMNS: &str = "name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in, join_mode, listed, profiles_mode, description, icon_kind";
+pub(crate) const LITE_COLUMNS: &str = "name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in, join_mode, listed, profiles_mode, description, icon_kind, seal, seal_forced";
 
 /// The summary of a server from the columns of `LITE_COLUMNS` in `row`, starting at `at`. A
 /// server whose join mode the row doesn't say (a server without a permanent password from
@@ -669,6 +669,7 @@ pub(crate) async fn lite_row(db: &Db, row: &AnyRow, at: usize) -> sqlx::Result<S
         icon_kind: crate::api::server_about::IconKind::stored(
             row.try_get::<Option<String>, _>(at + 14)?.as_deref(),
         ),
+        seal: crate::api::seal::server_view(db, row.try_get(at + 15)?, row.try_get(at + 16)?).await,
     })
 }
 
@@ -1613,7 +1614,7 @@ async fn configured_channel(
     rights: ChannelAccess,
 ) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
-        "SELECT c.kind, c.name, c.slowmode_seconds, c.sensitive, s.name, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, s.join_mode, s.listed, s.profiles_mode, s.description, s.icon_kind, c.text_only FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+        "SELECT c.kind, c.name, c.slowmode_seconds, c.sensitive, s.name, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, s.join_mode, s.listed, s.profiles_mode, s.description, s.icon_kind, s.seal, s.seal_forced, c.text_only FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
     .bind(id)
     .fetch_optional(db)
@@ -1632,7 +1633,7 @@ async fn configured_channel(
         name: r.try_get(1)?,
         slowmode: r.try_get(2)?,
         sensitive: r.try_get::<i64, _>(3)? != 0,
-        text_only: r.try_get::<i64, _>(19)? != 0,
+        text_only: r.try_get::<i64, _>(21)? != 0,
         rights,
     })
 }
@@ -1971,7 +1972,6 @@ pub struct MsgScope {
     pub kind: String,
     pub author: String,
     pub media_id: Option<String>,
-    pub media_filename: Option<String>,
     pub media_kind: MediaKind,
     pub server: Option<String>,
     pub dm_users: Option<Vec<String>>,
@@ -2021,7 +2021,7 @@ pub async fn resolve_dm(db: &Db, id: i64, user: &User) -> Result<Vec<String>, Ap
 
 async fn message_row(db: &Db, id: i64) -> Result<(MsgScope, i64), ApiError> {
     let sql = format!(
-        "SELECT m.channel_id, m.dm_id, m.thread_root_id, m.author, m.media_id, m.media_filename, m.media_kind, m.created_at, m.kind FROM messages m WHERE m.id = $1 AND {LIVE_AUTHOR}"
+        "SELECT m.channel_id, m.dm_id, m.thread_root_id, m.author, m.media_id, m.media_kind, m.created_at, m.kind FROM messages m WHERE m.id = $1 AND {LIVE_AUTHOR}"
     );
     let r = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
@@ -2033,15 +2033,14 @@ async fn message_row(db: &Db, id: i64) -> Result<(MsgScope, i64), ApiError> {
             channel_id: r.try_get(0)?,
             dm_id: r.try_get(1)?,
             thread_root_id: r.try_get(2)?,
-            kind: r.try_get(8)?,
+            kind: r.try_get(7)?,
             author: r.try_get(3)?,
             media_id: r.try_get(4)?,
-            media_filename: r.try_get(5)?,
-            media_kind: MediaKind::parse(&r.try_get::<String, _>(6)?)?,
+            media_kind: MediaKind::parse(&r.try_get::<String, _>(5)?)?,
             server: None,
             dm_users: None,
         },
-        r.try_get(7)?,
+        r.try_get(6)?,
     ))
 }
 
@@ -2372,7 +2371,6 @@ pub(crate) async fn may_delete_in(
             kind: "user".to_string(),
             author: author.to_string(),
             media_id: None,
-            media_filename: None,
             media_kind: MediaKind::Server,
             server: Some(channel.server().name().to_string()),
             dm_users: None,

@@ -75,6 +75,7 @@ import type {
   ServerUpdated,
   SiteSettings,
   SiteSettingsPatch,
+  StoredSeal,
   Unread,
   UserRef,
 } from './types'
@@ -846,6 +847,7 @@ export const endpoints = (c: ApiClient) => ({
       profiles_mode?: ProfilesMode
       description?: string | null
       icon_kind?: ServerIconKind
+      seal?: boolean
     }
   ) => c.req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch),
   deleteServer: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}`),
@@ -1042,6 +1044,7 @@ export const endpoints = (c: ApiClient) => ({
   dmsById: (ids: number[]) => c.req<DmSummary[]>('GET', `/dms?ids=${ids.join(',')}`),
   openDm: (username: string) => c.req<DmSummary>('POST', '/dms', { username }),
   closeDm: (id: number) => c.req<unknown>('POST', `/dms/${id}/close`),
+  setDmSeal: (id: number, on: boolean) => c.req<unknown>('PUT', `/dms/${id}/seal`, { on }),
   blocks: (cursor: string | null, q: string) =>
     c.page<BlockedUser>(withCursor(`/blocks?limit=50&q=${seg(q)}`, cursor)),
   blockedUsernames: () => c.req<string[]>('GET', '/blocks/usernames'),
@@ -1193,6 +1196,12 @@ export const endpoints = (c: ApiClient) => ({
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
   adminConfig: () => c.req<AdminConfig>('GET', '/admin/config'),
   adminEncryption: () => c.req<unknown>('GET', '/admin/encryption'),
+  adminRequireEncryption: (on: boolean) =>
+    c.req<{ on: boolean; pinned: boolean }>('PUT', '/admin/encryption/required', { on }),
+  adminConfirmCopies: (confirmed: boolean) =>
+    c.req<unknown>('PUT', '/admin/encryption/copies', { confirmed }),
+  adminRequireServerEncryption: (name: string, on: boolean) =>
+    c.req<StoredSeal>('PUT', `/admin/servers/${seg(name)}/seal_forced`, { on }),
   adminUsers: (cursor: string | null, q: string, filter: AccountFilter = 'all') =>
     c.page<UserRef>(
       withCursor(

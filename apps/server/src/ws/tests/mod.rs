@@ -43,6 +43,7 @@ async fn bulk_ids(
 
 fn message() -> Message {
     Message {
+        unreadable: false,
         id: 4,
         channel_id: None,
         dm_id: Some(2),
@@ -120,6 +121,7 @@ async fn general(db: &Db) -> i64 {
 
 fn lite(name: &str) -> ServerSummaryLite {
     ServerSummaryLite {
+        seal: Default::default(),
         name: name.to_string(),
         display_name: name.to_string(),
         creator: None,

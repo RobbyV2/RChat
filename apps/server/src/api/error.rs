@@ -42,6 +42,10 @@ pub enum ReasonKind {
     /// Refused until the caller confirms. `control` is what to confirm and `channel` the
     /// channel it opens.
     Confirm,
+    /// This site requires it, so it can't be turned off.
+    Forced,
+    /// This site has no encryption key that every copy of it holds.
+    Keys,
 }
 
 /// Why a request was refused, for programs. An error without one is a denial about a server,
@@ -234,6 +238,16 @@ impl ApiError {
             ..Reason::of(ReasonKind::Unavailable)
         };
         ApiError::because(StatusCode::SERVICE_UNAVAILABLE, error, reason)
+    }
+
+    /// 403: this site requires it.
+    pub fn forced(error: impl Into<String>) -> ApiError {
+        ApiError::because(StatusCode::FORBIDDEN, error, Reason::of(ReasonKind::Forced))
+    }
+
+    /// 409: no encryption key that every copy of this site holds.
+    pub fn keys(error: impl Into<String>) -> ApiError {
+        ApiError::because(StatusCode::CONFLICT, error, Reason::of(ReasonKind::Keys))
     }
 
     /// Whether the server failed, rather than the request being refused.
@@ -434,6 +448,8 @@ mod tests {
             (ApiError::unavailable("a", None), "unavailable"),
             (ApiError::locked("a", 9), "locked"),
             (ApiError::confirm(forbidden, "a", "calls", 7), "confirm"),
+            (ApiError::forced("a"), "forced"),
+            (ApiError::keys("a"), "keys"),
         ];
         let mut kinds = Vec::new();
         for (ApiError(status, error, reason), kind) in made {
@@ -477,6 +493,8 @@ mod tests {
                 ReasonKind::SignIn => Some(StatusCode::UNAUTHORIZED),
                 ReasonKind::Unavailable => Some(StatusCode::SERVICE_UNAVAILABLE),
                 ReasonKind::Locked => Some(StatusCode::FORBIDDEN),
+                ReasonKind::Forced => Some(StatusCode::FORBIDDEN),
+                ReasonKind::Keys => Some(StatusCode::CONFLICT),
                 ReasonKind::OffSite
                 | ReasonKind::OffAccount
                 | ReasonKind::OffServer
@@ -496,7 +514,7 @@ mod tests {
         }
         kinds.sort();
         kinds.dedup();
-        assert_eq!(kinds.len(), 14);
+        assert_eq!(kinds.len(), 16);
     }
 
     #[test]

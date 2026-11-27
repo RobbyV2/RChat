@@ -3,6 +3,12 @@ use sqlx::{Connection, Row};
 use super::*;
 use crate::api::test_util::{non_test_code, pg_temp};
 
+/// Whether the test run asks for every test database to hold a root key and require encrypted
+/// storage (`TEST_SEALED` in its environment).
+pub(super) fn sealed_suite() -> bool {
+    std::env::var_os("TEST_SEALED").is_some()
+}
+
 async fn commit_mode(conn: &mut AnyConnection) -> String {
     sqlx::query("SHOW synchronous_commit")
         .fetch_one(&mut *conn)
@@ -114,7 +120,11 @@ fn light_commits_are_async_unless_the_env_says_sync() {
 }
 
 /// Every `.rs` file under `dir`, as (path from `src`, non-test code).
-fn sources(dir: &std::path::Path, src: &std::path::Path, found: &mut Vec<(String, String)>) {
+pub(crate) fn sources(
+    dir: &std::path::Path,
+    src: &std::path::Path,
+    found: &mut Vec<(String, String)>,
+) {
     for entry in std::fs::read_dir(dir).expect("source directory") {
         let path = entry.expect("entry").path();
         let name = path

@@ -41,6 +41,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, Message, OkResp, ProfanityTarget, Settings, UserRef, allowed,
     bad, check_len, embeds, media, ok, placeholders, valid_color,
 };
+use crate::crypt::body::{Opened, Parts};
 use crate::crypt::secrets::{HOOK_COLUMN, HOOK_TABLE, Sealer, open_or};
 use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, lock_server, now, pepper};
 use crate::limits::bucket::{self, Keyed};
@@ -1653,9 +1654,9 @@ pub(crate) async fn edit_hook_message(
     paced(&state, &hook)?;
     let mid = own_message(db, &hook, &message_id).await?;
     let settings = Settings::cached(db).await;
-    let (mut tx, text_only) =
-        crate::api::messages::begin_message_write(db, Some(hook.channel_id), false).await?;
-    let read = "SELECT content, kind, media_id, media_removed, webhook_embeds FROM messages WHERE id = $1 AND channel_id = $2 AND webhook_id = $3";
+    let (mut tx, text_only, writer) =
+        crate::api::messages::begin_message_write(db, Some(hook.channel_id), None, false).await?;
+    let read = "SELECT kind, media_id, media_removed FROM messages WHERE id = $1 AND channel_id = $2 AND webhook_id = $3";
     let lock = if crate::db::is_sqlite(db) {
         ""
     } else {
@@ -1668,12 +1669,18 @@ pub(crate) async fn edit_hook_message(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(unknown_message)?;
-    let (old, kind): (String, String) = (row.try_get(0)?, row.try_get(1)?);
+    let kind: String = row.try_get(0)?;
     if kind != "user" {
         return Err(bad("Cannot edit this message"));
     }
-    let attached = row.try_get::<Option<String>, _>(2)?.is_some() && row.try_get::<i64, _>(3)? == 0;
-    let old_cards = parse_embeds(row.try_get::<Option<String>, _>(4)?.as_deref());
+    let attached = row.try_get::<Option<String>, _>(1)?.is_some() && row.try_get::<i64, _>(2)? == 0;
+    let (author, parts) = match crate::api::seal::stored_parts(db, &mut tx, mid).await? {
+        Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
+        Some(_) => return Err(bad("Cannot edit this message")),
+        None => return Err(unknown_message()),
+    };
+    let old = parts.content.clone();
+    let old_cards = parse_embeds(parts.embeds.as_deref());
     let content = content.unwrap_or_else(|| old.clone());
     let cards = cards.unwrap_or(old_cards.clone());
     if text_only && !cards.is_empty() && cards != old_cards {
@@ -1687,16 +1694,18 @@ pub(crate) async fn edit_hook_message(
     }
     if content != old || cards != old_cards {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
-        sqlx::query(
-            "UPDATE messages SET content = $1, webhook_embeds = $2, edited_at = $3, no_previews = $5 WHERE id = $4",
-        )
-        .bind(&content)
-        .bind(stored_embeds(&cards))
-        .bind(now())
-        .bind(mid)
-        .bind(i64::from(text_only))
-        .execute(&mut *tx)
-        .await?;
+        let parts = Parts {
+            content: content.clone(),
+            embeds: stored_embeds(&cards),
+            ..parts
+        };
+        crate::api::seal::store_parts(&mut tx, writer.as_ref(), mid, &author, &parts).await?;
+        sqlx::query("UPDATE messages SET edited_at = $1, no_previews = $3 WHERE id = $2")
+            .bind(now())
+            .bind(mid)
+            .bind(i64::from(text_only))
+            .execute(&mut *tx)
+            .await?;
         if relink || text_only {
             sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
                 .bind(mid)

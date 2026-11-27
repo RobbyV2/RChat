@@ -31,6 +31,7 @@ import {
   aboutOk,
   rulesOf,
   SERVER,
+  storeOk,
   timeoutEnd,
   timeoutEnds,
   timeouts as atRules,
@@ -128,6 +129,10 @@ export interface Facts extends FactsQ {
   // Categories by id and the category of each channel (`category`, `chcat`, registers).
   categories: RMap<string, AclContent>
   chcats: RMap<string, AclContent>
+  // Whether devices store the room's events sealed (`store`, a register read at display).
+  store: AclContent | undefined
+  // The `store` writes that count, for the lines that say who switched it.
+  storeWrites: RSet<string>
   addsTo: RMap<string, readonly Pend[]>
   consumed: RSet<string>
   codeOk: RSet<string>
@@ -976,6 +981,19 @@ export abstract class View {
     }
     return { perms, me }
   }
+  // Store: the register over the live `store` writes whose Authority holds in their own admission
+  // state (an owner, or a member with Manage server) and still holds after the effective denies
+  // concurrent with them. Like RoleMeta, neither test cuts anything.
+  storeOf(): AclContent | undefined {
+    const r = this.register(this.ix.storeEv.filter(x => this.storeCounts(x)))
+    return r && this.ix.ev[r.win].c
+  }
+  storeWrites(): RSet<string> {
+    return new Set(this.ix.storeEv.filter(x => this.storeCounts(x)).map(x => this.ix.ids[x]))
+  }
+  private storeCounts(x: number): boolean {
+    return storeOk(this.ix.ev[x], this.ix.rec[x].local.facts) && !this.metaDenied(x, SERVER)
+  }
   overwrite(ch: string, subj: string): AclContent | undefined {
     const r = this.register(this.ix.chpermEv.get(`${ch}|${subj}`) ?? EMPTY)
     if (!r) return undefined
@@ -1172,6 +1190,8 @@ export function fullFacts(V: View): Facts {
     about: V.aboutOf(),
     categories,
     chcats,
+    store: V.storeOf(),
+    storeWrites: V.storeWrites(),
     addsTo,
     consumed,
     codeOk,
@@ -1246,6 +1266,8 @@ const EMPTY_FACTS: Facts = {
   about: undefined,
   categories: new Map(),
   chcats: new Map(),
+  store: undefined,
+  storeWrites: new Set(),
   addsTo: new Map(),
   consumed: new Set(),
   codeOk: new Set(),

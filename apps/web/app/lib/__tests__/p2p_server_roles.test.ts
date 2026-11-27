@@ -677,6 +677,124 @@ describe('role_meta: a role keeps its name and color in a register', () => {
   })
 })
 
+describe('store: a room keeps "Encrypt stored messages" in a register', () => {
+  const stored = (w: AclWorld): Record<string, unknown> | null =>
+    (F(w).store as Record<string, unknown> | undefined) ?? null
+
+  test('admitted by the generic rule; only an owner or Manage server changes it', () => {
+    const w = world()
+    const ADMIN = role(w, 5, SERVER)
+    const MOD = role(w, 4, KICK | ROLES)
+    for (const d of ['A1', 'B1', 'D1']) join(w, d)
+    give(w, 'A', ADMIN)
+    give(w, 'B', MOD)
+    w.ok('O1', 'add', { to: 'C' })
+    expect(stored(w)).toBeNull()
+    const rows: [
+      string,
+      string,
+      Record<string, unknown>,
+      string,
+      Record<string, unknown> | null,
+    ][] = [
+      ['a member without Manage server', 'D1', { on: true }, 'A', null],
+      ['a moderator without Manage server', 'B1', { on: true }, 'A', null],
+      ['a member with Manage server', 'A1', { on: true }, 'A', { on: true }],
+      ['a malformed switch, no strike', 'A1', { on: 'yes' }, 'A', { on: true }],
+      ['a malformed earlier, no strike', 'O1', { on: false, earlier: 1 }, 'A', { on: true }],
+      ['the owner, off', 'O1', { on: false }, 'A', { on: false }],
+      [
+        'with earlier and a field of a later version',
+        'A1',
+        { on: true, earlier: true, later: 'kept' },
+        'A',
+        { on: true, earlier: true, later: 'kept' },
+      ],
+    ]
+    for (const [what, dev, c, verdict, want] of rows) {
+      expect([what, w.act(dev, 'store', c).v.s]).toEqual([what, verdict])
+      expect([what, stored(w)]).toEqual([what, want])
+    }
+    // Someone invited but not in yet: refused like any ACL event of a non-member.
+    expect(w.act('C1', 'store', { on: false }).v.s).toBe('R')
+    // The writes that count, which the storage lines show: the three by A and the owner.
+    expect(F(w).storeWrites.size).toBe(3)
+  })
+
+  test('concurrent switches resolve the same in every order; a demoted writer’s does not count', () => {
+    const w = world()
+    const HIGH = role(w, 6, SERVER)
+    const MID = role(w, 4, SERVER)
+    for (const d of ['A1', 'B1', 'C1', 'D1']) join(w, d)
+    give(w, 'A', HIGH)
+    give(w, 'C', HIGH)
+    give(w, 'B', MID)
+    give(w, 'D', MID)
+    const P0 = w.heads()
+    w.ok('A1', 'store', { on: true }, { ap: P0 })
+    w.ok('B1', 'store', { on: false }, { ap: P0 })
+    w.ok('C1', 'store', { on: true, earlier: true }, { ap: P0 })
+    const want = stored(w)
+    expect(want?.on).toBe(true)
+    let s = 9
+    for (let k = 0; k < 8; k++) {
+      const order = [...w.all]
+      for (let i = order.length - 1; i > 0; i--) {
+        s = (s * 1103515245 + 12345) & 0x7fffffff
+        const j = s % (i + 1)
+        ;[order[i], order[j]] = [order[j], order[i]]
+      }
+      const r = new TestReplica(AGREED)
+      for (const e of order) r.receive(e)
+      expect(r.state().facts.store as unknown).toEqual(want)
+    }
+    // A later write that saw them wins.
+    w.ok('B1', 'store', { on: false })
+    expect(stored(w)).toEqual({ on: false })
+    // D switches while the owner, concurrently, takes D's role: the switch doesn't count, though
+    // it stays live (cuts are the generic rule's).
+    const P1 = w.heads()
+    w.ok('O1', 'revoke', { to: 'D', role: MID })
+    const d = w.ok('D1', 'store', { on: true }, { ap: P1 })
+    expect(w.state().cut.has(d.id)).toBe(false)
+    expect(stored(w)).toEqual({ on: false })
+    expect(F(w).storeWrites.has(d.id)).toBe(false)
+    // The same while the owner takes Manage server off the role D holds again.
+    give(w, 'D', MID)
+    const P2 = w.heads()
+    w.ok('O1', 'role_bits', { role: MID, bit: SERVER, on: false })
+    w.ok('D1', 'store', { on: true }, { ap: P2 })
+    expect(stored(w)).toEqual({ on: false })
+    // With the permission back, D's next switch counts.
+    w.ok('O1', 'role_bits', { role: MID, bit: SERVER, on: true })
+    const counted = w.ok('D1', 'store', { on: true })
+    expect(stored(w)).toEqual({ on: true })
+    expect(F(w).storeWrites.has(counted.id)).toBe(true)
+  })
+
+  test('a client that does not know store admits it with no effect and no strike', () => {
+    const w = new AclWorld({ model: false })
+    w.genesis('O1', ['O'])
+    const R = role(w, 2, SERVER)
+    join(w, 'A1')
+    give(w, 'A', R)
+    const P0 = w.heads()
+    const writes = [
+      w.ok('O1', 'store', { on: true }, { ap: P0 }),
+      w.ok('A1', 'store', { on: false }, { ap: P0 }),
+      w.ok('A1', 'store', { on: 7 }),
+    ]
+    w.ok('O1', 'kick', { to: 'A' })
+    // The reference model, which has no store register (an older client), reads them as unknown.
+    const mr = new M.Replica()
+    for (const e of w.all) mr.receive(toModel(e))
+    expect(writes.map(e => mr.status.get(e.id)?.s)).toEqual(['A', 'A', 'A'])
+    expect(diffProdWorld(w)).toEqual([])
+    // Here: the owner's write is the senior one.
+    expect(stored(w)).toEqual({ on: true })
+  })
+})
+
 describe('the rules fuzz with role, channel and overwrite events', () => {
   // Random universes: members, roles and their moves, bits and holders, kicks, bans, channel
   // registers (names, restrictions, slow mode), overwrites and messages, a third of them signed at

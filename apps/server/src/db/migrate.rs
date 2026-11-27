@@ -166,6 +166,15 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "media_alt TEXT"),
     ("outgoing_webhooks", "secret_sealed {BYTES}"),
     ("sso_pending", "data_sealed {BYTES}"),
+    ("messages", "body {BYTES}"),
+    ("polls", "body {BYTES}"),
+    ("poll_options", "body {BYTES}"),
+    ("poll_snapshots", "body {BYTES}"),
+    ("servers", "seal {INT} NOT NULL DEFAULT 0"),
+    ("servers", "seal_since {INT}"),
+    ("servers", "seal_forced {INT} NOT NULL DEFAULT 0"),
+    ("dms", "seal {INT} NOT NULL DEFAULT 0"),
+    ("dms", "seal_since {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -299,7 +308,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 59: category permission rules and channels that copy their category's rules.
 /// 60: sealed instance secrets, outgoing webhook secrets and pending sign-in data.
 /// 61: scheduled messages (`scheduled_messages`).
-pub const SCHEMA_VERSION: i64 = 61;
+/// 62: sealed message and poll text, and the storage switches of servers and DMs.
+pub const SCHEMA_VERSION: i64 = 62;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

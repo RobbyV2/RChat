@@ -784,6 +784,7 @@ fn indexes_follow_every_op() {
             event: WsEvent::ServerRenamed {
                 old_name: s("two"),
                 server: crate::api::ServerSummaryLite {
+                    seal: Default::default(),
                     name: s("deux"),
                     display_name: s("deux"),
                     creator: None,
@@ -1532,6 +1533,7 @@ fn renamed(old_name: &str, name: &str) -> Op {
         event: WsEvent::ServerRenamed {
             old_name: s(old_name),
             server: crate::api::ServerSummaryLite {
+                seal: Default::default(),
                 name: s(name),
                 display_name: s(name),
                 creator: None,

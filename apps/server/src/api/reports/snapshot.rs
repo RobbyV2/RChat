@@ -4,6 +4,7 @@ use sqlx::any::AnyRow;
 use utoipa::ToSchema;
 
 use crate::api::{ApiError, ServerSummaryLite};
+use crate::crypt::body::{Opener, Parts, Scope};
 use crate::db::{Db, LIVE_AUTHOR, User};
 
 /// A person as a report keeps them: the names they had when the report was sent. Once the
@@ -113,13 +114,34 @@ pub struct Snapshot {
     pub channel: Option<String>,
 }
 
-const MESSAGE: &str = "SELECT m.id, m.author, m.kind, m.content, m.created_at, m.edited_at, m.thread_root_id, m.media_filename, COALESCE(m.media_mime, md.mime), COALESCE(m.media_size, md.size), m.media_removed, m.webhook_id, m.webhook_name, u.display_name FROM messages m LEFT JOIN users u ON u.username = m.author LEFT JOIN media md ON md.id = m.media_id";
+const MESSAGE: &str = "SELECT m.id, m.author, m.kind, m.content, m.created_at, m.edited_at, m.thread_root_id, m.media_filename, COALESCE(m.media_mime, md.mime), COALESCE(m.media_size, md.size), m.media_removed, m.webhook_id, m.webhook_name, u.display_name, m.channel_id, m.dm_id, m.body FROM messages m LEFT JOIN users u ON u.username = m.author LEFT JOIN media md ON md.id = m.media_id";
 
-fn message_of(r: &AnyRow) -> sqlx::Result<SnapMessage> {
+/// Where `MESSAGE` has `m.body`.
+const BODY: usize = 16;
+
+fn message_of(r: &AnyRow, opener: &Opener) -> sqlx::Result<SnapMessage> {
     let author: String = r.try_get(1)?;
+    let Parts {
+        content,
+        embeds: _,
+        filename,
+        dropped: _,
+        alt: _,
+    } = opener
+        .message(
+            r.try_get(0)?,
+            Scope::of(r.try_get(14)?, r.try_get(15)?),
+            &author,
+            r.try_get::<Option<Vec<u8>>, _>(BODY)?.as_deref(),
+            Parts {
+                filename: r.try_get(7)?,
+                ..Parts::text(r.try_get::<String, _>(3)?)
+            },
+        )
+        .parts;
     let webhook = r.try_get::<Option<i64>, _>(11)?.is_some();
     let removed = r.try_get::<i64, _>(10)? != 0;
-    let file = match (r.try_get::<Option<String>, _>(7)?, removed) {
+    let file = match (filename, removed) {
         (Some(filename), false) => Some(SnapFile {
             filename,
             mime: r.try_get(8)?,
@@ -144,7 +166,7 @@ fn message_of(r: &AnyRow) -> sqlx::Result<SnapMessage> {
             false => None,
         },
         kind: r.try_get(2)?,
-        content: r.try_get(3)?,
+        content,
         created_at: r.try_get(4)?,
         edited_at: r.try_get(5)?,
         thread_root_id: r.try_get(6)?,
@@ -168,7 +190,8 @@ pub(crate) async fn message(db: &Db, id: i64) -> Result<Option<SnapMessage>, Api
         .bind(id)
         .fetch_optional(db)
         .await?;
-    Ok(row.as_ref().map(message_of).transpose()?)
+    let opener = Opener::of_rows(db, row.as_slice(), BODY).await?;
+    Ok(row.as_ref().map(|r| message_of(r, &opener)).transpose()?)
 }
 
 /// The `count` newest messages before `id` in `place`, oldest first: only what people wrote
@@ -199,9 +222,10 @@ pub(crate) async fn context(
         .bind(i64::from(count))
         .fetch_all(db)
         .await?;
+    let opener = Opener::of_rows(db, &rows, BODY).await?;
     let mut out = rows
         .iter()
-        .map(message_of)
+        .map(|r| message_of(r, &opener))
         .collect::<sqlx::Result<Vec<_>>>()?;
     out.reverse();
     Ok(out)

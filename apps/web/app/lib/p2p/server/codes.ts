@@ -339,7 +339,7 @@ export function sendInvite(cx: ServerCtx, s: Session, room: string) {
   const add = m?.m === 'invite' ? m.adds?.[0] : undefined
   if (!add) return
   void cx.db.get('events', add).then(rec => {
-    if (!rec) return
+    if (!rec || rec.unreadable) return
     void s
       .send({
         t: 'ginvite',

@@ -1,3 +1,4 @@
+import { time } from '../platform/time'
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import type { Contact } from './contacts'
 import type { Summary } from './acl/summary'
@@ -6,6 +7,8 @@ import type { PackedRec } from './acl_room'
 import type { Core, Wire } from './event_v1'
 import type { WireV2 } from './event_v2'
 import type { Cert, KeyPair, Profile, Revocation, Succession } from './keys'
+import { deviceKeys } from '../platform'
+import { Sealing, sealedDb, sealingOf, vaultOf } from './sealed_db'
 
 // P2P data lives only in this browser, in one IndexedDB database per instance and account. Each
 // schema version adds its stores in UPGRADES; later tasks append theirs (rooms, events, ...).
@@ -146,7 +149,9 @@ export interface RoomRecord {
   chans?: Record<string, ChanCounts>
   // `ev`: the invite an admitting member signed for us when we redeemed a code. It enters the
   // room (ours to store) once we have the room's state, and we join right after.
-  joining?: { at: number; via: 'code' | 'invite'; ev?: WireV2 } | null
+  // `resync`: a member whose device dropped the room's events takes them again from `from`, the
+  // members it knew; it is in as soon as the state it gets says so.
+  joining?: { at: number; via: 'code' | 'invite' | 'resync'; ev?: WireV2; from?: string[] } | null
   // When we joined: older history that arrives later isn't counted as unread.
   since?: number
   // When a cascade took our membership (no removal of ours): an invite brings us back in.
@@ -212,6 +217,9 @@ export interface EventRecord {
   acl?: PackedRec
   // Imported from a transfer file: checked and decided on the next start.
   imp?: true
+  // Stored sealed and didn't open here (sealed_db.ts): only the plain fields are real, the wire
+  // has no content. Never sent to peers, exported, or stored over the record.
+  unreadable?: true
   // P2P servers: the content of a hidden event was purged here, or evicted for space (only its
   // header is left). Never served: a peer asks someone else. `evicted`: a body that
   // showed, evicted for space: fetched again only when it is viewed.
@@ -477,7 +485,7 @@ export const dbName = (instance: string, account: string) => `rchat-p2p:${instan
 // `onBlocking` runs when another tab needs a newer schema or deletes the database; closing lets
 // it go ahead. Without `create`, a database that does not exist is never made: its first upgrade
 // is aborted and the open answers null. Any other failure, an upgrade of a stored one too, throws.
-const openP2pDb = async (name: string, create: boolean, onBlocking: () => void) => {
+const openRaw = async (name: string, create: boolean, onBlocking: () => void) => {
   let missing = false
   try {
     return await openDB<P2pSchema>(name, DB_VERSION, {
@@ -498,6 +506,35 @@ const openP2pDb = async (name: string, create: boolean, onBlocking: () => void) 
   }
 }
 
+// The database `name` behind the handle that seals and opens the events of sealed rooms, or null
+// as `openRaw` answers it. A `blocking` call that comes before the caller holds the handle closes
+// the database here, and the caller hears of it once it has the handle.
+const openSealed = async (name: string, create: boolean, onBlocking: () => void) => {
+  let handed = false
+  let early = false
+  let opened: IDBPDatabase<P2pSchema> | null = null
+  const raw = await openRaw(name, create, () => {
+    if (handed) return onBlocking()
+    early = true
+    opened?.close()
+  })
+  if (!raw) return null
+  opened = raw
+  if (early) raw.close()
+  const vault = vaultOf(raw as unknown as IDBPDatabase<unknown>)
+  const sealing = new Sealing(raw as unknown as IDBPDatabase<unknown>, () => deviceKeys(vault))
+  await sealing.load().catch((e: unknown) => {
+    if (!early) throw e
+  })
+  handed = true
+  if (early) time().after(0, onBlocking)
+  return sealedDb(raw, sealing)
+}
+
+// The database `name`, made when there is none.
+export const openP2pDb = async (name: string, onBlocking: () => void = () => {}) =>
+  (await openSealed(name, true, onBlocking))!
+
 export class P2pStore {
   closed = false
 
@@ -505,7 +542,7 @@ export class P2pStore {
 
   private static async at(name: string, create: boolean, onBlocking?: () => void) {
     let store: P2pStore | null = null
-    const db = await openP2pDb(name, create, () => {
+    const db = await openSealed(name, create, () => {
       store?.close()
       onBlocking?.()
     })
@@ -531,6 +568,11 @@ export class P2pStore {
 
   get name() {
     return this.db.name
+  }
+
+  // Which rooms and DMs of this database store their events sealed.
+  get sealing() {
+    return sealingOf(this.db) as Sealing
   }
 
   self(): Promise<SelfRecord | undefined> {

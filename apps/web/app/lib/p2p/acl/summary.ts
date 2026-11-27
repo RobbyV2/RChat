@@ -25,7 +25,7 @@ import {
 // (acl_room.ts) is a SummarySource.
 
 // The shape of the page's summary: a cached one of another shape is not used.
-export const SUM_SHAPE = 8
+export const SUM_SHAPE = 9
 
 export type Membership = 'invite' | 'join' | 'leave' | 'ban'
 
@@ -152,6 +152,8 @@ export interface Summary {
   profiles: ProfilesMode | null
   // The server's description and icon, as written (read with `p2pAbout`).
   about: AclContent | null
+  // The `store` register: whether devices store the room's events sealed. Null: never set.
+  store: AclContent | null
   codes: Record<string, CodeSum>
   upgraded: boolean
   // Admitted upgrades, and devices with a fork point (evidence against them).
@@ -198,6 +200,7 @@ export const emptySummary = (): Summary => ({
   settings: null,
   profiles: null,
   about: null,
+  store: null,
   codes: dict(),
   upgraded: false,
   upgrades: [],
@@ -477,6 +480,7 @@ export function buildSummary(
       settings: F.setting ?? null,
       profiles: roomMode(F.profileMode) ?? null,
       about: F.about ?? null,
+      store: F.store ?? null,
       codes,
       upgraded: F.upgraded.length > 0,
       upgrades: [...F.upgraded],

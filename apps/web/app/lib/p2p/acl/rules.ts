@@ -816,6 +816,14 @@ export const channelMetaOk = (e: AclEv, St: FactsQ) => {
   return shaped && (St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & CHANNELS) !== 0))
 }
 
+// store is admitted, cut and live by the generic rule, like role_meta. Its Authority is read only
+// inside Store: a write counts when `on` is a boolean, `earlier` is absent or a boolean, and its
+// author, in St(w), is an owner or a member with Manage server.
+export const storeOk = (e: AclEv, St: FactsQ) =>
+  typeof e.c.on === 'boolean' &&
+  (e.c.earlier === undefined || typeof e.c.earlier === 'boolean') &&
+  (St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & SERVER) !== 0))
+
 export function classify(e: AclEv, F: FactsQ): { cls: Cls; self: boolean } {
   switch (e.t) {
     case 'kick':

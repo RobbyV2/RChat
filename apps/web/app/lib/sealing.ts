@@ -43,19 +43,38 @@ const readiness = (v: unknown): SealReadiness =>
 export interface HostedSeal {
   on?: unknown
   forced?: unknown
-  readiness?: unknown
+  own?: unknown
+  server_forced?: unknown
 }
 
-export const hostedServerSeal = (seal: HostedSeal | null | undefined, canManage: boolean) =>
-  sealState({
-    stored: flag(seal?.on) && !flag(seal?.forced),
-    forced: flag(seal?.forced),
-    readiness: seal ? readiness(seal.readiness) : 'keys',
+// What the site's settings say about encrypted storage; absent until they load.
+export interface HostedSite {
+  encryption_required?: unknown
+  encryption_ready?: unknown
+}
+
+// The site-wide requirement comes from the settings when they say it, so a change there shows
+// without the place being sent again.
+export function hostedServerSeal(
+  seal: HostedSeal | null | undefined,
+  canManage: boolean,
+  site: HostedSite = {}
+) {
+  const known = seal?.own !== undefined && seal.server_forced !== undefined
+  const siteForced = typeof site.encryption_required === 'boolean' ? site.encryption_required : null
+  const forced =
+    known && siteForced !== null ? flag(seal.server_forced) || siteForced : flag(seal?.forced)
+  return sealState({
+    stored: known ? flag(seal.own) : flag(seal?.on) && !flag(seal?.forced),
+    forced,
+    readiness: seal ? readiness(site.encryption_ready) : 'keys',
     allowed: canManage,
   })
+}
 
 // Either participant of a hosted DM may switch it.
-export const hostedDmSeal = (seal: HostedSeal | null | undefined) => hostedServerSeal(seal, true)
+export const hostedDmSeal = (seal: HostedSeal | null | undefined, site: HostedSite = {}) =>
+  hostedServerSeal(seal, true, site)
 
 // The `store {on, earlier?}` register of a P2P room, or the latest `store` content of a P2P DM.
 export interface StoreRegister {
@@ -114,3 +133,6 @@ export function sealReasonText(state: SealState, place: SealPlace): string | nul
       return null
   }
 }
+
+// What stands in for a stored message whose record can't be opened.
+export const UNREADABLE_TEXT = "This message can't be opened"

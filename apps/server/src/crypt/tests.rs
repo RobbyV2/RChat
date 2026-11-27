@@ -1118,3 +1118,297 @@ fn sealing_waits_for_every_live_copy() {
         ["ready", "first_need", "keys", "updating"]
     );
 }
+
+mod body {
+    use std::sync::Arc;
+
+    use super::super::body::{OPTIONS, Opener, POLLS, Parts, SNAPSHOTS, Scope, Writer};
+    use super::super::ring::Ring;
+    use crate::db::{Db, close, open_keyed, temp_db_path};
+
+    async fn keyed(tag: &str) -> (Db, std::path::PathBuf, Arc<Ring>) {
+        let path = temp_db_path(tag);
+        let _ = std::fs::remove_file(&path);
+        let db = open_keyed(path.to_str()).await.expect("open");
+        let ring = crate::db::ring(&db);
+        (db, path, ring)
+    }
+
+    async fn writer(db: &Db, ring: &Ring, scope: Scope) -> Writer {
+        ring.data_key(db, super::super::Purpose::Content)
+            .await
+            .expect("content key");
+        let mut conn = db.acquire().await.expect("connection");
+        Writer::of(ring, &mut conn, scope)
+            .await
+            .expect("key")
+            .expect("writer")
+    }
+
+    #[tokio::test]
+    async fn a_message_record_opens_only_as_its_own_row() {
+        let (db, path, ring) = keyed("body_binding").await;
+        let channel = Scope::Channel(7);
+        let w = writer(&db, &ring, channel).await;
+        let parts = Parts {
+            content: "hello \u{1F600} there".into(),
+            embeds: Some("[{\"title\":\"t\"}]".into()),
+            filename: Some("notes.txt".into()),
+            dropped: Some("left.bin".into()),
+            alt: Some("A cat on a mat".into()),
+        };
+        let record = w.message(41, "alice", &parts);
+        assert_eq!(&record[..2], [0x52, 0x01]);
+        let text = String::from_utf8_lossy(&record);
+        assert!(!text.contains("hello") && !text.contains("notes.txt") && !text.contains("cat"));
+        let opener = Opener::of(&db, [record.as_slice()]).await.expect("opener");
+        let own = opener.message(41, Some(channel), "alice", Some(&record), Parts::default());
+        assert_eq!((own.parts, own.unreadable), (parts.clone(), false));
+        let plain = opener.message(41, Some(channel), "alice", None, Parts::text("as stored"));
+        assert_eq!(
+            (plain.parts.content.as_str(), plain.unreadable),
+            ("as stored", false),
+            "a row without a record holds its plain columns"
+        );
+        for (id, scope, author, why) in [
+            (
+                42,
+                Some(channel),
+                "alice",
+                "another message by the same author",
+            ),
+            (41, Some(Scope::Channel(8)), "alice", "another channel"),
+            (
+                41,
+                Some(Scope::Dm(7)),
+                "alice",
+                "a DM with the channel's number",
+            ),
+            (41, Some(channel), "bob", "another author"),
+            (41, None, "alice", "no place"),
+        ] {
+            let moved = opener.message(id, scope, author, Some(&record), Parts::text("plain"));
+            assert_eq!(
+                (moved.parts, moved.unreadable),
+                (Parts::default(), true),
+                "{why}"
+            );
+        }
+        let again = w.message(41, "alice", &parts);
+        assert_ne!(again, record, "a new nonce every time");
+        for cut in [0, 5, 20, record.len() - 1] {
+            assert!(
+                opener
+                    .message(
+                        41,
+                        Some(channel),
+                        "alice",
+                        Some(&record[..cut]),
+                        Parts::default()
+                    )
+                    .unreadable
+            );
+        }
+        assert_eq!(ring.unreadable(), 9);
+        close(&db).await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn poll_text_is_bound_to_its_table_and_row() {
+        let (db, path, ring) = keyed("body_poll").await;
+        let scope = Scope::Dm(3);
+        let w = writer(&db, &ring, scope).await;
+        let record = w.text(POLLS, 5, "Which one");
+        let opener = Opener::of(&db, [record.as_slice()]).await.expect("opener");
+        assert_eq!(
+            opener.text(POLLS, 5, Some(scope), Some(&record), String::new()),
+            "Which one"
+        );
+        assert_eq!(
+            opener.text(POLLS, 5, Some(scope), None, "plain".into()),
+            "plain"
+        );
+        for (table, id) in [(OPTIONS, 5), (SNAPSHOTS, 5), (POLLS, 6)] {
+            assert_eq!(
+                opener.text(table, id, Some(scope), Some(&record), "plain".into()),
+                "",
+                "{table} {id}"
+            );
+        }
+        let as_message = opener.message(5, Some(scope), "alice", Some(&record), Parts::default());
+        assert!(as_message.unreadable);
+        close(&db).await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn a_record_under_a_key_another_copy_made_opens_after_one_lookup() {
+        let (db, path, ring) = keyed("body_other_copy").await;
+        let scope = Scope::Channel(1);
+        let record =
+            writer(&db, &ring, scope)
+                .await
+                .message(1, "alice", &Parts::text("from another copy"));
+        ring.forget_data_keys();
+        assert!(ring.held(1).is_none() && ring.held(2).is_none());
+        let opener = Opener::of(&db, [record.as_slice()]).await.expect("opener");
+        let opened = opener.message(1, Some(scope), "alice", Some(&record), Parts::default());
+        assert_eq!(opened.parts.content, "from another copy");
+        close(&db).await;
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+mod reads {
+    /// The string literals of `code`, each with the line it starts on.
+    fn literals(code: &str) -> Vec<(usize, String)> {
+        let bytes = code.as_bytes();
+        let (mut out, mut i, mut line) = (Vec::new(), 0, 1);
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\n' => line += 1,
+                b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                    while i < bytes.len() && bytes[i] != b'\n' {
+                        i += 1;
+                    }
+                    continue;
+                }
+                b'\'' if bytes.get(i + 2) == Some(&b'\'') => i += 2,
+                b'\'' if bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'') => {
+                    i += 3
+                }
+                b'"' => {
+                    let (start, at) = (i + 1, line);
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'"' {
+                        if bytes[i] == b'\\' {
+                            i += 1;
+                        }
+                        if bytes.get(i) == Some(&b'\n') {
+                            line += 1;
+                        }
+                        i += 1;
+                    }
+                    out.push((at, code[start..i.min(code.len())].to_owned()));
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        out
+    }
+
+    fn word(text: &str, name: &str) -> bool {
+        text.match_indices(name).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + name.len()..].chars().next();
+            let part = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+            !part(before) && !part(after)
+        })
+    }
+
+    /// The sealed columns a query reads: `(table, column)` for each column of a table the
+    /// query names.
+    fn sealed_reads(sql: &str) -> Vec<(&'static str, &'static str)> {
+        const COLUMNS: [(&str, &str); 8] = [
+            ("messages", "content"),
+            ("messages", "webhook_embeds"),
+            ("messages", "media_filename"),
+            ("messages", "fwd_dropped"),
+            ("messages", "media_alt"),
+            ("polls", "question"),
+            ("poll_options", "text"),
+            ("poll_snapshots", "data"),
+        ];
+        COLUMNS
+            .into_iter()
+            .filter(|(table, column)| word(sql, table) && word(sql, column))
+            .collect()
+    }
+
+    /// Queries that read a sealed column without its record, each for a stated reason.
+    const PLAIN_READS: [(&str, &str, &str); 9] = [
+        (
+            "api/messages.rs",
+            "SELECT h.id,m.content,m.author",
+            "search candidates come from the plain index, which has no sealed row",
+        ),
+        (
+            "db/channel_index.rs",
+            "",
+            "the plain search index; a sealed row has blank content and no terms",
+        ),
+        (
+            "db/schema.rs",
+            "",
+            "the full-text triggers index the plain column, blank in a sealed row",
+        ),
+        (
+            "db/migrate.rs",
+            "SELECT id, media_filename FROM messages WHERE id > $1 AND media_filename IS NOT NULL AND media_filename <> ''",
+            "a file name backfill of plain rows; a sealed row keeps the column blank",
+        ),
+        ("api/seal/sweep.rs", "", "reads plain rows to seal them"),
+        (
+            "api/polls.rs",
+            "UPDATE polls SET max_choices",
+            "names no sealed column of its own",
+        ),
+        (
+            "api/audit.rs",
+            "",
+            "audit details are JSON text in a column named data of another table",
+        ),
+        (
+            "api/reports/query.rs",
+            "",
+            "report text columns, sealed with the copies of reported content",
+        ),
+        (
+            "api/reports/store.rs",
+            "",
+            "report text columns, sealed with the copies of reported content",
+        ),
+    ];
+
+    /// Message and poll text is read in SQL only together with its `body` record, which
+    /// `crypt::body` opens: a query that selects a sealed column alone would show a sealed row
+    /// as empty.
+    #[test]
+    fn content_reads_go_through_open_body() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        crate::db::test_sources(&src, &mut files);
+        assert!(files.len() > 50, "the scan reads the sources");
+        let (mut misses, mut seen) = (Vec::new(), 0);
+        for (path, code) in &files {
+            for (line, sql) in literals(code) {
+                let reads = sealed_reads(&sql);
+                let select = sql.contains("SELECT ");
+                let writes = ["INSERT INTO", "CREATE ", "DELETE FROM"]
+                    .iter()
+                    .any(|start| sql.trim_start().starts_with(start));
+                if reads.is_empty() || !select || writes {
+                    continue;
+                }
+                seen += 1;
+                let allowed = PLAIN_READS
+                    .iter()
+                    .any(|(file, part, _)| file == path && sql.contains(part));
+                if !word(&sql, "body") && !allowed {
+                    misses.push(format!("{path}:{line} reads {reads:?} without body"));
+                }
+            }
+        }
+        assert!(seen > 20, "the scan finds the queries: {seen}");
+        assert!(misses.is_empty(), "{}", misses.join("\n"));
+        let found = literals("let a = \"SELECT content FROM messages\"; // \"x\"\nlet b = 'c';");
+        assert_eq!(found, [(1, "SELECT content FROM messages".to_owned())]);
+        assert_eq!(
+            sealed_reads("SELECT m.content FROM messages m"),
+            [("messages", "content")]
+        );
+        assert!(sealed_reads("SELECT contents FROM messages_fts").is_empty());
+    }
+}

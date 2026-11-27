@@ -336,12 +336,57 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
     open_with(database_url, &DbOptions::default()).await
 }
 
-/// Opens the database the way a server with no control in its env starts.
+/// Opens the database the way a server with no control in its env starts. With
+/// `TEST_SEALED` set in the environment of the test run, every such database holds a root key
+/// and requires encrypted storage, so a whole suite runs on sealed messages.
 #[cfg(test)]
 pub(crate) async fn open_started(database_url: Option<&str>) -> anyhow::Result<Db> {
+    match tests::sealed_suite() {
+        true => {
+            let db = open_keyed(database_url).await?;
+            ring(&db)
+                .data_key(&db, crate::crypt::Purpose::Content)
+                .await?;
+            sqlx::query("INSERT INTO settings(key, value) VALUES('seal_site_from', '1') ON CONFLICT(key) DO NOTHING")
+                .execute(&db)
+                .await?;
+            Ok(db)
+        }
+        false => open_ringed(database_url, Arc::default()).await,
+    }
+}
+
+/// The ring of a test database: without root keys, or with one while `TEST_SEALED` is set.
+#[cfg(test)]
+pub(crate) fn test_ring() -> Arc<Ring> {
+    match tests::sealed_suite() {
+        true => keyed_ring(),
+        false => Arc::default(),
+    }
+}
+
+#[cfg(test)]
+fn keyed_ring() -> Arc<Ring> {
+    let config = crate::crypt::ring::KeyConfig {
+        keys: Some(zeroize::Zeroizing::new(
+            "k1:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU".to_owned(),
+        )),
+        ..Default::default()
+    };
+    Arc::new(Ring::load(&config, None).expect("ring"))
+}
+
+/// `open_started` with a ring that holds one root key, so switches can turn on.
+#[cfg(test)]
+pub(crate) async fn open_keyed(database_url: Option<&str>) -> anyhow::Result<Db> {
+    open_ringed(database_url, keyed_ring()).await
+}
+
+#[cfg(test)]
+async fn open_ringed(database_url: Option<&str>, ring: Arc<Ring>) -> anyhow::Result<Db> {
     let opts = DbOptions {
         controls: Some(ControlSeeds::default()),
-        ring: Some(Arc::default()),
+        ring: Some(ring),
         ..DbOptions::default()
     };
     open_with(database_url, &opts).await
@@ -666,3 +711,9 @@ pub async fn connection_budget(db: &Db) -> sqlx::Result<Option<ConnectionBudget>
 
 #[cfg(test)]
 mod tests;
+
+/// The non-test code of every source file under `src`, as (path under `src`, code).
+#[cfg(test)]
+pub(crate) fn test_sources(src: &std::path::Path, found: &mut Vec<(String, String)>) {
+    tests::sources(src, src, found);
+}

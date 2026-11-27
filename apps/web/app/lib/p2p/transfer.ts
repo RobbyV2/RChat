@@ -71,6 +71,7 @@ import { fingerprint } from './keys'
 import { hashPages, partRange, readBlock } from './blobs'
 import { BLOCK, blobRootOf, blockCount, digest } from './hashing'
 import { LOCAL, type Local } from './limits'
+import { DEVICE_META } from './sealed_db'
 import { NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
 import { time } from '../platform/time'
@@ -539,7 +540,9 @@ export const readStores = async (db: P2pDatabase, skip: ReadonlySet<string> = ne
   const out = new Map<string, Row[]>()
   for (const n of names) {
     const st = tx.objectStore(n)
-    const values = await st.getAll()
+    const read = await st.getAll()
+    // An event stored sealed that didn't open here has nothing to carry.
+    const values = n === 'events' ? read.filter(v => !(v as EventRecord).unreadable) : read
     const keys = st.keyPath === null ? await st.getAllKeys() : null
     out.set(
       n,
@@ -1000,8 +1003,14 @@ const load = async (
   label: string,
   lim: TransferLimits
 ): Promise<Imported> => {
-  for (const n of names) fire(tx.objectStore(n).clear())
   const meta = tx.objectStore('meta')
+  // What belongs to this device stays: its device keys and what they sealed.
+  const own: unknown[] = []
+  for (const key of DEVICE_META) own.push(await meta.get(key))
+  for (const n of names) fire(tx.objectStore(n).clear())
+  DEVICE_META.forEach((key, i) => {
+    if (own[i] !== undefined) fire(meta.put(own[i], key))
+  })
   fire(meta.put(DB_VERSION, 'schema'))
   const ik = keyId(dump.self.ik.pk)
   const oldDk = keyId(dump.self.dk.pk)

@@ -23,6 +23,7 @@ import type { Session } from '../session'
 import { chanFactsOf, channelPermsOf, isOwner, memberOf, membershipOf, P } from '../state'
 import type { Check } from '../sync'
 import type { ServerCtx } from './context'
+import { followStore } from './sealing'
 import { storeDue } from './storage'
 import { sizeOfWire, type ServerArrival } from './types'
 import { type Rt } from './rt'
@@ -91,7 +92,8 @@ export async function take(
   const rt = cx.ensureRt(room)
   await rt.loading
   const have = await cx.db.get('events', id)
-  if (have) {
+  // One stored sealed that didn't open here is taken again like a new one.
+  if (have && !have.unreadable) {
     // A purged body that shows again, fetched back.
     if (
       have.purged &&
@@ -351,6 +353,7 @@ export async function applyDelta(cx: ServerCtx, room: string, delta: SumDelta) {
   const rt = cx.ensureRt(room)
   const before = rt.sum
   rt.sum = applySummary(rt.sum, delta)
+  if (delta.top && 'store' in delta.top) await followStore(cx, room)
   // Only removals of the last day, and not from an empty copy (a start without a cache).
   const reached = before.count ? reachedBy(before, rt.sum, cx.me, cx.clock.now()) : []
   if (reached.length) cx.noteReached(rt, reached)
@@ -448,7 +451,7 @@ export function tellRemoved(cx: ServerCtx, s: Session, room: string) {
   const m = memberOf(cx.sumOf(room), ik)
   if (!m?.rem || m.by === ik || (m.m !== 'leave' && m.m !== 'ban')) return
   void cx.db.get('events', m.rem).then(rec => {
-    if (rec) void s.send({ t: 'gmember', room, ev: rec.wire }).catch(() => {})
+    if (rec && !rec.unreadable) void s.send({ t: 'gmember', room, ev: rec.wire }).catch(() => {})
   })
 }
 

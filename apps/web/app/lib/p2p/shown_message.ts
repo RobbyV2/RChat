@@ -1,6 +1,7 @@
 import { readFwdSrc } from './content'
 import type { P2pMessage } from './dm'
 import { plainLine } from '../replies'
+import { UNREADABLE_TEXT } from '../sealing'
 import type { CallLog, Message, UserRef } from '../types'
 
 // Shared message components key rows by a number that grows in display order (jumps and the
@@ -35,6 +36,14 @@ export const callLogOf = (p: P2pMessage): CallLog | null => {
   }
 }
 
+// What a row says as a message: a storage line's switch, or the text that shows.
+const contentOf = (m: P2pMessage) => {
+  if (m.system?.kind === 'storage') return m.system.on ? 'on' : 'off'
+  if (m.unreadable) return `_${UNREADABLE_TEXT}_`
+  if (m.unavailable) return '_Message unavailable_'
+  return m.fwd ? m.fwd.body : m.body
+}
+
 export const asMessage = (
   m: P2pMessage,
   num: number,
@@ -47,7 +56,8 @@ export const asMessage = (
   dm_id: null,
   thread_root_id: null,
   author: user(m.sender),
-  content: m.unavailable ? '_Message unavailable_' : m.fwd ? m.fwd.body : m.body,
+  content: contentOf(m),
+  ...(m.unreadable ? { unreadable: true } : {}),
   created_at: seconds(m.ts),
   reply_count: m.replies ?? 0,
   media: null,

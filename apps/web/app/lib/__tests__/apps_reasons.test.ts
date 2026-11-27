@@ -40,6 +40,8 @@ const KINDS: Record<ReasonKind, true> = {
   locked: true,
   app: true,
   confirm: true,
+  forced: true,
+  keys: true,
 }
 
 const ascii = (s: string) => /^[\x20-\x7e]+$/.test(s)

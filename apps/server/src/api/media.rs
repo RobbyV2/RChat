@@ -1226,7 +1226,6 @@ pub(crate) async fn delete_media(
         kind: _,
         author,
         media_id,
-        media_filename: _,
         media_kind,
         server,
         dm_users,
@@ -1927,21 +1926,21 @@ async fn sweep_batch(db: &Db, at: i64) -> sqlx::Result<(Vec<String>, Vec<WsEvent
         query
     };
     let rows = bind_ids(format!(
-        "SELECT m.id, m.channel_id, m.dm_id, m.media_filename, c.server, d.user_a, d.user_b FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.media_id IN ({list}) AND m.media_removed = 0 AND m.media_kind != 'p2p'"
+        "SELECT m.id, m.channel_id, m.dm_id, c.server, d.user_a, d.user_b FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.media_id IN ({list}) AND m.media_removed = 0 AND m.media_kind != 'p2p'"
     ))
     .fetch_all(&mut *tx)
     .await?;
     let mut events = Vec::with_capacity(rows.len());
     for r in &rows {
         let dm_users = match (
+            r.try_get::<Option<String>, _>(4)?,
             r.try_get::<Option<String>, _>(5)?,
-            r.try_get::<Option<String>, _>(6)?,
         ) {
             (Some(a), Some(b)) => Some(vec![a, b]),
             (_, _) => None,
         };
         events.push(WsEvent::MediaRemoved {
-            server: r.try_get(4)?,
+            server: r.try_get(3)?,
             channel_id: r.try_get(1)?,
             dm_id: r.try_get(2)?,
             dm_users,

@@ -24,8 +24,6 @@ pub use channel_index::{build_channel_index, has_channel_index};
 pub use indexes::{Built, build_online};
 pub use migrate::{ConfigChange, ConfigStart, SCHEMA_VERSION, trigger_version};
 pub(crate) use migrate::{PINNED, ROLE_ORDER_INIT};
-#[cfg(test)]
-pub(crate) use pool::open_started;
 pub(crate) use pool::pool_key;
 #[cfg(test)]
 pub(crate) use pool::temp_db_path;
@@ -35,6 +33,8 @@ pub use pool::{
     has_accounts, is_sqlite, light, no_statement_limit, open, open_with, opened_limits, reader,
     ring, sqlite_file, stored_schema_version, take_config_start, writer_connections,
 };
+#[cfg(test)]
+pub(crate) use pool::{open_keyed, open_started, test_ring, test_sources};
 pub use schema::has_fts;
 #[cfg(test)]
 pub(crate) use schema::set_fts;

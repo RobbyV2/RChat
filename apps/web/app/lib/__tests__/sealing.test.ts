@@ -23,13 +23,13 @@ describe('the encrypted storage switch', () => {
     expect(
       sealState({ stored: false, forced: false, readiness: 'first_need', allowed: true })
     ).toEqual({ on: false, forced: false, available: true, reason: null })
-    expect(hostedServerSeal({ on: false, readiness: 'first_need' }, true)).toEqual({
+    expect(hostedServerSeal({ on: false }, true, { encryption_ready: 'first_need' })).toEqual({
       on: false,
       forced: false,
       available: true,
       reason: null,
     })
-    expect(hostedDmSeal({ on: false, readiness: 'first_need' }).available).toBe(true)
+    expect(hostedDmSeal({ on: false }, { encryption_ready: 'first_need' }).available).toBe(true)
   })
 
   test('cannot be turned on without a key or while a copy of the site lags', () => {
@@ -87,14 +87,16 @@ describe('the encrypted storage switch', () => {
     })
     expect(hostedServerSeal({ on: true }, true).on).toBe(true)
     expect(hostedServerSeal({ on: 1, forced: 0 }, false).reason).toBe('permission')
-    expect(hostedServerSeal({ on: 'yes', readiness: 'nonsense' }, true)).toEqual({
+    expect(hostedServerSeal({ on: 'yes' }, true, { encryption_ready: 'nonsense' })).toEqual({
       on: false,
       forced: false,
       available: true,
       reason: null,
     })
     expect(hostedServerSeal({ on: true, forced: true }, true).reason).toBe('forced')
-    expect(hostedServerSeal({ on: false, readiness: 'updating' }, true).reason).toBe('updating')
+    expect(hostedServerSeal({ on: false }, true, { encryption_ready: 'updating' }).reason).toBe(
+      'updating'
+    )
     expect(hostedDmSeal({ on: false })).toEqual({
       on: false,
       forced: false,
@@ -102,6 +104,42 @@ describe('the encrypted storage switch', () => {
       reason: null,
     })
     expect(hostedDmSeal(null).available).toBe(false)
+  })
+
+  test('shows what the site says before a switch is refused', () => {
+    const seal = { on: false, forced: false, own: false, server_forced: false }
+    for (const ready of ['keys', 'updating'] as const) {
+      const site = { encryption_required: false, encryption_ready: ready }
+      expect(hostedServerSeal(seal, true, site).reason).toBe(ready)
+      expect(hostedDmSeal(seal, site).reason).toBe(ready)
+    }
+    expect(sealReasonText(hostedDmSeal(seal, { encryption_ready: 'keys' }), 'hosted')).toBe(
+      'This site needs an encryption key first'
+    )
+  })
+
+  test('follows the site-wide requirement in the settings without the place sent again', () => {
+    const plain = { on: false, forced: false, own: false, server_forced: false }
+    const bySite = { on: true, forced: true, own: false, server_forced: false }
+    const required = { encryption_required: true, encryption_ready: 'ready' }
+    const lifted = { encryption_required: false, encryption_ready: 'ready' }
+    expect(hostedServerSeal(plain, true, required)).toEqual({
+      on: true,
+      forced: true,
+      available: false,
+      reason: 'forced',
+    })
+    expect(hostedServerSeal(bySite, true, lifted)).toEqual({
+      on: false,
+      forced: false,
+      available: true,
+      reason: null,
+    })
+    expect(hostedServerSeal({ ...bySite, own: true }, true, lifted).on).toBe(true)
+    expect(hostedServerSeal({ ...bySite, server_forced: true }, true, lifted).forced).toBe(true)
+    expect(hostedDmSeal(bySite, lifted).on).toBe(false)
+    expect(hostedServerSeal(bySite, true, {}).forced).toBe(true)
+    expect(hostedServerSeal({ on: true, forced: true }, true, lifted).forced).toBe(true)
   })
 
   test('reads the P2P store register and ignores what it does not know', () => {

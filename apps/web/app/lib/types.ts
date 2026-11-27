@@ -94,6 +94,8 @@ export interface ServerSummaryLite {
   // What it is about, and how its icon is drawn. Absent on older servers: none, the letter.
   description?: string | null
   icon_kind?: ServerIconKind
+  // Whether new messages are stored encrypted. Absent on older servers: off.
+  seal?: StoredSeal
 }
 
 export type JoinMode = 'name' | 'invite' | 'password' | 'closed'
@@ -350,6 +352,8 @@ export interface ServerDetail {
   listed?: boolean
   description?: string | null
   icon_kind?: ServerIconKind
+  // Whether new messages are stored encrypted. Absent on older servers: off.
+  seal?: StoredSeal
   channels: Channel[]
   categories?: Category[]
   layout_version?: number
@@ -404,6 +408,18 @@ export interface DmSummary {
   last_message_at?: number | null
   // The other person is an accepted friend; false for the self DM.
   friend?: boolean
+  // Whether new messages are stored encrypted. Absent on older servers: off.
+  seal?: StoredSeal
+}
+
+// Whether a server or DM stores new messages encrypted with a key the site keeps, and whether
+// the site requires it. `own` is the place's own switch, `server_forced` the site's requirement
+// of this server alone; absent on older servers.
+export interface StoredSeal {
+  on: boolean
+  forced: boolean
+  own?: boolean
+  server_forced?: boolean
 }
 
 export type MediaKind = 'server' | 'p2p'
@@ -435,7 +451,7 @@ export interface Embed {
   banner_removed: boolean
 }
 
-export type MessageKind = 'user' | 'poll' | 'call' | 'pin' | 'join' | 'leave'
+export type MessageKind = 'user' | 'poll' | 'call' | 'pin' | 'join' | 'leave' | 'storage'
 
 export type CallOutcome = 'missed' | 'declined' | 'completed'
 
@@ -477,6 +493,8 @@ export interface Message {
   poll?: Poll | null
   // Posted through an incoming webhook: the author is `@webhook:<id>`
   webhook?: MessageWebhook | null
+  // The stored message can't be opened; its content is empty.
+  unreadable?: boolean
 }
 
 export interface EmbedField {
@@ -819,6 +837,11 @@ export interface SiteSettings {
   incoming_webhooks?: boolean
   // The default servers anyone can read, where guests start.
   guest_servers?: string[]
+  // The site requires encrypted storage, also of what the app stores of P2P rooms and DMs on
+  // this device. Absent on older servers: off.
+  encryption_required?: boolean
+  // Whether encrypted storage can be turned on here. Absent on older servers.
+  encryption_ready?: 'ready' | 'first_need' | 'keys' | 'updating'
   // Whether the server every instance starts with is still there. Absent on older servers:
   // kept.
   builtin_server?: 'kept' | 'removed'
@@ -1351,6 +1374,7 @@ export type WsEvent =
     }
   | { type: 'guest_name'; name: string }
   | { type: 'dm_created'; dm_id: number; dm_users: string[] }
+  | { type: 'dm_updated'; dm_id: number; dm_users: string[]; seal: StoredSeal }
   | { type: 'dm_closed'; username: string; dm_id: number }
   | { type: 'dm_reopened'; username: string; dm_id: number }
   | { type: 'user_blocked'; username: string; blocked: BlockedUser }

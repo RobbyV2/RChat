@@ -75,6 +75,7 @@ import * as emitter from './emit'
 import * as roles from './roles'
 import * as modlog from './modlog'
 import * as categories from './categories'
+import * as sealing from './sealing'
 import * as moderation from './moderation'
 import { time } from '../../platform/time'
 import { sleep } from '../../clock'
@@ -415,6 +416,7 @@ export class Servers {
     const now = this.clock.now()
     for (const r of this.rooms.values()) {
       if (r.joining) this.maybeJoin(r.id)
+      for (const ik of r.joining?.from ?? []) this.prefer(r.id, ik)
       const rt = this.rt(r.id)
       if (rt?.held.size) {
         const due = [...rt.held].filter(([, h]) => h.due <= now)
@@ -1436,6 +1438,12 @@ export class Servers {
 
   editRole(room: string, role: string, patch: roles.RoleMetaPatch) {
     return roles.editRole(ctx(this), room, role, patch)
+  }
+
+  // "Encrypt stored messages" of a room: every member's device stores the events it gets from
+  // then on sealed, or plain again.
+  setStore(room: string, on: boolean, earlier = false) {
+    return sealing.setStore(ctx(this), room, on, earlier)
   }
 
   moveRole(room: string, role: string, pos: number, reason?: string) {

@@ -2553,6 +2553,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const { me } = get()
       if (me && ev.dm_users.includes(me.username)) bumpDm(ev.dm_id)
     },
+    dm_updated: ev => {
+      set(s => ({ dms: s.dms.map(d => (d.id === ev.dm_id ? { ...d, seal: ev.seal } : d)) }))
+      const closed = closedDms.get(ev.dm_id)
+      if (closed) closedDms.set(ev.dm_id, { ...closed, seal: ev.seal })
+    },
     dm_closed: ev => {
       if (get().me?.username === ev.username) hideDm(ev.dm_id)
     },

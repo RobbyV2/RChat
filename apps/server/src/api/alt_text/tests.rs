@@ -6,7 +6,7 @@ use sqlx::Row;
 
 use super::*;
 use crate::api::messages::{edit_message, send_channel_message};
-use crate::api::test_util::{add_member, each_db, mem_user, profanity_on};
+use crate::api::test_util::{add_member, each_db, each_db_keyed, mem_user, profanity_on};
 use crate::api::{Authed, Message};
 use crate::db::NewUser;
 use crate::state::AppState;
@@ -319,6 +319,91 @@ async fn a_forward_into_a_filtered_channel_checks_the_description() {
         )
         .await;
         assert!(matches!(&copy, Err((StatusCode::BAD_REQUEST, m)) if m.contains("profanity")));
+        temp.done(state).await;
+    }
+}
+
+#[tokio::test]
+async fn a_description_in_an_encrypted_place_is_kept_in_its_record() {
+    for (state, temp) in each_db_keyed("alt_text_sealed").await {
+        let db = &state.db;
+        let cid = general(db).await;
+        NewUser::plain("alice").add(db).await;
+        add_member(db, "rchat", "alice", 1, 0, 1).await;
+        sqlx::query("INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES('0123456789abcdef0123456789abcdef', 'cat.png', 'image/png', 3, NULL, 'alice', 1)")
+            .execute(db)
+            .await
+            .expect("media");
+        let switch = |on: bool| {
+            crate::api::servers::update_server(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Path("rchat".to_owned()),
+                Json(serde_json::from_value(json!({ "seal": on })).expect("patch")),
+            )
+        };
+        let _ = switch(true).await.expect("on");
+        let sent = send(
+            &state,
+            cid,
+            "alice",
+            json!({ "content": "", "media_id": "0123456789abcdef0123456789abcdef", "media_alt": "A cat" }),
+        )
+        .await
+        .expect("send");
+        assert_eq!(alt_of(&sent), Some("A cat"));
+        assert_eq!(stored(db, sent.id).await, None, "the column stays blank");
+        let record = |id: i64| async move {
+            sqlx::query("SELECT body FROM messages WHERE id = $1")
+                .bind(id)
+                .fetch_one(db)
+                .await
+                .expect("row")
+                .try_get::<Option<Vec<u8>>, _>(0)
+                .expect("body")
+        };
+        let body = record(sent.id).await.expect("a record");
+        assert!(!String::from_utf8_lossy(&body).contains("cat"));
+        let edited = edit(
+            &state,
+            sent.id,
+            "alice",
+            json!({ "content": "", "media_alt": "A dog" }),
+        )
+        .await
+        .expect("edit");
+        assert_eq!(alt_of(&edited), Some("A dog"));
+        assert_eq!(stored(db, sent.id).await, None);
+        assert!(!String::from_utf8_lossy(&record(sent.id).await.expect("record")).contains("dog"));
+        let kept = edit(
+            &state,
+            sent.id,
+            "alice",
+            json!({ "content": "same picture" }),
+        )
+        .await
+        .expect("text edit");
+        assert_eq!(
+            alt_of(&kept),
+            Some("A dog"),
+            "a text edit keeps the description"
+        );
+        let _ = switch(false).await.expect("off");
+        let copy = send(
+            &state,
+            cid,
+            "alice",
+            json!({ "content": "", "forward_of": sent.id }),
+        )
+        .await
+        .expect("forward");
+        assert_eq!(alt_of(&copy), Some("A dog"));
+        assert_eq!(stored(db, copy.id).await.as_deref(), Some("A dog"));
+        assert_eq!(
+            record(copy.id).await,
+            None,
+            "the copy in a plain place is plain"
+        );
         temp.done(state).await;
     }
 }

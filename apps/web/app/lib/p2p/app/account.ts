@@ -6,6 +6,8 @@ import { sessionStore, shareOrigin } from '../../instances'
 import { probeAddress } from '../../ice'
 import { keepAsker } from '../keep'
 import { dbName, P2pStore, removeP2pDb } from '../db'
+import { dropSealed } from '../sealed_drop'
+import { followSiteSeal } from '../sealed_db'
 import { BadgeKeeper, Badges, peersCanCheck, readSlots } from '../badge'
 import { fingerprint, keyId } from '../keys'
 import type { AddResult } from '../contacts'
@@ -225,6 +227,9 @@ export function createAccountPart(
       chat: chat && { ...chat, messages: [], loading: true },
     }
   }
+
+  const followSite = (s: P2pStore) =>
+    followSiteSeal(s.sealing, owner.store.getState().settings.encryption_required)
 
   // Another tab runs P2P: this one opens the database to show what is stored, and reloads when
   // the leader says something changed.
@@ -514,6 +519,16 @@ export function createAccountPart(
           ? await P2pStore.create(dbFor(username), onBlocking)
           : await P2pStore.open(dbFor(username), onBlocking)
       if (!live()) return s?.close()
+      if (s) {
+        // Without the device key that sealed them, those rooms are taken from peers again.
+        if (await s.sealing.lost()) await dropSealed(s.db)
+        await followSite(s)
+        const stopSite = owner.store.subscribe((now, was) => {
+          if (s.closed) return stopSite()
+          if (now.settings.encryption_required !== was.settings.encryption_required)
+            void followSite(s)
+        })
+      }
       const deps = startDeps(username)
       const n = s && (await openNode(deps, s, create !== null ? { name: create } : undefined))
       if (n) intent.create = null

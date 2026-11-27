@@ -517,6 +517,12 @@ pub enum WsEvent {
         dm_id: i64,
         dm_users: Vec<String>,
     },
+    /// Whether the DM stores new messages encrypted changed; to its participants only.
+    DmUpdated {
+        dm_id: i64,
+        dm_users: Vec<String>,
+        seal: crate::api::seal::SealView,
+    },
     /// `username` closed the DM; to that user's connections only.
     DmClosed {
         username: String,

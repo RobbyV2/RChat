@@ -1,5 +1,6 @@
 'use client'
 
+import { UNREADABLE_TEXT } from '../lib/sealing'
 import { memo, type ComponentType, type ReactNode } from 'react'
 import { Check, CircleAlert, Clock, EyeOff, MessageSquareText, Reply, Trash2 } from 'lucide-react'
 import { useStoreApi } from '../lib/client/react'
@@ -316,7 +317,11 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
   ) : undefined
   const body = (
     <>
-      {m.forward ? (
+      {m.unreadable ? (
+        <p data-unreadable className="text-sm italic text-on-surface-variant">
+          {UNREADABLE_TEXT}
+        </p>
+      ) : m.forward ? (
         <ForwardCard m={m} canDelete={canTrim} local={local} />
       ) : m.kind === 'poll' ? (
         <PollCard m={m} canVote={props.canVote ?? false} />

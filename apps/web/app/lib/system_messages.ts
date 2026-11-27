@@ -14,18 +14,45 @@ export const LEAVE_LINE = '{name} left the server.'
 
 export const DEFAULT_CHANNEL = 'Default channel'
 
-type SystemRow = Pick<Message, 'id' | 'kind'>
+// What a `storage` line says, by its content: the switch a member changed, or the site's
+// requirement.
+export const STORAGE_LINES: Record<string, string> = {
+  on: '{name} turned on encrypted storage for new messages.',
+  off: '{name} turned off encrypted storage for new messages. Messages stored encrypted stay encrypted.',
+  forced: '{name} now requires encrypted storage.',
+  unforced: '{name} no longer requires encrypted storage.',
+}
 
-export const isSystem = (m: Pick<Message, 'kind'>) => m.kind === 'join' || m.kind === 'leave'
+export const STORAGE_LINE = '{name} changed how messages are stored.'
 
-// A pin or join/leave line: its menu offers delete, select and its id only.
+// Who a storage line names when no member is behind it.
+export const SITE_NAME = 'This site'
+
+type SystemRow = Pick<Message, 'id' | 'kind'> & Partial<Pick<Message, 'content'>>
+
+export const isStorage = (m: Pick<Message, 'kind'>) => m.kind === 'storage'
+
+// A storage line that turns encrypted storage on, shown with a closed lock.
+export const sealsFromHere = (m: Pick<Message, 'kind'> & Partial<Pick<Message, 'content'>>) =>
+  isStorage(m) && (m.content === 'on' || m.content === 'forced')
+
+export const isSystem = (m: Pick<Message, 'kind'>) =>
+  m.kind === 'join' || m.kind === 'leave' || isStorage(m)
+
+// A storage line the site wrote: it has no author.
+export const bySite = (m: Pick<Message, 'kind' | 'author'>) =>
+  isStorage(m) && m.author.username === ''
+
+// A pin, join/leave or storage line: its menu offers delete, select and its id only.
 export const isNotice = (m: Pick<Message, 'kind'>) => m.kind === 'pin' || isSystem(m)
 
 // The same message always gets the same line, on every client.
 const template = (m: SystemRow) =>
-  m.kind === 'join'
-    ? JOIN_LINES[((m.id % JOIN_LINES.length) + JOIN_LINES.length) % JOIN_LINES.length]
-    : LEAVE_LINE
+  isStorage(m)
+    ? (STORAGE_LINES[m.content ?? ''] ?? STORAGE_LINE)
+    : m.kind === 'join'
+      ? JOIN_LINES[((m.id % JOIN_LINES.length) + JOIN_LINES.length) % JOIN_LINES.length]
+      : LEAVE_LINE
 
 // The text around the name, so the name itself can open the profile card.
 export const systemParts = (m: SystemRow): [string, string] => {
@@ -34,7 +61,7 @@ export const systemParts = (m: SystemRow): [string, string] => {
 }
 
 export const systemText = (m: SystemRow & Pick<Message, 'author'>) =>
-  template(m).replace('{name}', () => nameWithUsername(m.author))
+  template(m).replace('{name}', () => (bySite(m) ? SITE_NAME : nameWithUsername(m.author)))
 
 export const SYSTEM_CHANNEL_LABEL = 'Channel for join and leave messages'
 export const SYSTEM_DEFAULT_NOTE = 'The default channel is the first text channel.'

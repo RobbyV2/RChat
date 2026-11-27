@@ -53,6 +53,7 @@ pub mod recovery;
 pub mod reports;
 pub mod scheduled;
 pub mod scim;
+pub mod seal;
 pub mod sealed;
 pub mod search_limits;
 pub mod server_about;
@@ -435,6 +436,10 @@ pub struct ServerSummaryLite {
     /// `identicon` (a pattern made from its key), on its `banner_color` when it has one.
     #[serde(default)]
     pub icon_kind: server_about::IconKind,
+    /// Whether new messages of the server are stored encrypted with a key this site keeps
+    /// (this is not end-to-end encryption), and whether the site requires it. Set with
+    /// `PATCH /api/v1/servers/{name}`. Older servers send nothing, which reads as off.
+    pub seal: seal::SealView,
 }
 
 /// A channel in a server.
@@ -724,6 +729,8 @@ pub struct ServerDetail {
     pub description: Option<String>,
     /// How its icon is drawn (see `ServerSummaryLite`). Set with `PATCH /api/v1/servers/{name}`.
     pub icon_kind: server_about::IconKind,
+    /// Whether new messages are stored encrypted (see `ServerSummaryLite`). Set with
+    pub seal: seal::SealView,
     /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
     /// where the caller lacks View channels are left out.
     pub channels: Vec<Channel>,
@@ -797,6 +804,10 @@ pub struct DmSummary {
     /// Whether the other person is an accepted friend; `false` for the conversation with
     /// yourself.
     pub friend: bool,
+    /// Whether new messages of the DM are stored encrypted with a key this site keeps (this is
+    /// not end-to-end encryption), and whether the site requires it. Set with
+    /// `PUT /api/v1/dms/{id}/seal`.
+    pub seal: seal::SealView,
 }
 
 /// A file attached to a message, stored on the server or shared peer to peer.
@@ -1017,6 +1028,10 @@ pub struct Message {
     /// `username` is `@webhook:<id>`, which no account can have). Clients show a WEBHOOK badge.
     #[serde(default)]
     pub webhook: Option<webhooks::MessageWebhook>,
+    /// The stored message can't be opened: its encryption key is missing or the stored record
+    /// is damaged. `content` is empty then. Left out otherwise.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unreadable: bool,
 }
 
 /// The original of a forwarded message. The copy never changes when the original is edited or
@@ -1597,6 +1612,16 @@ pub struct PublicSettings {
     /// members read is never listed. Older servers send no list.
     #[serde(default)]
     pub guest_servers: Vec<String>,
+    /// The site requires encrypted storage: every server and DM stores new messages encrypted,
+    /// and the app encrypts what it stores of P2P rooms and DMs on this device. Older servers
+    /// send nothing, which reads as off.
+    #[serde(default)]
+    pub encryption_required: bool,
+    /// Whether encrypted storage can be turned on here: `ready`; `first_need` (no key yet, the
+    /// first switch makes one); `keys` (`This site needs an encryption key first`); or
+    /// `updating` (`Not available while this site updates`).
+    #[serde(default)]
+    pub encryption_ready: String,
 }
 
 impl std::ops::Deref for PublicSettings {
@@ -1614,6 +1639,8 @@ impl PublicSettings {
         PublicSettings {
             settings,
             guest_servers: policy::Policy::cached(db).await.guest_servers.clone(),
+            encryption_required: seal::site_floor(db).await > 0,
+            encryption_ready: seal::public_readiness(db).await,
         }
     }
 
@@ -1623,6 +1650,8 @@ impl PublicSettings {
         PublicSettings {
             settings,
             guest_servers: policy::Policy::load(db).await.guest_servers.clone(),
+            encryption_required: seal::site_floor(db).await > 0,
+            encryption_ready: seal::public_readiness(db).await,
         }
     }
 }
@@ -2631,6 +2660,7 @@ fn api_routes(
         .route("/dms/{id}/pins", get(pins::dm_pins))
         .route("/dms/{id}/threads", get(threads::dm_threads))
         .route("/dms/{id}/close", post(dms::close_dm))
+        .route("/dms/{id}/seal", put(seal::put_dm_seal))
         .route("/blocks", get(blocks::list_blocks).post(blocks::block_user))
         .route("/blocks/usernames", get(blocks::blocked_usernames))
         .route("/blocks/{username}", delete(blocks::unblock_user))
@@ -2772,6 +2802,12 @@ fn api_routes(
         )
         .route("/admin/config", get(admin::get_config))
         .route("/admin/encryption", get(encryption::admin_status))
+        .route("/admin/encryption/required", put(seal::put_required))
+        .route("/admin/encryption/copies", put(seal::put_copies))
+        .route(
+            "/admin/servers/{name}/seal_forced",
+            put(seal::put_server_forced),
+        )
         .route("/admin/overview", get(admin::overview))
         .route("/admin/users", get(admin::list_users))
         .route("/admin/servers", get(admin::list_servers))
@@ -2810,7 +2846,6 @@ mod audit_reason_tests;
 #[cfg(test)]
 pub(crate) mod test_util {
     use std::path::PathBuf;
-    use std::sync::Arc;
 
     use crate::db::{AvatarKind, Db, User, now, open_started};
     use crate::instance::{Instance, InstanceConfig};
@@ -2853,7 +2888,7 @@ pub(crate) mod test_util {
     pub(crate) async fn temp_state_env(tag: &str, pairs: &[(&str, &str)]) -> (AppState, PathBuf) {
         let path = crate::db::temp_db_path(tag);
         let opts = crate::db::DbOptions {
-            ring: Some(Arc::default()),
+            ring: Some(crate::db::test_ring()),
             ..crate::config::AppConfig::from_map(pairs)
                 .expect("config")
                 .db_options()
@@ -2994,6 +3029,14 @@ pub(crate) mod test_util {
     }
 
     impl TempDb {
+        /// The database URL another pool opens it with.
+        pub(crate) fn url(&self) -> String {
+            match self {
+                TempDb::Sqlite(path) => path.display().to_string(),
+                TempDb::Postgres(temp) => temp.url.clone(),
+            }
+        }
+
         pub(crate) async fn done(self, state: AppState) {
             match self {
                 TempDb::Sqlite(path) => done(state, path).await,
@@ -3008,6 +3051,37 @@ pub(crate) mod test_util {
         let mut out = vec![(state, TempDb::Sqlite(path))];
         if let Some((state, temp)) = pg_state(tag).await {
             out.push((state, TempDb::Postgres(temp)));
+        }
+        out
+    }
+
+    /// `each_db` on databases whose ring holds a root key, so encrypted storage can be turned
+    /// on. The Postgres one has "every copy runs this build" confirmed.
+    pub(crate) async fn each_db_keyed(tag: &str) -> Vec<(AppState, TempDb)> {
+        let path = crate::db::temp_db_path(tag);
+        let _ = std::fs::remove_file(&path);
+        let mut opened = vec![(
+            crate::db::open_keyed(path.to_str()).await.expect("open db"),
+            TempDb::Sqlite(path),
+        )];
+        if let Some(temp) = pg_temp(tag).await {
+            let db = crate::db::open_keyed(Some(temp.url.as_str()))
+                .await
+                .expect("open postgres");
+            sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2)")
+                .bind(super::seal::COPIES)
+                .bind(env!("CARGO_PKG_VERSION"))
+                .execute(&db)
+                .await
+                .expect("confirm");
+            opened.push((db, TempDb::Postgres(temp)));
+        }
+        let mut out = Vec::with_capacity(opened.len());
+        for (db, temp) in opened {
+            let instance = Instance::load(&db, &InstanceConfig::default())
+                .await
+                .expect("instance");
+            out.push((AppState::new(db, Hub::new(), None, None, instance), temp));
         }
         out
     }

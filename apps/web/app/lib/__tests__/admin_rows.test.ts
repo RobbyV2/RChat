@@ -62,10 +62,13 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   incoming_webhooks: true,
   guest_servers: true,
   builtin_server: true,
+  encryption_required: true,
+  encryption_ready: true,
 }
 
-// Settings the server works out from others: nothing sets them directly.
-const DERIVED = ['guest_servers', 'builtin_server']
+// Settings the server works out from others, or that their own page sets: no settings row
+// sets them.
+const DERIVED = ['guest_servers', 'builtin_server', 'encryption_required', 'encryption_ready']
 
 const example = readFileSync(
   fileURLToPath(new URL('../../../../../.env.local.example', import.meta.url)),

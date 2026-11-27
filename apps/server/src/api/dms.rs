@@ -289,6 +289,8 @@ async fn summaries_of(
             friends.insert(r.try_get(0)?);
         }
     }
+    let ids: Vec<i64> = parsed.iter().map(|d| d.id).collect();
+    let seals = crate::api::seal::dm_views(db, &ids).await?;
     Ok(parsed
         .into_iter()
         .map(
@@ -306,6 +308,7 @@ async fn summaries_of(
                 closed,
                 last_message_id: (latest > 0).then_some(latest),
                 last_message_at: sent_at.get(&latest).copied(),
+                seal: seals.get(&id).copied().unwrap_or_default(),
             },
         )
         .collect())

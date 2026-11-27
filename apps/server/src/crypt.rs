@@ -11,6 +11,7 @@ use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
+pub mod body;
 pub mod cli;
 pub mod ring;
 pub mod secrets;

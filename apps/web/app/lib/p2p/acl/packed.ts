@@ -324,6 +324,12 @@ class SnapFacts implements Facts {
   get setting() {
     return this.V.setting()
   }
+  get store() {
+    return this.V.storeOf()
+  }
+  get storeWrites() {
+    return this.V.storeWrites()
+  }
   get channels() {
     return this.one('channels', () =>
       lazyMap(

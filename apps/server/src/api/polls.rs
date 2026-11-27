@@ -19,6 +19,7 @@ use crate::api::{
     UserRef, bad, check_len, cursor_int, decode_cursor, encode_cursor, placeholders,
     require_guest_ok, user_from, user_refs,
 };
+use crate::crypt::body::{OPTIONS, Opener, POLLS, SNAPSHOTS, Scope, Writer};
 use crate::db::{Db, User, is_sqlite, now, pool_key};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -454,12 +455,14 @@ pub(crate) fn validate(req: PollReq, settings: Option<&Settings>) -> Result<Poll
     })
 }
 
-/// Stores the poll of the new message `id` (inside its transaction).
+/// Stores the poll of the new message `id` (inside its transaction), sealed when the message's
+/// place has a `writer`.
 pub(crate) async fn insert(
     conn: &mut sqlx::AnyConnection,
     id: i64,
     spec: &PollSpec,
     created_at: i64,
+    writer: Option<&Writer>,
 ) -> sqlx::Result<()> {
     let PollSpec {
         kind,
@@ -474,10 +477,13 @@ pub(crate) async fn insert(
         scale,
         duration,
     } = spec;
-    sqlx::query("INSERT INTO polls(message_id, kind, question, anonymous, results, allow_change, allow_add, min_choices, max_choices, scale, closes_at, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)")
+    sqlx::query("INSERT INTO polls(message_id, kind, question, anonymous, results, allow_change, allow_add, min_choices, max_choices, scale, closes_at, created_at, body) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)")
         .bind(id)
         .bind(kind.as_str())
-        .bind(question)
+        .bind(match writer {
+            Some(_) => "",
+            None => question.as_str(),
+        })
         .bind(*anonymous as i64)
         .bind(show_results.as_str())
         .bind(*allow_change as i64)
@@ -487,19 +493,73 @@ pub(crate) async fn insert(
         .bind(*scale)
         .bind(duration.map(|d| created_at + d))
         .bind(created_at)
+        .bind(writer.map(|w| w.text(POLLS, id, question)))
         .execute(&mut *conn)
         .await?;
     for (position, (text, emoji)) in options.iter().enumerate() {
-        sqlx::query("INSERT INTO poll_options(message_id, position, text, emoji, created_at) VALUES($1, $2, $3, $4, $5)")
-            .bind(id)
-            .bind(position as i64)
-            .bind(text)
-            .bind(emoji)
-            .bind(created_at)
-            .execute(&mut *conn)
-            .await?;
+        insert_option(
+            conn,
+            id,
+            position as i64,
+            text,
+            emoji.as_deref(),
+            None,
+            created_at,
+            writer,
+        )
+        .await?;
     }
     Ok(())
+}
+
+/// Stores one option. A sealed option is inserted blank and gets its record, which is bound to
+/// the new id, in the same transaction.
+#[allow(clippy::too_many_arguments)]
+async fn insert_option(
+    conn: &mut sqlx::AnyConnection,
+    message_id: i64,
+    position: i64,
+    text: &str,
+    emoji: Option<&str>,
+    added_by: Option<&str>,
+    created_at: i64,
+    writer: Option<&Writer>,
+) -> sqlx::Result<()> {
+    let option: i64 = sqlx::query_scalar("INSERT INTO poll_options(message_id, position, text, emoji, added_by, created_at) VALUES($1, $2, $3, $4, $5, $6) RETURNING id")
+        .bind(message_id)
+        .bind(position)
+        .bind(match writer {
+            Some(_) => "",
+            None => text,
+        })
+        .bind(emoji)
+        .bind(added_by)
+        .bind(created_at)
+        .fetch_one(&mut *conn)
+        .await?;
+    if let Some(writer) = writer {
+        crate::api::seal::set_body(
+            conn,
+            OPTIONS,
+            "id",
+            option,
+            writer.text(OPTIONS, option, text),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// The channel and DM of the message a poll row of `table` belongs to, as two columns.
+fn scope_cols(table: &str) -> String {
+    format!(
+        "(SELECT sm.channel_id FROM messages sm WHERE sm.id = {table}.message_id), (SELECT sm.dm_id FROM messages sm WHERE sm.id = {table}.message_id)"
+    )
+}
+
+/// The scope read from the two `scope_cols` columns starting at `at`.
+fn row_scope(r: &sqlx::any::AnyRow, at: usize) -> sqlx::Result<Option<Scope>> {
+    Ok(Scope::of(r.try_get(at)?, r.try_get(at + 1)?))
 }
 
 /// A stored poll's settings.
@@ -520,14 +580,30 @@ struct Def {
     version: i64,
 }
 
-const DEF_COLS: &str = "message_id, kind, question, anonymous, results, allow_change, allow_add, min_choices, max_choices, scale, closes_at, closed_at, version";
+const DEF_COLS: &str = "message_id, kind, question, anonymous, results, allow_change, allow_add, min_choices, max_choices, scale, closes_at, closed_at, version, body";
+/// Where `DEF_COLS` has `body`; the `scope_cols` follow it.
+const DEF_BODY: usize = 13;
 
-fn row_def(r: &sqlx::any::AnyRow) -> Result<(i64, Def), ApiError> {
+fn def_sql(tail: &str) -> String {
+    format!(
+        "SELECT {DEF_COLS}, {} FROM polls WHERE {tail}",
+        scope_cols("polls")
+    )
+}
+
+fn row_def(r: &sqlx::any::AnyRow, opener: &Opener) -> Result<(i64, Def), ApiError> {
+    let id: i64 = r.try_get(0)?;
     Ok((
-        r.try_get(0)?,
+        id,
         Def {
             kind: PollKind::parse(&r.try_get::<String, _>(1)?)?,
-            question: r.try_get(2)?,
+            question: opener.text(
+                POLLS,
+                id,
+                row_scope(r, DEF_BODY + 1)?,
+                r.try_get::<Option<Vec<u8>>, _>(DEF_BODY)?.as_deref(),
+                r.try_get(2)?,
+            ),
             anonymous: r.try_get::<i64, _>(3)? != 0,
             show_results: ShowResults::parse(&r.try_get::<String, _>(4)?)?,
             allow_change: r.try_get::<i64, _>(5)? != 0,
@@ -572,16 +648,10 @@ async fn defs(db: &Db, ids: &[i64]) -> Result<HashMap<i64, Def>, ApiError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let sql = format!(
-        "SELECT {DEF_COLS} FROM polls WHERE message_id IN ({})",
-        placeholders(1, ids.len())
-    );
-    binds(sql, ids)
-        .fetch_all(db)
-        .await?
-        .iter()
-        .map(row_def)
-        .collect()
+    let sql = def_sql(&format!("message_id IN ({})", placeholders(1, ids.len())));
+    let rows = binds(sql, ids).fetch_all(db).await?;
+    let opener = Opener::of_rows(db, &rows, DEF_BODY).await?;
+    rows.iter().map(|r| row_def(r, &opener)).collect()
 }
 
 async fn options_of(db: &Db, ids: &[i64]) -> Result<HashMap<i64, Vec<PollOption>>, ApiError> {
@@ -590,13 +660,23 @@ async fn options_of(db: &Db, ids: &[i64]) -> Result<HashMap<i64, Vec<PollOption>
         return Ok(out);
     }
     let sql = format!(
-        "SELECT message_id, id, text, emoji FROM poll_options WHERE message_id IN ({}) ORDER BY message_id, position, id",
+        "SELECT message_id, id, text, emoji, body, {} FROM poll_options WHERE message_id IN ({}) ORDER BY message_id, position, id",
+        scope_cols("poll_options"),
         placeholders(1, ids.len())
     );
-    for r in binds(sql, ids).fetch_all(db).await? {
+    let rows = binds(sql, ids).fetch_all(db).await?;
+    let opener = Opener::of_rows(db, &rows, 4).await?;
+    for r in &rows {
+        let id: i64 = r.try_get(1)?;
         out.entry(r.try_get(0)?).or_default().push(PollOption {
-            id: r.try_get(1)?,
-            text: r.try_get(2)?,
+            id,
+            text: opener.text(
+                OPTIONS,
+                id,
+                row_scope(r, 5)?,
+                r.try_get::<Option<Vec<u8>>, _>(4)?.as_deref(),
+                r.try_get(2)?,
+            ),
             emoji: r.try_get(3)?,
         });
     }
@@ -1077,14 +1157,9 @@ pub(crate) async fn attach(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError
     }
     let mut views = public_views(db, &polls).await?;
     if !copies.is_empty() {
-        let sql = format!(
-            "SELECT message_id, data FROM poll_snapshots WHERE message_id IN ({})",
-            placeholders(1, copies.len())
-        );
-        for r in binds(sql, &copies).fetch_all(db).await? {
-            let data: String = r.try_get(1)?;
+        for (id, data) in snapshots(db, &copies).await? {
             if let Ok(poll) = serde_json::from_str::<Poll>(&data) {
-                views.insert(r.try_get(0)?, poll);
+                views.insert(id, poll);
             }
         }
     }
@@ -1206,14 +1281,31 @@ pub(crate) async fn snapshot_of(db: &Db, source: i64) -> Result<Option<String>, 
             serde_json::to_string(&poll).map_err(ApiError::internal)?,
         ));
     }
-    Ok(
-        sqlx::query("SELECT data FROM poll_snapshots WHERE message_id = $1")
-            .bind(source)
-            .fetch_optional(db)
-            .await?
-            .map(|r| r.try_get(0))
-            .transpose()?,
-    )
+    Ok(snapshots(db, &[source]).await?.pop().map(|(_, data)| data))
+}
+
+/// The stored snapshots of the forwards `ids`, opened.
+async fn snapshots(db: &Db, ids: &[i64]) -> Result<Vec<(i64, String)>, ApiError> {
+    let sql = format!(
+        "SELECT message_id, data, body, {} FROM poll_snapshots WHERE message_id IN ({})",
+        scope_cols("poll_snapshots"),
+        placeholders(1, ids.len())
+    );
+    let rows = binds(sql, ids).fetch_all(db).await?;
+    let opener = Opener::of_rows(db, &rows, 2).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let id: i64 = r.try_get(0)?;
+        let data = opener.text(
+            SNAPSHOTS,
+            id,
+            row_scope(r, 3)?,
+            r.try_get::<Option<Vec<u8>>, _>(2)?.as_deref(),
+            r.try_get(1)?,
+        );
+        out.push((id, data));
+    }
+    Ok(out)
 }
 
 /// Runs the profanity filter on the question and every option of a stored snapshot, for a
@@ -1231,10 +1323,15 @@ pub(crate) async fn store_snapshot(
     conn: &mut sqlx::AnyConnection,
     id: i64,
     data: &str,
+    writer: Option<&Writer>,
 ) -> sqlx::Result<()> {
-    sqlx::query("INSERT INTO poll_snapshots(message_id, data) VALUES($1, $2)")
+    sqlx::query("INSERT INTO poll_snapshots(message_id, data, body) VALUES($1, $2, $3)")
         .bind(id)
-        .bind(data)
+        .bind(match writer {
+            Some(_) => "",
+            None => data,
+        })
+        .bind(writer.map(|w| w.text(SNAPSHOTS, id, data)))
         .execute(&mut *conn)
         .await?;
     Ok(())
@@ -1335,15 +1432,16 @@ async fn poll_target(state: &AppState, id: i64, user: &User) -> Result<ResolvedM
 /// Serializes writes to one poll (Postgres row lock; SQLite has a single writer) and reads it.
 async fn lock_poll(db: &Db, conn: &mut sqlx::AnyConnection, id: i64) -> Result<Def, ApiError> {
     let sql = match is_sqlite(db) {
-        true => format!("SELECT {DEF_COLS} FROM polls WHERE message_id = $1"),
-        false => format!("SELECT {DEF_COLS} FROM polls WHERE message_id = $1 FOR UPDATE"),
+        true => def_sql("message_id = $1"),
+        false => def_sql("message_id = $1 FOR UPDATE"),
     };
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_optional(&mut *conn)
         .await?
         .ok_or_else(not_found)?;
-    Ok(row_def(&row)?.1)
+    let opener = Opener::of_rows(db, std::slice::from_ref(&row), DEF_BODY).await?;
+    Ok(row_def(&row, &opener)?.1)
 }
 
 /// Marks a change to the votes or options of poll `id`, so its tally is counted again.
@@ -1590,13 +1688,22 @@ pub(crate) async fn add_option(
     if !def.kind.written() || !(def.allow_add || own) {
         return Err(bad("Options cannot be added to this poll"));
     }
-    let existing: Vec<String> = sqlx::query("SELECT text FROM poll_options WHERE message_id = $1")
+    let scope = Scope::of(resolved.scope().channel_id, resolved.scope().dm_id);
+    let rows = sqlx::query("SELECT id, text, body FROM poll_options WHERE message_id = $1")
         .bind(id)
         .fetch_all(&mut *tx)
-        .await?
-        .iter()
-        .map(|r| r.try_get(0))
-        .collect::<sqlx::Result<_>>()?;
+        .await?;
+    let opener = Opener::of_rows(db, &rows, 2).await?;
+    let mut existing: Vec<String> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        existing.push(opener.text(
+            OPTIONS,
+            r.try_get(0)?,
+            scope,
+            r.try_get::<Option<Vec<u8>>, _>(2)?.as_deref(),
+            r.try_get(1)?,
+        ));
+    }
     if existing.len() >= OPTIONS_MAX {
         return Err(bad("A poll can have at most 20 options"));
     }
@@ -1606,15 +1713,21 @@ pub(crate) async fn add_option(
     {
         return Err(bad("Options must be different"));
     }
-    sqlx::query("INSERT INTO poll_options(message_id, position, text, emoji, added_by, created_at) VALUES($1, $2, $3, $4, $5, $6)")
-        .bind(id)
-        .bind(existing.len() as i64)
-        .bind(&text)
-        .bind(&emoji)
-        .bind(&user.username)
-        .bind(now())
-        .execute(&mut *tx)
-        .await?;
+    let writer = match scope {
+        Some(scope) => crate::api::seal::writer_of(db, &mut tx, scope).await?,
+        None => None,
+    };
+    insert_option(
+        &mut tx,
+        id,
+        existing.len() as i64,
+        &text,
+        emoji.as_deref(),
+        Some(&user.username),
+        now(),
+        writer.as_ref(),
+    )
+    .await?;
     if def.kind == PollKind::Multiple && def.max_choices == existing.len() as i64 {
         sqlx::query("UPDATE polls SET max_choices = max_choices + 1 WHERE message_id = $1")
             .bind(id)

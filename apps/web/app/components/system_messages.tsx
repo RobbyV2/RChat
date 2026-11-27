@@ -2,7 +2,7 @@
 
 import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useState, type ReactNode } from 'react'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Lock, LockOpen } from 'lucide-react'
 import { errorText, useMask } from '../lib/store'
 import { useLive } from '../lib/place/react'
 import {
@@ -11,10 +11,14 @@ import {
   type SystemSettings,
 } from '../lib/place/system_messages'
 import {
+  SITE_NAME,
   SYSTEM_CHANNEL_LABEL,
   SYSTEM_DEFAULT_NOTE,
   SYSTEM_JOIN_LABEL,
   SYSTEM_LEAVE_LABEL,
+  bySite,
+  isStorage,
+  sealsFromHere,
   systemParts,
 } from '../lib/system_messages'
 import type { Message } from '../lib/types'
@@ -29,7 +33,8 @@ import { personCalled } from '../lib/names'
 import { ShownName } from './shown_user'
 import { Inset, Row, Stack } from './layout'
 
-// "alice joined the party." with a green arrow, "alice left the server." with a red one.
+// "alice joined the party." with a green arrow, "alice left the server." with a red one, a
+// storage line with a lock.
 export function SystemNotice({
   m,
   server,
@@ -47,7 +52,9 @@ export function SystemNotice({
   const store = useStoreApi()
   const [before, after] = systemParts(m)
   const join = m.kind === 'join'
-  const Arrow = join ? ArrowRight : ArrowLeft
+  const storage = isStorage(m)
+  const Arrow = storage ? (sealsFromHere(m) ? Lock : LockOpen) : join ? ArrowRight : ArrowLeft
+  const tone = storage ? 'text-on-surface-variant' : join ? 'text-status-green' : 'text-error'
   return (
     <div data-row data-mid={m.id}>
       {divider}
@@ -61,14 +68,14 @@ export function SystemNotice({
         align="start"
         look={onMenu ? 'hover:bg-surface-container-low' : undefined}
       >
-        <span
-          className={`flex h-lh w-9 shrink-0 items-center justify-center ${join ? 'text-status-green' : 'text-error'}`}
-        >
+        <span className={`flex h-lh w-9 shrink-0 items-center justify-center ${tone}`}>
           <Arrow size={16} aria-hidden />
         </span>
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {before}
-          {local ? (
+          {bySite(m) ? (
+            <span className="font-medium text-on-surface">{SITE_NAME}</span>
+          ) : local ? (
             <Name
               of={personCalled(m.author.display_name, m.author.username)}
               look="font-medium text-on-surface"

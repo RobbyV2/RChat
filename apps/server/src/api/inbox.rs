@@ -13,6 +13,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, OkResp, UserRef, bad, cursor_int, decode_cursor, encode_cursor,
     ok, user_from, user_refs,
 };
+use crate::crypt::body::{Opener, Parts, Scope};
 use crate::db::{Db, LIVE_AUTHOR, User};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -448,7 +449,7 @@ fn ping_sql(
         conds.push_str(" AND m.dm_id IS NOT NULL");
     }
     format!(
-        "SELECT p.id, p.kind, p.created_at, p.seen, p.actor, p.emoji, m.id, m.thread_root_id, m.content, m.media_filename, m.media_spoiler, m.channel_id, m.dm_id, c.server, c.name, s.display_name FROM pings p JOIN messages m ON m.id = p.message_id LEFT JOIN messages rt ON rt.id = m.thread_root_id LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN servers s ON s.name = c.server LEFT JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE p.username = $1 AND {seen} AND {LIVE_AUTHOR}{actor_live}{actor_blocked}{author_blocked} AND ((m.channel_id IS NOT NULL AND c.kind = 'text' AND mem.username IS NOT NULL{hidden}{history}) OR (m.dm_id IS NOT NULL AND EXISTS(SELECT 1 FROM dms d WHERE d.id = m.dm_id AND (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')))){conds}{extra}",
+        "SELECT p.id, p.kind, p.created_at, p.seen, p.actor, p.emoji, m.id, m.thread_root_id, m.content, m.media_filename, m.media_spoiler, m.channel_id, m.dm_id, c.server, c.name, s.display_name, m.author, m.body FROM pings p JOIN messages m ON m.id = p.message_id LEFT JOIN messages rt ON rt.id = m.thread_root_id LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN servers s ON s.name = c.server LEFT JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE p.username = $1 AND {seen} AND {LIVE_AUTHOR}{actor_live}{actor_blocked}{author_blocked} AND ((m.channel_id IS NOT NULL AND c.kind = 'text' AND mem.username IS NOT NULL{hidden}{history}) OR (m.dm_id IS NOT NULL AND EXISTS(SELECT 1 FROM dms d WHERE d.id = m.dm_id AND (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')))){conds}{extra}",
         actor_live = live("p.actor"),
         actor_blocked = not_blocked("p.actor"),
         author_blocked = not_blocked("m.author"),
@@ -557,6 +558,7 @@ async fn ping_items(
         .map(|r| r.try_get::<String, _>(4))
         .collect::<sqlx::Result<_>>()?;
     let refs = user_refs(db, &actors).await;
+    let opener = Opener::of_rows(db, &rows, 17).await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in &rows {
         let kind: String = r.try_get(1)?;
@@ -564,8 +566,25 @@ async fn ping_items(
             continue;
         };
         let actor: String = r.try_get(4)?;
-        let content: String = r.try_get(8)?;
         let (channel_id, dm_id): (Option<i64>, Option<i64>) = (r.try_get(11)?, r.try_get(12)?);
+        let Parts {
+            content,
+            embeds: _,
+            filename,
+            dropped: _,
+            alt: _,
+        } = opener
+            .message(
+                r.try_get(6)?,
+                Scope::of(channel_id, dm_id),
+                &r.try_get::<String, _>(16)?,
+                r.try_get::<Option<Vec<u8>>, _>(17)?.as_deref(),
+                Parts {
+                    filename: r.try_get(9)?,
+                    ..Parts::text(r.try_get::<String, _>(8)?)
+                },
+            )
+            .parts;
         let scope = match (channel_id, dm_id) {
             (Some(c), _) => format!("c{c}"),
             (None, Some(d)) => format!("d{d}"),
@@ -588,7 +607,7 @@ async fn ping_items(
             message_id: Some(r.try_get(6)?),
             thread_root_id: r.try_get(7)?,
             content: Some(excerpt(&content)),
-            media_filename: r.try_get(9)?,
+            media_filename: filename,
             media_spoiler: r.try_get::<i64, _>(10)? != 0,
         });
     }
@@ -715,18 +734,38 @@ async fn group_items(
         }
     }
     let msg_sql = format!(
-        "SELECT m.id, m.content, m.media_filename, m.media_spoiler, c.name, s.display_name FROM messages m JOIN channels c ON c.id = m.channel_id JOIN servers s ON s.name = c.server WHERE m.id IN ({list})"
+        "SELECT m.id, m.content, m.media_filename, m.media_spoiler, c.name, s.display_name, m.channel_id, m.author, m.body FROM messages m JOIN channels c ON c.id = m.channel_id JOIN servers s ON s.name = c.server WHERE m.id IN ({list})"
     );
     let mut messages: HashMap<i64, (String, Option<String>, bool, String, String)> = HashMap::new();
-    for r in sqlx::query(sqlx::AssertSqlSafe(msg_sql))
+    let found = sqlx::query(sqlx::AssertSqlSafe(msg_sql))
         .fetch_all(db)
-        .await?
-    {
+        .await?;
+    let opener = Opener::of_rows(db, &found, 8).await?;
+    for r in &found {
+        let id: i64 = r.try_get(0)?;
+        let Parts {
+            content,
+            embeds: _,
+            filename,
+            dropped: _,
+            alt: _,
+        } = opener
+            .message(
+                id,
+                Scope::of(r.try_get(6)?, None),
+                &r.try_get::<String, _>(7)?,
+                r.try_get::<Option<Vec<u8>>, _>(8)?.as_deref(),
+                Parts {
+                    filename: r.try_get(2)?,
+                    ..Parts::text(r.try_get::<String, _>(1)?)
+                },
+            )
+            .parts;
         messages.insert(
-            r.try_get(0)?,
+            id,
             (
-                r.try_get(1)?,
-                r.try_get(2)?,
+                content,
+                filename,
                 r.try_get::<i64, _>(3)? != 0,
                 r.try_get(4)?,
                 r.try_get(5)?,

@@ -202,6 +202,7 @@ export function toModel(e: AclEv): M.Ev {
   switch (e.t) {
     case 'channel':
     case 'role_meta':
+    case 'store':
       return { ...base(e), t: 'x_future', c: {} } as M.Ev
     case 'genesis':
       return {

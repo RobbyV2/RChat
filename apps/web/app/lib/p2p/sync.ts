@@ -735,7 +735,9 @@ export class Sync {
     link.serving += 1
     this.queue(link, 256, async () => {
       try {
-        const { events, more, denied } = await fn()
+        const { events: found, more, denied } = await fn()
+        // A record that didn't open here has no event to send: a peer asks someone else.
+        const events = found.filter(e => !e.unreadable)
         this.send(link, {
           t: this.t('events'),
           rid,

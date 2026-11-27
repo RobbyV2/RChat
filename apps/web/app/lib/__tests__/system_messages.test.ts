@@ -3,8 +3,13 @@ import {
   DEFAULT_CHANNEL,
   JOIN_LINES,
   LEAVE_LINE,
+  SITE_NAME,
+  bySite,
   choiceId,
+  isNotice,
+  isStorage,
   isSystem,
+  sealsFromHere,
   systemChoices,
   systemParts,
   systemText,
@@ -14,6 +19,9 @@ import { canForward } from '../forward'
 import { canPin } from '../pins'
 import { newSince } from '../lists'
 import type { Channel } from '../types'
+import type { P2pMessage } from '../p2p/dm'
+import { UNREADABLE_TEXT } from '../sealing'
+import { asMessage } from '../p2p/shown_message'
 import { msg, user } from './fixtures'
 
 const channel = (id: number, name: string, kind: Channel['kind'] = 'text'): Channel => ({
@@ -106,5 +114,68 @@ describe('system messages', () => {
     expect(systemChoices(channels, 3)).toHaveLength(3)
     expect(choiceId('')).toBeNull()
     expect(choiceId('3')).toBe(3)
+  })
+
+  test('storage rows say who changed encrypted storage, or that the site did', () => {
+    const bob = user('bob', { display_name: 'BOB' })
+    const row = (content: string, author = bob) => msg(1, { kind: 'storage', author, content })
+    expect(isStorage(row('on')) && isSystem(row('on')) && isNotice(row('on'))).toBe(true)
+    expect(isStorage(msg(1))).toBe(false)
+    expect(systemText(row('on'))).toBe('BOB turned on encrypted storage for new messages.')
+    expect(systemText(row('off'))).toBe(
+      'BOB turned off encrypted storage for new messages. Messages stored encrypted stay encrypted.'
+    )
+    const site = user('')
+    expect(bySite(row('forced', site))).toBe(true)
+    expect(bySite(row('on'))).toBe(false)
+    expect(bySite(msg(1, { kind: 'join', author: site }))).toBe(false)
+    expect(systemText(row('forced', site))).toBe(`${SITE_NAME} now requires encrypted storage.`)
+    expect(systemText(row('unforced', site))).toBe(
+      `${SITE_NAME} no longer requires encrypted storage.`
+    )
+    expect(systemText(row('on', site))).toBe(
+      `${SITE_NAME} turned on encrypted storage for new messages.`
+    )
+    expect(systemParts(row('on'))).toEqual(['', ' turned on encrypted storage for new messages.'])
+    expect(systemText(row('later'))).toBe('BOB changed how messages are stored.')
+    expect(canQuote(row('on'))).toBe(false)
+  })
+
+  test('a P2P storage line and an unreadable P2P message read like hosted ones', () => {
+    const bob = user('bob', { display_name: 'BOB' })
+    const row: P2pMessage = {
+      id: 'e',
+      sender: 'ik',
+      ts: 1000,
+      sentTs: 1000,
+      sortKey: 'k',
+      seq: 1,
+      body: '',
+      reply: null,
+      mentions: [],
+      fwd: null,
+      att: [],
+      edited: null,
+      reactions: [],
+      pinned: null,
+      late: false,
+      pending: false,
+      failed: false,
+      call: null,
+    }
+    for (const on of [true, false]) {
+      const m = asMessage(
+        { ...row, system: { kind: 'storage', ik: 'ik', on } },
+        1,
+        0,
+        () => bob,
+        ''
+      )
+      const hosted = msg(1, { kind: 'storage', author: bob, content: on ? 'on' : 'off' })
+      expect(isStorage(m) && isSystem(m) && sealsFromHere(m) === on).toBe(true)
+      expect(systemText(m)).toBe(systemText(hosted))
+    }
+    const lost = asMessage({ ...row, unavailable: true, unreadable: true }, 1, 0, () => bob, '')
+    expect([lost.unreadable, lost.content]).toEqual([true, `_${UNREADABLE_TEXT}_`])
   })
 })

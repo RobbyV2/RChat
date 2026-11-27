@@ -1945,7 +1945,6 @@ pub(crate) async fn delete_message(
         kind,
         author: _,
         media_id: _,
-        media_filename: _,
         media_kind: _,
         server,
         dm_users,

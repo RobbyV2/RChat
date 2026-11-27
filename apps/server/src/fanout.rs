@@ -231,6 +231,11 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             dm_users,
         }
         | WsEvent::DmCreated { dm_id: _, dm_users }
+        | WsEvent::DmUpdated {
+            dm_id: _,
+            dm_users,
+            seal: _,
+        }
         | WsEvent::CallState {
             dm_id: _,
             dm_users,
@@ -1053,6 +1058,7 @@ mod tests {
         router.deliver(WsEvent::ServerRenamed {
             old_name: s("a"),
             server: crate::api::ServerSummaryLite {
+                seal: Default::default(),
                 name: s("b"),
                 display_name: s("b"),
                 creator: None,
@@ -1103,6 +1109,7 @@ mod tests {
         };
         router.deliver(WsEvent::ServerUpdated {
             server: crate::api::ServerSummaryLite {
+                seal: Default::default(),
                 name: s("a"),
                 display_name: s("a"),
                 creator: None,

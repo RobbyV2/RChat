@@ -258,6 +258,12 @@ pub struct ServerPatch {
     /// to keep it.
     #[serde(default)]
     icon_kind: Option<IconKind>,
+    /// Whether new messages, edits and polls of the server are stored encrypted with a key this
+    /// site keeps. Messages stored before stay as they were, and turning it off decrypts
+    /// nothing. This is not end-to-end encryption. A change posts a `storage` system message.
+    /// Omit to leave it unchanged.
+    #[serde(default)]
+    seal: Option<bool>,
 }
 
 /// The server after an update, plus how many members a password change removed.
@@ -1281,6 +1287,7 @@ async fn server_detail(
         profiles_mode,
         description,
         icon_kind,
+        seal,
     } = access.lite().clone();
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only, perm_sync FROM channels WHERE server = $1 ORDER BY position, id",
@@ -1350,6 +1357,7 @@ async fn server_detail(
     let my_perms = eval::server_bits(&access.standing(db).await?.who, everyone, &HOSTED);
     let (roles_version, roles_order_confirmed) = role_order_state(db, &name).await?;
     Ok(ServerDetail {
+        seal,
         name: name.clone(),
         display_name,
         creator,
@@ -2350,6 +2358,7 @@ async fn found_server(
             profiles_mode: Default::default(),
             description: None,
             icon_kind: IconKind::Letter,
+            seal: crate::api::seal::server_view(&state.db, 0, 0).await,
         },
     });
     Ok((key, link.map(|link| link.info())))
@@ -3421,11 +3430,11 @@ pub(crate) async fn leave_server(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
         (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a description over 300 characters (`Description must be at most 300 characters`) or blocked by the profanity filter, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. With reason `invalid` and its `field`: `Use join or protected, not both`, `Pick one way to join` (a `password` with `join` other than `password`), `A password needs 8 characters` (`join: password` on a server without a permanent password), `Listed is only for servers people join by name`, or `That name is taken. Pick another to let people join by name.` (the server would take its lowercase name as its key, and another server has it). `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. `An account can be in at most 1000 servers` with the configured number (`SERVERS_PER_ACCOUNT`, reason `limit`): creating a server counts as joining it. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage server settings permission, missing Kick for `members: remove`, a password or `join` change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage server settings permission, missing Kick for `members: remove`, a password or `join` change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`), or `seal: false` while the site requires encrypted storage (`Required by this site`, with reason `forced`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
+        (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later. With reason `keys`, for `seal: true`: `This site needs an encryption key first` or `Not available while this site updates`", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", body = ApiErrorBody)
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords. With `seal`, `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): a switch posts a system message, so it counts against `MESSAGE_RATE_BURST` and `MESSAGE_RATE_PER_MINUTE` like one", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3454,6 +3463,7 @@ pub(crate) async fn update_server(
         profiles_mode,
         description,
         icon_kind,
+        seal,
     } = req;
     let guest_voice = guest_voice_opt_in.or(guest_voice.filter(|v| !v));
     let builtin = is_builtin(&state.db, &key).await;
@@ -3462,6 +3472,12 @@ pub(crate) async fn update_server(
     }
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageServer).await?;
+    if seal.is_some() {
+        crate::api::messages::message_rate(&state, &user).await?;
+    }
+    if seal == Some(true) {
+        crate::api::seal::make_ready(&state).await?;
+    }
     if join.is_some() && protected.is_some() {
         return Err(ApiError::invalid(
             "Use join or protected, not both",
@@ -3818,7 +3834,21 @@ pub(crate) async fn update_server(
         )
         .await?;
     }
+    let storage = match seal {
+        Some(on) => {
+            let sqlite = crate::db::is_sqlite(&state.db);
+            let author = match &actor {
+                audit::Actor::User(name) => name.as_str(),
+                audit::Actor::Staff => "",
+            };
+            crate::api::seal::set_server(&mut tx, sqlite, &new_key, author, on).await?
+        }
+        None => crate::api::seal::Switched::Same,
+    };
     tx.commit().await?;
+    if let crate::api::seal::Switched::Changed(notice) = storage {
+        announce_system(&state, &new_key, notice).await;
+    }
     let reading = password_hash.is_some() || public_read.is_some();
     if new_key != key || (reading && listed.default_servers.contains(&key)) {
         let settings = crate::api::PublicSettings::load(&state.db).await;
@@ -8580,6 +8610,7 @@ mod tests {
             Authed(mem_user("alice", false)),
             Path(server.to_string()),
             Json(ServerPatch {
+                seal: Default::default(),
                 name: Some(name.to_string()),
                 password: None,
                 protected: None,
@@ -9720,6 +9751,7 @@ mod tests {
             Authed(mem_user("alice", false)),
             Path("club".to_string()),
             Json(ServerPatch {
+                seal: Default::default(),
                 name: None,
                 password: Some(password.to_string()),
                 protected: None,
@@ -10172,6 +10204,7 @@ mod tests {
             Authed(actor),
             Path(server.to_string()),
             Json(ServerPatch {
+                seal: Default::default(),
                 name: name.map(str::to_string),
                 password: password.map(str::to_string),
                 protected: None,
@@ -14472,6 +14505,7 @@ mod tests {
             Authed(mem_user("alice", false)),
             Path("den".to_string()),
             Json(ServerPatch {
+                seal: Default::default(),
                 name: None,
                 password: Some("den-password".to_string()),
                 protected: None,

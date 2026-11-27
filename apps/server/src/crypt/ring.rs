@@ -26,7 +26,9 @@ const SEALED_MARK: &str = "!sealed";
 pub const RESET_SETTING: &str = "secrets_reset";
 
 /// Whether this build reads and writes sealed records, as its copy announcement says.
-pub const SEALS: bool = false;
+pub const SEALS: bool = true;
+
+const ACTIVE: &str = "SELECT id, gen, kek, wrapped FROM data_keys WHERE purpose = $1 AND state = 'active' ORDER BY gen DESC LIMIT 1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
@@ -54,6 +56,8 @@ pub struct KeyConfig {
     pub keys_file: Option<PathBuf>,
     pub account_secrets_key: Option<Zeroizing<String>>,
     pub allow_lost: bool,
+    /// `ENCRYPTION_REQUIRED`: every server and DM stores new messages encrypted.
+    pub required: bool,
 }
 
 impl std::fmt::Debug for KeyConfig {
@@ -66,8 +70,8 @@ impl std::fmt::Debug for KeyConfig {
 }
 
 impl KeyConfig {
-    /// Reads `ENCRYPTION_KEYS`, `ENCRYPTION_KEYS_FILE`, `ACCOUNT_SECRETS_KEY` and
-    /// `ENCRYPTION_ALLOW_LOST`. An unreadable file or a malformed value is an error naming the
+    /// Reads `ENCRYPTION_KEYS`, `ENCRYPTION_KEYS_FILE`, `ACCOUNT_SECRETS_KEY`,
+    /// `ENCRYPTION_ALLOW_LOST` and `ENCRYPTION_REQUIRED`. An unreadable file or a malformed value is an error naming the
     /// variable. `ENCRYPTION_KEYS_FILE` may name a file that does not exist yet.
     pub fn load(get: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<KeyConfig> {
         let set = |name: &str| {
@@ -99,12 +103,18 @@ impl KeyConfig {
             Some("on") => true,
             Some(_) => anyhow::bail!("ENCRYPTION_ALLOW_LOST is on or off"),
         };
+        let required = match set("ENCRYPTION_REQUIRED").as_deref() {
+            None | Some("off") => false,
+            Some("on") => true,
+            Some(_) => anyhow::bail!("ENCRYPTION_REQUIRED is on or off"),
+        };
         Ok(KeyConfig {
             keys_from_file: keys_from_file && keys.is_some(),
             keys: keys.map(Zeroizing::new),
             keys_file,
             account_secrets_key: account_secrets_key.map(Zeroizing::new),
             allow_lost,
+            required,
         })
     }
 }
@@ -310,9 +320,11 @@ pub struct Ring {
     /// may have made itself.
     named_file: bool,
     allow_lost: bool,
+    required: bool,
     making: tokio::sync::Mutex<()>,
     deks: RwLock<HashMap<u32, Dek>>,
     active: RwLock<HashMap<Purpose, u32>>,
+    unreadable: std::sync::atomic::AtomicU64,
     pub subkeys: Subkeys,
 }
 
@@ -401,9 +413,11 @@ impl Ring {
             key_file,
             named_file: false,
             allow_lost,
+            required: false,
             making: tokio::sync::Mutex::new(()),
             deks: RwLock::default(),
             active: RwLock::default(),
+            unreadable: std::sync::atomic::AtomicU64::new(0),
             subkeys: Subkeys::default(),
         }
     }
@@ -417,6 +431,7 @@ impl Ring {
             keys_file,
             account_secrets_key,
             allow_lost,
+            required,
         } = config;
         let alias = match account_secrets_key {
             Some(text) => parse_keys(text)
@@ -443,6 +458,7 @@ impl Ring {
         };
         Ok(Ring {
             named_file: *keys_from_file,
+            required: *required,
             ..Ring::with(loaded, alias, key_file, *allow_lost)
         })
     }
@@ -666,7 +682,8 @@ impl Ring {
         Some((id, key))
     }
 
-    /// `data_key` on one connection, for a caller inside a transaction.
+    /// `data_key` on one connection, for a caller inside a transaction that forgets the held
+    /// keys when it rolls back.
     pub async fn data_key_on(
         &self,
         conn: &mut AnyConnection,
@@ -675,7 +692,6 @@ impl Ring {
         if let Some(held) = self.held_data_key(purpose) {
             return Ok(Some(held));
         }
-        const ACTIVE: &str = "SELECT id, gen, kek, wrapped FROM data_keys WHERE purpose = $1 AND state = 'active' ORDER BY gen DESC LIMIT 1";
         let mut row = sqlx::query(ACTIVE)
             .bind(purpose.name())
             .fetch_optional(&mut *conn)
@@ -698,9 +714,39 @@ impl Ring {
                 .fetch_optional(&mut *conn)
                 .await?;
         }
-        let Some(row) = row else {
-            return Ok(None);
-        };
+        match row {
+            Some(row) => self.hold_active(conn, purpose, row).await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// The active data key of `purpose` as stored, read on the caller's connection. It never
+    /// makes one, so a write transaction holds only a key that a committed write made: a key
+    /// made inside a transaction that rolls back would stay held for records nothing opens.
+    pub async fn stored_data_key_on(
+        &self,
+        conn: &mut AnyConnection,
+        purpose: Purpose,
+    ) -> anyhow::Result<Option<(u32, Key)>> {
+        if let Some(held) = self.held_data_key(purpose) {
+            return Ok(Some(held));
+        }
+        let row = sqlx::query(ACTIVE)
+            .bind(purpose.name())
+            .fetch_optional(&mut *conn)
+            .await?;
+        match row {
+            Some(row) => self.hold_active(conn, purpose, row).await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    async fn hold_active(
+        &self,
+        conn: &mut AnyConnection,
+        purpose: Purpose,
+        row: sqlx::any::AnyRow,
+    ) -> anyhow::Result<(u32, Key)> {
         let (id, generation): (i64, i64) = (row.try_get(0)?, row.try_get(1)?);
         let (kek, wrapped): (String, String) = (row.try_get(2)?, row.try_get(3)?);
         let Ok(key) = self
@@ -719,7 +765,7 @@ impl Ring {
             },
         );
         write(&self.active).insert(purpose, id);
-        Ok(Some((id, key)))
+        Ok((id, key))
     }
 
     /// The data key a record names, whatever its state, unless it was destroyed or its root key
@@ -769,6 +815,29 @@ impl Ring {
             },
         );
         Ok(Some((purpose, key)))
+    }
+
+    /// Whether the server configuration requires encrypted storage everywhere.
+    pub fn required(&self) -> bool {
+        self.required
+    }
+
+    /// A data key this process already holds.
+    pub fn held(&self, id: u32) -> Option<(Purpose, Key)> {
+        read(&self.deks)
+            .get(&id)
+            .map(|dek| (dek.purpose, dek.key.clone()))
+    }
+
+    /// Counts a stored record that did not open.
+    pub fn note_unreadable(&self) {
+        self.unreadable
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// How many stored records did not open since this process started.
+    pub fn unreadable(&self) -> u64 {
+        self.unreadable.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Whether a start goes on with records it cannot open (`ENCRYPTION_ALLOW_LOST=on`).

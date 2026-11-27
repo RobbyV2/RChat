@@ -229,6 +229,7 @@ fn self_grants_are_recognized() {
     assert_eq!(self_grant(&joined, Some("bob")), None);
     let created = |creator: Option<&str>| WsEvent::ServerCreated {
         server: ServerSummaryLite {
+            seal: Default::default(),
             name: "vault".to_string(),
             display_name: "vault".to_string(),
             creator: creator.map(str::to_string),
@@ -370,6 +371,30 @@ fn scheduled_events_reach_only_the_author() {
         for (me, staff) in [(Some("bob"), false), (Some("root"), true), (None, false)] {
             assert!(!wants(&ev, me, staff, &all, &all), "{me:?}");
         }
+    }
+}
+
+#[test]
+fn a_dm_storage_change_reaches_only_its_participants() {
+    let ev = WsEvent::DmUpdated {
+        dm_id: 1,
+        dm_users: vec![s("alice"), s("bob")],
+        seal: crate::api::seal::SealView {
+            on: true,
+            forced: false,
+            own: true,
+            server_forced: false,
+        },
+    };
+    let none = set(&[]);
+    for (who, site_admin, sees) in [
+        (Some("alice"), false, true),
+        (Some("bob"), false, true),
+        (Some("carol"), false, false),
+        (Some("root"), true, false),
+        (None, false, false),
+    ] {
+        assert_eq!(wants(&ev, who, site_admin, &none, &none), sees, "{who:?}");
     }
 }
 
@@ -868,6 +893,16 @@ fn every_event() -> Vec<WsEvent> {
             dm_id: 1,
             dm_users: vec![s("bob"), s("carol")],
         },
+        WsEvent::DmUpdated {
+            dm_id: 1,
+            dm_users: vec![s("bob"), s("carol")],
+            seal: crate::api::seal::SealView {
+                on: true,
+                forced: false,
+                own: true,
+                server_forced: false,
+            },
+        },
         WsEvent::UserUpdated {
             user: message().author,
             scope: UserScope::default(),
@@ -877,6 +912,8 @@ fn every_event() -> Vec<WsEvent> {
         },
         WsEvent::SettingsChanged {
             settings: crate::api::PublicSettings {
+                encryption_required: false,
+                encryption_ready: s("ready"),
                 settings: Settings {
                     profanity_filter: false,
                     ..Settings::DENY

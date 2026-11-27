@@ -151,6 +151,7 @@
     "setProfileMode",
     "setRoleBit",
     "setRoomProfile",
+    "setStore",
     "setSystem",
     "slowLeft",
     "start",

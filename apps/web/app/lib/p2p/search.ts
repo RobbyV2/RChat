@@ -9,6 +9,7 @@ import {
   type SearchKey,
   type SearchMeta,
 } from './db'
+import { sealingOf } from './sealed_db'
 import { isEventId, type EditContent, type MsgContent } from './content'
 import { LOCAL, type Local } from './limits'
 
@@ -312,6 +313,7 @@ export const rebuildStep = async (
     m = SEARCH_STALE
   }
   const events = tx.objectStore('events')
+  const sealing = sealingOf(db)
   let cursor = await events.openCursor(m.at ? IDBKeyRange.lowerBound(m.at, true) : undefined)
   let at = m.at
   let n = 0
@@ -324,7 +326,7 @@ export const rebuildStep = async (
         await cursor.update(rec)
       }
     }
-    if (rec.layer === 'c' && !skip(rec.room))
+    if (rec.layer === 'c' && !skip(rec.room) && !sealing?.on(rec.room))
       delta.set(rec.room, (delta.get(rec.room) ?? 0) + (await indexEvent(st, events, rec, lim)))
     at = rec.id
     n += 1

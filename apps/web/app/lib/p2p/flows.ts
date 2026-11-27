@@ -211,6 +211,7 @@ export const actParts = (t: string, to?: string, ends = false): { act: string; w
     role_del: 'Delete a role',
     role_meta: 'Change how a role shows',
     profile_mode: 'Change what server profiles may hold',
+    store: 'Change how messages are stored',
     channel: 'Change a channel',
     chperm: 'Change who may use a channel',
     category: 'Change a category',
@@ -319,6 +320,8 @@ export const effectHolds = (
       return !!to && to.reset?.last === id
     case 'about':
       return same(s.about, c)
+    case 'store':
+      return same(s.store, c)
     case 'profile':
       return same(s.members[me]?.profile, c)
     default:

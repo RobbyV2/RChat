@@ -15,6 +15,8 @@ export type ReasonKind =
   | 'locked'
   | 'app'
   | 'confirm'
+  | 'forced'
+  | 'keys'
 
 export interface Reason {
   kind: ReasonKind

@@ -30,6 +30,7 @@ use crate::api::{
     allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, dms, embeds,
     encode_cursor, ok, placeholders, require_guest_ok, unique_capped, user_from, user_refs, yes,
 };
+use crate::crypt::body::{Opened, Opener, Parts, Scope as SealScope, Writer};
 use crate::db::{
     Db, LIVE_AUTHOR, MediaKind, Tokenizer, User, has_channel_index, has_fts, is_sqlite, now,
     pool_key, touch_interaction,
@@ -40,7 +41,7 @@ use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 use rchat_perms::masks;
 
-pub(crate) const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews, m.media_alt";
+pub(crate) const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews, m.media_alt, m.body";
 /// Top-level messages of a DM.
 const DM_TOP: &str = "m.dm_id = $1 AND m.thread_root_id IS NULL";
 
@@ -377,13 +378,44 @@ pub(crate) async fn label_origins<'a>(
     Ok(())
 }
 
-fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, ApiError> {
+/// Where `COLS` has `m.body`.
+pub(crate) const BODY_COL: usize = 42;
+
+fn row_message(
+    r: &AnyRow,
+    refs: &HashMap<String, UserRef>,
+    opener: &Opener,
+) -> Result<Message, ApiError> {
+    let (channel_id, dm_id): (Option<i64>, Option<i64>) = (r.try_get(1)?, r.try_get(2)?);
+    let Opened {
+        parts:
+            Parts {
+                content,
+                embeds: cards,
+                filename,
+                dropped,
+                alt,
+            },
+        unreadable,
+    } = opener.message(
+        r.try_get(0)?,
+        SealScope::of(channel_id, dm_id),
+        &r.try_get::<String, _>(4)?,
+        r.try_get::<Option<Vec<u8>>, _>(BODY_COL)?.as_deref(),
+        Parts {
+            content: r.try_get(5)?,
+            embeds: r.try_get::<Option<String>, _>(39).ok().flatten(),
+            filename: r.try_get(7)?,
+            dropped: r.try_get(28)?,
+            alt: r.try_get(41)?,
+        },
+    );
     let media = match r.try_get::<Option<String>, _>(6)? {
         Some(id) => {
             let removed = r.try_get::<i64, _>(8)?;
             Some(MediaRef {
                 id,
-                filename: r.try_get::<Option<String>, _>(7)?.unwrap_or_default(),
+                filename: filename.unwrap_or_default(),
                 kind: MediaKind::parse(&r.try_get::<String, _>(12)?)?,
                 hoster: r.try_get(13)?,
                 expires_at: r.try_get(14)?,
@@ -394,7 +426,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
                 removed_by_author: removed == 2,
                 spoiler: r.try_get::<i64, _>(9)? != 0,
                 alt: match removed {
-                    0 => r.try_get(41)?,
+                    0 => alt,
                     _ => None,
                 },
             })
@@ -424,11 +456,12 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
     };
     Ok(Message {
         id: r.try_get(0)?,
-        channel_id: r.try_get(1)?,
-        dm_id: r.try_get(2)?,
+        channel_id,
+        dm_id,
         thread_root_id: r.try_get(3)?,
         author,
-        content: r.try_get(5)?,
+        content,
+        unreadable,
         created_at: r.try_get(10)?,
         reply_count: r.try_get(11)?,
         media,
@@ -462,7 +495,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
                 created_at,
                 source_id,
                 r.try_get::<Option<String>, _>(27)?.as_deref(),
-                r.try_get(28)?,
+                dropped,
             )),
             (_, _, _) => None,
         },
@@ -475,9 +508,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
         poll: None,
         webhook: hook.map(|id| crate::api::webhooks::MessageWebhook {
             id,
-            embeds: crate::api::webhooks::parse_embeds(
-                r.try_get::<Option<String>, _>(39).ok().flatten().as_deref(),
-            ),
+            embeds: crate::api::webhooks::parse_embeds(cards.as_deref()),
         }),
     })
 }
@@ -533,9 +564,10 @@ pub(crate) async fn rows_messages(
         }
     }
     let refs = user_refs(db, &authors).await;
+    let opener = Opener::of_rows(db, rows, BODY_COL).await?;
     let mut msgs = rows
         .iter()
-        .map(|r| row_message(r, &refs))
+        .map(|r| row_message(r, &refs, &opener))
         .collect::<Result<Vec<_>, _>>()?;
     crate::api::polls::attach(db, &mut msgs).await?;
     label_origins(db, msgs.iter_mut().filter_map(|m| m.forward.as_mut())).await?;
@@ -766,7 +798,7 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
         return Ok(());
     }
     let sql = format!(
-        "SELECT m.id, m.channel_id, m.dm_id, m.author, m.content, m.media_id, m.created_at, m.fwd_source_id, m.webhook_id, m.webhook_name, m.webhook_avatar, m.fwd_created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_origin, m.fwd_dropped FROM messages m WHERE m.id IN ({}) AND {LIVE_AUTHOR}",
+        "SELECT m.id, m.channel_id, m.dm_id, m.author, m.content, m.media_id, m.created_at, m.fwd_source_id, m.webhook_id, m.webhook_name, m.webhook_avatar, m.fwd_created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_origin, m.fwd_dropped, m.body FROM messages m WHERE m.id IN ({}) AND {LIVE_AUTHOR}",
         placeholders(1, ids.len())
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -774,6 +806,7 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
         query = query.bind(*id);
     }
     let rows = query.fetch_all(db).await?;
+    let opener = Opener::of_rows(db, &rows, 15).await?;
     let mut names = Vec::with_capacity(rows.len() * 2);
     for r in &rows {
         names.push(r.try_get::<String, _>(3)?);
@@ -782,12 +815,33 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
     let refs = user_refs(db, &names).await;
     let mut found: HashMap<i64, Original> = HashMap::with_capacity(rows.len());
     for r in &rows {
+        let (id, channel_id, dm_id): (i64, Option<i64>, Option<i64>) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        let author: String = r.try_get(3)?;
+        let Parts {
+            content,
+            embeds: _,
+            filename: _,
+            dropped,
+            alt: _,
+        } = opener
+            .message(
+                id,
+                SealScope::of(channel_id, dm_id),
+                &author,
+                r.try_get::<Option<Vec<u8>>, _>(15)?.as_deref(),
+                Parts {
+                    dropped: r.try_get(14)?,
+                    ..Parts::text(r.try_get::<String, _>(4)?)
+                },
+            )
+            .parts;
         found.insert(
-            r.try_get(0)?,
+            id,
             Original {
-                channel_id: r.try_get(1)?,
-                dm_id: r.try_get(2)?,
-                author: r.try_get(3)?,
+                channel_id,
+                dm_id,
+                author,
                 hook: match r.try_get::<Option<i64>, _>(8)? {
                     Some(id) => Some(crate::api::webhooks::author_ref(
                         id,
@@ -796,7 +850,7 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
                     )),
                     None => None,
                 },
-                content: r.try_get(4)?,
+                content,
                 has_media: r.try_get::<Option<String>, _>(5)?.is_some(),
                 created_at: r.try_get(6)?,
                 forward: match (
@@ -809,7 +863,7 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
                         at,
                         source,
                         r.try_get::<Option<String>, _>(13)?.as_deref(),
-                        r.try_get(14)?,
+                        dropped,
                     )),
                     _ => None,
                 },
@@ -1261,33 +1315,35 @@ pub(crate) fn replied(quote: &Option<Quoted>) -> Option<&str> {
         .map(|q| q.author.as_str())
 }
 
+/// Begins the transaction that writes a message of a channel or DM and reads, held until it
+/// ends, what the write follows: whether the channel is text only, and the writer of a place
+/// that stores its messages sealed.
 pub(crate) async fn begin_message_write(
     db: &Db,
     channel_id: Option<i64>,
+    dm_id: Option<i64>,
     rich: bool,
-) -> Result<(sqlx::Transaction<'_, sqlx::Any>, bool), ApiError> {
-    let mut tx = if is_sqlite(db) && channel_id.is_some() {
-        db.begin_with("BEGIN IMMEDIATE").await?
-    } else {
-        db.begin().await?
+) -> Result<(sqlx::Transaction<'static, sqlx::Any>, bool, Option<Writer>), ApiError> {
+    let sqlite = is_sqlite(db);
+    let mut tx = match sqlite {
+        true => db.begin_with("BEGIN IMMEDIATE").await?,
+        false => db.begin().await?,
     };
-    let Some(id) = channel_id else {
-        return Ok((tx, false));
+    let Some(scope) = SealScope::of(channel_id, dm_id) else {
+        return Ok((tx, false, None));
     };
-    let sql = if crate::db::is_sqlite(db) {
-        "SELECT text_only FROM channels WHERE id = $1"
-    } else {
-        "SELECT text_only FROM channels WHERE id = $1 FOR SHARE"
+    let (text_only, floors) = match scope {
+        SealScope::Channel(id) => crate::api::seal::channel_place(&mut tx, sqlite, id).await?,
+        SealScope::Dm(id) => (
+            false,
+            crate::api::seal::dm_place(&mut tx, sqlite, id).await?,
+        ),
     };
-    let flag: i64 = sqlx::query(sql)
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?
-        .try_get(0)?;
-    if flag != 0 && rich {
+    if text_only && rich {
         return Err(bad("This channel only accepts text"));
     }
-    Ok((tx, flag != 0))
+    let writer = crate::api::seal::writer(db, &mut tx, scope, floors).await?;
+    Ok((tx, text_only, writer))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1335,9 +1391,10 @@ pub(crate) async fn insert_message(
     check_len(&content, state.limits.message_max_chars, "Message")?;
     let spoiler = media_spoiler.unwrap_or(false);
     attachments_allowed(&settings, media_id.is_some(), p2p.is_some())?;
-    let (mut tx, text_only) = begin_message_write(
+    let (mut tx, text_only, writer) = begin_message_write(
         db,
         channel_id,
+        dm_id,
         media_id.is_some()
             || p2p.is_some()
             || poll.is_some()
@@ -1386,47 +1443,79 @@ pub(crate) async fn insert_message(
         return Err(bad("Message is empty"));
     }
     let t = now();
-    let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind, webhook_id, webhook_name, webhook_avatar, webhook_embeds, no_previews, media_alt) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING id",
-    )
-    .bind(channel_id)
-    .bind(dm_id)
-    .bind(thread_root_id)
-    .bind(&user.username)
-    .bind(&content)
-    .bind(media.as_ref().map(|m| m.id.clone()))
-    .bind(media.as_ref().map(|m| m.filename.clone()))
-    .bind(spoiler as i64)
-    .bind(media.as_ref().map_or(MediaKind::Server, |m| m.kind).as_str())
-    .bind(media.as_ref().and_then(|m| m.hoster.clone()))
-    .bind(media.as_ref().and_then(|m| m.expires_at))
-    .bind(media.as_ref().and_then(|m| m.size))
-    .bind(media.as_ref().and_then(|m| m.mime.clone()))
-    .bind(media.as_ref().and_then(|m| m.sha256.clone()))
-    .bind(quote.map(|q| q.id))
-    .bind(quote.is_some_and(|q| q.mention) as i64)
-    .bind(stored_group_mentions(&groups))
-    .bind(t)
-    .bind(match poll {
-        Some(_) => "poll",
-        None => "user",
-    })
-    .bind(hook.map(|h| h.id))
-    .bind(hook.map(|h| h.name.clone()))
-    .bind(hook.map(|h| h.avatar.clone()))
-    .bind(hook.and_then(|h| crate::api::webhooks::stored_embeds(&h.embeds)))
-    .bind(i64::from(no_previews))
-    .bind(&alt)
-    .fetch_one(&mut *tx)
-    .await?
-    .try_get(0)?;
+    let parts = Parts {
+        content: content.clone(),
+        embeds: hook.and_then(|h| crate::api::webhooks::stored_embeds(&h.embeds)),
+        filename: media.as_ref().map(|m| m.filename.clone()),
+        dropped: None,
+        alt: alt.clone(),
+    };
+    let stored = crate::api::seal::columns(writer.as_ref(), &parts);
+    let reserved =
+        crate::api::seal::reserve(&mut tx, is_sqlite(db), "messages", writer.as_ref()).await?;
+    const INTO: &str = "channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind, webhook_id, webhook_name, webhook_avatar, webhook_embeds, no_previews, media_alt";
+    const VALUES: &str = "$1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25";
+    let sql = match reserved {
+        Some(_) => format!(
+            "INSERT INTO messages({INTO}, id, body) OVERRIDING SYSTEM VALUE VALUES({VALUES}, $26, $27) RETURNING id"
+        ),
+        None => format!("INSERT INTO messages({INTO}) VALUES({VALUES}) RETURNING id"),
+    };
+    let insert = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(channel_id)
+        .bind(dm_id)
+        .bind(thread_root_id)
+        .bind(&user.username)
+        .bind(&stored.content)
+        .bind(media.as_ref().map(|m| m.id.clone()))
+        .bind(&stored.filename)
+        .bind(spoiler as i64)
+        .bind(
+            media
+                .as_ref()
+                .map_or(MediaKind::Server, |m| m.kind)
+                .as_str(),
+        )
+        .bind(media.as_ref().and_then(|m| m.hoster.clone()))
+        .bind(media.as_ref().and_then(|m| m.expires_at))
+        .bind(media.as_ref().and_then(|m| m.size))
+        .bind(media.as_ref().and_then(|m| m.mime.clone()))
+        .bind(media.as_ref().and_then(|m| m.sha256.clone()))
+        .bind(quote.map(|q| q.id))
+        .bind(quote.is_some_and(|q| q.mention) as i64)
+        .bind(stored_group_mentions(&groups))
+        .bind(t)
+        .bind(match poll {
+            Some(_) => "poll",
+            None => "user",
+        })
+        .bind(hook.map(|h| h.id))
+        .bind(hook.map(|h| h.name.clone()))
+        .bind(hook.map(|h| h.avatar.clone()))
+        .bind(&stored.embeds)
+        .bind(i64::from(no_previews))
+        .bind(&stored.alt);
+    let insert = match (reserved, &writer) {
+        (Some(id), Some(writer)) => {
+            insert
+                .bind(id)
+                .bind(writer.message(id, &user.username, &parts))
+        }
+        (_, _) => insert,
+    };
+    let id: i64 = insert.fetch_one(&mut *tx).await?.try_get(0)?;
+    if let (None, Some(writer)) = (reserved, &writer) {
+        let record = writer.message(id, &user.username, &parts);
+        crate::api::seal::set_body(&mut tx, "messages", "id", id, record).await?;
+    }
     if let Some(spec) = &poll {
-        crate::api::polls::insert(&mut tx, id, spec, t).await?;
+        crate::api::polls::insert(&mut tx, id, spec, t, writer.as_ref()).await?;
     }
     crate::api::scheduled::finish_in(&mut tx, claim, id, t).await?;
     tx.commit().await?;
     let media = media.map(|m| MediaRef { alt, ..m });
     let mut msgs = [Message {
+        unreadable: false,
         id,
         channel_id,
         dm_id,
@@ -1620,18 +1709,45 @@ async fn forwarded(
         (None, Some(_)) => Some(Origin::Dm),
         (None, None) => return Err(cannot_forward()),
     };
-    let row = sqlx::query("SELECT m.content, m.kind, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.author, m.created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_dropped, m.media_alt FROM messages m WHERE m.id = $1")
+    let row = sqlx::query("SELECT m.content, m.kind, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.author, m.created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_dropped, m.body, m.channel_id, m.dm_id, m.media_alt FROM messages m WHERE m.id = $1")
         .bind(id)
         .fetch_optional(db)
         .await?
         .ok_or_else(cannot_forward)?;
+    let Opened {
+        parts:
+            Parts {
+                content,
+                embeds: _,
+                filename,
+                dropped: left_behind,
+                alt,
+            },
+        unreadable,
+    } = crate::crypt::body::open_body(
+        db,
+        id,
+        SealScope::of(row.try_get(17)?, row.try_get(18)?),
+        &row.try_get::<String, _>(11)?,
+        row.try_get(16)?,
+        Parts {
+            content: row.try_get(0)?,
+            embeds: None,
+            filename: row.try_get(3)?,
+            dropped: row.try_get(15)?,
+            alt: row.try_get(19)?,
+        },
+    )
+    .await?;
+    if unreadable {
+        return Err(cannot_forward());
+    }
     let kind: String = row.try_get(1)?;
     if !matches!(kind.as_str(), "user" | "poll") {
         return Err(cannot_forward());
     }
     let snapshot = crate::api::polls::snapshot_of(db, id).await?;
-    let content: String = row.try_get(0)?;
-    let filename = row.try_get::<Option<String>, _>(3)?.unwrap_or_default();
+    let filename = filename.unwrap_or_default();
     let uploads = Settings::cached(db).await.asset_uploads;
     let (media, dropped) = match (
         row.try_get::<Option<String>, _>(2)?,
@@ -1657,12 +1773,12 @@ async fn forwarded(
                 removed: false,
                 removed_by_author: false,
                 spoiler: row.try_get::<i64, _>(5)? != 0,
-                alt: row.try_get(16)?,
+                alt,
             };
             (stored.then_some(media), None)
         }
         (Some(_), 0, MediaKind::P2p) => (None, Some(filename)),
-        (_, _, _) => (None, row.try_get::<Option<String>, _>(15)?),
+        (_, _, _) => (None, left_behind),
     };
     if content.trim().is_empty() && media.is_none() && dropped.is_none() {
         return Err(cannot_forward());
@@ -1718,9 +1834,10 @@ async fn insert_forward(
         }
     }
     let t = now();
-    let (mut tx, text_only) = begin_message_write(
+    let (mut tx, text_only, writer) = begin_message_write(
         db,
         channel_id,
+        dm_id,
         media.is_some() || dropped.is_some() || snapshot.is_some(),
     )
     .await?;
@@ -1739,31 +1856,57 @@ async fn insert_forward(
         }
         media => (media, dropped),
     };
-    let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, fwd_author, fwd_created_at, fwd_source_id, fwd_origin, fwd_dropped, created_at, no_previews, media_alt) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, 'server', NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id",
-    )
-    .bind(channel_id)
-    .bind(dm_id)
-    .bind(thread_root_id)
-    .bind(&user.username)
-    .bind(&content)
-    .bind(media.as_ref().map(|m| m.id.clone()))
-    .bind(media.as_ref().map(|m| m.filename.clone()))
-    .bind(media.as_ref().is_some_and(|m| m.spoiler) as i64)
-    .bind(media.as_ref().and_then(|m| m.expires_at))
-    .bind(media.as_ref().and_then(|m| m.size))
-    .bind(media.as_ref().and_then(|m| m.mime.clone()))
-    .bind(&author)
-    .bind(created_at)
-    .bind(source_id)
-    .bind(origin.as_ref().map(Origin::stored))
-    .bind(&dropped)
-    .bind(t)
-    .bind(i64::from(text_only))
-    .bind(media.as_ref().and_then(|m| m.alt.clone()))
-    .fetch_one(&mut *tx)
-    .await?
-    .try_get(0)?;
+    let parts = Parts {
+        content: content.clone(),
+        embeds: None,
+        filename: media.as_ref().map(|m| m.filename.clone()),
+        dropped: dropped.clone(),
+        alt: media.as_ref().and_then(|m| m.alt.clone()),
+    };
+    let stored = crate::api::seal::columns(writer.as_ref(), &parts);
+    let reserved =
+        crate::api::seal::reserve(&mut tx, is_sqlite(db), "messages", writer.as_ref()).await?;
+    const INTO: &str = "channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, fwd_author, fwd_created_at, fwd_source_id, fwd_origin, fwd_dropped, created_at, no_previews, media_alt";
+    const VALUES: &str = "$1, $2, $3, $4, $5, $6, $7, 0, $8, 'server', NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19";
+    let sql = match reserved {
+        Some(_) => format!(
+            "INSERT INTO messages({INTO}, id, body) OVERRIDING SYSTEM VALUE VALUES({VALUES}, $20, $21) RETURNING id"
+        ),
+        None => format!("INSERT INTO messages({INTO}) VALUES({VALUES}) RETURNING id"),
+    };
+    let insert = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(channel_id)
+        .bind(dm_id)
+        .bind(thread_root_id)
+        .bind(&user.username)
+        .bind(&stored.content)
+        .bind(media.as_ref().map(|m| m.id.clone()))
+        .bind(&stored.filename)
+        .bind(media.as_ref().is_some_and(|m| m.spoiler) as i64)
+        .bind(media.as_ref().and_then(|m| m.expires_at))
+        .bind(media.as_ref().and_then(|m| m.size))
+        .bind(media.as_ref().and_then(|m| m.mime.clone()))
+        .bind(&author)
+        .bind(created_at)
+        .bind(source_id)
+        .bind(origin.as_ref().map(Origin::stored))
+        .bind(&stored.dropped)
+        .bind(t)
+        .bind(i64::from(text_only))
+        .bind(&stored.alt);
+    let insert = match (reserved, &writer) {
+        (Some(id), Some(writer)) => {
+            insert
+                .bind(id)
+                .bind(writer.message(id, &user.username, &parts))
+        }
+        (_, _) => insert,
+    };
+    let id: i64 = insert.fetch_one(&mut *tx).await?.try_get(0)?;
+    if let (None, Some(writer)) = (reserved, &writer) {
+        let record = writer.message(id, &user.username, &parts);
+        crate::api::seal::set_body(&mut tx, "messages", "id", id, record).await?;
+    }
     let previews = sqlx::query("INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) SELECT $1, ord, url, banner_removed, removed FROM message_embeds WHERE message_id = $2 AND CAST($3 AS BIGINT) = 0")
         .bind(id)
         .bind(source_id)
@@ -1772,11 +1915,12 @@ async fn insert_forward(
         .await?
         .rows_affected();
     if let Some(data) = &snapshot {
-        crate::api::polls::store_snapshot(&mut tx, id, data).await?;
+        crate::api::polls::store_snapshot(&mut tx, id, data, writer.as_ref()).await?;
     }
     tx.commit().await?;
     let refs = user_refs(db, author.as_slice()).await;
     let mut msgs = [Message {
+        unreadable: false,
         id,
         channel_id,
         dm_id,
@@ -1816,14 +1960,14 @@ async fn insert_forward(
 /// The answer past the per-account message rate.
 pub const SENDING_TOO_FAST: &str = "Sending too fast, try again in a moment";
 
-/// Messages per account: channel, thread and DM messages, forwards and polls; and guest text
-/// per client address.
+/// Messages per account: channel, thread and DM messages, forwards, polls and switches of
+/// encrypted storage; and guest text per client address.
 static MESSAGE_RATE: std::sync::LazyLock<Rate> =
     std::sync::LazyLock::new(|| Rate::new("messages", 100_000));
 
 /// Counts one message of `user` against `MESSAGE_RATE_BURST` and `MESSAGE_RATE_PER_MINUTE`,
 /// across copies when the instance has Redis.
-async fn message_rate(state: &AppState, user: &User) -> Result<(), ApiError> {
+pub(crate) async fn message_rate(state: &AppState, user: &User) -> Result<(), ApiError> {
     sender_rate(state, &user.username).await
 }
 
@@ -2148,7 +2292,6 @@ async fn locate_message(
         kind,
         author,
         media_id,
-        media_filename: _,
         media_kind: _,
         server,
         dm_users: _,
@@ -2165,13 +2308,31 @@ async fn locate_message(
         return Err(crate::api::access::not_found());
     }
     let row = sqlx::query(
-        "SELECT m.content, m.created_at, m.fwd_created_at, m.fwd_source_id, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_origin, m.fwd_dropped FROM messages m WHERE m.id = $1",
+        "SELECT m.content, m.created_at, m.fwd_created_at, m.fwd_source_id, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_origin, m.fwd_dropped, m.body FROM messages m WHERE m.id = $1",
     )
     .bind(id)
     .fetch_optional(db)
     .await?
     .ok_or_else(crate::api::access::not_found)?;
-    let content: String = row.try_get(0)?;
+    let Parts {
+        content,
+        embeds: _,
+        filename: _,
+        dropped,
+        alt: _,
+    } = crate::crypt::body::open_body(
+        db,
+        id,
+        SealScope::of(channel_id, dm_id),
+        &author,
+        row.try_get(7)?,
+        Parts {
+            dropped: row.try_get(6)?,
+            ..Parts::text(row.try_get::<String, _>(0)?)
+        },
+    )
+    .await?
+    .parts;
     let original: Option<String> = row.try_get(4)?;
     let mut names = vec![author.clone()];
     names.extend(original.clone());
@@ -2185,7 +2346,7 @@ async fn locate_message(
             created_at,
             source_id,
             row.try_get::<Option<String>, _>(5)?.as_deref(),
-            row.try_get(6)?,
+            dropped,
         )),
         _ => None,
     };
@@ -2635,7 +2796,6 @@ pub(crate) async fn delete_message(
         kind,
         author: _,
         media_id: _,
-        media_filename: _,
         media_kind: _,
         server,
         dm_users,
@@ -2727,18 +2887,24 @@ pub(crate) async fn edit_message(
     let EditReq { content, media_alt } = req;
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.edit_gate(&state.db).await?;
-    let row = sqlx::query(
-        "SELECT content, kind, media_removed, fwd_source_id, media_alt FROM messages WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(crate::api::access::not_found)?;
-    let (old, kind, media_removed): (String, String, i64) =
-        (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
-    if kind != "user" || row.try_get::<Option<i64>, _>(3)?.is_some() {
+    let row = sqlx::query("SELECT kind, media_removed, fwd_source_id FROM messages WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(crate::api::access::not_found)?;
+    let (kind, media_removed): (String, i64) = (row.try_get(0)?, row.try_get(1)?);
+    if kind != "user" || row.try_get::<Option<i64>, _>(2)?.is_some() {
         return Err(bad("Cannot edit this message"));
     }
+    let stored = {
+        let mut conn = state.db.acquire().await?;
+        crate::api::seal::stored_parts(&state.db, &mut conn, id).await?
+    };
+    let (old, old_alt) = match stored {
+        Some((_, _, Opened { parts, unreadable })) if !unreadable => (parts.content, parts.alt),
+        Some(_) => return Err(bad("Cannot edit this message")),
+        None => return Err(crate::api::access::not_found()),
+    };
     check_len(&content, state.limits.message_max_chars, "Message")?;
     let attached = message.scope().media_id.is_some() && media_removed == 0;
     if content.trim().is_empty() && !attached {
@@ -2747,7 +2913,6 @@ pub(crate) async fn edit_message(
     if message.channel().is_some() {
         check_profanity(&state.db, ProfanityTarget::Messages, &content).await?;
     }
-    let old_alt: Option<String> = row.try_get(4)?;
     let alt = match media_alt {
         Some(_) if !attached => return Err(bad(crate::api::alt_text::NOTHING_TO_DESCRIBE)),
         Some(text) => {
@@ -2762,23 +2927,35 @@ pub(crate) async fn edit_message(
     };
     if content != old || alt != old_alt {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
-        let (mut tx, text_only) =
-            begin_message_write(&state.db, message.scope().channel_id, false).await?;
+        let (mut tx, text_only, writer) = begin_message_write(
+            &state.db,
+            message.scope().channel_id,
+            message.scope().dm_id,
+            false,
+        )
+        .await?;
         let text_only = text_only
             || match message.channel() {
                 Some(channel) => !channel.member_rights(&state.db).await?.holds(held::EMBED),
                 None => false,
             };
-        sqlx::query(
-            "UPDATE messages SET content = $1, edited_at = $2, no_previews = $4, media_alt = $5 WHERE id = $3",
-        )
-        .bind(&content)
-        .bind(now())
-        .bind(id)
-        .bind(i64::from(text_only))
-        .bind(&alt)
-        .execute(&mut *tx)
-        .await?;
+        let (author, parts) = match crate::api::seal::stored_parts(&state.db, &mut tx, id).await? {
+            Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
+            Some(_) => return Err(bad("Cannot edit this message")),
+            None => return Err(crate::api::access::not_found()),
+        };
+        let parts = Parts {
+            content: content.clone(),
+            alt: alt.clone(),
+            ..parts
+        };
+        crate::api::seal::store_parts(&mut tx, writer.as_ref(), id, &author, &parts).await?;
+        sqlx::query("UPDATE messages SET edited_at = $1, no_previews = $3 WHERE id = $2")
+            .bind(now())
+            .bind(id)
+            .bind(i64::from(text_only))
+            .execute(&mut *tx)
+            .await?;
         if relink || text_only {
             sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
                 .bind(id)
@@ -2793,7 +2970,6 @@ pub(crate) async fn edit_message(
             kind: _,
             author: _,
             media_id: _,
-            media_filename: _,
             media_kind: _,
             server,
             dm_users,

@@ -325,8 +325,8 @@ export function pulling(cx: ServerCtx, room: string) {
   return cx.sync.pulling(room)
 }
 
-// Messages of a channel, oldest first, with join and leave lines in the system channel (the
-// page bounds as in dm.ts loadMessages).
+// Messages of a channel, oldest first, with join, leave and storage lines in the system channel
+// (the page bounds as in dm.ts loadMessages).
 export async function loadChannel(
   cx: ServerCtx,
   room: string,
@@ -377,9 +377,8 @@ export async function loadChannel(
   )
   rows.push(...pinRows)
   const sys = systemOf(cx.sumOf(room), cx.local.display)
-  // An archive brings no join and leave lines of the old copy.
-  if (sys.ch === ch && (sys.join || sys.leave) && !opts.keep)
-    rows.push(...(await cx.systemRows(room, lo, hi, sys)))
+  // An archive brings no system lines of the old copy.
+  if (sys.ch === ch && !opts.keep) rows.push(...(await cx.systemRows(room, lo, hi, sys)))
   rows.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
   // A new copy shows the old copy's messages of the same channel above its own, as
   // they are there (read-only).
@@ -597,8 +596,8 @@ export async function loadThreadAround(cx: ServerCtx, room: string, root: string
   return { ...older, messages: [...older.messages, ...self, ...newer.messages] }
 }
 
-// Join and leave lines from ACL events in a sort key range: the genesis (its creator) and a live
-// join, an effective leave, kick or ban.
+// System lines from ACL events in a sort key range: the genesis (its creator) and a live join, an
+// effective leave, kick or ban, as the server's settings ask; and every `store` write that counts.
 export async function systemRows(
   cx: ServerCtx,
   room: string,
@@ -609,6 +608,7 @@ export async function systemRows(
   const kinds = [
     ...(sys.join ? ['genesis', 'join'] : []),
     ...(sys.leave ? ['leave', 'kick', 'ban'] : []),
+    'store',
   ]
   const recs: EventRecord[] = []
   for (const t of kinds)
@@ -631,6 +631,14 @@ export async function systemRows(
   recs.forEach((rec, i) => {
     if (!shown[i] || shown[i]?.hidden || !mine[i]) return
     const c = serverWire(rec).c
+    if (rec.type === 'store') {
+      if (shown[i]?.store && typeof c?.on === 'boolean')
+        out.push({
+          ...systemRow(rec, rec.sender),
+          system: { kind: 'storage', ik: rec.sender, on: c.on },
+        })
+      return
+    }
     const ik = rec.type === 'kick' || rec.type === 'ban' ? (c?.to as string) : rec.sender
     if (typeof ik !== 'string') return
     out.push({
@@ -675,6 +683,12 @@ export async function rows(cx: ServerCtx, room: string, recs: EventRecord[]) {
         thread,
         ...(r.thread && !thread ? { noThread: true as const } : {}),
       })
+      continue
+    }
+    // Stored sealed and it didn't open here: it keeps its place, without its text, unless what
+    // was decided about it hides it.
+    if (r.unreadable && r.type === 'msg' && !r.redacted && !sh?.hidden) {
+      out.push({ ...placeholder(r), unavailable: true, unreadable: true, thread })
       continue
     }
     // Sent by a member around the time they were removed, and after it: a line

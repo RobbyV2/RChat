@@ -51,6 +51,8 @@ import { around, type PageOpts } from './jump'
 import { isQuotaError, Sync, type SyncLimits } from './sync'
 import { clip } from './rate'
 import { deadCounts, liveThreadPings, type ThreadPing } from './thread_pings'
+import { isRecord } from '../bytes'
+import { storeRegister, type StoreRegister } from '../sealing'
 
 // P2P direct messages: one room per pair of identities, its events in IndexedDB on both sides,
 // synced whenever both are online. This module builds the conversation view (edits, reactions,
@@ -104,12 +106,20 @@ export interface P2pMessage {
   // A call log row (written by the caller, `sender`), or a missed call this side noted itself
   // when the caller never wrote one (`local`).
   call: (CallContent & { local?: true }) | null
-  // A line made from an event: a pin (by `ik`, of `target` while it shows), and in P2P servers a
-  // join or leave line made from a member event. A mention of everyone by someone allowed to.
-  system?: { kind: 'join' | 'leave' | 'pin'; ik: string; target?: string | null } | null
+  // A line made from an event: a pin (by `ik`, of `target` while it shows), a switch of encrypted
+  // storage (`on`), and in P2P servers a join or leave line made from a member event. A mention
+  // of everyone by someone allowed to.
+  system?: {
+    kind: 'join' | 'leave' | 'pin' | 'storage'
+    ik: string
+    target?: string | null
+    on?: boolean
+  } | null
   everyone?: boolean
   // P2P servers: it shows, but its body was purged here and is on its way back.
   unavailable?: boolean
+  // Stored sealed here and it didn't open (shown as "This message can't be opened").
+  unreadable?: boolean
   // A thread reply's root; on a top-level message, its thread's replies that show and when the
   // last one was sent.
   thread?: string | null
@@ -201,8 +211,10 @@ export const deriveMessage = (
 ): P2pMessage | null => {
   if (msg.type === 'call') return callRow(msg, related, me, outbox, peer)
   if (msg.type === 'pin') return pinRow(msg, replyTo, replyRelated)
+  if (msg.type === STORE_TYPE) return storeRow(msg)
   // A type from a newer version is stored but not shown.
   if (msg.type !== 'msg') return null
+  if (msg.unreadable) return msg.redacted || isRedactedBy(msg, related) ? null : unreadableRow(msg)
   const c = msg.wire.c as MsgContent | null
   if (!c || msg.redacted || isRedactedBy(msg, related)) return null
   const edit = c.fwd ? null : editOf(msg, related)
@@ -261,6 +273,24 @@ const pinRow = (
     system: { kind: 'pin', ik: msg.sender, target: live ? c.target : null },
   }
 }
+
+// "{name} turned on encrypted storage for new messages.": a well-formed `store` event.
+const storeRow = (msg: EventRecord): P2pMessage | null => {
+  const c: unknown = msg.wire.c
+  if (msg.redacted || !isRecord(c) || typeof c.on !== 'boolean') return null
+  return {
+    ...blankRow(msg.id, msg.sender, msg.effTs, msg.sortKey, msg.seq),
+    sentTs: msg.wire.ev.ts,
+    system: { kind: 'storage', ik: msg.sender, on: c.on },
+  }
+}
+
+// A message stored sealed that didn't open here: it keeps its place, without its text.
+const unreadableRow = (msg: EventRecord): P2pMessage => ({
+  ...blankRow(msg.id, msg.sender, msg.effTs, msg.sortKey, msg.seq),
+  unavailable: true,
+  unreadable: true,
+})
 
 const callRow = (
   msg: EventRecord,
@@ -400,9 +430,9 @@ export const loadMessages = async (
   const limit = opts.limit ?? lim.dm.page
   const up = opts.newer === true
   const recs: EventRecord[] = []
-  // Messages (thread replies show in their thread only), call rows and pin lines, from the
-  // starting end.
-  for (const type of ['msg', 'call', 'pin'] as const) {
+  // Messages (thread replies show in their thread only), call rows, pin lines and storage lines,
+  // from the starting end.
+  for (const type of ['msg', 'call', 'pin', STORE_TYPE as EvType] as const) {
     const store = db.transaction('events').store
     const get = (id: string) => store.get(id)
     let cursor = await store
@@ -457,6 +487,31 @@ export const loadPins = async (
     if (r && r.room === room && r.type === 'msg') recs.push(r)
   }
   return viewOf(db, room, recs, me, peer)
+}
+
+// The type of the events that switch "Encrypt stored messages" of a conversation. Versions that
+// don't know it store them like any unknown type and show nothing.
+export const STORE_TYPE = 'store'
+
+// The conversation's `store` register: the latest well-formed `store` event by the room's order
+// (causal, then by id); either participant writes it. Off without one.
+export const loadStore = async (
+  db: P2pDatabase,
+  room: string,
+  lim: DmLimits = LOCAL
+): Promise<StoreRegister> => {
+  let steps = 0
+  let cursor = await db
+    .transaction('events')
+    .store.index('room_type_sort')
+    .openCursor(sortRange(room, STORE_TYPE as EvType), 'prev')
+  while (cursor && steps < lim.dag.walk) {
+    const c: unknown = cursor.value.wire.c
+    steps += 1
+    if (isRecord(c) && typeof c.on === 'boolean') return storeRegister(c)
+    cursor = await cursor.continue()
+  }
+  return storeRegister(null)
 }
 
 // A message by id with its surroundings, for jumping to it (jump.ts).
@@ -900,9 +955,18 @@ export class Dms {
     }
   }
 
+  // Whether this device stores the conversation's events sealed follows its `store` register,
+  // for everything stored after the change. A device that can't keep a device key stores plain.
+  private async followStore(room: string) {
+    const { on } = await loadStore(this.db, room, this.local)
+    await this.deps.store.sealing.setRoom(room, on).catch(() => {})
+  }
+
   private stored(room: string, from: string, added: Inserted[]) {
     this.files(added)
     this.aimed(added.flatMap(a => (a.status === 'new' ? [a.rec] : [])))
+    if (added.some(a => a.status === 'new' && a.rec.type === STORE_TYPE))
+      void this.followStore(room).catch(() => {})
     for (const a of added) {
       if (a.status !== 'new') continue
       if (a.rec.sender === this.me) continue
@@ -932,6 +996,19 @@ export class Dms {
 
   online(room: string) {
     return this.sync.online(room)
+  }
+
+  // Turns "Encrypt stored messages" of a conversation on or off; either participant may. Both
+  // devices store what they get from then on sealed, or plain again.
+  async setStore(room: string, on: boolean, earlier = false) {
+    const content = { on, ...(on && earlier ? { earlier: true } : {}) }
+    const id = await this.create(room, STORE_TYPE as EvType, content as unknown as Content)
+    await this.followStore(room)
+    return id
+  }
+
+  storeOf(room: string) {
+    return loadStore(this.db, room, this.local)
   }
 
   // Builds, checks and stores a new event of ours, then sends it. It goes through the same

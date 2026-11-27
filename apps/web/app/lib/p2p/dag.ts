@@ -25,6 +25,7 @@ import {
   type P2pSchema,
   type RoomRecord,
 } from './db'
+import { sealingOf } from './sealed_db'
 
 // The room DAG on disk: heads (events without known children), the children index, parents we
 // still miss, and bounded walks over prev links. Inserting an event is one transaction, so the
@@ -218,7 +219,8 @@ export const insertInto = async (
   const ev = wire.ev
   const rid = ev.room
   const have = await events.get(id)
-  if (have) return { status: 'dup', rec: have }
+  // One stored sealed that didn't open here is stored again from what a peer sent.
+  if (have && !have.unreadable) return { status: 'dup', rec: have }
   const room = (await tx.objectStore('rooms').get(rid)) ?? blankRoom(rid, ctx.peer, receivedAt)
   if (room.kind === 'server') return { status: 'invalid', why: 'auth' }
   const mayRedact = sameSender
@@ -534,7 +536,7 @@ export const insertServer = async (
   tx.done.catch(() => {})
   const events = tx.objectStore('events')
   const have = await events.get(id)
-  if (have) {
+  if (have && !have.unreadable) {
     await tx.done
     return { status: 'dup', rec: have }
   }
@@ -645,8 +647,9 @@ export const insertServer = async (
   if (atts.length) Object.assign(rec, withFiles(rec, atts))
   await events.put(rec)
   // The search index's rows count as the room's storage.
+  // A sealed room stays out of the search index.
   const indexed =
-    !acl && !ctx.unknown
+    !acl && !ctx.unknown && !sealingOf(db)?.on(room)
       ? await indexEvent(tx.objectStore('search'), events, rec, ctx.lim.search)
       : 0
   const storedBytes = (gone ? storedSize(stored) : size) + indexed
@@ -844,7 +847,9 @@ export const restoreBody = async (
   next = withFiles(next, atts)
   const size = storedSize(next.wire)
   await events.put(next)
-  const indexed = await indexEvent(tx.objectStore('search'), events, next, cut)
+  const indexed = sealingOf(db)?.on(room)
+    ? 0
+    : await indexEvent(tx.objectStore('search'), events, next, cut)
   const grown = size - storedSize(r.wire) + indexed
   await heldAdd(meta, room, r.sender, size + indexed)
   const rec = await tx.objectStore('rooms').get(room)

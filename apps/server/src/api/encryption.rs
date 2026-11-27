@@ -16,6 +16,14 @@ pub struct EncryptionView {
     pub readiness: &'static str,
     /// Whether the key file should be backed up.
     pub needs_backup: bool,
+    /// Whether the site requires encrypted storage, and whether the server configuration sets
+    /// that.
+    pub required: crate::api::seal::RequiredView,
+    /// Stored records that did not open since this copy started.
+    pub unreadable: u64,
+    /// Whether "every copy runs this build" is confirmed; left out where nobody has to confirm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copies_confirmed: Option<bool>,
 }
 
 pub(crate) async fn admin_status(
@@ -28,14 +36,20 @@ pub(crate) async fn admin_status(
         .status(&state.db)
         .await
         .map_err(ApiError::internal)?;
-    let readiness = state
-        .crypt
-        .readiness(crate::db::is_sqlite(&state.db), &state.hub.other_copies())
-        .name();
+    let readiness = match crate::api::seal::copies(&state).await? {
+        Some(false) => crate::api::seal::readiness(&state).await?.name(),
+        Some(true) | None => state
+            .crypt
+            .readiness(crate::db::is_sqlite(&state.db), &state.hub.other_copies())
+            .name(),
+    };
     Ok(Json(EncryptionView {
         needs_backup: status.needs_backup(),
         status,
         readiness,
+        required: crate::api::seal::required_view(&state).await?,
+        unreadable: state.crypt.unreadable(),
+        copies_confirmed: crate::api::seal::copies(&state).await?,
     }))
 }
 

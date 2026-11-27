@@ -299,13 +299,15 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
         .with_limits(Arc::new(config.limits.clone()))
         .with_sso(Arc::new(crate::sso::Sso::new(config.sso.clone())?))
         .with_crypt(ring);
+    crate::api::seal::start(&state).await?;
     if state.bus.is_some() {
-        let (hub, ring) = (state.hub.clone(), state.crypt.clone());
+        let (hub, ring, db) = (state.hub.clone(), state.crypt.clone(), state.db.clone());
         held.spawn(async move {
             let mut every = tokio::time::interval(crate::crypt::ring::COPY_EVERY);
             loop {
                 every.tick().await;
                 hub.announce_copy(crate::crypt::ring::SEALS, ring.kek_ids());
+                crate::api::seal::note_copies(&db, &hub);
             }
         });
     }
@@ -487,6 +489,19 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
                     Ok(_) => {}
                     Err(e) => tracing::warn!("stale row sweep failed: {e}"),
                 }
+            }
+        }
+    });
+    let sealing = state.clone();
+    held.spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            if holds(&sealing, "seal-sweep", Duration::from_secs(290)).await
+                && let Err(crate::api::ApiError(_, e, _)) =
+                    crate::api::seal::sweep(&sealing.db).await
+            {
+                tracing::warn!("the sweep for messages to encrypt failed: {e}");
             }
         }
     });

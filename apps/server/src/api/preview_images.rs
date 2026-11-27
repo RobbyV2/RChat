@@ -428,7 +428,7 @@ async fn remembered(
 /// or its image was removed, or its link is only inside a spoiler.
 async fn source_of(db: &Db, message_id: i64, ord: i64) -> sqlx::Result<Option<String>> {
     let row = sqlx::query(
-        "SELECT me.url, e.image_url, m.content FROM message_embeds me JOIN embeds e ON e.url = me.url JOIN messages m ON m.id = me.message_id WHERE me.message_id = $1 AND me.ord = $2 AND me.removed = 0 AND me.banner_removed = 0",
+        "SELECT me.url, e.image_url, m.content, m.channel_id, m.dm_id, m.author, m.body FROM message_embeds me JOIN embeds e ON e.url = me.url JOIN messages m ON m.id = me.message_id WHERE me.message_id = $1 AND me.ord = $2 AND me.removed = 0 AND me.banner_removed = 0",
     )
     .bind(message_id)
     .bind(ord)
@@ -437,8 +437,18 @@ async fn source_of(db: &Db, message_id: i64, ord: i64) -> sqlx::Result<Option<St
     let Some(r) = row else {
         return Ok(None);
     };
-    let (url, source, content): (String, Option<String>, String) =
-        (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+    let (url, source): (String, Option<String>) = (r.try_get(0)?, r.try_get(1)?);
+    let content = crate::crypt::body::open_body(
+        db,
+        message_id,
+        crate::crypt::body::Scope::of(r.try_get(3)?, r.try_get(4)?),
+        &r.try_get::<String, _>(5)?,
+        r.try_get(6)?,
+        crate::crypt::body::Parts::text(r.try_get::<String, _>(2)?),
+    )
+    .await?
+    .parts
+    .content;
     if content.contains("||") && crate::api::embeds::spoilered_urls(&content).contains(&url) {
         return Ok(None);
     }

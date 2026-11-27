@@ -128,6 +128,8 @@ export interface Shown {
   everyone: boolean
   // A pin: its author held Manage messages where it was posted (it counts).
   pins?: boolean
+  // A `store` write that counts (acl/facts.ts storeOf).
+  store?: boolean
 }
 
 export interface PlanReq {
@@ -947,6 +949,7 @@ export class AclRoom {
           reactions: [],
           pin: null,
           everyone: false,
+          ...(e.t === 'store' ? { store: this.r.state().facts.storeWrites.has(id) } : {}),
         }
       }
       const hidden = v.hidden(m)

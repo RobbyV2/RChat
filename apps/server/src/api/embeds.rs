@@ -526,18 +526,21 @@ async fn store_embeds(
     if locked.rows_affected() == 0 {
         return Ok(None);
     }
-    let row = sqlx::query("SELECT content, thread_root_id, edited_at FROM messages WHERE id = $1")
+    let row = sqlx::query("SELECT thread_root_id, edited_at FROM messages WHERE id = $1")
         .bind(message_id)
         .fetch_one(&mut *tx)
         .await?;
-    let content: String = row.try_get(0)?;
+    let content = match crate::api::seal::stored_parts(db, &mut tx, message_id).await? {
+        Some((_, _, opened)) => opened.parts.content,
+        None => return Ok(None),
+    };
     if extract_urls(&content) != urls {
         return Ok(None);
     }
     let hidden = spoilered_urls(&content);
     let stored = Stored {
-        thread_root_id: row.try_get(1)?,
-        edited_at: row.try_get(2)?,
+        thread_root_id: row.try_get(0)?,
+        edited_at: row.try_get(1)?,
     };
     for embed in embeds.iter().filter(|e| !hidden.contains(&e.url)) {
         sqlx::query(

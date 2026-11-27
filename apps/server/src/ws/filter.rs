@@ -935,9 +935,12 @@ pub(super) fn wants(
         WsEvent::Banned { username: _ }
         | WsEvent::SettingsChanged { settings: _ }
         | WsEvent::BrandChanged { brand: _ } => true,
-        WsEvent::DmCreated { dm_id: _, dm_users } => {
-            me.is_some_and(|user| dm_users.iter().any(|u| u == user))
-        }
+        WsEvent::DmCreated { dm_id: _, dm_users }
+        | WsEvent::DmUpdated {
+            dm_id: _,
+            dm_users,
+            seal: _,
+        } => me.is_some_and(|user| dm_users.iter().any(|u| u == user)),
         WsEvent::VoiceState {
             server,
             channel_id: _,

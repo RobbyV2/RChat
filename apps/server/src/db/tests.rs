@@ -9045,3 +9045,56 @@ async fn messages_keep_their_files_when_image_descriptions_are_added() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn sealed_messages_upgrade_preserves_v61_rows() {
+    on_each_database("sealed_messages_upgrade", |url| async move {
+        let db = super::open(Some(&url)).await.unwrap();
+        for sql in [
+            "ALTER TABLE messages DROP COLUMN body",
+            "ALTER TABLE polls DROP COLUMN body",
+            "ALTER TABLE poll_options DROP COLUMN body",
+            "ALTER TABLE poll_snapshots DROP COLUMN body",
+            "ALTER TABLE servers DROP COLUMN seal",
+            "ALTER TABLE servers DROP COLUMN seal_since",
+            "ALTER TABLE servers DROP COLUMN seal_forced",
+            "ALTER TABLE dms DROP COLUMN seal",
+            "ALTER TABLE dms DROP COLUMN seal_since",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1), ('bob', 'Bob', 'x', 'text', 'identicon', 1)",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 1)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('den', 'general', 'text', 1)",
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+            "INSERT INTO messages(channel_id, author, content, media_id, media_filename, webhook_embeds, created_at) SELECT id, 'alice', 'kept text', 'f00d', 'kept.txt', '[]', 5 FROM channels WHERE server = 'den'",
+            "INSERT INTO messages(dm_id, author, content, kind, created_at) SELECT id, 'bob', 'kept question', 'poll', 6 FROM dms",
+            "INSERT INTO polls(message_id, kind, question, created_at) SELECT id, 'single', 'kept question', 6 FROM messages WHERE kind = 'poll'",
+            "INSERT INTO poll_options(message_id, position, text, created_at) SELECT id, 0, 'kept option', 6 FROM messages WHERE kind = 'poll'",
+            "INSERT INTO poll_snapshots(message_id, data) SELECT id, '{\"kept\":1}' FROM messages WHERE kind = 'user'",
+            "UPDATE settings SET value='61' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open_started(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'den' AND seal = 0 AND seal_since IS NULL AND seal_forced = 0").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM dms WHERE user_a = 'alice' AND seal = 0 AND seal_since IS NULL").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM messages WHERE content = 'kept text' AND media_filename = 'kept.txt' AND webhook_embeds = '[]' AND body IS NULL").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM messages WHERE content = 'kept question' AND body IS NULL").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM polls WHERE question = 'kept question' AND body IS NULL").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM poll_options WHERE text = 'kept option' AND body IS NULL").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM poll_snapshots WHERE data = '{\"kept\":1}' AND body IS NULL").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM data_keys WHERE purpose = 'content'").await, 0);
+            sqlx::query("UPDATE servers SET seal = 7, seal_since = 9, seal_forced = 8 WHERE name = 'den'").execute(&db).await.unwrap();
+            sqlx::query("UPDATE dms SET seal = 7, seal_since = 9").execute(&db).await.unwrap();
+            sqlx::query("UPDATE messages SET body = $1 WHERE content = 'kept text'").bind(vec![0x52_u8, 1, 0]).execute(&db).await.unwrap();
+            let body: Option<Vec<u8>> = sqlx::query_scalar("SELECT body FROM messages WHERE content = 'kept text'").fetch_one(&db).await.unwrap();
+            assert_eq!(body, Some(vec![0x52, 1, 0]));
+            sqlx::query("UPDATE servers SET seal = 0, seal_since = NULL, seal_forced = 0 WHERE name = 'den'").execute(&db).await.unwrap();
+            sqlx::query("UPDATE dms SET seal = 0, seal_since = NULL").execute(&db).await.unwrap();
+            sqlx::query("UPDATE messages SET body = NULL WHERE content = 'kept text'").execute(&db).await.unwrap();
+            close(&db).await;
+        }
+    })
+    .await;
+}

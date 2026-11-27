@@ -17,6 +17,7 @@ use super::messages::{Quotes, cannot_reply, load_message, partial_quote};
 use super::{
     ApiError, Authed, Message, OkResp, ProfanityTarget, bad, check_len, check_profanity, ok,
 };
+use crate::crypt::body::{Parts, Scope};
 use crate::db::{ChannelKind, Db, lock_server, now, pool_key, secret_key};
 use crate::identity::random_id;
 use crate::limits::bucket::{Keyed, Policy};
@@ -241,7 +242,7 @@ pub(crate) async fn post(
         reply_to,
         at: t,
     }
-    .insert(&mut tx, reading, granted)
+    .insert(&state.db, &mut tx, reading, granted)
     .await?
     .ok_or_else(not_found)?;
     tx.commit().await?;
@@ -277,6 +278,7 @@ impl Stored<'_> {
     /// message gets no link previews.
     async fn insert(
         &self,
+        db: &Db,
         tx: &mut sqlx::AnyConnection,
         reading: super::access::Reading,
         granted: bool,
@@ -286,21 +288,46 @@ impl Stored<'_> {
         let send = overwrite_sql(masks::SEND, None);
         let threads = overwrite_sql(held::THREADS, None);
         let embed = overwrite_sql(held::EMBED, None);
+        let scope = Scope::Channel(self.channel);
+        let writer = crate::api::seal::writer_of(db, tx, scope).await?;
+        let parts = Parts::text(self.content);
+        let stored = crate::api::seal::columns(writer.as_ref(), &parts);
+        let reserved =
+            crate::api::seal::reserve(tx, crate::db::is_sqlite(db), "messages", writer.as_ref())
+                .await?;
+        let (columns, values) = match reserved {
+            Some(_) => (", id, body", ", $9, $10"),
+            None => ("", ""),
+        };
+        let overriding = match reserved {
+            Some(_) => " OVERRIDING SYSTEM VALUE",
+            None => "",
+        };
         let insert = format!(
-            "INSERT INTO messages(channel_id, thread_root_id, author, content, reply_to, created_at, no_previews) SELECT $1, $2, $3, $4, $5, $6, CASE WHEN c.text_only <> 0 OR NOT {embed} THEN 1 ELSE 0 END FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND s.name = $7 AND ($8 = 1 OR ({public})) AND COALESCE(s.password_hash, '') <> '!purging' AND c.kind = 'text' AND {view} AND {send} AND ($2 IS NULL OR {threads} OR EXISTS(SELECT 1 FROM messages tm WHERE tm.thread_root_id = $2)) AND s.guest_chat_opt_in = 1 AND (SELECT COUNT(*) FROM settings WHERE key IN ('guests_enabled', 'guest_chat_enabled') AND value = '1') = 2 RETURNING id"
+            "INSERT INTO messages(channel_id, thread_root_id, author, content, reply_to, created_at, no_previews{columns}){overriding} SELECT $1, $2, $3, $4, $5, $6, CASE WHEN c.text_only <> 0 OR NOT {embed} THEN 1 ELSE 0 END{values} FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND s.name = $7 AND ($8 = 1 OR ({public})) AND COALESCE(s.password_hash, '') <> '!purging' AND c.kind = 'text' AND {view} AND {send} AND ($2 IS NULL OR {threads} OR EXISTS(SELECT 1 FROM messages tm WHERE tm.thread_root_id = $2)) AND s.guest_chat_opt_in = 1 AND (SELECT COUNT(*) FROM settings WHERE key IN ('guests_enabled', 'guest_chat_enabled') AND value = '1') = 2 RETURNING id"
         );
-        let row = sqlx::query(sqlx::AssertSqlSafe(insert))
+        let query = sqlx::query(sqlx::AssertSqlSafe(insert))
             .bind(self.channel)
             .bind(self.thread_root_id)
             .bind(self.author)
-            .bind(self.content)
+            .bind(&stored.content)
             .bind(self.reply_to)
             .bind(self.at)
             .bind(self.server)
-            .bind(i64::from(granted))
-            .fetch_optional(&mut *tx)
-            .await?;
-        Ok(row.map(|r| r.try_get(0)).transpose()?)
+            .bind(i64::from(granted));
+        let query = match (reserved, &writer) {
+            (Some(id), Some(writer)) => {
+                query.bind(id).bind(writer.message(id, self.author, &parts))
+            }
+            (_, _) => query,
+        };
+        let row = query.fetch_optional(&mut *tx).await?;
+        let id: Option<i64> = row.map(|r| r.try_get(0)).transpose()?;
+        if let (Some(id), None, Some(writer)) = (id, reserved, &writer) {
+            let record = writer.message(id, self.author, &parts);
+            crate::api::seal::set_body(tx, "messages", "id", id, record).await?;
+        }
+        Ok(id)
     }
 }
 
@@ -1049,6 +1076,7 @@ mod tests {
                 at: now(),
             }
             .insert(
+                db,
                 &mut tx,
                 super::super::access::Reading::now(db).await,
                 granted,
