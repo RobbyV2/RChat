@@ -8,7 +8,15 @@ import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
-import { PlaceProvider, useP2pRoom } from '../../lib/place/react'
+import { PlaceProvider, useLive, useP2pRoom } from '../../lib/place/react'
+import { featureAt, isUnsupported } from '../../lib/place/feature'
+import {
+  channels as channelsFeature,
+  noChannels,
+  type ChannelEntry,
+} from '../../lib/place/channels'
+import { ChannelList } from '../channel_list'
+import { IconButton } from '../controls'
 import { P2pRoom } from '../../lib/place/place'
 import MemberSidebar from '../member_sidebar'
 
@@ -24,7 +32,6 @@ import {
   Plus,
   Search,
   UserPlus,
-  ChevronDown,
   Users,
   Volume2,
   Waypoints,
@@ -37,8 +44,7 @@ import { displayName } from '../../lib/p2p/contacts'
 import { movedText, type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import { serverPings, serverUnread } from '../../lib/p2p/alerts'
-import type { ChannelView, MemberView, ServerView } from '../../lib/p2p/server'
-import { roomGroups } from '../../lib/categories'
+import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { levelOf, mutedOf } from '../../lib/notify'
 import { folderKey, railItems, serverKey, type Folder } from '../../lib/nav_layout'
@@ -456,73 +462,40 @@ function P2pServerSidebarBody() {
 
   const { room, v } = useOpen()
   const loading = useP2p(serversLoading)
-  const own = useP2p(s => ownsP2pServer(v, s.me))
-  const active = useP2p(s => s.server?.ch ?? null)
   const prefs = useStore(s => s.notifyPrefs)
   const [adding, setAdding] = useState<string | null>(null)
   const [kind, setKind] = useState<'text' | 'voice'>('text')
-  const [shut, setShut] = useState<Set<string>>(() => new Set())
-  if (!v)
+  const place = useP2pRoom(room)
+  const list = place ? featureAt(channelsFeature, place) : null
+  const listed = list && !isUnsupported(list) ? list : null
+  const listState = useLive(listed?.state ?? noChannels)
+  if (!v || !listed)
     return (
       <aside className="flex h-full w-60 shrink-0 flex-col bg-surface-container-low">
         {room && loading && <ChannelListSkeleton seed={room} header className="min-h-0 flex-1" />}
       </aside>
     )
-  const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
-  const groups = roomGroups({ channels: shown, categories: v.categories }, can(v, P.ManageChannels))
-  const row = (c: ChannelView) => {
-    if (c.kind === 'voice')
-      return (
-        <P2pVoiceRow
-          key={c.id}
-          v={v}
-          c={c}
-          active={active === c.id}
-          menu={(x, y) =>
-            openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
-          }
-          memberMenu={m => (x, y) =>
-            openActionMenu(x, y, { kind: 'p2p_member', v, m }, undefined, acct, identity)
-          }
-        />
-      )
-    const counts = v.chans[c.id]
-    const scope = channelScope(v.id, c.id)
+  const facts = (c: ChannelEntry) => {
+    const counts = v.chans[c.key]
+    const scope = channelScope(v.id, c.key)
     const muted = mutedOf(prefs, scope, Date.now()) || mutedOf(prefs, serverScope(v.id), Date.now())
     const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
-    const unread = !!counts?.unread && !muted
-    return (
-      <button
+    return { scope, muted, pings, unread: !!counts?.unread && !muted }
+  }
+  const voiceRow = (entry: ChannelEntry) => {
+    const c = v.channels.find(x => x.id === entry.key)
+    return c ? (
+      <P2pVoiceRow
         key={c.id}
-        data-p2p-channel={c.name}
-        onClick={() => p2pServer.openChannel(c.id)}
-        {...longPress((x, y) =>
-          openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
-        )}
-        className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
-          active === c.id
-            ? 'bg-secondary-container text-on-secondary-container'
-            : `hover:bg-surface-container hover:text-on-surface ${unread ? 'font-semibold text-on-surface' : 'text-on-surface-variant'} ${muted ? 'opacity-60' : ''}`
-        }`}
-      >
-        <Hash size={16} className="shrink-0" />
-        <span className="truncate">
-          <Masked text={c.name} own={own} />
-        </span>
-        {c.restrict_view && (
-          <span
-            title="Private channel"
-            aria-label="Private channel"
-            role="img"
-            className="flex shrink-0"
-          >
-            <Lock size={12} />
-          </span>
-        )}
-        <MutedIcon scope={scope} />
-        <P2pChannelEnd room={v.id} ch={c.id} pings={pings} unread={unread} />
-      </button>
-    )
+        v={v}
+        c={c}
+        active={entry.active}
+        menu={(x, y) => listed.channelMenu(c.id, x, y)}
+        memberMenu={m => (x, y) =>
+          openActionMenu(x, y, { kind: 'p2p_member', v, m }, undefined, acct, identity)
+        }
+      />
+    ) : null
   }
   const submit = () => {
     const name = (adding ?? '').trim()
@@ -532,126 +505,87 @@ function P2pServerSidebarBody() {
       if (id && kind === 'text') void p2pServer.openChannel(id)
     })
   }
-  const kindBtn = (k: 'text' | 'voice') => {
-    const label = k === 'text' ? 'Text channel' : 'Voice channel'
-    const Icon = k === 'text' ? Hash : Volume2
-    return (
-      <button
-        title={label}
-        aria-label={label}
-        aria-pressed={kind === k}
-        onMouseDown={e => e.preventDefault()}
-        onClick={() => setKind(k)}
-        className={`rounded-lg p-1.5 ${
-          kind === k
-            ? 'bg-secondary-container text-on-secondary-container'
-            : 'text-on-surface-variant hover:bg-surface-container'
-        }`}
-      >
-        <Icon size={14} />
-      </button>
-    )
-  }
+  const kindBtn = (k: 'text' | 'voice') => (
+    <IconButton
+      icon={k === 'text' ? Hash : Volume2}
+      label={k === 'text' ? 'Text channel' : 'Voice channel'}
+      size="sm"
+      shape="square"
+      pressed={kind === k}
+      onMouseDown={e => e.preventDefault()}
+      onClick={() => setKind(k)}
+    />
+  )
   return (
     <aside
       data-p2p-sidebar
       className="flex h-full w-60 shrink-0 flex-col border-r border-dashed border-tertiary/40 bg-surface-container-low"
     >
       <ServerHead v={v} />
-      <Surface pad="sm" tone="plain" radius="none" place="min-h-0 flex-1">
-        <Surface pad="sm" inset="bar" tone="plain" radius="none">
-          <Row gap="sm" justify="between">
-            <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-              Channels
-            </span>
-            {can(v, P.ManageChannels) && (
-              <button
-                title="Create channel"
-                aria-label="Create channel"
-                onClick={() => {
-                  setKind('text')
-                  setAdding('')
-                }}
-                className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-              >
-                <Plus size={16} />
-              </button>
-            )}
-          </Row>
-        </Surface>
-        <Stack as="nav" gap="sm" place="min-h-0 flex-1 overflow-y-auto">
-          {groups.uncategorized.length > 0 && (
-            <Stack gap="3xs">{groups.uncategorized.map(row)}</Stack>
+      <Surface pad="lg" inset="bar" tone="plain" radius="none">
+        <Row gap="sm" justify="between">
+          <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+            Channels
+          </span>
+          {listState.canManage && (
+            <IconButton
+              icon={Plus}
+              label="Create channel"
+              size="sm"
+              onClick={() => {
+                setKind('text')
+                setAdding('')
+              }}
+            />
           )}
-          {groups.categories.map(({ category, channels }) => {
-            const open = !shut.has(category.id)
-            return (
-              <Stack key={category.id} gap="3xs">
-                <button
-                  data-p2p-category={category.name}
-                  aria-expanded={open}
-                  onClick={() =>
-                    setShut(prev => {
-                      const next = new Set(prev)
-                      if (open) next.add(category.id)
-                      else next.delete(category.id)
-                      return next
-                    })
-                  }
-                  {...longPress((x, y) =>
-                    openActionMenu(
-                      x,
-                      y,
-                      { kind: 'p2p_category', v, cat: category },
-                      undefined,
-                      acct,
-                      identity
-                    )
-                  )}
-                  className="flex min-w-0 items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-medium tracking-wider text-on-surface-variant uppercase hover:text-on-surface"
-                >
-                  <ChevronDown size={12} className={`shrink-0 ${open ? '' : '-rotate-90'}`} />
-                  <span className="truncate">
-                    <Masked text={category.name} own={own} />
-                  </span>
-                </button>
-                {(open ? channels : channels.filter(c => c.id === active)).map(row)}
-              </Stack>
-            )
-          })}
-          {adding !== null && (
-            <Row as="span" gap="sm">
-              <Row as="span" gap="3xs" align="stretch" place="shrink-0">
-                {kindBtn('text')}
-                {kindBtn('voice')}
-              </Row>
-              <input
-                autoFocus
-                value={adding}
-                maxLength={p2p.limits().server.nameMax}
-                onChange={e => setAdding(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') submit()
-                  if (e.key === 'Escape') setAdding(null)
-                }}
-                onBlur={submit}
-                placeholder="channel name"
-                aria-label="New channel name"
-                className="min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
-              />
-            </Row>
-          )}
-          {shown.length === 0 && (
-            <Surface pad="sm" tone="plain" radius="none">
-              <p className="text-sm text-on-surface-variant">
-                {v.me === null
-                  ? 'Waiting for the server to arrive from a member…'
-                  : 'No channels yet.'}
-              </p>
-            </Surface>
-          )}
-        </Stack>
+        </Row>
       </Surface>
+      <ChannelList
+        channels={listed}
+        state={listState}
+        look={c => {
+          const { muted, unread } = facts(c)
+          return { muted, bold: unread }
+        }}
+        end={c => {
+          const { scope, pings, unread } = facts(c)
+          return (
+            <>
+              <MutedIcon scope={scope} />
+              <P2pChannelEnd room={v.id} ch={c.key} pings={pings} unread={unread} />
+            </>
+          )
+        }}
+        voice={voiceRow}
+        rowProps={c => ({ 'data-p2p-channel': c.name })}
+        categoryProps={category => ({ 'data-p2p-category': category.name })}
+        createRow={category =>
+          category === null && adding !== null ? (
+            <Surface as="span" pad="sm" tone="plain" radius="none">
+              <Row as="span" gap="sm">
+                <Row as="span" gap="3xs" place="shrink-0">
+                  {kindBtn('text')}
+                  {kindBtn('voice')}
+                </Row>
+                <input
+                  autoFocus
+                  value={adding}
+                  maxLength={p2p.limits().server.nameMax}
+                  onChange={e => setAdding(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') submit()
+                    if (e.key === 'Escape') setAdding(null)
+                  }}
+                  onBlur={submit}
+                  placeholder="channel name"
+                  aria-label="New channel name"
+                  className="min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+                />
+              </Row>
+            </Surface>
+          ) : null
+        }
+      />
       <VoiceDock />
     </aside>
   )

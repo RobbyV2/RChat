@@ -61,17 +61,19 @@ import {
   channelGroups,
   fullIndex,
   zoneOf,
-  type ChannelGroup,
 } from '../lib/categories'
 import { UserAvatar } from './user_avatar'
 import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
+import { ChannelList } from './channel_list'
+import { featureAt, isUnsupported } from '../lib/place/feature'
+import { channels as channelsFeature, noChannels, type ChannelEntry } from '../lib/place/channels'
 import { FriendsEntry } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
 import { Button, IconButton, LinkButton } from './controls'
-import { Row, Stack, Surface } from './layout'
+import { Row, Surface } from './layout'
 import { Masked, Sentinel, useOwnServer } from './ui'
 import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
@@ -82,7 +84,7 @@ import { scopePings } from '../lib/pings'
 import { MutedIcon } from './notify_menu'
 import { NO_CONNECT, shownMedia } from '../lib/timeouts'
 import { useChannelCan } from '../lib/place/use_rights'
-import { useHostedServer } from '../lib/place/react'
+import { useHostedServer, useLive } from '../lib/place/react'
 
 import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
 import { ContactRow, lastTsOf } from './p2p/p2p_home'
@@ -910,7 +912,6 @@ export function ChannelSidebar() {
   const layout = useStore(s => s.layout)
   const dragGroup = useDrag(s => s.group)
   const dropZone = useDrag(s => s.zone)
-  const openChannel = useStore(s => s.openChannel)
   const openDialog = useStore(s => s.openDialog)
   const createChannel = useStore(s => s.createChannel)
   const moveChannel = useStore(s => s.moveChannel)
@@ -948,13 +949,18 @@ export function ChannelSidebar() {
   })
   useAuthorMembers(voiceServer, voiceKey)
 
+  const place = useHostedServer(view?.kind === 'channel' ? view.server : null)
+  const list = place ? featureAt(channelsFeature, place) : null
+  const listed = list && !isUnsupported(list) ? list : null
+  const listState = useLive(listed?.state ?? noChannels)
+
   const dmBeside = useP2p(s => s.home && s.dmList && s.chat !== null)
   if (view?.kind === 'dm' || dmBeside)
     return <DmSidebar dmId={view?.kind === 'dm' ? view.dmId : -1} />
 
   if (!view) return null
   const detail = servers[view.server]
-  if (!detail)
+  if (!detail || !listed)
     return (
       <aside className={base}>
         <ChannelListSkeleton seed={view.server} header className="min-h-0 flex-1" />
@@ -998,12 +1004,6 @@ export function ChannelSidebar() {
   }
 
   const allCategories = groups.categories.map(g => g.category.id)
-
-  const channelMenu = (channel: Channel) => (x: number, y: number) =>
-    openActionMenu(x, y, { kind: 'channel', server, channel }, undefined, acct)
-
-  const categoryMenu = (category: Category) => (x: number, y: number) =>
-    openActionMenu(x, y, { kind: 'category', server, category }, undefined, acct)
 
   const keepShown = (c: Channel) => c.id === activeId || voice?.channelId === c.id
 
@@ -1112,36 +1112,6 @@ export function ChannelSidebar() {
       </Surface>
     ) : null
 
-  const textRow = (c: Channel) => (
-    <button
-      key={c.id}
-      onClick={() => void openChannel(server, c.id)}
-      {...longPress(channelMenu(c), channelDragSpec(c))}
-      className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11 ${
-        activeId === c.id
-          ? 'bg-secondary-container text-on-secondary-container'
-          : `text-on-surface-variant hover:bg-surface-container hover:text-on-surface ${
-              scopeMuted(acct.store.getState(), { kind: 'channel', id: c.id, server })
-                ? 'opacity-60'
-                : ''
-            }`
-      }`}
-    >
-      <Hash size={16} className="shrink-0" />
-      <span className="truncate">
-        <Masked text={c.name} own={ownServer} />
-      </span>
-      {c.restrict_view && <PrivateIcon />}
-      <MutedIcon scope={{ kind: 'channel', id: c.id, server }} />
-      <HostedChannelEnd
-        scopes={[`c${c.id}`]}
-        server={server}
-        pings={pingsOf(`c${c.id}`)}
-        unread={unread(`c${c.id}`)}
-      />
-    </button>
-  )
-
   const voiceRow = (c: Channel) => {
     const roster = rosterOf(acct, account, voiceUsers, server, c)
     return (
@@ -1154,7 +1124,7 @@ export function ChannelSidebar() {
           connected={voice?.channelId === c.id}
           count={roster.length}
           onJoin={() => void joinVoice(server, c.id)}
-          menu={channelMenu(c)}
+          menu={(x, y) => listed.channelMenu(String(c.id), x, y)}
           drag={channelDragSpec(c)}
         />
         {roster.map(u => (
@@ -1170,95 +1140,19 @@ export function ChannelSidebar() {
     )
   }
 
-  const row = (c: Channel) =>
-    editingHere?.mode === 'rename' && editingHere.id === c.id ? (
-      <Surface key={c.id} as="span" pad="sm" inset="bar" tone="plain" radius="none">
+  const byKey = new Map(detail.channels.map(c => [String(c.id), c]))
+  const categoryByKey = new Map((detail.categories ?? []).map(c => [String(c.id), c]))
+  const channelOf = (entry: ChannelEntry) => byKey.get(entry.key)
+  const renameRow = (entry: ChannelEntry) =>
+    editingHere?.mode === 'rename' && String(editingHere.id) === entry.key ? (
+      <Surface key={entry.key} as="span" pad="sm" inset="bar" tone="plain" radius="none">
         <Row as="span" gap="none">
           {editInput}
         </Row>
       </Surface>
-    ) : c.kind === 'voice' ? (
-      voiceRow(c)
-    ) : (
-      textRow(c)
-    )
-
-  const zoneCls = (zone: string, empty: boolean) =>
-    `flex flex-col rounded-lg transition-colors ${
-      channelDrag && empty ? 'mx-2 min-h-8 border-2 border-dashed border-outline-variant' : ''
-    } ${channelDrag && dropZone === zone ? 'bg-primary-container/40' : ''}`
-
-  const categoryBlock = ({ category, channels }: ChannelGroup) => {
-    const open = !shut.has(category.id)
-    const visible = open ? channels : channels.filter(keepShown)
-    const zone = zoneOf(category.id)
-    const hiddenPings = open
-      ? 0
-      : channels.reduce((n, c) => n + (keepShown(c) ? 0 : pingsOf(`c${c.id}`)), 0)
-    const hiddenUnread =
-      !open && channels.some(c => c.kind === 'text' && !keepShown(c) && unread(`c${c.id}`))
-    const hiddenScopes = open
-      ? []
-      : channels.filter(c => c.kind === 'text' && !keepShown(c)).map(c => `c${c.id}`)
-    return (
-      <Surface
-        key={category.id}
-        data-drag-box
-        pad="none"
-        tone="plain"
-        radius="md"
-        place="group/cat"
-      >
-        <Surface pad="sm" inset="bar" tone="plain" radius="none">
-          <Row gap="none">
-            <button
-              aria-expanded={open}
-              onClick={() => setCategoriesCollapsed(server, [category.id], open)}
-              {...longPress(categoryMenu(category), categoryDragSpec(category))}
-              className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase outline-offset-[-2px] hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
-            >
-              {open ? (
-                <ChevronDown size={14} className="shrink-0" />
-              ) : (
-                <ChevronRight size={14} className="shrink-0" />
-              )}
-              <span className="truncate">
-                <Masked text={category.name} own={ownServer} />
-              </span>
-              {hiddenPings > 0 ? (
-                <PingBadge count={hiddenPings} className="ml-auto" />
-              ) : (
-                <HostedChannelEnd
-                  scopes={hiddenScopes}
-                  server={server}
-                  pings={0}
-                  unread={hiddenUnread}
-                />
-              )}
-            </button>
-            {canManage && (
-              <IconButton
-                icon={Plus}
-                label={`Create channel in ${category.name}`}
-                tooltip="Create channel"
-                size="sm"
-                onClick={() => createIn(category.id)}
-                place="md:opacity-0 md:group-hover/cat:opacity-100 md:focus-visible:opacity-100 pointer-coarse:opacity-100"
-              />
-            )}
-          </Row>
-        </Surface>
-        <div
-          data-drop-zone={zone}
-          data-drop-label={category.name}
-          className={zoneCls(zone, visible.length === 0)}
-        >
-          {visible.map(row)}
-          {createRow(category.id)}
-        </div>
-      </Surface>
-    )
-  }
+    ) : null
+  const textScopes = (entries: ChannelEntry[]) =>
+    entries.filter(c => c.kind === 'text').map(c => `c${c.key}`)
 
   return (
     <aside className={base}>
@@ -1297,26 +1191,61 @@ export function ChannelSidebar() {
           )}
         </Row>
       </Surface>
-      <div ref={dragScope} className="flex-1 overflow-y-auto pb-3">
-        <Stack gap="md">
-          <div
-            data-drop-zone={NO_CATEGORY}
-            data-drop-label="No category"
-            className={zoneCls(
-              NO_CATEGORY,
-              groups.uncategorized.length === 0 && groups.categories.length > 0
-            )}
-          >
-            {groups.uncategorized.map(row)}
-            {createRow(null)}
-          </div>
-          {groups.categories.length > 0 && (
-            <Stack data-drop-zone={CATEGORIES_ZONE} gap="md">
-              {groups.categories.map(categoryBlock)}
-            </Stack>
-          )}
-        </Stack>
-      </div>
+      <ChannelList
+        channels={listed}
+        state={listState}
+        look={c => ({
+          muted: scopeMuted(acct.store.getState(), { kind: 'channel', id: Number(c.key), server }),
+          bold: false,
+        })}
+        end={c => (
+          <>
+            <MutedIcon scope={{ kind: 'channel', id: Number(c.key), server }} />
+            <HostedChannelEnd
+              scopes={[`c${c.key}`]}
+              server={server}
+              pings={pingsOf(`c${c.key}`)}
+              unread={unread(`c${c.key}`)}
+            />
+          </>
+        )}
+        voice={entry => {
+          const c = channelOf(entry)
+          return c ? voiceRow(c) : null
+        }}
+        categoryEnd={(_category, hidden) => {
+          const hiddenPings = hidden.reduce((n, c) => n + pingsOf(`c${c.key}`), 0)
+          const scopes = textScopes(hidden)
+          return hiddenPings > 0 ? (
+            <PingBadge count={hiddenPings} className="ml-auto" />
+          ) : (
+            <HostedChannelEnd
+              scopes={scopes}
+              server={server}
+              pings={0}
+              unread={scopes.some(unread)}
+            />
+          )
+        }}
+        replace={renameRow}
+        createRow={category => createRow(category === null ? null : Number(category))}
+        onAdd={category => createIn(Number(category.key))}
+        drag={{
+          scope: dragScope,
+          channel: entry => {
+            const c = channelOf(entry)
+            return c ? channelDragSpec(c) : undefined
+          },
+          category: entry => {
+            const category = categoryByKey.get(entry.key)
+            return category ? categoryDragSpec(category) : undefined
+          },
+          zoneOf: category => (category === null ? NO_CATEGORY : zoneOf(Number(category))),
+          categoriesZone: CATEGORIES_ZONE,
+          moving: channelDrag,
+          over: dropZone,
+        }}
+      />
       <VoiceDock />
     </aside>
   )
