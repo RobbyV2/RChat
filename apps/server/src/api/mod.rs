@@ -17,6 +17,7 @@ pub mod config_shares;
 pub mod controls;
 pub mod dms;
 pub mod embeds;
+pub mod encryption;
 pub mod error;
 pub mod features;
 pub mod form_heads;
@@ -2723,6 +2724,7 @@ fn api_routes(
             get(admin::get_report_forms).put(admin::put_report_forms),
         )
         .route("/admin/config", get(admin::get_config))
+        .route("/admin/encryption", get(encryption::admin_status))
         .route("/admin/overview", get(admin::overview))
         .route("/admin/users", get(admin::list_users))
         .route("/admin/servers", get(admin::list_servers))

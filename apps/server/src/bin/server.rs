@@ -1,12 +1,16 @@
 use clap::{Parser, Subcommand};
 use rust_next::api::admin_cli::{self, UserCommand};
 use rust_next::config::{AppConfig, CliOverrides};
+use rust_next::crypt::cli::{self as keys_cli, KeysCommand};
 use rust_next::run::{self, RunOptions};
 use tracing::info;
 
 /// The server's command line: with no command it runs the server.
 #[derive(Debug, Parser)]
-#[command(name = "server", about = "Runs the server, or manages its accounts")]
+#[command(
+    name = "server",
+    about = "Runs the server, or manages its accounts and keys"
+)]
 struct Cli {
     #[command(flatten)]
     overrides: CliOverrides,
@@ -20,6 +24,11 @@ enum Command {
     User {
         #[command(subcommand)]
         action: UserCommand,
+    },
+    /// Manage the instance's encryption keys.
+    Keys {
+        #[command(subcommand)]
+        action: KeysCommand,
     },
 }
 
@@ -37,9 +46,16 @@ async fn main() -> anyhow::Result<()> {
 
     let Cli { overrides, command } = Cli::parse();
     let config = AppConfig::load(&overrides)?;
-    if let Some(Command::User { action }) = command {
-        println!("{}", admin_cli::run(&config, action).await?);
-        return Ok(());
+    match command {
+        Some(Command::User { action }) => {
+            println!("{}", admin_cli::run(&config, action).await?);
+            return Ok(());
+        }
+        Some(Command::Keys { action }) => {
+            println!("{}", keys_cli::run(&config, action).await?);
+            return Ok(());
+        }
+        None => {}
     }
     let running = run::start(config, RunOptions::default()).await?;
     shutdown_signal().await;
@@ -75,6 +91,8 @@ async fn shutdown_signal() {
 mod tests {
     use clap::Parser;
     use rust_next::api::admin_cli::UserCommand;
+
+    use rust_next::crypt::cli::KeysCommand;
 
     use super::{Cli, Command};
 
@@ -134,5 +152,61 @@ mod tests {
         assert!(parsed(&["user", "create"]).is_err(), "a name is required");
         assert!(parsed(&["user", "delete", "dana"]).is_err());
         assert!(parsed(&["user"]).is_err());
+    }
+
+    #[test]
+    fn keys_commands_parse() {
+        let action = |args: &[&str]| match parsed(args).map(|cli| cli.command) {
+            Ok(Some(Command::Keys { action })) => Some(action),
+            Ok(Some(Command::User { action: _ })) | Ok(None) | Err(_) => None,
+        };
+        assert_eq!(
+            action(&["keys", "new"]),
+            Some(KeysCommand::New {
+                id: "k1".to_string()
+            })
+        );
+        assert_eq!(
+            action(&["keys", "new", "--id", "k2"]),
+            Some(KeysCommand::New {
+                id: "k2".to_string()
+            })
+        );
+        assert_eq!(action(&["keys", "status"]), Some(KeysCommand::Status));
+        assert_eq!(
+            action(&["keys", "export", "--out", "keys.json"]),
+            Some(KeysCommand::Export {
+                out: "keys.json".into(),
+                passphrase_file: None
+            })
+        );
+        assert_eq!(action(&["keys", "export"]), None, "a file is required");
+        assert_eq!(
+            action(&["keys", "import", "--in", "keys.json"]),
+            Some(KeysCommand::Import {
+                input: "keys.json".into(),
+                passphrase_file: None,
+                out: None
+            })
+        );
+        assert_eq!(
+            action(&[
+                "keys",
+                "import",
+                "--in",
+                "keys.json",
+                "--passphrase-file",
+                "phrase",
+                "--out",
+                "site.keys"
+            ]),
+            Some(KeysCommand::Import {
+                input: "keys.json".into(),
+                passphrase_file: Some("phrase".into()),
+                out: Some("site.keys".into())
+            })
+        );
+        assert_eq!(action(&["keys", "import"]), None, "a file is required");
+        assert_eq!(action(&["keys"]), None);
     }
 }

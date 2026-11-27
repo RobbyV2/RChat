@@ -37,7 +37,8 @@ pub enum SlotRefused {
 }
 
 pub use replica::{
-    Aftermath, Applied, Audio, CallEnd, Envelope, Op, Outcome, P2pDrop, Purge, Replica, Scope,
+    Aftermath, Applied, Audio, CallEnd, CopyNote, Envelope, Op, Outcome, P2pDrop, Purge, Replica,
+    Scope,
 };
 
 pub const DEAD_AFTER_MS: i64 = 30_000;
@@ -694,6 +695,23 @@ impl Hub {
             *hub.inner.reannounced.lock().unwrap() = (Some(Instant::now()), false);
             hub.resync(false);
         });
+    }
+
+    /// Tells the other copies what this one runs and which root keys it holds.
+    pub fn announce_copy(&self, seal: bool, keks: Vec<String>) {
+        if self.is_replicated() {
+            self.post(Op::Copy {
+                build: env!("CARGO_PKG_VERSION").to_owned(),
+                seal,
+                keks,
+            });
+        }
+    }
+
+    /// The last announcement of every other live copy, `None` for a copy that made none.
+    pub fn other_copies(&self) -> Vec<Option<CopyNote>> {
+        let store = self.inner.store.lock().unwrap();
+        store.replica.copies(self.inner.instance)
     }
 
     pub fn heartbeat(&self) {

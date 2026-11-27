@@ -143,7 +143,24 @@ pub(super) struct Peer {
     pub(super) seq: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) gaps: Vec<(u64, u64)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    copy: Option<CopyNote>,
 }
+
+/// What a copy of the instance last announced about itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyNote {
+    pub build: String,
+    /// Whether it reads and writes sealed records.
+    pub seal: bool,
+    /// The ids of the root keys it holds.
+    pub keks: Vec<String>,
+    #[serde(default)]
+    at: i64,
+}
+
+/// A copy whose announcement is older than this counts as having made none.
+pub const COPY_STALE_MS: i64 = 90_000;
 
 #[derive(Clone, Default, Debug, PartialEq)]
 pub(super) struct Index {
@@ -580,6 +597,14 @@ pub enum Op {
         addr: Option<String>,
     },
     Heartbeat,
+    /// What this copy runs and which root keys it holds, announced every `COPY_EVERY`.
+    Copy {
+        build: String,
+        #[serde(default)]
+        seal: bool,
+        #[serde(default)]
+        keks: Vec<String>,
+    },
     Depart,
 }
 
@@ -705,6 +730,11 @@ impl Op {
             | Op::CallEnd { user: _, dm_id: _ }
             | Op::DropConn { user: _, conn: _ }
             | Op::SweepVoice { idle: _ }
+            | Op::Copy {
+                build: _,
+                seal: _,
+                keks: _,
+            }
             | Op::Depart => false,
         }
     }
@@ -1935,6 +1965,20 @@ impl Replica {
             .collect()
     }
 
+    /// What every live copy other than `me` last announced: `None` for one that announced
+    /// nothing within `COPY_STALE_MS`.
+    pub fn copies(&self, me: u32) -> Vec<Option<CopyNote>> {
+        self.peers
+            .iter()
+            .filter(|(id, _)| **id != me)
+            .map(|(_, peer)| {
+                peer.copy
+                    .clone()
+                    .filter(|note| self.clock - note.at <= COPY_STALE_MS)
+            })
+            .collect()
+    }
+
     pub fn apply(&mut self, origin: u32, op: Op, t_ms: i64) -> Applied {
         let t = t_ms.div_euclid(1000);
         let mut evs = Vec::new();
@@ -2415,6 +2459,15 @@ impl Replica {
                 Outcome::Done
             }
             Op::Heartbeat => Outcome::Done,
+            Op::Copy { build, seal, keks } => {
+                self.peers.entry(origin).or_default().copy = Some(CopyNote {
+                    build,
+                    seal,
+                    keks,
+                    at: t_ms,
+                });
+                Outcome::Done
+            }
             Op::Depart => {
                 self.purge(origin, t_ms, true, &mut evs, &mut purge);
                 Outcome::Departed(std::mem::take(&mut purge))

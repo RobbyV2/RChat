@@ -513,3 +513,48 @@ async fn unconfirmed_cleanup_finishes_in_the_background() {
     };
     assert!(matches!(purge.p2p.as_slice(), [(user, P2pDrop::Offline)] if user == "alice"));
 }
+
+#[tokio::test]
+async fn copies_announce_their_build_and_keys_and_go_stale() {
+    let (hub, mut out) = Hub::replicated();
+    assert!(hub.other_copies().is_empty());
+    hub.announce_copy(true, vec!["k1".to_string()]);
+    let mine = out.try_recv().unwrap();
+    assert!(
+        matches!(&mine.op, Op::Copy { build, seal: true, keks } if !build.is_empty() && keks == &["k1"])
+    );
+    hub.ingest(&format!("{T0}-0"), mine.clone(), true);
+    assert!(
+        hub.other_copies().is_empty(),
+        "a copy does not wait for itself"
+    );
+    let other = mine.origin.wrapping_add(1);
+    let from = |seq: u64, op: Op| Envelope {
+        origin: other,
+        seq,
+        op,
+    };
+    hub.ingest(&format!("{T0}-1"), from(1, Op::Heartbeat), true);
+    assert_eq!(hub.other_copies(), [None], "a copy that announced nothing");
+    let raw = r#"{"origin":1,"seq":2,"op":{"op":"copy","build":"9.9.9","seal":true,"keks":["k1","k2"],"later":1}}"#;
+    let Envelope { origin: _, seq, op } = serde_json::from_str(raw).unwrap();
+    hub.ingest(&format!("{T0}-2"), from(seq, op), true);
+    let heard = hub.other_copies();
+    let [Some(note)] = &heard[..] else {
+        panic!("{heard:?}");
+    };
+    assert_eq!((note.build.as_str(), note.seal), ("9.9.9", true));
+    assert_eq!(note.keks, ["k1", "k2"]);
+    let mut seq = 2;
+    for t in (20_000..=100_000).step_by(20_000) {
+        seq += 1;
+        hub.ingest(&format!("{}-0", T0 + t), from(seq, Op::Heartbeat), true);
+    }
+    assert_eq!(hub.other_copies(), [None], "unheard for 90 seconds");
+    let bare: Envelope =
+        serde_json::from_str(r#"{"origin":1,"seq":9,"op":{"op":"copy","build":"1"}}"#).unwrap();
+    assert!(matches!(bare.op, Op::Copy { seal: false, ref keks, .. } if keks.is_empty()));
+    let (plain, _) = (Hub::new(), ());
+    plain.announce_copy(true, Vec::new());
+    assert!(plain.other_copies().is_empty());
+}

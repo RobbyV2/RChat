@@ -68,6 +68,10 @@
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },
   {
+    "route": "get /api/v1/admin/encryption",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
     "route": "get /api/v1/admin/overview",
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },

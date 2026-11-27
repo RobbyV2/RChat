@@ -207,6 +207,18 @@ fn connect_url(database_url: Option<&str>) -> String {
     }
 }
 
+/// The file of the SQLite database `DATABASE_URL` names, as sqlx opens it: `None` for Postgres
+/// and for a database in memory.
+pub fn sqlite_file(database_url: Option<&str>) -> Option<std::path::PathBuf> {
+    let url = connect_url(database_url);
+    if !url.starts_with("sqlite:") || url.contains(":memory:") || url.contains("mode=memory") {
+        return None;
+    }
+    let options = url.parse::<sqlx::sqlite::SqliteConnectOptions>().ok()?;
+    let file = options.get_filename();
+    (!file.as_os_str().is_empty()).then(|| file.to_owned())
+}
+
 /// The schema version stored in the database `DATABASE_URL` names, without changing it: `None`
 /// when there is no database yet (no SQLite file, or no tables), 0 for one from before versions
 /// were stored. A missing SQLite file is not created.

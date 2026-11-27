@@ -33,7 +33,7 @@ pub(crate) use pool::writer;
 pub use pool::{
     ConnectionBudget, Db, DbOptions, LightCommits, close, connection_budget, default_pool,
     has_accounts, is_sqlite, light, no_statement_limit, open, open_with, opened_limits, reader,
-    stored_schema_version, take_config_start, writer_connections,
+    sqlite_file, stored_schema_version, take_config_start, writer_connections,
 };
 pub use schema::has_fts;
 #[cfg(test)]

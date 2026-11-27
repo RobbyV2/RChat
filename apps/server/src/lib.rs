@@ -1,6 +1,7 @@
 pub mod api;
 pub mod bus;
 pub mod config;
+pub mod crypt;
 pub mod db;
 pub mod env_file;
 pub mod fanout;

@@ -54,6 +54,7 @@ test('the page lists every section and shows the open one', () => {
     'Servers',
     'Audit log',
     'Config',
+    'Encryption',
     'Danger zone',
   ])
     expect(html).toContain(`>${label}</span>`)

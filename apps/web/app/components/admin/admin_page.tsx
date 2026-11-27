@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react'
 import {
+  KeyRound,
   LayoutDashboard,
   Palette,
   ScrollText,
@@ -22,6 +23,7 @@ import { BRAND_IMAGE_ROWS, BrandingSection } from './branding'
 import { ConfigSection, controlLabel } from './config'
 import { useConfigStore, useConfigSync } from './config_state'
 import { DangerSection } from './danger'
+import { EncryptionSection } from './encryption'
 import { FeaturesSection } from './features'
 import { OverviewSection, OverviewSummary } from './overview'
 import { ServerPage, ServersSection } from './servers'
@@ -35,6 +37,7 @@ const SECTIONS: Record<AdminSection, { label: string; icon: LucideIcon }> = {
   servers: { label: 'Servers', icon: Server },
   audit: { label: 'Audit log', icon: ScrollText },
   config: { label: 'Config', icon: SlidersHorizontal },
+  encryption: { label: 'Encryption', icon: KeyRound },
   danger: { label: 'Danger zone', icon: TriangleAlert },
 }
 
@@ -57,6 +60,7 @@ function Page() {
       servers: () => (item === null ? <ServersSection /> : <ServerPage key={item} name={item} />),
       audit: () => <AuditSection />,
       config: () => <ConfigSection />,
+      encryption: () => <EncryptionSection />,
       danger: () => <DangerSection />,
     }
     return (Object.keys(SECTIONS) as AdminSection[]).map(id => ({
@@ -128,16 +132,25 @@ function Page() {
                       env: l.env,
                     })),
                   ]
-                : id === 'danger'
+                : id === 'encryption'
                   ? [
                       {
-                        section: 'danger',
-                        id: 'delete_message',
-                        label: 'Delete a message',
-                        line: 'Removes one message for everyone, by its id.',
+                        section: 'encryption',
+                        id: 'keys',
+                        label: 'Encryption keys',
+                        line: 'Where the keys come from, their fingerprints and the backup warning.',
                       },
                     ]
-                  : undefined,
+                  : id === 'danger'
+                    ? [
+                        {
+                          section: 'danger',
+                          id: 'delete_message',
+                          label: 'Delete a message',
+                          line: 'Removes one message for everyone, by its id.',
+                        },
+                      ]
+                    : undefined,
       render: body[id],
     }))
   }, [item, config])

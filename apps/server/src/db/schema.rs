@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS scim_owned_aliases(source TEXT NOT NULL, alias_key TE
 CREATE TABLE IF NOT EXISTS sso_user_groups(username TEXT NOT NULL, source TEXT NOT NULL, grp TEXT NOT NULL, alias_key TEXT, PRIMARY KEY(username,source,grp));
 CREATE TABLE IF NOT EXISTS sso_grants(username TEXT NOT NULL, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, role_id INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, grp TEXT, PRIMARY KEY(username,server,role_id));
 CREATE INDEX IF NOT EXISTS idx_sso_pending_expires ON sso_pending(expires_at);
+CREATE TABLE IF NOT EXISTS data_keys(id INTEGER PRIMARY KEY AUTOINCREMENT, purpose TEXT NOT NULL CHECK(purpose IN ('content','media','secrets','search','bus')), gen INTEGER NOT NULL, kek TEXT NOT NULL, wrapped TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active','retiring','retired','destroyed')), created_at INTEGER NOT NULL, retired_at INTEGER, destroyed_at INTEGER, UNIQUE(purpose, gen));
 CREATE INDEX IF NOT EXISTS idx_scim_group_members_username ON scim_group_members(username);
 CREATE INDEX IF NOT EXISTS idx_sso_user_groups_key ON sso_user_groups(source,alias_key);
 CREATE INDEX IF NOT EXISTS idx_sso_grants_server ON sso_grants(server);
@@ -209,6 +210,7 @@ CREATE TABLE IF NOT EXISTS scim_owned_aliases(source TEXT NOT NULL, alias_key TE
 CREATE TABLE IF NOT EXISTS sso_user_groups(username TEXT NOT NULL, source TEXT NOT NULL, grp TEXT NOT NULL, alias_key TEXT, PRIMARY KEY(username,source,grp));
 CREATE TABLE IF NOT EXISTS sso_grants(username TEXT NOT NULL, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, role_id BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, grp TEXT, PRIMARY KEY(username,server,role_id));
 CREATE INDEX IF NOT EXISTS idx_sso_pending_expires ON sso_pending(expires_at);
+CREATE TABLE IF NOT EXISTS data_keys(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, purpose TEXT NOT NULL CHECK(purpose IN ('content','media','secrets','search','bus')), gen BIGINT NOT NULL, kek TEXT NOT NULL, wrapped TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'active' CHECK(state IN ('active','retiring','retired','destroyed')), created_at BIGINT NOT NULL, retired_at BIGINT, destroyed_at BIGINT, UNIQUE(purpose, gen));
 CREATE INDEX IF NOT EXISTS idx_scim_group_members_username ON scim_group_members(username);
 CREATE INDEX IF NOT EXISTS idx_sso_user_groups_key ON sso_user_groups(source,alias_key);
 CREATE INDEX IF NOT EXISTS idx_sso_grants_server ON sso_grants(server);

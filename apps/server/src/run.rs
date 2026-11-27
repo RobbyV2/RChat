@@ -191,8 +191,11 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
     }
 
     let roles = config.roles;
+    let ring = crate::crypt::ring::Ring::load(&config.encryption, config.database_url.as_deref())?;
     let db = crate::db::open_with(config.database_url.as_deref(), &config.db_options()).await?;
     held.db = Some(db.clone());
+    ring.check(&db).await?;
+    ring.note_source(&db).await?;
     match crate::db::connection_budget(&db).await {
         Ok(Some(budget)) if budget.tight() => tracing::warn!("{}", budget.message()),
         Ok(Some(budget)) => info!("{}", budget.message()),
@@ -288,7 +291,18 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
     }
     let mut state = AppState::new(db, hub, config.s3()?, bus, instance)
         .with_limits(Arc::new(config.limits.clone()))
-        .with_sso(Arc::new(crate::sso::Sso::new(config.sso.clone())?));
+        .with_sso(Arc::new(crate::sso::Sso::new(config.sso.clone())?))
+        .with_crypt(Arc::new(ring));
+    if state.bus.is_some() {
+        let (hub, ring) = (state.hub.clone(), state.crypt.clone());
+        held.spawn(async move {
+            let mut every = tokio::time::interval(crate::crypt::ring::COPY_EVERY);
+            loop {
+                every.tick().await;
+                hub.announce_copy(crate::crypt::ring::SEALS, ring.kek_ids());
+            }
+        });
+    }
     if roles.api {
         crate::api::scim::initialize_group_ownership(&state).await?;
         for provider in state.sso.providers().cloned() {
@@ -612,6 +626,90 @@ pub(crate) mod tests {
                 .await
                 .expect("file");
         }
+    }
+
+    #[tokio::test]
+    async fn a_start_is_refused_while_a_data_key_has_no_root_key() {
+        use crate::crypt::Purpose;
+        use crate::crypt::ring::{KeyConfig, Ring};
+        let _one = ONE.lock().await;
+        let path = crate::db::temp_db_path("run_lost_key");
+        let keys = std::path::PathBuf::from(format!("{}.keys", path.display()));
+        wipe(&path);
+        let _ = std::fs::remove_file(&keys);
+        let malformed = AppConfig::from_map(&[("ENCRYPTION_KEYS", "k1:short")]);
+        let named = malformed.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(named.starts_with("ENCRYPTION_KEYS is malformed"), "{named}");
+
+        let first = start(config(&path, 0, &[]), RunOptions::default())
+            .await
+            .expect("start");
+        assert!(!first.state.crypt.ready(), "no key until one is needed");
+        assert!(!keys.exists());
+        let ring = &first.state.crypt;
+        assert_eq!(
+            ring.ensure_ring(&first.state.db, false)
+                .await
+                .expect("ring"),
+            Ok(())
+        );
+        let made = ring
+            .data_key(&first.state.db, Purpose::Content)
+            .await
+            .expect("key");
+        let (id, _) = made.expect("a data key");
+        first.shutdown().await;
+
+        let again = start(config(&path, 0, &[]), RunOptions::default())
+            .await
+            .expect("the key file is loaded at the start");
+        assert!(again.state.crypt.ready());
+        assert!(
+            again
+                .state
+                .crypt
+                .key_by_id(&again.state.db, id)
+                .await
+                .expect("key")
+                .is_some()
+        );
+        again.shutdown().await;
+
+        let kept = std::fs::read(&keys).expect("key file");
+        std::fs::remove_file(&keys).expect("lose the key file");
+        let refused = match start(config(&path, 0, &[]), RunOptions::default()).await {
+            Ok(_) => panic!("started without the key"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            refused.contains(&format!("the data key {id} ")),
+            "{refused}"
+        );
+        assert!(refused.contains(&keys.display().to_string()), "{refused}");
+        let lost = start(
+            config(&path, 0, &[("ENCRYPTION_ALLOW_LOST", "on")]),
+            RunOptions::default(),
+        )
+        .await
+        .expect("allowed to start without it");
+        assert!(
+            lost.state
+                .crypt
+                .key_by_id(&lost.state.db, id)
+                .await
+                .expect("key")
+                .is_none()
+        );
+        lost.shutdown().await;
+        std::fs::write(&keys, kept).expect("restore");
+        let _ = Ring::load(&KeyConfig::default(), path.to_str()).expect("restored ring");
+        start(config(&path, 0, &[]), RunOptions::default())
+            .await
+            .expect("start with the restored key")
+            .shutdown()
+            .await;
+        wipe(&path);
+        let _ = std::fs::remove_file(&keys);
     }
 
     #[tokio::test]

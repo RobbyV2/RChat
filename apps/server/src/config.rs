@@ -194,6 +194,8 @@ pub struct AppConfig {
     #[serde(skip)]
     pub secrets: Secrets,
     #[serde(skip)]
+    pub encryption: crate::crypt::ring::KeyConfig,
+    #[serde(skip)]
     pub controls: ControlSeeds,
     #[serde(skip)]
     pub sso: crate::sso::config::SsoConfig,
@@ -255,6 +257,20 @@ pub(crate) fn read_secret(
         .map_err(|error| anyhow::anyhow!("{key} cannot be read: {error}"))?;
     let value = contents.trim();
     Ok((!value.is_empty()).then(|| value.to_owned()))
+}
+
+/// `read_secret` for a secret the start cannot do without knowing: an unreadable file or an empty
+/// one is an error naming the variable, never an unset secret.
+pub(crate) fn read_required_secret(
+    get: &dyn Fn(&str) -> Option<String>,
+    name: &str,
+) -> anyhow::Result<Option<String>> {
+    let named = |key: &str| get(key).is_some_and(|v| !v.trim().is_empty());
+    match read_secret(get, name)? {
+        Some(value) => Ok(Some(value)),
+        None if named(&format!("{name}_FILE")) => anyhow::bail!("{name}_FILE names an empty file"),
+        None => Ok(None),
+    }
 }
 
 /// A secret from an explicit environment map, with the same file fallback as `env_secret`.
@@ -361,6 +377,7 @@ impl AppConfig {
             relay_secret: secret(&env, "RELAY_SECRET"),
             p2p_secret: secret(&env, "P2P_SECRET"),
         };
+        config.encryption = crate::crypt::ring::KeyConfig::load(&|name| lookup(&env, name))?;
         config.controls = ControlSeeds::load(&|name| lookup(&env, name))?;
         config.sso = crate::sso::config::SsoConfig::load(
             &|name| lookup(&env, name),

@@ -1386,6 +1386,65 @@ async fn the_reset_profiles_permission_reaches_kick_holders_once() {
 }
 
 #[tokio::test]
+async fn data_keys_upgrade_preserves_v57_rows() {
+    on_each_database("data_keys_upgrade", |url| async move {
+        let db = open(Some(&url)).await.unwrap();
+        for sql in [
+            "DROP TABLE data_keys",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1)",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 1)",
+            "UPDATE settings SET value='57' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let pepper: String = sqlx::query_scalar("SELECT value FROM settings WHERE key='password_pepper'").fetch_one(&db).await.unwrap();
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM users WHERE username='alice'").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM servers WHERE name='den'").await, 1);
+            let kept: String = sqlx::query_scalar("SELECT value FROM settings WHERE key='password_pepper'").fetch_one(&db).await.unwrap();
+            assert_eq!(kept, pepper);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM data_keys").await, round);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM settings WHERE key IN ('secrets_db_kek','keys_source','keys_backed_up_at')").await, 0);
+            if round == 0 {
+                sqlx::query("INSERT INTO data_keys(purpose, gen, kek, wrapped, created_at) VALUES('content', 1, 'k1', 'w', 1)").execute(&db).await.unwrap();
+                assert_eq!(count(&db, "SELECT COUNT(*) FROM data_keys WHERE state='active' AND retired_at IS NULL AND destroyed_at IS NULL AND id > 0").await, 1);
+                for bad in [
+                    "INSERT INTO data_keys(purpose, gen, kek, wrapped, created_at) VALUES('content', 1, 'k2', 'w', 1)",
+                    "INSERT INTO data_keys(purpose, gen, kek, wrapped, created_at) VALUES('other', 1, 'k1', 'w', 1)",
+                    "INSERT INTO data_keys(purpose, gen, kek, wrapped, state, created_at) VALUES('media', 1, 'k1', 'w', 'gone', 1)",
+                ] {
+                    assert!(sqlx::query(bad).execute(&db).await.is_err(), "{bad}");
+                }
+            }
+            close(&db).await;
+        }
+    }).await;
+}
+
+#[test]
+fn column_placeholders_fill_per_database() {
+    let filled = |col: &str, sqlite: bool| match sqlite {
+        true => super::migrate::column_definition(col, "INTEGER", "BLOB", "BLOB"),
+        false => super::migrate::column_definition(col, "BIGINT", "BYTEA", "INTEGER[]"),
+    };
+    assert_eq!(filled("body {BYTES}", true), "body BLOB");
+    assert_eq!(filled("body {BYTES}", false), "body BYTEA");
+    assert_eq!(filled("grams {INTS}", true), "grams BLOB");
+    assert_eq!(filled("grams {INTS}", false), "grams INTEGER[]");
+    assert_eq!(
+        filled("seal {INT} NOT NULL DEFAULT 0", true),
+        "seal INTEGER NOT NULL DEFAULT 0"
+    );
+    assert_eq!(
+        filled("seal {INT} NOT NULL DEFAULT 0", false),
+        "seal BIGINT NOT NULL DEFAULT 0"
+    );
+}
+
+#[tokio::test]
 async fn sso_tables_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("sso_schema_upgrade");
     let tables = [

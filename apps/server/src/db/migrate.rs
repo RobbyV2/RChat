@@ -290,7 +290,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 56: how roles show (display order, groups in the member list, icon, name color) and the
 /// `user_roles(role_id, username)` index in place of `idx_user_roles_role`.
 /// 57: descriptions of attached images (`messages.media_alt`).
-pub const SCHEMA_VERSION: i64 = 57;
+/// 58: wrapped data keys for encryption at rest.
+pub const SCHEMA_VERSION: i64 = 58;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -468,6 +469,14 @@ async fn key_usernames(conn: &mut AnyConnection) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A `MIGRATIONS` column with its placeholders filled: `{INT}`, `{BYTES}` (BLOB or BYTEA) and
+/// `{INTS}` (`INTEGER[]` on Postgres; a BLOB that stays NULL on SQLite).
+pub(super) fn column_definition(col: &str, int: &str, bytes: &str, ints: &str) -> String {
+    col.replace("{INTS}", ints)
+        .replace("{INT}", int)
+        .replace("{BYTES}", bytes)
+}
+
 async fn reconcile_columns(
     conn: &mut AnyConnection,
     is_sqlite: bool,
@@ -476,9 +485,13 @@ async fn reconcile_columns(
         true => "INTEGER",
         false => "BIGINT",
     };
+    let (bytes, ints) = match is_sqlite {
+        true => ("BLOB", "BLOB"),
+        false => ("BYTEA", "INTEGER[]"),
+    };
     let mut added = Vec::new();
     for (table, col) in MIGRATIONS {
-        let coldef = col.replace("{INT}", int);
+        let coldef = column_definition(col, int, bytes, ints);
         let name = coldef.split_whitespace().next().unwrap_or(&coldef);
         if !is_sqlite {
             let present = sqlx::query(

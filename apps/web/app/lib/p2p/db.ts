@@ -479,6 +479,10 @@ export class P2pStore {
     this.db.close()
   }
 
+  get name() {
+    return this.db.name
+  }
+
   self(): Promise<SelfRecord | undefined> {
     return this.db.get('self', 'me')
   }
@@ -557,6 +561,17 @@ export class P2pStore {
 
   async setMeta(key: string, value: unknown) {
     await this.db.put('meta', value, key)
+  }
+
+  // Reads and writes one meta value in a single transaction: `fn` answers the new value, or null
+  // to keep what is there.
+  async updateMeta(key: string, fn: (cur: unknown) => unknown) {
+    const tx = this.db.transaction('meta', 'readwrite')
+    const cur: unknown = await tx.store.get(key)
+    const next = fn(cur)
+    if (next !== null) await tx.store.put(next, key)
+    await tx.done
+    return next ?? cur
   }
 
   async counts() {

@@ -19,6 +19,7 @@ pub struct AppState {
     pub instance: Arc<Instance>,
     pub limits: Arc<Limits>,
     pub sso: Arc<crate::sso::Sso>,
+    pub crypt: Arc<crate::crypt::ring::Ring>,
 }
 
 impl AppState {
@@ -41,6 +42,7 @@ impl AppState {
             instance,
             limits: limits.clone(),
             sso: Arc::new(crate::sso::Sso::off()),
+            crypt: Arc::default(),
         }
         .with_limits(limits)
     }
@@ -54,6 +56,10 @@ impl AppState {
 
     pub fn with_sso(self, sso: Arc<crate::sso::Sso>) -> Self {
         Self { sso, ..self }
+    }
+
+    pub fn with_crypt(self, crypt: Arc<crate::crypt::ring::Ring>) -> Self {
+        Self { crypt, ..self }
     }
 
     pub fn read(&self) -> Db {

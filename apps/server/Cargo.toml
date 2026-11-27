@@ -90,6 +90,15 @@ stun = "0.17.2"
 webrtc-util = { version = "0.17.2", default-features = false, features = [
   "conn",
 ] }
+chacha20poly1305 = "0.10"
+hkdf = "0.13"
+zeroize = "1"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = [
+  "std",
+  "termios",
+] }
 
 [dev-dependencies]
 rust-next-wasm = { path = "../../crates/wasm" }

@@ -1020,6 +1020,7 @@ export const endpoints = (c: ApiClient) => ({
   removeAnnouncement: (id: string) => c.req('DELETE', `/admin/announcements/${seg(id)}`),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
   adminConfig: () => c.req<AdminConfig>('GET', '/admin/config'),
+  adminEncryption: () => c.req<unknown>('GET', '/admin/encryption'),
   adminUsers: (cursor: string | null, q: string, filter: AccountFilter = 'all') =>
     c.page<UserRef>(
       withCursor(

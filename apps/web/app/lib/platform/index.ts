@@ -7,6 +7,7 @@ import type { BlobStore } from './blobs'
 import { webBlobs } from './web_blobs'
 import type { DeviceStore } from './device_store'
 import { webDeviceStore } from './web_device_store'
+import { shellDeviceKeys, webDeviceKeys, type DeviceKeys, type KeyVault } from './device_keys'
 import type { Notifier } from './notifications'
 import { webNotifier } from './web_notifications'
 import type { Sharing } from './sharing'
@@ -20,6 +21,7 @@ import { mobileSharing } from './mobile'
 
 export type { BlobStore, BlobWriter } from './blobs'
 export type { DeviceStore } from './device_store'
+export type { DeviceKey, DeviceKeys, KeyVault } from './device_keys'
 export type { NoticeHandle, NoticeOptions, Notifier, Permission } from './notifications'
 export type { ShareData, ShareResult, Sharing } from './sharing'
 export type { QrScanner } from './qr_scanner'
@@ -77,11 +79,34 @@ export const setBlobs = (next: BlobStore) => {
 }
 
 let deviceStore: DeviceStore = webDeviceStore
+let deviceKeysOf: ((vault: KeyVault) => DeviceKeys) | undefined
+let madeKeys = new WeakMap<KeyVault, DeviceKeys>()
 
 export const device = () => deviceStore
 
 export const setDeviceStore = (next: DeviceStore) => {
   deviceStore = next
+  madeKeys = new WeakMap()
+}
+
+// The device key of the profile whose P2P database is `vault`: wrapped through the shell's device
+// store inside a shell, a non-extractable browser key on the web. One per vault, so every caller
+// waits on the same key.
+export const deviceKeys = (vault: KeyVault): DeviceKeys => {
+  const have = madeKeys.get(vault)
+  if (have) return have
+  const made = deviceKeysOf
+    ? deviceKeysOf(vault)
+    : shell
+      ? shellDeviceKeys(vault, deviceStore, deviceStore !== webDeviceStore)
+      : webDeviceKeys(vault)
+  madeKeys.set(vault, made)
+  return made
+}
+
+export const setDeviceKeys = (next?: (vault: KeyVault) => DeviceKeys) => {
+  deviceKeysOf = next
+  madeKeys = new WeakMap()
 }
 
 let qrScanner: QrScanner = webQrScanner
