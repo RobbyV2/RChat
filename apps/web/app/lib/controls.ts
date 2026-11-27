@@ -13,7 +13,7 @@ export type IconButtonSize = 'xs' | 'sm' | 'md' | 'lg'
 export type IconButtonShape = 'round' | 'square'
 export type RowTone = 'plain' | 'muted' | 'primary' | 'danger'
 export type RowVariant = 'plain' | 'card'
-export type BadgeTone = 'danger' | 'primary' | 'tertiary' | 'neutral' | 'outline'
+export type BadgeTone = 'danger' | 'primary' | 'tertiary' | 'neutral' | 'outline' | 'error'
 
 type Sign = '' | '-'
 type Edge = 'top' | 'right' | 'bottom' | 'left' | 'inset' | 'inset-x' | 'inset-y' | 'start' | 'end'
@@ -225,6 +225,7 @@ const BADGE_TONE: Record<BadgeTone, string> = {
   tertiary: 'bg-tertiary-container text-on-tertiary-container',
   neutral: 'bg-surface-container-highest text-on-surface-variant',
   outline: 'border border-outline-variant text-on-surface-variant',
+  error: 'bg-error-container text-on-error-container',
 }
 
 // A count on a small round badge.

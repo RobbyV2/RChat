@@ -21,7 +21,8 @@ import {
   type Timeout,
 } from '../lib/timeouts'
 import { UserAvatar } from './user_avatar'
-import { Button, Chip } from './controls'
+import { Button, Chip, Pill } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Dialog, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
 
@@ -62,15 +63,10 @@ export function TimeoutBadge({ t, compact = false }: { t: Timeout; compact?: boo
   const now = useNow(true)
   const title = timeoutTitle(t, now)
   return (
-    <span
-      title={title}
-      aria-label={title}
-      role="img"
-      className="flex shrink-0 items-center gap-0.5 rounded-md bg-error-container px-1.5 py-0.5 text-3xs font-medium text-on-error-container tabular-nums"
-    >
+    <Pill tone="error" title={title} aria-label={title} role="img">
       <Timer size={compact ? 11 : 12} aria-hidden />
-      {remainingText(t.ends - now)}
-    </span>
+      <span className="tabular-nums">{remainingText(t.ends - now)}</span>
+    </Pill>
   )
 }
 
@@ -156,125 +152,135 @@ export function TimeoutDialog({
   }
   return (
     <Dialog title={current ? 'Change timeout' : 'Time out member'} onClose={onClose}>
-      <div className="flex items-center gap-3">
-        {user && (
-          <UserAvatar
-            username={user.username}
-            avatarKind={user.avatar_kind}
-            avatarColor={user.avatar_color}
-            size={36}
-          />
-        )}
-        <div className="min-w-0">
-          <p className="streamer truncate text-sm font-medium text-on-surface">
-            {user ? <NameWithUsername user={user} /> : name}
-          </p>
-          {user && (
-            <p className="streamer truncate text-xs text-on-surface-variant">@{user.username}</p>
-          )}
-        </div>
-      </div>
-      <p className="mt-3 text-sm text-on-surface-variant">
-        They can still read, but can&apos;t send messages, react, or talk in voice until it ends.
-      </p>
-      {current && (
-        <div
-          data-timeout-current
-          className="mt-3 flex items-center gap-2 rounded-xl bg-error-container px-3 py-2 text-sm text-on-error-container"
-        >
-          <Timer size={16} className="shrink-0" aria-hidden />
-          <span className="min-w-0 flex-1">
-            <span className="tabular-nums">{remainingText(current.ends - now)}</span> left
-            {current.reason && (
-              <span className="block text-xs break-words">Reason: {current.reason}</span>
+      <Stack gap="lg">
+        <Stack gap="md">
+          <Row gap="md">
+            {user && (
+              <UserAvatar
+                username={user.username}
+                avatarKind={user.avatar_kind}
+                avatarColor={user.avatar_color}
+                size={36}
+              />
             )}
-          </span>
-          <Button
-            variant="danger"
-            onClick={() => {
-              untimeout(who)
-              onClose()
-            }}
-          >
-            Remove timeout
-          </Button>
-        </div>
-      )}
-      <p className="mt-4 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-        Duration
-      </p>
-      <div role="radiogroup" aria-label="Duration" className="mt-2 flex flex-wrap gap-2">
-        {TIMEOUT_PRESETS.map(p => (
-          <Chip
-            key={p.seconds}
-            radio
-            on={preset === p.seconds}
-            onClick={() => setPreset(p.seconds)}
-          >
-            {p.label}
-          </Chip>
-        ))}
-        <Chip radio on={preset === null} onClick={() => setPreset(null)}>
-          Custom
-        </Chip>
-      </div>
-      {preset === null && (
-        <div className="mt-3 flex items-center gap-2">
-          <input
-            type="number"
-            min={1}
-            autoFocus
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-            aria-label="Custom duration"
-            placeholder="Amount"
-            className={`${fieldCls} w-24`}
-          />
-          <select
-            value={mult}
-            onChange={e => setMult(Number(e.target.value))}
-            aria-label="Unit"
-            className={`${fieldCls} flex-none`}
-          >
-            {TIMEOUT_UNITS.map(u => (
-              <option key={u.mult} value={u.mult}>
-                {u.label}
-              </option>
+            <Stack gap="none" place="min-w-0">
+              <p className="streamer truncate text-sm font-medium text-on-surface">
+                {user ? <NameWithUsername user={user} /> : name}
+              </p>
+              {user && (
+                <p className="streamer truncate text-xs text-on-surface-variant">
+                  @{user.username}
+                </p>
+              )}
+            </Stack>
+          </Row>
+          <p className="text-sm text-on-surface-variant">
+            They can still read, but can&apos;t send messages, react, or talk in voice until it
+            ends.
+          </p>
+          {current && (
+            <Surface data-timeout-current row pad="md" gap="sm" tone="error" radius="lg">
+              <Timer size={16} className="shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 text-sm">
+                <span className="tabular-nums">{remainingText(current.ends - now)}</span> left
+                {current.reason && (
+                  <span className="block text-xs break-words">Reason: {current.reason}</span>
+                )}
+              </span>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  untimeout(who)
+                  onClose()
+                }}
+              >
+                Remove timeout
+              </Button>
+            </Surface>
+          )}
+        </Stack>
+        <Stack gap="sm">
+          <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+            Duration
+          </p>
+          <Row role="radiogroup" aria-label="Duration" gap="sm" wrap>
+            {TIMEOUT_PRESETS.map(p => (
+              <Chip
+                key={p.seconds}
+                radio
+                on={preset === p.seconds}
+                onClick={() => setPreset(p.seconds)}
+              >
+                {p.label}
+              </Chip>
             ))}
-          </select>
-        </div>
-      )}
-      {preset === null && amount.trim() !== '' && custom === null && (
-        <p role="alert" className="pt-1.5 text-xs text-error">
-          Pick a time up to 28 days.
-        </p>
-      )}
-      <label className="mt-4 block text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-        Reason
-        <input
-          value={reason}
-          maxLength={TIMEOUT_REASON_MAX}
-          onChange={e => setReason(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') void submit()
-          }}
-          placeholder="Optional, shown to moderators"
-          className={`${fieldCls} mt-1.5 w-full text-on-surface normal-case tracking-normal`}
-        />
-      </label>
-      <div className="mt-5 flex justify-end gap-2">
-        <Button size="md" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button
-          variant="filled-danger"
-          size="md"
-          disabled={seconds === null || busy}
-          onClick={() => void submit()}
-        >
-          {current ? 'Update timeout' : 'Time out'}
-        </Button>
-      </div>
+            <Chip radio on={preset === null} onClick={() => setPreset(null)}>
+              Custom
+            </Chip>
+          </Row>
+        </Stack>
+        {preset === null && (
+          <Stack gap="xs">
+            <Row gap="sm">
+              <input
+                type="number"
+                min={1}
+                autoFocus
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                aria-label="Custom duration"
+                placeholder="Amount"
+                className={`${fieldCls} w-24`}
+              />
+              <select
+                value={mult}
+                onChange={e => setMult(Number(e.target.value))}
+                aria-label="Unit"
+                className={`${fieldCls} flex-none`}
+              >
+                {TIMEOUT_UNITS.map(u => (
+                  <option key={u.mult} value={u.mult}>
+                    {u.label}
+                  </option>
+                ))}
+              </select>
+            </Row>
+            {amount.trim() !== '' && custom === null && (
+              <p role="alert" className="text-xs text-error">
+                Pick a time up to 28 days.
+              </p>
+            )}
+          </Stack>
+        )}
+        <Stack as="label" gap="xs">
+          <span className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+            Reason
+          </span>
+          <input
+            value={reason}
+            maxLength={TIMEOUT_REASON_MAX}
+            onChange={e => setReason(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') void submit()
+            }}
+            placeholder="Optional, shown to moderators"
+            className={`${fieldCls} w-full text-on-surface`}
+          />
+        </Stack>
+        <Row gap="sm" justify="end">
+          <Button size="md" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="filled-danger"
+            size="md"
+            disabled={seconds === null || busy}
+            onClick={() => void submit()}
+          >
+            {current ? 'Update timeout' : 'Time out'}
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

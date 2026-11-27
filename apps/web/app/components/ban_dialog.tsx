@@ -17,6 +17,7 @@ import { useLive, useWatch } from '../lib/place/react'
 import type { ModerationTarget } from '../lib/store_types'
 import { UserAvatar } from './user_avatar'
 import { Button, Chip } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
 
@@ -35,7 +36,7 @@ export default function BanDialogHost() {
   ) : null
 }
 
-const heading = 'mt-4 text-xs font-medium tracking-wide text-on-surface-variant uppercase'
+const heading = 'text-xs font-medium tracking-wide text-on-surface-variant uppercase'
 
 function Chips<T>({
   label,
@@ -49,16 +50,16 @@ function Chips<T>({
   onPick: (value: T) => void
 }) {
   return (
-    <>
+    <Stack gap="sm">
       <p className={heading}>{label}</p>
-      <div role="radiogroup" aria-label={label} className="mt-2 flex flex-wrap gap-2">
+      <Row role="radiogroup" aria-label={label} gap="sm" wrap>
         {options.map(o => (
           <Chip key={o.label} radio on={value === o.value} onClick={() => onPick(o.value)}>
             {o.label}
           </Chip>
         ))}
-      </div>
-    </>
+      </Row>
+    </Stack>
   )
 }
 
@@ -89,60 +90,68 @@ export function BanDialog({
   }
   return (
     <Dialog title={title} onClose={onClose}>
-      <div className="flex items-center gap-3">
-        {user && (
-          <UserAvatar
-            username={user.username}
-            avatarKind={user.avatar_kind}
-            avatarColor={user.avatar_color}
-            size={36}
-          />
+      <Stack gap="lg">
+        <Stack gap="md">
+          <Row gap="md">
+            {user && (
+              <UserAvatar
+                username={user.username}
+                avatarKind={user.avatar_kind}
+                avatarColor={user.avatar_color}
+                size={36}
+              />
+            )}
+            <Stack gap="none" place="min-w-0">
+              <p className="streamer truncate text-sm font-medium text-on-surface">
+                {user ? <NameWithUsername user={user} /> : name}
+              </p>
+              {user && (
+                <p className="streamer truncate text-xs text-on-surface-variant">
+                  @{user.username}
+                </p>
+              )}
+            </Stack>
+          </Row>
+          <p className="text-sm text-on-surface-variant">{note}</p>
+        </Stack>
+        {support.timed && (
+          <Chips label="Duration" options={BAN_DURATIONS} value={seconds} onPick={setSeconds} />
         )}
-        <div className="min-w-0">
-          <p className="streamer truncate text-sm font-medium text-on-surface">
-            {user ? <NameWithUsername user={user} /> : name}
-          </p>
-          {user && (
-            <p className="streamer truncate text-xs text-on-surface-variant">@{user.username}</p>
-          )}
-        </div>
-      </div>
-      <p className="mt-3 text-sm text-on-surface-variant">{note}</p>
-      {support.timed && (
-        <Chips label="Duration" options={BAN_DURATIONS} value={seconds} onPick={setSeconds} />
-      )}
-      {windows.length > 0 && (
-        <Chips
-          label={purgeLabel(support.purge)}
-          options={windows}
-          value={purge}
-          onPick={setPurge}
-        />
-      )}
-      {support.purge === 'all' && purge !== 0 && (
-        <p className="mt-2 text-xs text-on-surface-variant">{PURGE_ALL_NOTE}</p>
-      )}
-      <label className={`${heading} block`}>
-        Reason
-        <input
-          value={reason}
-          maxLength={BAN_REASON_MAX}
-          onChange={e => setReason(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') void submit()
-          }}
-          placeholder="Optional, shown to moderators"
-          className={`${fieldCls} mt-1.5 w-full text-on-surface normal-case tracking-normal`}
-        />
-      </label>
-      <div className="mt-5 flex justify-end gap-2">
-        <Button size="md" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button variant="filled-danger" size="md" disabled={busy} onClick={() => void submit()}>
-          Ban
-        </Button>
-      </div>
+        {windows.length > 0 && (
+          <Stack gap="sm">
+            <Chips
+              label={purgeLabel(support.purge)}
+              options={windows}
+              value={purge}
+              onPick={setPurge}
+            />
+            {support.purge === 'all' && purge !== 0 && (
+              <p className="text-xs text-on-surface-variant">{PURGE_ALL_NOTE}</p>
+            )}
+          </Stack>
+        )}
+        <Stack as="label" gap="xs">
+          <span className={heading}>Reason</span>
+          <input
+            value={reason}
+            maxLength={BAN_REASON_MAX}
+            onChange={e => setReason(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') void submit()
+            }}
+            placeholder="Optional, shown to moderators"
+            className={`${fieldCls} w-full text-on-surface`}
+          />
+        </Stack>
+        <Row gap="sm" justify="end">
+          <Button size="md" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="filled-danger" size="md" disabled={busy} onClick={() => void submit()}>
+            Ban
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
