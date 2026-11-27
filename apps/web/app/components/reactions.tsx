@@ -19,7 +19,7 @@ import {
 import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { ShownAvatar, useShown, useViewServer } from './shown_user'
-import { CloseButton, Masked, SheetGrip, useOwnCheck } from './ui'
+import { CloseButton, Masked, Sheet, useOwnCheck } from './ui'
 import { centerEmoji } from '../lib/emoji_center'
 import { useReactionActions } from './chat_source'
 
@@ -302,85 +302,76 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
   const more = users ? current.count - users.length : 0
 
   return createPortal(
-    <div
-      {...shield}
-      onClick={e => {
-        e.stopPropagation()
-        if (e.target === e.currentTarget) onClose()
+    <Sheet
+      sheet={coarse}
+      float={{
+        at: 'inset-0 m-auto h-fit max-h-[min(70vh,calc(100%-2rem))] w-[min(28rem,calc(100%-2rem))]',
+        backdrop: 'dim',
       }}
-      className={`fixed inset-x-0 top-app z-top flex h-app bg-scrim/40 ${
-        coarse ? 'flex-col justify-end' : 'items-center justify-center px-safe-4 py-4'
-      }`}
+      selectable={!coarse}
+      overlay={shield}
+      onClose={onClose}
+      aria-labelledby={titleId}
+      data-popover=""
     >
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        data-popover
-        className={`flex flex-col bg-surface-container-high shadow-elevation-3 ${
-          coarse
-            ? 'animate-sheet-up max-h-[70dvh] rounded-t-3xl px-safe pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] select-none'
-            : 'max-h-[min(70vh,100%)] w-full max-w-md rounded-2xl py-4'
+        className={`flex shrink-0 items-center justify-between px-4 pb-2${coarse ? '' : ' pt-4'}`}
+      >
+        <h2 id={titleId} className="text-base font-medium text-on-surface">
+          Reactions
+        </h2>
+        {!coarse && <CloseButton onClick={onClose} />}
+      </div>
+      <div
+        role="tablist"
+        aria-label="Reactions"
+        className="flex shrink-0 gap-1.5 overflow-x-auto px-4 pb-3"
+      >
+        {list.map(r => (
+          <button
+            key={r.emoji}
+            type="button"
+            role="tab"
+            aria-selected={r.emoji === current.emoji}
+            aria-label={reactionAria(r)}
+            onClick={() => setPicked(r.emoji)}
+            className={`${chipCls} h-8 shrink-0 ${
+              r.emoji === current.emoji ? chipMineCls : chipOtherCls
+            }`}
+          >
+            <span aria-hidden className={emojiCls}>
+              {r.emoji}
+            </span>
+            <span aria-hidden>{r.count}</span>
+          </button>
+        ))}
+      </div>
+      <ul
+        role="tabpanel"
+        aria-label={`${current.emoji} reacted by ${peopleText(current.count)}`}
+        className={`min-h-24 overflow-y-auto overscroll-contain border-t border-outline-variant px-2 pt-2${
+          coarse ? '' : ' mb-4'
         }`}
       >
-        {coarse && <SheetGrip />}
-        <div className="flex shrink-0 items-center justify-between px-4 pb-2">
-          <h2 id={titleId} className="text-base font-medium text-on-surface">
-            Reactions
-          </h2>
-          {!coarse && <CloseButton onClick={onClose} />}
-        </div>
-        <div
-          role="tablist"
-          aria-label="Reactions"
-          className="flex shrink-0 gap-1.5 overflow-x-auto px-4 pb-3"
-        >
-          {list.map(r => (
-            <button
-              key={r.emoji}
-              type="button"
-              role="tab"
-              aria-selected={r.emoji === current.emoji}
-              aria-label={reactionAria(r)}
-              onClick={() => setPicked(r.emoji)}
-              className={`${chipCls} h-8 shrink-0 ${
-                r.emoji === current.emoji ? chipMineCls : chipOtherCls
-              }`}
-            >
-              <span aria-hidden className={emojiCls}>
-                {r.emoji}
+        {users === null && (
+          <li className="px-2 py-3 text-sm text-on-surface-variant">Loading reactions</li>
+        )}
+        {users?.map(u => (
+          <li key={u.username} className="flex items-center gap-3 rounded-xl px-2 py-2">
+            <ShownAvatar user={u} server={server} size={32} />
+            <span className="min-w-0 flex-1">
+              <span className="streamer block truncate text-sm font-medium text-on-surface">
+                <ReactorName user={u} server={server} />
               </span>
-              <span aria-hidden>{r.count}</span>
-            </button>
-          ))}
-        </div>
-        <ul
-          role="tabpanel"
-          aria-label={`${current.emoji} reacted by ${peopleText(current.count)}`}
-          className="min-h-24 overflow-y-auto overscroll-contain border-t border-outline-variant px-2 pt-2"
-        >
-          {users === null && (
-            <li className="px-2 py-3 text-sm text-on-surface-variant">Loading reactions</li>
-          )}
-          {users?.map(u => (
-            <li key={u.username} className="flex items-center gap-3 rounded-xl px-2 py-2">
-              <ShownAvatar user={u} server={server} size={32} />
-              <span className="min-w-0 flex-1">
-                <span className="streamer block truncate text-sm font-medium text-on-surface">
-                  <ReactorName user={u} server={server} />
-                </span>
-                <span className="streamer block truncate text-xs text-on-surface-variant">
-                  {u.username}
-                </span>
+              <span className="streamer block truncate text-xs text-on-surface-variant">
+                {u.username}
               </span>
-            </li>
-          ))}
-          {more > 0 && (
-            <li className="px-2 py-2 text-xs text-on-surface-variant">And {more} more</li>
-          )}
-        </ul>
-      </div>
-    </div>,
+            </span>
+          </li>
+        ))}
+        {more > 0 && <li className="px-2 py-2 text-xs text-on-surface-variant">And {more} more</li>}
+      </ul>
+    </Sheet>,
     document.body
   )
 }

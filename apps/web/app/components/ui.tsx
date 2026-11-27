@@ -11,8 +11,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type HTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type Ref,
   type RefObject,
   type SyntheticEvent,
 } from 'react'
@@ -173,10 +175,136 @@ export function CloseButton({
   return <IconButton icon={X} label="Close" size={compact ? 'sm' : 'md'} onClick={onClick} />
 }
 
-// The drag handle at the top of a bottom sheet.
-export function SheetGrip() {
+export type OverlayLayer = 'page' | 'top' | 'palette'
+export type Backdrop = 'dim' | 'clear' | 'none'
+export type SheetHeight = 'fit' | 'list' | 'half' | 'tall'
+export type SheetSurface = 'low' | 'base' | 'high'
+
+const OVERLAY_Z: Record<OverlayLayer, string> = {
+  page: 'z-page',
+  top: 'z-top',
+  palette: 'z-palette',
+}
+
+const SHEET_HEIGHT: Record<SheetHeight, string> = {
+  fit: 'max-h-[85%]',
+  list: 'min-h-64 max-h-[85%]',
+  half: 'h-[60%] min-h-80',
+  tall: 'h-[85%]',
+}
+
+const SURFACE: Record<SheetSurface, string> = {
+  low: 'bg-surface-container-low',
+  base: 'bg-surface-container',
+  high: 'bg-surface-container-high',
+}
+
+type DivAttrs = Omit<HTMLAttributes<HTMLDivElement>, 'className' | 'role'> & {
+  [data: `data-${string}`]: string | number | undefined
+}
+
+// A layer over the app's area (under the title bar and status bar, above the on-screen keyboard) on
+// `layer`. A `dim` backdrop lays a scrim over it and a `clear` one only takes presses; a click on
+// the backdrop calls `onClose`. Only what the layer holds and its backdrop take presses.
+export function Overlay({
+  layer = 'top',
+  backdrop = 'dim',
+  onClose,
+  ref,
+  children,
+  ...rest
+}: DivAttrs & {
+  layer?: OverlayLayer
+  backdrop?: Backdrop
+  onClose: () => void
+  ref?: Ref<HTMLDivElement>
+  children: ReactNode
+}) {
   return (
-    <div aria-hidden className="mx-auto mb-2 h-1 w-8 shrink-0 rounded-full bg-outline-variant" />
+    <div
+      {...rest}
+      ref={ref}
+      className={`pointer-events-none fixed inset-x-0 top-app h-app *:pointer-events-auto ${OVERLAY_Z[layer]}`}
+    >
+      {backdrop !== 'none' && (
+        <div
+          data-backdrop
+          aria-hidden
+          onClick={onClose}
+          className={`absolute inset-0${backdrop === 'dim' ? ' bg-scrim/40' : ''}`}
+        />
+      )}
+      {children}
+    </div>
+  )
+}
+
+// A panel on an `Overlay`. As a `sheet` (on a phone) it rises from the bottom of the app over a dim
+// backdrop, under a grip (`gripProps` makes it a drag handle): `fit` is as high as what it holds
+// (85% at most), `list` too but at least 16rem (a list that loads), `half` 60% and `tall` 85% of
+// the app. Otherwise it floats where `float.at` places it in
+// the app's area, over `float.backdrop`. A `scroll` panel scrolls itself; one that is not
+// `selectable` keeps a long press from selecting its text. It is a modal dialog (or a `menu`); a
+// dialog floating with no backdrop is not modal. What it holds keeps its state when it turns from
+// a sheet to a floating panel. `overlay` takes the handlers of the layer under it.
+export function Sheet({
+  sheet = true,
+  float,
+  layer,
+  height = 'fit',
+  surface = 'high',
+  grip = true,
+  scroll = false,
+  selectable = true,
+  role = 'dialog',
+  onClose,
+  overlay,
+  gripProps,
+  ref,
+  children,
+  ...rest
+}: DivAttrs & {
+  sheet?: boolean
+  float?: { at: string; backdrop: Backdrop }
+  layer?: OverlayLayer
+  height?: SheetHeight
+  surface?: SheetSurface
+  grip?: boolean
+  scroll?: boolean
+  selectable?: boolean
+  role?: 'dialog' | 'menu'
+  onClose: () => void
+  overlay?: DivAttrs
+  gripProps?: DivAttrs
+  ref?: Ref<HTMLDivElement>
+  children: ReactNode
+}) {
+  const backdrop = sheet ? 'dim' : (float?.backdrop ?? 'dim')
+  const look = sheet
+    ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} animate-sheet-up rounded-t-3xl px-safe pb-[max(0.75rem,env(safe-area-inset-bottom))]`
+    : `absolute ${float?.at ?? 'inset-0 m-auto h-fit max-h-[85%] w-[min(28rem,calc(100%-2rem))]'} rounded-2xl border border-outline-variant`
+  return (
+    <Overlay {...overlay} layer={layer} backdrop={backdrop} onClose={onClose}>
+      <div
+        {...rest}
+        ref={ref}
+        role={role}
+        aria-modal={role === 'dialog' && backdrop !== 'none' ? 'true' : undefined}
+        className={`${look} flex flex-col ${SURFACE[surface]} shadow-elevation-3 outline-none ${
+          scroll ? 'overflow-y-auto overscroll-contain' : 'overflow-hidden'
+        }${selectable ? '' : ' select-none'}`}
+      >
+        {sheet && grip && (
+          <div
+            {...gripProps}
+            className={`flex shrink-0 justify-center pt-3 pb-2${gripProps ? ' touch-none' : ''}`}
+          >
+            <div aria-hidden className="h-1 w-8 rounded-full bg-outline-variant" />
+          </div>
+        )}
+        {children}
+      </div>
+    </Overlay>
   )
 }
 

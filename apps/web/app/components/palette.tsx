@@ -50,7 +50,7 @@ import { ApiConsoleFor } from './api_console'
 import { useMedia } from './context_menu'
 import { CreatePollDialog } from './poll_dialog'
 import { Button, Chip, IconButton } from './controls'
-import { Masked, MaskedText, SheetGrip } from './ui'
+import { Masked, MaskedText, Sheet } from './ui'
 
 const SHEET = '(max-width: 767px)'
 
@@ -585,7 +585,6 @@ function Palette() {
   useEffect(() => loadLists(acct), [acct])
   useEffect(() => loadSignInChoices(acct), [acct])
   const sheet = useMedia(SHEET)
-  const pressed = useRef(false)
   const box = useRef<HTMLDivElement>(null)
 
   // Focus goes back to where it was when the palette closes.
@@ -629,45 +628,37 @@ function Palette() {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
 
+  const body =
+    view.kind === 'api' ? (
+      <ApiConsoleFor
+        key={`${view.op}`}
+        opId={view.op}
+        initial={view.values}
+        onBack={() => setPaletteView({ kind: 'list' })}
+      />
+    ) : view.kind === 'arg' ? (
+      <ArgView item={view.item} onBack={() => setPaletteView({ kind: 'list' })} />
+    ) : (
+      <ListView />
+    )
   return (
-    <div
-      className="fixed inset-0 z-palette bg-scrim/50"
-      onMouseDown={e => {
-        pressed.current = e.target === e.currentTarget
+    <Sheet
+      sheet={sheet}
+      float={{
+        at: `top-[max(4rem,12vh)] left-1/2 w-[min(42rem,calc(100%-2rem))] -translate-x-1/2 ${
+          view.kind === 'api' ? 'h-[min(44rem,80vh)]' : 'max-h-[min(40rem,80vh)]'
+        }`,
+        backdrop: 'dim',
       }}
-      onClick={e => {
-        if (pressed.current && e.target === e.currentTarget) closePalette()
-        pressed.current = false
-      }}
+      layer="palette"
+      height="tall"
+      surface="low"
+      aria-label="Command palette"
+      onClose={closePalette}
+      ref={box}
+      data-palette=""
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Command palette"
-        data-palette
-        ref={box}
-        className={
-          sheet
-            ? 'absolute inset-x-0 bottom-0 flex h-[85dvh] flex-col rounded-t-3xl bg-surface-container-low pt-2 pb-[env(safe-area-inset-bottom)] shadow-elevation-3'
-            : `absolute top-[max(4rem,12vh)] left-1/2 flex w-[min(42rem,calc(100vw-2rem))] -translate-x-1/2 flex-col overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-low shadow-elevation-3 ${
-                view.kind === 'api' ? 'h-[min(44rem,80vh)]' : 'max-h-[min(40rem,80vh)]'
-              }`
-        }
-      >
-        {sheet && <SheetGrip />}
-        {view.kind === 'api' ? (
-          <ApiConsoleFor
-            key={`${view.op}`}
-            opId={view.op}
-            initial={view.values}
-            onBack={() => setPaletteView({ kind: 'list' })}
-          />
-        ) : view.kind === 'arg' ? (
-          <ArgView item={view.item} onBack={() => setPaletteView({ kind: 'list' })} />
-        ) : (
-          <ListView />
-        )}
-      </div>
-    </div>
+      {body}
+    </Sheet>
   )
 }

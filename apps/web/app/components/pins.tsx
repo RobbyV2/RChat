@@ -15,7 +15,7 @@ import { SHEET_QUERY } from './emoji_picker'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
 import { Button, IconButton } from './controls'
-import { CloseButton, Masked, SheetGrip, useOwn } from './ui'
+import { CloseButton, Masked, Sheet, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
@@ -391,24 +391,16 @@ export function HeaderPopover({
 
   if (sheet)
     return createPortal(
-      <div
-        data-popover
-        onClick={e => {
-          if (e.target === e.currentTarget) onClose()
-        }}
-        className="fixed inset-x-0 top-app z-page flex h-app flex-col justify-end bg-scrim/40"
+      <Sheet
+        layer="page"
+        height="list"
+        overlay={{ 'data-popover': '' }}
+        onClose={onClose}
+        ref={rootRef}
+        aria-labelledby={titleId}
       >
-        <div
-          ref={rootRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={titleId}
-          className="flex max-h-[80%] min-h-64 animate-sheet-up flex-col overflow-hidden rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-elevation-3"
-        >
-          <SheetGrip />
-          {body}
-        </div>
-      </div>,
+        {body}
+      </Sheet>,
       document.body
     )
 

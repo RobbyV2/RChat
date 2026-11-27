@@ -18,7 +18,7 @@ import type { Channel } from '../lib/types'
 import { useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { MessageLink } from './markdown_message'
-import { CloseButton, fieldCls, FieldError, Masked, SheetGrip, useOwnServer } from './ui'
+import { CloseButton, fieldCls, FieldError, Masked, Sheet, useOwnServer } from './ui'
 
 const topicFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -192,25 +192,16 @@ function TopicWindow({
 
   if (sheet)
     return createPortal(
-      <div
-        data-popover
-        onClick={e => {
-          if (e.target === e.currentTarget) onClose()
-        }}
-        className="fixed inset-x-0 top-app z-page flex h-app flex-col justify-end bg-scrim/40"
+      <Sheet
+        layer="page"
+        overlay={{ 'data-popover': '' }}
+        onClose={onClose}
+        ref={rootRef}
+        aria-labelledby={titleId}
+        tabIndex={-1}
       >
-        <div
-          ref={rootRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={titleId}
-          tabIndex={-1}
-          className="flex max-h-[70%] animate-sheet-up outline-none flex-col overflow-hidden rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-elevation-3"
-        >
-          <SheetGrip />
-          {body}
-        </div>
-      </div>,
+        {body}
+      </Sheet>,
       document.body
     )
 

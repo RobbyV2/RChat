@@ -34,7 +34,7 @@ import { EDITABLE } from '../lib/follow'
 import { withActionElement } from '../lib/masked_reveal'
 import { dnd, type DragSpec } from './drag'
 import { IconButton } from './controls'
-import { SheetGrip } from './ui'
+import { Overlay, Sheet } from './ui'
 
 let press = idlePress
 let owner: HTMLElement | null = null
@@ -449,7 +449,7 @@ function Panel({
       ref={ref}
       role="menu"
       data-menu-level={level}
-      className="absolute max-h-[calc(100dvh-1rem)] min-w-44 overflow-y-auto rounded-xl bg-surface-container-high py-2 shadow-elevation-2"
+      className="fixed max-h-[calc(100dvh-1rem)] min-w-44 overflow-y-auto rounded-xl bg-surface-container-high py-2 shadow-elevation-2"
       onMouseDown={e => e.stopPropagation()}
     >
       {header && <div className="mb-1 border-b border-outline-variant px-2 pb-2">{header}</div>}
@@ -591,57 +591,56 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
     const top = stack[depth - 1]
     const items = levels[depth]
     return (
-      <div
-        className="fixed inset-x-0 top-app z-top flex h-app flex-col justify-end bg-scrim/40"
-        onClick={close}
+      <Sheet
+        role="menu"
+        scroll
+        selectable={false}
+        overlay={{
+          onContextMenu: e => {
+            e.preventDefault()
+            if (press.phase !== 'held') close()
+          },
+        }}
+        onClose={close}
+        ref={ref}
+        data-menu-level={0}
+        onClick={e => e.stopPropagation()}
         onContextMenu={e => {
           e.preventDefault()
-          if (press.phase !== 'held') close()
+          e.stopPropagation()
         }}
       >
-        <div
-          ref={ref}
-          role="menu"
-          data-menu-level={0}
-          onClick={e => e.stopPropagation()}
-          onContextMenu={e => {
-            e.preventDefault()
-            e.stopPropagation()
-          }}
-          className="animate-sheet-up max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-elevation-3 select-none"
-        >
-          <SheetGrip />
-          {top ? (
-            <div className="flex items-center gap-1 border-b border-outline-variant px-2 pb-2">
-              <IconButton icon={ChevronLeft} label="Back" size="lg" onClick={back} />
-              <span className="truncate text-base font-medium text-on-surface">{top.label}</span>
-            </div>
-          ) : (
-            menu.header && (
-              <div className="border-b border-outline-variant px-4 pt-1 pb-3">{menu.header}</div>
-            )
-          )}
-          {items.map((it, i) => (
-            <Row
-              key={`${depth}:${i}`}
-              it={it}
-              level={depth}
-              index={i}
-              open={false}
-              coarse
-              swatches={items.some(x => x.swatch)}
-              onPick={(el, keyboard) => pick(depth, i, el, keyboard)}
-            />
-          ))}
-        </div>
-      </div>
+        {top ? (
+          <div className="flex items-center gap-1 border-b border-outline-variant px-2 pb-2">
+            <IconButton icon={ChevronLeft} label="Back" size="lg" onClick={back} />
+            <span className="truncate text-base font-medium text-on-surface">{top.label}</span>
+          </div>
+        ) : (
+          menu.header && (
+            <div className="border-b border-outline-variant px-4 pt-1 pb-3">{menu.header}</div>
+          )
+        )}
+        {items.map((it, i) => (
+          <Row
+            key={`${depth}:${i}`}
+            it={it}
+            level={depth}
+            index={i}
+            open={false}
+            coarse
+            swatches={items.some(x => x.swatch)}
+            onPick={(el, keyboard) => pick(depth, i, el, keyboard)}
+          />
+        ))}
+      </Sheet>
     )
   }
 
   return (
-    <div
+    <Overlay
+      backdrop="clear"
       ref={ref}
-      className="fixed inset-0 z-top"
+      onClose={close}
       onMouseDown={close}
       onContextMenu={e => {
         e.preventDefault()
@@ -673,7 +672,7 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
           ))}
         </Panel>
       ))}
-    </div>
+    </Overlay>
   )
 }
 

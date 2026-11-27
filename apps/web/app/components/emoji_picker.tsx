@@ -51,6 +51,7 @@ import {
 import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { useMedia } from './context_menu'
 import { Button, IconButton } from './controls'
+import { Sheet } from './ui'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
 
@@ -246,32 +247,21 @@ export function EmojiPicker({
       onTouchCancel: () => setDragY(null),
     }
     return createPortal(
-      <div
-        {...guard}
-        data-popover
-        onClick={e => {
-          e.stopPropagation()
-          if (e.target === e.currentTarget) onClose()
-        }}
-        className="fixed inset-x-0 top-app z-top flex h-app flex-col justify-end bg-scrim/40"
+      <Sheet
+        height="half"
+        overlay={{ ...guard, onClick: stop, 'data-popover': '' }}
+        gripProps={handle}
+        onClose={onClose}
+        ref={rootRef}
+        aria-label={label}
+        style={
+          dragY
+            ? { transform: `translateY(${dragY}px)`, transition: 'none' }
+            : { transition: 'transform 160ms ease-out' }
+        }
       >
-        <div
-          ref={rootRef}
-          role="dialog"
-          aria-label={label}
-          style={
-            dragY
-              ? { transform: `translateY(${dragY}px)`, transition: 'none' }
-              : { transition: 'transform 160ms ease-out' }
-          }
-          className="flex h-[60%] min-h-80 animate-sheet-up flex-col overflow-hidden rounded-t-3xl bg-surface-container-high px-safe pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-elevation-3"
-        >
-          <div {...handle} className="flex shrink-0 touch-none justify-center pt-3 pb-2">
-            <div aria-hidden className="h-1 w-8 rounded-full bg-outline-variant" />
-          </div>
-          {body}
-        </div>
-      </div>,
+        {body}
+      </Sheet>,
       document.body
     )
   }

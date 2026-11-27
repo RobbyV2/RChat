@@ -69,7 +69,7 @@ import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { useLook } from './shown_user'
 import { UserAvatar } from './user_avatar'
 import { Button, IconButton, LinkButton, ListRow } from './controls'
-import { Masked, useCopied, useOwnServer } from './ui'
+import { Masked, Sheet, useCopied, useOwnServer } from './ui'
 import { dmPlaceholder } from '../lib/display_name'
 import { ProfileFriendButton } from './friends'
 import { COARSE_QUERY, useMedia } from './context_menu'
@@ -803,23 +803,18 @@ function Card({ target }: { target: ProfileTarget }) {
 
   if (sheet) {
     return (
-      <div
-        className="fixed inset-x-0 top-app z-top flex h-app flex-col justify-end bg-scrim/40"
-        onClick={close}
-        onContextMenu={e => e.preventDefault()}
+      <Sheet
+        grip={false}
+        scroll
+        overlay={{ onContextMenu: e => e.preventDefault() }}
+        onClose={close}
+        ref={ref}
+        aria-labelledby={titleId}
+        {...focusProps}
+        onClick={e => e.stopPropagation()}
       >
-        <div
-          ref={ref}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={titleId}
-          {...focusProps}
-          onClick={e => e.stopPropagation()}
-          className="animate-sheet-up flex max-h-[90%] flex-col overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high px-safe pb-[max(1rem,env(safe-area-inset-bottom))] shadow-elevation-3 outline-none"
-        >
-          {body}
-        </div>
-      </div>
+        {body}
+      </Sheet>
     )
   }
 

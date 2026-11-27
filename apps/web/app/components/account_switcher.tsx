@@ -33,15 +33,16 @@ import type { SettingsSection } from '../lib/settings_sections'
 import { AccountTag, ActorAvatar, InstanceTag } from './account_tag'
 import { hostedLockMessage } from '../lib/client/hosted_policy'
 import { useAddingAllowed } from './add_instance'
-import { longPress } from './context_menu'
+import { longPress, useMedia } from './context_menu'
 import { RailInstance } from './instance_badge'
 import { Button, IconButton, ListRow } from './controls'
-import { Masked, SheetGrip, useEscape } from './ui'
+import { Masked, Sheet, useEscape } from './ui'
 
 function useRows() {
   const [source] = useState(createSwitcherSource)
   return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
 }
+const NARROW = '(max-width: 767px)'
 const keyOf = (row: SwitcherRow) => JSON.stringify([row.origin, row.username, row.local])
 const smallButton =
   'inline-flex size-9 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container-highest disabled:opacity-35'
@@ -493,7 +494,7 @@ function AccountList({
         })}
       </div>
       {manage && !canAdd && <p className="px-3 text-sm">{hostedLockMessage()}</p>}
-      <footer className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-outline-variant p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <footer className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-outline-variant p-2">
         {canAdd && (
           <Button
             icon={Plus}
@@ -534,45 +535,37 @@ export function SwitcherDialog({ initialManage }: { initialManage: boolean }) {
   const group = model.groups.find(g => g.rows.some(r => r.active))
   const actor = group?.rows.find(r => r.active)
   const close = owner.store.getState().closeDialog
+  const narrow = useMedia(NARROW)
   useEscape(close)
   return (
-    <div
-      className="fixed inset-0 z-top flex items-end bg-scrim/40 md:items-start md:bg-transparent"
-      onMouseDown={e => {
-        if (e.target === e.currentTarget) close()
-      }}
+    <Sheet
+      sheet={narrow}
+      float={{ at: 'top-2 left-20 max-h-[calc(100%-1rem)] w-[26rem]', backdrop: 'clear' }}
+      surface="base"
+      onClose={close}
+      aria-label={manage ? 'Manage accounts' : 'Switch account'}
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-label={manage ? 'Manage accounts' : 'Switch account'}
-        className="flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-surface-container pb-safe text-on-surface shadow-elevation-3 md:mt-2 md:ml-20 md:max-h-[calc(100dvh-1rem)] md:w-[26rem] md:rounded-2xl md:pb-0"
-      >
-        <span className="md:hidden">
-          <SheetGrip />
-        </span>
-        <header className="flex items-center justify-between gap-2 px-4 py-2">
-          <h2 className="font-semibold">
-            {manage ? (
-              'Manage accounts'
-            ) : actor && group ? (
-              <span className="inline-flex items-center gap-1">
-                Acting as <AccountTag row={actor} name={group.name} />
-              </span>
-            ) : (
-              'Switch account'
-            )}
-          </h2>
-          <IconButton
-            icon={X}
-            label="Close account switcher"
-            size="lg"
-            shape="square"
-            onClick={close}
-          />
-        </header>
-        <AccountList manage={manage} modeChange={setManage} />
-      </section>
-    </div>
+      <header className="flex items-center justify-between gap-2 px-4 py-2">
+        <h2 className="font-semibold">
+          {manage ? (
+            'Manage accounts'
+          ) : actor && group ? (
+            <span className="inline-flex items-center gap-1">
+              Acting as <AccountTag row={actor} name={group.name} />
+            </span>
+          ) : (
+            'Switch account'
+          )}
+        </h2>
+        <IconButton
+          icon={X}
+          label="Close account switcher"
+          size="lg"
+          shape="square"
+          onClick={close}
+        />
+      </header>
+      <AccountList manage={manage} modeChange={setManage} />
+    </Sheet>
   )
 }

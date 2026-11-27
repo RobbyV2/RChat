@@ -46,7 +46,7 @@ import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MessageTime } from './timestamp'
 import { Button, Chip, IconButton, ListRow, Tab } from './controls'
-import { Masked, Sentinel, SheetGrip, useEscape, useOwnServer } from './ui'
+import { Masked, Sentinel, Sheet, useEscape, useOwnServer } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
@@ -698,25 +698,20 @@ export function InboxHost() {
   }
 
   return (
-    <div className={sheet ? 'fixed inset-0 z-top' : ''}>
-      {sheet && (
-        <div data-inbox-scrim className="absolute inset-0 bg-scrim/50" onClick={() => close()} />
-      )}
-      <div
-        ref={ref}
-        role="dialog"
-        aria-label="Inbox"
-        aria-modal={sheet ? 'true' : undefined}
-        onKeyDown={trap}
-        className={
-          sheet
-            ? 'absolute inset-x-0 bottom-0 flex h-[85dvh] flex-col rounded-t-3xl bg-surface-container-low pt-2 pb-[env(safe-area-inset-bottom)] shadow-elevation-3'
-            : 'fixed top-[calc(var(--safe-top)+3.25rem)] right-3 z-top flex h-[min(40rem,calc(100dvh-var(--safe-top)-4.5rem))] w-[26rem] flex-col rounded-2xl border border-outline-variant bg-surface-container-low shadow-elevation-3'
-        }
-      >
-        {sheet && <SheetGrip />}
-        <InboxPanel onClose={close} />
-      </div>
-    </div>
+    <Sheet
+      sheet={sheet}
+      float={{
+        at: 'top-[3.25rem] right-3 h-[min(40rem,calc(100%-4.5rem))] w-[26rem]',
+        backdrop: 'none',
+      }}
+      height="tall"
+      surface="low"
+      aria-label="Inbox"
+      onClose={() => close()}
+      ref={ref}
+      onKeyDown={trap}
+    >
+      <InboxPanel onClose={close} />
+    </Sheet>
   )
 }
