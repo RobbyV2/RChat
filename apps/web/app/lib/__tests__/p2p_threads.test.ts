@@ -424,6 +424,32 @@ describe('threads', () => {
     )
   }, 90_000)
 
+  test('the Threads list of a channel: roots with replies there, newest reply first', async () => {
+    const { clock, a, room, ch } = await solo()
+    const first = await a.servers.send(room, { ch, body: 'First topic' })
+    const second = await a.servers.send(room, { ch, body: 'Second topic' })
+    await a.servers.send(room, { ch, body: 'No replies' })
+    await a.servers.send(room, { ch, body: 'on first', thread: first })
+    await clock.advance(1000)
+    const last = await a.servers.send(room, { ch, body: 'on second', thread: second })
+    await clock.advance(1000)
+    await a.servers.addChannel(room, 'other')
+    const other = a.servers.view(room)!.channels.find(c => c.name === 'other')!.id
+    const elsewhere = await a.servers.send(room, { ch: other, body: 'Elsewhere' })
+    await a.servers.send(room, { ch: other, body: 'on elsewhere', thread: elsewhere })
+    const list = await a.servers.listThreads(room, ch)
+    expect(list.map(t => [t.root.id, t.root.replies]).sort()).toEqual(
+      [
+        [first, 1],
+        [second, 1],
+      ].sort()
+    )
+    const newest = [...list].sort((x, y) => (x.last < y.last ? 1 : -1))
+    expect(newest[0].root.id).toBe(second)
+    expect(newest[0].last).toBe((await a.store.event(last))!.sortKey)
+    expect((await a.servers.listThreads(room, other)).map(t => t.root.id)).toEqual([elsewhere])
+  }, 90_000)
+
   test('a reply naming a root that is missing, elsewhere or itself a reply shows in its channel', async () => {
     const { clock, hub, a, room, ch } = await solo()
     const b = await makeMember(hub, 'Bob', clock)

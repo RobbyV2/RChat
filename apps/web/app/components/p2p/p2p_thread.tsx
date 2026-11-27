@@ -6,7 +6,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
 
-import { Fragment, useCallback, useEffect, useMemo, useRef } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { roomLooksKey } from '../../lib/server_profile'
 import { useStore } from '../../lib/store'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
@@ -14,7 +14,7 @@ import type { P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import type { ServerView } from '../../lib/p2p/server'
 import { newSince } from '../../lib/lists'
-import type { Message } from '../../lib/types'
+import type { Message, UserRef } from '../../lib/types'
 import { ChatSourceProvider } from '../chat_source'
 import { EmojiPicker } from '../emoji_picker'
 import { ThreadPanelView } from '../thread_panel'
@@ -33,29 +33,47 @@ import {
 } from './p2p_chat'
 import { sendBlockFor } from './p2p_server_view'
 import { usePeerTimeoutEnds } from '../timeout_dialog'
+import { useDmFacts } from './p2p_dm_pane'
 import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
 import { MessageListSkeleton } from '../skeletons'
 
-// The thread of a P2P server channel beside it (full screen on phones): its root, the replies
-// stored here and a composer, through the same panel as instance threads.
+// The thread of a P2P server channel or conversation beside it (full screen on phones): its root,
+// the replies stored here and a composer, through the same panel as instance threads.
 
 const EMPTY: P2pMessage[] = []
 const NONE: string[] = []
 const ALONE: GroupPlace = { first: true, last: true }
 
-function P2pThreadPanelBody() {
-  const t = useP2p(s => s.thread)
-  const v = useP2p(s => (s.thread ? s.servers[s.thread.room] : undefined))
-  if (!t || !v) return null
-  return <ThreadBody key={`${t.room}/${t.root}`} t={t} v={v} />
+// What a thread's rows and composer need from where it is.
+interface ThreadFacts {
+  nameOf: (ik: string) => string
+  userOf?: (ik: string) => UserRef
+  ownName: (ik: string) => string
+  people: Mentionable[]
+  mayDelete: (p: P2pMessage) => boolean
+  disabled: ReactNode
+  typers: string[]
+  unseen: boolean
+  textOnly?: boolean
+  pendingTip: string
+  // A server thread's rules for acting, a timeout among them; a conversation follows `disabled`.
+  canAct?: boolean
+  timedOut?: boolean
 }
 
-function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
-  const identity = useP2pApp()!
-  const { memberName, memberUser, profileName, p2pThread, p2pDm } = identity
+function P2pThreadPanelBody() {
+  const t = useP2p(s => s.thread)
+  const v = useP2p(s => (s.thread?.ch ? s.servers[s.thread.room] : undefined))
+  if (!t) return null
+  if (!t.ch) return <ConversationThread key={`${t.room}/${t.root}`} t={t} />
+  return v ? <ServerThread key={`${t.room}/${t.root}`} t={t} v={v} /> : null
+}
 
+function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
+  const identity = useP2pApp()!
+  const { memberName, memberUser, profileName } = identity
   const acct = useAccount()
   const me = useP2p(s => s.me)
   const reader = useP2p(s => s.reader)
@@ -63,14 +81,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const status = useP2p(s => s.status)
   const movedAt = useP2p(s => s.movedAt)
   const movingAt = useP2p(s => s.movingAt)
-  const key = threadKey(t)
-  const scope = identityScopeKey(identity.localId, threadScope(t))
-  const focus = useP2p(s => (s.focus?.room === key ? s.focus : null))
-  const typers = useP2p(s => s.serverTyping[key] ?? NONE)
-  const unseen = (v.chans[t.ch]?.threads?.[t.root] ?? 0) > 0
-  const following = useStore(s => s.atBottom[scope] === true)
-  const listRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
+  const typers = useP2p(s => s.serverTyping[threadKey(t)] ?? NONE)
   const room = v.id
   const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const members = v.members
@@ -84,6 +95,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const timedOut = usePeerTimeoutEnds(v.timedOutUntil)
   const moderator = v.me === 'join' && (v.perms & P.ManageMessages) !== 0 && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
+  const ownName = useCallback((ik: string) => profileName(ik, room), [room])
   const channel = v.channels.find(c => c.id === t.ch)
   const { bar: disabled, canAct } = sendBlockFor(identity)(
     v,
@@ -91,9 +103,73 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
     channel,
     acct
   )
+  const names = useMemo(() => typers.map(nameOf), [typers, nameOf])
+  return (
+    <ThreadBody
+      t={t}
+      f={{
+        nameOf,
+        userOf,
+        ownName,
+        people,
+        mayDelete,
+        disabled,
+        typers: names,
+        unseen: (v.chans[t.ch ?? '']?.threads?.[t.root] ?? 0) > 0,
+        textOnly: channel?.text_only,
+        pendingTip: 'Waiting for a member to come online',
+        canAct,
+        timedOut: timedOut !== null,
+      }}
+    />
+  )
+}
+
+function ConversationThread({ t }: { t: P2pThread }) {
+  const identity = useP2pApp()!
+  const { profileName } = identity
+  const facts = useDmFacts()
+  const { nameOf, people, mayDelete, disabled, peerIk, peerRaw, peerName } = facts
+  const typingIks = useP2p(s => s.typing[threadKey(t)] ?? NONE)
+  const unseen = useP2p(s => (s.rooms[t.room]?.threads?.[t.root] ?? 0) > 0)
+  const ownName = useCallback((ik: string) => profileName(ik), [])
+  const typers = useMemo(
+    () => typingIks.filter(ik => ik === peerIk).map(() => peerRaw),
+    [typingIks, peerIk, peerRaw]
+  )
+  return (
+    <ThreadBody
+      t={t}
+      f={{
+        nameOf,
+        ownName,
+        people,
+        mayDelete,
+        disabled,
+        typers,
+        unseen,
+        pendingTip: `Waiting for ${peerName} to come online`,
+      }}
+    />
+  )
+}
+
+function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
+  const identity = useP2pApp()!
+  const { p2pThread, p2pDm } = identity
+  const { nameOf, userOf, ownName, people, mayDelete, disabled, unseen } = f
+
+  const me = useP2p(s => s.me)
+  const key = threadKey(t)
+  const scope = identityScopeKey(identity.localId, threadScope(t))
+  const focus = useP2p(s => (s.focus?.room === key ? s.focus : null))
+  const following = useStore(s => s.atBottom[scope] === true)
+  const listRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const canAct = f.canAct ?? !disabled
+  const timedOut = f.timedOut ?? false
   const replies = t.messages ?? EMPTY
   const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])
-  const ownName = useCallback((ik: string) => profileName(ik, room), [room])
   const { rows, num, idOf, source, editing, editingState, rowMenu, copyRow, picker, setPicker } =
     useP2pList({
       messages: all,
@@ -104,7 +180,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
       draftKey: key,
       scope,
       canAct,
-      timedOut: timedOut !== null,
+      timedOut,
       mayPin: false,
       mayDelete,
       forwardSkip: null,
@@ -178,12 +254,12 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
         first={place.first}
         last={place.last}
         mine={p.sender === me}
-        pendingTip="Waiting for a member to come online"
+        pendingTip={f.pendingTip}
         mentioned={pingsMe(p, me)}
         divider={false}
         flash={flash === m.id}
         canAct={canAct}
-        timedOut={timedOut !== null}
+        timedOut={timedOut}
         canDelete={!root && mayDelete(p)}
         editing={editing && editingState?.id === p.id ? editing : null}
         draftKey={key}
@@ -241,14 +317,10 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
           }
           footer={
             <>
-              <TypingIndicator
-                scope={null}
-                bg="bg-surface-container-low"
-                names={typers.map(nameOf)}
-              />
+              <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
               <P2pComposer
                 draftKey={key}
-                channelTextOnly={channel?.text_only}
+                channelTextOnly={f.textOnly}
                 scope={scope}
                 title="the thread"
                 placeholder="Message thread"

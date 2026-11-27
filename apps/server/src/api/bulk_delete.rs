@@ -12,8 +12,8 @@ use utoipa::ToSchema;
 
 use crate::api::access::perms::Perm;
 use crate::api::access::{
-    MsgScope, Proof, ResolvedChannel, ResolvedMessage, StaffUse, not_found, resolve_channel_for,
-    resolve_dm, resolve_message_for, typing_scope,
+    MsgScope, Proof, ResolvedChannel, ResolvedMessage, StaffUse, ThreadHome, not_found,
+    resolve_channel_for, resolve_dm, resolve_message_for, typing_scope,
 };
 use crate::api::audit;
 use crate::api::budget::slow_down;
@@ -200,7 +200,11 @@ impl Place {
         match self {
             Place::Channel(c) => scope.channel_id == Some(c.id()) && scope.thread_root_id.is_none(),
             Place::Thread(root, _) => scope.thread_root_id == Some(*root),
-            Place::Dm(id, _) => scope.dm_id == Some(*id) && scope.channel_id.is_none(),
+            Place::Dm(id, _) => {
+                scope.dm_id == Some(*id)
+                    && scope.channel_id.is_none()
+                    && scope.thread_root_id.is_none()
+            }
         }
     }
 
@@ -208,7 +212,10 @@ impl Place {
         match self {
             Place::Channel(c) => ("m.channel_id = $1 AND m.thread_root_id IS NULL", c.id()),
             Place::Thread(root, _) => ("m.thread_root_id = $1", *root),
-            Place::Dm(id, _) => ("m.dm_id = $1 AND m.channel_id IS NULL", *id),
+            Place::Dm(id, _) => (
+                "m.dm_id = $1 AND m.channel_id IS NULL AND m.thread_root_id IS NULL",
+                *id,
+            ),
         }
     }
 
@@ -233,7 +240,8 @@ impl Place {
         };
         let (dm_id, dm_users) = match self {
             Place::Dm(id, users) => (Some(*id), Some(users.clone())),
-            Place::Channel(_) | Place::Thread(_, _) => (None, None),
+            Place::Thread(_, root) => (root.scope().dm_id, root.scope().dm_users.clone()),
+            Place::Channel(_) => (None, None),
         };
         let thread_root_id = match self {
             Place::Thread(root, _) => Some(*root),
@@ -283,7 +291,9 @@ async fn resolve_place(
             let root = resolve_message_for(db, id, Some(user), &Proof::none(), used)
                 .await
                 .map_err(hide)?;
-            root.thread_channel().map_err(hide)?;
+            if let ThreadHome::Dm { id: dm, users: _ } = root.thread_home().map_err(hide)? {
+                resolve_dm(db, dm, user).await.map_err(hide)?;
+            }
             Ok(Place::Thread(id, Box::new(root)))
         }
         _ => Ok(Place::Dm(id, resolve_dm(db, id, user).await.map_err(hide)?)),

@@ -239,6 +239,8 @@ impl Modify for Bearer {
         super::messages::send_channel_message,
         super::messages::thread_messages,
         super::messages::send_thread_message,
+        super::threads::channel_threads,
+        super::threads::dm_threads,
         super::messages::dm_messages,
         super::messages::send_dm_message,
         super::messages::delete_message,

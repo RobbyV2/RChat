@@ -52,6 +52,7 @@ const IN_A_SERVER = [
   'system_messages.tsx',
   'text_assist.tsx',
   'thread_panel.tsx',
+  'threads.tsx',
   'timeout_dialog.tsx',
   'typing_indicator.tsx',
   'voice_grid.tsx',

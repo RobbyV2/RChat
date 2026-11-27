@@ -23,6 +23,7 @@ import {
   MoreVertical,
   MessageSquareText,
   MessagesSquare,
+  NotebookPen,
   Phone,
   PhoneCall,
   PhoneIncoming,
@@ -39,6 +40,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { lastOwn, newSince, unreadMark } from '../lib/lists'
+import { SELF_DM_TEXT, SELF_DM_TITLE } from '../lib/dm_list'
 import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
@@ -102,6 +104,7 @@ import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction } from './forwards'
 import { PinNotice, PinsButton, PinsWindow } from './pins'
+import { ThreadsButton, ThreadsWindow } from './threads'
 import { PollCard } from './poll_card'
 import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
@@ -504,7 +507,6 @@ interface RowProps {
   canEdit: boolean
   canForward: boolean
   editing: boolean
-  channel: boolean
   server: string | null
   color: string | undefined
   quoteColor: string | undefined
@@ -529,7 +531,6 @@ const MessageRow = memo(function MessageRow({
   canEdit,
   canForward,
   editing,
-  channel,
   server,
   color,
   quoteColor,
@@ -583,7 +584,7 @@ const MessageRow = memo(function MessageRow({
         />
       )}
       <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
-      {channel && m.reply_count > 0 && (
+      {m.reply_count > 0 && (
         <button
           title="Open thread"
           onClick={() => void openThread(m)}
@@ -770,6 +771,32 @@ export function OutboxRows({
         </Fragment>
       ))}
     </>
+  )
+}
+
+// Your DM with yourself while it is empty: what the space is for.
+function SelfDmEmpty() {
+  const me = useStore(s => s.me)
+  return (
+    <div
+      data-self-dm-empty
+      className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
+    >
+      {me ? (
+        <span className="rounded-full ring-4 ring-secondary-container">
+          <UserAvatar
+            username={me.username}
+            avatarKind={me.avatar_kind}
+            avatarColor={me.avatar_color}
+            size={64}
+          />
+        </span>
+      ) : (
+        <NotebookPen size={40} className="text-on-surface-variant" />
+      )}
+      <span className="text-2xl font-semibold text-on-surface">{SELF_DM_TITLE}</span>
+      <span className="max-w-md text-sm text-on-surface-variant">{SELF_DM_TEXT}</span>
+    </div>
   )
 }
 
@@ -1004,7 +1031,13 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         timedOutEnds === null))
   const replies = useStore(
     useShallow(s =>
-      replyAccess(s, memberServer, view?.kind === 'channel' ? view.channelId : null, canReact)
+      replyAccess(
+        s,
+        memberServer,
+        view?.kind === 'channel' ? view.channelId : null,
+        canReact,
+        view?.kind === 'dm'
+      )
     )
   )
 
@@ -1150,6 +1183,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           <StatusClock timeCls="@max-lg:hidden" />
           {scope && <SelectButton scope={scope} className="@max-sm:hidden" />}
           {scope && <PinsButton className="@max-sm:hidden" />}
+          {scope && <ThreadsButton className="@max-sm:hidden" />}
           {!guest && <InboxButton />}
           {view?.kind === 'channel' && !isVoice && (
             <button
@@ -1221,12 +1255,16 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                   <span>Select a conversation</span>
                 </div>
               )}
-              {view && messages.length === 0 && (
-                <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant opacity-70">
-                  <span className="text-2xl font-semibold">No messages here yet</span>
-                  <span className="text-sm">Be the first to say something.</span>
-                </div>
-              )}
+              {view &&
+                messages.length === 0 &&
+                (dm?.is_self ? (
+                  <SelfDmEmpty />
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant opacity-70">
+                    <span className="text-2xl font-semibold">No messages here yet</span>
+                    <span className="text-sm">Be the first to say something.</span>
+                  </div>
+                ))}
               <div ref={contentRef}>
                 {positioned && messages.length > 0 && older?.more !== false && (
                   <EdgeSentinel key={messages[0].id} root={listRef} edge="top" onVisible={onTop} />
@@ -1253,7 +1291,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                         canEdit={canEdit(m)}
                         canForward={forwardable(m)}
                         editing={editingId === m.id}
-                        channel={view?.kind === 'channel'}
                         server={memberServer}
                         color={roleColor(
                           detail?.roles,
@@ -1315,6 +1352,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         </>
       )}
       {scope && <PinsWindow />}
+      {scope && <ThreadsWindow />}
       {dragging && (
         <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-surface/80 font-medium text-primary">
           Drop file to attach

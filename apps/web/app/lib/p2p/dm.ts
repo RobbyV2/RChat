@@ -4,6 +4,7 @@ import {
   aimedAt,
   blankRoom,
   capped,
+  getEvents,
   insertEvent,
   refitFull,
   type DagLimits,
@@ -12,6 +13,7 @@ import {
   type PingKind,
 } from './dag'
 import {
+  dmRootOf,
   fileKey,
   type EventRecord,
   type OutboxRecord,
@@ -22,6 +24,7 @@ import {
 import { Blobs, type BulkLimits } from './blobs'
 import { buildEvent, isLate, validate, type Invalid, type Wire } from './event_v1'
 import {
+  isEventId,
   LIMITS as EV,
   fitForward,
   shownReaction,
@@ -46,6 +49,7 @@ import { realClock, type Clock } from './session'
 import { around, type PageOpts } from './jump'
 import { isQuotaError, Sync, type SyncLimits } from './sync'
 import { clip } from './rate'
+import { deadCounts, liveThreadPings, type ThreadPing } from './thread_pings'
 
 // P2P direct messages: one room per pair of identities, its events in IndexedDB on both sides,
 // synced whenever both are online. This module builds the conversation view (edits, reactions,
@@ -105,12 +109,12 @@ export interface P2pMessage {
   everyone?: boolean
   // P2P servers: it shows, but its body was purged here and is on its way back.
   unavailable?: boolean
-  // P2P servers: a thread reply's root; on a top-level message, its thread's replies that show
-  // and when the last one was sent.
+  // A thread reply's root; on a top-level message, its thread's replies that show and when the
+  // last one was sent.
   thread?: string | null
   replies?: number
   lastReply?: number
-  // Names a thread root that isn't one here: shown in the channel, and starts no thread.
+  // Names a thread root that isn't one here: shown in the conversation, and starts no thread.
   noThread?: true
   // P2P servers: hidden, sent around the time its author was removed.
   removed?: boolean
@@ -339,6 +343,15 @@ const related = async (db: P2pDatabase, room: string, id: string) =>
 const outboxMap = async (db: P2pDatabase, room: string) =>
   new Map((await db.getAllFromIndex('outbox', 'room', room)).map(o => [o.id, o]))
 
+const threadRange = (room: string, root: string, after?: string, before?: string) =>
+  IDBKeyRange.bound([room, root, after ?? ''], [room, root, before ?? '\uffff'], !!after, !!before)
+
+// The replies of a thread that show: messages, not deleted.
+const repliesIn = async (db: P2pDatabase, room: string, root: string) =>
+  (await db.getAllFromIndex('events', 'room_thread_sort', threadRange(room, root))).filter(
+    r => r.type === 'msg' && !r.redacted
+  )
+
 export const viewOf = async (
   db: P2pDatabase,
   room: string,
@@ -348,13 +361,23 @@ export const viewOf = async (
 ) => {
   const box = await outboxMap(db, room)
   const out: P2pMessage[] = []
+  const get = (id: string) => db.get('events', id)
   for (const r of recs) {
     const rel = await related(db, room, r.id)
     const reply = r.type === 'pin' ? r.target : (r.wire.c as MsgContent | null)?.reply
     const target = reply ? await db.get('events', reply) : undefined
     const replyRel = target ? await related(db, room, target.id) : []
     const m = deriveMessage(r, rel, target?.room === room ? target : null, replyRel, me, box, peer)
-    if (m) out.push(m)
+    if (!m) continue
+    if (r.type !== 'msg') out.push(m)
+    else if (r.thread) {
+      const root = await dmRootOf(r, get)
+      out.push(root ? { ...m, thread: root } : { ...m, noThread: true })
+    } else {
+      const list = await repliesIn(db, room, r.id)
+      const last = list.at(-1)
+      out.push(last ? { ...m, replies: list.length, lastReply: last.effTs } : m)
+    }
   }
   return out
 }
@@ -376,16 +399,21 @@ export const loadMessages = async (
   const limit = opts.limit ?? lim.dm.page
   const up = opts.newer === true
   const recs: EventRecord[] = []
-  // Messages, call rows and pin lines, from the starting end.
+  // Messages (thread replies show in their thread only), call rows and pin lines, from the
+  // starting end.
   for (const type of ['msg', 'call', 'pin'] as const) {
-    let cursor = await db
-      .transaction('events')
-      .store.index('room_type_sort')
+    const store = db.transaction('events').store
+    const get = (id: string) => store.get(id)
+    let cursor = await store
+      .index('room_type_sort')
       .openCursor(sortRange(room, type, opts.before, opts.after, opts.from), up ? 'next' : 'prev')
     let n = 0
     while (cursor && n < limit + 1) {
-      recs.push(cursor.value)
-      n += 1
+      const r = cursor.value
+      if (!(await dmRootOf(r, get))) {
+        recs.push(r)
+        n += 1
+      }
       cursor = await cursor.continue()
     }
   }
@@ -449,6 +477,111 @@ export const loadAround = async (
   )
 }
 
+// A thread: its root and replies, oldest first, `limit` at most before `before` (or after
+// `after`).
+export const loadDmThread = async (
+  db: P2pDatabase,
+  room: string,
+  root: string,
+  me: string,
+  peer: string,
+  opts: { before?: string; after?: string; limit?: number } = {}
+) => {
+  const limit = opts.limit ?? 100
+  const r = await db.get('events', root)
+  if (!r || r.room !== room || r.type !== 'msg' || r.thread) return null
+  const recs: EventRecord[] = []
+  let cursor = await db
+    .transaction('events')
+    .store.index('room_thread_sort')
+    .openCursor(threadRange(room, root, opts.after, opts.before), opts.after ? 'next' : 'prev')
+  while (cursor && recs.length < limit + 1) {
+    if (cursor.value.type === 'msg') recs.push(cursor.value)
+    cursor = await cursor.continue()
+  }
+  const more = recs.length > limit
+  const page = opts.after ? recs.slice(0, limit) : recs.slice(0, limit).reverse()
+  const [head] = await viewOf(db, room, [r], me, peer)
+  return { root: head ?? null, messages: await viewOf(db, room, page, me, peer), more }
+}
+
+// A thread around one of its replies, for jumping to it.
+export const loadDmThreadAround = async (
+  db: P2pDatabase,
+  room: string,
+  root: string,
+  me: string,
+  peer: string,
+  id: string,
+  lim: Pick<Local, 'server'> = LOCAL
+) => {
+  const r = await db.get('events', id)
+  if (!r || r.room !== room || (await dmRootOf(r, x => db.get('events', x))) !== root) return null
+  const older = await loadDmThread(db, room, root, me, peer, {
+    before: r.sortKey,
+    limit: lim.server.threadBefore,
+  })
+  const newer = await loadDmThread(db, room, root, me, peer, {
+    after: r.sortKey,
+    limit: lim.server.threadAfter,
+  })
+  if (!older || !newer) return null
+  const self = await viewOf(db, room, [r], me, peer)
+  return { ...older, messages: [...older.messages, ...self, ...newer.messages] }
+}
+
+// Every thread of a conversation that shows: its root (with its replies) and the sort key of
+// its newest reply.
+export const loadDmThreads = async (db: P2pDatabase, room: string, me: string, peer: string) => {
+  const recs = await db.getAllFromIndex(
+    'events',
+    'room_thread_sort',
+    IDBKeyRange.bound([room, ''], [room, '\uffff'])
+  )
+  const last = new Map<string, string>()
+  for (const r of recs)
+    if (r.type === 'msg' && !r.redacted && r.thread && (last.get(r.thread) ?? '') < r.sortKey)
+      last.set(r.thread, r.sortKey)
+  const roots: EventRecord[] = []
+  for (const id of last.keys()) {
+    const r = await db.get('events', id)
+    if (r && r.room === room && r.type === 'msg' && !r.thread) roots.push(r)
+  }
+  const rows = await viewOf(db, room, roots, me, peer)
+  return rows.flatMap(m => (m.replies ? [{ root: m, last: last.get(m.id) ?? '' }] : []))
+}
+
+// Replies a conversation stored before this device knew its threads get their root, once: they
+// move into their thread.
+export const THREADS_BACKFILL = 'dm_threads_v1'
+
+export const backfillThreads = async (db: P2pDatabase) => {
+  if (await db.get('meta', THREADS_BACKFILL)) return []
+  const rooms = (await db.getAll('rooms')).filter(r => r.kind === 'dm').map(r => r.id)
+  const changed: string[] = []
+  for (const room of rooms) {
+    const tx = db.transaction('events', 'readwrite')
+    let n = 0
+    let cursor = await tx.store.index('room_type_sort').openCursor(sortRange(room, 'msg'))
+    while (cursor) {
+      const r = cursor.value
+      const thread = (r.wire.c as MsgContent | null)?.thread
+      if (r.thread === undefined && isEventId(thread)) {
+        await cursor.update({ ...r, thread })
+        n += 1
+      }
+      cursor = await cursor.continue()
+    }
+    await tx.done
+    if (n) changed.push(room)
+  }
+  await db.put('meta', true, THREADS_BACKFILL)
+  return changed
+}
+
+// The backfill never keeps P2P from starting (storage full, for one): it runs again next start.
+export const backfillThreadsSafely = (db: P2pDatabase) => backfillThreads(db).catch(() => [])
+
 // ----- Sending -----
 
 export class DmError extends Error {}
@@ -478,6 +611,7 @@ export const fullNote = (
 export const STORAGE_FULL_TEXT = "Storage on this device is full. New messages can't be saved."
 export const PEER_FULL_TEXT = 'Their storage is full. Messages wait until there is space.'
 export const TOO_LONG_TEXT = 'This message is too long to send.'
+export const THREAD_ROOT_TEXT = 'Threads only start on top-level messages'
 export const CANT_SEND_TEXT = "This message can't be sent. Delete it instead."
 
 const INVALID_TEXT: Partial<Record<Invalid, string>> = {
@@ -501,12 +635,14 @@ export const movedText = (at: number | null) =>
     ? MOVED_TEXT
     : `Your P2P identity moved to another device on ${new Date(at).toLocaleDateString()}. This browser can no longer send.`
 
+// `thread`: the root of the conversation thread the event replies in.
 export interface Arrival {
   room: string
   peer: string
   rec: EventRecord
   ping: PingKind | null
   unread: boolean
+  thread: string | null
 }
 
 export interface DmDeps {
@@ -578,7 +714,7 @@ export class Dms {
       roomOf: ik => dmRoomId(node.ik, ik),
       onStored: (room, from, added) => this.stored(room, from, added),
       onDelivered: room => this.changed(room),
-      onTyping: (room, ik, on) => this.typed(room, ik, on),
+      onTyping: (room, ik, on, thread) => this.typed(room, ik, on, thread ?? null),
       onState: room => this.changed(room),
       limits: { ...this.local.sync, ...deps.limits },
       dag: () => this.dag,
@@ -606,6 +742,7 @@ export class Dms {
   // Conversations that filled under lower limits than these take events again.
   async start() {
     for (const id of await refitFull(this.db, 'dm', this.dag)) this.changed(id)
+    for (const id of await backfillThreadsSafely(this.db)) this.changed(id)
   }
 
   // The serving gate for files: a mutual contact, in a conversation where a live message carries
@@ -769,8 +906,8 @@ export class Dms {
       if (a.status !== 'new') continue
       if (a.rec.sender === this.me) continue
       for (const fn of this.arriveFns)
-        fn({ room, peer: from, rec: a.rec, ping: a.ping, unread: a.unread })
-      if (a.rec.type === 'msg') this.typed(room, a.rec.sender, false)
+        fn({ room, peer: from, rec: a.rec, ping: a.ping, unread: a.unread, thread: a.thread })
+      if (a.rec.type === 'msg') this.typed(room, a.rec.sender, false, a.thread)
     }
     this.changed(room)
   }
@@ -877,9 +1014,19 @@ export class Dms {
     this.changed(room)
   }
 
-  async send(room: string, msg: { body: string; reply?: string; fwd?: Fwd; att?: Attachment[] }) {
+  async send(
+    room: string,
+    msg: { body: string; reply?: string; fwd?: Fwd; att?: Attachment[]; thread?: string }
+  ) {
     const rec = await this.deps.store.room(room)
     const content: MsgContent = { body: msg.body }
+    if (msg.thread) {
+      const root = await this.db.get('events', msg.thread)
+      const gone = root?.redacted || root?.purged
+      if (!root || root.room !== room || root.type !== 'msg' || root.thread || gone)
+        throw new DmError(THREAD_ROOT_TEXT)
+      content.thread = msg.thread
+    }
     if (msg.reply) content.reply = msg.reply
     if (msg.att?.length) content.att = msg.att
     if (msg.fwd) content.fwd = msg.fwd
@@ -939,29 +1086,79 @@ export class Dms {
     return this.create(room, 'pin', { target, on })
   }
 
-  async markRead(room: string) {
-    await this.deps.store.updateRoom(room, cur =>
-      cur && (cur.readSeq !== cur.lastSeq || cur.unread || cur.pings)
-        ? { ...cur, readSeq: cur.lastSeq, unread: 0, pings: 0 }
+  // Reads the conversation; `drop` comes off its thread counters (thread pings that no longer
+  // count).
+  async markRead(room: string, drop: Readonly<Record<string, number>> = {}) {
+    await this.deps.store.updateRoom(room, cur => {
+      if (!cur) return null
+      const threads = lessThreads(cur.threads, drop)
+      if (cur.readSeq === cur.lastSeq && !cur.unread && !cur.pings && threads === cur.threads)
+        return null
+      return { ...cur, readSeq: cur.lastSeq, unread: 0, pings: 0, threads }
+    })
+    this.changed(room)
+  }
+
+  // The thread counters of a conversation (pings per root).
+  async threadCounts(room: string): Promise<Record<string, number>> {
+    return { ...(await this.deps.store.room(room))?.threads }
+  }
+
+  // Reads the conversation, and takes off the thread pings that no longer count: their reply (or
+  // the reaction's target) was deleted or left its thread, or the thread's root is gone. `pings`:
+  // the log's unread thread pings of the conversation; `counts`: the thread counters before they
+  // were read. Returns the ids of `pings` that no longer count.
+  async readConversation(
+    room: string,
+    pings: readonly ThreadPing[],
+    counts: Readonly<Record<string, number>>
+  ) {
+    const db = this.db
+    const live = await liveThreadPings(pings, {
+      events: ids => getEvents(db, room, ids),
+      rootOf: m => dmRootOf(m, id => db.get('events', id)),
+      shows: async ids =>
+        new Set(
+          (await getEvents(db, room, ids)).filter(r => !r.redacted && !r.purged).map(r => r.id)
+        ),
+    })
+    await this.markRead(room, deadCounts(counts, pings, live))
+    return pings.filter(p => !live.has(p.id)).map(p => p.id)
+  }
+
+  // Pings marked read one by one (the inbox): off the counter (a thread's, for pings on its
+  // replies), the read position stays.
+  async unping(room: string, n: number, thread: string | null = null) {
+    await this.deps.store.updateRoom(room, cur => {
+      if (!cur) return null
+      if (thread === null)
+        return cur.pings > 0 ? { ...cur, pings: Math.max(0, cur.pings - n) } : null
+      const left = (cur.threads?.[thread] ?? 0) - n
+      return cur.threads?.[thread]
+        ? { ...cur, threads: withCount(cur.threads, thread, left) }
         : null
-    )
+    })
     this.changed(room)
   }
 
-  // Pings marked read one by one (the inbox): off the counter, the read position stays.
-  async unping(room: string, n: number) {
-    await this.deps.store.updateRoom(room, cur =>
-      cur && cur.pings > 0 ? { ...cur, pings: Math.max(0, cur.pings - n) } : null
-    )
-    this.changed(room)
+  // A thread read at the bottom: its pings come off.
+  async markThread(room: string, root: string) {
+    let wrote = false
+    await this.deps.store.updateRoom(room, cur => {
+      if (!cur?.threads?.[root]) return null
+      wrote = true
+      return { ...cur, threads: withCount(cur.threads, root, 0) }
+    })
+    if (wrote) this.changed(room)
   }
 
-  typing(room: string, on: boolean) {
-    this.sync.typing(room, on)
+  // `thread`: typing in the thread of that root.
+  typing(room: string, on: boolean, thread: string | null = null) {
+    this.sync.typing(room, on, thread)
   }
 
-  private typed(room: string, ik: string, on: boolean) {
-    const key = `${room}\n${ik}`
+  private typed(room: string, ik: string, on: boolean, thread: string | null = null) {
+    const key = `${typingScope(room, thread)}\n${ik}`
     const cur = this.typers.get(key)
     if (cur) this.clock.clear(cur.timer)
     if (!on) {
@@ -974,13 +1171,15 @@ export class Dms {
     const ttl = this.sync.limits.typingMs
     this.typers.set(key, {
       until: this.clock.now() + ttl,
-      timer: this.clock.set(() => this.typed(room, ik, false), ttl),
+      timer: this.clock.set(() => this.typed(room, ik, false, thread), ttl),
     })
     if (!cur) this.changed(room)
   }
 
-  typingIn(room: string) {
-    return [...this.typers.keys()].filter(k => k.startsWith(`${room}\n`)).map(k => k.split('\n')[1])
+  // Who types in the conversation, or in the thread of `thread`.
+  typingIn(room: string, thread: string | null = null) {
+    const at = `${typingScope(room, thread)}\n`
+    return [...this.typers.keys()].filter(k => k.startsWith(at)).map(k => k.split('\n')[1])
   }
 
   loadOlder(room: string) {
@@ -994,6 +1193,31 @@ export class Dms {
     this.blobs.stop()
   }
 }
+
+const typingScope = (room: string, thread: string | null) => (thread ? `${room}#${thread}` : room)
+
+// Per-thread counts with `root` at `n` (dropped at 0).
+const withCount = (threads: Record<string, number>, root: string, n: number) => {
+  const out = { ...threads }
+  if (n > 0) out[root] = n
+  else delete out[root]
+  return out
+}
+
+// Thread counters less `drop` (the same object when nothing changes).
+const lessThreads = (
+  threads: Record<string, number> | undefined,
+  drop: Readonly<Record<string, number>>
+) => {
+  let out = threads
+  for (const [root, n] of Object.entries(drop))
+    if (out?.[root]) out = withCount(out, root, out[root] - n)
+  return out
+}
+
+// The unseen pings on a conversation's thread replies.
+export const threadPingTotal = (threads: Record<string, number> | undefined) =>
+  Object.values(threads ?? {}).reduce((a, b) => a + b, 0)
 
 // Whether `body` mentions someone by one of `names` (an `@` not inside a word, the name, then no
 // word character), case-insensitively.

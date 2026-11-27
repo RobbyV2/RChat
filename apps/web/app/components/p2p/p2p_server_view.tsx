@@ -52,6 +52,7 @@ import { p2pRowTypers } from '../../lib/typing_rows'
 import { voiceLabel } from '../../lib/voice_rail'
 import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
+import { ThreadsButton } from '../threads'
 import { iconBtn, Masked, Sentinel } from '../ui'
 import { PAGE, pageGroups } from '../../lib/paging'
 import {
@@ -872,6 +873,7 @@ function P2pChannelPaneBody({
   const movedAt = useP2p(s => s.movedAt)
   const movingAt = useP2p(s => s.movingAt)
   const pinsOpen = useP2p(s => s.pins !== null && s.pins.room === s.chat?.room)
+  const threadsOpen = useP2p(s => s.threads !== null && !!s.chat && s.threads === chatKey(s.chat))
   const searchOpen = useP2p(s => s.panel === 'search')
   const typingIks = useP2p(s => (s.chat?.ch ? (s.serverTyping[chatKey(s.chat)] ?? NONE) : NONE))
   const menuPings = useStore(allPings)
@@ -973,6 +975,14 @@ function P2pChannelPaneBody({
             toggle={{
               open: pinsOpen,
               onClick: () => (pinsOpen ? p2pDm.closePins() : void p2pDm.openPins()),
+            }}
+          />
+        )}
+        {chat && !voiceCh && (
+          <ThreadsButton
+            toggle={{
+              open: threadsOpen,
+              onClick: () => (threadsOpen ? p2pDm.closeThreads() : p2pDm.openThreads()),
             }}
           />
         )}

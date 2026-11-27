@@ -34,6 +34,7 @@ const ROWS: Record<Target['kind'], boolean> = {
   timestamp: false,
   file: true,
   inbox: true,
+  thread: true,
   card: true,
   call: false,
   p2p_contact: true,

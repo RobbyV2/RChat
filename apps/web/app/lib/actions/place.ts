@@ -13,6 +13,7 @@ import {
   IdCard,
   Link,
   LogOut,
+  MessagesSquare,
   Phone,
   Pin,
   Search,
@@ -309,6 +310,15 @@ export const placeActions: Action[] = [
     icon: Pin,
     available: ({ list }) => list !== null,
     run: ({ acct }) => acct.store.getState().openPins(),
+  },
+  {
+    id: 'open_threads',
+    title: 'Show threads',
+    scope: 'channel',
+    icon: MessagesSquare,
+    keywords: ['thread', 'replies'],
+    available: ({ list, channel }) => list !== null && channel?.kind !== 'voice',
+    run: ({ acct }) => acct.store.getState().openThreads(),
   },
   {
     id: 'copy_link_here',

@@ -13,6 +13,7 @@ import { P2P_DM_INTRO } from '../../lib/home'
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
 import { fullNote, movedText, withMissed, type P2pMessage } from '../../lib/p2p/dm'
 import { PinsButton } from '../pins'
+import { ThreadsButton } from '../threads'
 import { PingBadge, pingLabel } from '../ping_badge'
 import {
   AccountChip,
@@ -47,12 +48,11 @@ const statusLine = (online: boolean, name: string): ReactNode =>
     </>
   )
 
-// The open conversation. Beside the instance's DM list it has no way back: the list is there.
-function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => void }) {
+// Who the open conversation is with, who may write in it, and why not when they can't: for the
+// conversation and its threads.
+export function useDmFacts() {
   const identity = useP2pApp()!
-  const { p2p, p2pDm } = identity
-
-  const chat = useP2p(s => s.chat)
+  const { p2p } = identity
   const me = useP2p(s => s.me)
   const myName = useP2p(s => s.name)
   const reader = useP2p(s => s.reader)
@@ -63,30 +63,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   const peer = useP2p(s => s.contacts.find(c => c.ik === s.chat?.peer))
   const presence = useP2p(s => (s.chat ? (s.presence[s.chat.peer] ?? 'offline') : 'offline'))
   const room = useP2p(s => (s.chat ? s.rooms[s.chat.room] : undefined))
-  const typingIks = useP2p(s => (s.chat ? (s.typing[s.chat.room] ?? NONE) : NONE))
-  const nameId = useId()
-  const shieldId = useId()
-  const statusId = useId()
-  const streamer = useStore(s => s.streamer)
-  const pinsOpen = useP2p(s => s.pins !== null && s.pins.room === s.chat?.room)
-  const menuPings = useStore(allPings)
-  const staged = useP2p(
-    s =>
-      s.chat !== null &&
-      s.call?.room === s.chat.room &&
-      (s.call.dir === 'out' || s.call.state === 'active')
-  )
-  const callShare = useRoomCallShare(chat?.room ?? '')
-
-  const raw = chat?.messages
-  const missed = chat?.missed
-  const more = chat?.more ?? false
-  const messages = useMemo(
-    () => (raw && missed ? withMissed(raw, missed, more) : (raw ?? [])),
-    [raw, missed, more]
-  )
-  const peerIk = chat?.peer ?? ''
-  const chip = useHasChip(peerIk)
+  const peerIk = useP2p(s => s.chat?.peer ?? '')
   const mask = useMask()
   const peerRaw = peer ? displayName(peer) : 'Contact'
   const peerName = mask(peerRaw)
@@ -108,8 +85,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
     return out
   }, [peer, me, myName])
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me, [me])
-
-  if (!chat) return null
 
   const disabled: ReactNode =
     reader || elsewhere ? (
@@ -142,6 +117,60 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
         isn&apos;t a mutual contact right now.
       </div>
     ) : null
+
+  return {
+    me,
+    peer,
+    peerIk,
+    peerRaw,
+    peerName,
+    presence,
+    online,
+    room,
+    canAct,
+    nameOf,
+    people,
+    mayDelete,
+    disabled,
+  }
+}
+
+// The open conversation. Beside the instance's DM list it has no way back: the list is there.
+function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => void }) {
+  const identity = useP2pApp()!
+  const { p2p, p2pDm } = identity
+
+  const chat = useP2p(s => s.chat)
+  const typingIks = useP2p(s => (s.chat ? (s.typing[s.chat.room] ?? NONE) : NONE))
+  const nameId = useId()
+  const shieldId = useId()
+  const statusId = useId()
+  const streamer = useStore(s => s.streamer)
+  const pinsOpen = useP2p(s => s.pins !== null && s.pins.room === s.chat?.room)
+  const threadsOpen = useP2p(
+    s => s.threads !== null && s.chat !== null && s.threads === s.chat.room
+  )
+  const menuPings = useStore(allPings)
+  const staged = useP2p(
+    s =>
+      s.chat !== null &&
+      s.call?.room === s.chat.room &&
+      (s.call.dir === 'out' || s.call.state === 'active')
+  )
+  const callShare = useRoomCallShare(chat?.room ?? '')
+  const raw = chat?.messages
+  const missed = chat?.missed
+  const more = chat?.more ?? false
+  const messages = useMemo(
+    () => (raw && missed ? withMissed(raw, missed, more) : (raw ?? [])),
+    [raw, missed, more]
+  )
+  const facts = useDmFacts()
+  const { peer, peerIk, peerRaw, peerName, presence, online, room, canAct, nameOf, people } = facts
+  const { mayDelete, disabled } = facts
+  const chip = useHasChip(peerIk)
+
+  if (!chat) return null
 
   const header = (
     <header className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-3 sm:gap-2 md:px-4">
@@ -223,6 +252,12 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
           toggle={{
             open: pinsOpen,
             onClick: () => (pinsOpen ? p2pDm.closePins() : void p2pDm.openPins()),
+          }}
+        />
+        <ThreadsButton
+          toggle={{
+            open: threadsOpen,
+            onClick: () => (threadsOpen ? p2pDm.closeThreads() : p2pDm.openThreads()),
           }}
         />
       </div>

@@ -275,7 +275,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 50: account deletions their owners asked for (`pending_purges.self_requested`).
 /// 51: server descriptions and icon looks (`servers.description`, `servers.icon_kind`).
 /// 52: the @everyone permissions of a server and allow/deny channel overwrites.
-pub const SCHEMA_VERSION: i64 = 52;
+/// 53: the indexes of thread replies by channel and by DM (`idx_messages_channel_threads`,
+/// `idx_messages_dm_threads`), for the thread lists.
+pub const SCHEMA_VERSION: i64 = 53;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

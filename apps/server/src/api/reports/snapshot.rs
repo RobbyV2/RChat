@@ -187,7 +187,7 @@ pub(crate) async fn context(
     let (clause, key) = match place {
         Place::Channel(channel) => ("m.channel_id = $2 AND m.thread_root_id IS NULL", channel),
         Place::Thread(root) => ("(m.thread_root_id = $2 OR m.id = $2)", root),
-        Place::Dm(dm) => ("m.dm_id = $2", dm),
+        Place::Dm(dm) => ("m.dm_id = $2 AND m.thread_root_id IS NULL", dm),
     };
     let sql = format!(
         "{MESSAGE} WHERE m.id < $1 AND {clause} AND m.kind IN ('user', 'poll') AND m.created_at >= $3 AND {LIVE_AUTHOR} ORDER BY m.id DESC LIMIT $4"

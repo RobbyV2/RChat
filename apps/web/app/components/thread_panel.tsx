@@ -42,7 +42,7 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { PanelHeader, useEscape } from './ui'
-import { BlockedList } from './blocking'
+import { BlockedComposer, BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
 import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
@@ -129,7 +129,12 @@ export default function ThreadPanel() {
   const root = useStore(s => {
     if (s.panel?.kind !== 'thread') return null
     const r = s.panel.root
-    const list = r.channel_id !== null ? s.messages[`c${r.channel_id}`] : undefined
+    const list =
+      r.channel_id !== null
+        ? s.messages[`c${r.channel_id}`]
+        : r.dm_id !== null
+          ? s.messages[`d${r.dm_id}`]
+          : undefined
     return findById(list, r.id) ?? r
   })
   const replies =
@@ -142,6 +147,11 @@ export default function ThreadPanel() {
   const roles = detail?.roles
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const timedOutEnds = useMyTimeoutEnds(server)
+  const dmOther = useStore(s => {
+    const id = s.panel?.kind === 'thread' ? s.panel.root.dm_id : null
+    const dm = id !== null ? s.dms.find(d => d.id === id) : undefined
+    return dm && s.blocked[dm.other.username] ? dm.other : null
+  })
   const memberFor = useMemberLookup(server)
   const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
   useAuthorMembers(server, usePeopleKey(people))
@@ -218,15 +228,18 @@ export default function ThreadPanel() {
   const rootAt = root?.created_at ?? null
 
   const canUnreact = me !== null && !guest
+  const inDm = root !== null && root.dm_id !== null
   const canReact =
     canUnreact &&
     root !== null &&
-    server !== null &&
-    me.servers.some(x => x.name === server) &&
-    !readOnly(detail, root.channel_id) &&
-    timedOutEnds === null
+    (inDm
+      ? !dmOther
+      : server !== null &&
+        me.servers.some(x => x.name === server) &&
+        !readOnly(detail, root.channel_id) &&
+        timedOutEnds === null)
   const canQuoteHere = useStore(
-    s => replyAccess(s, server, root?.channel_id ?? null, canReact).quote
+    s => replyAccess(s, server, root?.channel_id ?? null, canReact, inDm).quote
   )
 
   if (!root || !key) return null
@@ -252,9 +265,15 @@ export default function ThreadPanel() {
   const editMsg = (m: Message) => startEdit(key, m)
   const jump = (id: number) => void jumpTo(key, id)
   const jumpMain = (id: number) => {
-    if (root.channel_id === null) return
+    const main =
+      root.channel_id !== null
+        ? `c${root.channel_id}`
+        : root.dm_id !== null
+          ? `d${root.dm_id}`
+          : null
+    if (!main) return
     if (!wide) closePanel()
-    void jumpTo(`c${root.channel_id}`, id)
+    void jumpTo(main, id)
   }
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
@@ -424,7 +443,13 @@ export default function ThreadPanel() {
       footer={
         <>
           <TypingIndicator scope={key} server={server} bg="bg-surface-container-low" />
-          {selecting && !wide ? <SelectionBar scope={key} sheet /> : <MessageComposer thread />}
+          {selecting && !wide ? (
+            <SelectionBar scope={key} sheet />
+          ) : dmOther ? (
+            <BlockedComposer user={dmOther} />
+          ) : (
+            <MessageComposer thread />
+          )}
         </>
       }
     />

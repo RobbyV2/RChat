@@ -15,6 +15,7 @@ import {
   type SearchWrite,
 } from './search'
 import {
+  dmRootOf,
   serverWire,
   SERVER_TOTAL_BYTES,
   withFiles,
@@ -56,8 +57,16 @@ export const aimedAt = (recs: readonly Pick<EventRecord, 'type' | 'target'>[]) =
   recs.flatMap(r => ((r.type === 'edit' || r.type === 'redact') && r.target ? [r.target] : []))
 
 export type Inserted =
-  // `freed`: files of a message this insert redacted (they may be deleted here now).
-  | { status: 'new'; rec: EventRecord; ping: PingKind | null; unread: boolean; freed: string[] }
+  // `freed`: files of a message this insert redacted (they may be deleted here now). `unread`: a
+  // message from the other side; `thread`: the root of the conversation thread it replies in.
+  | {
+      status: 'new'
+      rec: EventRecord
+      ping: PingKind | null
+      unread: boolean
+      freed: string[]
+      thread: string | null
+    }
   | { status: 'dup'; rec: EventRecord }
   | { status: 'invalid'; why: 'depth' | 'auth' }
   | { status: 'full'; why: FullWhy }
@@ -289,6 +298,11 @@ export const insertInto = async (
   }
   if (tid) rec.target = tid
   if (reply) rec.reply = reply
+  const thread =
+    ev.type === 'msg' && wire.c && 'body' in wire.c
+      ? (wire.c as { thread?: unknown }).thread
+      : undefined
+  if (isEventId(thread)) rec.thread = thread
   const atts = isRedacted || ev.type !== 'msg' ? [] : attsOf(stored.c)
   if (atts.length) Object.assign(rec, withFiles(rec, atts))
   await events.put(rec)
@@ -309,6 +323,15 @@ export const insertInto = async (
   let ping: PingKind | null = null
   let unread = false
   const c = rec.wire.c
+  // A reply in a thread of this conversation is read in its thread: it isn't unread in the
+  // conversation, and a ping on it (or a reaction to it) counts for its thread until the thread
+  // is read.
+  const root =
+    ev.type === 'msg'
+      ? await dmRootOf(rec, x => events.get(x))
+      : ev.type === 'react' && target
+        ? await dmRootOf(target, x => events.get(x))
+        : null
   if (ev.sender !== ctx.me) {
     if (ev.type === 'msg' && c) {
       unread = true
@@ -328,8 +351,11 @@ export const insertInto = async (
     maxDepth: Math.max(room.maxDepth, ev.depth),
     count: room.count + 1,
     lastSeq: seq,
-    unread: room.unread + (unread ? 1 : 0),
-    pings: room.pings + (ping ? 1 : 0),
+    unread: room.unread + (unread && !root ? 1 : 0),
+    pings: room.pings + (ping && !root ? 1 : 0),
+    ...(ping && root
+      ? { threads: { ...room.threads, [root]: (room.threads?.[root] ?? 0) + 1 } }
+      : {}),
     lastTs: ev.type === 'msg' || ev.type === 'call' ? Math.max(room.lastTs, effTs) : room.lastTs,
     bytes: roomBytes + size,
     full: false,
@@ -337,7 +363,7 @@ export const insertInto = async (
   await tx.objectStore('rooms').put(next)
   await meta.put(total + 1, TOTAL)
   await meta.put(totalBytes + size, TOTAL_BYTES)
-  return { status: 'new', rec, ping, unread, freed }
+  return { status: 'new', rec, ping, unread, freed, thread: root }
 }
 
 const sameSender = (r: EventRecord, t: Pick<EventRecord, 'sender'>) => r.sender === t.sender
@@ -672,7 +698,7 @@ export const insertServer = async (
   )
   await tx.objectStore('rooms').put(moved)
   await tx.done
-  return { status: 'new', rec, ping: null, unread: false, freed: [] }
+  return { status: 'new', rec, ping: null, unread: false, freed: [], thread: null }
 }
 
 // Applies what the ACL core lets storage drop: each event goes; an ACL event whose

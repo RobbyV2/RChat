@@ -49,7 +49,7 @@ import { createP2pApp } from '../p2p/app/runtime'
 import { home, pinEmptyBook } from './home_instance'
 import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
 import type { Fwd } from '../p2p/content'
-import { useP2pList } from '../../components/p2p/p2p_chat'
+import { asMessage, useP2pList } from '../../components/p2p/p2p_chat'
 import type { Contact } from '../p2p/contacts'
 import { keyId, newKeyPair } from '../p2p/keys'
 import type { OwnBadge, RoomRecord } from '../p2p/db'
@@ -105,6 +105,7 @@ import { P2pHome } from '../../components/p2p/p2p_home'
 import { memberMenu, P2pMemberList, P2pServerSidebar } from '../../components/p2p/p2p_server_view'
 import { P2pDmPane } from '../../components/p2p/p2p_dm_pane'
 import { P2pThreadPanel } from '../../components/p2p/p2p_thread'
+import { ThreadsPanel } from '../../components/threads'
 import { AccountChip } from '../../components/p2p/p2p_badge'
 import { ServerSettingsDialog } from '../../components/p2p/p2p_server_settings'
 import { ServerInviteDialog, ServerNewDialog } from '../../components/p2p/p2p_invite_dialog'
@@ -487,6 +488,139 @@ afterEach(() => {
   useP2p.setState(p2pSaved)
   accountStore.setState(saved)
   resetMasking()
+})
+
+describe('threads in a P2P conversation', () => {
+  const row = (id: string, body: string, over: Partial<P2pMessage> = {}): P2pMessage => ({
+    id,
+    sender: ALICE,
+    ts: NOW,
+    sentTs: NOW,
+    sortKey: id,
+    seq: 1,
+    body,
+    reply: null,
+    mentions: [],
+    fwd: null,
+    att: [],
+    edited: null,
+    reactions: [],
+    pinned: null,
+    late: false,
+    pending: false,
+    failed: false,
+    call: null,
+    ...over,
+  })
+  const conversation = (over: Partial<P2pState> = {}) => {
+    Object.assign(initial, { me: me('bob'), streamer: false })
+    p2pState({
+      enabled: true,
+      account: 'bob',
+      me: BOB,
+      name: 'Bob',
+      status: 'online',
+      home: true,
+      contacts: [contact(ALICE, 'Alice')],
+      rooms: {
+        [ROOM]: { id: ROOM, peer: ALICE, seq: 0, unread: 0, pings: 0, lastTs: NOW },
+      } as unknown as P2pState['rooms'],
+      chat: {
+        room: ROOM,
+        peer: ALICE,
+        messages: [row('root1', 'Weekend plans', { replies: 2, lastReply: NOW })],
+        more: false,
+        loading: false,
+        readSeq: 0,
+        missed: [],
+      },
+      ...over,
+    })
+  }
+
+  test('the header has the Threads button, and a root shows its replies', () => {
+    conversation()
+    const html = render(<P2pDmPane onBack={() => {}} onMenu={() => {}} />)
+    const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'))
+    expect(header).toContain('data-threads-button')
+    expect(header).toContain('title="Threads" aria-label="Threads"')
+    expect(html).toContain('data-p2p-thread-chip')
+    expect(readText(html)).toContain('2 replies')
+  })
+
+  test('the open Threads list searches the conversation', () => {
+    conversation({ threads: ROOM })
+    const html = render(<P2pDmPane onBack={() => {}} onMenu={() => {}} />)
+    expect(html).toContain('placeholder="Search threads"')
+    expect(html).toContain('Loading threads')
+  })
+
+  test("Threads list rows name your own roots and a contact's as the conversation does", () => {
+    conversation()
+    const named = (ik: string) => ({
+      username: ik,
+      display_name: ik === BOB ? 'Bob' : 'Alice',
+      avatar_kind: 'identicon' as const,
+      avatar_color: null,
+    })
+    const rows = [
+      row('mine', 'P2P root C', { sender: BOB, replies: 1 }),
+      row('theirs', 'From Alice', { replies: 2 }),
+    ].map(p => ({
+      key: p.id,
+      root: asMessage(p, p.id === 'mine' ? 1 : 2, 0, named, BOB),
+      files: false,
+      replies: p.replies ?? 0,
+      lastAt: 1,
+      pinged: false,
+    }))
+    const html = render(
+      <ThreadsPanel
+        list={{
+          query: '',
+          search: () => {},
+          rows,
+          next: null,
+          failed: false,
+          more: () => {},
+          retry: () => {},
+        }}
+        server={null}
+        peer
+        onClose={() => {}}
+        onOpen={() => {}}
+        onJump={() => {}}
+      />
+    )
+    const text = readText(html)
+    expect(text).toContain('Bob')
+    expect(text).toContain('Alice')
+    expect(html).not.toContain(BOB)
+    expect(html).not.toContain(ALICE)
+    expect(html.match(/<span class="streamer[^"]*">(Bob|Alice)/g)?.length).toBe(2)
+  })
+
+  test('a thread opens beside the conversation with its own composer', () => {
+    conversation({
+      panel: 'thread',
+      thread: {
+        room: ROOM,
+        ch: null,
+        root: 'root1',
+        head: row('root1', 'Weekend plans', { replies: 1 }),
+        messages: [row('reply1', 'Saturday works', { sender: BOB, thread: 'root1' })],
+        more: false,
+        loading: false,
+      },
+    })
+    const html = render(<P2pThreadPanel />)
+    const text = readText(html)
+    expect(html).toContain('data-p2p-thread')
+    expect(text).toContain('Weekend plans')
+    expect(text).toContain('Saturday works')
+    expect(text).toContain('1 reply')
+    expect(html).toContain('Message thread')
+  })
 })
 
 describe('the P2P DM header', () => {

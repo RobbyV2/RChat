@@ -156,6 +156,13 @@ export interface MessagesDeps {
     nav?: Nav,
     switching?: boolean
   ) => Promise<void>
+  openDmAt: (
+    dmId: number,
+    threadRootId: number | null,
+    id: number,
+    nav?: Nav,
+    switching?: boolean
+  ) => Promise<void>
   persistGuestServers: (list: string[]) => void
   pinSelf: () => void
   readsHub: { more: () => boolean }
@@ -309,6 +316,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     noteUnblocked,
     navigationIntent,
     openChannelAt,
+    openDmAt,
     persistGuestServers,
     pinSelf,
     readsHub,
@@ -1251,10 +1259,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       return false
     const switching = client.noticePending(acct)
     if (loc.dm_id !== null) {
-      const v = shownView(acct, get().view)
-      if (!switching && v?.kind === 'dm' && v.dmId === loc.dm_id)
-        await get().jumpTo(`d${loc.dm_id}`, id)
-      else await get().openDm(loc.dm_id, nav, id)
+      await openDmAt(loc.dm_id, loc.thread_root_id, id, nav, switching)
       return true
     }
     const { server, channel_id } = loc
@@ -1538,6 +1543,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     | 'alertFrom'
     | 'openPins'
     | 'closePins'
+    | 'openThreads'
+    | 'closeThreads'
     | 'pinMessage'
     | 'openPinned'
     | 'unpinMessage'
@@ -1734,11 +1741,18 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const { view } = get()
       if (!view) return
       const key = viewKey(view)
-      set({ pins: { key, list: null, failed: false }, contextMenu: null })
+      set({ pins: { key, list: null, failed: false }, threads: null, contextMenu: null })
       loadPins(key)
     },
 
     closePins: () => set(s => (s.pins ? { pins: null } : {})),
+
+    openThreads: () => {
+      const { view } = get()
+      if (view) set({ threads: viewKey(view), pins: null, contextMenu: null })
+    },
+
+    closeThreads: () => set(s => (s.threads ? { threads: null } : {})),
 
     pinMessage: id =>
       act(async () => {
@@ -2086,10 +2100,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
             )
           return
         }
-        const v = shownView(acct, get().view)
-        if (!switching && v?.kind === 'dm' && v.dmId === id)
-          await get().jumpTo(ping.scope, ping.message_id)
-        else await get().openDm(id, 'push', ping.message_id)
+        await openDmAt(id, ping.thread_root_id, ping.message_id, 'push', switching)
       }),
 
     uploadFile: (key, file) => {
@@ -2104,7 +2115,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       if (file && get().settings.p2p_attachments) void hashOf(file).catch(() => {})
       const { panel } = get()
       const root = panel?.kind === 'thread' && threadKey(panel.root.id) === key ? panel.root : null
-      const scope = root && root.channel_id !== null ? `c${root.channel_id}` : key
+      const scope = (root && messageKey(root.channel_id, root.dm_id)) ?? key
       const pending: PendingUpload | null =
         file && mode ? { file, spoiler: false, mode, scope } : null
       set(s => ({ pending: keyed(s.pending, key, pending) }))
@@ -2326,7 +2337,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const rootId = m.thread_root_id
       if (rootId !== null) {
         const tkey = threadKey(rootId)
-        const ckey = m.channel_id !== null ? `c${m.channel_id}` : null
+        const ckey = messageKey(m.channel_id, m.dm_id)
         const bump = (list: Message[]) =>
           patchById(list, rootId, r => ({ ...r, reply_count: r.reply_count + 1 }))
         const held = ckey ? tails.get(ckey) : undefined
@@ -2394,12 +2405,14 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const toMe =
         repliesToMe(m, me.username) || (m.reply_to?.partial === true && m.reply_to.mention)
       if (!m.forward && (mentionsUser(m.content, me.username) || toMe)) return
+      const shownIn = rootId !== null ? threadKey(rootId) : scope
+      const panel = get().panel
+      const open =
+        rootId !== null
+          ? panel?.kind === 'thread' && panel.root.id === rootId
+          : view !== null && viewKey(view) === scope
       const watched =
-        view !== null &&
-        viewKey(view) === scope &&
-        get().atBottom[scope] === true &&
-        !detached(scope) &&
-        pageVisible()
+        open && get().atBottom[shownIn] === true && !detached(shownIn) && pageVisible()
       if (!messageAlert(scopeRule(get(), target), watched)) return
       const { dm_id, channel_id } = ev
       const host = ev.server !== null ? get().servers[ev.server] : undefined
@@ -2439,7 +2452,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         name: nameWithUsername(actor),
         generic: 'New message',
         go: () => {
-          if (dm_id !== null) return get().openDm(dm_id, 'push', m.id)
+          if (dm_id !== null) return openDmAt(dm_id, rootId, m.id)
           else if (ev.server !== null && channel_id !== null)
             return get().openChannel(ev.server, channel_id, 'push', m.id)
         },

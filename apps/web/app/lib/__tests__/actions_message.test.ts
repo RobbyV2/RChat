@@ -751,6 +751,7 @@ test('the hidden site admin: Ban site-wide on others, in channels and DMs, never
   expect(labels(at(dmBob))).toEqual([
     'Reply',
     'Forward',
+    'Reply in thread',
     'Direct Message',
     'Pin Message',
     ...PERSON,
@@ -804,12 +805,13 @@ test('timed out, read-only and not a member: no edit, reply or pin', () => {
   ])
 })
 
-test('in a DM: no thread and no moderation', () => {
+test('in a DM: threads and no moderation', () => {
   state({ view: 'd9' })
   expect(labels(at(dmOwn))).toEqual([
     'Edit Message',
     'Reply',
     'Forward',
+    'Reply in thread',
     'Direct Message',
     'Pin Message',
     'Select Message',
@@ -819,6 +821,7 @@ test('in a DM: no thread and no moderation', () => {
   const dmBobRows = [
     'Reply',
     'Forward',
+    'Reply in thread',
     'Direct Message',
     'Pin Message',
     ...PERSON,
@@ -1063,7 +1066,7 @@ test('each message row runs its action', async () => {
     ['Remove Timeout', [['removeTimeout', 's', 'bob']]],
   ])
   state({ siteAdmin: true, view: 'd9', blocked: ['bob'] })
-  expect(await effects(items(at(dmBob)).slice(4, 7))).toEqual([
+  expect(await effects(items(at(dmBob)).slice(5, 8))).toEqual([
     ['Unblock', [['unblockUser', 'bob', 'Bobby']]],
     ['Remove backup phrase', [['openDialog', { kind: 'remove_phrase_confirm', username: 'bob' }]]],
     ['Ban site-wide', [['openDialog', { kind: 'ban_confirm', username: 'bob' }]]],

@@ -105,6 +105,14 @@ beforeEach(() => {
     }
     if (url === '/api/servers/s')
       return new Response(JSON.stringify(serverDetail('s', { channels: [chan] })), { status: 200 })
+    if (url.startsWith('/api/dms/4/messages')) {
+      pages.push(url)
+      return new Response(JSON.stringify([dmRoot]), { status: 200 })
+    }
+    if (url.startsWith('/api/messages/50/thread')) {
+      pages.push(url)
+      return new Response(JSON.stringify([dmReply]), { status: 200 })
+    }
     return new Response(JSON.stringify([]), { status: 200 })
   }) as typeof fetch
   useStore.setState({
@@ -124,6 +132,8 @@ beforeEach(() => {
 })
 
 const chan = { id: 77, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+const dmRoot = msg(50, { channel_id: null, dm_id: 4, reply_count: 1 })
+const dmReply = msg(51, { channel_id: null, dm_id: 4, thread_root_id: 50 })
 
 afterEach(() => {
   restoreBook()
@@ -319,5 +329,51 @@ describe('link cards', () => {
     await advance(150)
     expect(st().linkCards[40]?.content).toBe('new news')
     expect(batches).toEqual([[40], [40]])
+  })
+})
+
+describe('opening a reply in a DM thread', () => {
+  const reply = () => card({ id: 51, server: null, channel_id: null, dm_id: 4, thread_root_id: 50 })
+  const threadOpen = () => {
+    const panel = st().panel
+    return panel?.kind === 'thread' ? panel.root.id : null
+  }
+
+  test('the DM opens at its root, then the thread at the reply', async () => {
+    readable[51] = reply()
+    await st().openMessage(51)
+    expect(st().view).toEqual({ kind: 'dm', dmId: 4 })
+    expect(threadOpen()).toBe(50)
+    expect(pages.some(p => p.startsWith('/api/dms/4/messages') && p.includes('around=50'))).toBe(
+      true
+    )
+    expect(
+      pages.some(p => p.startsWith('/api/messages/50/thread') && p.includes('around=51'))
+    ).toBe(true)
+  })
+
+  test('the DM on screen jumps to the root in place and opens the thread', async () => {
+    readable[51] = reply()
+    useStore.setState({
+      view: { kind: 'dm', dmId: 4 },
+      messages: { d4: [dmRoot] },
+      atBottom: { d4: true },
+    })
+    const shown = st().view
+    await st().openMessage(51)
+    expect(st().view).toBe(shown)
+    expect(threadOpen()).toBe(50)
+  })
+
+  test('a top-level DM message closes an open thread', async () => {
+    readable[50] = card({ id: 50, server: null, channel_id: null, dm_id: 4 })
+    useStore.setState({
+      view: { kind: 'dm', dmId: 4 },
+      messages: { d4: [dmRoot] },
+      panel: { kind: 'thread', root: dmRoot },
+    })
+    await st().openMessage(50)
+    expect(threadOpen()).toBeNull()
+    expect(st().focus.d4).toEqual({ id: 50, flash: true })
   })
 })

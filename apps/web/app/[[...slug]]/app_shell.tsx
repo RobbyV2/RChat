@@ -345,7 +345,10 @@ function Chat() {
   const p2pRoom = useP2p(s => s.chat?.room ?? null)
   const p2pServer = useP2p(s => s.server !== null) && me !== null
   const p2pChannel = useP2p(s => (s.server ? `${s.server.room}/${s.server.ch}` : null))
-  const p2pPanelKind = useP2p(s => (s.server ? s.panel : null))
+  // A P2P server channel's thread or search, or the thread of a P2P conversation.
+  const p2pPanelKind = useP2p(s =>
+    s.server ? s.panel : s.home && s.chat && !s.chat.ch && s.panel === 'thread' ? s.panel : null
+  )
   const p2pPanel = me !== null ? p2pPanelKind : null
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
@@ -494,12 +497,12 @@ function Chat() {
             <P2pMemberList />
           </div>
         )}
-        {p2pServer && p2pPanel && (
+        {p2pPanel && (
           <div className="fixed inset-x-0 top-app z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
             {p2pPanel === 'thread' ? <P2pThreadPanel /> : <P2pSearchPanel />}
           </div>
         )}
-        {panel && !(p2pServer && p2pPanel) && (
+        {panel && !p2pPanel && (
           <div className="fixed inset-x-0 top-app z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
             {panel.kind === 'thread' ? (
               <ThreadPanel />

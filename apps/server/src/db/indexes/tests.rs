@@ -814,6 +814,140 @@ async fn the_member_join_index_is_built_online_on_a_big_table() {
     drop(pg);
 }
 
+/// The thread list query of a channel or DM, with its parameters written in.
+fn thread_list(col: &str, key: i64, search: bool) -> String {
+    crate::api::threads::list_sql(col, search)
+        .replace("$5", "'%topic%'")
+        .replace("$4", "51")
+        .replace("$3", &i64::MAX.to_string())
+        .replace("$2", "0")
+        .replace("$1", &key.to_string())
+}
+
+const THREAD_INDEXES: [&str; 2] = ["idx_messages_channel_threads", "idx_messages_dm_threads"];
+
+/// Channel 1 holds many top-level messages and a few threads, another channel many replies, and
+/// one DM a few threads among many messages.
+async fn thread_rows(db: &Db) -> (i64, i64) {
+    let general: i64 = rows(db, "SELECT id FROM channels WHERE server = 'rchat'").await[0].get(0);
+    let busy: i64 = rows(
+        db,
+        "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'busy', 'text', 1) RETURNING id",
+    )
+    .await[0]
+        .get(0);
+    let dm: i64 = rows(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+    )
+    .await[0]
+        .get(0);
+    for stmt in [
+        format!(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3000) INSERT INTO messages(channel_id, author, content, created_at) SELECT {general}, 'alice', 'topic ' || i, 10 FROM n"
+        ),
+        format!(
+            "INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) SELECT {general}, id, 'bob', 'reply', 11 FROM messages WHERE channel_id = {general} AND id % 500 = 0"
+        ),
+        format!(
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES({busy}, 'alice', 'busy root', 10)"
+        ),
+        format!(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3000) INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) SELECT {busy}, (SELECT MIN(id) FROM messages WHERE channel_id = {busy}), 'bob', 'busy reply', 12 FROM n"
+        ),
+        format!(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3000) INSERT INTO messages(dm_id, author, content, created_at) SELECT {dm}, 'alice', 'topic ' || i, 10 FROM n"
+        ),
+        format!(
+            "INSERT INTO messages(dm_id, thread_root_id, author, content, created_at) SELECT {dm}, id, 'bob', 'reply', 11 FROM messages WHERE dm_id = {dm} AND id % 500 = 0"
+        ),
+        "ANALYZE".to_string(),
+    ] {
+        run(db, &stmt).await;
+    }
+    (general, dm)
+}
+
+async fn thread_lists_plan(url: String) {
+    let db = open_started(Some(&url)).await.expect("open");
+    for index in THREAD_INDEXES {
+        assert!(has_index(&db, index).await, "{index}");
+    }
+    let (general, dm) = thread_rows(&db).await;
+    for search in [false, true] {
+        for (col, key, index) in [
+            ("channel_id", general, "idx_messages_channel_threads"),
+            ("dm_id", dm, "idx_messages_dm_threads"),
+        ] {
+            let plan = plan(&db, &thread_list(col, key, search)).await;
+            assert!(
+                plan.contains(index),
+                "{col} search {search} uses {index}: {plan}"
+            );
+        }
+    }
+    let listed = rows(&db, &thread_list("channel_id", general, false)).await;
+    let roots: i64 = rows(
+        &db,
+        &format!(
+            "SELECT COUNT(DISTINCT thread_root_id) FROM messages WHERE channel_id = {general}"
+        ),
+    )
+    .await[0]
+        .get(0);
+    assert!(roots > 0);
+    assert_eq!(listed.len() as i64, roots);
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn thread_lists_read_the_thread_indexes() {
+    on_each_database("thread_list_plans", thread_lists_plan).await;
+}
+
+#[tokio::test]
+async fn the_thread_indexes_are_built_online_on_a_big_table() {
+    let Some(pg) = pg_temp("online_thread_lists").await else {
+        return;
+    };
+    let db = open_started(Some(&pg.url)).await.expect("open");
+    for index in THREAD_INDEXES {
+        assert_eq!(state(&db, index).await, Some(true), "{index}");
+        run(&db, &format!("DROP INDEX {index}")).await;
+    }
+    for stmt in [
+        "UPDATE settings SET value = '52' WHERE key = 'schema_version'".to_string(),
+        format!(
+            "INSERT INTO messages(channel_id, author, content, created_at) SELECT c.id, 'bob', 'message ' || g, 1 FROM channels c, generate_series(1, {ONLINE_ROWS}) g WHERE c.server = 'rchat'"
+        ),
+        "ANALYZE messages".to_string(),
+    ] {
+        run(&db, &stmt).await;
+    }
+    close(&db).await;
+    let db = open_started(Some(&pg.url)).await.expect("start");
+    assert_eq!(
+        rows(&db, STORED_SCHEMA).await[0].get::<i64, _>(0),
+        super::super::migrate::SCHEMA_VERSION
+    );
+    for index in THREAD_INDEXES {
+        assert_eq!(
+            state(&db, index).await,
+            None,
+            "the start leaves {index} of a big table to the online build"
+        );
+    }
+    assert_eq!(
+        build_online(&db, &Limits::default()).await.expect("build"),
+        built(&THREAD_INDEXES, &[])
+    );
+    for index in THREAD_INDEXES {
+        assert_eq!(state(&db, index).await, Some(true), "{index}");
+    }
+    close(&db).await;
+    drop(pg);
+}
+
 /// One index of a table: its columns in order (`None` for an expression), whether it is unique
 /// and its `WHERE`.
 struct Listed {

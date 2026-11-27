@@ -86,7 +86,7 @@ export const pingText = async (s: P2pStore, p: PingRec): Promise<PingText | null
 
 export interface PingLogDeps {
   store: P2pStore
-  dms: { unping: (room: string, n: number) => Promise<void> }
+  dms: { unping: (room: string, n: number, thread?: string | null) => Promise<void> }
   servers: {
     unping: (room: string, ch: string, n: number, thread?: string | null) => Promise<void>
   }
@@ -174,8 +174,8 @@ export class PingLog {
     await this.write(list => markSeen(list, want), true)
   }
 
-  // The unread thread pings of a channel, with their roots.
-  async threadPings(room: string, ch: string) {
+  // The unread thread pings of a channel or conversation (`ch` null), with their roots.
+  async threadPings(room: string, ch: string | null) {
     const { list, readSeq } = await this.read()
     return list.flatMap(p =>
       p.room === room && p.ch === ch && p.thread && pingUnread(p, readSeq)
@@ -185,7 +185,7 @@ export class PingLog {
   }
 
   // The unread pings of a thread, to mark when it is read.
-  async ofThread(room: string, ch: string, root: string) {
+  async ofThread(room: string, ch: string | null, root: string) {
     const { list, readSeq } = await this.read()
     return list
       .filter(p => p.room === room && p.ch === ch && p.thread === root && pingUnread(p, readSeq))
@@ -205,12 +205,12 @@ export class PingLog {
     }, true)
     if (!ok) return 0
     for (const [key, n] of byThreadCounter(cut)) {
-      const i = key.indexOf('/')
-      const [ch, thread] = key.slice(i + 1).split('#')
+      const [place, thread] = key.split('#')
+      const i = place.indexOf('/')
       await (
         i < 0
-          ? this.deps.dms.unping(key, n)
-          : this.deps.servers.unping(key.slice(0, i), ch, n, thread ?? null)
+          ? this.deps.dms.unping(place, n, thread ?? null)
+          : this.deps.servers.unping(place.slice(0, i), place.slice(i + 1), n, thread ?? null)
       ).catch(() => {})
     }
     return cut.length

@@ -1883,6 +1883,20 @@ pub struct ResolvedMessage {
     user: Option<User>,
 }
 
+/// Where a thread lives: a channel, or a DM and its two participants.
+pub enum ThreadHome<'a> {
+    Channel(&'a ResolvedChannel),
+    Dm { id: i64, users: &'a [String] },
+}
+
+fn not_root() -> ApiError {
+    ApiError(
+        StatusCode::BAD_REQUEST,
+        "Threads only start on top-level messages".to_string(),
+        None,
+    )
+}
+
 async fn dm_pair(db: &Db, id: i64, live: bool) -> sqlx::Result<Option<Vec<String>>> {
     let sql = match live {
         true => format!("SELECT user_a, user_b FROM dms WHERE id = $1 AND {LIVE_DM}"),
@@ -2047,16 +2061,26 @@ impl ResolvedMessage {
         self.channel.as_ref()
     }
 
+    /// A thread root of a channel: a top-level `user` or `poll` message there.
     pub fn thread_channel(&self) -> Result<&ResolvedChannel, ApiError> {
-        match (&self.channel, self.scope.thread_root_id) {
-            (Some(channel), None) if matches!(self.scope.kind.as_str(), "user" | "poll") => {
-                Ok(channel)
-            }
-            (_, _) => Err(ApiError(
-                StatusCode::BAD_REQUEST,
-                "Threads only start on channel messages".to_string(),
-                None,
-            )),
+        match self.thread_home()? {
+            ThreadHome::Channel(channel) => Ok(channel),
+            ThreadHome::Dm { id: _, users: _ } => Err(not_root()),
+        }
+    }
+
+    /// Where a thread rooted at this message lives: a top-level `user` or `poll` message of a
+    /// channel or of a DM (with its two participants).
+    pub fn thread_home(&self) -> Result<ThreadHome<'_>, ApiError> {
+        if self.scope.thread_root_id.is_some()
+            || !matches!(self.scope.kind.as_str(), "user" | "poll")
+        {
+            return Err(not_root());
+        }
+        match (&self.channel, self.scope.dm_id, &self.scope.dm_users) {
+            (Some(channel), _, _) => Ok(ThreadHome::Channel(channel)),
+            (None, Some(id), Some(users)) => Ok(ThreadHome::Dm { id, users }),
+            (None, _, _) => Err(not_root()),
         }
     }
 
@@ -2758,6 +2782,19 @@ pub(crate) async fn ws_typing_place(db: &Db, username: &str, scope: &str) -> Opt
         dm_users: None,
         display_name: display_name.clone(),
     };
+    let dm = async |id: i64| {
+        let users = resolve_dm(db, id, &user).await.ok()?;
+        crate::api::blocks::check_dm_write(db, username, &users)
+            .await
+            .ok()?;
+        Some(TypingPlace {
+            server: None,
+            channel_id: None,
+            dm_id: Some(id),
+            dm_users: Some(users),
+            display_name: display_name.clone(),
+        })
+    };
     match kind {
         "c" => {
             let resolved = resolve_channel(db, id, Some(&user), &Proof::none())
@@ -2770,23 +2807,15 @@ pub(crate) async fn ws_typing_place(db: &Db, username: &str, scope: &str) -> Opt
             let root = resolve_message(db, id, Some(&user), &Proof::none())
                 .await
                 .ok()?;
-            let resolved = root.thread_channel().ok()?;
-            resolved.send_rights(db).await.ok()?;
-            Some(channel(resolved))
+            match root.thread_home().ok()? {
+                ThreadHome::Channel(resolved) => {
+                    resolved.send_rights(db).await.ok()?;
+                    Some(channel(resolved))
+                }
+                ThreadHome::Dm { id, users: _ } => dm(id).await,
+            }
         }
-        "d" => {
-            let users = resolve_dm(db, id, &user).await.ok()?;
-            crate::api::blocks::check_dm_write(db, username, &users)
-                .await
-                .ok()?;
-            Some(TypingPlace {
-                server: None,
-                channel_id: None,
-                dm_id: Some(id),
-                dm_users: Some(users),
-                display_name,
-            })
-        }
+        "d" => dm(id).await,
         _ => None,
     }
 }
@@ -3931,6 +3960,7 @@ mod tests {
         ),
         ("DELETE", "/channels/{c}/perms/u:alice", None),
         ("GET", "/channels/{c}/messages", None),
+        ("GET", "/channels/{c}/threads", None),
         (
             "POST",
             "/channels/{c}/messages",

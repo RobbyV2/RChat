@@ -7558,6 +7558,56 @@ async fn the_dm_author_index_is_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn the_thread_indexes_are_added_to_an_old_database() {
+    on_each_database("thread_indexes", |url| async move {
+        let db = open(Some(&url)).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_messages_channel_threads",
+            "DROP INDEX idx_messages_dm_threads",
+            "UPDATE settings SET value = '52' WHERE key = 'schema_version'",
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+            "INSERT INTO messages(dm_id, author, content, created_at) SELECT id, 'alice', 'dm root', 9 FROM dms",
+            "INSERT INTO messages(dm_id, thread_root_id, author, content, created_at) SELECT dm_id, id, 'bob', 'dm reply', 10 FROM messages WHERE content = 'dm root'",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        let general = general_id(&db).await;
+        sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'root', 9)")
+            .bind(general)
+            .execute(&db)
+            .await
+            .expect("channel root");
+        sqlx::query("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) SELECT channel_id, id, 'bob', 'reply', 10 FROM messages WHERE content = 'root'")
+            .execute(&db)
+            .await
+            .expect("channel reply");
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            for index in ["idx_messages_channel_threads", "idx_messages_dm_threads"] {
+                assert_eq!(index_count(&db, index).await, 1, "{index}");
+            }
+            for (sql, want) in [
+                ("SELECT COUNT(*) FROM messages WHERE thread_root_id IS NOT NULL", 2),
+                (
+                    "SELECT COUNT(*) FROM messages r JOIN messages m ON m.id = r.thread_root_id WHERE r.content = 'dm reply' AND m.content = 'dm root' AND r.dm_id = m.dm_id",
+                    1,
+                ),
+                (
+                    "SELECT COUNT(*) FROM messages r JOIN messages m ON m.id = r.thread_root_id WHERE r.content = 'reply' AND m.content = 'root' AND r.channel_id = m.channel_id",
+                    1,
+                ),
+            ] {
+                assert_eq!(count(&db, sql).await, want, "{sql}");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn the_strict_file_names_control_is_added_to_an_old_database() {
     controls_reach_an_old_database(
         "strict_names_control",

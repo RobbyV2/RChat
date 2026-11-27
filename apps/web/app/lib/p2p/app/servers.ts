@@ -8,6 +8,7 @@ import { peerTimeout } from '../../timeouts'
 import type { ProfilesMode, UserRef } from '../../types'
 import { BanExpiry } from '../ban_expiry'
 import type { P2pStore, RoomRecord, ServerCache } from '../db'
+import { loadDmThread, loadDmThreadAround, loadDmThreads, type P2pMessage } from '../dm'
 import { cacheKey } from '../dag'
 import { knownRules } from '../acl/rules'
 import { cachedSummary } from '../server/load'
@@ -29,6 +30,7 @@ import {
 import { unsentText } from '../flows'
 import { membershipOf, P, roomColor, type HistoryVis } from '../state'
 import { p2pAbout, type AboutChange } from '../../server_about'
+import type { P2pThread } from './store'
 import type { IdentityScope, P2pParts } from './scope'
 
 // Messages stored here that match (search panel). `from` is matched against member names.
@@ -167,7 +169,7 @@ export function createServersPart(
     for (const k of Object.keys(typing))
       if (k.startsWith(`${room}/`) && k.includes('#')) delete typing[k]
     const th = st.thread
-    if (th?.room === room) {
+    if (th?.room === room && th.ch) {
       const list = sv.typingIn(room, th.ch, th.root)
       if (list.length) typing[threadKey(th)] = list
     }
@@ -237,15 +239,23 @@ export function createServersPart(
     }
   }
 
+  // A page of a thread: a server channel's, or a conversation's.
+  const threadPage = (t: P2pThread, opts: { before?: string; limit?: number }) => {
+    const s = parts.dms.dbNow()
+    const me = parts.dms.meNow()
+    const peer = useP2p.getState().rooms[t.room]?.peer ?? useP2p.getState().chat?.peer
+    if (t.ch) return state.servers ? state.servers.loadThread(t.room, t.root, opts) : null
+    return s && me && peer ? loadDmThread(s.db, t.room, t.root, me, peer, opts) : null
+  }
+
   // The open thread's root and newest replies (`keep`: at least as many as shown).
   const loadThread = async (keep = false) => {
-    const sv = state.servers
     const t = useP2p.getState().thread
-    if (!sv || !t) return
+    if (!t) return
     const page = state.limits.dm.page
     const limit = keep ? Math.max(page, t.messages.length) : page
     try {
-      const got = await sv.loadThread(t.room, t.root, { limit })
+      const got = await threadPage(t, { limit })
       const now = useP2p.getState().thread
       if (now?.room !== t.room || now.root !== t.root) return
       if (!got) return useP2p.setState({ thread: { ...now, loading: false } })
@@ -261,15 +271,17 @@ export function createServersPart(
   }
 
   const p2pThread = {
-    // Opens the thread of a top-level message of the open channel (at one of its replies).
+    // Opens the thread of a top-level message of the open channel or conversation (at one of
+    // its replies).
     async open(root: string, at?: string) {
       const st = useP2p.getState()
       const chat = st.chat
       const s = parts.dms.dbNow()
-      if (!chat?.ch || !s) return
+      if (!chat || !s) return
       const rec = await s.event(root).catch(() => undefined)
-      if (!rec || rec.room !== chat.room || rec.type !== 'msg' || !rec.chan || rec.thread) return
-      if (rec.chan !== chat.ch) {
+      if (!rec || rec.room !== chat.room || rec.type !== 'msg' || rec.thread) return
+      if (chat.ch && !rec.chan) return
+      if (chat.ch && rec.chan && rec.chan !== chat.ch) {
         if (!(await p2pServer.openChannel(rec.chan))) return
         await parts.inbox.channelLoaded(chat.room, rec.chan)
       }
@@ -277,9 +289,10 @@ export function createServersPart(
       const head = same ? (st.thread?.head ?? null) : (parts.dms.findMessage(root) ?? null)
       useP2p.setState({
         panel: 'thread',
+        threads: null,
         thread: {
           room: chat.room,
-          ch: rec.chan,
+          ch: chat.ch ? (rec.chan ?? null) : null,
           root,
           head,
           messages: same ? (st.thread?.messages ?? []) : [],
@@ -301,13 +314,12 @@ export function createServersPart(
       })),
 
     async loadOlder() {
-      const sv = state.servers
       const t = useP2p.getState().thread
-      if (!sv || !t || !t.more || t.loading) return
+      if (!t || !t.more || t.loading) return
       useP2p.setState({ thread: { ...t, loading: true } })
-      const page = await sv
-        .loadThread(t.room, t.root, { before: t.messages[0]?.sortKey })
-        .catch(() => null)
+      const page = await Promise.resolve(threadPage(t, { before: t.messages[0]?.sortKey })).catch(
+        () => null
+      )
       const now = useP2p.getState().thread
       if (now?.room !== t.room || now.root !== t.root) return
       useP2p.setState({
@@ -324,12 +336,20 @@ export function createServersPart(
 
     // A reply of the open thread, loaded around if it isn't shown, and flashed.
     async jumpTo(id: string) {
-      const sv = state.servers
       const t = useP2p.getState().thread
-      if (!sv || !t) return
+      if (!t) return
       if (id === t.root) return parts.dms.p2pDm.jumpTo(id)
       if (!t.messages.some(m => m.id === id)) {
-        const around = await sv.loadThreadAround(t.room, t.root, id).catch(() => null)
+        const s = parts.dms.dbNow()
+        const me = parts.dms.meNow()
+        const peer = useP2p.getState().rooms[t.room]?.peer ?? useP2p.getState().chat?.peer
+        const around = await (
+          t.ch
+            ? state.servers?.loadThreadAround(t.room, t.root, id)
+            : s && me && peer
+              ? loadDmThreadAround(s.db, t.room, t.root, me, peer, id, state.limits)
+              : null
+        )?.catch(() => null)
         const now = useP2p.getState().thread
         if (now?.room !== t.room || now.root !== t.root) return
         // The reply no longer shows here (or left the thread): the thread opens as it is.
@@ -351,13 +371,41 @@ export function createServersPart(
     async markRead() {
       const t = useP2p.getState().thread
       const sv = state.servers
-      if (!t || !sv) return
-      if (!useP2p.getState().servers[t.room]?.chans[t.ch]?.threads?.[t.root]) return
+      if (!t) return
+      const st = useP2p.getState()
+      const counted = t.ch
+        ? st.servers[t.room]?.chans[t.ch]?.threads?.[t.root]
+        : st.rooms[t.room]?.threads?.[t.root]
+      if (!counted) return
       const ids = state.pingLog
         ? await state.pingLog.ofThread(t.room, t.ch, t.root).catch(() => [])
         : []
       if (ids.length) await state.pingLog?.mark(ids).catch(() => 0)
-      await sv.markThread(t.room, t.ch, t.root).catch(() => {})
+      if (t.ch) await sv?.markThread(t.room, t.ch, t.root).catch(() => {})
+      else await state.dms?.markThread(t.room, t.root).catch(() => {})
+    },
+
+    // Every thread of the open channel or conversation that shows here, for its Threads list:
+    // its root, the sort key of its newest reply, and whether it has unread pings.
+    async list(): Promise<{ root: P2pMessage; last: string; pinged: boolean }[]> {
+      const chat = useP2p.getState().chat
+      const s = parts.dms.dbNow()
+      const me = parts.dms.meNow()
+      if (!chat || !s || !me) return []
+      const all = chat.ch
+        ? ((await state.servers?.listThreads(chat.room, chat.ch)) ?? [])
+        : await loadDmThreads(s.db, chat.room, me, chat.peer)
+      const pings = state.pingLog
+        ? await state.pingLog.threadPings(chat.room, chat.ch ?? null).catch(() => [])
+        : []
+      const pinged = new Set(pings.map(p => p.thread))
+      const counts = chat.ch
+        ? useP2p.getState().servers[chat.room]?.chans[chat.ch]?.threads
+        : useP2p.getState().rooms[chat.room]?.threads
+      return all.map(t => ({
+        ...t,
+        pinged: pinged.has(t.root.id) || (counts?.[t.root.id] ?? 0) > 0,
+      }))
     },
   }
 
@@ -680,6 +728,7 @@ export function createServersPart(
         chat: null,
         panel: null,
         pins: null,
+        threads: null,
         thread: null,
         dialog: null,
       })
@@ -723,6 +772,7 @@ export function createServersPart(
               }
             : null,
         pins: null,
+        threads: null,
         editing: null,
         replying: null,
         pulling: false,
@@ -742,6 +792,7 @@ export function createServersPart(
         server: null,
         chat: st.chat?.ch ? null : st.chat,
         pins: st.chat?.ch ? null : st.pins,
+        threads: st.chat?.ch ? null : st.threads,
         panel: null,
         thread: null,
       })),
@@ -1026,6 +1077,7 @@ export function createServersPart(
     refreshServer,
     scheduleServer,
     loadChannel,
+    loadThread,
     p2pThread,
     p2pSearch,
     readSlow,

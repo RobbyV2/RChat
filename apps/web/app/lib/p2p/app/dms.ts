@@ -1,7 +1,7 @@
 import { resolve as resolveNotify } from '../../notify'
 import { applySed, parseSed } from '../../sed'
 import type { UserRef } from '../../types'
-import type { RoomRecord } from '../db'
+import { dmRootOf, type RoomRecord } from '../db'
 import { displayName } from '../contacts'
 import { p2pAlert } from '../alerts'
 import {
@@ -14,11 +14,13 @@ import {
   loadAround,
   loadMessages,
   loadPins,
+  threadPingTotal,
   type Arrival,
 } from '../dm'
 import type { Fwd } from '../content'
 import type { PageOpts } from '../jump'
 import { Servers } from '../server'
+import { channelReadSkips, threadsSig } from './servers'
 import { typingResendMs } from '../sync'
 import type { RoomSummary, P2pChat } from './store'
 import type { IdentityScope, P2pParts } from './scope'
@@ -28,7 +30,7 @@ export function createDmsPart(
   scope: IdentityScope
 ) {
   const state = parts.store
-  const { useP2p, p2pHost, chatKey, threadKey, chatScope, writeHome } = state
+  const { useP2p, p2pHost, chatKey, threadKey, threadScope, chatScope, writeHome } = state
 
   // ----- Direct messages -----
 
@@ -48,7 +50,8 @@ export function createDmsPart(
     peer: r.peer,
     seq: r.lastSeq,
     unread: r.unread,
-    pings: r.pings,
+    pings: r.pings + threadPingTotal(r.threads),
+    threads: r.threads,
     lastTs: r.lastTs,
     count: r.count,
     bytes: r.bytes ?? 0,
@@ -168,15 +171,31 @@ export function createDmsPart(
     if (state.dms && useP2p.getState().storageFull !== state.dms.storageFull)
       useP2p.setState({ storageFull: state.dms.storageFull })
     const st = useP2p.getState()
-    const typing = state.dms ? state.dms.typingIn(room) : []
-    if ((st.typing[room] ?? []).join() !== typing.join())
-      useP2p.setState(x => ({ typing: { ...x.typing, [room]: typing } }))
+    // The conversation's typers, and the open thread's (`{room}#{root}`); closed threads' go.
+    const mine = (k: string) => k === room || k.startsWith(`${room}#`)
+    const typing: Record<string, string[]> = Object.fromEntries(
+      Object.entries(st.typing).filter(([k]) => !mine(k))
+    )
+    typing[room] = state.dms ? state.dms.typingIn(room) : []
+    const th = st.thread
+    if (th?.room === room && !th.ch) {
+      const inThread = state.dms ? state.dms.typingIn(room, th.root) : []
+      if (inThread.length) typing[threadKey(th)] = inThread
+    }
+    const sig = (x: Record<string, string[]>) =>
+      JSON.stringify(
+        Object.entries(x)
+          .filter(([k]) => mine(k))
+          .sort()
+      )
+    if (sig(st.typing) !== sig(typing)) useP2p.setState({ typing })
     if (st.chat?.room === room) {
       await loadChat(room, st.chat.peer, true)
       if (!current()) return
       useP2p.setState({ pulling: state.dms?.sync.pulling(room) ?? false })
     }
     if (st.pins?.room === room) await loadPinList(room)
+    if (st.thread?.room === room) await parts.servers.loadThread(true)
   }
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -216,15 +235,21 @@ export function createDmsPart(
   // A new event from the other side: toasts and desktop notifications follow the conversation's
   // notification level, like an instance DM. Reading the conversation at the bottom marks it read.
   const arrived = (a: Arrival) => {
-    if (a.ping) state.pingLog?.note(a.room, null, a.ping, a.rec)
+    if (a.ping) state.pingLog?.note(a.room, null, a.ping, a.rec, a.thread)
     const st = useP2p.getState()
-    const watched =
-      st.home &&
-      st.chat?.room === a.room &&
-      p2pHost.following(chatScope(a.room)) &&
-      (typeof document === 'undefined' || document.visibilityState === 'visible')
+    const visible = typeof document === 'undefined' || document.visibilityState === 'visible'
+    const t = st.thread
+    // A thread reply is seen in its open thread, read at the bottom.
+    const watched = a.thread
+      ? !!t &&
+        t.room === a.room &&
+        t.root === a.thread &&
+        p2pHost.following(threadScope(t)) &&
+        visible
+      : st.home && st.chat?.room === a.room && p2pHost.following(chatScope(a.room)) && visible
     if (watched) {
-      void state.dms?.markRead(a.room)
+      if (a.thread) setTimeout(() => void parts.servers.p2pThread.markRead(), 0)
+      else void state.dms?.markRead(a.room)
       return
     }
     const rule = resolveNotify(p2pHost.prefs(), { kind: 'p2p', room: a.room }, Date.now())
@@ -232,9 +257,32 @@ export function createDmsPart(
     const alert = p2pAlert(a, rule, p2pUser(a.peer), () => {
       if (!current()) return
       parts.account.p2p.openHome()
-      void p2pDm.openDm(a.peer)
+      void p2pDm.openDm(a.peer).then(() => {
+        if (current() && a.thread) void p2pDm.jumpTo(a.rec.id)
+      })
     })
     if (alert) p2pHost.alert(alert)
+  }
+
+  // Thread counters already checked on a read, at a stored position, so reading at the bottom
+  // again doesn't redo it (as for server channels).
+  const readChecked = new Map<string, string>()
+
+  // Reads a conversation: thread pings whose reply or root is gone come off with it, and the log
+  // notes them as seen. The counters are taken before the log, so a ping that arrives meanwhile
+  // stays counted.
+  const readConversation = async (d: Dms, room: string) => {
+    const counts = await d.threadCounts(room)
+    const pings = state.pingLog ? await state.pingLog.threadPings(room, null) : []
+    const dead = await d.readConversation(room, pings, counts)
+    if (dead.length) await state.pingLog?.seen(dead)
+    const after = await dbNow()
+      ?.room(room)
+      .catch(() => undefined)
+    if (after) {
+      const s = summary(after)
+      readChecked.set(room, threadsSig(s, s.seq))
+    }
   }
 
   const withDms = async <T>(fn: (d: Dms) => Promise<T>): Promise<T | null> => {
@@ -253,16 +301,22 @@ export function createDmsPart(
 
   const chatRoom = () => useP2p.getState().chat?.room ?? null
 
-  // Where a draft key ("{room}", "{room}/{channel}" or "{room}/{channel}#{root}") sends to.
+  // Where a draft key ("{room}", "{room}#{root}", "{room}/{channel}" or
+  // "{room}/{channel}#{root}") sends to.
   type Target =
-    | { kind: 'dm'; room: string }
+    | { kind: 'dm'; room: string; thread: string | null }
     | { kind: 'server'; room: string; ch: string; thread: string | null }
 
   const targetOf = (key: string): Target => {
-    const i = key.indexOf('/')
-    if (i < 0) return { kind: 'dm', room: key }
-    const [ch, thread] = key.slice(i + 1).split('#')
-    return { kind: 'server', room: key.slice(0, i), ch, thread: thread ?? null }
+    const [place, thread] = key.split('#')
+    const i = place.indexOf('/')
+    if (i < 0) return { kind: 'dm', room: place, thread: thread ?? null }
+    return {
+      kind: 'server',
+      room: place.slice(0, i),
+      ch: place.slice(i + 1),
+      thread: thread ?? null,
+    }
   }
 
   // The open conversation or channel, as a draft key.
@@ -274,12 +328,12 @@ export function createDmsPart(
   // Runs a DM action or a server one for a draft key.
   const onTarget = <T>(
     key: string,
-    dm: (d: Dms, room: string) => Promise<T>,
+    dm: (d: Dms, room: string, thread: string | null) => Promise<T>,
     server: (s: Servers, room: string, ch: string, thread: string | null) => Promise<T>
   ): Promise<T | null> => {
     const t = targetOf(key)
     return t.kind === 'dm'
-      ? withDms(d => dm(d, t.room))
+      ? withDms(d => dm(d, t.room, t.thread))
       : parts.servers.withServers(s => server(s, t.room, t.ch, t.thread))
   }
 
@@ -344,6 +398,9 @@ export function createDmsPart(
           missed: st.chat?.room === room ? st.chat.missed : [],
         },
         pins: null,
+        threads: null,
+        thread: st.thread?.room === room ? st.thread : null,
+        panel: st.panel === 'thread' && st.thread?.room !== room ? null : st.panel,
         editing: null,
         pulling: false,
         rooms: r ? { ...st.rooms, [room]: summary(r) } : st.rooms,
@@ -362,7 +419,15 @@ export function createDmsPart(
       return r?.id ?? null
     },
 
-    closeDm: () => useP2p.setState({ chat: null, pins: null, editing: null, replying: null }),
+    closeDm: () =>
+      useP2p.setState(st => ({
+        chat: null,
+        pins: null,
+        threads: null,
+        editing: null,
+        replying: null,
+        ...(st.server ? {} : { thread: null, panel: st.panel === 'thread' ? null : st.panel }),
+      })),
 
     async loadOlderPage() {
       const current = currentSession()
@@ -449,11 +514,14 @@ export function createDmsPart(
       const me = meNow()
       const chat = st.chat
       if (!s || !me || !chat) return
-      if (chat.ch) {
-        const root = await state.servers?.threadOf(id).catch(() => null)
-        if (!current()) return
-        if (root) return parts.servers.p2pThread.open(root, id)
-      }
+      const root = chat.ch
+        ? await state.servers?.threadOf(id).catch(() => null)
+        : await s
+            .event(id)
+            .then(r => (r ? dmRootOf(r, x => s.event(x)) : null))
+            .catch(() => null)
+      if (!current()) return
+      if (root) return parts.servers.p2pThread.open(root, id)
       if (!chat.messages.some(m => m.id === id)) {
         const sv = state.servers
         const around = await (
@@ -518,7 +586,7 @@ export function createDmsPart(
       const reply = st.replying?.room === room ? st.replying.id : undefined
       const id = await onTarget(
         room,
-        (d, r) => d.send(r, { body: text, reply, att }),
+        (d, r, thread) => d.send(r, { body: text, reply, att, ...(thread ? { thread } : {}) }),
         (sv, r, ch, thread) =>
           sv.send(r, { ch, body: text, reply, att, ...(thread ? { thread } : {}) })
       )
@@ -540,7 +608,7 @@ export function createDmsPart(
       const clipped = { ...fwd, name: clipName(fwd.name) }
       const id = await onTarget(
         room,
-        (d, r) => d.send(r, { body: '', fwd: clipped }),
+        (d, r, thread) => d.send(r, { body: '', fwd: clipped, ...(thread ? { thread } : {}) }),
         (sv, r, ch, thread) =>
           sv.send(r, { ch, body: '', fwd: clipped, ...(thread ? { thread } : {}) })
       )
@@ -640,19 +708,27 @@ export function createDmsPart(
     async openPins() {
       const room = chatRoom()
       if (!room) return
-      useP2p.setState({ pins: { room, list: null } })
+      useP2p.setState({ pins: { room, list: null }, threads: null })
       await loadPinList(room)
     },
 
     closePins: () => useP2p.setState({ pins: null }),
 
+    openThreads() {
+      const chat = useP2p.getState().chat
+      if (chat) useP2p.setState({ threads: chatKey(chat), pins: null })
+    },
+
+    closeThreads: () => useP2p.setState({ threads: null }),
+
     // `room` is a draft key.
     markRead(room: string) {
       const t = targetOf(room)
       if (t.kind === 'server') return parts.servers.p2pServer.markRead(t.room, t.ch)
+      if (t.thread) return
       const r = useP2p.getState().rooms[room]
-      if (!r || (!r.unread && !r.pings)) return
-      void withDms(d => d.markRead(room))
+      if (!r || channelReadSkips(r, r.seq, readChecked.get(room))) return
+      void withDms(d => readConversation(d, room))
     },
 
     // The open conversation's first unread message (in storage when not loaded), for its banner.
@@ -688,7 +764,7 @@ export function createDmsPart(
       if (!p2pHost.typingOn()) return
       const t = targetOf(room)
       if (t.kind === 'server') state.servers?.typing(t.room, t.ch, on, t.thread ?? undefined)
-      else state.dms?.typing(room, on)
+      else state.dms?.typing(t.room, on, t.thread)
     },
   }
 
@@ -696,6 +772,7 @@ export function createDmsPart(
     ++jumpRevision
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
+    readChecked.clear()
   })
   return {
     currentSession,

@@ -3,7 +3,7 @@
 import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ChartColumn, FileText, Pin, X } from 'lucide-react'
+import { ChartColumn, FileText, Pin, X, type LucideIcon } from 'lucide-react'
 import { PreviewSpoiler, RevealChannelPreview } from './preview_reveal'
 import { useMediaSrc } from '../lib/media_src'
 import { PINS_TITLE, noPinsText, pinPlace } from '../lib/pins'
@@ -320,29 +320,23 @@ export function PinsWindow() {
   )
 }
 
-// The pinned messages of one conversation, as a popover (a sheet on phones).
-export function PinsPanel({
-  list,
-  failed,
-  place,
-  empty,
-  canUnpin,
-  profiles,
+// A list that drops down from a conversation's header button (`button`, a selector of it), as a
+// popover, or a sheet on phones: its title row (with a close button, on a sheet too with
+// `sheetClose`), then `children`.
+export function HeaderPopover({
+  icon: Icon,
+  title,
+  button,
+  sheetClose = false,
   onClose,
-  onRetry,
-  onJump,
-  onUnpin,
+  children,
 }: {
-  list: Message[] | null
-  failed: boolean
-  place: string
-  empty: string
-  canUnpin: boolean
-  profiles: boolean
+  icon: LucideIcon
+  title: string
+  button: string
+  sheetClose?: boolean
   onClose: () => void
-  onRetry: () => void
-  onJump: (id: number) => void
-  onUnpin: (id: number) => void
+  children: ReactNode
 }) {
   const store = useStoreApi()
   const sheet = useMedia(SHEET_QUERY)
@@ -368,8 +362,7 @@ export function PinsPanel({
       if (!(t instanceof Element)) return
       const s = store.getState()
       if (s.confirm || s.contextMenu || s.profile) return
-      if (rootRef.current?.contains(t) || t.closest('[data-pins-button], [aria-modal="true"]'))
-        return
+      if (rootRef.current?.contains(t) || t.closest(`${button}, [aria-modal="true"]`)) return
       closeRef.current()
     }
     window.addEventListener('keydown', onKey)
@@ -378,7 +371,7 @@ export function PinsPanel({
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onDown, true)
     }
-  }, [store])
+  }, [store, button])
 
   useLayoutEffect(() => {
     if (!sheet) return
@@ -389,12 +382,78 @@ export function PinsPanel({
   const body = (
     <>
       <div className="flex shrink-0 items-center gap-2 px-4 pb-2">
-        <Pin size={18} className="text-on-surface-variant" />
+        <Icon size={18} className="text-on-surface-variant" />
         <h2 id={titleId} className="flex-1 text-base font-medium text-on-surface">
-          {PINS_TITLE}
+          {title}
         </h2>
-        {!sheet && <CloseButton onClick={onClose} />}
+        {(!sheet || sheetClose) && <CloseButton onClick={onClose} />}
       </div>
+      {children}
+    </>
+  )
+
+  if (sheet)
+    return createPortal(
+      <div
+        data-popover
+        onClick={e => {
+          if (e.target === e.currentTarget) onClose()
+        }}
+        className="fixed inset-x-0 top-app z-40 flex h-app flex-col justify-end bg-scrim/40"
+      >
+        <div
+          ref={rootRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          className="flex max-h-[80%] min-h-64 animate-sheet-up flex-col overflow-hidden rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-elevation-3"
+        >
+          <SheetGrip />
+          {body}
+        </div>
+      </div>,
+      document.body
+    )
+
+  return (
+    <div
+      ref={rootRef}
+      role="dialog"
+      aria-labelledby={titleId}
+      data-popover
+      className="absolute top-14 right-2 z-30 flex max-h-[min(36rem,calc(100%-4.5rem))] w-[26rem] max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
+    >
+      {body}
+    </div>
+  )
+}
+
+// The pinned messages of one conversation, as a popover (a sheet on phones).
+export function PinsPanel({
+  list,
+  failed,
+  place,
+  empty,
+  canUnpin,
+  profiles,
+  onClose,
+  onRetry,
+  onJump,
+  onUnpin,
+}: {
+  list: Message[] | null
+  failed: boolean
+  place: string
+  empty: string
+  canUnpin: boolean
+  profiles: boolean
+  onClose: () => void
+  onRetry: () => void
+  onJump: (id: number) => void
+  onUnpin: (id: number) => void
+}) {
+  return (
+    <HeaderPopover icon={Pin} title={PINS_TITLE} button="[data-pins-button]" onClose={onClose}>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-outline-variant px-3 pt-3 pb-3">
         {list === null && !failed && (
           <p className="px-1 py-6 text-center text-sm text-on-surface-variant">
@@ -436,41 +495,6 @@ export function PinsPanel({
           </ul>
         )}
       </div>
-    </>
-  )
-
-  if (sheet)
-    return createPortal(
-      <div
-        data-popover
-        onClick={e => {
-          if (e.target === e.currentTarget) onClose()
-        }}
-        className="fixed inset-x-0 top-app z-40 flex h-app flex-col justify-end bg-scrim/40"
-      >
-        <div
-          ref={rootRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={titleId}
-          className="flex max-h-[80%] min-h-64 animate-sheet-up flex-col overflow-hidden rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-elevation-3"
-        >
-          <SheetGrip />
-          {body}
-        </div>
-      </div>,
-      document.body
-    )
-
-  return (
-    <div
-      ref={rootRef}
-      role="dialog"
-      aria-labelledby={titleId}
-      data-popover
-      className="absolute top-14 right-2 z-30 flex max-h-[min(36rem,calc(100%-4.5rem))] w-[26rem] max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
-    >
-      {body}
-    </div>
+    </HeaderPopover>
   )
 }

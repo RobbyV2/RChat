@@ -266,6 +266,7 @@ const IDS = [
   'jump_present',
   'select',
   'pins',
+  'open_threads',
   'copy_link_here',
   'search_channel',
   'jump_date',
@@ -337,6 +338,7 @@ const LOOKS = [
   ['jump_present', 'Jump to present', 'commands', 'CheckCheck', '', '', ''],
   ['select', 'Select messages', 'commands', 'SquareCheck', '', 'Mod+Shift+S', ''],
   ['pins', 'Show pinned messages', 'commands', 'Pin', '', '', ''],
+  ['open_threads', 'Show threads', 'commands', 'MessagesSquare', '', '', ''],
   ['copy_link_here', 'Copy link to #general', 'commands', 'Link', '', '', ''],
   ['search_channel', 'Search messages on the server', 'commands', 'Search', '', '', ''],
   ['jump_date', 'Jump to date', 'commands', 'FileClock', '', '', ''],
@@ -463,6 +465,7 @@ const KEYWORDS: Record<string, string[]> = {
   mark_read_here: ['read', 'unread'],
   jump_present: ['latest', 'bottom'],
   select: ['bulk', 'delete', 'export'],
+  open_threads: ['thread', 'replies'],
   copy_link_here: ['share', 'url'],
   jump_date: ['history', 'day'],
   mute_here: ['notifications', 'silence'],
@@ -493,7 +496,7 @@ const KEYWORDS: Record<string, string[]> = {
 }
 const ORDER: Record<string, string> = {
   channelState: [
-    'home inbox mark_read_here jump_unread jump_present select pins copy_link_here',
+    'home inbox mark_read_here jump_unread jump_present select pins open_threads copy_link_here',
     'search_channel jump_date mute_here level_here mark_server_read mute_server level_server server_settings',
     'audit_log webhooks timeout_member untimeout_s_bob leave_server poll switch_account manage_accounts mark_all_read mark_dms_read',
     'start_dm create_server add_instance join_server palette_help logout friends add_friends block',
@@ -501,7 +504,7 @@ const ORDER: Record<string, string> = {
     'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information apps.preview',
   ].join(' '),
   dmState: [
-    'home inbox mark_read_here jump_unread jump_present select pins copy_link_here',
+    'home inbox mark_read_here jump_unread jump_present select pins open_threads copy_link_here',
     'mute_here level_here poll call video_call close_dm switch_account manage_accounts mark_all_read mark_dms_read',
     'start_dm create_server add_instance join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer typing animations profanity',
@@ -514,7 +517,7 @@ const ORDER: Record<string, string> = {
     'settings_sync settings_palette settings_information',
   ].join(' '),
   guestState: [
-    'home mark_read_here jump_unread jump_present select pins copy_link_here search_channel',
+    'home mark_read_here jump_unread jump_present select pins open_threads copy_link_here search_channel',
     'jump_date mute_here level_here mark_server_read mute_server level_server switch_account manage_accounts add_instance join_server palette_help',
     'theme streamer typing animations profanity spoilers settings_settings settings_profile settings_general settings_notifications settings_sync',
     'settings_palette settings_information',
@@ -524,7 +527,7 @@ const ORDER: Record<string, string> = {
     'settings_palette settings_information',
   ].join(' '),
   mutedState: [
-    'home inbox mark_read_here jump_unread jump_present select pins copy_link_here',
+    'home inbox mark_read_here jump_unread jump_present select pins open_threads copy_link_here',
     'search_channel jump_date unmute_here level_here mark_server_read unmute_server level_server server_settings',
     'audit_log webhooks timeout_member untimeout_s_bob poll switch_account manage_accounts mark_all_read mark_dms_read start_dm',
     'create_server add_instance join_server palette_help logout friends add_friends block accept_carol',
@@ -541,6 +544,7 @@ const RUNS: Record<string, Record<string, unknown[]>> = {
     jump_present: [['jumpToPresent', 'c1']],
     select: [['startSelection', 'c1']],
     pins: [['openPins']],
+    open_threads: [['openThreads']],
     copy_link_here: [
       ['copyText', 'ORIGIN/s/s/1/'],
       ['showToast', 'Link copied'],
@@ -766,7 +770,9 @@ test('rows come in the pinned order in each state', () => {
     list.filter(id => !drop.includes(id)).join(' ')
   const mod = ['server_settings', 'audit_log', 'webhooks', 'timeout_member', 'untimeout_s_bob']
   expect(order(threadState())).toBe(ORDER.channelState)
-  expect(order(voiceChannelState())).toBe(without(channel, 'search_channel', 'jump_date', 'poll'))
+  expect(order(voiceChannelState())).toBe(
+    without(channel, 'open_threads', 'search_channel', 'jump_date', 'poll')
+  )
   expect(order(readOnlyState())).toBe(without(channel, 'poll'))
   expect(order(lobbyState())).toBe(without(channel, ...mod, 'leave_server'))
   expect(order(unloadedState())).toBe(

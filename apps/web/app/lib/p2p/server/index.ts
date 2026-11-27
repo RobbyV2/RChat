@@ -1883,6 +1883,10 @@ export class Servers {
     return views.loadThreadAround(ctx(this), room, root, id)
   }
 
+  listThreads(room: string, ch: string) {
+    return views.listThreads(ctx(this), room, ch)
+  }
+
   private systemRows(
     room: string,
     lo: string | undefined,

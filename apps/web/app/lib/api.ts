@@ -49,6 +49,7 @@ import type {
   Poll,
   PollKind,
   PollVoter,
+  ThreadItem,
   ShowResults,
   PasswordMembers,
   CreatedPassword,
@@ -134,6 +135,8 @@ export const withCursor = (path: string, cursor: string | null) =>
   cursor ? `${path}${path.includes('?') ? '&' : '?'}cursor=${seg(cursor)}` : path
 
 const seg = encodeURIComponent
+
+const threadsQuery = (q: string) => (q.trim() ? `?q=${seg(q.trim())}` : '')
 
 export interface InboxQuery {
   unread?: boolean
@@ -917,6 +920,10 @@ export const endpoints = (c: ApiClient) => ({
         cursor
       )
     ),
+  channelThreads: (id: number, q: string, cursor: string | null) =>
+    c.page<ThreadItem>(withCursor(`/channels/${id}/threads${threadsQuery(q)}`, cursor)),
+  dmThreads: (id: number, q: string, cursor: string | null) =>
+    c.page<ThreadItem>(withCursor(`/dms/${id}/threads${threadsQuery(q)}`, cursor)),
   threadMessages: (id: number, page: PageOpts = {}) =>
     c.req<Message[]>('GET', `/messages/${id}/thread${pageQuery(page)}`),
   sendThreadMessage: (id: number, content: string, opts: SendOpts = {}) =>

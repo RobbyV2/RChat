@@ -56,7 +56,9 @@ export interface RoomSummary {
   // Arrival number of the newest stored event: it moves only when stored content changes.
   seq: number
   unread: number
+  // With the pings on its thread replies, which `threads` counts per thread root.
   pings: number
+  threads?: Record<string, number>
   lastTs: number
   // Stored events and bytes: which limit a full conversation reached.
   count: number
@@ -89,10 +91,11 @@ export interface P2pChat {
   missed: MissedCall[]
 }
 
-// The open thread of a P2P server channel: its root and the newest replies.
+// The open thread of a P2P server channel or of a conversation (`ch` null): its root and the
+// newest replies.
 export interface P2pThread {
   room: string
-  ch: string
+  ch: string | null
   root: string
   head: P2pMessage | null
   messages: P2pMessage[]
@@ -144,7 +147,9 @@ export interface P2pState {
   chat: P2pChat | null
   typing: Record<string, string[]>
   pins: { room: string; list: P2pMessage[] | null } | null
-  // The panel beside a server channel: a thread or search.
+  // The Threads list of the open conversation or channel (its draft key).
+  threads: string | null
+  // The panel beside a server channel or conversation: a thread or search.
   panel: 'thread' | 'search' | null
   thread: P2pThread | null
   search: P2pSearch
@@ -257,8 +262,8 @@ export const emptySearch = (): P2pSearch => ({
 export const chatKey = (c: { room: string; ch?: string | null }) =>
   c.ch ? `${c.room}/${c.ch}` : c.room
 
-export const threadKey = (t: { room: string; ch: string; root: string }) =>
-  `${t.room}/${t.ch}#${t.root}`
+export const threadKey = (t: { room: string; ch: string | null; root: string }) =>
+  t.ch ? `${t.room}/${t.ch}#${t.root}` : `${t.room}#${t.root}`
 
 // Stored per account: { v: 1, on }. Anything unreadable means off.
 export const p2pKey = (username: string) => `rchat_p2p:${username}`
@@ -338,7 +343,8 @@ export const parseAuto = (raw: string | null, l: Readonly<Local> = LOCAL) => {
 export const chatScope = (room: string, ch?: string | null) =>
   ch ? `p2p:${room}/${ch}` : `p2p:${room}`
 
-export const threadScope = (t: { room: string; ch: string; root: string }) => `p2p:${threadKey(t)}`
+export const threadScope = (t: { room: string; ch: string | null; root: string }) =>
+  `p2p:${threadKey(t)}`
 
 export const initialPeerState = (): P2pState => ({
   countsLoaded: null,
@@ -367,6 +373,7 @@ export const initialPeerState = (): P2pState => ({
   chat: null,
   typing: {},
   pins: null,
+  threads: null,
   panel: null,
   thread: null,
   search: emptySearch(),

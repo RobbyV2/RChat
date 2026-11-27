@@ -73,6 +73,8 @@ export type Target =
   | { kind: 'timestamp'; ts: number; token: string }
   // An inbox row, with its panel's open and mark-read.
   | { kind: 'inbox'; entry: InboxEntry; open(): void; read(): void }
+  // A row of a Threads list: open the thread, or jump to its root in the conversation.
+  | { kind: 'thread'; open(): void; jump(): void }
   // A Home card: `read`, what marking it read would mark now.
   | {
       kind: 'card'

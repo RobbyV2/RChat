@@ -557,6 +557,13 @@ export interface Poll {
   snapshot?: boolean
 }
 
+// A thread in a channel's or DM's thread list: its root and its newest reply.
+export interface ThreadItem {
+  root: Message
+  last_reply_id: number
+  last_reply_at: number
+}
+
 export interface PollVoter {
   user: UserRef
   voted_at: number

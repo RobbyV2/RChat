@@ -335,10 +335,13 @@ async fn place(
                     if to == ReportKind::Server {
                         return Err(instance_only());
                     }
+                    let spot = match scope.thread_root_id {
+                        Some(root) => Place::Thread(root),
+                        None => Place::Dm(dm),
+                    };
                     Ok(Placed {
                         snapshot: Snapshot {
-                            context: snapshot::context(db, id, Place::Dm(dm), None, context)
-                                .await?,
+                            context: snapshot::context(db, id, spot, None, context).await?,
                             message: Some(message),
                             ..Snapshot::default()
                         },

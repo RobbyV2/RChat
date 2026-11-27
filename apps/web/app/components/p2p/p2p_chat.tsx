@@ -77,6 +77,8 @@ import {
   useVouchedFiles,
 } from '../forwards'
 import { PinLine, PinsPanel, confirmUnpin } from '../pins'
+import { ThreadsPanel, useThreadPages, type ThreadPage } from '../threads'
+import { pageThreads } from '../../lib/thread_list'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker, SHEET_QUERY } from '../emoji_picker'
 import { longPress, useMedia } from '../context_menu'
@@ -1117,6 +1119,64 @@ function useFirstUnread(key: string | null) {
   return found && found.key === key ? found : null
 }
 
+// The Threads list of the open conversation or channel, from what is stored here.
+function P2pThreadsList({
+  nameOf,
+  toMessage,
+}: {
+  nameOf: (ik: string) => string
+  toMessage: (p: P2pMessage) => Message
+}) {
+  const identity = useP2pApp()!
+  const { p2pDm, p2pThread } = identity
+  const convert = useRef(toMessage)
+  const names = useRef(nameOf)
+  useEffect(() => {
+    convert.current = toMessage
+    names.current = nameOf
+  })
+  const load = useCallback(
+    async (query: string, cursor: string | null): Promise<ThreadPage> => {
+      const all = (await p2pThread.list()).map(t => ({
+        ...t,
+        id: t.root.id,
+        text: t.root.fwd ? t.root.fwd.body : t.root.body,
+        names: [names.current(t.root.sender)],
+      }))
+      const page = pageThreads(all, query, cursor)
+      return {
+        items: page.items.map(t => ({
+          key: t.id,
+          root: convert.current(t.root),
+          files: (t.root.fwd?.att ?? t.root.att).length > 0,
+          replies: t.root.replies ?? 0,
+          lastAt: Math.floor((t.root.lastReply ?? t.root.ts) / 1000),
+          pinged: t.pinged,
+        })),
+        next: page.next,
+      }
+    },
+    [p2pThread]
+  )
+  const list = useThreadPages(load)
+  return (
+    <ThreadsPanel
+      list={list}
+      server={null}
+      peer
+      onClose={p2pDm.closeThreads}
+      onOpen={r => {
+        p2pDm.closeThreads()
+        void p2pThread.open(r.key)
+      }}
+      onJump={r => {
+        p2pDm.closeThreads()
+        void p2pDm.jumpTo(r.key)
+      }}
+    />
+  )
+}
+
 function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
   const { profileName, p2pDm, p2pFiles } = identity
@@ -1129,6 +1189,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   const me = useP2p(s => s.me)
   const movingAt = useP2p(s => s.movingAt)
   const pins = useP2p(s => (s.pins && s.pins.room === s.chat?.room ? s.pins : null))
+  const threadsOpen = useP2p(s => s.threads !== null && s.threads === key)
   const focus = useP2p(s => (s.focus && s.focus.room === s.chat?.room ? s.focus : null))
   const pulling = useP2p(s => s.pulling)
   const storageFull = useP2p(s => s.storageFull)
@@ -1171,7 +1232,7 @@ function IdentityChatBody(props: ChatBodyProps) {
     mayPin,
     mayDelete,
     forwardSkip,
-    threads: !!chat.ch,
+    threads: true,
   })
 
   const lastNum = shared[shared.length - 1]?.id
@@ -1356,7 +1417,7 @@ function IdentityChatBody(props: ChatBodyProps) {
                       canDelete={mayDelete(p)}
                       editing={editing && editingState?.id === p.id ? editing : null}
                       draftKey={key}
-                      threads={!!chat.ch}
+                      threads
                       onMenu={rowMenu}
                       onCopy={copyRow}
                       onJump={rowJump}
@@ -1427,6 +1488,14 @@ function IdentityChatBody(props: ChatBodyProps) {
               const id = pins.list?.find(p => (num.get(p.id) ?? Math.max(1, p.ts * 1000)) === n)?.id
               if (id) confirmUnpin(store, () => void p2pDm.pin(id, false))
             }}
+          />
+        )}
+        {threadsOpen && (
+          <P2pThreadsList
+            nameOf={nameOf}
+            toMessage={p =>
+              asMessage(p, num.get(p.id) ?? Math.max(1, p.ts * 1000), 0, user, me ?? '')
+            }
           />
         )}
         {picker && (

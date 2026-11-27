@@ -1479,7 +1479,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     readQueue.flush()
     leaveServerView(null)
     syncUrl(null, nav)
-    set({ view: null, pins: null, panel: null, home: true })
+    set({ view: null, pins: null, threads: null, panel: null, home: true })
     leaveVisit()
     get().setViewing(null)
   }
@@ -1497,6 +1497,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       focus: keyed(s.focus, key, null),
       unreadAnchor: left && left !== key ? keyed(s.unreadAnchor, left, null) : s.unreadAnchor,
       pins: s.pins && s.pins.key !== key ? null : s.pins,
+      threads: s.threads !== key ? null : s.threads,
     }))
     leaveVisit(
       view.kind === 'channel' ? instanceTarget(get(), view.server, view.channelId)?.key : undefined
@@ -1531,6 +1532,29 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     )
       return
     const root = (get().messages[`c${channelId}`] ?? []).find(m => m.id === threadRootId)
+    if (root) await get().openThread(root, id)
+  }
+
+  // A DM message, or a reply in one of its threads: the DM at it (or at the thread's root), then
+  // the thread at the reply.
+  const openDmAt = async (
+    dmId: number,
+    threadRootId: number | null,
+    id: number,
+    nav: Nav = 'push',
+    switching = false
+  ) => {
+    const v = shownView(acct, get().view)
+    const at = threadRootId ?? id
+    const mark = sessionMark()
+    if (!switching && v?.kind === 'dm' && v.dmId === dmId) {
+      if (threadRootId === null && get().panel?.kind === 'thread') set({ panel: null })
+      await get().jumpTo(`d${dmId}`, at)
+    } else await get().openDm(dmId, nav, at)
+    const now = get().view
+    if (threadRootId === null || mark !== sessionMark() || now?.kind !== 'dm' || now.dmId !== dmId)
+      return
+    const root = (get().messages[`d${dmId}`] ?? []).find(m => m.id === threadRootId)
     if (root) await get().openThread(root, id)
   }
 
@@ -2176,6 +2200,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         linkCards: {},
         toast: null,
         pins: null,
+        threads: null,
         composerFocus: null,
         editing: null,
         bootError: null,
@@ -2496,6 +2521,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
             const now = get().view
             if (now?.kind !== 'channel' || now.channelId !== id) return
           }
+        } else if (root.dm_id !== null) {
+          const id = root.dm_id
+          if (view?.kind !== 'dm' || view.dmId !== id) {
+            await get().openDm(id)
+            const now = get().view
+            if (now?.kind !== 'dm' || now.dmId !== id) return
+          }
         }
         const key = threadKey(root.id)
         set(s => ({ panel: { kind: 'thread', root }, focus: keyed(s.focus, key, null) }))
@@ -2540,6 +2572,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       return () => intent === navigation
     },
     openChannelAt,
+    openDmAt,
     persistGrants,
     persistGuestNames,
     persistGuestServers,

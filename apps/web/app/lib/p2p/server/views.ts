@@ -489,6 +489,49 @@ export async function loadThread(
   return { root: head ?? null, ch: r.chan, messages: await cx.rows(room, page), more }
 }
 
+// Every thread of channel `ch` that shows here: its root (with its replies) and the sort key of
+// its newest reply.
+export async function listThreads(cx: ServerCtx, room: string, ch: string) {
+  if (cx.readOnly(room) || !cx.canViewCh(room, ch)) return []
+  const keep = cx.sumOf(room).upgraded ? await cx.archiveKeep(room, cx.rooms.get(room)?.next) : null
+  const recs = await cx.db.getAllFromIndex(
+    'events',
+    'room_thread_sort',
+    IDBKeyRange.bound([room, ''], [room, '\uffff'])
+  )
+  const replies = recs.filter(
+    r => r.type === 'msg' && r.chan === ch && !r.redacted && r.thread && (!keep || keep(r))
+  )
+  // Ordered by the newest reply that shows, like the "Last reply" a row shows.
+  const shown = await cx.host.display(
+    room,
+    replies.map(r => r.id)
+  )
+  const last = new Map<string, string>()
+  replies.forEach((r, i) => {
+    const sh = shown[i]
+    if (sh && !sh.hidden && r.thread && (last.get(r.thread) ?? '') < r.sortKey)
+      last.set(r.thread, r.sortKey)
+  })
+  const roots: EventRecord[] = []
+  for (const id of last.keys()) {
+    const r = await cx.db.get('events', id)
+    if (
+      r &&
+      r.room === room &&
+      r.type === 'msg' &&
+      r.chan === ch &&
+      !r.thread &&
+      (!keep || keep(r))
+    )
+      roots.push(r)
+  }
+  const rows = await cx.withReplies(room, ch, await cx.rows(room, roots))
+  return rows.flatMap(m =>
+    m.replies && !m.removed && !m.system ? [{ root: m, last: last.get(m.id) ?? '' }] : []
+  )
+}
+
 // A thread around one of its replies, for jumping to it.
 export async function loadThreadAround(cx: ServerCtx, room: string, root: string, id: string) {
   const r = await cx.db.get('events', id)

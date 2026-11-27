@@ -126,6 +126,9 @@ export interface RoomRecord {
   readSeq: number
   unread: number
   pings: number
+  // A DM's unseen pings on thread replies, per thread root (not in `pings`): reading the thread
+  // clears them.
+  threads?: Record<string, number>
   // Newest message, for the room list.
   lastTs: number
   // The room reached its event or byte cap on this device.
@@ -598,9 +601,9 @@ export class P2pStore {
     return this.db.getAllFromIndex('outbox', 'room', room)
   }
 
-  // The first message from someone else that arrived after `seq`: in a conversation, by arrival;
-  // in one channel of a P2P server (`ch`, top level), newest first back to the first one already
-  // read. It looks at `max` events at most.
+  // The first message from someone else that arrived after `seq`, outside threads: in a
+  // conversation, by arrival; in one channel of a P2P server (`ch`, top level), newest first back
+  // to the first one already read. It looks at `max` events at most.
   async firstMessageAfter(
     room: string,
     seq: number,
@@ -620,7 +623,8 @@ export class P2pStore {
         cur = await cur.continue()
       ) {
         seen += 1
-        if (theirs(cur.value)) found = cur.value
+        const r = cur.value
+        if (theirs(r) && !(await dmRootOf(r, id => tx.store.get(id)))) found = r
       }
     } else {
       const range = IDBKeyRange.bound([room, ch, ''], [room, ch, '\uffff'])
@@ -639,6 +643,17 @@ export class P2pStore {
     await tx.done.catch(() => {})
     return found
   }
+}
+
+// The thread a message of a conversation replies in: its root, a top-level message of the same
+// conversation. `get` reads events (within an open transaction, when one is).
+export const dmRootOf = async (
+  rec: Pick<EventRecord, 'room' | 'thread'>,
+  get: (id: string) => Promise<EventRecord | undefined>
+) => {
+  if (!rec.thread) return null
+  const r = await get(rec.thread)
+  return r && r.room === rec.room && r.type === 'msg' && !r.thread ? rec.thread : null
 }
 
 export const removeP2pDb = (name: string) => deleteDB(name)

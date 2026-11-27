@@ -175,6 +175,7 @@ export function createChatStore(acct: AccountSession) {
       noteUnblocked: (...a) => sessionHub.noteUnblocked(...a),
       navigationIntent: (): (() => boolean) => sessionHub.navigationIntent(),
       openChannelAt: (...a) => sessionHub.openChannelAt(...a),
+      openDmAt: (...a) => sessionHub.openDmAt(...a),
       persistGuestServers: (...a) => sessionHub.persistGuestServers(...a),
       pinSelf,
       readsHub,
@@ -475,6 +476,7 @@ export function createChatStore(acct: AccountSession) {
       staffShut: null,
       staffOpen: [],
       pins: null,
+      threads: null,
       composerFocus: null,
       editing: null,
       search: emptySearch(),
@@ -620,6 +622,7 @@ export function createChatStore(acct: AccountSession) {
       chatStore.setState({
         panel: null,
         pins: null,
+        threads: null,
         contextMenu: null,
         profile: null,
         notices: [],

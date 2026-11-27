@@ -57,16 +57,18 @@ export interface MessageRights {
   thread: boolean
 }
 
+// Quoting, and opening threads: in a channel or a DM (`dm`), where threads need an account.
 export function replyAccess(
   s: RChatState,
   server: string | null,
   channelId: number | null,
-  canReact: boolean
+  canReact: boolean,
+  dm = false
 ) {
   const guestWrites = guestPostingStatus(s, server, channelId) === 'ready'
   return {
     quote: canReact || guestWrites,
-    thread: channelId !== null && (signedIn(s) || guestWrites),
+    thread: dm ? signedIn(s) : channelId !== null && (signedIn(s) || guestWrites),
   }
 }
 
@@ -81,12 +83,12 @@ export const messageRights = (s: RChatState, m: Message, list: string): MessageR
   const manages = server !== null && hasPerm(myPerms(s, server), Perm.DeleteMessages)
   const writable = server !== null && !readOnly(s.servers[server], m.channel_id)
   const react = signed && (dm || (member && writable && free))
-  const replies = replyAccess(s, server, m.channel_id, react)
+  const replies = replyAccess(s, server, m.channel_id, react, dm)
   return {
     react,
     edit: react && ownEditable(m, me?.username),
     quote: canQuote(m) && replies.quote,
-    thread: list.startsWith('c') && !isNotice(m) && replies.thread,
+    thread: !list.startsWith('t') && canQuote(m) && replies.thread,
     forward: signed && canForward(m),
     delete: signed && (m.author.username === me?.username || manages),
     pin: signed && !list.startsWith('t') && (dm || (member && manages)) && free && canPin(m),
@@ -445,6 +447,30 @@ export const embedActions: Action[] = [
     available: ({ target }) => target.kind === 'inbox',
     run: ({ target }) => {
       if (target.kind === 'inbox') target.open()
+    },
+  },
+  {
+    id: 'thread_open',
+    title: 'Open thread',
+    icon: MessageSquareText,
+    scope: 'message',
+    targets: ['thread'],
+    order: 100,
+    available: ({ target }) => target.kind === 'thread',
+    run: ({ target }) => {
+      if (target.kind === 'thread') target.open()
+    },
+  },
+  {
+    id: 'thread_jump',
+    title: 'Jump to message',
+    icon: ExternalLink,
+    scope: 'message',
+    targets: ['thread'],
+    order: 110,
+    available: ({ target }) => target.kind === 'thread',
+    run: ({ target }) => {
+      if (target.kind === 'thread') target.jump()
     },
   },
   {

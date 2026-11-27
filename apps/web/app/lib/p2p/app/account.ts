@@ -809,13 +809,13 @@ export function createAccountPart(
       useP2p.setState({
         home: false,
         dmList: false,
-        ...(dmList ? { chat: null, pins: null, editing: null, replying: null } : {}),
+        ...(dmList ? { chat: null, pins: null, threads: null, editing: null, replying: null } : {}),
       })
     },
     // The P2P home on its contacts, where the message requests are.
     openRequests: () => {
       p2p.openHome()
-      useP2p.setState({ chat: null, pins: null, editing: null, replying: null })
+      useP2p.setState({ chat: null, pins: null, threads: null, editing: null, replying: null })
     },
     clearError: () => useP2p.setState({ error: null }),
     openDialog: (dialog: P2pDialog) => useP2p.setState({ dialog }),

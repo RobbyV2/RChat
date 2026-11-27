@@ -57,6 +57,7 @@ pub mod servers;
 pub mod staff_audit;
 pub mod system_messages;
 pub mod temp_passwords;
+pub mod threads;
 pub mod timeouts;
 pub mod upload_expiry;
 pub mod users;
@@ -2536,12 +2537,14 @@ fn api_routes(
         )
         .route("/messages/{id}/pause-guest", post(guest_chat::pause))
         .route("/channels/{id}/pins", get(pins::channel_pins))
+        .route("/channels/{id}/threads", get(threads::channel_threads))
         .route("/dms", get(dms::list_dms).post(dms::open_dm))
         .route(
             "/dms/{id}/messages",
             get(messages::dm_messages).post(messages::send_dm_message),
         )
         .route("/dms/{id}/pins", get(pins::dm_pins))
+        .route("/dms/{id}/threads", get(threads::dm_threads))
         .route("/dms/{id}/close", post(dms::close_dm))
         .route("/blocks", get(blocks::list_blocks).post(blocks::block_user))
         .route("/blocks/usernames", get(blocks::blocked_usernames))

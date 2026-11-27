@@ -244,3 +244,8 @@ export const unreadListed = (
   reads: Record<string, { lastRead: number; latest: number }>,
   cut: boolean
 ): boolean => !cut && unreadDmIds(reads, UNREAD_DMS_MAX + 1).length <= UNREAD_DMS_MAX
+
+// What your DM with yourself says while it is empty.
+export const SELF_DM_TITLE = 'Your personal space'
+export const SELF_DM_TEXT =
+  'This space is just for you. Jot down notes, forward messages here to save for later, drop files and links, or organize topics into threads.'

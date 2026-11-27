@@ -104,7 +104,8 @@ export interface SyncDeps {
   // Events stored from a peer (new ones only).
   onStored: (room: string, from: string, added: Inserted[]) => void
   onDelivered: (room: string, ids: string[]) => void
-  onTyping: (room: string, ik: string, on: boolean) => void
+  // `thread`: typing in the thread of that root.
+  onTyping: (room: string, ik: string, on: boolean, thread?: string | null) => void
   // Called when a room's sync state changes (gaps, outstanding pulls).
   onState?: (room: string) => void
   limits?: Partial<SyncLimits>
@@ -923,15 +924,20 @@ export class Sync {
 
   // ----- Typing -----
 
-  typing(room: string, on: boolean) {
-    for (const link of this.linksOf(room)) this.send(link, { t: this.t('typing'), room, on })
+  // `thread`: typing in the thread of that root (a peer without threads shows it as typing in
+  // the conversation).
+  typing(room: string, on: boolean, thread: string | null = null) {
+    for (const link of this.linksOf(room))
+      this.send(link, { t: this.t('typing'), room, on, ...(thread ? { thread } : {}) })
   }
 
   private onTypingMsg(m: Message, s: Session) {
     const link = this.linkFor(s, m.room)
     if (!link) return
+    const thread = m.thread
     if (typeof m.on !== 'boolean') return s.strike()
-    this.deps.onTyping(link.room, link.ik, m.on)
+    if (thread !== undefined && !isEventId(thread)) return s.strike()
+    this.deps.onTyping(link.room, link.ik, m.on, thread ?? null)
   }
 
   stop() {

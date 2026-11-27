@@ -1,7 +1,8 @@
 // What a narrow channel or DM header folds into its More button.
 
-import { Pin, Search, SquareCheckBig } from 'lucide-react'
+import { MessagesSquare, Pin, Search, SquareCheckBig } from 'lucide-react'
 import { PINS_TITLE } from '../pins'
+import { THREADS_TITLE } from '../thread_list'
 import { signedIn } from './global'
 import type { Action, ActionCtx } from './types'
 
@@ -33,6 +34,15 @@ export const headerActions: Action[] = [
     order: 110,
     available: ctx => listOf(ctx) !== null,
     run: ({ acct }) => acct.store.getState().openPins(),
+  },
+  {
+    id: 'header_threads',
+    title: THREADS_TITLE,
+    icon: MessagesSquare,
+    ...onHeader,
+    order: 115,
+    available: ctx => listOf(ctx) !== null,
+    run: ({ acct }) => acct.store.getState().openThreads(),
   },
   {
     id: 'header_search',

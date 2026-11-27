@@ -412,6 +412,8 @@ export interface RChatState {
   linkCards: Record<number, MessageLocation | null>
   toast: Toast | null
   pins: PinsView | null
+  // The Threads list of a channel or DM (its key), while it is open.
+  threads: string | null
   composerFocus: { key: string; n: number } | null
   editing: Editing | null
   search: SearchState
@@ -609,6 +611,8 @@ export interface RChatState {
   setForwardShowSource: (key: string, on: boolean) => void
   openPins: () => void
   closePins: () => void
+  openThreads: () => void
+  closeThreads: () => void
   pinMessage: (id: number) => Promise<void>
   openPinned: (key: string, id: number) => Promise<void>
   unpinMessage: (id: number) => Promise<void>

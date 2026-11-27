@@ -1,5 +1,6 @@
 import { richMessage, textOnlyChannel } from '../acl/rules'
 import { getEvents } from '../dag'
+import { deadCounts, liveThreadPings } from '../thread_pings'
 import { serverWire, type ChanCounts, type EventRecord } from '../db'
 import {
   fitContent,
@@ -223,12 +224,7 @@ export async function readChannel(
   counts: Readonly<Record<string, number>> = cx.threadCounts(room, ch)
 ) {
   const live = await cx.livePings(room, pings)
-  const drop: Record<string, number> = {}
-  for (const [root, n] of Object.entries(counts)) {
-    const alive = pings.filter(p => p.thread === root && live.has(p.id)).length
-    if (n > alive) drop[root] = n - alive
-  }
-  await cx.markRead(room, ch, drop)
+  await cx.markRead(room, ch, deadCounts(counts, pings, live))
   return pings.filter(p => !live.has(p.id)).map(p => p.id)
 }
 
@@ -236,39 +232,19 @@ export function threadCounts(cx: ServerCtx, room: string, ch: string): Record<st
   return { ...cx.rooms.get(room)?.chans?.[ch]?.threads }
 }
 
-export async function livePings(
+export function livePings(
   cx: ServerCtx,
   room: string,
   pings: readonly { id: string; thread: string }[]
 ) {
-  const recs = new Map<string, EventRecord>()
-  for (const r of await getEvents(cx.db, room, [...new Set(pings.flatMap(p => [p.id, p.thread]))]))
-    recs.set(r.id, r)
-  const targets = new Map<string, EventRecord>()
-  for (const r of await getEvents(
-    cx.db,
-    room,
-    [...recs.values()].flatMap(r => (r.type === 'react' && r.target ? [r.target] : []))
-  ))
-    targets.set(r.id, r)
-  // The message each ping is about (a reaction's target), in the thread it pinged in.
-  const about = new Map<string, EventRecord>()
-  for (const p of pings) {
-    const r = recs.get(p.id)
-    const m = r?.type === 'react' && r.target ? targets.get(r.target) : r
-    if (!r || !m || m.type !== 'msg' || r.purged || r.redacted || m.purged || m.redacted) continue
-    if ((await cx.rootOf(m)) === p.thread && recs.get(p.thread)) about.set(p.id, m)
-  }
-  const ids = [
-    ...new Set([...about].flatMap(([id, m]) => [id, m.id, m.thread as string]).filter(x => x)),
-  ]
-  const shown = await cx.host.display(room, ids)
-  const ok = new Set(ids.filter((_x, i) => shown[i] && !shown[i]?.hidden))
-  return new Set(
-    [...about]
-      .filter(([id, m]) => ok.has(id) && ok.has(m.id) && ok.has(m.thread as string))
-      .map(([id]) => id)
-  )
+  return liveThreadPings(pings, {
+    events: ids => getEvents(cx.db, room, ids),
+    rootOf: m => cx.rootOf(m),
+    shows: async ids => {
+      const shown = await cx.host.display(room, ids)
+      return new Set(ids.filter((_x, i) => shown[i] && !shown[i]?.hidden))
+    },
+  })
 }
 
 // Reads a thread: its pings come off the channel's counter.

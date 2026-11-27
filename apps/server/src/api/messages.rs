@@ -12,8 +12,8 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::access::overwrite_sql::overwrite_sql;
 use crate::api::access::perms::{ChannelAccess, Perm};
 use crate::api::access::{
-    Proof, ResolvedMessage, channel_manager_servers, granted_servers, member_channel_rights,
-    resolve_channel, resolve_dm, resolve_message,
+    Proof, ResolvedMessage, ThreadHome, channel_manager_servers, granted_servers,
+    member_channel_rights, resolve_channel, resolve_dm, resolve_message,
 };
 use crate::api::admin::like_pattern;
 use crate::api::audit;
@@ -40,7 +40,10 @@ use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 use rchat_perms::masks;
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews";
+pub(crate) const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews";
+/// Top-level messages of a DM.
+const DM_TOP: &str = "m.dm_id = $1 AND m.thread_root_id IS NULL";
+
 const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
@@ -260,20 +263,19 @@ pub struct Unread {
     /// Last message id the caller marked read with `POST /api/v1/read`; 0 if never.
     #[schema(example = 340)]
     pub last_read: i64,
-    /// Id of the newest message from someone else: in a channel the newest top-level one
-    /// (thread replies are not counted).
+    /// Id of the newest top-level message from someone else (thread replies are not counted).
     #[schema(example = 352)]
     pub latest: i64,
     /// Unseen pings (mentions, replies and reactions for the caller) in this scope, including
-    /// thread replies of a channel. A scope with pings is listed even when it is read.
+    /// its thread replies. A scope with pings is listed even when it is read.
     #[schema(example = 2)]
     pub pings: i64,
     /// Highest unseen ping id outside threads (0: none). Send it as `pings_until` to
     /// `POST /api/v1/read` for this scope.
     #[schema(example = 918)]
     pub pings_until: i64,
-    /// Unseen pings on thread replies in this channel, per thread (included in `pings`). Read
-    /// with scope `t<root id>`.
+    /// Unseen pings on thread replies in this channel or DM, per thread (included in `pings`).
+    /// Read with scope `t<root id>`.
     pub thread_pings: Vec<ThreadPings>,
     /// Unread messages in this channel that ping the caller through `@everyone`, `@here` or a
     /// role they hold, newest first (not included in `pings`; at most 1000 over all scopes).
@@ -506,7 +508,11 @@ pub(crate) fn partial_quote(mut message: Message) -> Message {
     message
 }
 
-async fn rows_messages(db: &Db, rows: &[AnyRow], quotes: Quotes) -> Result<Vec<Message>, ApiError> {
+pub(crate) async fn rows_messages(
+    db: &Db,
+    rows: &[AnyRow],
+    quotes: Quotes,
+) -> Result<Vec<Message>, ApiError> {
     let mut authors = Vec::with_capacity(rows.len());
     for r in rows {
         authors.push(r.try_get::<String, _>(4)?);
@@ -1195,8 +1201,8 @@ pub(crate) fn cannot_reply() -> ApiError {
 }
 
 /// Checks `reply_to` of a new message going to `place`: the sender must be able to read it
-/// (through the access gate) and it must be a `user` message in the same channel (outside
-/// threads), the same thread or its root, or the same DM. Every refusal is the same 400, so it
+/// (through the access gate) and it must be a `user` message in the same channel or DM (outside
+/// threads), or the same thread or its root. Every refusal is the same 400, so it
 /// tells nothing about messages the sender cannot read.
 async fn quoted(
     db: &Db,
@@ -1213,10 +1219,8 @@ async fn quoted(
     let scope = target.scope();
     let here = match place {
         Place::Channel(cid) => scope.channel_id == Some(cid) && scope.thread_root_id.is_none(),
-        Place::Thread(root) => {
-            scope.channel_id.is_some() && (id == root || scope.thread_root_id == Some(root))
-        }
-        Place::Dm(did) => scope.dm_id == Some(did),
+        Place::Thread(root) => id == root || scope.thread_root_id == Some(root),
+        Place::Dm(did) => scope.dm_id == Some(did) && scope.thread_root_id.is_none(),
     };
     if !here {
         return Err(cannot_reply());
@@ -2302,11 +2306,12 @@ pub(crate) async fn send_channel_message(
 
 /// List thread replies
 ///
-/// Returns the replies to a top-level channel message, oldest first, with link previews.
-/// Access is checked on the root's channel exactly as for `GET /api/v1/channels/{id}/messages`
-/// (guests allowed when guest access is on, password-protected servers, bans, channel view
-/// and read-history permissions). General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) thread replies, oldest first, paged with `before`, `after` or `around` like channel messages; without read-history access only replies since joining are returned", body = Vec<Message>), (status = 400, description = "The message is a DM message or itself a thread reply (`Threads only start on channel messages`). A non-numeric id or paging parameter gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
+/// Returns the replies to a top-level channel or DM message, oldest first, with link previews.
+/// For a channel root, access is checked on its channel exactly as for
+/// `GET /api/v1/channels/{id}/messages` (guests allowed when guest access is on,
+/// password-protected servers, bans, channel view and read-history permissions); for a DM root,
+/// as for `GET /api/v1/dms/{id}/messages`. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) thread replies, oldest first, paged with `before`, `after` or `around` like channel messages; without read-history access only replies since joining are returned", body = Vec<Message>), (status = 400, description = "The message is itself a thread reply, a call log or a notice (`Threads only start on top-level messages`). A non-numeric id or paging parameter gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn thread_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -2323,7 +2328,14 @@ pub(crate) async fn thread_messages(
         &Proof::headers(&headers, &state.limits),
     )
     .await?;
-    let min_ts = root.thread_channel()?.read_since(db).await?;
+    let min_ts = match root.thread_home()? {
+        ThreadHome::Channel(channel) => channel.read_since(db).await?,
+        ThreadHome::Dm { id: dm, users: _ } => {
+            let viewer = user.as_ref().ok_or_else(crate::api::access::not_found)?;
+            resolve_dm(db, dm, viewer).await?;
+            None
+        }
+    };
     let mut msgs = page(db, db, "m.thread_root_id = $1", id, &q, min_ts).await?;
     attach_reactions(db, &mut msgs, user.as_ref()).await?;
     crate::api::polls::personalize(db, &mut msgs, user.as_ref()).await?;
@@ -2332,19 +2344,21 @@ pub(crate) async fn thread_messages(
 
 /// Reply in a thread
 ///
-/// Posts a reply to a top-level channel message and starts the thread if needed. The reply is in
-/// the channel of the root and has `thread_root_id` set. Requires a bearer token. The profanity
-/// filter checks the text when it is on. In server channels, needs membership and the send
-/// permission. With slow mode, members without Manage channels or Manage messages wait
-/// `slowmode_seconds` between messages in the channel (thread replies count). Emits `message` to
-/// clients in the server that can see the channel. If the text has links, `embeds_resolved`
-/// follows when the previews are fetched. Each `@username` outside code pings that user if they
-/// are a member who can see the channel (at most 20 users, not yourself). The ping is stored for
-/// `GET /api/v1/unreads` and sent as a `ping` event. `reply_to` can quote the root or another reply
-/// of the thread. With `mention_reply` (default), its author gets a `reply` ping instead of a
-/// mention ping. With `forward_of`, the reply is a copy of a message you can read (see `SendReq`)
-/// and pings nobody. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (`Too Many Requests! Wait for Ns`). Or `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): more messages from your account than `MESSAGE_RATE_BURST` at once (by default 100) or `MESSAGE_RATE_PER_MINUTE` a minute after that (by default 2400), counted across copies when `REDIS_URL` is set", body = ApiErrorBody)), security(("bearer" = [])))]
+/// Posts a reply to a top-level channel or DM message and starts the thread if needed. The reply
+/// is in the channel or DM of the root and has `thread_root_id` set. Requires a bearer token. In
+/// a channel, the profanity filter checks the text when it is on, and it needs membership and
+/// the send permission. In a DM, it needs being a participant while neither blocked the other,
+/// and DM text is not checked by the profanity filter. With slow mode, members without Manage
+/// channels or Manage messages wait `slowmode_seconds` between messages in the channel (thread
+/// replies count). Emits `message` to clients in the server that can see the channel, or to both
+/// DM participants. If the text has links, `embeds_resolved` follows when the previews are
+/// fetched. Each `@username` outside code pings that user if they are a member who can see the
+/// channel, or the other DM participant (at most 20 users, not yourself). The ping is stored for
+/// `GET /api/v1/unreads` and sent as a `ping` event. `reply_to` can quote the root or another
+/// reply of the thread. With `mention_reply` (default), its author gets a `reply` ping instead of
+/// a mention ping. With `forward_of`, the reply is a copy of a message you can read (see
+/// `SendReq`) and pings nobody. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/v1/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is itself a reply, a call log or a notice (`Threads only start on top-level messages`), blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off), or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (`Too Many Requests! Wait for Ns`). Or `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): more messages from your account than `MESSAGE_RATE_BURST` at once (by default 100) or `MESSAGE_RATE_PER_MINUTE` a minute after that (by default 2400), counted across copies when `REDIS_URL` is set", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2352,26 +2366,45 @@ pub(crate) async fn send_thread_message(
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
     let root = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
-    let channel = root.thread_channel()?;
-    if req.forward_of.is_none() {
-        check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
+    match root.thread_home()? {
+        ThreadHome::Channel(channel) => {
+            if req.forward_of.is_none() {
+                check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
+            }
+            channel.send_gate(&state.db).await?;
+            deliver(
+                &state,
+                &user,
+                req,
+                Place::Thread(id),
+                PingScope::Channel(channel),
+            )
+            .await
+        }
+        ThreadHome::Dm { id: dm, users: _ } => {
+            let users = resolve_dm(&state.db, dm, &user).await?;
+            crate::api::blocks::check_dm_write(&state.db, &user.username, &users).await?;
+            deliver(
+                &state,
+                &user,
+                req,
+                Place::Thread(id),
+                PingScope::Dm {
+                    id: dm,
+                    users: &users,
+                },
+            )
+            .await
+        }
     }
-    channel.send_gate(&state.db).await?;
-    deliver(
-        &state,
-        &user,
-        req,
-        Place::Thread(id),
-        PingScope::Channel(channel),
-    )
-    .await
 }
 
 /// List DM messages
 ///
-/// Returns messages of a direct-message conversation, oldest first, with link previews.
-/// Requires a bearer token and being one of the two participants. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) DM messages, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+/// Returns the top-level messages of a direct-message conversation, oldest first, with link
+/// previews. Thread replies are not included (see `reply_count`). Requires a bearer token and
+/// being one of the two participants. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) top-level DM messages, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn dm_messages(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2381,7 +2414,7 @@ pub(crate) async fn dm_messages(
     let db = &state.read();
     resolve_dm(db, id, &user).await?;
     let read = async |reader: &Db| {
-        let mut msgs = page(reader, db, "m.dm_id = $1", id, &q, None).await?;
+        let mut msgs = page(reader, db, DM_TOP, id, &q, None).await?;
         attach_reactions(db, &mut msgs, Some(&user)).await?;
         crate::api::polls::personalize(db, &mut msgs, Some(&user)).await?;
         Ok(Json(msgs))
@@ -4035,10 +4068,10 @@ pub(crate) async fn unreads(
         .await?;
     let dm_sql = match all {
         true => {
-            "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE ((d.user_a = $1 AND d.closed_a = 0) OR (d.user_b = $1 AND d.closed_b = 0)) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')"
+            "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.thread_root_id IS NULL AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE ((d.user_a = $1 AND d.closed_a = 0) OR (d.user_b = $1 AND d.closed_b = 0)) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')"
         }
         false => {
-            "SELECT x.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = x.id AND m.author <> $1), x.last_read FROM (SELECT d.id, d.last_message_id, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) AS last_read FROM dms d WHERE ((d.user_a = $1 AND d.closed_a = 0) OR (d.user_b = $1 AND d.closed_b = 0)) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')) x WHERE x.last_message_id > x.last_read OR EXISTS(SELECT 1 FROM pings p WHERE p.username = $1 AND p.seen = 0 AND p.scope = 'd' || x.id)"
+            "SELECT x.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = x.id AND m.thread_root_id IS NULL AND m.author <> $1), x.last_read FROM (SELECT d.id, d.last_message_id, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) AS last_read FROM dms d WHERE ((d.user_a = $1 AND d.closed_a = 0) OR (d.user_b = $1 AND d.closed_b = 0)) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')) x WHERE x.last_message_id > x.last_read OR EXISTS(SELECT 1 FROM pings p WHERE p.username = $1 AND p.seen = 0 AND p.scope = 'd' || x.id)"
         }
     };
     let dm_rows = sqlx::query(dm_sql)
@@ -4166,11 +4199,11 @@ const UNREAD_COUNT_MAX: i64 = 100;
 
 /// Count unread messages in a channel or DM
 ///
-/// Counts the messages by other users after `after` (or the caller's read position) in a text
-/// channel (top-level messages only) or a DM, oldest first, at most 100, with the time of the
-/// first one. The caller must be able to read the scope: the same checks as listing its
-/// messages, and without read-history access only messages since joining count. Requires a
-/// bearer token. General rate-limit bucket.
+/// Counts the top-level messages by other users after `after` (or the caller's read position)
+/// in a text channel or a DM, oldest first, at most 100, with the time of the first one. The
+/// caller must be able to read the scope: the same checks as listing its messages, and without
+/// read-history access only messages since joining count. Requires a bearer token. General
+/// rate-limit bucket.
 #[utoipa::path(get, path = "/api/v1/unreads/{scope}", tag = "Messages", params(("scope" = String, Path, description = "`c<channel id>` or `d<dm id>`"), UnreadCountQuery), responses((status = 200, description = "The count (at most 100, with `more` when more follow), the time of the first unread message and the id of the newest one counted", body = UnreadCount), (status = 400, description = "`scope` is not `c` or `d` followed by digits (`Invalid scope`), or a non-numeric `after` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel or DM does not exist or you cannot read it (hidden channel, a server you have no access to or are banned from, a DM you are not in, or a participant's account is being deleted); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn unread_count(
     State(state): State<AppState>,
@@ -4199,7 +4232,7 @@ pub(crate) async fn unread_count(
         }
         Some(ReadTarget::Dm(id)) => {
             resolve_dm(db, id, &user).await?;
-            (id, "m.dm_id = $1", None, format!("d{id}"))
+            (id, DM_TOP, None, format!("d{id}"))
         }
         Some(ReadTarget::Thread(_)) | None => return Err(bad("Invalid scope")),
     };
@@ -4256,7 +4289,7 @@ pub(crate) async fn unread_count(
 /// pings were marked seen, emits `read_updated` to the connections of the caller with
 /// `pings_until` (the highest ping id marked seen, 0 for none). Other devices then clear those
 /// badges and keep newer ones. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards (for a thread, `last_read` as sent)", body = ReadState), (status = 400, description = "`scope` is not `c`, `d` or `t` followed by digits (`Invalid scope`), or a `t` scope names a DM message or a thread reply (`Threads only start on channel messages`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel, DM or thread root does not exist or you cannot read it (hidden channel, before your join without read history, a server you have no access to or are banned from, a DM you are not in, or a participant's account is being deleted); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards (for a thread, `last_read` as sent)", body = ReadState), (status = 400, description = "`scope` is not `c`, `d` or `t` followed by digits (`Invalid scope`), or a `t` scope names a thread reply, a call log or a notice (`Threads only start on top-level messages`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel, DM or thread root does not exist or you cannot read it (hidden channel, before your join without read history, a server you have no access to or are banned from, a DM you are not in, or a participant's account is being deleted); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn mark_read(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -4337,7 +4370,7 @@ async fn latest_readable(
                 .await?
         }
         ReadTarget::Dm(id) => {
-            sqlx::query("SELECT MAX(id) FROM messages WHERE dm_id = $1")
+            sqlx::query("SELECT MAX(id) FROM messages WHERE dm_id = $1 AND thread_root_id IS NULL")
                 .bind(id)
                 .fetch_one(db)
                 .await?
@@ -4367,12 +4400,18 @@ async fn read_scope(
     let (since, notices) = match target {
         ReadTarget::Thread(id) => {
             let root = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
-            let channel = format!("c{}", root.thread_channel()?.id());
+            let home = match root.thread_home()? {
+                ThreadHome::Channel(channel) => format!("c{}", channel.id()),
+                ThreadHome::Dm { id: dm, users: _ } => {
+                    resolve_dm(&state.db, dm, user).await?;
+                    format!("d{dm}")
+                }
+            };
             let seen = mark_seen(
                 &state.db,
                 &user.username,
                 SeenScope::Thread {
-                    scope: &channel,
+                    scope: &home,
                     root: id,
                 },
                 pings_until,
@@ -4455,7 +4494,7 @@ async fn read_scope(
             pings_until: seen.unwrap_or(0),
         });
     }
-    if given.is_none() && matches!(target, ReadTarget::Channel(_)) {
+    if given.is_none() && matches!(target, ReadTarget::Channel(_) | ReadTarget::Dm(_)) {
         let threads = sqlx::query(
             "SELECT thread_root_id, MAX(id) FROM pings WHERE username = $1 AND scope = $2 AND seen = 0 AND thread_root_id IS NOT NULL GROUP BY thread_root_id",
         )

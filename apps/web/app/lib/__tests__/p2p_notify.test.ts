@@ -37,6 +37,7 @@ const arrival = (
   peer: 'ik',
   ping,
   unread,
+  thread: null,
   rec: { type, wire: { c } } as EventRecord,
 })
 

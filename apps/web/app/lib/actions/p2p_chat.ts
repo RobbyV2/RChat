@@ -10,6 +10,7 @@ import {
   Forward,
   Hash,
   MessageSquareText,
+  MessagesSquare,
   Pencil,
   Pin,
   PinOff,
@@ -585,11 +586,28 @@ export const peerChat = identityActions(identity => {
     },
   ]
 
+  // The palette's Threads list of the open P2P conversation or server channel.
+  const placeActions: Action[] = [
+    {
+      id: 'p2p_threads',
+      title: 'Show threads',
+      icon: MessagesSquare,
+      scope: 'p2p',
+      keywords: ['thread', 'replies'],
+      available: () => {
+        const st = identity().useP2p.getState()
+        return !!st.chat && (st.server !== null ? !!st.chat.ch : st.home)
+      },
+      run: () => identity().p2pDm.openThreads(),
+    },
+  ]
+
   const p2pChatActions: Action[] = [
     ...messageActions,
     ...pinLineActions,
     ...callActions,
     ...badgeActions,
+    ...placeActions,
   ]
 
   return { actions: p2pChatActions, threadAct, confirmDelete, copyForP2p, forwardTo, startDownload }

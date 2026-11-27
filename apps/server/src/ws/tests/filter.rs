@@ -1680,3 +1680,72 @@ async fn thread_events_follow_the_read_history_of_their_root() {
     }
     crate::api::test_util::done(state, path).await;
 }
+
+#[tokio::test]
+async fn dm_thread_events_reach_only_the_two_participants() {
+    let (state, path) = crate::api::test_util::temp_state("ws_dm_thread").await;
+    let db = &state.db;
+    for name in ["alice", "bob", "carol", "root"] {
+        add_user(db, name).await;
+    }
+    exec(db, "INSERT INTO members(server, username, joined_at) VALUES('rchat', 'carol', 1), ('rchat', 'alice', 1)").await;
+    exec(db, "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')").await;
+    let dm: i64 = sqlx::query("SELECT id FROM dms")
+        .fetch_one(db)
+        .await
+        .unwrap()
+        .try_get(0)
+        .unwrap();
+    let root: i64 = sqlx::query("INSERT INTO messages(dm_id, author, content, created_at) VALUES($1, 'alice', 'root', $2) RETURNING id")
+        .bind(dm)
+        .bind(now())
+        .fetch_one(db)
+        .await
+        .unwrap()
+        .try_get(0)
+        .unwrap();
+    let mut rx = state.hub.subscribe();
+    let _ = crate::api::messages::send_thread_message(
+        axum::extract::State(state.clone()),
+        axum::extract::Path(root),
+        crate::api::Authed(crate::api::test_util::mem_user("bob", false)),
+        axum::Json(serde_json::from_value(serde_json::json!({ "content": "reply" })).unwrap()),
+    )
+    .await
+    .expect("reply");
+    let ev = std::iter::from_fn(|| rx.try_recv().ok())
+        .find(|ev| matches!(ev, WsEvent::Message { .. }))
+        .expect("message event");
+    let WsEvent::Message {
+        server,
+        channel_id,
+        dm_id,
+        message,
+        ..
+    } = &ev
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        (server, channel_id, dm_id, message.thread_root_id),
+        (&None, &None, &Some(dm), Some(root))
+    );
+    let conn = state.hub.next_conn();
+    for (user, site_admin, servers, expected) in [
+        ("alice", false, set(&["rchat"]), true),
+        ("bob", false, set(&[]), true),
+        ("carol", false, set(&["rchat"]), false),
+        ("root", true, set(&["rchat"]), false),
+    ] {
+        let mut access = Access::new(Some(s(user)), site_admin, servers);
+        assert_eq!(
+            on_event(&state, conn, &mut access, &ev).await,
+            Some(expected),
+            "{user}"
+        );
+    }
+    let mut guest = Access::new(None, false, set(&[]));
+    guest.subs = set(&["rchat"]);
+    assert_eq!(on_event(&state, conn, &mut guest, &ev).await, Some(false));
+    crate::api::test_util::done(state, path).await;
+}
