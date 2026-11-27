@@ -20,11 +20,11 @@ import {
 import type { AccountSession } from '../lib/client/session'
 import type { RChatState } from '../lib/store_types'
 import { historyKey } from '../lib/openapi'
-import { notifications } from '../lib/platform'
+import { desktopInfo, focusWindow, notifications } from '../lib/platform'
 import { useGuestPostingCheck } from '../components/use_guest_posting_check'
 import { pollAccountCounts, startAccountCounts } from '../lib/client/account_counts'
 import { restoreStreamer, restoreTheme, startApp } from '../lib/start'
-import { takeAppRequest } from '../lib/app_requests'
+import { answerAppRequests, takeAppRequest } from '../lib/app_requests'
 import { STREAMER_KEY, THEME_KEY } from '../lib/theme/device'
 import { shareLoginHref } from '../lib/client/share_target'
 import { ContextMenu } from '../components/context_menu'
@@ -172,6 +172,15 @@ export default function AppShell() {
       if ((state.me !== before.me && state.me) || (state.guest && !before.guest)) markEntry(shown)
     })
   }, [route, shown, start, pendingNotice])
+
+  // The desktop app's docs window asks this window to open Add an instance.
+  useEffect(() => {
+    if (!desktopInfo()) return
+    return answerAppRequests(() => {
+      client.shown().store.getState().openDialog({ kind: 'add_instance' })
+      void focusWindow()
+    })
+  }, [])
 
   const ready = route === 'chat'
   useEffect(() => {

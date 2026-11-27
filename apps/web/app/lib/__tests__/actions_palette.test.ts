@@ -409,7 +409,7 @@ const LOOKS = [
   ['settings_privacy', 'Settings: Privacy', 'settings', 'ShieldOff', '', '', ''],
   ['settings_sync', 'Settings: Sync config', 'settings', 'Copy', '', '', ''],
   ['settings_palette', 'Settings: Command palette', 'settings', 'Command', '', '', ''],
-  ['settings_information', 'Settings: Information', 'settings', 'Keyboard', '', '', ''],
+  ['settings_information', 'Settings: About and help', 'settings', 'Keyboard', '', '', ''],
   ['apps.preview', 'App previews', 'commands', '', '', '', ''],
   ['scheduled_open', 'Scheduled messages', 'navigation', 'CalendarClock', '', '', ''],
 ]

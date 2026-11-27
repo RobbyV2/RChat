@@ -19,7 +19,7 @@ export const SECTION_LABELS: Record<SettingsSection, string> = {
   p2p: 'P2P',
   sync: 'Sync config',
   palette: 'Command palette',
-  information: 'Information',
+  information: 'About and help',
 }
 
 // The heading each entry sits under in the nav.
@@ -226,6 +226,12 @@ const ROWS: Record<SettingsSection, SettingsRow[]> = {
   ],
   information: [
     { id: 'user_info_about', label: 'About' },
+    {
+      id: 'user_info_docs',
+      label: 'Docs',
+      line: 'Using the app, running an instance, the API and the P2P protocol.',
+      keywords: ['help', 'documentation', 'manual', 'api'],
+    },
     {
       id: 'user_info_accounts',
       label: 'Accounts and passwords',

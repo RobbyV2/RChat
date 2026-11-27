@@ -1,5 +1,6 @@
 import {
   Bell,
+  BookOpen,
   Command,
   Copy,
   Eye,
@@ -17,7 +18,9 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { UNAVAILABLE } from '../capabilities'
-import { capabilities } from '../platform'
+import { DOCS_PATH, docsFor } from '../docs_link'
+import { instanceLabel } from '../instance_label'
+import { capabilities, docsViewer } from '../platform'
 import { filterSwitch } from '../profanity'
 import type { RChatState } from '../store_types'
 import { canEditDisplayName } from '../display_name'
@@ -168,6 +171,18 @@ export const settingsActions: Action[] = [
   ...ssoActions,
   ...signInRowActions,
   {
+    id: 'open_docs',
+    title: 'Open docs',
+    scope: 'global',
+    group: 'settings',
+    icon: BookOpen,
+    keywords: ['help', 'documentation', 'manual', 'api'],
+    available: ({ acct, s }) =>
+      docsFor(acct.conn, s.settings, instanceLabel(s.instance, s.instanceHost || acct.conn.host))
+        .kind === 'open',
+    run: () => void docsViewer().open(DOCS_PATH),
+  },
+  {
     id: 'settings_settings',
     title: 'Open settings',
     scope: 'global',
@@ -184,5 +199,5 @@ export const settingsActions: Action[] = [
   section('p2p', 'Settings: P2P', Waypoints),
   section('sync', 'Settings: Sync config', Copy),
   section('palette', 'Settings: Command palette', Command),
-  section('information', 'Settings: Information', Keyboard),
+  section('information', 'Settings: About and help', Keyboard),
 ]

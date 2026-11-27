@@ -40,4 +40,4 @@ Settings → Command palette chooses what its search index keeps. Loaded only in
 | Ctrl+Click                    | Select or unselect a message                 |
 | Shift+Click on the trash icon | Delete without confirming                    |
 
-On Apple devices, ⌘ takes the place of Ctrl. Settings → Information → Keyboard shortcuts lists them all, with the formatting keys of the message box.
+On Apple devices, ⌘ takes the place of Ctrl. Settings → About and help → Keyboard shortcuts lists them all, with the formatting keys of the message box.

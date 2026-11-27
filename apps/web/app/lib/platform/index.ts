@@ -18,6 +18,7 @@ import { inShell, invoke, mobileOs } from './desktop'
 import { desktopNotifier } from './desktop_notifications'
 import { desktopSharing } from './desktop_sharing'
 import { mobileSharing } from './mobile'
+import { desktopDocs, mobileDocs, webDocs, type DocsViewer } from './docs_viewer'
 
 export type { BlobStore, BlobWriter } from './blobs'
 export type { DeviceStore } from './device_store'
@@ -25,10 +26,12 @@ export type { DeviceKey, DeviceKeys, KeyVault } from './device_keys'
 export type { NoticeHandle, NoticeOptions, Notifier, Permission } from './notifications'
 export type { ShareData, ShareResult, Sharing } from './sharing'
 export type { QrScanner } from './qr_scanner'
+export type { DocsViewer } from './docs_viewer'
 export { mobileBrowser, pausesHidden } from './background'
 export { deviceTime, setTime, time } from './time'
 export {
   desktopInfo,
+  focusWindow,
   inShell,
   mobileOs,
   shellInfo,
@@ -131,4 +134,14 @@ let browser: AuthBrowser | undefined
 export const authBrowser = () => browser ?? (inShell() ? shellAuthBrowser : webAuthBrowser)
 export const setAuthBrowser = (next?: AuthBrowser) => {
   browser = next
+}
+
+// Where the docs open: a window of their own on computers, the app's own view on phones, a new
+// tab on the web.
+let viewer: DocsViewer = shell ? (mobile ? mobileDocs : desktopDocs) : webDocs
+
+export const docsViewer = () => viewer
+
+export const setDocsViewer = (next: DocsViewer) => {
+  viewer = next
 }

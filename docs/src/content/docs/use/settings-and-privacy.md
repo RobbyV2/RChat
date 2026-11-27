@@ -16,7 +16,7 @@ Settings opens from the gear in the server rail, and a search finds any row. App
 | Command palette | What the palette's search index keeps.                                                                                                                                              |
 | Sync config     | Export, import or share your settings.                                                                                                                                              |
 | P2P             | Your P2P identity, files, devices and storage on this device.                                                                                                                       |
-| Information     | How accounts, files, calls and servers work on the instance, keyboard shortcuts and moderation.                                                                                     |
+| About and help  | These docs, how accounts, files, calls and servers work on the instance, keyboard shortcuts and moderation.                                                                         |
 
 ## What some rows do
 

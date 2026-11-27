@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Button } from '../../../apps/web/app/components/controls'
 import { Row, Stack, Surface } from '../../../apps/web/app/components/layout'
 import { CopyButton, QrCode } from '../../../apps/web/app/components/share_code'
-import { askApp } from '../../../apps/web/app/lib/app_requests'
+import { askApp, askAppWindow } from '../../../apps/web/app/lib/app_requests'
 import { Name, Note, Title } from './parts'
 import { useLive } from './store'
 
@@ -48,8 +48,10 @@ function Address({ address, beside }: { address: string; beside?: ReactNode }) {
   )
 }
 
-// Hands the tab back to the app, which opens its Add an instance dialog.
-function addInstance() {
+// Has the app open its Add an instance dialog: the desktop app's main window when these docs are
+// in a window of their own, else this tab, handed back to the app.
+async function addInstance() {
+  if ('__TAURI_INTERNALS__' in window && (await askAppWindow('add_instance'))) return
   askApp('add_instance')
   const path = window.location.pathname
   window.location.assign(path.slice(0, path.lastIndexOf('/docs/') + 1) || '/')
@@ -83,7 +85,7 @@ export function Connect() {
     <Surface pad="lg" gap="md" aria-label="Your instances">
       <Title>Your instances</Title>
       <Row gap="sm" wrap>
-        <Button variant="filled" size="md" icon={Plus} onClick={addInstance}>
+        <Button variant="filled" size="md" icon={Plus} onClick={() => void addInstance()}>
           Add an instance
         </Button>
       </Row>

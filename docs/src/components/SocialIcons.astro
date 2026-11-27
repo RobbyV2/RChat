@@ -1,0 +1,29 @@
+---
+// The header's links, and in the phone apps a way back from the docs to the app, which opened
+// them in its own view.
+import Default from '@astrojs/starlight/components/SocialIcons.astro'
+---
+
+<a href="/" class="live-back" hidden>Back to the app</a>
+<Default />
+
+<style>
+  .live-back {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    color: var(--sl-color-text-accent);
+    font-size: var(--sl-text-sm);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .live-back[hidden] {
+    display: none;
+  }
+</style>
+
+<script>
+  import { mountBack } from '../live/back'
+  mountBack()
+</script>

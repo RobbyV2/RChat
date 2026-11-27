@@ -18,6 +18,7 @@ export default defineConfig({
       components: {
         ThemeProvider: './src/components/ThemeProvider.astro',
         ThemeSelect: './src/components/ThemeSelect.astro',
+        SocialIcons: './src/components/SocialIcons.astro',
       },
       expressiveCode: { styleOverrides: { borderRadius: 'var(--radius-lg)' } },
       plugins: [

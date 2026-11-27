@@ -70,6 +70,7 @@ import { MOTION_CHOICES, animHeldBack } from '../lib/motion/setting'
 import { useReducedMotion } from '../lib/motion/use_motion'
 import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
+import { DocsEntry } from './docs_entry'
 import { DesktopSection } from './desktop_settings'
 import { BlockedUsersSection } from './blocking'
 import { PaletteSettingsSection } from './palette_settings'
@@ -1107,6 +1108,9 @@ function InformationSection() {
           Anonymous chat with a Discord-style layout. Everything runs on the server you connect to;
           no external APIs, no telemetry, no email.
         </p>
+      </Info>
+      <Info id="user_info_docs" title="Docs">
+        <DocsEntry />
       </Info>
       <Info id="user_info_accounts" title="Accounts and passwords">
         <p>

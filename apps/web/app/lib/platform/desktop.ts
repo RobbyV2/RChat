@@ -61,6 +61,12 @@ export const invoke: Invoke = async (cmd, args, options) => {
   return core.invoke(cmd, args, options)
 }
 
+// Brings the window this page runs in to the front.
+export const focusWindow = async () => {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window')
+  await getCurrentWindow().setFocus()
+}
+
 export const listen = async (event: string, cb: (payload?: unknown) => void) => {
   const events = await import('@tauri-apps/api/event')
   return events.listen(event, ev => cb(ev.payload))
