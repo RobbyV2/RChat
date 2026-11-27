@@ -75,7 +75,7 @@ export const smaller = (s: Space): Space => SPACES[Math.max(0, SPACES.indexOf(s)
 
 export type StackAlign = 'stretch' | 'start' | 'center' | 'end'
 export type RowAlign = 'center' | 'baseline' | 'start' | 'end' | 'stretch'
-export type Justify = 'start' | 'center' | 'end' | 'between'
+export type Justify = 'start' | 'center' | 'end' | 'between' | 'around'
 export type Breakpoint = 'sm' | 'md' | 'lg'
 
 // A column that turns into a centered row from a width on.
@@ -98,6 +98,7 @@ const JUSTIFY: Record<Justify, string> = {
   center: 'justify-center',
   end: 'justify-end',
   between: 'justify-between',
+  around: 'justify-around',
 }
 
 // The looks below leave the display (`flex`, `grid`) to the component, so a placement can hide a
@@ -136,14 +137,16 @@ export type Elevation = 0 | 1 | 2 | 3
 // How a surface pads its content: `even` the same on all four sides; `bar` (a header, footer or
 // toolbar line) one step less above and below than at the sides.
 export type SurfaceInset = 'even' | 'bar'
-// A line along every side, or only along the top or bottom (a header or footer of a panel).
-export type SurfaceBorder = boolean | 'top' | 'bottom'
+// A line along every side, or only along the top or bottom (a header or footer of a panel), or a
+// dashed one (a place something can go, or a draft).
+export type SurfaceBorder = boolean | 'top' | 'bottom' | 'dashed'
 
-const BORDER: Record<'true' | 'false' | 'top' | 'bottom', string> = {
+const BORDER: Record<'true' | 'false' | 'top' | 'bottom' | 'dashed', string> = {
   true: 'border border-outline-variant',
   false: '',
   top: 'border-t border-outline-variant',
   bottom: 'border-b border-outline-variant',
+  dashed: 'border border-dashed border-outline',
 }
 
 const TONE: Record<SurfaceTone, string> = {
@@ -189,6 +192,7 @@ export const surfaceLook = ({
   align,
   row = false,
   elevation = 0,
+  justify = 'start',
 }: {
   pad: Space
   gap: Space
@@ -200,12 +204,14 @@ export const surfaceLook = ({
   align: StackAlign
   row?: boolean
   elevation?: Elevation
+  justify?: Justify
 }) =>
   [
     row ? 'min-w-0 flex-row' : 'min-w-0 flex-col',
     inset === 'even' ? PAD[pad] : `${PAD_X[pad]} ${PAD_Y[smaller(pad)]}`,
     GAP[gap],
     ITEMS[align],
+    JUSTIFY[justify],
     TONE[tone],
     RADIUS[radius],
     BORDER[String(border) as keyof typeof BORDER],
@@ -268,3 +274,8 @@ export const gridLook = (
 // The box an icon sits in beside text: one line of the text high, so a row aligned at its start
 // puts the icon on the middle of the first line.
 export const firstLineLook = 'h-lh shrink-0 items-center'
+
+// Where a bar at the bottom of a pane sits (the composer, or what stands in for it): inset from the
+// sides, and above the home indicator or, while it is open, the on-screen keyboard.
+export const dockLook =
+  'mx-(--space-md) mb-[max(var(--space-md),env(safe-area-inset-bottom))] shrink-0 keyboard:mb-(--space-md)'

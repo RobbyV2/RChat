@@ -22,7 +22,7 @@ import {
 } from '../lib/timeouts'
 import { UserAvatar } from './user_avatar'
 import { Button, Chip, Pill } from './controls'
-import { Row, Stack, Surface } from './layout'
+import { Dock, Row, Stack, Surface } from './layout'
 import { Dialog, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
 
@@ -93,17 +93,15 @@ export function PeerTimeoutBadge({
 export function TimedOutBar({ ends }: { ends: number }) {
   const now = useNow(true)
   return (
-    <div
-      data-timed-out
-      role="status"
-      className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 items-center gap-2 rounded-2xl bg-error-container px-4 py-3 text-sm text-on-error-container keyboard:mb-3"
-    >
-      <Timer size={16} className="shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1">{timedOutLine(ends, now)}</span>
-      <span title="Time left" className="shrink-0 font-medium tabular-nums">
-        {remainingText(ends - now)}
-      </span>
-    </div>
+    <Dock>
+      <Surface data-timed-out role="status" row pad="lg" gap="sm" tone="error" radius="xl">
+        <Timer size={16} className="shrink-0" aria-hidden />
+        <span className="min-w-0 flex-1 text-sm">{timedOutLine(ends, now)}</span>
+        <span title="Time left" className="shrink-0 text-sm font-medium tabular-nums">
+          {remainingText(ends - now)}
+        </span>
+      </Surface>
+    </Dock>
   )
 }
 

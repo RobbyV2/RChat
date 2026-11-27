@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   SPACES,
+  dockLook,
   firstLineLook,
   gridLook,
   rowLook,
@@ -125,4 +126,15 @@ test('a row surface lays its children side by side; elevation and full round are
 
 test('an icon beside text sits in a box one text line high', () => {
   has(firstLineLook, 'h-lh', 'items-center', 'shrink-0')
+})
+
+test('a surface can sit its children apart along its line, and draw a dashed edge', () => {
+  has(surface({ row: true, justify: 'between' }), 'flex-row', 'justify-between')
+  has(rowLook('sm', 'center', 'around'), 'justify-around')
+  has(surface({ border: 'dashed' }), 'border', 'border-dashed', 'border-outline')
+})
+
+test('a docked bar sits inside the pane, above the home indicator or the keyboard', () => {
+  has(dockLook, 'mx-(--space-md)', 'keyboard:mb-(--space-md)', 'shrink-0')
+  expect(dockLook.includes('env(safe-area-inset-bottom)')).toBe(true)
 })

@@ -1,6 +1,7 @@
 import { createElement, type AllHTMLAttributes, type ReactNode, type Ref } from 'react'
 import { placed, type LayoutPlace } from '../lib/controls'
 import {
+  dockLook,
   firstLineLook,
   gridLook,
   rowLook,
@@ -114,6 +115,7 @@ export function Surface<const S extends string = never>({
   row = false,
   align = row ? 'center' : 'stretch',
   elevation = 0,
+  justify,
   ...box
 }: Box<S> & {
   pad: Space
@@ -126,10 +128,11 @@ export function Surface<const S extends string = never>({
   row?: boolean
   align?: StackAlign
   elevation?: Elevation
+  justify?: Justify
 }) {
   return render(
     'flex',
-    surfaceLook({ pad, gap, tone, radius, border, inset, fit, align, row, elevation }),
+    surfaceLook({ pad, gap, tone, radius, border, inset, fit, align, row, elevation, justify }),
     box
   )
 }
@@ -149,4 +152,10 @@ export function Grid<const S extends string = never>({
 // on the middle of the first line however many lines the text takes.
 export function FirstLine({ children }: { children: ReactNode }) {
   return <span className={`flex ${firstLineLook}`}>{children}</span>
+}
+
+// The place of a bar at the bottom of a pane (the composer, or what stands in for it): inset from
+// the sides and above the home indicator, or the keyboard while it is open.
+export function Dock({ children }: { children: ReactNode }) {
+  return <div className={dockLook}>{children}</div>
 }

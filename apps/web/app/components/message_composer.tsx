@@ -61,7 +61,7 @@ import type { PollTarget } from '../lib/polls_store'
 import { RelayPicker } from './relay_settings'
 import type { RelayChoice } from '../lib/relays'
 import { useInstanceLabel } from './instance_badge'
-import { Row, Stack } from './layout'
+import { Dock, Row, Stack, Surface } from './layout'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -172,41 +172,42 @@ function JoinBar({ server }: { server: string }) {
   }
 
   return (
-    <div
-      data-preview-bar
-      className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0 rounded-2xl border border-dashed border-outline bg-surface-container px-4 py-3 keyboard:mb-3"
-    >
-      <form
-        onSubmit={e => {
-          e.preventDefault()
-          void join()
-        }}
-        className="flex flex-wrap items-center gap-2"
-      >
-        <p className="flex min-w-48 flex-1 items-center gap-2 text-sm text-on-surface-variant">
-          <Eye size={16} className="shrink-0 text-primary" />
-          <span className="min-w-0">
-            You&apos;re previewing{' '}
-            <span className="streamer font-medium text-on-surface">
-              <Masked text={detail?.display_name ?? server} />
+    <Dock>
+      <Surface data-preview-bar pad="lg" tone="base" radius="xl" border="dashed">
+        <Row
+          as="form"
+          onSubmit={e => {
+            e.preventDefault()
+            void join()
+          }}
+          gap="sm"
+          wrap
+        >
+          <Row as="p" gap="sm" place="min-w-0 flex-1">
+            <Eye size={16} className="shrink-0 text-primary" />
+            <span className="min-w-48 text-sm text-on-surface-variant">
+              You&apos;re previewing{' '}
+              <span className="streamer font-medium text-on-surface">
+                <Masked text={detail?.display_name ?? server} />
+              </span>
             </span>
-          </span>
-        </p>
-        {locked && (
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            placeholder="Server password"
-            className={`${fieldCls} max-w-56`}
-          />
-        )}
-        <Button type="submit" variant="filled" size="md" disabled={!ready}>
-          Join server
-        </Button>
-      </form>
-      <FieldError message={error} />
-    </div>
+          </Row>
+          {locked && (
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="Server password"
+              className={`${fieldCls} max-w-56`}
+            />
+          )}
+          <Button type="submit" variant="filled" size="md" disabled={!ready}>
+            Join server
+          </Button>
+        </Row>
+        <FieldError message={error} />
+      </Surface>
+    </Dock>
   )
 }
 
@@ -433,24 +434,25 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       )
     }
     return (
-      <div
-        data-guest-notice
-        className="mx-3 mt-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3"
-      >
-        {
-          {
-            off: 'Guest posting is off here.',
-            checking: 'Checking guest access…',
-            paused: 'Guest posting is paused by a moderator.',
-            unavailable: 'Guest posting is unavailable here.',
-            ready: '',
-          }[posting]
-        }{' '}
-        <Link href="/login" onClick={() => logout()} className="text-primary underline">
-          {ask}
-        </Link>{' '}
-        to use account features.
-      </div>
+      <Dock>
+        <Surface data-guest-notice pad="lg" tone="base" radius="xl">
+          <p className="text-sm text-on-surface-variant">
+            {
+              {
+                off: 'Guest posting is off here.',
+                checking: 'Checking guest access…',
+                paused: 'Guest posting is paused by a moderator.',
+                unavailable: 'Guest posting is unavailable here.',
+                ready: '',
+              }[posting]
+            }{' '}
+            <Link href="/login" onClick={() => logout()} className="text-primary underline">
+              {ask}
+            </Link>{' '}
+            to use account features.
+          </p>
+        </Surface>
+      </Dock>
     )
   }
 
@@ -458,13 +460,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   if (view?.kind === 'channel' && (!can.send || (unstarted && !can.threads))) {
     return (
-      <div
-        data-no-send
-        className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 items-center gap-2 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3"
-      >
-        <Lock size={16} className="shrink-0" />
-        <span>{can.send ? NO_THREADS_TEXT : NO_SEND}</span>
-      </div>
+      <Dock>
+        <Surface data-no-send row pad="lg" gap="sm" tone="base" radius="xl">
+          <Lock size={16} className="shrink-0 text-on-surface-variant" />
+          <span className="text-sm text-on-surface-variant">
+            {can.send ? NO_THREADS_TEXT : NO_SEND}
+          </span>
+        </Surface>
+      </Dock>
     )
   }
 
