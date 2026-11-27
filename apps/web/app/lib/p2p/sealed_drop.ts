@@ -1,4 +1,5 @@
 import { time } from '../platform/time'
+import { partRange } from './blobs'
 import { blankRoom, cacheKey, countOf, moveCounts, TOTAL, TOTAL_BYTES } from './dag'
 import type { P2pDatabase, RoomRecord, ServerCache } from './db'
 import { isSealedPing, logValue, parseLog, PING_LOG } from './inbox'
@@ -11,7 +12,8 @@ const ASK = 32
 // events are emptied here (events, their links, outbox and index rows, counters), and their
 // records start over, so the device takes them from its peers again. The device's own chains in
 // servers stay, so what it signs later goes on from them. A server is asked of the members the
-// device last knew. The inbox keeps no row it sealed. Returns the rooms it emptied.
+// device last knew. The inbox keeps no row it sealed, and files stored sealed go. Returns the
+// rooms it emptied.
 export async function dropSealed(db: P2pDatabase, now = time().now()): Promise<string[]> {
   const sealing = sealingOf(db)
   if (!sealing) return []
@@ -82,6 +84,23 @@ export async function dropSealed(db: P2pDatabase, now = time().now()): Promise<s
   const plain = pings.filter(p => !isSealedPing(p))
   if (plain.length < pings.length) await meta.put(logValue(plain), PING_LOG)
   await tx.done
+  await dropSealedFiles(raw)
   await sealing.reset()
   return [...rooms]
+}
+
+// The files whose blocks were stored sealed go whole (record, blocks and hashes); a file is
+// downloaded again when it is opened.
+async function dropSealedFiles(raw: P2pDatabase) {
+  const tx = raw.transaction(['blobs', 'blob_parts', 'blob_hashes'], 'readwrite')
+  const parts = tx.objectStore('blob_parts')
+  const files = new Set<string>()
+  for (let c = await parts.openCursor(); c; c = await c.continue())
+    if (c.value.sealed === true) files.add(c.value.h)
+  for (const h of files) {
+    await parts.delete(partRange(h))
+    await tx.objectStore('blob_hashes').delete(partRange(h))
+    await tx.objectStore('blobs').delete(h)
+  }
+  await tx.done
 }

@@ -1332,6 +1332,120 @@ mod copies {
     }
 }
 
+mod media {
+    use super::super::media::{
+        CHUNK, Facts, MediaKey, OBJECT_HEADER, ObjectReader, chunk_len, chunks, object_len,
+    };
+    use super::super::{CryptError, Purpose};
+    use crate::db::{close, open_keyed, temp_db_path};
+
+    async fn key(tag: &str) -> (crate::db::Db, MediaKey, std::path::PathBuf) {
+        let path = temp_db_path(tag);
+        let _ = std::fs::remove_file(&path);
+        let db = open_keyed(path.to_str()).await.expect("open");
+        let ring = crate::db::ring(&db);
+        let mut conn = db.acquire().await.expect("connection");
+        assert!(
+            MediaKey::stored_on(&ring, &mut conn)
+                .await
+                .expect("read")
+                .is_none(),
+            "reading the key never makes it"
+        );
+        drop(conn);
+        ring.data_key(&db, Purpose::Media).await.expect("media key");
+        let mut conn = db.acquire().await.expect("connection");
+        let key = MediaKey::stored_on(&ring, &mut conn)
+            .await
+            .expect("read")
+            .expect("key");
+        drop(conn);
+        (db, key, path)
+    }
+
+    fn bytes(n: usize) -> Vec<u8> {
+        (0..n).map(|i| (i * 7 % 251) as u8).collect()
+    }
+
+    #[test]
+    fn sizes_count_their_chunks() {
+        for (size, total) in [(0, 0), (1, 1), (CHUNK, 1), (CHUNK + 1, 2), (3 * CHUNK, 3)] {
+            assert_eq!(chunks(size as u64), total, "{size}");
+        }
+        assert_eq!(chunk_len(CHUNK as u64 + 1, 0), CHUNK);
+        assert_eq!(chunk_len(CHUNK as u64 + 1, 1), 1);
+        assert_eq!(object_len(0), OBJECT_HEADER as u64);
+    }
+
+    #[tokio::test]
+    async fn a_chunk_opens_only_in_its_own_place() {
+        let (db, key, path) = key("media_chunks_binding").await;
+        let record = key.seal_chunk("f1", 0, 2, b"first");
+        assert_eq!(&record[..2], [0x52, 0x01]);
+        assert_eq!(key.open_chunk("f1", 0, 2, &record).expect("open"), b"first");
+        for (id, seq, total) in [("f2", 0, 2), ("f1", 1, 2), ("f1", 0, 1), ("f1", 0, 3)] {
+            assert!(
+                key.open_chunk(id, seq, total, &record).is_err(),
+                "{id} {seq}/{total}"
+            );
+        }
+        let facts = Facts {
+            name: "notes.txt".to_string(),
+        };
+        let kept = key.seal_facts("f1", &facts);
+        assert!(!String::from_utf8_lossy(&kept).contains("notes"));
+        assert_eq!(key.open_facts("f1", &kept), Some(facts));
+        assert_eq!(key.open_facts("f2", &kept), None);
+        close(&db).await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn an_object_opens_as_it_arrives_in_any_pieces() {
+        let (db, key, path) = key("media_objects").await;
+        for size in [0, 1, CHUNK, CHUNK + 1] {
+            let data = bytes(size);
+            let object = key.seal_object("f1", &data);
+            assert_eq!(object.len() as u64, object_len(size as u64), "{size}");
+            assert_eq!(&object[..2], [0x52, 0x03]);
+            for step in [1, 7, 4096, object.len().max(1)] {
+                let mut reader = ObjectReader::new("f1", size as u64, key.clone());
+                let mut got = Vec::new();
+                for piece in object.chunks(step) {
+                    for chunk in reader.feed(piece).expect("feed") {
+                        got.extend_from_slice(&chunk);
+                    }
+                }
+                assert!(reader.finished(), "{size} in pieces of {step}");
+                assert_eq!(got, data, "{size} in pieces of {step}");
+            }
+            let mut cut = ObjectReader::new("f1", size as u64, key.clone());
+            let _ = cut.feed(&object[..object.len() - 1]);
+            assert!(!cut.finished(), "a cut object never finishes ({size})");
+            let mut other = ObjectReader::new("f2", size as u64, key.clone());
+            let opened = other.feed(&object);
+            match size {
+                0 => assert!(opened.is_ok() && other.finished()),
+                _ => assert_eq!(opened.err(), Some(CryptError::Open), "{size}"),
+            }
+            let mut longer = ObjectReader::new("f1", size as u64 + 1, key.clone());
+            assert!(
+                longer.feed(&object).is_err() || !longer.finished(),
+                "a size the object was not sealed for ({size})"
+            );
+        }
+        close(&db).await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn facts_ignore_what_they_do_not_know() {
+        let read: Facts =
+            serde_json::from_str(r#"{"f":"a.png","t":"later","w":4}"#).expect("facts");
+        assert_eq!(read.name, "a.png");
+    }
+}
+
 mod reads {
     /// The string literals of `code`, each with the line it starts on.
     fn literals(code: &str) -> Vec<(usize, String)> {
@@ -1382,7 +1496,7 @@ mod reads {
 
     /// Each column that may be stored sealed: its table, the column and the column of its
     /// record.
-    const COLUMNS: [(&str, &str, &str); 15] = [
+    const COLUMNS: [(&str, &str, &str); 16] = [
         ("messages", "content", "body"),
         ("messages", "webhook_embeds", "body"),
         ("messages", "media_filename", "body"),
@@ -1398,6 +1512,7 @@ mod reads {
         ("webhook_deliveries", "payload", "payload_sealed"),
         ("users", "bio", "bio_sealed"),
         ("p2p_backups", "data", "data_sealed"),
+        ("media", "filename", "name_sealed"),
     ];
 
     /// The sealed columns a query reads: `(table, column, record)` for each column of a table
@@ -1410,7 +1525,7 @@ mod reads {
     }
 
     /// Queries that read a sealed column without its record, each for a stated reason.
-    const PLAIN_READS: [(&str, &str, &str); 7] = [
+    const PLAIN_READS: [(&str, &str, &str); 8] = [
         (
             "db/channel_index.rs",
             "",
@@ -1436,6 +1551,11 @@ mod reads {
             "api/audit.rs",
             "",
             "audit details are JSON text in a column named data of another table",
+        ),
+        (
+            "api/media/sealed.rs",
+            "seal_key",
+            "reads the names of files stored plain to seal them",
         ),
         (
             "api/reports/store.rs",

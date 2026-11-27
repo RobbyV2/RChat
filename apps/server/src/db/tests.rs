@@ -9249,3 +9249,56 @@ async fn sealed_copies_upgrade_preserves_v63_rows() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn sealed_uploads_upgrade_preserves_v64_rows() {
+    on_each_database("sealed_uploads_upgrade", |url| async move {
+        let db = super::open(Some(&url)).await.unwrap();
+        for sql in [
+            "DROP INDEX IF EXISTS idx_media_plain_object",
+            "ALTER TABLE media DROP COLUMN seal_key",
+            "ALTER TABLE media DROP COLUMN name_sealed",
+            "ALTER TABLE media DROP COLUMN plain_object",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1)",
+            "UPDATE settings SET value='64' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql)
+                .execute(&db)
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        sqlx::query("INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES('old', 'kept.png', 'image/png', 4, $1, 'alice', 1), ('chunked', 'parts.bin', 'application/octet-stream', 3, NULL, 'alice', 1)")
+            .bind(&b"blob"[..])
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO media_chunks(media_id, seq, data) VALUES('chunked', 0, $1)")
+            .bind(&b"abc"[..])
+            .execute(&db)
+            .await
+            .unwrap();
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open_started(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            for sql in [
+                "SELECT COUNT(*) FROM media WHERE id = 'old' AND filename = 'kept.png' AND size = 4 AND seal_key IS NULL AND name_sealed IS NULL AND plain_object IS NULL",
+                "SELECT COUNT(*) FROM media WHERE id = 'chunked' AND filename = 'parts.bin' AND seal_key IS NULL AND name_sealed IS NULL AND plain_object IS NULL",
+                "SELECT COUNT(*) FROM media_chunks WHERE media_id = 'chunked' AND seq = 0",
+            ] {
+                assert_eq!(count(&db, sql).await, 1, "{sql}");
+            }
+            let kept: Vec<u8> = sqlx::query_scalar("SELECT data FROM media WHERE id = 'old'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+            assert_eq!(kept, b"blob");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM media WHERE plain_object IS NOT NULL").await,
+                0
+            );
+            close(&db).await;
+        }
+    })
+    .await;
+}

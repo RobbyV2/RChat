@@ -564,28 +564,34 @@ pub(crate) async fn make_ready(state: &AppState) -> Result<(), ApiError> {
     }
 }
 
-/// Makes the active `content` key, and the `search` key of its grams, on a connection of their
-/// own, so they are committed before a place turns on and a write transaction only ever reads
-/// them. False without a root key.
+/// Makes the active `content` key, the `search` key of its grams and the `media` key of its
+/// files, on a connection of their own, so they are committed before a place turns on and a
+/// write transaction only ever reads them. False without a root key.
 async fn content_key(db: &Db) -> anyhow::Result<bool> {
     let ring = crate::db::ring(db);
     if ring.data_key(db, Purpose::Content).await?.is_none() {
         return Ok(false);
     }
+    ring.data_key(db, Purpose::Media).await?;
     if !ring.scans() {
         ring.data_key(db, Purpose::Search).await?;
     }
     Ok(true)
 }
 
-/// Makes the `search` key of a site that stores messages encrypted and has none yet.
+/// Makes the `search` and `media` keys of a site that stores messages encrypted and has none
+/// of them yet.
 async fn search_key(db: &Db) -> anyhow::Result<()> {
     let ring = crate::db::ring(db);
     let sealed: Option<i64> =
         sqlx::query_scalar("SELECT id FROM data_keys WHERE purpose = 'content' LIMIT 1")
             .fetch_optional(db)
             .await?;
-    if sealed.is_some() && !ring.scans() {
+    if sealed.is_none() {
+        return Ok(());
+    }
+    ring.data_key(db, Purpose::Media).await?;
+    if !ring.scans() {
         ring.data_key(db, Purpose::Search).await?;
     }
     Ok(())
@@ -791,7 +797,7 @@ pub async fn start(state: &AppState) -> anyhow::Result<()> {
         }
     }
     if let Err(e) = search_key(db).await {
-        tracing::warn!("the search key of encrypted messages could not be made: {e}");
+        tracing::warn!("the search and file keys of encrypted messages could not be made: {e}");
     }
     note_copies(db, &state.hub);
     let mut tx = db.begin().await?;

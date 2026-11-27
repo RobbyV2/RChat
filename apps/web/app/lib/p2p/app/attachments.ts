@@ -266,7 +266,8 @@ export function createAttachmentsPart(
         return null
       }
       try {
-        for (const p of list) await d.blobs.putOwn(p.file, p.hashed as Hashed)
+        const target = room.split('#')[0].split('/')[0]
+        for (const p of list) await d.blobs.putOwn(p.file, p.hashed as Hashed, target)
       } catch (e) {
         p2pHost.toast(e instanceof Error ? e.message : String(e))
         return null

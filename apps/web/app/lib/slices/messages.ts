@@ -13,6 +13,7 @@ import {
   attachModes,
   p2pIdTaken,
   startMode,
+  uploadPlace,
 } from '../attachments'
 import { accountPrompt } from '../features'
 import {
@@ -1320,7 +1321,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     }
     const max = limitsOf(get().instance).upload_bytes
     if (file.size > max) throw new Error(tooLargeText(max))
-    const uploaded = await api.uploadMedia(file)
+    const place = uploadPlace(pending.scope, root => {
+      const panel = get().panel
+      return panel?.kind === 'thread' && panel.root.id === root ? panel.root.channel_id : null
+    })
+    const uploaded = await api.uploadMedia(file, place)
     return {
       opts: { media_id: uploaded.id, media_spoiler: spoiler, ...(media_alt ? { media_alt } : {}) },
       p2pId: null,

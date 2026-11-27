@@ -181,6 +181,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("webhook_deliveries", "payload_sealed {BYTES}"),
     ("users", "bio_sealed {BYTES}"),
     ("p2p_backups", "data_sealed {BYTES}"),
+    ("media", "seal_key {INT}"),
+    ("media", "name_sealed {BYTES}"),
+    ("media", "plain_object {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -317,7 +320,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 62: sealed message and poll text, and the storage switches of servers and DMs.
 /// 63: keyed search grams of sealed messages (`messages.grams`).
 /// 64: sealed copies: report text and notes, webhook delivery payloads, bios and P2P backups.
-pub const SCHEMA_VERSION: i64 = 64;
+/// 65: sealed uploads (`media.seal_key`, `media.name_sealed`, `media.plain_object`).
+pub const SCHEMA_VERSION: i64 = 65;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

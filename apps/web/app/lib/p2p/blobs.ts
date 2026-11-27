@@ -3,6 +3,7 @@ import { hkdf } from '@noble/hashes/hkdf.js'
 import { imageSize, NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { b64u, bytesOf, concat, equalBytes, fromB64u, randomBytes, utf8 } from './canonical'
 import type { BlobRecord, EventRecord, HashPage, P2pDatabase, P2pStore } from './db'
+import { partBytes, partData, sealsFile, storedPart } from './sealed_files'
 import type { Attachment } from './content'
 import {
   chunk,
@@ -110,7 +111,8 @@ export const readHashes = async (db: P2pDatabase, h: string, count: number) => {
 }
 
 // The whole file, put together from what is stored (the sender's own file, or the verified
-// blocks). Nothing is read into memory: the parts are Blobs backed by the browser's storage.
+// blocks). Plain parts are Blobs backed by the browser's storage and are not read into memory;
+// sealed ones are opened in memory.
 export const assemble = async (db: P2pDatabase, h: string): Promise<Blob | null> => {
   const rec = await db.get('blobs', h)
   if (!rec?.done) return null
@@ -118,17 +120,20 @@ export const assemble = async (db: P2pDatabase, h: string): Promise<Blob | null>
   if (rec.file) return new Blob([rec.file], { type })
   const parts = await db.getAll('blob_parts', partRange(h))
   if (parts.length !== blockCount(rec.size)) return null
-  return new Blob(
-    parts.sort((a, b) => a.block - b.block).map(p => p.data),
-    { type }
-  )
+  const data: Blob[] = []
+  for (const p of parts.sort((a, b) => a.block - b.block)) {
+    const opened = await partData(db, p)
+    if (!opened) return null
+    data.push(opened)
+  }
+  return new Blob(data, { type })
 }
 
 export const readBlock = async (db: P2pDatabase, rec: BlobRecord, i: number) => {
   if (rec.file)
     return new Uint8Array(await rec.file.slice(i * BLOCK, (i + 1) * BLOCK).arrayBuffer())
   const part = await db.get('blob_parts', [rec.h, i])
-  return part ? new Uint8Array(await part.data.arrayBuffer()) : null
+  return part ? partBytes(db, part) : null
 }
 
 export interface Usage {
@@ -640,6 +645,8 @@ export class Download {
   writes: Promise<unknown> = Promise.resolve()
   // Blocks received and not stored yet.
   writing = 0
+  // Whether its blocks are stored sealed (sealed_files.ts), decided at the first block.
+  sealed: boolean | null = null
 
   constructor(
     readonly h: string,
@@ -1189,6 +1196,8 @@ export class Blobs {
   private async storeBlock(dl: Download, f: Fetch) {
     if (dl.state === 'removed' || dl.have.has(f.block)) return
     try {
+      dl.sealed ??= await sealsFile(this.db, dl.h)
+      const part = await storedPart(this.db, dl.h, f.block, f.buf, dl.sealed)
       const tx = this.db.transaction(['blobs', 'blob_parts'], 'readwrite')
       tx.done.catch(() => {})
       const rec = await tx.objectStore('blobs').get(dl.h)
@@ -1197,9 +1206,7 @@ export class Blobs {
         dl.state = 'removed'
         return
       }
-      await tx
-        .objectStore('blob_parts')
-        .put({ h: dl.h, block: f.block, data: new Blob([f.buf as BlobPart]) })
+      await tx.objectStore('blob_parts').put(part)
       await tx.objectStore('blobs').put({ ...rec, have: rec.have + 1, lastUsed: this.clock.now() })
       await tx.done
       dl.have.add(f.block)
@@ -1583,7 +1590,8 @@ export class Blobs {
       return
     }
     const first = dl.count ? await this.db.get('blob_parts', [dl.h, 0]) : undefined
-    const head = first ? new Uint8Array(await first.data.slice(0, SNIFF_BYTES).arrayBuffer()) : null
+    const opened = first ? await partData(this.db, first) : null
+    const head = opened ? new Uint8Array(await opened.slice(0, SNIFF_BYTES).arrayBuffer()) : null
     const type = head ? safeType(head) : NEUTRAL_TYPE
     await this.store.updateBlob(dl.h, cur =>
       cur
@@ -1754,12 +1762,17 @@ export class Blobs {
     void this.store.updateBlob(h, cur => (cur ? { ...cur, lastUsed: now } : null)).catch(() => {})
   }
 
-  // Keeps a file we are about to send, whole, as it was hashed. Blocks of an unfinished download
-  // of the same file go: the whole file replaces them.
-  async putOwn(file: Blob, hashed: Hashed) {
+  // Keeps a file we are about to send to `room`, whole, as it was hashed. Blocks of an unfinished
+  // download of the same file go: the whole file replaces them. A file sealed rooms refer to is
+  // kept as sealed blocks instead (sealed_files.ts), also when it was kept plain before.
+  async putOwn(file: Blob, hashed: Hashed, room?: string) {
     const free = (await this.deps.room?.()) ?? null
+    const sealed = await sealsFile(this.db, hashed.h, room)
     const rec0 = await this.db.get('blobs', hashed.h)
-    if (rec0?.done) return
+    if (rec0?.done) {
+      if (sealed) await this.sealStored(hashed.h)
+      return
+    }
     if (free !== null && hashed.size + this.limits.margin > free) throw new Error(SHARE_ROOM_TEXT)
     const head = new Uint8Array(await file.slice(0, SNIFF_BYTES).arrayBuffer())
     const now = this.clock.now()
@@ -1775,8 +1788,8 @@ export class Blobs {
       size: hashed.size,
       hashed: true,
       have: 0,
-      done: true,
-      file,
+      done: !sealed,
+      ...(sealed ? {} : { file }),
       type: safeType(head),
       own: true,
       wanted: false,
@@ -1784,7 +1797,39 @@ export class Blobs {
       lastUsed: now,
     })
     await tx.done
+    if (sealed) {
+      const count = blockCount(hashed.size)
+      for (let i = 0; i < count; i++) {
+        const bytes = new Uint8Array(await file.slice(i * BLOCK, (i + 1) * BLOCK).arrayBuffer())
+        await this.db.put('blob_parts', await storedPart(this.db, hashed.h, i, bytes, true))
+      }
+      await this.store.updateBlob(hashed.h, cur =>
+        cur ? { ...cur, have: count, done: true } : null
+      )
+    }
     this.changed(hashed.h)
+  }
+
+  // Stores the blocks of the finished file `h` sealed where they are plain; its own whole copy
+  // becomes sealed blocks.
+  async sealStored(h: string) {
+    const rec = await this.db.get('blobs', h)
+    if (!rec?.done) return
+    const count = blockCount(rec.size)
+    for (let i = 0; i < count; i++) {
+      const part = rec.file ? undefined : await this.db.get('blob_parts', [h, i])
+      if (part?.sealed === true) continue
+      const bytes = await readBlock(this.db, rec, i)
+      if (!bytes) return
+      await this.db.put('blob_parts', await storedPart(this.db, h, i, bytes, true))
+    }
+    if (rec.file)
+      await this.store.updateBlob(h, cur => {
+        if (!cur) return null
+        const { file: _file, ...rest } = cur
+        return { ...rest, have: count }
+      })
+    this.changed(h)
   }
 
   // Deletes a file here: its record, its blocks, its hashes and any download of it.

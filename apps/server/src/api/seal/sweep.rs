@@ -25,7 +25,7 @@ pub(crate) async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
         true => db.begin_with("BEGIN IMMEDIATE").await?,
         false => db.begin().await?,
     };
-    let row = sqlx::query("SELECT channel_id, dm_id, author, content, webhook_embeds, media_filename, fwd_dropped, media_alt FROM messages WHERE id = $1 AND body IS NULL AND kind IN ('user', 'poll')")
+    let row = sqlx::query("SELECT channel_id, dm_id, author, content, webhook_embeds, media_filename, fwd_dropped, CASE WHEN media_kind = 'server' THEN media_id END, media_alt FROM messages WHERE id = $1 AND body IS NULL AND kind IN ('user', 'poll')")
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
@@ -48,7 +48,7 @@ pub(crate) async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
         embeds: row.try_get(4)?,
         filename: row.try_get(5)?,
         dropped: row.try_get(6)?,
-        alt: row.try_get(7)?,
+        alt: row.try_get(8)?,
     };
     let blank = columns(Some(&writer), &parts);
     let grams = match sqlite {
@@ -71,6 +71,10 @@ pub(crate) async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
     let written = query.execute(&mut *tx).await?.rows_affected();
     if written == 0 {
         return Ok(false);
+    }
+    let media: Option<String> = row.try_get(7)?;
+    if let Some(media) = &media {
+        crate::api::media::sealed::seal_file_on(db, &mut tx, media).await?;
     }
     let question: Option<String> =
         sqlx::query_scalar("SELECT question FROM polls WHERE message_id = $1 AND body IS NULL")

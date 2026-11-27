@@ -63,7 +63,7 @@ beforeEach(() => {
         { status: 200 }
       )
     }
-    if (init?.method === 'POST' && url === '/api/media') {
+    if (init?.method === 'POST' && url === '/api/media?place=c%3A77') {
       uploads += 1
       const wait = gate
       if (wait) await wait

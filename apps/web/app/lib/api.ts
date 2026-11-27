@@ -1172,10 +1172,11 @@ export const endpoints = (c: ApiClient) => ({
     ),
   postReadBatch: (scopes: string[]) =>
     c.req<{ ok: boolean }>('POST', '/read/batch', { scopes }, BACKGROUND),
-  uploadMedia: (file: File) => {
+  uploadMedia: (file: File, place: string | null = null) => {
     const form = new FormData()
     form.append('file', file, file.name)
-    return c.req<{ id: string }>('POST', '/media', form)
+    const query = place ? `?place=${encodeURIComponent(place)}` : ''
+    return c.req<{ id: string }>('POST', `/media${query}`, form)
   },
   getSettings: (background = false) =>
     c.req<SiteSettings>('GET', '/settings', undefined, background ? BACKGROUND : {}),

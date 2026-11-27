@@ -15,6 +15,7 @@ pub mod body;
 pub mod cli;
 pub mod copies;
 pub mod grams;
+pub mod media;
 pub mod ring;
 pub mod secrets;
 

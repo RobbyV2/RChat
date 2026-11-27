@@ -341,20 +341,36 @@ export class Sealing {
   // the events of a sealed room (the inbox rows of its pings); null while `room` stores its
   // events plain.
   async box(store: string, key: string, room: string, value: unknown): Promise<Uint8Array | null> {
-    const cur = this.cur
-    if (!cur || !this.on(room)) return null
-    const plain = enc.encode(JSON.stringify(value))
-    return sealDevice(cur.key, cur.id, deviceAad(store, key, room), plain)
+    if (!this.on(room)) return null
+    return this.sealBytes(store, key, room, enc.encode(JSON.stringify(value)))
   }
 
   // What a record `box` made holds; undefined, and counted, when it doesn't open.
   async unbox(store: string, key: string, room: string, record: Uint8Array): Promise<unknown> {
+    const plain = await this.openBytes(store, key, room, record)
+    const value = plain ? parsed(plain) : undefined
+    if (plain && value === undefined) this.unreadable += 1
+    return value
+  }
+
+  // The rooms whose own switch stores their events sealed.
+  sealedRooms(): readonly string[] {
+    return [...this.rooms]
+  }
+
+  // A device record of `plain` under the current key; null without one.
+  async sealBytes(store: string, key: string, room: string, plain: Uint8Array) {
+    const cur = this.cur
+    return cur ? sealDevice(cur.key, cur.id, deviceAad(store, key, room), plain) : null
+  }
+
+  // What a device record holds; null, and counted, when it doesn't open.
+  async openBytes(store: string, key: string, room: string, record: Uint8Array) {
     const id = recordHeader(record)?.keyId
     const held = id === undefined ? null : await this.key(id)
     const plain = held && (await openDevice(held, deviceAad(store, key, room), record))
-    const value = plain ? parsed(plain) : undefined
-    if (value === undefined) this.unreadable += 1
-    return value
+    if (!plain) this.unreadable += 1
+    return plain ?? null
   }
 
   // The event record a stored one holds. One that doesn't open reads as `unopened` and is

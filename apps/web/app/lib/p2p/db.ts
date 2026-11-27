@@ -256,9 +256,9 @@ export const withFiles = (r: EventRecord, atts: string[]): EventRecord => {
   return atts.length ? { ...rest, atts, files: atts.map(h => fileKey(r.room, r.sender, h)) } : rest
 }
 
-// A file this browser holds or is fetching. The sender's own file is kept
-// whole in `file`; a downloaded one lives in `blob_parts`, one verified 1 MiB block per record,
-// and is put together only when it is opened or saved.
+// A file this browser holds or is fetching. The sender's own file is kept whole in `file`
+// unless sealed rooms refer to it; a downloaded one, and a sealed one, lives in `blob_parts`, one
+// verified 1 MiB block per record, and is put together only when it is opened or saved.
 export interface BlobRecord {
   h: string
   size: number
@@ -290,6 +290,8 @@ export interface PartRecord {
   h: string
   block: number
   data: Blob
+  // `data` is a device record of the block (sealed_files.ts).
+  sealed?: true
 }
 
 // What we know of a P2P server member who isn't a contact: devices and profile, all signed by

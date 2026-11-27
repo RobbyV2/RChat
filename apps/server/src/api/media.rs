@@ -3,7 +3,7 @@ use std::fmt::Write;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::multipart::MultipartRejection;
-use axum::extract::{FromRequest, Multipart, Path, Request, State};
+use axum::extract::{FromRequest, Multipart, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 use rand::Rng;
@@ -17,9 +17,14 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, MediaRef, OkResp, Settings, allowed, bad, ok, placeholders,
     request_token, require_guest_ok, user_for_token,
 };
+use crate::crypt::media::{Facts, MediaKey, chunk_len, chunks};
 use crate::db::{Db, MediaKind, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
+
+#[cfg(test)]
+pub(crate) mod s3_stub;
+pub(crate) mod sealed;
 
 pub(crate) const MEDIA_TTL_SECS: i64 = 86400;
 /// Longest stored file name, in bytes.
@@ -940,11 +945,15 @@ fn s3_key(id: &str) -> String {
     format!("media/{id}")
 }
 
+/// Deletes the S3 object of file `id`, plain or sealed.
 async fn s3_delete(s3: Option<&Bucket>, id: &str) {
-    if let Some(bucket) = s3
-        && let Err(e) = bucket.delete_object(s3_key(id)).await
-    {
-        tracing::warn!("s3 delete failed for {id}: {e}");
+    let Some(bucket) = s3 else {
+        return;
+    };
+    for key in [s3_key(id), sealed::sealed_key(id)] {
+        if let Err(e) = bucket.delete_object(&key).await {
+            tracing::warn!("s3 delete failed for {key}: {e}");
+        }
     }
 }
 
@@ -987,6 +996,7 @@ pub(crate) async fn store_media(
         in_db,
         uploader,
         uploaded_at,
+        sealed: None,
     };
     store_within(db, &file, Charge::own(uploader), 0).await
 }
@@ -999,6 +1009,8 @@ struct NewMedia<'a> {
     in_db: Option<&'a [u8]>,
     uploader: &'a str,
     uploaded_at: i64,
+    /// The key the file is stored under, from its first byte.
+    sealed: Option<&'a MediaKey>,
 }
 
 /// Stores `file` unless it takes `charge` past `budget` bytes of counted files (0 for no limit):
@@ -1031,7 +1043,10 @@ async fn store_within(
         .filter(|account| account != file.uploader);
     let inserted = sqlx::query(STORE)
         .bind(file.id)
-        .bind(file.filename)
+        .bind(match file.sealed {
+            Some(_) => "",
+            None => file.filename,
+        })
         .bind(file.mime)
         .bind(file.size)
         .bind(file.uploader)
@@ -1049,21 +1064,43 @@ async fn store_within(
         tx.rollback().await?;
         return Err(over_budget(budget, charge));
     }
-    for (seq, chunk) in file
-        .in_db
-        .unwrap_or_default()
-        .chunks(MEDIA_CHUNK)
-        .enumerate()
-    {
+    if let Some(key) = file.sealed {
+        let facts = Facts {
+            name: file.filename.to_string(),
+        };
+        sqlx::query("UPDATE media SET seal_key = $1, name_sealed = $2 WHERE id = $3")
+            .bind(i64::from(key.id()))
+            .bind(key.seal_facts(file.id, &facts))
+            .bind(file.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let data = file.in_db.unwrap_or_default();
+    let total = chunks(data.len() as u64);
+    for (seq, chunk) in data.chunks(MEDIA_CHUNK).enumerate() {
+        let stored = match file.sealed {
+            Some(key) => key.seal_chunk(file.id, seq as u64, total, chunk),
+            None => chunk.to_vec(),
+        };
         sqlx::query("INSERT INTO media_chunks(media_id, seq, data) VALUES($1, $2, $3)")
             .bind(file.id)
             .bind(seq as i64)
-            .bind(chunk.to_vec())
+            .bind(stored)
             .execute(&mut *tx)
             .await?;
     }
     tx.commit().await?;
     Ok(())
+}
+
+/// Where an upload will be posted.
+#[derive(Debug, Default, serde::Deserialize, utoipa::IntoParams)]
+pub struct UploadQuery {
+    /// `c:<channel id>` or `d:<dm id>`: the channel (a thread's channel for a thread reply) or
+    /// DM the file will be posted in. While that place stores new messages encrypted, the file
+    /// is stored encrypted from its first byte; otherwise it is encrypted when it is posted in
+    /// such a place.
+    pub place: Option<String>,
 }
 
 /// Upload a file
@@ -1090,12 +1127,17 @@ async fn store_within(
 /// is most. A body that sends nothing for 30 seconds, or takes over 10 minutes in all, is
 /// dropped with 408.
 ///
+/// With `place` naming the channel or DM the file will be posted in, a place that stores new
+/// messages encrypted gets the file stored encrypted from its first byte (the place must be one
+/// you can see). Without it, the file is encrypted when it is posted in such a place.
+///
 /// Requires a bearer token and the instance's uploads setting. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON \"Error parsing `multipart/form-data` request\"), which includes a part head over 16 KiB: from the start of the body, or the end of the part before, to the blank line after the part's headers. A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`): `File exceeds 25MB limit` with the configured number. A request body over that size plus 1 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket, the per-account budget is used up (JSON `Upload limit reached: you can upload up to 2 GiB a day. ...` with the configured size; space frees up 24 hours after each upload, or sooner when a file is removed, and the site operator sets the limit with `UPLOAD_BUDGET_MIB`), or 3 of your uploads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`)", body = ApiErrorBody), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/media", tag = "Media", params(UploadQuery), request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "`place must be c:<channel id> or d:<dm id>`, or no file part (JSON `No file provided`) or a malformed multipart body (JSON \"Error parsing `multipart/form-data` request\"), which includes a part head over 16 KiB: from the start of the body, or the end of the part before, to the blank line after the part's headers. A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 404, description = "`Not found`: `place` names a channel you cannot see or a DM you are not in", body = ApiErrorBody), (status = 409, description = "`This site needs an encryption key first`: `place` stores messages encrypted and the key to store files encrypted is not there (reason `keys`)", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`): `File exceeds 25MB limit` with the configured number. A request body over that size plus 1 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket, the per-account budget is used up (JSON `Upload limit reached: you can upload up to 2 GiB a day. ...` with the configured size; space frees up 24 hours after each upload, or sooner when a file is removed, and the site operator sets the limit with `UPLOAD_BUDGET_MIB`), or 3 of your uploads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`)", body = ApiErrorBody), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
     Authed(user): Authed,
     headers: axum::http::HeaderMap,
+    Query(UploadQuery { place }): Query<UploadQuery>,
     UploadForm(mut multipart, watch): UploadForm,
 ) -> Result<Json<MediaRef>, ApiError> {
     if !Settings::cached(&state.db).await.asset_uploads {
@@ -1105,6 +1147,13 @@ pub(crate) async fn upload_media(
             None,
         ));
     }
+    let key = match place.as_deref() {
+        Some(text) => {
+            let place = sealed::Place::parse(text).ok_or_else(|| bad(sealed::BAD_PLACE))?;
+            sealed::upload_key(&state.db, &user, place).await?
+        }
+        None => None,
+    };
     check_budget(&state.db, Charge::own(&user.username), 1, budget()).await?;
     let slot = reading_slot(&state.db, &user.username)?;
     let body = state.limits.upload_body_bytes();
@@ -1122,13 +1171,15 @@ pub(crate) async fn upload_media(
     let filename = clean_filename(field.file_name().unwrap_or("file"));
     let mime = clean_mime(field.content_type().unwrap_or(NEUTRAL_MIME));
     let body = read_file(field, max, held, &watch).await?;
-    let (id, uploaded_at) = save_upload(
+    let (id, uploaded_at) = save_within(
         &state,
         &filename,
         &mime,
         &body.data,
         &user.username,
         Charge::own(&user.username),
+        budget(),
+        key.as_ref(),
     )
     .await?;
     Ok(Json(MediaRef::server(
@@ -1142,6 +1193,7 @@ pub(crate) async fn upload_media(
 
 /// Stores an uploaded file for `uploader`, counted against `charge` (S3 when configured, else
 /// the database). Returns its id and upload time.
+#[cfg(test)]
 pub(crate) async fn save_upload(
     state: &AppState,
     filename: &str,
@@ -1150,9 +1202,21 @@ pub(crate) async fn save_upload(
     uploader: &str,
     charge: Charge<'_>,
 ) -> Result<(String, i64), ApiError> {
-    save_within(state, filename, mime, data, uploader, charge, budget()).await
+    save_within(
+        state,
+        filename,
+        mime,
+        data,
+        uploader,
+        charge,
+        budget(),
+        None,
+    )
+    .await
 }
 
+/// `save_upload` within `budget` bytes, stored under `sealed` from its first byte when given.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn save_within(
     state: &AppState,
     filename: &str,
@@ -1161,6 +1225,7 @@ pub(crate) async fn save_within(
     uploader: &str,
     charge: Charge<'_>,
     budget: u64,
+    sealed: Option<&MediaKey>,
 ) -> Result<(String, i64), ApiError> {
     let max = state.limits.upload_bytes();
     if data.len() > max {
@@ -1172,15 +1237,26 @@ pub(crate) async fn save_within(
     check_budget(&state.db, charge, data.len() as u64, budget).await?;
     let id = fresh_id(&state.db).await?;
     let uploaded_at = now();
-    let in_db = match &state.s3 {
-        Some(bucket) => {
+    let in_db = match (&state.s3, sealed) {
+        (Some(bucket), Some(key)) => {
+            bucket
+                .put_object_with_content_type(
+                    sealed::sealed_key(&id),
+                    &key.seal_object(&id, data),
+                    NEUTRAL_MIME,
+                )
+                .await
+                .map_err(ApiError::internal)?;
+            None
+        }
+        (Some(bucket), None) => {
             bucket
                 .put_object_with_content_type(s3_key(&id), data, mime)
                 .await
                 .map_err(ApiError::internal)?;
             None
         }
-        None => Some(data),
+        (None, _) => Some(data),
     };
     let file = NewMedia {
         id: &id,
@@ -1190,6 +1266,7 @@ pub(crate) async fn save_within(
         in_db,
         uploader,
         uploaded_at,
+        sealed,
     };
     if let Err(e) = store_within(&state.db, &file, charge, budget).await {
         s3_delete(state.s3.as_deref(), &id).await;
@@ -1409,10 +1486,13 @@ pub(crate) async fn media_view_ok(
     }
 }
 
+/// The plain chunks of file `id`, each checked to hold the bytes a chunk of a file of `size`
+/// holds, so a chunk sealed meanwhile ends the body instead of passing as file bytes.
 fn chunk_stream(
     db: Db,
     id: String,
     chunks: i64,
+    size: u64,
 ) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {
     futures_util::stream::unfold(0i64, move |seq| {
         let (db, id) = (db.clone(), id.clone());
@@ -1430,7 +1510,13 @@ fn chunk_stream(
                 .flatten()
                 .and_then(|r| r.try_get::<Vec<u8>, _>(0).ok())
             {
-                Some(bytes) => Some((Ok(bytes), seq + 1)),
+                Some(bytes) if bytes.len() == chunk_len(size, seq as u64) => {
+                    Some((Ok(bytes), seq + 1))
+                }
+                Some(_) => Some((
+                    Err(std::io::Error::other("media changed while streaming")),
+                    chunks,
+                )),
                 None => Some((
                     Err(std::io::Error::other("media removed while streaming")),
                     chunks,
@@ -1440,12 +1526,13 @@ fn chunk_stream(
     })
 }
 
-/// Bytes `start..=end` of a file kept in `media_chunks`: only the rows that hold them, the first
-/// and last trimmed. Every row but the last holds `MEDIA_CHUNK` bytes; a file whose rows don't
-/// fit that ends the body with an error.
+/// Bytes `start..=end` of a file of `size` bytes kept in `media_chunks`: only the rows that hold
+/// them, the first and last trimmed. Each row must hold the bytes a chunk of that file holds; one
+/// that doesn't (a chunk sealed meanwhile) ends the body with an error.
 fn chunk_range_stream(
     db: Db,
     id: String,
+    size: u64,
     start: u64,
     end: u64,
 ) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> {
@@ -1469,8 +1556,7 @@ fn chunk_range_stream(
             let to = (end + 1).min(at + piece) - at;
             match bytes {
                 Some(bytes)
-                    if to as usize <= bytes.len()
-                        && (seq == last || bytes.len() == MEDIA_CHUNK) =>
+                    if to as usize <= bytes.len() && bytes.len() == chunk_len(size, seq) =>
                 {
                     Some((
                         Ok(bytes[from as usize..to as usize].to_vec()),
@@ -1487,6 +1573,36 @@ fn chunk_range_stream(
                 )),
             }
         }
+    })
+}
+
+/// Bytes `start..=end` of a file from `stream`, which yields its bytes from offset `at` on. The
+/// stream is not read past `end`.
+fn cut_stream<S>(
+    stream: S,
+    at: u64,
+    start: u64,
+    end: u64,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>>
+where
+    S: futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> + Unpin,
+{
+    futures_util::stream::unfold((stream, at), move |(mut stream, mut at)| async move {
+        while at <= end {
+            match futures_util::StreamExt::next(&mut stream).await? {
+                Ok(bytes) => {
+                    let next = at + bytes.len() as u64;
+                    if next > start {
+                        let from = (start.max(at) - at) as usize;
+                        let to = ((end + 1).min(next) - at) as usize;
+                        return Some((Ok(bytes[from..to].to_vec()), (stream, next)));
+                    }
+                    at = next;
+                }
+                Err(e) => return Some((Err(e), (stream, end + 1))),
+            }
+        }
+        None
     })
 }
 
@@ -1687,7 +1803,7 @@ fn if_range_ok(headers: &axum::http::HeaderMap, etag: &str) -> bool {
 /// joined count; in a direct message its two participants. Before it is attached only the
 /// uploader can fetch it. Access is checked before `If-None-Match`, so a 304 is only sent to
 /// callers allowed to see the file. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server"), ("Range" = Option<String>, Header, description = "One byte range: `bytes=a-b`, `bytes=a-` (to the end) or `bytes=-n` (the last n bytes). Several ranges or another form get the whole file"), ("If-Range" = Option<String>, Header, description = "The file's `ETag`: the range is served only while it matches, else the whole file")), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag`, `Cache-Control: private, max-age=86400, immutable`, `Vary: X-Guest-Grant` and `Accept-Ranges: bytes`"), (status = 206, description = "The bytes of the one `Range` asked for, streamed, with `Content-Range: bytes a-b/size`, their `Content-Length` and the same headers as 200. With S3 storage at most 8 MiB from the range's start; `Content-Range` names the bytes sent"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file. Carries the same `ETag`, `Cache-Control`, `Vary`, `Content-Security-Policy` and `X-Content-Type-Options`"), (status = 416, description = "The `Range` starts at or past the end of the file: no body, `Content-Range: bytes */size`"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "`Attachments are turned off on this server`: uploads and P2P attachments are both off (text only); only sent to callers who may see the file", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server"), ("Range" = Option<String>, Header, description = "One byte range: `bytes=a-b`, `bytes=a-` (to the end) or `bytes=-n` (the last n bytes). Several ranges or another form get the whole file"), ("If-Range" = Option<String>, Header, description = "The file's `ETag`: the range is served only while it matches, else the whole file")), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag`, `Cache-Control: private, max-age=86400, immutable`, `Vary: X-Guest-Grant` and `Accept-Ranges: bytes`"), (status = 206, description = "The bytes of the one `Range` asked for, streamed, with `Content-Range: bytes a-b/size`, their `Content-Length` and the same headers as 200. With S3 storage at most 8 MiB from the range's start; `Content-Range` names the bytes sent"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file. Carries the same `ETag`, `Cache-Control`, `Vary`, `Content-Security-Policy` and `X-Content-Type-Options`"), (status = 416, description = "The `Range` starts at or past the end of the file: no body, `Content-Range: bytes */size`"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "`Attachments are turned off on this server`: uploads and P2P attachments are both off (text only); only sent to callers who may see the file", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 500, description = "`This file can't be opened`: it is stored encrypted and its key is not held. A stored encrypted chunk that does not open ends the body early", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn download_media(
     State(state): State<AppState>,
     method: axum::http::Method,
@@ -1710,7 +1826,7 @@ pub(crate) async fn download_media(
         ));
     }
     let row = sqlx::query(
-        "SELECT filename, mime, size, CAST(CASE WHEN data IS NULL THEN 0 ELSE 1 END AS BIGINT), (SELECT COUNT(*) FROM media_chunks mc WHERE mc.media_id = media.id) FROM media WHERE id = $1",
+        "SELECT filename, mime, size, CAST(CASE WHEN data IS NULL THEN 0 ELSE 1 END AS BIGINT), (SELECT COUNT(*) FROM media_chunks mc WHERE mc.media_id = media.id), seal_key, name_sealed FROM media WHERE id = $1",
     )
     .bind(&id)
     .fetch_optional(&db)
@@ -1724,6 +1840,29 @@ pub(crate) async fn download_media(
             r.try_get(4)?,
         ),
         None => return Err(media_hidden()),
+    };
+    let (seal_key, record): (Option<i64>, Option<Vec<u8>>) = match &row {
+        Some(r) => (r.try_get(5)?, r.try_get(6)?),
+        None => (None, None),
+    };
+    let key = match seal_key {
+        Some(key_id) => Some(
+            MediaKey::named(&state.db, key_id as u32)
+                .await
+                .map_err(ApiError::internal)?
+                .ok_or_else(sealed::unreadable)?,
+        ),
+        None => None,
+    };
+    let filename = match (&key, seal_key) {
+        (Some(key), Some(_)) => {
+            record
+                .as_deref()
+                .and_then(|record| key.open_facts(&id, record))
+                .ok_or_else(sealed::unreadable)?
+                .name
+        }
+        _ => filename,
     };
     let etag = format!("\"{id}\"");
     let cache = "private, max-age=86400, immutable";
@@ -1747,8 +1886,59 @@ pub(crate) async fn download_media(
         .and_then(|v| v.to_str().ok())
         .filter(|_| if_range_ok(&headers, &etag));
     let stored = u64::try_from(size).unwrap_or_default();
-    let (body, wanted, total) = match (inline != 0, chunks > 0, &state.s3) {
-        (true, _, _) => {
+    let (body, wanted, total) = match (key, inline != 0, chunks > 0, &state.s3) {
+        (Some(key), _, true, _) => {
+            let wanted = wanted_range(asked, stored);
+            let body = match wanted {
+                Wanted::Whole => {
+                    Body::from_stream(sealed::chunk_stream(db.clone(), id.clone(), stored, key, 0))
+                }
+                Wanted::Part { start, end } => {
+                    let first = start / MEDIA_CHUNK as u64;
+                    let opened = sealed::chunk_stream(db.clone(), id.clone(), stored, key, first);
+                    Body::from_stream(cut_stream(
+                        Box::pin(opened),
+                        first * MEDIA_CHUNK as u64,
+                        start,
+                        end,
+                    ))
+                }
+                Wanted::Unsatisfiable => Body::empty(),
+            };
+            (body, wanted, stored)
+        }
+        (Some(_), _, false, _) if size == 0 => (Body::empty(), wanted_range(asked, 0), 0),
+        (Some(key), _, false, Some(bucket)) => {
+            let wanted = s3_window(wanted_range(asked, stored));
+            let body = match wanted {
+                _ if method == axum::http::Method::HEAD => Body::empty(),
+                Wanted::Unsatisfiable => Body::empty(),
+                Wanted::Whole | Wanted::Part { .. } => {
+                    let mut open = (**bucket).clone();
+                    open.set_request_timeout(None);
+                    let stream = open
+                        .get_object_stream(sealed::sealed_key(&id))
+                        .await
+                        .map_err(ApiError::internal)?;
+                    let opened = sealed::object_stream(stream.bytes, id.clone(), stored, key);
+                    match wanted {
+                        Wanted::Part { start, end } => {
+                            Body::from_stream(cut_stream(Box::pin(opened), 0, start, end))
+                        }
+                        Wanted::Whole | Wanted::Unsatisfiable => Body::from_stream(opened),
+                    }
+                }
+            };
+            (body, wanted, stored)
+        }
+        (Some(_), _, false, None) => {
+            return Err(ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Media stored in S3 but S3 is not configured".to_string(),
+                None,
+            ));
+        }
+        (None, true, _, _) => {
             let bytes: Vec<u8> = sqlx::query("SELECT data FROM media WHERE id = $1")
                 .bind(&id)
                 .fetch_optional(&db)
@@ -1768,19 +1958,25 @@ pub(crate) async fn download_media(
             };
             (body, wanted, total)
         }
-        (false, true, _) => {
+        (None, false, true, _) => {
             let wanted = wanted_range(asked, stored);
             let body = match wanted {
-                Wanted::Whole => Body::from_stream(chunk_stream(db.clone(), id.clone(), chunks)),
-                Wanted::Part { start, end } => {
-                    Body::from_stream(chunk_range_stream(db.clone(), id.clone(), start, end))
+                Wanted::Whole => {
+                    Body::from_stream(chunk_stream(db.clone(), id.clone(), chunks, stored))
                 }
+                Wanted::Part { start, end } => Body::from_stream(chunk_range_stream(
+                    db.clone(),
+                    id.clone(),
+                    stored,
+                    start,
+                    end,
+                )),
                 Wanted::Unsatisfiable => Body::empty(),
             };
             (body, wanted, stored)
         }
-        (false, false, _) if size == 0 => (Body::empty(), wanted_range(asked, 0), 0),
-        (false, false, Some(bucket)) => {
+        (None, false, false, _) if size == 0 => (Body::empty(), wanted_range(asked, 0), 0),
+        (None, false, false, Some(bucket)) => {
             let wanted = s3_window(wanted_range(asked, stored));
             let body = match wanted {
                 _ if method == axum::http::Method::HEAD => Body::empty(),
@@ -1815,7 +2011,7 @@ pub(crate) async fn download_media(
             };
             (body, wanted, stored)
         }
-        (false, false, None) => {
+        (None, false, false, None) => {
             return Err(ApiError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Media stored in S3 but S3 is not configured".to_string(),
@@ -2305,6 +2501,7 @@ mod tests {
                 "alice",
                 Charge::own("alice"),
                 budget,
+                None,
             )
         });
         let results = futures_util::future::join_all(uploads).await;
@@ -3342,6 +3539,7 @@ mod tests {
                     uploader,
                     charge,
                     budget,
+                    None,
                 )
                 .await
             }

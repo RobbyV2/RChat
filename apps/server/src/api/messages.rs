@@ -1107,6 +1107,7 @@ pub(crate) async fn recent_channel_messages(
 /// (`None` the instance default, `Some(0)` until removed, else seconds after upload) and the
 /// server charged for a time longer than the default.
 async fn claim_media(
+    db: &Db,
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,
     id: &str,
     username: &str,
@@ -1125,16 +1126,35 @@ async fn claim_media(
     .execute(&mut **tx)
     .await?
     .rows_affected();
-    let row = sqlx::query("SELECT filename, uploaded_at, size FROM media WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&mut **tx)
-        .await?;
-    let (filename, uploaded_at, size): (String, i64, i64) = match &row {
-        Some(r) => (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?),
+    let row = sqlx::query(
+        "SELECT filename, uploaded_at, size, seal_key, name_sealed FROM media WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    type Claimed = (String, i64, i64, Option<i64>, Option<Vec<u8>>);
+    let (filename, uploaded_at, size, seal_key, record): Claimed = match &row {
+        Some(r) => (
+            r.try_get(0)?,
+            r.try_get(1)?,
+            r.try_get(2)?,
+            r.try_get(3)?,
+            r.try_get(4)?,
+        ),
         None => {
             return Err(bad("Unknown media"));
         }
     };
+    let filename = crate::api::media::sealed::facts_on(
+        db,
+        &mut *tx,
+        id,
+        filename,
+        seal_key,
+        record.as_deref(),
+    )
+    .await?
+    .name;
     if claimed == 0 {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
@@ -1420,7 +1440,7 @@ pub(crate) async fn insert_message(
                 }
                 None => crate::api::upload_expiry::Keep::default(),
             };
-            Some(claim_media(&mut tx, id, &user.username, spoiler, &keep).await?)
+            Some(claim_media(db, &mut tx, id, &user.username, spoiler, &keep).await?)
         }
         (None, Some(p2p)) => Some(p2p_media(&mut tx, p2p, user, spoiler).await?),
         (None, None) => None,
@@ -1511,9 +1531,14 @@ pub(crate) async fn insert_message(
     if let Some(spec) = &poll {
         crate::api::polls::insert(&mut tx, id, spec, t, writer.as_ref()).await?;
     }
+    let later =
+        crate::api::media::sealed::at_send(db, &mut tx, media.as_ref(), writer.is_some()).await?;
     crate::api::scheduled::finish_in(&mut tx, claim, id, t).await?;
     tx.commit().await?;
     let media = media.map(|m| MediaRef { alt, ..m });
+    if let Some(file) = later {
+        crate::api::media::sealed::seal_later(state, file);
+    }
     let mut msgs = [Message {
         unreadable: false,
         id,
@@ -1802,7 +1827,7 @@ async fn forwarded(
 /// Stores the forwarded copy and copies the original's link previews. Returns the message and
 /// whether the original had any previews (otherwise the copy's links are resolved anew).
 async fn insert_forward(
-    db: &Db,
+    state: &AppState,
     channel_id: Option<i64>,
     dm_id: Option<i64>,
     thread_root_id: Option<i64>,
@@ -1810,6 +1835,7 @@ async fn insert_forward(
     fwd: Forwarded,
     plain: bool,
 ) -> Result<(Message, bool), ApiError> {
+    let db = &state.db;
     let Forwarded {
         id: source_id,
         content,
@@ -1917,7 +1943,12 @@ async fn insert_forward(
     if let Some(data) = &snapshot {
         crate::api::polls::store_snapshot(&mut tx, id, data, writer.as_ref()).await?;
     }
+    let later =
+        crate::api::media::sealed::at_send(db, &mut tx, media.as_ref(), writer.is_some()).await?;
     tx.commit().await?;
+    if let Some(file) = later {
+        crate::api::media::sealed::seal_later(state, file);
+    }
     let refs = user_refs(db, author.as_slice()).await;
     let mut msgs = [Message {
         unreadable: false,
@@ -2035,7 +2066,7 @@ async fn deliver(
                 false => fwd,
             };
             let (message, previews) =
-                insert_forward(db, channel_id, dm_id, thread_root_id, user, fwd, plain).await?;
+                insert_forward(state, channel_id, dm_id, thread_root_id, user, fwd, plain).await?;
             (message, None, previews)
         }
         None => {

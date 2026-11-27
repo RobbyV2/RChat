@@ -497,11 +497,17 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
         let mut interval = tokio::time::interval(Duration::from_secs(300));
         loop {
             interval.tick().await;
-            if holds(&sealing, "seal-sweep", Duration::from_secs(290)).await
-                && let Err(crate::api::ApiError(_, e, _)) =
+            if holds(&sealing, "seal-sweep", Duration::from_secs(290)).await {
+                if let Err(crate::api::ApiError(_, e, _)) =
                     crate::api::seal::sweep(&sealing.db).await
-            {
-                tracing::warn!("the sweep for messages to encrypt failed: {e}");
+                {
+                    tracing::warn!("the sweep for messages to encrypt failed: {e}");
+                }
+                if let Err(crate::api::ApiError(_, e, _)) =
+                    crate::api::media::sealed::sweep(&sealing).await
+                {
+                    tracing::warn!("the sweep for files to encrypt failed: {e}");
+                }
             }
         }
     });

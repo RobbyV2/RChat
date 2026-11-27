@@ -69,6 +69,7 @@ import { buildEvent, claimedId, type Wire } from './event_v1'
 import { claimedId2 } from './event_v2'
 import { fingerprint } from './keys'
 import { hashPages, partRange, readBlock } from './blobs'
+import { sealsFile, storedPart } from './sealed_files'
 import { BLOCK, blobRootOf, blockCount, digest } from './hashing'
 import { LOCAL, type Local } from './limits'
 import { DEVICE_META } from './sealed_db'
@@ -1663,7 +1664,10 @@ export const importFiles = async (
       x.hashes.set(await digest(body), x.next * 32)
       if (x.next === 0) x.type = safeType(body.subarray(0, SNIFF_BYTES))
       if (!x.had)
-        await db.put('blob_parts', { h: x.h, block: x.next, data: new Blob([body as BlobPart]) })
+        await db.put(
+          'blob_parts',
+          await storedPart(db, x.h, x.next, body, await sealsFile(db, x.h))
+        )
       x.next += 1
       done += body.length
       progress?.(done)

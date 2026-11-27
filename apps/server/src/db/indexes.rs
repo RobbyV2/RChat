@@ -46,6 +46,13 @@ pub(super) const ONLINE_INDEXES: &[OnlineIndex] = &[
         extensions: &[],
     },
     OnlineIndex {
+        name: "idx_media_plain_object",
+        table: "media",
+        body: "ON media(plain_object, id) WHERE plain_object IS NOT NULL",
+        replaces: &[],
+        extensions: &[],
+    },
+    OnlineIndex {
         name: "idx_messages_content_trgm",
         table: "messages",
         body: "ON messages USING gin (lower(content) gin_trgm_ops)",

@@ -91,7 +91,7 @@ beforeEach(() => {
         { status: 200 }
       )
     }
-    if (init?.method === 'POST' && url === '/api/media') {
+    if (init?.method === 'POST' && url === '/api/media?place=c%3A77') {
       const wait = uploadGate
       if (wait) await wait
       return new Response(JSON.stringify({ id: 'up1' }), { status: 200 })

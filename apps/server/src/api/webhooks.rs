@@ -1456,9 +1456,19 @@ async fn post(
             }
             settings.check_profanity(ProfanityTarget::FileNames, &filename)?;
             let charge = upload_charge(db, hook).await?;
-            let (id, _) =
-                media::save_upload(state, &filename, &mime, &data.data, &user.username, charge)
-                    .await?;
+            let place = media::sealed::Place::Channel(hook.channel_id);
+            let key = media::sealed::place_key(db, place).await?;
+            let (id, _) = media::save_within(
+                state,
+                &filename,
+                &mime,
+                &data.data,
+                &user.username,
+                charge,
+                media::budget(),
+                key.as_ref(),
+            )
+            .await?;
             Some(id)
         }
         None => None,
