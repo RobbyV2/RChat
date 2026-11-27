@@ -51,6 +51,17 @@
   --color-mute-fg: #ff8a80;
   --color-code-blue: #8fcdff;
   --color-code-orange: #ffb59a;
+  --color-tag-1: #433878;
+  --color-tag-2: #245147;
+  --color-tag-3: #78364c;
+  --color-tag-4: #4a4275;
+  --color-tag-5: #264d6b;
+  --color-tag-6: #634121;
+  --color-on-tag: #ffffff;
+  --color-avatar: #9e9e9e;
+  --color-on-avatar: #ffffff;
+  --color-window-close: #c42b1c;
+  --color-on-window-close: #ffffff;
   --font-sans: Roboto, 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', var(--font-sans);
   --text-2xs: 0.6875rem;

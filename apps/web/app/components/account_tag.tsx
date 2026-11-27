@@ -6,18 +6,18 @@ import { KeyAvatar } from './p2p/p2p_badge'
 import { useMask, useStore } from '../lib/store'
 import { Masked } from './ui'
 
-export const TAG_COLORS = ['#433878', '#245147', '#78364c', '#4a4275', '#264d6b', '#634121']
-export function tagColor(origin: string) {
+// The tag colors of globals.css (`--color-tag-1` to `-6`), one per instance by its origin.
+export const TAG_CLASSES = ['bg-tag-1', 'bg-tag-2', 'bg-tag-3', 'bg-tag-4', 'bg-tag-5', 'bg-tag-6']
+export function tagClass(origin: string) {
   let hash = 0
   for (const c of origin) hash = (Math.imul(hash, 31) + c.charCodeAt(0)) >>> 0
-  return TAG_COLORS[hash % TAG_COLORS.length]
+  return TAG_CLASSES[hash % TAG_CLASSES.length]
 }
 export function InstanceTag({ origin, name }: { origin: string; name: string }) {
   return (
     <span
       aria-hidden="true"
-      style={{ backgroundColor: tagColor(origin), color: '#fff' }}
-      className="streamer inline-flex size-5 shrink-0 items-center justify-center rounded-md text-xs font-bold"
+      className={`streamer inline-flex size-5 shrink-0 items-center justify-center rounded-md text-xs font-bold text-on-tag ${tagClass(origin)}`}
     >
       {[...name][0]?.toUpperCase()}
     </span>

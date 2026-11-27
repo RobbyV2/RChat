@@ -32,10 +32,10 @@ export function UserAvatar({ username, avatarKind, avatarColor, size = 32 }: Pro
     />
   ) : (
     <span
-      style={{ width: size, height: size, background: avatarColor ?? '#9e9e9e' }}
-      className="flex shrink-0 items-center justify-center rounded-full"
+      style={{ width: size, height: size, background: avatarColor ?? undefined }}
+      className="flex shrink-0 items-center justify-center rounded-full bg-avatar text-on-avatar"
     >
-      <User size={Math.round(size * 0.6)} color="#ffffff" strokeWidth={2.25} />
+      <User size={Math.round(size * 0.6)} strokeWidth={2.25} />
     </span>
   )
 }
