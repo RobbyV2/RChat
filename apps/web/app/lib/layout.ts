@@ -70,6 +70,21 @@ const PAD_Y: Record<Space, string> = {
   '3xl': 'py-(--space-3xl)',
 }
 
+// The bottom padding of a surface at the lower edge of the screen: its own, or the home
+// indicator's inset when that is larger.
+const PAD_SAFE_BOTTOM: Record<Space, string> = {
+  none: 'pb-[env(safe-area-inset-bottom)]',
+  '3xs': 'pb-[max(var(--space-3xs),env(safe-area-inset-bottom))]',
+  '2xs': 'pb-[max(var(--space-2xs),env(safe-area-inset-bottom))]',
+  xs: 'pb-[max(var(--space-xs),env(safe-area-inset-bottom))]',
+  sm: 'pb-[max(var(--space-sm),env(safe-area-inset-bottom))]',
+  md: 'pb-[max(var(--space-md),env(safe-area-inset-bottom))]',
+  lg: 'pb-[max(var(--space-lg),env(safe-area-inset-bottom))]',
+  xl: 'pb-[max(var(--space-xl),env(safe-area-inset-bottom))]',
+  '2xl': 'pb-[max(var(--space-2xl),env(safe-area-inset-bottom))]',
+  '3xl': 'pb-[max(var(--space-3xl),env(safe-area-inset-bottom))]',
+}
+
 // The step below `s` on the scale (`none` stays `none`).
 export const smaller = (s: Space): Space => SPACES[Math.max(0, SPACES.indexOf(s) - 1)]
 
@@ -100,6 +115,30 @@ const JUSTIFY: Record<Justify, string> = {
   between: 'justify-between',
   around: 'justify-around',
 }
+
+// The type step and the color a box gives the text in it (its children inherit both).
+export type BoxText = '3xs' | '2xs' | 'xs' | 'sm' | 'base' | 'lg'
+export type BoxInk = 'strong' | 'muted' | 'primary' | 'tertiary' | 'error'
+
+const TEXT: Record<BoxText, string> = {
+  '3xs': 'text-3xs',
+  '2xs': 'text-2xs',
+  xs: 'text-xs',
+  sm: 'text-sm',
+  base: 'text-base',
+  lg: 'text-lg',
+}
+
+const INK: Record<BoxInk, string> = {
+  strong: 'text-on-surface',
+  muted: 'text-on-surface-variant',
+  primary: 'text-primary',
+  tertiary: 'text-tertiary',
+  error: 'text-error',
+}
+
+export const typeLook = (text?: BoxText, ink?: BoxInk) =>
+  [text ? TEXT[text] : '', ink ? INK[ink] : ''].filter(Boolean).join(' ')
 
 // The looks below leave the display (`flex`, `grid`) to the component, so a placement can hide a
 // box (`hidden md:flex`).
@@ -193,6 +232,7 @@ export const surfaceLook = ({
   row = false,
   elevation = 0,
   justify = 'start',
+  safe = false,
 }: {
   pad: Space
   gap: Space
@@ -205,10 +245,12 @@ export const surfaceLook = ({
   row?: boolean
   elevation?: Elevation
   justify?: Justify
+  safe?: boolean
 }) =>
   [
     row ? 'min-w-0 flex-row' : 'min-w-0 flex-col',
     inset === 'even' ? PAD[pad] : `${PAD_X[pad]} ${PAD_Y[smaller(pad)]}`,
+    safe ? PAD_SAFE_BOTTOM[inset === 'even' ? pad : smaller(pad)] : '',
     GAP[gap],
     ITEMS[align],
     JUSTIFY[justify],

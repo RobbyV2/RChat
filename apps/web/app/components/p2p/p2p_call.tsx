@@ -176,7 +176,7 @@ function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
       border="bottom"
       place="shrink-0"
     >
-      <div className="flex flex-wrap items-center gap-3">
+      <Row gap="md" wrap>
         <Row as="span" gap="sm" place="flex-1">
           {c.video ? (
             <Video size={16} className="shrink-0 text-status-green" aria-hidden />
@@ -209,7 +209,7 @@ function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
             Decline
           </button>
         </Row>
-      </div>
+      </Row>
     </Surface>
   )
 }

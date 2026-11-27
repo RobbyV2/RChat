@@ -328,7 +328,7 @@ function EntryRow({
   if (adapter.canPreview?.(entry) === false) {
     const target = adapter.previewTarget?.(entry)
     return (
-      <li className="flex min-w-0 flex-wrap items-center gap-x-1">
+      <Row as="li" gap="2xs" wrap place="min-w-0">
         <ListRow
           onClick={() => onOpen(entry)}
           label={
@@ -339,7 +339,7 @@ function EntryRow({
           place="flex-1"
         />
         {target && <RevealChannelPreview target={target} />}
-      </li>
+      </Row>
     )
   }
   const snippet = inboxPreview(entry, streamer)

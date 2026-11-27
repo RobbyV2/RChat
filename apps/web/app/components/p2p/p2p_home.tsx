@@ -166,12 +166,12 @@ function ElsewhereNoticeBody() {
 
   return (
     <Surface role="status" pad="md" tone="plain" radius="none">
-      <div className="flex flex-wrap items-center gap-3">
+      <Row gap="md" wrap>
         <p className="text-sm">P2P is open in another tab.</p>
         <button data-p2p-use-here onClick={() => p2p.useHere()} className={textBtn}>
           Use here
         </button>
-      </div>
+      </Row>
     </Surface>
   )
 }
@@ -204,14 +204,14 @@ function IdentityAlertBody() {
   return (
     <Surface role="alert" data-p2p-alert pad="lg" gap="md" tone="error" align="start">
       <p className="text-sm">{ALERT_TEXT}</p>
-      <div className="flex flex-wrap gap-2">
+      <Row gap="sm" align="stretch" wrap>
         <button onClick={() => confirmResetFor(identity)(ask)} className={dangerBtn}>
           Reset identity
         </button>
         <button onClick={() => void p2p.clearAlert()} className={textBtn}>
           Dismiss
         </button>
-      </div>
+      </Row>
     </Surface>
   )
 }
@@ -873,7 +873,7 @@ function ContactDialog({ ik }: { ik: string }) {
           </p>
         )}
         <p className="streamer font-mono text-xs text-on-surface-variant">{fingerprint(c.ik)}</p>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <Row gap="sm" justify="end" wrap>
           {menuItems(
             ctxFor(
               acct.store.getState(),
@@ -897,7 +897,7 @@ function ContactDialog({ ik }: { ik: string }) {
                 {item.label}
               </button>
             ))}
-        </div>
+        </Row>
       </Stack>
     </Dialog>
   )

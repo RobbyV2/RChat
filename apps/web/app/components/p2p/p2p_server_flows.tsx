@@ -272,7 +272,7 @@ function DisputedNote({ v }: { v: ServerView }) {
         <span className="font-medium text-on-surface">{DISPUTED_TEXT}</span>
         {v.next ? '' : '. Pick the copy to follow.'}
       </span>
-      <span className="flex flex-wrap gap-1">
+      <Row as="span" gap="2xs" align="stretch" wrap>
         {(list ?? []).map(x => (
           <ListRow
             wrap
@@ -288,7 +288,7 @@ function DisputedNote({ v }: { v: ServerView }) {
             }
           />
         ))}
-      </span>
+      </Row>
     </Note>
   )
 }
@@ -418,7 +418,7 @@ function TransferAsksBody({ room }: { room?: string }) {
           className="rounded-2xl border border-dashed border-tertiary bg-surface-container"
         >
           <Surface pad="md" tone="plain" radius="none">
-            <div className="flex flex-wrap items-center gap-3">
+            <Row gap="md" wrap>
               <KeyAvatar ik={a.from} size={32} />
               <p className="min-w-48 flex-1 text-sm">
                 <Who room={a.room} ik={a.from} />{' '}
@@ -452,7 +452,7 @@ function TransferAsksBody({ room }: { room?: string }) {
                   {a.kind === 'take' ? 'Take it' : 'Approve'}
                 </Button>
               </Row>
-            </div>
+            </Row>
           </Surface>
         </li>
       ))}
@@ -487,7 +487,7 @@ function CoOwnerAsksBody() {
               className="rounded-2xl border border-dashed border-tertiary bg-surface-container"
             >
               <Surface pad="md" tone="plain" radius="none">
-                <div className="flex flex-wrap items-center gap-3">
+                <Row gap="md" wrap>
                   <KeyAvatar ik={a.from} size={32} />
                   <p className="min-w-48 flex-1 text-sm">
                     <span className="streamer font-medium">
@@ -511,7 +511,7 @@ function CoOwnerAsksBody() {
                       Agree
                     </Button>
                   </Row>
-                </div>
+                </Row>
               </Surface>
             </li>
           )
@@ -621,7 +621,7 @@ function DevicesSectionBody() {
             tone="base"
             radius="lg"
           >
-            <div className="flex flex-wrap items-center gap-2">
+            <Row gap="sm" wrap>
               <div className="min-w-0 flex-1">
                 <Row as="p" gap="sm" align="baseline">
                   <span className="truncate text-sm">{d.label}</span>
@@ -643,7 +643,7 @@ function DevicesSectionBody() {
                   Lost or stolen
                 </Button>
               )}
-            </div>
+            </Row>
           </Surface>
         ))}
       </Stack>
@@ -715,13 +715,13 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
               className="rounded-xl border border-outline-variant bg-transparent px-3 py-2 text-base md:text-sm"
             />
           </Stack>
-          <div className="flex flex-wrap gap-1">
+          <Row gap="2xs" align="stretch" wrap>
             {times.map(o => (
               <Button key={o.ms} onClick={() => setT(at - o.ms)}>
                 {o.label}
               </Button>
             ))}
-          </div>
+          </Row>
         </Stack>
         <p data-p2p-lost-text className="text-sm">
           {lostText(time)}

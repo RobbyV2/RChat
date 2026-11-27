@@ -252,7 +252,7 @@ export function AddInstanceFlow({
             />
           </Stack>
           {!streamer && !linkTarget && (
-            <div className="flex flex-wrap gap-2">
+            <Row gap="sm" align="stretch" wrap>
               {knownInstances()
                 .filter(i => allowed || i.origin === ownInstance()?.origin)
                 .map(({ origin, info }) => (
@@ -268,7 +268,7 @@ export function AddInstanceFlow({
                     {info.name} · {new URL(origin).host}
                   </Button>
                 ))}
-            </div>
+            </Row>
           )}
           <Row gap="sm" justify="end">
             {onCancel && (

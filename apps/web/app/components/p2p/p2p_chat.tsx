@@ -118,9 +118,9 @@ export function NoteBar({
   return (
     <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
       <Surface {...rest} pad="lg" tone="base">
-        <div className="flex flex-wrap items-center gap-2 text-sm text-on-surface-variant">
+        <Row gap="sm" wrap text="sm" ink="muted">
           {children}
-        </div>
+        </Row>
       </Surface>
     </div>
   )
@@ -355,7 +355,7 @@ export const P2pRow = memo(function P2pRow({
               />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-baseline gap-2">
+              <Row gap="sm" align="baseline" wrap>
                 <span className="streamer min-w-0 truncate text-sm font-medium" style={{ color }}>
                   {name}
                 </span>
@@ -374,7 +374,7 @@ export const P2pRow = memo(function P2pRow({
                   </span>
                 )}
                 {status}
-              </div>
+              </Row>
               {body}
             </div>
           </Row>
@@ -1138,7 +1138,7 @@ function IdentityChatBody(props: ChatBodyProps) {
 
   const gapNote = props.gap && !chat.more && (
     <Surface data-p2p-gap pad="lg" tone="plain" radius="none">
-      <div className="flex flex-wrap items-center justify-center gap-2">
+      <Row gap="sm" justify="center" wrap>
         <History size={14} className="text-on-surface-variant" />
         {props.online ? (
           <>
@@ -1152,7 +1152,7 @@ function IdentityChatBody(props: ChatBodyProps) {
         ) : (
           <span className="text-xs text-on-surface-variant">{props.gapOffline}</span>
         )}
-      </div>
+      </Row>
     </Surface>
   )
 

@@ -96,7 +96,7 @@ function ExpiryDialog({
             only download them while you are online.
           </p>
           <RelayPicker value={relay} onChange={setRelay} prefs={prefs} />
-          <div className="flex flex-wrap gap-2">
+          <Row gap="sm" align="stretch" wrap>
             {PRESETS.map(p => (
               <button
                 key={p.label}
@@ -106,7 +106,7 @@ function ExpiryDialog({
                 {p.label}
               </button>
             ))}
-          </div>
+          </Row>
         </Stack>
         <Row gap="sm">
           <input

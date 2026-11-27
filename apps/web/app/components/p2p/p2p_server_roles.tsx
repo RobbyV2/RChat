@@ -474,7 +474,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
         </p>
       )}
       {roles.length > 0 && (
-        <ul aria-label="Roles" className="flex flex-wrap gap-1">
+        <Row as="ul" aria-label="Roles" gap="2xs" align="stretch" wrap>
           {roles.map(r => (
             <li
               key={r.id}
@@ -500,7 +500,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
               )}
             </li>
           ))}
-        </ul>
+        </Row>
       )}
     </Surface>
   )
@@ -769,10 +769,7 @@ function ChannelAccessBody({
         {channel ? (
           <>
             {category && (
-              <div
-                data-p2p-sync
-                className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant"
-              >
+              <Row data-p2p-sync gap="sm" wrap text="xs" ink="muted">
                 <span className="min-w-0 flex-1">
                   {channel.sync
                     ? `Synced with ${category.name}. Changing a rule here stops it.`
@@ -783,7 +780,7 @@ function ChannelAccessBody({
                     Sync now
                   </button>
                 )}
-              </div>
+              </Row>
             )}
             <RestrictionToggles nobody={NOBODY} value={channel} onToggle={toggle} send={!voice} />
             <p className="text-xs font-medium text-on-surface-variant">

@@ -672,7 +672,7 @@ function Layout({
     )
   return (
     <Stack gap="md">
-      <div className="flex flex-wrap items-center gap-3">
+      <Row gap="md" wrap>
         {icon}
         <Stack gap="3xs" place="flex-1">
           <p className="min-w-0 font-semibold">
@@ -689,7 +689,7 @@ function Layout({
             {actions}
           </div>
         )}
-      </div>
+      </Row>
       {extra}
     </Stack>
   )
@@ -1099,7 +1099,7 @@ export function InviteCard({
 function RemoteOrigin({ host, name }: { host: string; name?: string }) {
   const streamer = useStore(s => s.streamer)
   return (
-    <span className="flex max-w-full min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+    <Row as="span" gap="xs" wrap lineGap="3xs" place="max-w-full min-w-0">
       <InstanceChip host={host} />
       {name && name !== host && (
         <span
@@ -1109,7 +1109,7 @@ function RemoteOrigin({ host, name }: { host: string; name?: string }) {
           {name}
         </span>
       )}
-    </span>
+    </Row>
   )
 }
 

@@ -318,7 +318,7 @@ function Rating({
   return (
     <div className="mt-2">
       {onPick && (
-        <div role="radiogroup" aria-label="Score" className="flex flex-wrap gap-1.5">
+        <Row role="radiogroup" aria-label="Score" gap="xs" align="stretch" wrap>
           {scores.map(v => {
             const on = picked[0] === v
             return (
@@ -339,7 +339,7 @@ function Rating({
               </button>
             )
           })}
-        </div>
+        </Row>
       )}
       {r && (
         <div className="mt-3 flex items-end gap-3">
@@ -514,7 +514,7 @@ function PollVoters({ m, onClose }: { m: Message; onClose: () => void }) {
           <p className="text-sm break-words text-on-surface-variant">
             <PollText text={poll.question} />
           </p>
-          <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by option">
+          <Row role="tablist" aria-label="Filter by option" gap="xs" align="stretch" wrap>
             {chips.map(c => (
               <Tab
                 key={c.key ?? 'all'}
@@ -527,7 +527,7 @@ function PollVoters({ m, onClose }: { m: Message; onClose: () => void }) {
                 </span>
               </Tab>
             ))}
-          </div>
+          </Row>
           {poll.kind === 'ranked' && option !== null && (
             <p className="text-xs text-on-surface-variant">Voters who ranked it first</p>
           )}
@@ -602,22 +602,22 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
         data-poll={m.id}
         className="mt-1 max-w-120 min-w-0 rounded-2xl border border-outline-variant bg-surface-container p-3"
       >
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-on-surface-variant">
+        <Row gap="sm" wrap lineGap="3xs" text="xs" ink="muted">
           <span className="flex items-center gap-1 font-medium text-primary">
             <ChartColumn size={14} />
             {KIND_LABELS[poll.kind]}
           </span>
           {poll.anonymous && (
-            <span className="flex items-center gap-1">
+            <Row as="span" gap="2xs">
               <EyeOff size={12} />
               Anonymous
-            </span>
+            </Row>
           )}
           {static_ && <span>Snapshot</span>}
           <span className="ml-auto" data-poll-status>
             {closed ? 'Closed' : static_ ? null : (left ?? 'Open')}
           </span>
-        </div>
+        </Row>
         <p className="mt-1.5 text-base font-medium break-words text-on-surface">
           <PollText text={poll.question} />
         </p>

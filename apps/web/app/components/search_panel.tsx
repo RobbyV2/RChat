@@ -40,10 +40,10 @@ function HitText({ r }: { r: SearchHit }) {
     )
   if (copy.access !== 'open')
     return (
-      <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-sm text-on-surface-variant">
+      <Row as="p" gap="2xs" wrap text="sm" ink="muted" place="min-w-0">
         <span className="italic">Forwarded message</span>
         {copy.target && <RevealChannelPreview target={copy.target} />}
-      </p>
+      </Row>
     )
   if (!r.content && r.file === null) return null
   return (
@@ -231,7 +231,7 @@ export function SearchView({
           autoFocus
           className={fieldCls}
         />
-        <div className="flex flex-wrap items-center gap-2">
+        <Row gap="sm" wrap>
           <input
             value={from}
             onChange={e => setFrom(e.target.value)}
@@ -257,7 +257,7 @@ export function SearchView({
           </Chip>
           {dateField('before', before, setBefore)}
           {dateField('after', after, setAfter)}
-        </div>
+        </Row>
         {note && <p className="text-xs text-on-surface-variant">{note}</p>}
       </Surface>
       <div

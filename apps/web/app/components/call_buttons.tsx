@@ -47,7 +47,7 @@ export function CallType({
   const Icon = video ? Video : Phone
   const label = video ? 'Video call' : 'Call'
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-on-surface-variant">
+    <Row as="span" gap="sm" wrap lineGap="3xs" text="sm" ink="muted" place="min-w-0">
       <Row as="span" gap="xs">
         <Icon size={14} aria-hidden className="shrink-0" />
         <span className="whitespace-nowrap">
@@ -62,7 +62,7 @@ export function CallType({
             {ROUTE_LABEL.server}
           </span>
         ))}
-    </span>
+    </Row>
   )
 }
 

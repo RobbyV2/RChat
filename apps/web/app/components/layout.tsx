@@ -7,6 +7,9 @@ import {
   rowLook,
   stackLook,
   surfaceLook,
+  typeLook,
+  type BoxInk,
+  type BoxText,
   type Breakpoint,
   type Elevation,
   type GridColumns,
@@ -22,7 +25,8 @@ import {
 
 // The boxes every screen is laid out with. Their spacing and alignment come only from their props
 // (the scale and choices of `lib/layout.ts`); they take no class names or styles, so a screen
-// cannot add space of its own. `place` puts a box in its parent (see `LayoutPlace`).
+// cannot add space of its own. `place` puts a box in its parent (see `LayoutPlace`); `text` and
+// `ink` set the type step and color its text inherits.
 
 type Tag =
   | 'div'
@@ -49,6 +53,8 @@ type Box<S extends string> = Omit<
 > & {
   as?: Tag
   place?: LayoutPlace<S>
+  text?: BoxText
+  ink?: BoxInk
   ref?: Ref<HTMLElement>
   children?: ReactNode
 }
@@ -56,9 +62,13 @@ type Box<S extends string> = Omit<
 function render<S extends string>(
   display: string,
   look: string,
-  { as = 'div', place, ...rest }: Box<S>
+  { as = 'div', place, text, ink, ...rest }: Box<S>
 ) {
-  return createElement(as, { ...rest, className: placed(display, look, place) })
+  const type = typeLook(text, ink)
+  return createElement(as, {
+    ...rest,
+    className: placed(display, type ? `${look} ${type}` : look, place),
+  })
 }
 
 // Children one under the other, `gap` apart; `divided` draws a line between them; `rowFrom`
@@ -103,7 +113,8 @@ export function Row<const S extends string = never>({
 // its children a column `gap` apart. `fit` makes it as wide as its content (an image, a code), so
 // nothing leaves empty space beside it. `tone="plain"` pads without a surface of its own;
 // `border="bottom"` (or `top`) lines one edge, as a panel's header or footer. A `row` surface lays
-// its children side by side, centered; `elevation` lifts it (a popover).
+// its children side by side, centered; `elevation` lifts it (a popover); a `safe` one at the
+// lower edge of the screen keeps its content above the home indicator.
 export function Surface<const S extends string = never>({
   pad,
   gap = 'none',
@@ -116,6 +127,7 @@ export function Surface<const S extends string = never>({
   align = row ? 'center' : 'stretch',
   elevation = 0,
   justify,
+  safe = false,
   ...box
 }: Box<S> & {
   pad: Space
@@ -129,10 +141,24 @@ export function Surface<const S extends string = never>({
   align?: StackAlign
   elevation?: Elevation
   justify?: Justify
+  safe?: boolean
 }) {
   return render(
     'flex',
-    surfaceLook({ pad, gap, tone, radius, border, inset, fit, align, row, elevation, justify }),
+    surfaceLook({
+      pad,
+      gap,
+      tone,
+      radius,
+      border,
+      inset,
+      fit,
+      align,
+      row,
+      elevation,
+      justify,
+      safe,
+    }),
     box
   )
 }

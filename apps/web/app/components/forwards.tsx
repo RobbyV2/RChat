@@ -640,7 +640,7 @@ export function ForwardCard({
     <Stack gap="2xs" data-forward={fwd.source_id}>
       {head}
       <div className="max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2">
+        <Row gap="sm" wrap place="min-w-0">
           <Row as="span" gap="sm" place="max-w-full" data-forward-author>
             {author ? (
               <>
@@ -677,7 +677,7 @@ export function ForwardCard({
             )}
           </Row>
           <MessageTime ts={fwd.created_at} className="shrink-0 text-xs text-on-surface-variant" />
-        </div>
+        </Row>
         {m.poll?.snapshot ? (
           <PollCard m={m} />
         ) : (

@@ -182,12 +182,12 @@ function MemberRow({
         {face.kind === 'account' ? (
           <MemberName user={face.user} color={look.color} icon={icon} />
         ) : (
-          <span className="flex min-w-0 items-center gap-1">
+          <Row as="span" gap="2xs" place="min-w-0">
             <span className="streamer min-w-0 truncate text-sm" style={{ color: look.color }}>
               <Masked text={entry.name} own={entry.own} />
             </span>
             <RoleIcon emoji={icon?.emoji} role={icon?.role} />
-          </span>
+          </Row>
         )}
         {entry.chip && (
           <span className="flex h-4 min-w-0">

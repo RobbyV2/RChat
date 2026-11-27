@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react'
 import { Check, ChevronDown, ExternalLink } from 'lucide-react'
+import { Stack } from '../layout'
 
 // The buttons and menus under an automation's message, as the shared rules write them.
 export type ButtonStyle = 'plain' | 'primary' | 'danger'
@@ -149,7 +150,7 @@ function SelectView({
     if (picksOk(c, next)) onPick(c.cid, next)
   }
   return (
-    <div className="flex w-full min-w-0 flex-col gap-1">
+    <Stack gap="2xs" place="w-full min-w-0">
       <button
         type="button"
         data-cid={c.cid}
@@ -225,7 +226,7 @@ function SelectView({
           )}
         </div>
       )}
-    </div>
+    </Stack>
   )
 }
 

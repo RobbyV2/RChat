@@ -78,7 +78,7 @@ import { AltBadge } from './alt_text'
 import { longPress } from './context_menu'
 import { useFileMenu } from './file_card'
 import { Masked, useCopied, useEscape } from './ui'
-import { Row } from './layout'
+import { Row, Surface } from './layout'
 
 // An image as the viewer shows it. `src` is the address its message shows it from, held while it
 // is on screen; `w` and `h` the size its sender gave, until the image tells its own; `placeholder`
@@ -887,10 +887,15 @@ export function LightboxView({
         >
           <div key={key} className={`absolute inset-0 ${slide}`}>
             {!loaded && !broken && (
-              <div
+              <Surface
                 role="status"
                 aria-label="Loading image"
-                className="absolute inset-0 flex items-center justify-center p-8"
+                pad="2xl"
+                row
+                tone="plain"
+                radius="none"
+                justify="center"
+                place="absolute inset-0"
               >
                 {item.placeholder ? (
                   <img
@@ -903,7 +908,7 @@ export function LightboxView({
                     className={`size-16 rounded-2xl bg-surface-container-high/60 ${moves ? 'animate-pulse' : ''}`}
                   />
                 )}
-              </div>
+              </Surface>
             )}
             {broken ? (
               <div

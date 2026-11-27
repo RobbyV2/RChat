@@ -10,6 +10,7 @@ import {
   smaller,
   stackLook,
   surfaceLook,
+  typeLook,
   type Space,
 } from '../layout'
 
@@ -137,4 +138,19 @@ test('a surface can sit its children apart along its line, and draw a dashed edg
 test('a docked bar sits inside the pane, above the home indicator or the keyboard', () => {
   has(dockLook, 'mx-(--space-md)', 'keyboard:mb-(--space-md)', 'shrink-0')
   expect(dockLook.includes('env(safe-area-inset-bottom)')).toBe(true)
+})
+
+test('a box gives its text a type step and a color from the tokens', () => {
+  expect(typeLook('sm', 'muted')).toBe('text-sm text-on-surface-variant')
+  expect(typeLook(undefined, 'error')).toBe('text-error')
+  expect(typeLook()).toBe('')
+})
+
+test('a safe surface pads its lower edge by its own step or the home indicator, whichever is more', () => {
+  has(surface({ pad: 'md', safe: true }), 'pb-[max(var(--space-md),env(safe-area-inset-bottom))]')
+  has(
+    surface({ pad: 'lg', inset: 'bar', safe: true }),
+    'pb-[max(var(--space-md),env(safe-area-inset-bottom))]'
+  )
+  expect(surface().includes('safe-area')).toBe(false)
 })

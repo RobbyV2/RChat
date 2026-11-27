@@ -522,7 +522,7 @@ export default function FriendsPanel() {
           pad="sm"
           place="shrink-0"
         >
-          <div className="flex flex-wrap gap-1">
+          <Row gap="2xs" align="stretch" wrap>
             <Chip on={activeFilter === null} onClick={() => setFilter(null)}>
               All
             </Chip>
@@ -536,7 +536,7 @@ export default function FriendsPanel() {
                 <AccountTag row={e.row} name={e.name} />
               </Chip>
             ))}
-          </div>
+          </Row>
         </Surface>
       )}
       <Surface tone="plain" radius="none" pad="sm" gap="md" place="min-h-0 flex-1 overflow-y-auto">
@@ -652,7 +652,7 @@ function AccountFriendsSection({ max }: { max: number }) {
           friends.map(f => <FriendRow key={f.user.username} friend={f} />)
         )}
       </Stack>
-      <div className="flex flex-wrap gap-1">
+      <Row gap="2xs" align="stretch" wrap>
         <Button
           onClick={() => {
             if (client.shown() !== account) client.show(account)
@@ -669,7 +669,7 @@ function AccountFriendsSection({ max }: { max: number }) {
         >
           Add friend
         </Button>
-      </div>
+      </Row>
     </Stack>
   )
 }
@@ -906,7 +906,7 @@ export function Choice<T extends string>({
   return (
     <Stack gap="sm">
       <p className="text-sm text-on-surface">{label}</p>
-      <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
+      <Row role="radiogroup" aria-label={label} gap="sm" align="stretch" wrap>
         {options.map(o => (
           <Chip
             key={o.value}
@@ -918,7 +918,7 @@ export function Choice<T extends string>({
             {o.label}
           </Chip>
         ))}
-      </div>
+      </Row>
     </Stack>
   )
 }

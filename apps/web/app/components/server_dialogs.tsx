@@ -20,7 +20,7 @@ import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { Button, ListRow, Tab } from './controls'
-import { Row, Stack } from './layout'
+import { Row, Stack, Surface } from './layout'
 import { Dialog, FieldError, Masked } from './ui'
 import { ServerGlyph } from './server_rail'
 import { AboutLine } from './server_about'
@@ -178,7 +178,7 @@ function AddServerDialog({
       <Stack gap="lg">
         {picker}
         {!guest && (
-          <div role="tablist" className="flex rounded-full bg-surface-container p-1">
+          <Surface role="tablist" pad="2xs" row tone="base" radius="full" align="stretch">
             {(['create', 'join'] as const).map(t => (
               <Tab
                 key={t}
@@ -193,7 +193,7 @@ function AddServerDialog({
                 {t === 'create' ? 'Create' : 'Join'}
               </Tab>
             ))}
-          </div>
+          </Surface>
         )}
         <Stack gap="md">
           <p className="text-sm text-on-surface-variant">

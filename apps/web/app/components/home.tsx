@@ -1263,7 +1263,7 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
             })}
             {card.top.length > 0 && (
               <Line>
-                <ul aria-label="Online contacts" className="flex flex-wrap gap-2">
+                <Row as="ul" aria-label="Online contacts" gap="sm" align="stretch" wrap>
                   {card.top.map(c => {
                     const label = streamer ? 'Message contact' : `Message ${mask(displayName(c))}`
                     return (
@@ -1285,12 +1285,12 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
                       </li>
                     )
                   })}
-                </ul>
+                </Row>
               </Line>
             )}
             {card.state !== 'starting' && (
               <Controls>
-                <div className="flex flex-wrap gap-2">
+                <Row gap="sm" align="stretch" wrap>
                   <Button
                     icon={UserPlus}
                     data-peer-code
@@ -1315,7 +1315,7 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
                   >
                     Join P2P server
                   </Button>
-                </div>
+                </Row>
               </Controls>
             )}
           </>
@@ -1336,7 +1336,7 @@ function GetStarted({ className = '' }: { className?: string }) {
         </p>
       </Line>
       <Controls>
-        <div className="flex flex-wrap gap-2">
+        <Row gap="sm" align="stretch" wrap>
           <Button
             variant="filled"
             size="md"
@@ -1350,7 +1350,7 @@ function GetStarted({ className = '' }: { className?: string }) {
           <Button size="md" onClick={() => openFriends('add')}>
             Add a friend
           </Button>
-        </div>
+        </Row>
       </Controls>
     </Card>
   )
@@ -1441,7 +1441,7 @@ function ActorChips({
 }) {
   if (accounts.length < 2) return null
   return (
-    <div aria-label="Account" className="flex max-w-full flex-wrap gap-1">
+    <Row aria-label="Account" gap="2xs" align="stretch" wrap place="max-w-full">
       {accounts.map(actor => (
         <button
           key={actor.key}
@@ -1453,7 +1453,7 @@ function ActorChips({
           <HomeActorLabel actor={actor} />
         </button>
       ))}
-    </div>
+    </Row>
   )
 }
 function GroupUnread({ actor }: { actor: HomeActor }) {

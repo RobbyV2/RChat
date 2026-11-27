@@ -227,7 +227,7 @@ function Channels({ v }: { v: ServerView }) {
               tone="base"
               radius="lg"
             >
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Row gap="md" wrap lineGap="2xs">
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">
                   <Masked text={cat.name} own={ownsP2pServer(v, me)} />
                 </span>
@@ -241,7 +241,7 @@ function Channels({ v }: { v: ServerView }) {
                 >
                   Permissions
                 </button>
-              </div>
+              </Row>
               {openCat === cat.id && <ChannelAccess v={v} cat={cat} />}
             </Surface>
           )
@@ -352,7 +352,7 @@ function Channels({ v }: { v: ServerView }) {
               aria-label={`Topic of ${label}`}
               className={fieldCls}
             />
-            <div className="flex flex-wrap justify-end gap-2">
+            <Row gap="sm" align="stretch" justify="end" wrap>
               {edit && (
                 <button
                   onClick={() => setOpen(open === c.id ? null : c.id)}
@@ -372,7 +372,7 @@ function Channels({ v }: { v: ServerView }) {
                   Save
                 </button>
               )}
-            </div>
+            </Row>
             {edit && !voice && v.textOnlyChannels && (
               <SettingSwitch
                 label="Text-only channel"
@@ -472,7 +472,7 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
   const me = useP2p(s => s.me)
   return (
     <Surface as="li" data-p2p-member-line={m.name} pad="sm" tone="plain" radius="lg">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Row gap="md" wrap lineGap="2xs">
         <MemberAvatar members={v.members} ik={m.ik} size={32} />
         <span
           className="streamer min-w-0 flex-1 truncate text-sm"
@@ -486,7 +486,7 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
           </span>
         )}
         {children}
-      </div>
+      </Row>
     </Surface>
   )
 }
@@ -712,7 +712,7 @@ function ModerationLog({ v }: { v: ServerView }) {
   })
   const now = Date.now()
   return (
-    <div data-p2p-modlog className="flex flex-col gap-2">
+    <Stack data-p2p-modlog gap="sm">
       {lines.length === 0 && pages.length > 0 && <Note>Nothing yet.</Note>}
       <ul aria-label="Moderation log" className="flex flex-col gap-1">
         {lines.map(l => (
@@ -721,7 +721,7 @@ function ModerationLog({ v }: { v: ServerView }) {
             data-p2p-log={l.act}
             className="flex flex-col gap-0.5 rounded-xl bg-surface-container px-3 py-2"
           >
-            <div className="flex min-w-0 items-start gap-2">
+            <Row gap="sm" align="start" place="min-w-0">
               <MemberAvatar members={v.members} ik={l.a} size={20} />
               <span className="min-w-0 flex-1 text-sm break-words">
                 <span className="streamer font-medium">
@@ -742,7 +742,7 @@ function ModerationLog({ v }: { v: ServerView }) {
               >
                 {relativeTime(l.at, now)}
               </time>
-            </div>
+            </Row>
             {l.undone && <p className="pl-7 text-xs text-on-surface-variant">Not in force</p>}
             {l.reason && (
               <p className="pl-7 text-xs text-on-surface-variant">
@@ -757,7 +757,7 @@ function ModerationLog({ v }: { v: ServerView }) {
           </li>
         ))}
       </ul>
-      <div className="flex flex-wrap gap-2">
+      <Row gap="sm" align="stretch" wrap>
         {next !== null && (
           <button onClick={more} disabled={loading} className={textBtn}>
             Show more
@@ -768,8 +768,8 @@ function ModerationLog({ v }: { v: ServerView }) {
             Back to the newest
           </button>
         )}
-      </div>
-    </div>
+      </Row>
+    </Stack>
   )
 }
 

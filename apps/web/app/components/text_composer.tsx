@@ -58,12 +58,12 @@ export function TextComposer({
       }}
     >
       {reply && (
-        <div className="flex items-center justify-between gap-2 text-xs">
+        <Row gap="sm" justify="between" text="xs">
           <span className="truncate">
             Reply to <span className="streamer">{reply}</span>
           </span>
           <LinkButton onClick={cancelReply}>Cancel reply</LinkButton>
-        </div>
+        </Row>
       )}
       <Row gap="sm" align="end">
         <textarea

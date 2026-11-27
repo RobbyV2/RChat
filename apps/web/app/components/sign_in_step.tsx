@@ -176,10 +176,10 @@ export function SignInStep({
   return (
     <>
       {signup && !owner && (
-        <div className="flex gap-1 rounded-full bg-surface-container p-1">
+        <Surface pad="2xs" gap="2xs" row tone="base" radius="full" align="stretch">
           {tab('login', 'Log in')}
           {tab('register', 'Create account')}
-        </div>
+        </Surface>
       )}
       {!missing && auth && mode === 'login' && (!owner || owner.username !== null) && (
         <ProviderButtons

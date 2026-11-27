@@ -800,15 +800,12 @@ export function DmBlock({
                   !paging &&
                   (!unreadKey || looked === unreadKey) && (
                     <Surface pad="lg" tone="plain" radius="none">
-                      <p
-                        data-dm-none
-                        className="flex flex-wrap items-baseline gap-x-2 text-sm text-on-surface-variant"
-                      >
+                      <Row as="p" data-dm-none gap="sm" align="baseline" wrap text="sm" ink="muted">
                         <span>No conversations match</span>
                         <LinkButton onClick={() => setDmList(clearDmFilters(prefs))}>
                           Clear filters
                         </LinkButton>
-                      </p>
+                      </Row>
                     </Surface>
                   )}
                 {paging && <Sentinel key={dms.length} onVisible={loadMoreDms} />}

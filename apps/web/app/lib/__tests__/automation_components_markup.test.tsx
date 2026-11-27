@@ -239,10 +239,17 @@ describe('menu picks', () => {
 })
 
 describe('layering', () => {
-  test('props only: no store, no API client, no other component', () => {
+  // The layout boxes take props only themselves.
+  const BOXES = [
+    'apps/web/app/components/layout.tsx',
+    'apps/web/app/lib/controls.ts',
+    'apps/web/app/lib/layout.ts',
+  ]
+
+  test('props only: no store, no API client, no other component than the layout boxes', () => {
     for (const name of ['components_view', 'only_you_row', 'automation_chip']) {
       const entry = `apps/web/app/components/automations/${name}.tsx`
-      expect([name, [...importsOf(entry)]]).toEqual([name, []])
+      expect([name, [...importsOf(entry)].filter(f => !BOXES.includes(f))]).toEqual([name, []])
       expect([name, [...packagesOf(entry)].sort()]).toEqual([
         name,
         name === 'components_view' ? ['lucide-react', 'react'] : [],

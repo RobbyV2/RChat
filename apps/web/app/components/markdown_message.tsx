@@ -107,6 +107,7 @@ import { useNearView, VideoAttachment, VideoPlaceholder } from './video_attachme
 import { ViewableImage } from './media_lightbox'
 import { altText } from '../lib/alt_text'
 import { cause, logError } from '../lib/log'
+import { Row } from './layout'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -713,13 +714,15 @@ export function P2pFile({
       <span>·</span>
       <span>{fmtExpiry(expires_at)}</span>
       {unverified && (
-        <span
+        <Row
+          as="span"
           title="This file has no checksum, so its contents can't be verified"
-          className="flex items-center gap-1 text-error"
+          gap="2xs"
+          ink="error"
         >
           <ShieldAlert size={12} />
           {UNVERIFIED}
-        </span>
+        </Row>
       )}
     </span>
   )

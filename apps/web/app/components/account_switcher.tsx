@@ -517,7 +517,7 @@ function AccountList({
         </Surface>
       )}
       <Surface as="footer" tone="plain" radius="none" border="top" pad="sm" place="shrink-0">
-        <div className="flex flex-wrap justify-between gap-1">
+        <Row gap="2xs" align="stretch" justify="between" wrap>
           {canAdd && (
             <Button
               icon={Plus}
@@ -537,7 +537,7 @@ function AccountList({
               {manage ? 'Back to accounts' : 'Manage accounts'}
             </Button>
           )}
-        </div>
+        </Row>
       </Surface>
     </Stack>
   )

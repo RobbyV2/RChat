@@ -22,7 +22,7 @@ import { LightboxList, MediaLightbox } from '../components/media_lightbox'
 import { TextComposer } from '../components/text_composer'
 import { UserAvatar } from '../components/user_avatar'
 import { fieldCls, filledBtn, Masked, textBtn } from '../components/ui'
-import { Grid, Stack, Surface } from '../components/layout'
+import { Grid, Row, Stack, Surface } from '../components/layout'
 import { audibleStreams, guestLabel, isGuestName } from '../lib/guest_voice'
 import { restoreStreamer } from '../lib/start'
 import { errorText } from '../lib/store'
@@ -79,7 +79,7 @@ function AccessForm({ client }: { client: WidgetConnection }) {
   }
   return (
     <Surface tone="plain" radius="none" pad="sm" gap="2xs">
-      <div className="flex flex-wrap gap-1">
+      <Row gap="2xs" align="stretch" wrap>
         {client.signedIn ? (
           <button className={textBtn + ' cursor-pointer'} onClick={() => client.logout()}>
             Sign out
@@ -100,7 +100,7 @@ function AccessForm({ client }: { client: WidgetConnection }) {
             Use server password
           </button>
         )}
-      </div>
+      </Row>
       {choice && (
         <form onSubmit={submit}>
           <Grid cols={1} gap="sm">
@@ -331,7 +331,7 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
       </div>
       {client.canRestoreDraft ? (
         <Surface tone="plain" radius="none" pad="sm">
-          <div className="flex min-w-0 flex-wrap items-center gap-1">
+          <Row gap="2xs" wrap place="min-w-0">
             <p className="w-full text-sm">
               {client.draftExpired ? 'Your sign-in expired.' : 'Your sign-in changed.'} Your unsent
               text is still here.
@@ -350,7 +350,7 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
             >
               Discard draft
             </button>
-          </div>
+          </Row>
         </Surface>
       ) : client.canPost ? (
         <TextComposer
@@ -491,7 +491,7 @@ export default function WidgetPage() {
             inset="bar"
             place="shrink-0"
           >
-            <div className="flex flex-wrap items-center justify-between gap-1">
+            <Row gap="2xs" justify="between" wrap>
               <h1 className="min-w-0 break-words font-medium">
                 {room.kind === 'text' ? '# ' : ''}
                 {room.name}
@@ -499,7 +499,7 @@ export default function WidgetPage() {
               {client.mode !== 'read_link' && client.mode !== 'public_read' && (
                 <AccessForm client={client} />
               )}
-            </div>
+            </Row>
           </Surface>
           {room.kind === 'text' ? (
             <WidgetChat key={target?.key} client={client} rows={room.messages} />
@@ -525,7 +525,7 @@ export default function WidgetPage() {
                 ))}
               </Stack>
               {client.inVoice ? (
-                <div className="flex flex-wrap gap-2">
+                <Row gap="sm" align="stretch" wrap>
                   <button
                     className={filledBtn + ' cursor-pointer'}
                     disabled={client.silenced.includes(client.name)}
@@ -536,7 +536,7 @@ export default function WidgetPage() {
                   <button className={textBtn + ' cursor-pointer'} onClick={() => client.leave()}>
                     Leave voice
                   </button>
-                </div>
+                </Row>
               ) : room.participate && !client.hideSend ? (
                 <button
                   className={filledBtn + ' cursor-pointer'}

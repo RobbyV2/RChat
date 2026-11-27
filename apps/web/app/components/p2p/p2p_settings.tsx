@@ -197,7 +197,7 @@ function AutoSelect({
 }) {
   const id = useId()
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    <Row gap="sm" justify="between" wrap>
       <label htmlFor={id} className="text-sm">
         {label}
       </label>
@@ -213,7 +213,7 @@ function AutoSelect({
           </option>
         ))}
       </select>
-    </div>
+    </Row>
   )
 }
 
@@ -311,7 +311,7 @@ function FilesSettings() {
           ? `Attachments here: ${fmtSize(usage.bytes)} (${fmtSize(usage.sent)} sent, ${fmtSize(usage.downloaded)} downloaded).`
           : 'Attachments here: none yet.'}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
+      <Row gap="sm" wrap>
         <span className="text-xs text-on-surface-variant">
           Clear downloaded attachments older than
         </span>
@@ -320,7 +320,7 @@ function FilesSettings() {
             {d} days
           </Button>
         ))}
-      </div>
+      </Row>
     </Surface>
   )
 }
@@ -383,7 +383,7 @@ function AdvancedLimits() {
         <p className="text-xs text-on-surface-variant">Storage on this device</p>
         {LIMIT_ROWS.map(([f, label]) => select(f, label))}
         {select('hiddenPauseMs', 'Keep syncing in the background on phones')}
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <Row gap="sm" justify="between" wrap>
           <p className="text-xs text-on-surface-variant">{LIMITS_LATER}</p>
           <Button
             data-p2p-limits-reset
@@ -392,7 +392,7 @@ function AdvancedLimits() {
           >
             Reset to defaults
           </Button>
-        </div>
+        </Row>
       </Surface>
     </div>
   )
@@ -613,12 +613,12 @@ function P2pSectionBody() {
           <AdvancedLimits />
           <DevicesSection />
           <Surface pad="2xs" tone="plain" radius="none">
-            <div className="flex flex-wrap gap-2">
+            <Row gap="sm" align="stretch" wrap>
               <Button onClick={() => confirmResetFor(identity)(ask)}>Reset identity</Button>
               <Button variant="danger" onClick={remove}>
                 Remove P2P data from this browser
               </Button>
-            </div>
+            </Row>
           </Surface>
         </Stack>
       )}

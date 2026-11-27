@@ -284,7 +284,7 @@ function P2pImportBody({
       {!signedIn ? (
         <p className="text-sm text-on-surface-variant">Sign in to import a P2P identity.</p>
       ) : done ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <Row gap="sm" wrap>
           <p role="status" className="text-sm text-on-surface">
             {done}
           </p>
@@ -296,14 +296,17 @@ function P2pImportBody({
           >
             Open P2P
           </Button>
-        </div>
+        </Row>
       ) : !unlocked ? (
-        <form
+        <Row
+          as="form"
           onSubmit={e => {
             e.preventDefault()
             if (pass && !busy) void unlock()
           }}
-          className="flex flex-wrap gap-2"
+          gap="sm"
+          align="stretch"
+          wrap
         >
           <input
             type="password"
@@ -329,7 +332,7 @@ function P2pImportBody({
               <SlowNote />
             </Stack>
           )}
-        </form>
+        </Row>
       ) : (
         <Stack gap="sm">
           <p data-p2p-preview className="streamer text-sm break-words text-on-surface">
@@ -343,12 +346,12 @@ function P2pImportBody({
               : caseText[unlocked.kind]}
           </p>
           {elsewhere ? (
-            <div role="status" className="flex flex-wrap items-center gap-3">
+            <Row role="status" gap="md" wrap>
               <p className="text-sm">P2P is open in another tab. Use it here to import.</p>
               <Button onClick={() => p2p.useHere()}>Use here</Button>
-            </div>
+            </Row>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <Row gap="sm" align="stretch" wrap>
               <Button
                 variant={unlocked.kind === 'replace' ? 'danger' : 'filled'}
                 size="md"
@@ -368,7 +371,7 @@ function P2pImportBody({
               <Button disabled={busy !== null} onClick={() => setUnlocked(null)}>
                 Cancel
               </Button>
-            </div>
+            </Row>
           )}
         </Stack>
       )}

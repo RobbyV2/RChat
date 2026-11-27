@@ -21,8 +21,9 @@ type Margin = 'm' | 'mx' | 'my' | 'mt' | 'mr' | 'mb' | 'ml' | 'ms' | 'me'
 type Length = `${number}` | `${number}/${number}` | 'px' | 'full' | 'auto' | 'app' | `[${string}]`
 type Layer = 'raised' | 'float' | 'popover' | 'page' | 'top' | 'banner' | 'drag' | 'chrome'
 type Display = 'hidden' | 'flex' | 'inline-flex' | 'grid' | 'block'
+type Size = 'w' | 'h' | 'size' | 'min-w' | 'min-h' | 'max-w' | 'max-h'
 type Container = 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl' | '6xl' | 'prose'
-type LayoutUtility =
+type SharedUtility =
   | 'absolute'
   | 'relative'
   | 'fixed'
@@ -64,7 +65,9 @@ type LayoutUtility =
   | 'group'
   | `group/${string}`
   | 'peer'
-type PlaceUtility = LayoutUtility | `${Sign}${Margin}-${Length}`
+// A layout box may also have a fixed size (a rail, a media frame); a control's size is its look.
+type LayoutUtility = SharedUtility | `${Size}-${number}` | `${Size}-${number}/${number}`
+type PlaceUtility = SharedUtility | `${Sign}${Margin}-${Length}`
 type Breakpoint = 'sm' | 'md' | 'lg' | 'xl' | '2xl'
 type Variant =
   | Breakpoint

@@ -677,7 +677,7 @@ function Card({ target }: { target: ProfileTarget }) {
                 {showRoles && (
                   <Stack gap="xs">
                     <p className={labelCls}>{roles.length === 1 ? 'Role' : 'Roles'}</p>
-                    <div className="flex flex-wrap items-center gap-1.5">
+                    <Row gap="xs" wrap>
                       {roles.map(r => (
                         <span
                           key={r.id}
@@ -717,7 +717,7 @@ function Card({ target }: { target: ProfileTarget }) {
                           <Plus size={14} />
                         </button>
                       )}
-                    </div>
+                    </Row>
                     {adding && addable.length > 0 && (
                       <div className="max-h-44 overflow-y-auto rounded-lg">
                         <Surface tone="high" radius="md" pad="2xs">

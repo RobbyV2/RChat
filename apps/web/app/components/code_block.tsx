@@ -18,7 +18,7 @@ import {
 import { useHighlight, type CodeNode } from '../lib/highlight'
 import { sharing } from '../lib/platform'
 import { useChat } from '../lib/place/use_chat'
-import { Surface } from './layout'
+import { Row, Surface } from './layout'
 
 const CLASS = /^[a-z][\w-]*$/i
 
@@ -215,10 +215,10 @@ export function CodePreview({
             </p>
           )}
           {note && (
-            <p className="flex items-center gap-1 text-xs text-error">
+            <Row as="p" gap="2xs" text="xs" ink="error">
               <ShieldAlert size={12} className="shrink-0" />
               {note}
-            </p>
+            </Row>
           )}
         </Surface>
       )}

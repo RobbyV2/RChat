@@ -257,7 +257,7 @@ export function CallLogLine({
       >
         <Icon size={18} className={tone === 'ringing' ? 'motion-safe:animate-pulse' : ''} />
       </span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-on-surface-variant">
+      <Row gap="sm" wrap lineGap="2xs" text="sm" ink="muted" place="min-w-0 flex-1">
         <span className="font-medium text-on-surface">{info.label}</span>
         {badge}
         <span aria-hidden>·</span>
@@ -275,7 +275,7 @@ export function CallLogLine({
         {live}
         <MessageTime ts={time} className="text-xs opacity-70" />
         {children}
-      </div>
+      </Row>
     </div>
   )
 }
@@ -330,7 +330,7 @@ export function AuthorRow({
         </span>
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+        <Row gap="sm" align="baseline" wrap place="min-w-0">
           <FitName
             user={shown}
             {...profileTrigger(store, author, server)}
@@ -340,7 +340,7 @@ export function AuthorRow({
           <RoleIcon emoji={icon?.emoji} role={icon?.role} />
           {isWebhookAuthor(author.username) && <WebhookBadge />}
           {meta}
-        </div>
+        </Row>
         {children}
       </div>
     </Row>

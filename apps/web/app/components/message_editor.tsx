@@ -14,7 +14,7 @@ import { useMedia } from './context_menu'
 import { useTextAssist } from './text_assist'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { fullTimeOf } from '../lib/timestamps'
-import { Row, Stack } from './layout'
+import { Row, Stack, Surface } from './layout'
 
 export const editAction = (onClick: () => void): ToolbarAction => ({
   key: 'edit',
@@ -128,7 +128,16 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
       onTouchStart={e => e.stopPropagation()}
     >
       <Stack gap="xs">
-        <div className="relative flex items-end gap-2 rounded-xl bg-surface-container-high px-3 py-2">
+        <Surface
+          pad="md"
+          inset="bar"
+          gap="sm"
+          row
+          tone="high"
+          radius="lg"
+          align="end"
+          place="relative"
+        >
           {assist.popups}
           <FormatToolbar open={formatting.selected} onFormat={formatting.apply} below={below} />
           <textarea
@@ -159,7 +168,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
               {max - count}
             </span>
           )}
-        </div>
+        </Surface>
         {alt && (
           <div data-alt-field className="w-full max-w-md">
             <AltField value={alt.text} onChange={alt.set} />

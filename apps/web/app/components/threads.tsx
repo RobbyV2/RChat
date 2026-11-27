@@ -193,10 +193,10 @@ function ThreadEntry({
             {blocked ? (
               <span className="italic">Blocked message</span>
             ) : closed ? (
-              <span className="flex min-w-0 flex-wrap items-center gap-x-1">
+              <Row as="span" gap="2xs" wrap place="min-w-0">
                 <span className="italic">Forwarded message</span>
                 {target && <RevealChannelPreview target={target} />}
-              </span>
+              </Row>
             ) : line.label ? (
               <span className="italic">{line.label}</span>
             ) : (
