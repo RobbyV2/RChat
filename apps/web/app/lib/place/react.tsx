@@ -4,7 +4,8 @@ import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNod
 import { useAccount, useStore } from '../client/react'
 import { featureAt, type Feature, type Unsupported } from './feature'
 import type { Live } from './live'
-import { HostedDm, HostedServer, type Place } from './place'
+import { useP2pApp } from '../client/p2p_react'
+import { HostedDm, HostedServer, P2pRoom, type Place } from './place'
 
 const PlaceContext = createContext<Place | null>(null)
 
@@ -23,6 +24,18 @@ export function usePlace(): Place | null {
   if (given) return given
   if (server !== null) return HostedServer.open(account, server)
   return dmId === null ? null : HostedDm.open(account, dmId)
+}
+
+// The hosted server `server` of the account around the component.
+export function useHostedServer(server: string | null): HostedServer | null {
+  const account = useAccount()
+  return server === null ? null : HostedServer.open(account, server)
+}
+
+// The P2P room `room` of the identity around the component.
+export function useP2pRoom(room: string | null): P2pRoom | null {
+  const app = useP2pApp()
+  return app && room !== null ? P2pRoom.open(app, room) : null
 }
 
 // `feature` as the place around the component has it.

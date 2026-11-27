@@ -5,7 +5,7 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
-import { ChannelCanContext, useChannelPerms } from '../../lib/client/use_channel_perms'
+import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
 import { CAN_ALL, type ChannelCan } from '../../lib/channel_perms'
 import type { Look } from '../../lib/role_looks'
 
@@ -17,7 +17,7 @@ import type { P2pMessage } from '../../lib/p2p/dm'
 import type { ServerView } from '../../lib/p2p/server'
 import { newSince } from '../../lib/lists'
 import type { Message, UserRef } from '../../lib/types'
-import { PlaceProvider } from '../../lib/place/react'
+import { PlaceProvider, useP2pRoom } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
 import { ThreadPanelView } from '../thread_panel'
 import { TypingIndicator } from '../typing_indicator'
@@ -106,7 +106,7 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
     [members]
   )
   const timedOut = usePeerTimeoutEnds(v.timedOutUntil)
-  const held = useChannelPerms(t.ch ? { p2pRoom: v.id, ch: t.ch } : null)
+  const held = useChannelCan(useP2pRoom(v.id), t.ch)
   const moderator = held.manage && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
   const ownName = useCallback((ik: string) => profileName(ik, room), [room])

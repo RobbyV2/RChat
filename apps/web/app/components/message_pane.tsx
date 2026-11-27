@@ -44,7 +44,8 @@ import { SELF_DM_TEXT, SELF_DM_TITLE } from '../lib/dm_list'
 import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
-import { useChannelPerms } from '../lib/client/use_channel_perms'
+import { useChannelCan } from '../lib/place/use_rights'
+import { useHostedServer } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
 import { messageRights, replyAccess } from '../lib/actions/message'
@@ -920,8 +921,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
 
   const channel =
     view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
-  const can = useChannelPerms(
-    view?.kind === 'channel' ? { server: view.server, channelId: view.channelId } : null
+  const can = useChannelCan(
+    useHostedServer(view?.kind === 'channel' ? view.server : null),
+    view?.kind === 'channel' ? view.channelId : null
   )
   const canAttach = attachmentsEnabled && !channel?.text_only && can.attach
   const channelName = channel?.name

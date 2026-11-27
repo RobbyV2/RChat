@@ -16,7 +16,8 @@ import { LiveBadge } from '../voice_grid'
 import { MemberAvatar } from './p2p_badge'
 
 import { useAccount } from '../../lib/client/react'
-import { useChannelPerms } from '../../lib/client/use_channel_perms'
+import { useChannelCan } from '../../lib/place/use_rights'
+import { useP2pRoom } from '../../lib/place/react'
 import { NO_CONNECT } from '../../lib/timeouts'
 
 // Voice channels of a P2P server in its sidebar: the row joins (and opens the stage), and who is
@@ -114,7 +115,7 @@ function P2pVoiceRowBody({
   })
   const users = (!closed && v.voice[c.id]) || NONE
   const count = users.length
-  const can = useChannelPerms({ p2pRoom: v.id, ch: c.id })
+  const can = useChannelCan(useP2pRoom(v.id), c.id)
   const locked = !connected && !can.connect
   return (
     <div className="flex flex-col rounded-lg">

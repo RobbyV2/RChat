@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'reac
 import { MessageSquareText, Trash2 } from 'lucide-react'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { ReactionBar } from './reactions'
-import { useChannelPerms } from '../lib/client/use_channel_perms'
+import { useChannelCan } from '../lib/place/use_rights'
+import { useHostedServer } from '../lib/place/react'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { actionPress, openActionMenu } from '../lib/actions/menu'
 import { myRank, roleColor, roleLook, threadKey, useStore } from '../lib/store'
@@ -236,9 +237,7 @@ export default function ThreadPanel() {
 
   const canUnreact = me !== null && !guest
   const inDm = root !== null && root.dm_id !== null
-  const can = useChannelPerms(
-    server !== null && root?.channel_id != null ? { server, channelId: root.channel_id } : null
-  )
+  const can = useChannelCan(useHostedServer(server), root?.channel_id ?? null)
   const acting =
     canUnreact &&
     root !== null &&

@@ -7,7 +7,8 @@ import type { P2pApp } from '../../lib/p2p/app/runtime'
 
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
-import { ChannelCanContext, useChannelPerms } from '../../lib/client/use_channel_perms'
+import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
+import { useP2pRoom } from '../../lib/place/react'
 
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { roomLooksKey } from '../../lib/server_profile'
@@ -948,7 +949,7 @@ function P2pChannelPaneBody({
     [members]
   )
   const timedOut = usePeerTimeoutEnds(v?.timedOutUntil)
-  const held = useChannelPerms(v && chat?.ch ? { p2pRoom: v.id, ch: chat.ch } : null)
+  const held = useChannelCan(useP2pRoom(v?.id ?? null), chat?.ch ?? null)
   const moderator = held.manage && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
 

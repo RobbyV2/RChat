@@ -80,7 +80,8 @@ import { ChannelEnd, useHostedTypers } from './typing_indicator'
 import { scopePings } from '../lib/pings'
 import { MutedIcon } from './notify_menu'
 import { NO_CONNECT, shownMedia } from '../lib/timeouts'
-import { useChannelPerms } from '../lib/client/use_channel_perms'
+import { useChannelCan } from '../lib/place/use_rights'
+import { useHostedServer } from '../lib/place/react'
 
 import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
 import { ContactRow, lastTsOf } from './p2p/p2p_home'
@@ -233,7 +234,7 @@ function VoiceChannelRow({
   drag?: DragSpec
 }) {
   const mask = useMask(own)
-  const can = useChannelPerms({ server, channelId: channel.id })
+  const can = useChannelCan(useHostedServer(server), channel.id)
   const locked = !connected && !can.connect
   return (
     <button

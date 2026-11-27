@@ -158,8 +158,3 @@ export const p2pMask = (
   if (room.me !== 'join') return 0
   return room.channels.find(c => c.id === ch)?.perms ?? null
 }
-
-// A channel of a hosted server or of a P2P room; null for a place without channel permissions
-// (a DM), where everything is allowed.
-export type PermPlace =
-  { server: string; channelId: number } | { p2pRoom: string; ch: string } | null

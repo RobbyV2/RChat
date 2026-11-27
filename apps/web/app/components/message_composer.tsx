@@ -38,7 +38,8 @@ import { spliceText } from '../lib/autocomplete'
 import { loadEmojiData } from '../lib/emoji'
 import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
 import { parseSed } from '../lib/sed'
-import { useChannelPerms } from '../lib/client/use_channel_perms'
+import { useChannelCan } from '../lib/place/use_rights'
+import { useHostedServer } from '../lib/place/react'
 import { NO_THREADS_TEXT } from '../lib/channel_perms'
 import { textOnlyDestination } from '../lib/channel_content'
 import { clock } from '../lib/slowmode'
@@ -274,10 +275,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const max = useStore(s => limitsOf(s.instance).message_chars)
   const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
   const placeChannel = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
-  const can = useChannelPerms(
-    view?.kind === 'channel' && placeChannel !== null
-      ? { server: view.server, channelId: placeChannel }
-      : null
+  const can = useChannelCan(
+    useHostedServer(view?.kind === 'channel' ? view.server : null),
+    placeChannel
   )
   const unstarted = useStore(
     s =>

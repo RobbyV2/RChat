@@ -88,7 +88,8 @@ import {
   TIMED_OUT_MIC,
   TIMED_OUT_SHARE,
 } from '../lib/timeouts'
-import { useChannelPerms } from '../lib/client/use_channel_perms'
+import { useChannelCan } from '../lib/place/use_rights'
+import { useHostedServer, useP2pRoom } from '../lib/place/react'
 import { useStable } from '../lib/stable_key'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
@@ -549,13 +550,9 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
     camera,
     sharing,
   } = useCallMedia()
-  const can = useChannelPerms(
-    voice
-      ? { server: voice.server, channelId: voice.channelId }
-      : roomVoice
-        ? { p2pRoom: roomVoice.room, ch: roomVoice.ch }
-        : null
-  )
+  const hostedVoice = useHostedServer(voice?.server ?? null)
+  const peerVoice = useP2pRoom(voice ? null : (roomVoice?.room ?? null))
+  const can = useChannelCan(hostedVoice ?? peerVoice, voice?.channelId ?? roomVoice?.ch ?? null)
   const listed = useForcedMute() && (voice !== null || roomVoice !== null)
   const timeout = useMyTimeoutEnds(voice?.server) !== null && voice !== null
   // A mute listed for someone who holds Speak is a timeout's.
@@ -1087,13 +1084,9 @@ export function VoiceGrid({
   const voiceUsers = (p2pCh !== undefined && sv?.voice[p2pCh]) || NO_USERS
   const silenced = forVoice ? [...peers, ...unheardIn(voiceUsers)] : listed
   const unseen = forVoice ? voiceUsers.filter(u => u.unseen).map(u => u.ik) : NO_NAMES
-  const here = useChannelPerms(
-    forVoice
-      ? { p2pRoom: forVoice.room, ch: forVoice.ch }
-      : server !== null && channelId !== undefined
-        ? { server, channelId }
-        : null
-  )
+  const hostedHere = useHostedServer(forVoice ? null : server)
+  const peerHere = useP2pRoom(forVoice?.room ?? null)
+  const here = useChannelCan(peerHere ?? hostedHere, forVoice ? forVoice.ch : (channelId ?? null))
 
   const forRoom =
     !forVoice && p2pRoom !== undefined && contactCall?.room === p2pRoom && !voice && !call

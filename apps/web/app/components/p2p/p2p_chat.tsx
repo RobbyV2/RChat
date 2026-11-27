@@ -7,7 +7,7 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount, useStoreApi } from '../../lib/client/react'
-import { ChannelCanContext } from '../../lib/client/use_channel_perms'
+import { ChannelCanContext } from '../../lib/place/use_rights'
 import { NO_THREADS_TEXT, type ChannelCan } from '../../lib/channel_perms'
 
 import {
