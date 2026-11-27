@@ -21,8 +21,15 @@ pub fn denied(before: Option<Ow>, after: Option<Ow>) -> Mask {
     a.deny & !b.deny
 }
 
-/// An overwrite edit may grant only what the actor holds in that channel, and may deny a
-/// moderation bit only when the actor holds it and outranks the subject (`subject_ok`).
+/// The moderation bits an overwrite edit newly denies or stops allowing.
+pub fn taken(before: Option<Ow>, after: Option<Ow>) -> Mask {
+    let (b, a) = (before.unwrap_or_default(), after.unwrap_or_default());
+    (denied(before, after) | (b.allow & !a.allow)) & MOD_CHANNEL
+}
+
+/// An overwrite edit may grant only what the actor holds in that channel, may deny a moderation
+/// bit only when the actor holds it, and may deny or stop allowing one only when the actor
+/// outranks the subject (`subject_ok`).
 pub fn check_overwrite_edit(
     actor_mask: Mask,
     exempt: bool,
@@ -34,8 +41,8 @@ pub fn check_overwrite_edit(
         return Ok(());
     }
     let over = granted(before, after) & !actor_mask;
-    let taken = denied(before, after) & MOD_CHANNEL;
-    match (over, taken & !actor_mask, taken != 0 && !subject_ok) {
+    let missing = denied(before, after) & MOD_CHANNEL & !actor_mask;
+    match (over, missing, taken(before, after) != 0 && !subject_ok) {
         (0, 0, false) => Ok(()),
         (0, 0, true) => Err(Refusal::Outranked),
         (0, missing, _) => Err(Refusal::DeniesModeration(missing)),

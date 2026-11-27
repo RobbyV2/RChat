@@ -8,7 +8,9 @@ use super::schema::*;
 use super::sweep::*;
 
 use super::*;
-use crate::api::access::perms::{ALL_PERMS, Perm, Restrict, fold_access, perm_row};
+use crate::api::access::perms::{
+    ALL_PERMS, ChannelAccess, Perm, Restrict, Standing, channel_mask, perm_columns, perm_row,
+};
 use crate::api::controls::ControlSeeds;
 use crate::api::test_util::{add_member, done, temp_state};
 use crate::limits::Limits;
@@ -2687,11 +2689,14 @@ async fn channel_restrictions_are_added_to_an_old_database() {
         );
         if round == 0 {
             let cid = count(&db, "SELECT id FROM channels WHERE name = 'private'").await;
-            let rows = sqlx::query("SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1")
-                .bind(cid)
-                .fetch_all(&db)
-                .await
-                .expect("rules");
+            let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT {} FROM channel_perms cp WHERE cp.channel_id = $1",
+                perm_columns("cp")
+            )))
+            .bind(cid)
+            .fetch_all(&db)
+            .await
+            .expect("rules");
             let rows = rows
                 .iter()
                 .map(|r| perm_row(r, 0))
@@ -2701,8 +2706,17 @@ async fn channel_restrictions_are_added_to_an_old_database() {
                 view: true,
                 send: false,
             };
-            let carol = fold_access(&rows, &["u:carol".to_string()], false, restrict);
-            let bob = fold_access(&rows, &["u:bob".to_string()], false, restrict);
+            let access = |name: &str| {
+                let member = Standing {
+                    who: rchat_perms::eval::Who::Member { roles: 0 },
+                    subjects: vec![format!("u:{name}")],
+                };
+                let everyone = rchat_perms::eval::DEFAULT_EVERYONE;
+                ChannelAccess::of(channel_mask(
+                    &rows, &member, everyone, restrict, false, false,
+                ))
+            };
+            let (carol, bob) = (access("carol"), access("bob"));
             assert!(!carol.view, "the old private channel is still hidden");
             assert!(bob.view && !bob.send && bob.history);
             sqlx::query("UPDATE channels SET restrict_view = 0 WHERE name = 'private'")
@@ -7993,6 +8007,112 @@ async fn text_only_preserves_channels_and_existing_messages() {
             close(&db).await;
         }
     }).await;
+}
+
+#[tokio::test]
+async fn channel_overwrites_are_added_to_an_old_database() {
+    on_each_database("overwrites_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let cid = general_id(&db).await;
+        let rules = format!(
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history, restrict_set) VALUES({cid}, 'u:bob', 1, 0, 1, 1), ({cid}, 'r:7', 0, 0, 0, 1)"
+        );
+        for sql in [
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'Club', 3)",
+            rules.as_str(),
+            "ALTER TABLE channel_perms DROP COLUMN allow",
+            "ALTER TABLE channel_perms DROP COLUMN deny",
+            "ALTER TABLE channel_perms DROP COLUMN mode",
+            "ALTER TABLE servers DROP COLUMN everyone_perms",
+            "UPDATE settings SET value = '51' WHERE key = 'schema_version'",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+                .execute(&db)
+                .await
+                .expect(sql);
+        }
+        assert_eq!(count(&db, STORED_SCHEMA).await, 51);
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'club' AND display_name = 'Club' AND created_at = 3").await,
+                1,
+                "{round}: the old server"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE everyone_perms IS NULL").await,
+                2 - round,
+                "{round}: no server stores what everyone holds until it is changed"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channel_perms WHERE allow = 0 AND deny = 0 AND mode = 'override' AND restrict_set = 1 AND ((subject = 'u:bob' AND can_view = 1 AND can_send = 0 AND can_read_history = 1) OR (subject = 'r:7' AND can_view = 0 AND can_send = 0 AND can_read_history = 0))").await,
+                2,
+                "{round}: the old rules keep their flags and get no masks"
+            );
+            let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT {} FROM channel_perms cp WHERE cp.channel_id = $1 ORDER BY cp.subject",
+                perm_columns("cp")
+            )))
+            .bind(cid)
+            .fetch_all(&db)
+            .await
+            .expect("rules");
+            let read: Vec<(String, u64, u64, bool)> = rows
+                .iter()
+                .map(|r| {
+                    let row = perm_row(r, 0).expect("row");
+                    let (ow, mode) = row.evaluated();
+                    let merge = mode == rchat_perms::eval::Mode::Merge;
+                    (row.subject, ow.allow, ow.deny, merge)
+                })
+                .collect();
+            use rchat_perms::masks::{HISTORY, SEND_GROUP, VIEW};
+            let old = [
+                ("r:7".to_string(), 0, VIEW | SEND_GROUP | HISTORY, false),
+                ("u:bob".to_string(), VIEW | HISTORY, SEND_GROUP, true),
+            ];
+            assert_eq!(
+                read[read.len() - 2..],
+                old,
+                "{round}: the old rules read as their flags"
+            );
+            assert_eq!(read.len() as i64, 2 + round);
+            if round == 0 {
+                let stored = format!(
+                    "INSERT INTO channel_perms(channel_id, subject, allow, deny, mode) VALUES({cid}, 'everyone', 0, 262144, 'override')"
+                );
+                for sql in [
+                    "UPDATE servers SET everyone_perms = 131072 WHERE name = 'club'",
+                    stored.as_str(),
+                ] {
+                    sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+                        .execute(&db)
+                        .await
+                        .expect(sql);
+                }
+                let refused = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "INSERT INTO channel_perms(channel_id, subject, mode) VALUES({cid}, 'u:carol', 'both')"
+                )))
+                .execute(&db)
+                .await;
+                assert!(refused.is_err(), "a rule has one of the two modes");
+            } else {
+                assert_eq!(
+                    count(&db, "SELECT everyone_perms FROM servers WHERE name = 'club'").await,
+                    131072
+                );
+                assert_eq!(
+                    count(&db, "SELECT COUNT(*) FROM channel_perms WHERE subject = 'everyone' AND allow = 0 AND deny = 262144 AND mode = 'override' AND can_view = 1 AND can_send = 1 AND can_read_history = 1").await,
+                    1,
+                    "a rule written with masks survives the next start"
+                );
+            }
+            close(&db).await;
+        }
+    })
+    .await;
 }
 
 #[tokio::test]

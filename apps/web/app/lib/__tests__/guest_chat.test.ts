@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { ApiClient } from '../api'
-import { accountBenefits, guestHomeLine, postGuest } from '../guest_chat'
+import { accountBenefits, guestCanPost, guestHomeLine, postGuest } from '../guest_chat'
+import { ChannelPermBit, type Channel, type ServerDetail, type SiteSettings } from '../types'
 
 function guest(origin: string) {
   const api = new ApiClient(origin + '/api')
@@ -95,4 +96,26 @@ test('the guest home says what guests can do on this site', () => {
   expect(accountBenefits(site(true, false))).toBe(
     'send direct messages, add friends and get notified when someone mentions you.'
   )
+})
+
+test('a guest posts where the channel says they hold Send, or by its restrictions when it says nothing', () => {
+  const settings = { guests_enabled: true, guest_chat_enabled: true } as SiteSettings
+  const detail = (channel: Partial<Channel>, read_only: number[] = []) =>
+    ({
+      guest_chat: true,
+      read_only,
+      channels: [{ id: 1, name: 'general', kind: 'text', slowmode_seconds: 0, ...channel }],
+    }) as unknown as ServerDetail
+  const view = ChannelPermBit.ViewChannels
+  const send = ChannelPermBit.SendMessages
+  expect(guestCanPost(settings, detail({ my_perms: view + send }), 1)).toBe(true)
+  expect(guestCanPost(settings, detail({ my_perms: view }), 1)).toBe(false)
+  expect(guestCanPost(settings, detail({ my_perms: view, restrict_send: false }), 1)).toBe(false)
+  expect(guestCanPost(settings, detail({ my_perms: view + send, kind: 'voice' }), 1)).toBe(false)
+  expect(guestCanPost(settings, detail({}), 1)).toBe(true)
+  expect(guestCanPost(settings, detail({ restrict_send: true }), 1)).toBe(false)
+  expect(guestCanPost(settings, detail({}, [1]), 1)).toBe(false)
+  expect(
+    guestCanPost({ ...settings, guest_chat_enabled: false }, detail({ my_perms: view + send }), 1)
+  ).toBe(false)
 })

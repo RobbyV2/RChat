@@ -14,7 +14,7 @@ const sql = new RegExp(
 )
 const permItem = new RegExp(
   [
-    String.raw`\b(enum|struct|fn|const|static|type|trait)\s+(Perm|ALL_PERMS|perm_bits|can_moderate|can_grant|ChannelAccess|perm_subjects|PermRow|perm_row|Restrict|fold_access|rule_narrows)\b`,
+    String.raw`\b(enum|struct|fn|const|static|type|trait)\s+(Perm|ALL_PERMS|perm_bits|can_moderate|can_grant|ChannelAccess|perm_subjects|PermRow|perm_row|Restrict|channel_mask|rule_narrows)\b`,
     String.raw`\bpub(\([^)]*\))?\s+use\s[^;]*\bperms\b`,
   ].join('|')
 )
@@ -133,11 +133,11 @@ describe('access gate', () => {
       'pub struct PermRow {',
       'pub fn perm_row(r: &AnyRow, at: usize) -> sqlx::Result<PermRow> {',
       'pub struct Restrict {',
-      "pub fn fold_access<'a>(",
+      "pub fn channel_mask<'a>(",
       'pub fn rule_narrows(rule: &PermRow, restrict: Restrict) -> bool {',
       'type Restrict = (bool, bool);',
       'pub use crate::api::access::perms::*;',
-      'pub(crate) use crate::api::access::perms::{Perm, fold_access};',
+      'pub(crate) use crate::api::access::perms::{Perm, channel_mask};',
       'pub use crate::api::access::perms;',
       'pub(crate) use crate::api::access::{perms::*, timed_out};',
     ]

@@ -445,12 +445,12 @@ pub struct Channel {
     /// Minimum seconds between two messages from the same member, 0 (off) to 21600; members
     /// with Manage channels or Manage messages are exempt.
     pub slowmode_seconds: i64,
-    /// Only the channel's allowed roles and members (rules with `can_view`) and people who manage
-    /// channels can see it.
+    /// Only the roles and members a rule allows View channels, and people who manage channels,
+    /// can see it.
     #[serde(default)]
     pub restrict_view: bool,
-    /// Only the channel's allowed roles and members (rules with `can_send`) and people who manage
-    /// channels can send in it.
+    /// Only the roles and members a rule allows to send, and people who manage channels, can
+    /// send in it.
     #[serde(default)]
     pub restrict_send: bool,
     /// Shared sensitive-content label. Defaults to false.
@@ -459,6 +459,10 @@ pub struct Channel {
     /// New messages in this channel may contain text only.
     #[serde(default)]
     pub text_only: bool,
+    /// The permission bits the caller holds in this channel (the bits of `ChannelPerm.allow`).
+    /// Only in `ServerDetail.channels`; events leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub my_perms: Option<i64>,
     /// Channel topic: plain text, links are shown as links. At most 1024 characters, no
     /// control characters other than newlines; `null` when the channel has none.
     #[serde(default)]
@@ -528,6 +532,8 @@ pub struct Role {
     /// 128 Timeout members, 256 Manage webhooks, 512 Manage reports (see and act on reports in the
     /// server), 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign
     /// roles, 65536 Reset server profiles (clear and lock the server profile of another member).
+    /// A role can also hold the bits everyone can hold (see
+    /// `PATCH /api/v1/servers/{name}/everyone`).
     #[schema(example = 6)]
     pub perms: i64,
     /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
@@ -543,25 +549,37 @@ pub struct RoleLimits {
     /// Roles held by another member whose server permissions are not a strict subset of yours.
     /// You can't edit or delete them.
     pub held_above: Vec<i64>,
-    /// Roles whose channel permission rules give access you don't have in that channel. You
+    /// Roles whose channel permission rules allow something you don't hold in that channel. You
     /// can't assign them. Always empty when you have Manage channels.
     pub channel_grants: Vec<i64>,
-    /// Roles with a channel permission rule that allows less than a member matching no rule gets
-    /// in that channel (under its `restrict_view` / `restrict_send`). Deleting one or taking it
-    /// away from anyone, yourself included, would widen access, so it needs Manage channels.
-    /// Always empty when you have Manage channels.
+    /// Roles with a channel permission rule that denies something the channel gives everyone who
+    /// views it. Deleting one or taking it away from anyone, yourself included, would widen
+    /// access, so it needs Manage channels. Always empty when you have Manage channels.
     pub channel_denies: Vec<i64>,
 }
 
-/// One permission rule on a channel. Members with Manage channels pass every rule. A member
-/// matching one or more rules gets what any of them allows (the flags are combined). A member
-/// matching none can view and send unless the channel's `restrict_view` / `restrict_send` is on,
-/// and reads history. A role rule that denies something only holds while the member keeps the
-/// role: leaving the server drops every role, so a member can lose a deny by leaving and
-/// rejoining. Turn on the matching restriction and allow the others explicitly for strict control.
+/// How a rule for one member combines with the rules of their roles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PermMode {
+    /// The member's rule is applied after their roles' rules and wins over them.
+    Override,
+    /// The member's rule joins their roles' rules: an allow on any of them wins over a deny.
+    Merge,
+}
+
+/// One permission rule on a channel. A member starts from what everyone holds in the server and
+/// their roles add. The `everyone` rule applies first, then the channel's `restrict_view` and
+/// `restrict_send` take View channels and the sending permissions away, then the rules of the
+/// member's roles (an allow on any role wins over a deny on another), then the member's own rule.
+/// Members with Manage channels keep every permission everyone can hold, and admins keep their
+/// moderation permissions. Without View channels a member holds nothing in the channel. A role
+/// rule that denies something only holds while the member keeps the role: leaving the server
+/// drops every role, so a member can lose a deny by leaving and rejoining.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelPerm {
-    /// Who the rule applies to: `u:<username>` for a user or `r:<role id>` for a role.
+    /// Who the rule applies to: `everyone`, `u:<username>` for a user or `r:<role id>` for a
+    /// role.
     #[schema(example = "r:12")]
     pub subject: String,
     /// The subject can see the channel. Without it the other flags grant nothing.
@@ -570,6 +588,19 @@ pub struct ChannelPerm {
     pub can_send: bool,
     /// The subject can read messages sent before now.
     pub can_read_history: bool,
+    /// Permission bits the rule allows: 2 Manage messages, 32 Mention everyone, 131072 View
+    /// channels, 262144 Send messages, 524288 Read history, 1048576 Add reactions, 2097152 Attach
+    /// files, 4194304 Embed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect,
+    /// 67108864 Speak, 134217728 Video, 536870912 Pin messages and 1073741824 Bypass slow mode.
+    /// A rule stored with the three flags alone reports the bits they stand for: `can_send`
+    /// covers Send messages, Add reactions, Attach files, Embed links, Create polls and Start
+    /// threads.
+    pub allow: i64,
+    /// Permission bits the rule denies.
+    pub deny: i64,
+    /// How a `u:` rule combines with the member's roles. A `u:` rule stored with the three
+    /// flags alone is `merge`.
+    pub mode: PermMode,
 }
 
 /// A server member: the user's `UserRef` fields plus their standing in the server.
@@ -664,7 +695,7 @@ pub struct ServerDetail {
     /// How its icon is drawn (see `ServerSummaryLite`). Set with `PATCH /api/v1/servers/{name}`.
     pub icon_kind: server_about::IconKind,
     /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
-    /// with permission rules that do not grant the caller `can_view` are left out.
+    /// where the caller lacks View channels are left out.
     pub channels: Vec<Channel>,
     /// Channel categories, ordered by `position`. Categories without a channel the caller can
     /// see are left out, unless the caller manages channels.
@@ -678,6 +709,12 @@ pub struct ServerDetail {
     pub read_only: Vec<i64>,
     /// Every role of the server, oldest first.
     pub roles: Vec<Role>,
+    /// The permission bits every member holds (the bits of
+    /// `PATCH /api/v1/servers/{name}/everyone`). Roles add to them.
+    pub everyone_perms: i64,
+    /// The permission bits the caller holds in the server: the bits of `Role.perms` and of
+    /// `everyone_perms`. 0 for someone who is not a member.
+    pub my_perms: i64,
     /// Roles the caller can't change even though the permission rules on `perms` allow it.
     pub role_limits: RoleLimits,
     /// Number of members.
@@ -2455,6 +2492,10 @@ fn api_routes(
             patch(servers::set_admin_perms),
         )
         .route("/servers/{name}/roles", post(servers::create_role))
+        .route(
+            "/servers/{name}/everyone",
+            patch(servers::set_everyone_perms),
+        )
         .route(
             "/servers/{name}/roles/{id}",
             patch(servers::update_role).delete(servers::delete_role),

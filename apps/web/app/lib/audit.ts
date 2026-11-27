@@ -2,6 +2,7 @@ import { ICON_KINDS } from './server_about'
 import { guestLabel } from './guest_voice'
 import { MODE_LABELS, isProfilesMode } from './profile_fields'
 import { FOREVER, RESET_FIELDS, RESET_LABELS, isResetField } from './profile_reset'
+import { hasBit } from './perms'
 import { PERM_ITEMS } from './rules'
 import { slowLabel } from './slowmode'
 import { durationText } from './timeouts'
@@ -100,7 +101,7 @@ const FIELD_LABELS: Record<string, string> = {
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
 
 export const permNames = (bits: number) => {
-  const names = PERM_ITEMS.filter(p => (bits & p.bit) !== 0).map(p => p.label)
+  const names = PERM_ITEMS.filter(p => hasBit(bits, p.bit)).map(p => p.label)
   return names.length ? names.join(', ') : 'None'
 }
 

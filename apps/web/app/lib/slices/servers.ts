@@ -34,6 +34,7 @@ import { forgetProfile, forgetProfiles, profileKey } from '../profile'
 import { lockUntil } from '../profile_reset'
 import { shownParts, showsMore, withLook } from '../server_profile'
 import { myPerms, previewServer } from '../selectors'
+import { keepMyPerms, withChannel } from '../channel_perms'
 import type { Paged, RChatState } from '../store_types'
 import { localUntil, type TimeoutWire } from '../timeouts'
 import { cleanTopic } from '../topic'
@@ -431,7 +432,13 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       bannedHere.delete(name)
       if (get().guest) rememberGuestName(detail.name, detail.display_name)
       const merged = read.updates.size
-        ? { ...detail, channels: detail.channels.map(c => read.updates.get(c.id) ?? c) }
+        ? {
+            ...detail,
+            channels: detail.channels.map(c => {
+              const update = read.updates.get(c.id)
+              return update ? keepMyPerms(c, update) : c
+            }),
+          }
         : detail
       responseEpoch.set(merged, epoch)
       return merged
@@ -726,7 +733,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       if (read.server === ev.server) read.updates.set(ev.channel.id, ev.channel)
     patchServer(ev.server, d => ({
       ...d,
-      channels: d.channels.map(c => (c.id === ev.channel.id ? ev.channel : c)),
+      channels: withChannel(d.channels, ev.channel),
     }))
   }
 
@@ -990,7 +997,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         const channel = await live(api.updateChannel(id, { topic: cleanTopic(topic) || null }))
         patchServer(server, d => ({
           ...d,
-          channels: d.channels.map(c => (c.id === channel.id ? channel : c)),
+          channels: withChannel(d.channels, channel),
         }))
         return null
       } catch (e) {
@@ -1438,8 +1445,9 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       )
       if (
         get().me?.username === ev.username ||
-        (myPerms(get(), ev.server) & (Perm.ManageAdmins | Perm.ManageRoles | Perm.AssignRoles)) !==
-          0
+        [Perm.ManageAdmins, Perm.ManageRoles, Perm.AssignRoles].some(perm =>
+          hasPerm(myPerms(get(), ev.server), perm)
+        )
       )
         refetchServer(ev.server)
     },

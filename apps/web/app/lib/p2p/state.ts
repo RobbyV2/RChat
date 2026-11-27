@@ -197,6 +197,7 @@ const buildChanFacts = (s: Summary): ChanFacts => ({
     ])
   ),
   channels: new Map(Object.entries(s.channels)),
+  rules: s.rules ?? undefined,
 })
 
 // `ik`'s permissions in channel `ch` (owners and Manage channels have every bit).

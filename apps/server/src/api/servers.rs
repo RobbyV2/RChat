@@ -7,10 +7,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::{AnyConnection, Row};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::PermMode;
+use crate::api::access::overwrite_sql::private_sql;
 use crate::api::access::perms::{
-    ALL_PERMS, ChannelAccess, PRE_DELEGATION_PERMS, PRE_REPORT_PERMS, Perm, PermRow, Restrict,
-    can_grant, can_moderate, fold_access, perm_bits, perm_row, perm_subjects, rule_narrows,
-    update_bits,
+    ALL_PERMS, ChannelAccess, EVERYONE, EVERYONE_BITS, PRE_DELEGATION_PERMS, PRE_REPORT_PERMS,
+    Perm, PermRow, ROLE_BITS, Restrict, can_grant, can_moderate, channel_mask, everyone_mask,
+    perm_bits, perm_columns, perm_row, reflag, row_flags, rule_narrows, update_bits,
+    update_role_bits,
 };
 use crate::api::access::{
     BANNED, Caller, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden,
@@ -51,6 +54,10 @@ use crate::db::{ChannelKind, Db, NO_PERMANENT_HASH, User, lock_server, now, shif
 use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
+use rchat_perms::delta::{self, Refusal};
+use rchat_perms::eval::{self, Mode, Ow, Who};
+use rchat_perms::rules::HOSTED;
+use rchat_perms::{Mask, masks};
 
 /// Request body for creating a channel.
 #[derive(Deserialize, ToSchema)]
@@ -331,9 +338,10 @@ pub struct RoleReq {
     /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
     /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention
     /// everyone and roles, 64 View audit log, 128 Timeout members, 256 Manage webhooks, 512
-    /// Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles and 65536 Reset server profiles. Bits outside 127999 are dropped.
-    /// Roles only add permissions to members who are not admins. Admins use their own admin
-    /// permissions.
+    /// Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles and 65536 Reset server profiles,
+    /// and the bits everyone can hold (see `PATCH /api/v1/servers/{name}/everyone`). Other bits
+    /// are dropped. Roles only add permissions to members who are not admins. Admins use their
+    /// own admin permissions and get only the bits everyone can hold from their roles.
     #[schema(example = 6)]
     perms: i64,
     /// Anyone who can send may mention the role (default `false`: only members with the Mention
@@ -353,7 +361,7 @@ pub struct RolePatch {
     name: Option<String>,
     /// New role color as `#rrggbb`, stored as sent.
     color: Option<String>,
-    /// New permission bitmask (see `RoleReq.perms`). Bits outside 127999 are dropped.
+    /// New permission bitmask (see `RoleReq.perms`). Bits no role can hold are dropped.
     perms: Option<i64>,
     /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`). Turning it
     /// on needs the Mention everyone permission.
@@ -1086,6 +1094,7 @@ fn channel_row(r: &sqlx::any::AnyRow) -> Result<Channel, ApiError> {
         position: r.try_get(8)?,
         sensitive: r.try_get::<i64, _>(9)? != 0,
         text_only: r.try_get::<i64, _>(10)? != 0,
+        my_perms: None,
     })
 }
 
@@ -1130,13 +1139,20 @@ async fn server_detail(
     .fetch_all(db)
     .await?;
     let rights = access.channel_rights(db).await?;
+    let shown = match access.is_member() || access.site_admin() {
+        true => masks::CHANNEL as i64,
+        false => access.visitor_caps(db).await? as i64,
+    };
     let mut channels = Vec::new();
     for r in &rows {
         let id: i64 = r.try_get(0)?;
         if rights.get(&id).is_some_and(|a| !a.view) {
             continue;
         }
-        channels.push(channel_row(r)?);
+        channels.push(Channel {
+            my_perms: rights.get(&id).map(|a| a.mask & shown),
+            ..channel_row(r)?
+        });
     }
     let read_only = read_only_channels(access, &rights, &channels);
     let manage = access.manages_channels(db).await?;
@@ -1180,6 +1196,8 @@ async fn server_detail(
     let online_count = hub.online_count(&name);
     let choice = crate::api::upload_expiry::stored(db, &name).await?;
     let settings = crate::api::Settings::cached(db).await;
+    let everyone = access.everyone(db).await?;
+    let my_perms = eval::server_bits(&access.standing(db).await?.who, everyone, &HOSTED);
     Ok(ServerDetail {
         name: name.clone(),
         display_name,
@@ -1200,6 +1218,8 @@ async fn server_detail(
         layout_version,
         read_only,
         roles: server_roles(db, &name).await?,
+        everyone_perms: everyone as i64,
+        my_perms: my_perms as i64,
         role_limits: role_limits(db, access).await?,
         member_count,
         online_count,
@@ -2571,9 +2591,10 @@ async fn invite_preview(
     contents: bool,
     revision: Option<&str>,
 ) -> Result<InvitePreview, ApiError> {
-    let row = sqlx::query(
-        "SELECT c.id, c.name FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view = 0) ORDER BY c.id LIMIT 1",
-    )
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT c.id, c.name FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND NOT {} ORDER BY c.id LIMIT 1",
+        private_sql()
+    )))
     .bind(access.name())
     .fetch_optional(db)
     .await?;
@@ -4040,6 +4061,7 @@ pub(crate) async fn create_channel(
         topic: None,
         category_id: req.category_id,
         position,
+        my_perms: None,
     };
     state.hub.broadcast(WsEvent::ChannelCreated {
         server: key.clone(),
@@ -4148,7 +4170,10 @@ pub(crate) async fn update_channel(
         .audit_actor(&state.db, Perm::ManageChannels)
         .await?;
     let mut tx = state.db.begin().await?;
-    let old = sqlx::query("SELECT name, topic, slowmode_seconds, restrict_view, restrict_send, CASE WHEN EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id) THEN 1 ELSE 0 END, sensitive, text_only FROM channels WHERE id = $1")
+    let old = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT c.name, c.topic, c.slowmode_seconds, c.restrict_view, c.restrict_send, CASE WHEN {} THEN 1 ELSE 0 END, c.sensitive, c.text_only FROM channels c WHERE c.id = $1",
+        private_sql()
+    )))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
@@ -4156,7 +4181,7 @@ pub(crate) async fn update_channel(
     let before = Restrict::read(&old, 3)?;
     let (was_name, was_topic, was_slow): (String, Option<String>, i64) =
         (old.try_get(0)?, old.try_get(1)?, old.try_get(2)?);
-    let ruled = old.try_get::<i64, _>(5)? != 0;
+    let was_private = old.try_get::<i64, _>(5)? != 0;
     let was_text_only = old.try_get::<i64, _>(7)? != 0;
     let was_sensitive = old.try_get::<i64, _>(6)? != 0;
     if let Some(channel_name) = &channel_name {
@@ -4247,7 +4272,7 @@ pub(crate) async fn update_channel(
         let at = ChannelRef {
             id,
             name: channel_name.clone().unwrap_or(was_name.clone()),
-            private: before.view || ruled || restrict_view == Some(true),
+            private: was_private || restrict_view == Some(true),
         };
         audit::record(
             &mut tx,
@@ -5252,57 +5277,48 @@ async fn channel_limits(
         return Ok(out);
     }
     let server = access.name();
-    let filter = match role {
-        Some(_) => "cp.subject = $2",
-        None => "cp.subject LIKE 'r:%'",
-    };
-    let sql = format!(
-        "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history, c.restrict_view, c.restrict_send FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1 AND {filter}"
-    );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
-    if let Some(id) = role {
-        query = query.bind(format!("r:{id}"));
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT cp.channel_id, {}, c.restrict_view, c.restrict_send, c.kind FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1",
+        perm_columns("cp")
+    )))
+    .bind(server)
+    .fetch_all(db)
+    .await?;
+    let only = role.map(|id| format!("r:{id}"));
+    let mut channels: HashMap<i64, (Vec<PermRow>, Restrict, bool)> = HashMap::new();
+    for r in &rows {
+        let voice = r.try_get::<String, _>(10)? == "voice";
+        channels
+            .entry(r.try_get(0)?)
+            .or_insert((Vec::new(), Restrict::read(r, 8)?, voice))
+            .0
+            .push(perm_row(r, 1)?);
     }
-    let rules = query.fetch_all(db).await?;
-    if rules.is_empty() {
+    let named = |rule: &PermRow| only.as_ref().is_none_or(|s| *s == rule.subject);
+    if !channels
+        .values()
+        .any(|(rules, _, _)| rules.iter().any(named))
+    {
         return Ok(out);
     }
-    let subjects = perm_subjects(db, Some(server), &actor.username).await?;
-    let sql = format!(
-        "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1 AND cp.subject IN ({})",
-        placeholders(2, subjects.len())
-    );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
-    for subject in &subjects {
-        query = query.bind(subject);
-    }
-    let mut own: HashMap<i64, Vec<PermRow>> = HashMap::new();
-    for r in &query.fetch_all(db).await? {
-        own.entry(r.try_get(0)?).or_default().push(perm_row(r, 1)?);
-    }
-    for r in &rules {
-        let channel: i64 = r.try_get(0)?;
-        let rule = perm_row(r, 1)?;
-        let Some(id) = rule
-            .subject
-            .strip_prefix("r:")
-            .and_then(|id| id.parse::<i64>().ok())
-        else {
-            continue;
-        };
-        let restrict = Restrict::read(r, 5)?;
-        let have = fold_access(
-            own.get(&channel).into_iter().flatten(),
-            &subjects,
-            false,
-            restrict,
-        );
-        if (rule.view && !have.view) || (rule.send && !have.send) || (rule.history && !have.history)
-        {
-            out.grants.insert(id);
-        }
-        if rule_narrows(&rule, restrict) {
-            out.denies.insert(id);
+    let standing = access.standing(db).await?;
+    let everyone = access.everyone(db).await?;
+    for (rules, restrict, voice) in channels.values() {
+        let have = channel_mask(rules, &standing, everyone, *restrict, *voice, false);
+        for rule in rules.iter().filter(|rule| named(rule)) {
+            let Some(id) = rule
+                .subject
+                .strip_prefix("r:")
+                .and_then(|id| id.parse::<i64>().ok())
+            else {
+                continue;
+            };
+            if rule.evaluated().0.allow & !have != 0 {
+                out.grants.insert(id);
+            }
+            if rule_narrows(rule, rules, everyone, *restrict) {
+                out.denies.insert(id);
+            }
         }
     }
     Ok(out)
@@ -5429,7 +5445,7 @@ pub(crate) async fn create_role(
     )
     .await?;
     check_color(&req.color)?;
-    let perms = req.perms & ALL_PERMS;
+    let perms = req.perms & ROLE_BITS;
     access.require_grant(&state.db, perms).await?;
     require_mentionable(&state.db, &access, req.mentionable).await?;
     let (db, on) = (&state.db, req.mentionable);
@@ -5551,7 +5567,7 @@ pub(crate) async fn update_role(
     if let Some(color) = &color {
         check_color(color)?;
     }
-    let perms = perms.map(|p| update_bits(current, p, mask.unwrap_or(PRE_DELEGATION_PERMS)));
+    let perms = perms.map(|p| update_role_bits(current, p, mask.unwrap_or(PRE_DELEGATION_PERMS)));
     if let Some(perms) = perms {
         access.require_grant(&state.db, perms).await?;
     }
@@ -5666,8 +5682,8 @@ pub(crate) async fn update_role(
 /// Deletes the role, unassigns it from everyone and removes the channel permission rules that
 /// name it. The role's permissions must be a subset of yours, and every other member who holds it
 /// must have server permissions that are a strict subset of yours (the kick and ban rule). If one
-/// of the role's channel rules allows less than a member matching no rule gets in that channel
-/// (see `role_limits.channel_denies`), deleting it would widen access, so you also need Manage
+/// of the role's channel rules denies something its channel gives everyone who views it (see
+/// `role_limits.channel_denies`), deleting it would widen access, so you also need Manage
 /// channels. Requires the Manage roles server permission.
 /// Emits `roles_changed` to the server and removes users from voice channels they can no longer
 /// view. General rate-limit bucket.
@@ -5869,8 +5885,8 @@ pub(crate) async fn assign_role(
 ///
 /// Takes the role away from `username`. When `username` is someone else, their server
 /// permissions must be a strict subset of yours (the kick and ban rule); the role's own
-/// permissions don't matter. If one of the role's channel rules allows less than a member matching
-/// no rule gets in that channel (see `role_limits.channel_denies`), removing it would widen
+/// permissions don't matter. If one of the role's channel rules denies something its channel gives
+/// everyone who views it (see `role_limits.channel_denies`), removing it would widen
 /// access, so you also need Manage channels, even for yourself. Requires the Assign roles server
 /// permission.
 /// Emits `roles_changed` to the server and removes users from voice channels they can no longer
@@ -6062,16 +6078,176 @@ async fn channel_perm_guard(
     Ok(channel)
 }
 
-async fn check_subject(state: &AppState, server: &str, subject: &str) -> Result<(), ApiError> {
+/// A rule subject: `everyone`, a role of the server, or an account. A name that is not a
+/// member of the server holds one of the caller's misses while it is looked up, and keeps it
+/// when no account has the name, which is refused like a malformed subject.
+async fn check_subject(
+    state: &AppState,
+    caller: &User,
+    access: &ServerAccess,
+    subject: &str,
+) -> Result<(), ApiError> {
     let wrong = || ApiError::invalid("Invalid subject", "subject");
+    if subject == EVERYONE {
+        return Ok(());
+    }
     match subject.split_once(':') {
-        Some(("u", name)) if crate::api::names::could_be_username(name) => Ok(()),
+        Some(("u", name)) if crate::api::names::could_be_username(name) => {
+            if access.has_member(&state.db, name).await? {
+                return Ok(());
+            }
+            let held = lookup::unmissed(state, Some(caller))?;
+            match crate::db::get_user(&state.db, name).await? {
+                Some(_) => Ok(()),
+                None => {
+                    held.spend();
+                    Err(wrong())
+                }
+            }
+        }
         Some(("r", id)) => {
             let id: i64 = id.parse().map_err(|_| wrong())?;
-            require_role(&state.db, server, id).await.map(|_| ())
+            require_role(&state.db, access.name(), id).await.map(|_| ())
         }
         Some((_, _)) | None => Err(wrong()),
     }
+}
+
+/// Whether the caller may take moderation permissions from `subject` in a channel: everyone, a
+/// role they could edit, or a member they could moderate.
+async fn outranks_subject(db: &Db, access: &ServerAccess, subject: &str) -> Result<bool, ApiError> {
+    match subject.split_once(':') {
+        Some(("r", id)) => {
+            let id: i64 = id.parse().unwrap_or_default();
+            let mine = access.perms(db).await?;
+            Ok(mine & Perm::ManageRoles as i64 != 0
+                && require_role_change(db, access, id, require_role(db, access.name(), id).await?)
+                    .await
+                    .is_ok())
+        }
+        Some((_, name)) => Ok(access.require_moderate(db, name).await.is_ok()),
+        None => Ok(true),
+    }
+}
+
+/// Refuses a rule edit that allows what the caller does not hold in the channel (`mine`), that
+/// denies a moderation permission they do not hold, or that denies or stops allowing one for a
+/// subject they do not outrank. Admins with every permission pass.
+async fn check_rule_edit(
+    db: &Db,
+    access: &ServerAccess,
+    mine: i64,
+    subject: &str,
+    before: Option<Ow>,
+    after: Option<Ow>,
+) -> Result<(), ApiError> {
+    let exempt = matches!(
+        access.standing(db).await?.who,
+        Who::Staff | Who::Owner | Who::Admin { mask: 0, roles: _ }
+    );
+    if exempt {
+        return Ok(());
+    }
+    let subject_ok =
+        delta::taken(before, after) == 0 || outranks_subject(db, access, subject).await?;
+    match delta::check_overwrite_edit(mine as Mask, false, before, after, subject_ok) {
+        Ok(()) => Ok(()),
+        Err(Refusal::Grants(_)) => Err(forbidden(
+            "You can't allow permissions you don't have in this channel",
+        )),
+        Err(Refusal::DeniesModeration(_)) => Err(forbidden(
+            "You can't deny moderation permissions you don't have in this channel",
+        )),
+        Err(Refusal::Outranked) => Err(forbidden(
+            "You can't take moderation permissions from this role or member",
+        )),
+    }
+}
+
+/// `check_rule_edit` for a change from `before` to `after`. A rule that changes how it combines
+/// with roles is checked as removed and added again. Returns whether the edit only passed
+/// through instance powers.
+async fn guard_rule_edit(
+    db: &Db,
+    channel: &ResolvedChannel,
+    subject: &str,
+    before: Option<&PermRow>,
+    after: Option<&PermRow>,
+) -> Result<bool, ApiError> {
+    let ow = |row: Option<&PermRow>| row.map(|r| r.evaluated());
+    let steps = match (ow(before), ow(after)) {
+        (Some((b, was)), Some((a, now))) if was != now => vec![(Some(b), None), (None, Some(a))],
+        (b, a) => vec![(b.map(|x| x.0), a.map(|x| x.0))],
+    };
+    let access = channel.server();
+    let mine = channel.rights().mask;
+    for (b, a) in &steps {
+        check_rule_edit(db, access, mine, subject, *b, *a).await?;
+    }
+    let Some(member) = access.as_member() else {
+        return Ok(false);
+    };
+    let own = channel.member_rights(db).await?.mask;
+    for (b, a) in &steps {
+        if check_rule_edit(db, &member, own, subject, *b, *a)
+            .await
+            .is_err()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn perm_view(row: &PermRow) -> ChannelPerm {
+    let (Ow { allow, deny }, mode) = row.evaluated();
+    ChannelPerm {
+        subject: row.subject.clone(),
+        can_view: row.view,
+        can_send: row.send,
+        can_read_history: row.history,
+        allow: allow as i64,
+        deny: deny as i64,
+        mode: match mode {
+            Mode::Override => PermMode::Override,
+            Mode::Merge => PermMode::Merge,
+        },
+    }
+}
+
+fn rule_changes(was: Option<&PermRow>, now: Option<&PermRow>) -> Details {
+    let (was, now) = (was.map(perm_view), now.map(perm_view));
+    let mode = |p: &ChannelPerm| match p.mode {
+        PermMode::Override => "override",
+        PermMode::Merge => "merge",
+    };
+    Details::new()
+        .change(
+            "can_view",
+            was.as_ref().map(|p| p.can_view),
+            now.as_ref().map(|p| p.can_view),
+        )
+        .change(
+            "can_send",
+            was.as_ref().map(|p| p.can_send),
+            now.as_ref().map(|p| p.can_send),
+        )
+        .change(
+            "can_read_history",
+            was.as_ref().map(|p| p.can_read_history),
+            now.as_ref().map(|p| p.can_read_history),
+        )
+        .change(
+            "allow",
+            was.as_ref().map(|p| p.allow),
+            now.as_ref().map(|p| p.allow),
+        )
+        .change(
+            "deny",
+            was.as_ref().map(|p| p.deny),
+            now.as_ref().map(|p| p.deny),
+        )
+        .change("mode", was.as_ref().map(mode), now.as_ref().map(mode))
 }
 
 /// Paging query parameters for channel permission rules.
@@ -6117,9 +6293,10 @@ pub(crate) async fn list_channel_perms(
         Some(raw) => decode_cursor(raw, 1)?.remove(0),
         None => String::new(),
     };
-    let rows = sqlx::query(
-        "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1 AND subject > $2 ORDER BY subject LIMIT $3",
-    )
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM channel_perms cp WHERE cp.channel_id = $1 AND cp.subject > $2 ORDER BY cp.subject LIMIT $3",
+        perm_columns("cp")
+    )))
     .bind(id)
     .bind(&after)
     .bind(limit + 1)
@@ -6127,12 +6304,7 @@ pub(crate) async fn list_channel_perms(
     .await?;
     let mut perms = Vec::with_capacity(rows.len());
     for r in &rows {
-        perms.push(ChannelPerm {
-            subject: r.try_get(0)?,
-            can_view: r.try_get::<i64, _>(1)? != 0,
-            can_send: r.try_get::<i64, _>(2)? != 0,
-            can_read_history: r.try_get::<i64, _>(3)? != 0,
-        });
+        perms.push(perm_view(&perm_row(r, 0)?));
     }
     let more = perms.len() as i64 > limit;
     perms.truncate(limit as usize);
@@ -6143,30 +6315,59 @@ pub(crate) async fn list_channel_perms(
     Ok(Paged(perms, next))
 }
 
+/// Request body for setting a channel permission rule: `subject` with either `allow` and `deny`
+/// (and `mode`), or the three `can_` flags, or a rule as listed with its flags changed.
+#[derive(Deserialize, ToSchema)]
+pub struct ChannelPermSet {
+    /// Who the rule applies to: `everyone`, `u:<username>` or `r:<role id>`.
+    #[schema(example = "r:12")]
+    subject: String,
+    /// Permission bits the rule allows in the channel (see `ChannelPerm.allow`).
+    allow: Option<i64>,
+    /// Permission bits the rule denies in the channel. No bit may be in both masks.
+    deny: Option<i64>,
+    /// How a `u:` rule combines with the member's roles. Defaults to the rule's current mode,
+    /// or `override` for a new rule. Only `u:` rules may be `merge`.
+    mode: Option<PermMode>,
+    /// With `can_send` and `can_read_history`: the subject can see the channel.
+    can_view: Option<bool>,
+    /// The subject can send messages in the channel.
+    can_send: Option<bool>,
+    /// The subject can read messages sent before now.
+    can_read_history: Option<bool>,
+}
+
 /// Set a channel permission rule
 ///
-/// Creates or replaces the rule for `subject` on the channel. The subject is `u:<username>` (any
-/// name a user could have, whether an account has it or not: the same answer) or `r:<role id>`
-/// (a role of the channel's server), case-insensitive. A member
-/// matching any rule gets what one of their rules allows; members matching none can do what the
-/// channel's `restrict_view` / `restrict_send` leave open. A channel
-/// can have at most 500 rules. Requires the Manage channels permission in the channel's server.
-/// Emits `channel_perms_changed` to the server and removes users from the channel's voice room if
-/// they can no longer view it. General rate-limit bucket.
+/// Creates or replaces the rule for `subject` on the channel. The subject is `everyone`,
+/// `u:<username>` (an existing account; a name outside the server counts against your hourly
+/// lookup misses, `LOOKUP_MISSES_PER_HOUR`, when no account has it) or `r:<role id>` (a role of
+/// the channel's server), case-insensitive. Send `allow` and `deny` (bits of `ChannelPerm.allow`); with both 0 the rule
+/// is removed. A body with `can_view`, `can_send` and `can_read_history` instead stores a rule
+/// that allows what is on and denies what is off. A body with the flags and the `allow`, `deny`
+/// and `mode` that `GET` lists for the stored rule changes only the flags that differ: a flag
+/// turned on allows its permissions, one turned off denies them, and the rule keeps its other
+/// bits and its mode. A channel can have at most 500 rules. Requires the Manage channels
+/// permission in the channel's server. You can only allow, or stop denying, permissions you hold
+/// in the channel, and deny Manage messages, Mention everyone, Pin messages or Bypass slow mode
+/// only when you hold it. Denying one of them, or no longer allowing it, also needs a role you
+/// could edit or a member you could moderate. Emits `channel_perms_changed` to the server and
+/// removes users from the channel's voice room if they can no longer view it. General
+/// rate-limit bucket.
 #[utoipa::path(
     put,
     path = "/api/v1/channels/{id}/perms",
     tag = "Channels",
     params(("id" = i64, Path, description = "Channel id")),
-    request_body = ChannelPerm,
+    request_body = ChannelPermSet,
     responses(
-        (status = 200, description = "Permission rule created or replaced for the subject", body = OkResp),
-        (status = 400, description = "`Invalid subject` (reason `invalid`, field `subject`; also a `u:` name no account could have), or the channel already has 500 rules. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 200, description = "Permission rule created, replaced or removed for the subject", body = OkResp),
+        (status = 400, description = "`Invalid subject` (reason `invalid`, field `subject`; also a `u:` name without an account), `Invalid permissions` (bits outside the channel permissions, or a bit in both masks), `Invalid mode` (`merge` on a rule that is not for a user), a body with neither form, `This rule changed. Try again.` (the flags with masks that are not those listed for the stored rule), or the channel already has 500 rules. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage channels permission, or the rule allows or denies more than you may", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or the subject's role does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
+        (status = 429, description = "Too many requests in the general bucket, or `Too many lookups. Try again later.` for a `u:` subject outside the server once your lookup misses are spent", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -6174,7 +6375,7 @@ pub(crate) async fn set_channel_perm(
     State(state): State<AppState>,
     Authed(user): Authed,
     Path(id): Path<i64>,
-    Json(req): Json<ChannelPerm>,
+    Json(req): Json<ChannelPermSet>,
 ) -> Result<Json<OkResp>, ApiError> {
     let user = rule_actor(&user, &req.subject);
     let channel = channel_perm_guard(&state, id, &user).await?;
@@ -6183,70 +6384,150 @@ pub(crate) async fn set_channel_perm(
         .server()
         .audit_actor(&state.db, Perm::ManageChannels)
         .await?;
-    let ChannelPerm {
+    let ChannelPermSet {
         subject,
+        allow,
+        deny,
+        mode,
         can_view,
         can_send,
         can_read_history,
     } = req;
     let subject = subject.to_lowercase();
-    check_subject(&state, &server, &subject).await?;
-    let was = sqlx::query("SELECT can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1 AND subject = $2")
-        .bind(id)
-        .bind(&subject)
-        .fetch_optional(&state.db)
-        .await?
-        .map(|r| -> sqlx::Result<[bool; 3]> {
-            Ok([
-                r.try_get::<i64, _>(0)? != 0,
-                r.try_get::<i64, _>(1)? != 0,
-                r.try_get::<i64, _>(2)? != 0,
-            ])
+    check_subject(&state, &user, channel.server(), &subject).await?;
+    let was = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM channel_perms cp WHERE cp.channel_id = $1 AND cp.subject = $2",
+        perm_columns("cp")
+    )))
+    .bind(id)
+    .bind(&subject)
+    .fetch_optional(&state.db)
+    .await?
+    .map(|r| perm_row(&r, 0))
+    .transpose()?;
+    let own = subject.starts_with("u:");
+    let flagged = |[view, send, history]: [bool; 3]| PermRow {
+        subject: subject.clone(),
+        view,
+        send,
+        history,
+        allow: 0,
+        deny: 0,
+        merge: false,
+    };
+    let masked = |allow: i64, deny: i64, merge: bool| {
+        let [view, send, history] = row_flags(allow, deny);
+        (allow | deny != 0).then(|| PermRow {
+            subject: subject.clone(),
+            view,
+            send,
+            history,
+            allow,
+            deny,
+            merge,
         })
-        .transpose()?;
-    let exists = was.is_some();
+    };
+    let listed = |row: &&PermRow| {
+        let shown = perm_view(row);
+        allow == Some(shown.allow)
+            && deny == Some(shown.deny)
+            && mode.is_none_or(|m| m == shown.mode)
+    };
+    let now = match (allow, deny, [can_view, can_send, can_read_history]) {
+        (None, None, [Some(view), Some(send), Some(history)]) if mode.is_none() => {
+            Some(flagged([view, send, history]))
+        }
+        (Some(_), Some(_), [Some(view), Some(send), Some(history)]) => {
+            let row = was
+                .as_ref()
+                .filter(listed)
+                .ok_or_else(|| bad("This rule changed. Try again."))?;
+            let flags = [view, send, history];
+            match row.allow | row.deny {
+                0 => Some(flagged(flags)),
+                _ => {
+                    let shown = [row.view, row.send, row.history];
+                    let (allow, deny) = reflag(row.allow, row.deny, shown, flags);
+                    masked(allow, deny, row.merge)
+                }
+            }
+        }
+        (allow, deny, [None, None, None]) if allow.is_some() || deny.is_some() => {
+            let (allow, deny) = (allow.unwrap_or(0), deny.unwrap_or(0));
+            if (allow | deny) & !(masks::CHANNEL as i64) != 0 || allow & deny != 0 {
+                return Err(ApiError::invalid("Invalid permissions", "allow"));
+            }
+            let merge = match (mode, &was) {
+                (Some(PermMode::Merge), _) if !own => {
+                    return Err(ApiError::invalid("Invalid mode", "mode"));
+                }
+                (Some(mode), _) => mode == PermMode::Merge,
+                (None, Some(row)) => row.evaluated().1 == Mode::Merge,
+                (None, None) => false,
+            };
+            masked(allow, deny, merge)
+        }
+        _ => {
+            return Err(bad(
+                "Send allow and deny, or can_view, can_send and can_read_history",
+            ));
+        }
+    };
     let rules: i64 = sqlx::query("SELECT COUNT(*) FROM channel_perms WHERE channel_id = $1")
         .bind(id)
         .fetch_one(&state.db)
         .await?
         .try_get(0)?;
-    if !exists && rules >= CHANNEL_PERM_MAX {
+    if was.is_none() && now.is_some() && rules >= CHANNEL_PERM_MAX {
         return Err(bad(&format!(
             "A channel can have at most {CHANNEL_PERM_MAX} permission rules"
         )));
     }
+    let bypassed =
+        guard_rule_edit(&state.db, &channel, &subject, was.as_ref(), now.as_ref()).await?;
+    let actor = actor.staff_if(bypassed);
     let mut tx = state.db.begin().await?;
-    sqlx::query(
-        "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history, restrict_set) VALUES($1, $2, $3, $4, $5, 1) ON CONFLICT(channel_id, subject) DO UPDATE SET can_view = excluded.can_view, can_send = excluded.can_send, can_read_history = excluded.can_read_history, restrict_set = 1",
-    )
-    .bind(id)
-    .bind(&subject)
-    .bind(i64::from(can_view))
-    .bind(i64::from(can_send))
-    .bind(i64::from(can_read_history))
-    .execute(&mut *tx)
-    .await?;
-    let mut changes = Details::new();
-    for (i, (field, now_on)) in [
-        ("can_view", can_view),
-        ("can_send", can_send),
-        ("can_read_history", can_read_history),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        changes = changes.change(field, was.map(|w| w[i]), now_on);
+    match &now {
+        Some(row) => {
+            sqlx::query(
+                "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history, restrict_set, allow, deny, mode) VALUES($1, $2, $3, $4, $5, 1, $6, $7, $8) ON CONFLICT(channel_id, subject) DO UPDATE SET can_view = excluded.can_view, can_send = excluded.can_send, can_read_history = excluded.can_read_history, restrict_set = 1, allow = excluded.allow, deny = excluded.deny, mode = excluded.mode",
+            )
+            .bind(id)
+            .bind(&subject)
+            .bind(i64::from(row.view))
+            .bind(i64::from(row.send))
+            .bind(i64::from(row.history))
+            .bind(row.allow)
+            .bind(row.deny)
+            .bind(match row.merge {
+                true => "merge",
+                false => "override",
+            })
+            .execute(&mut *tx)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1 AND subject = $2")
+                .bind(id)
+                .bind(&subject)
+                .execute(&mut *tx)
+                .await?;
+        }
     }
+    let changes = rule_changes(was.as_ref(), now.as_ref());
     if changes.has_changes()
         && let Some(at) = audit::channel_ref(&mut *tx, id).await?
     {
         let details = changes
             .channel(&at)
             .set("subject", rule_subject(&mut tx, &subject).await?);
+        let action = match now {
+            Some(_) => audit::Action::ChannelPermSet,
+            None => audit::Action::ChannelPermClear,
+        };
         audit::record(
             &mut tx,
-            audit::channel_entry(&server, &actor, audit::Action::ChannelPermSet, &at)
-                .details(details),
+            audit::channel_entry(&server, &actor, action, &at).details(details),
         )
         .await?;
     }
@@ -6262,21 +6543,23 @@ pub(crate) async fn set_channel_perm(
 /// Remove a channel permission rule
 ///
 /// Deletes the rule for `subject` on the channel. Requires the Manage channels permission in the
-/// channel's server. Emits `channel_perms_changed` to the server and removes users from the
-/// channel's voice room if they can no longer view it. General rate-limit bucket.
+/// channel's server. Removing a rule that denies something is checked like allowing it, and
+/// removing one that allows a moderation permission like denying it to that role or member (see
+/// `PUT /api/v1/channels/{id}/perms`). Emits `channel_perms_changed` to the server and removes
+/// users from the channel's voice room if they can no longer view it. General rate-limit bucket.
 #[utoipa::path(
     delete,
     path = "/api/v1/channels/{id}/perms/{subject}",
     tag = "Channels",
     params(
         ("id" = i64, Path, description = "Channel id"),
-        ("subject" = String, Path, description = "Rule subject, `u:<username>` or `r:<role id>`, case-insensitive")
+        ("subject" = String, Path, description = "Rule subject, `everyone`, `u:<username>` or `r:<role id>`, case-insensitive")
     ),
     responses(
         (status = 200, description = "Permission rule removed for the subject", body = OkResp),
         (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage channels permission, the rule denies a permission you don't hold in the channel, or it allows a moderation permission to a role you couldn't edit or a member you couldn't moderate", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or no rule for that subject", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -6295,23 +6578,29 @@ pub(crate) async fn clear_channel_perm(
         .audit_actor(&state.db, Perm::ManageChannels)
         .await?;
     let subject = subject.to_lowercase();
+    let was = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM channel_perms cp WHERE cp.channel_id = $1 AND cp.subject = $2",
+        perm_columns("cp")
+    )))
+    .bind(id)
+    .bind(&subject)
+    .fetch_optional(&state.db)
+    .await?
+    .map(|r| perm_row(&r, 0))
+    .transpose()?
+    .ok_or_else(|| not_found("No such rule"))?;
+    let bypassed = guard_rule_edit(&state.db, &channel, &subject, Some(&was), None).await?;
+    let actor = actor.staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     let at = audit::channel_ref(&mut *tx, id).await?;
-    let gone = sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1 AND subject = $2 RETURNING can_view, can_send, can_read_history")
+    let removed = sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1 AND subject = $2")
         .bind(id)
         .bind(&subject)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let removed = u64::from(gone.is_some());
-    if let (Some(gone), Some(at)) = (&gone, &at) {
-        let mut details = Details::new();
-        for (i, field) in ["can_view", "can_send", "can_read_history"]
-            .into_iter()
-            .enumerate()
-        {
-            details = details.change(field, gone.try_get::<i64, _>(i)? != 0, None::<bool>);
-        }
-        let details = details
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if let (1.., Some(at)) = (removed, &at) {
+        let details = rule_changes(Some(&was), None)
             .channel(at)
             .set("subject", rule_subject(&mut tx, &subject).await?);
         audit::record(
@@ -6333,6 +6622,128 @@ pub(crate) async fn clear_channel_perm(
             Ok(ok())
         }
     }
+}
+
+/// Request body for changing what everyone in a server may do.
+#[derive(Deserialize, ToSchema)]
+pub struct EveryoneReq {
+    /// The permission bits everyone holds (see `ServerDetail.everyone_perms`).
+    #[schema(example = 536739840)]
+    perms: i64,
+    /// The bits this request changes. Bits outside it keep their current value. Defaults to
+    /// every bit everyone may hold.
+    mask: Option<i64>,
+}
+
+/// What everyone in a server may do.
+#[derive(Serialize, ToSchema)]
+pub struct EveryonePerms {
+    /// The permission bits everyone holds (see `ServerDetail.everyone_perms`).
+    pub everyone_perms: i64,
+}
+
+/// Set what everyone may do
+///
+/// Changes the permission bits every member of the server holds: 131072 View channels, 262144
+/// Send messages, 524288 Read history, 1048576 Add reactions, 2097152 Attach files, 4194304
+/// Embed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect, 67108864 Speak
+/// and 134217728 Video. Other bits are left as they are. Requires the Manage roles permission,
+/// and you can only add bits you hold yourself. Emits `roles_changed` to the server and removes
+/// users from voice rooms they can no longer view. General rate-limit bucket.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/servers/{name}/everyone",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = EveryoneReq,
+    responses(
+        (status = 200, description = "The bits everyone holds now", body = EveryonePerms),
+        (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text 400 or 415)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage roles permission, or the change adds a permission you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 409, description = "The bits changed during this request", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn set_everyone_perms(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Json(req): Json<EveryoneReq>,
+) -> Result<Json<EveryonePerms>, ApiError> {
+    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let key = access.name().to_string();
+    let EveryoneReq { perms, mask } = req;
+    let may = mask.unwrap_or(EVERYONE_BITS) & EVERYONE_BITS;
+    let db = &state.db;
+    let check = async |access: &ServerAccess, before: i64, after: i64| {
+        let standing = access.standing(db).await?;
+        let everyone = before as Mask;
+        let exempt = matches!(
+            standing.who,
+            Who::Staff | Who::Owner | Who::Admin { mask: 0, roles: _ }
+        );
+        let mine = eval::server_bits(&standing.who, everyone, &HOSTED);
+        match delta::check_bits_edit(mine, exempt, everyone, after as Mask) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(forbidden("You can't grant permissions you don't have")),
+        }
+    };
+    let stored: Option<i64> = sqlx::query("SELECT everyone_perms FROM servers WHERE name = $1")
+        .bind(&key)
+        .fetch_one(db)
+        .await?
+        .try_get(0)?;
+    let before = everyone_mask(stored) as i64;
+    let after = (before & !may) | (perms & may);
+    check(&access, before, after).await?;
+    let bypassed = match access.as_member() {
+        Some(member) => check(&member, before, after).await.is_err(),
+        None => false,
+    };
+    let actor = access
+        .audit_actor(&state.db, Perm::ManageRoles)
+        .await?
+        .staff_if(bypassed);
+    if after != before {
+        let mut tx = state.db.begin().await?;
+        let swapped = sqlx::query("UPDATE servers SET everyone_perms = $1 WHERE name = $2 AND COALESCE(everyone_perms, -1) = $3")
+            .bind(after)
+            .bind(&key)
+            .bind(stored.unwrap_or(-1))
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if swapped == 0 {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "Permissions changed during this request".to_string(),
+                None,
+            ));
+        }
+        audit::record(
+            &mut tx,
+            Entry::new(&key, &actor, audit::Action::ServerUpdate).details(Details::new().change(
+                "everyone_perms",
+                before,
+                after,
+            )),
+        )
+        .await?;
+        tx.commit().await?;
+    }
+    if after != before {
+        state.hub.broadcast(WsEvent::RolesChanged {
+            server: key.clone(),
+        });
+        evict_unviewable(&state, &key, None).await;
+    }
+    Ok(Json(EveryonePerms {
+        everyone_perms: after,
+    }))
 }
 
 #[cfg(test)]
@@ -12379,6 +12790,7 @@ mod tests {
                 topic: None,
                 category_id: None,
                 position: 0,
+                my_perms: None,
             },
         };
         match crate::ws::current(&state, stale).await {

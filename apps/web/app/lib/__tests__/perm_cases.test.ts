@@ -5,15 +5,19 @@ import { fileURLToPath } from 'node:url'
 import {
   atLeast,
   bit,
+  baseBits,
   channelMask,
   checkBitsEdit,
   checkOverwriteEdit,
+  derivedRow,
+  everyoneStage,
   fromWire,
   hasBit,
   known,
   maskAnd,
   maskNot,
   maskOr,
+  maskXor,
   mayAssign,
   moved,
   outranks,
@@ -29,8 +33,10 @@ import {
   type Ow,
   type PermsModule,
   type Rank,
+  type Refusal,
+  type Who,
 } from '../perms'
-import { ALL_PERMS, Perm } from '../types'
+import { ALL_PERMS, ChannelPermBit, Perm } from '../types'
 import { authCore, channelPerms, P, type ChanFacts } from '../p2p/acl/rules'
 import { jsBuild, loadPerms, wasmBuild } from './helpers/perms'
 import { authCase, worldLines, type AuthWorlds } from './helpers/perm_auth_cases'
@@ -46,7 +52,55 @@ const ASSETS = join(
 )
 const json = <T>(name: string) => JSON.parse(readFileSync(join(ASSETS, name), 'utf8')) as T
 
+type MaskList = (string | number)[]
+interface RowCase {
+  allow?: MaskList
+  deny?: MaskList
+  merge?: boolean
+  can?: string
+}
+interface ChannelCase {
+  name: string
+  who: 'staff' | 'owner' | 'admin' | 'member' | 'guest' | 'visitor'
+  mask?: MaskList
+  roles?: MaskList
+  caps?: MaskList
+  everyone?: MaskList
+  restrict?: number
+  voice?: boolean
+  ev?: RowCase
+  rows?: RowCase[]
+  own?: RowCase
+  timed_out?: boolean
+  acting?: boolean
+  out: MaskList
+}
+interface EditCase {
+  name: string
+  actor: MaskList
+  exempt: boolean
+  before: RowCase | null
+  after: RowCase | null
+  subject_ok: boolean
+  out: number
+}
+interface BitsCase {
+  name: string
+  actor: MaskList
+  exempt: boolean
+  before: MaskList
+  after: MaskList
+  out: number
+}
+
 interface Cases {
+  hosted: {
+    channel: ChannelCase[]
+    edits: EditCase[]
+    bits: BitsCase[]
+    configured: { webhook: MaskList; read_link: MaskList }
+  }
+  p2p5: { channel: ChannelCase[]; edits: EditCase[] }
   p2p4: {
     channel_bits: { bit: number; out: string }[]
     channel_worlds: string[]
@@ -122,6 +176,120 @@ const factsOf = (w: World): ChanFacts => {
         },
       ],
     ]),
+  } as unknown as ChanFacts
+}
+
+// A list of bit names, numbers, the groups OPEN and SEND_GROUP, and `-name` removals.
+const SEND_GROUP = [
+  'SendMessages',
+  'AddReactions',
+  'AttachFiles',
+  'EmbedLinks',
+  'CreatePolls',
+  'StartThreads',
+]
+const maskList = (list: MaskList): number => {
+  const one = (name: string): number =>
+    name === 'OPEN'
+      ? registry()
+          .filter(b => b.everyone && b.scope === 'channel' && b.hosted === 'live')
+          .reduce((m, b) => maskOr(m, b.value), 0)
+      : name === 'SEND_GROUP'
+        ? SEND_GROUP.reduce((m, n) => maskOr(m, bit(n)), 0)
+        : bit(name)
+  let m = 0
+  for (const v of list)
+    m =
+      typeof v === 'number'
+        ? maskOr(m, v)
+        : v.startsWith('-')
+          ? maskAnd(m, maskNot(one(v.slice(1))))
+          : maskOr(m, one(v))
+  return m
+}
+
+type Fit = (mask: number) => number
+const rowOf = (r: RowCase, member: boolean, fit: Fit) =>
+  derivedRow(
+    {
+      allow: r.can === undefined ? fit(maskList(r.allow ?? [])) : 0,
+      deny: r.can === undefined ? fit(maskList(r.deny ?? [])) : 0,
+      merge: r.merge === true,
+      canView: r.can?.includes('v') === true,
+      canSend: r.can?.includes('s') === true,
+      canReadHistory: r.can?.includes('h') === true,
+    },
+    member
+  )
+
+const channelCase = (c: ChannelCase, ruleset: number, everyone: number, fit: Fit) => {
+  const roles = fit(maskList(c.roles ?? []))
+  const who: Who =
+    c.who === 'staff' || c.who === 'owner'
+      ? { kind: c.who }
+      : c.who === 'admin'
+        ? { kind: 'admin', mask: maskList(c.mask ?? []), roles }
+        : c.who === 'member'
+          ? { kind: 'member', roles }
+          : { kind: 'visitor', signedIn: c.who === 'visitor', caps: maskList(c.caps ?? []) }
+  return channelMask(
+    who,
+    everyone,
+    {
+      everyone: c.ev && rowOf(c.ev, false, fit),
+      restrictView: ((c.restrict ?? 0) & 1) !== 0,
+      restrictSend: ((c.restrict ?? 0) & 2) !== 0,
+      voice: c.voice === true,
+      roles: (c.rows ?? []).map(r => rowOf(r, false, fit)),
+      member: c.own && rowOf(c.own, true, fit),
+    },
+    ruleset,
+    c.timed_out === true,
+    c.acting === true
+  )
+}
+
+const REFUSALS: (Refusal | null)[] = [null, 'grants', 'denies_moderation', 'outranked']
+const editCase = (c: EditCase, fit: Fit) =>
+  checkOverwriteEdit(
+    fit(maskList(c.actor)),
+    c.exempt,
+    c.before ? rowOf(c.before, false, fit) : undefined,
+    c.after ? rowOf(c.after, false, fit) : undefined,
+    c.subject_ok
+  )
+
+// What a device does with a rules-5 mask: over the wire and back.
+const wire5: Fit = m => fromWire(toWire(m, 5), 5)
+
+// A rules-5 case as P2P facts: the member is 'p', the channel 'v'.
+const factsOf5 = (c: ChannelCase): ChanFacts => {
+  const wire = (r: RowCase | undefined) =>
+    r && { allow: toWire(maskList(r.allow ?? []), 5), deny: toWire(maskList(r.deny ?? []), 5) }
+  const rows = c.rows ?? []
+  const ov = new Map(
+    [
+      ['r:everyone', wire(c.ev)] as const,
+      ...rows.map((r, i) => [`r:r${i}`, wire(r)] as const),
+      ['u:p', wire(c.own)] as const,
+    ].flatMap(([subject, row]) => (row ? [[subject, row] as const] : []))
+  )
+  return {
+    owners: new Set(c.who === 'owner' ? ['p'] : []),
+    bits: new Map([['everyone', toWire(maskList(c.roles ?? []), 5)]]),
+    holds: new Map([['p', new Set(rows.map((_, i) => `r${i}`))]]),
+    overwrites: new Map([['v', ov]]),
+    channels: new Map([
+      [
+        'v',
+        {
+          kind: c.voice === true ? 'voice' : 'text',
+          restrict_view: ((c.restrict ?? 0) & 1) !== 0,
+          restrict_send: ((c.restrict ?? 0) & 2) !== 0,
+        },
+      ],
+    ]),
+    rules: 5,
   } as unknown as ChanFacts
 }
 
@@ -221,6 +389,62 @@ for (const [name, build] of builds)
         }
         expect([rules, mask === out, view === out]).toEqual([rules, true, true])
       }
+    })
+
+    test('hosted channel cases', async () => {
+      await load()
+      for (const c of cases.hosted.channel) {
+        const everyone = c.everyone === undefined ? baseBits() : maskList(c.everyone)
+        expect([c.name, channelCase(c, 0, everyone, m => m)]).toEqual([c.name, maskList(c.out)])
+      }
+    })
+
+    test('hosted edit cases', async () => {
+      await load()
+      for (const c of cases.hosted.edits)
+        expect([c.name, editCase(c, m => m)]).toEqual([c.name, REFUSALS[c.out]])
+      for (const c of cases.hosted.bits)
+        expect([
+          c.name,
+          checkBitsEdit(maskList(c.actor), c.exempt, maskList(c.before), maskList(c.after)),
+        ]).toEqual([c.name, REFUSALS[c.out]])
+    })
+
+    test('rules-5 channel cases, through the rules and through channelPerms', async () => {
+      await load()
+      for (const c of cases.p2p5.channel) {
+        const want = toWire(maskList(c.out), 5)
+        expect([c.name, toWire(channelCase(c, 5, 0, wire5), 5)]).toEqual([c.name, want])
+        if (c.timed_out !== true)
+          expect([c.name, channelPerms(factsOf5(c), 'p', 'v')]).toEqual([c.name, want])
+      }
+    })
+
+    test('rules-5 edit cases', async () => {
+      await load()
+      for (const c of cases.p2p5.edits)
+        expect([c.name, editCase(c, wire5)]).toEqual([c.name, REFUSALS[c.out]])
+    })
+
+    test('the everyone stage and the channel bit table follow the rules', async () => {
+      await load()
+      const view = bit('ViewChannels')
+      const send = bit('SendMessages')
+      expect(everyoneStage(baseBits(), { restrictView: true }, 0)).toBe(baseBits() - view)
+      expect(everyoneStage(view, { everyone: { allow: send, deny: view } }, 0)).toBe(send)
+      for (const [name, value] of Object.entries(ChannelPermBit)) {
+        const found = registry().find(b => b.name === name)
+        expect([name, found?.value, found?.scope, found?.hosted]).toEqual([
+          name,
+          value,
+          'channel',
+          'live',
+        ])
+      }
+      const channel = registry().filter(b => b.scope === 'channel' && b.hosted === 'live')
+      expect(channel.map(b => b.name).filter(n => !(n in ChannelPermBit) && !(n in Perm))).toEqual(
+        []
+      )
     })
 
     test('small authority worlds match the recorded outputs', async () => {
@@ -350,6 +574,8 @@ describe('masks above 32 bits', () => {
     expect(maskOr(maskNot(a), a)).toBe(2 ** 53 - 1)
     expect(hasBit(a, 2 ** 31)).toBe(true)
     expect(hasBit(a, 2 ** 32)).toBe(false)
+    expect(maskXor(a, b)).toBe(2 ** 52 + 2 ** 31 + 1)
+    expect(maskXor(maskXor(a, 2 ** 32), 2 ** 32)).toBe(a)
   })
 })
 

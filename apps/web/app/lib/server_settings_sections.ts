@@ -3,6 +3,7 @@
 import type { SearchRow } from './settings_search'
 import { Perm, hasPerm } from './types'
 import { MEMBER_SEARCH_PERMS } from './member_filters'
+import { hasBit } from './perms'
 
 export type ServerSettingsSection =
   | 'invites'
@@ -64,7 +65,7 @@ export const serverSettingsSections = ({
     access: manage || (!builtin && can(Perm.ManageInvites)),
     roles: can(Perm.ManageRoles),
     channels: can(Perm.ManageChannels),
-    members: can(Perm.ManageAdmins) || (perms & MEMBER_SEARCH_PERMS) !== 0,
+    members: can(Perm.ManageAdmins) || hasBit(perms, MEMBER_SEARCH_PERMS),
     bans: can(Perm.Kick),
     integrations: can(Perm.ManageWebhooks) || can(Perm.ManageChannels),
     audit: can(Perm.ViewAuditLog),

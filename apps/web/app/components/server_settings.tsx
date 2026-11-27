@@ -45,6 +45,7 @@ import {
   canRevoke,
   passwordDone,
   passwordPrompt,
+  EVERYONE_SUBJECT,
   ROLE_DENY_HINT,
   roleDeleteBlock,
   roleDenyEscapes,
@@ -58,10 +59,13 @@ import { readableNow, type PublicRead } from '../lib/public_reading'
 import { parseMembersVisible } from '../lib/profile_choice'
 import { enterKey } from '../lib/keys'
 import { allowListTitle, emptyAllowText } from '../lib/channel_access'
+import { toggledRule, type RuleFlag } from '../lib/channel_perms'
+import { hasBit } from '../lib/perms'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type {
   Channel,
   ChannelPerm,
+  ChannelPermInput,
   ConfirmChoice,
   Member,
   Role,
@@ -84,6 +88,7 @@ import { ColorField } from './color_field'
 import { AboutEditor } from './server_about'
 import { hostedAbout, hostedAboutPatch } from '../lib/server_about'
 import { ServerHeader } from './server_header'
+import { usePermissionRules } from './use_permission_rules'
 import { ServerSystemMessages } from './system_messages'
 import { ProfilesModeField } from './server_profile_dialog'
 import { NameWithUsername } from './display_name'
@@ -444,6 +449,8 @@ function ChannelPermsEditor({
   const askStaffView = useStore(s => s.askStaffView)
   const staffOpen = useStore(s => s.staffOpen.includes(channelId))
   const me = useStore(s => s.me?.username ?? null)
+  const everyone = useStore(s => s.servers[server]?.everyone_perms)
+  const rulesLoaded = usePermissionRules()
   const [rows, setRows] = useState<ChannelPerm[]>([])
   const [shut, setShut] = useState(false)
   const [subject, setSubject] = useState('')
@@ -486,23 +493,24 @@ function ChannelPermsEditor({
     }
   }, [staffOpen, reload])
 
-  const save = (perm: ChannelPerm) => void setChannelPerm(channelId, perm).then(inSession(reload))
+  const save = (perm: ChannelPermInput) =>
+    void setChannelPerm(channelId, perm).then(inSession(reload))
   const allow = (subj: string) =>
     save({ subject: subj, can_view: true, can_send: true, can_read_history: true })
   const listed = (subj: string) => rows.some(r => r.subject === subj)
   const label = (subj: string) =>
-    subj.startsWith('u:') ? subj.slice(2) : (roles.find(r => `r:${r.id}` === subj)?.name ?? subj)
+    subj === EVERYONE_SUBJECT
+      ? '@everyone'
+      : subj.startsWith('u:')
+        ? subj.slice(2)
+        : (roles.find(r => `r:${r.id}` === subj)?.name ?? subj)
   const restricted = !!channel.restrict_view || !!channel.restrict_send
-  const flag = (
-    perm: ChannelPerm,
-    key: 'can_view' | 'can_send' | 'can_read_history',
-    text: string
-  ) => (
+  const flag = (perm: ChannelPerm, key: RuleFlag, text: string) => (
     <label className="flex items-center gap-1 text-xs">
       <input
         type="checkbox"
         checked={perm[key]}
-        onChange={() => save({ ...perm, [key]: !perm[key] })}
+        onChange={() => save(toggledRule(perm, key))}
         className="accent-primary"
       />
       {text}
@@ -558,7 +566,7 @@ function ChannelPermsEditor({
           </button>
         </div>
       ))}
-      {roleDenyEscapes(channel, rows) && (
+      {rulesLoaded && roleDenyEscapes(channel, rows, everyone) && (
         <p className="text-xs text-on-surface-variant">{ROLE_DENY_HINT}</p>
       )}
       {roles.length > 0 && (
@@ -1426,7 +1434,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
   const canInvites = hasPerm(perms, Perm.ManageInvites)
   const canAssign = hasPerm(perms, Perm.AssignRoles)
   const canAdmin = hasPerm(perms, Perm.ManageAdmins)
-  const canSearch = (perms & MEMBER_SEARCH_PERMS) !== 0
+  const canSearch = hasBit(perms, MEMBER_SEARCH_PERMS)
   const siteAdmin = me?.is_site_admin ?? false
   const limit = siteAdmin ? undefined : perms
   const promote = canPromote(perms, siteAdmin)

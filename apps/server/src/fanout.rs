@@ -887,7 +887,9 @@ impl Channels {
                 server: _,
             } => self.forget_server(old_name),
             WsEvent::ServerUpdated { server } => self.forget_server(&server.name),
-            WsEvent::ServerDeleted { name } => self.forget_server(name),
+            WsEvent::ServerDeleted { name } | WsEvent::RolesChanged { server: name } => {
+                self.forget_server(name)
+            }
             _ => {}
         }
     }
@@ -1062,6 +1064,7 @@ mod tests {
             topic: None,
             category_id: None,
             position: 0,
+            my_perms: None,
         };
         router.deliver(WsEvent::ServerUpdated {
             server: crate::api::ServerSummaryLite {
@@ -1172,14 +1175,19 @@ mod tests {
         assert!(channels.slot(1).get().is_none());
         channels.observe(&WsEvent::ServerDeleted { name: s("a") });
         assert!(channels.slot(2).get().is_none());
-        assert_eq!(
-            channels.slot(3).get(),
-            Some(&Some(ChannelPolicy {
-                server: s("b"),
-                public_view: false,
-                limits_history: false,
-            }))
+        let kept = Some(ChannelPolicy {
+            server: s("b"),
+            public_view: false,
+            limits_history: false,
+        });
+        assert_eq!(channels.slot(3).get(), Some(&kept));
+        fill(4, "c", true);
+        channels.observe(&roles("c"));
+        assert!(
+            channels.slot(4).get().is_none(),
+            "what everyone holds changed"
         );
+        assert_eq!(channels.slot(3).get(), Some(&kept));
         channels.clear();
         assert!(channels.slot(3).get().is_none());
     }

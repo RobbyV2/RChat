@@ -20,19 +20,24 @@ use crate::limits::Limits;
 use crate::limits::bucket::{Keyed, Policy};
 use crate::ws::UserScope;
 
+pub mod overwrite_sql;
+#[cfg(test)]
+mod overwrite_tests;
 pub mod perms;
 mod rules;
 pub mod subjects;
 #[cfg(test)]
 mod subjects_walk;
 
+use overwrite_sql::{denied_to_some_sql, everyone_stage_sql, overwrite_sql, private_sql};
 use perms::{
-    ChannelAccess, Perm, PermRow, Restrict, can_grant, can_moderate, fold_access, perm_row,
-    perm_subjects,
+    ChannelAccess, Perm, PermRow, Restrict, Standing, VISITOR_CAPS, can_grant, can_moderate,
+    channel_mask, everyone_mask, perm_columns, perm_row,
 };
+use rchat_perms::{Mask, masks};
 use rules::{
     channel_access, channel_viewable, channel_viewers, effective_perms, grants_open, is_banned,
-    live_grant_servers, member_perms, view_rules, view_under,
+    live_grant_servers, member_perms, server_everyone, standing, view_rules, view_under,
 };
 pub use subjects::{
     Caller, Level, Seen, SeenUser, UserView, candidates, level_of, resolve_user, seen_among,
@@ -61,8 +66,8 @@ pub fn not_found() -> ApiError {
     ApiError(StatusCode::NOT_FOUND, NOT_FOUND.to_string(), None)
 }
 
-/// The permissions a timed-out member keeps: only those that read.
-pub const READ_PERMS: i64 = Perm::ViewAuditLog as i64;
+/// What a timed-out member keeps of their server permissions.
+pub const TIMED_OUT_KEEP: i64 = masks::TIMED_OUT_KEEP as i64;
 
 /// Who `user` acts as on `target` inside a server: on themselves a site admin has only their
 /// plain membership, never instance powers, so whatever they do to themselves (lifting their
@@ -983,7 +988,7 @@ impl ServerAccess {
     }
 
     /// The viewer's permissions for acting. A member who is timed out keeps only the read
-    /// rights (`READ_PERMS`) until the timeout ends. That holds for a site admin who is a
+    /// rights (`TIMED_OUT_KEEP`) until the timeout ends. That holds for a site admin who is a
     /// member too: acting normally while timed out would show what they are. Only a site
     /// admin reaching the server as staff (not a member, so never timed out here) is not
     /// limited.
@@ -992,10 +997,10 @@ impl ServerAccess {
         match &self.user {
             Some(user)
                 if self.via != Via::Staff
-                    && bits & !READ_PERMS != 0
+                    && bits & !TIMED_OUT_KEEP != 0
                     && timed_out(db, self.name(), &user.username).await?.is_some() =>
             {
-                Ok(bits & READ_PERMS)
+                Ok(bits & TIMED_OUT_KEEP)
             }
             Some(_) | None => Ok(bits),
         }
@@ -1130,11 +1135,45 @@ impl ServerAccess {
         }
     }
 
-    /// The viewer's rights in each channel of this server that has rules or restrictions;
-    /// channels that are not listed are open to everyone who can open the server.
+    /// What a visitor may hold in this server right now: viewing and reading, and for a guest
+    /// the sending and voice the site and the server have both turned on for guests.
+    pub(crate) async fn visitor_caps(&self, db: &Db) -> Result<Mask, ApiError> {
+        let (guest_chat, guest_voice) = (self.lite.guest_chat, self.lite.guest_voice);
+        if self.user.is_some() || !(guest_chat || guest_voice) {
+            return Ok(masks::READ_LINK);
+        }
+        let on: HashSet<String> = sqlx::query("SELECT key FROM settings WHERE key IN ('guests_enabled', 'guest_chat_enabled', 'guest_voice_enabled') AND value = '1'")
+            .fetch_all(db)
+            .await?
+            .iter()
+            .filter_map(|r| r.try_get(0).ok())
+            .collect();
+        let cap = |opted_in: bool, control: &str, bits: Mask| match opted_in
+            && on.contains("guests_enabled")
+            && on.contains(control)
+        {
+            true => bits,
+            false => 0,
+        };
+        Ok(masks::READ_LINK
+            | cap(guest_chat, "guest_chat_enabled", masks::GUEST_CHAT)
+            | cap(guest_voice, "guest_voice_enabled", masks::GUEST_VOICE))
+    }
+
+    /// Who the viewer is in this server for channel permissions.
+    pub(crate) async fn standing(&self, db: &Db) -> Result<Standing, ApiError> {
+        Ok(standing(db, self.name(), self.user.as_ref(), VISITOR_CAPS).await?)
+    }
+
+    /// The @everyone mask of this server.
+    pub(crate) async fn everyone(&self, db: &Db) -> Result<Mask, ApiError> {
+        Ok(server_everyone(db, self.name()).await?)
+    }
+
+    /// The viewer's rights in each channel of this server.
     pub async fn channel_rights(&self, db: &Db) -> Result<HashMap<i64, ChannelAccess>, ApiError> {
         let channels = sqlx::query(
-            "SELECT c.id, c.restrict_view, c.restrict_send FROM channels c WHERE c.server = $1 AND (c.restrict_view <> 0 OR c.restrict_send <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id))",
+            "SELECT c.id, c.restrict_view, c.restrict_send, c.kind FROM channels c WHERE c.server = $1",
         )
         .bind(self.name())
         .fetch_all(db)
@@ -1142,33 +1181,30 @@ impl ServerAccess {
         if channels.is_empty() {
             return Ok(HashMap::new());
         }
-        let (manage, subjects) = match &self.user {
-            Some(user) => (
-                self.manages_channels(db).await?,
-                perm_subjects(db, Some(self.name()), &user.username).await?,
-            ),
-            None => (false, Vec::new()),
-        };
-        let rules = match manage {
-            true => HashMap::new(),
-            false => {
-                let rows = sqlx::query(
-                    "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1",
-                )
-                .bind(self.name())
-                .fetch_all(db)
-                .await?;
-                rules_by_channel(&rows)?
-            }
-        };
+        let standing = self.standing(db).await?;
+        let everyone = self.everyone(db).await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT cp.channel_id, {} FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1",
+            perm_columns("cp")
+        )))
+        .bind(self.name())
+        .fetch_all(db)
+        .await?;
+        let rules = rules_by_channel(&rows)?;
         let mut out = HashMap::with_capacity(channels.len());
         for r in &channels {
             let id: i64 = r.try_get(0)?;
             let list = rules.get(&id).map(Vec::as_slice).unwrap_or_default();
-            out.insert(
-                id,
-                fold_access(list, &subjects, manage, Restrict::read(r, 1)?),
+            let voice = r.try_get::<String, _>(3)? == "voice";
+            let mask = channel_mask(
+                list,
+                &standing,
+                everyone,
+                Restrict::read(r, 1)?,
+                voice,
+                false,
             );
+            out.insert(id, ChannelAccess::of(mask));
         }
         Ok(out)
     }
@@ -1185,26 +1221,21 @@ impl ServerAccess {
         match &self.user {
             None => TextReading {
                 sql: format!(
-                    "SELECT c.id, 1 AS whole, ${next} AS since FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND c.restrict_view = 0"
+                    "SELECT c.id, CASE WHEN {} THEN 1 ELSE 0 END AS whole, ${next} AS since FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND {}",
+                    overwrite_sql(masks::HISTORY, None),
+                    overwrite_sql(masks::VIEW, None)
                 ),
                 viewer: None,
                 now,
             },
             Some(user) => {
                 let (name, at) = (next, next + 1);
-                let rule = |allows: &str| {
-                    format!(
-                        "EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id{allows} AND (cp.subject = 'u:' || ${name} OR cp.subject IN (SELECT 'r:' || CAST(ur.role_id AS TEXT) FROM user_roles ur WHERE ur.server = $1 AND ur.username = ${name})))"
-                    )
-                };
-                let (any, view, history) = (
-                    rule(""),
-                    rule(" AND cp.can_view <> 0"),
-                    rule(" AND cp.can_read_history <> 0"),
-                );
+                let viewer = format!("${name}");
                 TextReading {
                     sql: format!(
-                        "SELECT c.id, CASE WHEN NOT {any} OR {history} THEN 1 ELSE 0 END AS whole, COALESCE((SELECT mm.joined_at FROM members mm WHERE mm.server = $1 AND mm.username = ${name}), ${at}) AS since FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND ((c.restrict_view = 0 AND NOT {any}) OR {view})"
+                        "SELECT c.id, CASE WHEN {} THEN 1 ELSE 0 END AS whole, COALESCE((SELECT mm.joined_at FROM members mm WHERE mm.server = $1 AND mm.username = ${name}), ${at}) AS since FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND {}",
+                        overwrite_sql(masks::HISTORY, Some(&viewer)),
+                        overwrite_sql(masks::VIEW, Some(&viewer))
                     ),
                     viewer: Some(user.username.clone()),
                     now,
@@ -1222,9 +1253,22 @@ impl ServerAccess {
         }
     }
 
+    /// The viewer's server bits, with the ones everyone holds.
+    pub(crate) async fn server_bits(&self, db: &Db) -> Result<Mask, ApiError> {
+        let everyone = self.everyone(db).await?;
+        let standing = self.standing(db).await?;
+        Ok(rchat_perms::eval::server_bits(
+            &standing.who,
+            everyone,
+            &rchat_perms::rules::HOSTED,
+        ))
+    }
+
     pub async fn require_grant(&self, db: &Db, perms: i64) -> Result<(), ApiError> {
         let mine = self.perms(db).await?;
-        match can_grant(mine, self.site_admin(), perms) {
+        let base = (perms & perms::EVERYONE_BITS) as Mask;
+        let held = base == 0 || self.site_admin() || base & !self.server_bits(db).await? == 0;
+        match held && can_grant(mine, self.site_admin(), perms) {
             true => Ok(()),
             false => Err(forbidden("You can't grant permissions you don't have")),
         }
@@ -1264,6 +1308,7 @@ impl ServerAccess {
                         self.via == Via::Staff,
                         ChannelAccess {
                             history: false,
+                            mask: rights.mask & !(masks::HISTORY as i64),
                             ..rights
                         },
                     ),
@@ -1360,6 +1405,7 @@ async fn staff_gap(db: &Db, server: &str, id: i64, admin: &User) -> sqlx::Result
         view,
         send: _,
         history,
+        mask: _,
     } = channel_access(db, server, id, Some(&plain)).await?;
     Ok(match (view, history) {
         (false, _) => StaffGap::View,
@@ -1458,11 +1504,11 @@ pub async fn resolve_channel_for(
         .await
 }
 
-/// A channel as an incoming webhook that posts into it sees it: no viewer, and every right in
-/// that one channel (a webhook can always send in its own channel and nowhere else). Unknown
-/// channels and servers being deleted get `not_found`.
+/// A channel as an incoming webhook that posts into it sees it: no viewer, and reading, sending,
+/// files and embeds in that one channel (a webhook can always send in its own channel and
+/// nowhere else). Unknown channels and servers being deleted get `not_found`.
 pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel, ApiError> {
-    configured_channel(db, id, ChannelAccess::all(true)).await
+    configured_channel(db, id, ChannelAccess::of(masks::WEBHOOK)).await
 }
 
 /// A read key delegates history in this single channel and never delegates membership.
@@ -1471,16 +1517,7 @@ pub(crate) async fn read_link_channel(
     id: i64,
     viewer: Option<&User>,
 ) -> Result<ResolvedChannel, ApiError> {
-    let mut channel = configured_channel(
-        db,
-        id,
-        ChannelAccess {
-            view: true,
-            send: false,
-            history: true,
-        },
-    )
-    .await?;
+    let mut channel = configured_channel(db, id, ChannelAccess::of(masks::READ_LINK)).await?;
     if channel.kind() != ChannelKind::Text {
         return Err(not_found());
     }
@@ -1585,12 +1622,14 @@ impl ResolvedChannel {
         &self.name
     }
 
-    /// Whether not everyone in its server may see the channel: it requires roles to view or has
-    /// any permission rule (its name stays inside that audience, e.g. in forward origins).
+    /// Whether not everyone in its server may see the channel: everyone lacks View in it, or a
+    /// rule denies View to a role or a member (its name stays inside that audience, e.g. in
+    /// forward origins).
     pub async fn restricted(&self, db: &Db) -> Result<bool, ApiError> {
-        Ok(sqlx::query(
-            "SELECT 1 FROM channels c WHERE c.id = $1 AND (c.restrict_view <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id))",
-        )
+        Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT 1 FROM channels c WHERE c.id = $1 AND {}",
+            private_sql()
+        )))
         .bind(self.id)
         .fetch_optional(db)
         .await?
@@ -1659,6 +1698,11 @@ impl ResolvedChannel {
         }
     }
 
+    /// What the viewer holds in this channel.
+    pub fn rights(&self) -> ChannelAccess {
+        self.rights
+    }
+
     /// The server permissions that membership alone gives (see `member_rights`).
     pub async fn member_bits(&self, db: &Db) -> Result<i64, ApiError> {
         match &self.server.user {
@@ -1683,13 +1727,22 @@ impl ResolvedChannel {
         }
     }
 
-    /// Effective guest participation in this channel, using the site's current controls.
+    /// Effective guest participation in this channel, using the site's current controls: a
+    /// guest who holds Send in a text channel, or Connect and Speak in a voice channel.
     pub(crate) async fn guest_participation(&self, db: &Db) -> Result<bool, ApiError> {
-        let (opted_in, control) = match self.kind {
-            ChannelKind::Text => (self.server.lite.guest_chat, "guest_chat_enabled"),
-            ChannelKind::Voice => (self.server.lite.guest_voice, "guest_voice_enabled"),
+        let (opted_in, control, need) = match self.kind {
+            ChannelKind::Text => (
+                self.server.lite.guest_chat,
+                "guest_chat_enabled",
+                masks::GUEST_CHAT,
+            ),
+            ChannelKind::Voice => (
+                self.server.lite.guest_voice,
+                "guest_voice_enabled",
+                masks::GUEST_VOICE,
+            ),
         };
-        if self.server.user.is_some() || !opted_in || !self.rights.view || !self.rights.send {
+        if self.server.user.is_some() || !opted_in || self.rights.mask as Mask & need != need {
             return Ok(false);
         }
         Ok(sqlx::query("SELECT 1 FROM settings WHERE key = $1 AND value = '1' AND EXISTS (SELECT 1 FROM settings WHERE key = 'guests_enabled' AND value = '1')")
@@ -2187,31 +2240,34 @@ pub(crate) async fn may_delete_in(
     }
 }
 
-/// Restricted text-channel rights of `user` across the servers it is a member of (unread
-/// counts, the inbox): channels with rules or restrictions. Membership is the proof: rows of
-/// servers the user has not joined never load. A site admin counts as a plain member, except
-/// in the channels they have open as staff (`staff_audit::open_channels`), which give them
-/// every right.
+/// The text-channel rights of `user` across the servers it is a member of (unread counts, the
+/// inbox), for the channels where they are not simply the rights of everyone: channels with rules
+/// or restrictions, and every channel of a server whose @everyone lacks View, Send or Read
+/// history. Membership is the proof: rows of servers the user has not joined never load. A site
+/// admin counts as a plain member, except in the channels they have open as staff
+/// (`staff_audit::open_channels`), which give them every right.
 pub(crate) async fn member_channel_rights(
     db: &Db,
     user: &User,
 ) -> Result<HashMap<i64, ChannelAccess>, ApiError> {
+    let open = (masks::VIEW | masks::SEND | masks::HISTORY) as i64;
     let channels = sqlx::query(
-        "SELECT c.id, c.server, c.restrict_view, c.restrict_send FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text' AND (c.restrict_view <> 0 OR c.restrict_send <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id))",
+        "SELECT c.id, c.server, c.restrict_view, c.restrict_send, s.everyone_perms FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 JOIN servers s ON s.name = c.server WHERE c.kind = 'text' AND (c.restrict_view <> 0 OR c.restrict_send <> 0 OR (s.everyone_perms IS NOT NULL AND (s.everyone_perms & $2) <> $2) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id))",
     )
     .bind(&user.username)
+    .bind(open)
     .fetch_all(db)
     .await?;
     if channels.is_empty() {
         return Ok(HashMap::new());
     }
-    let rows = sqlx::query(
-        "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text'",
-    )
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT cp.channel_id, {} FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text'",
+        perm_columns("cp")
+    )))
     .bind(&user.username)
     .fetch_all(db)
     .await?;
-    let subjects = perm_subjects(db, None, &user.username).await?;
     let rules = rules_by_channel(&rows)?;
     let member = User {
         is_site_admin: false,
@@ -2221,23 +2277,27 @@ pub(crate) async fn member_channel_rights(
         true => staff_audit::open_channels(db, &user.username).await?,
         false => Vec::new(),
     };
-    let mut manages: HashMap<String, bool> = HashMap::new();
+    let staff = Standing {
+        who: rchat_perms::eval::Who::Staff,
+        subjects: vec![format!("u:{}", user.username)],
+    };
+    let mut standings: HashMap<String, Standing> = HashMap::new();
     let mut out = HashMap::with_capacity(channels.len());
     for r in &channels {
         let (id, server): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
         let restrict = Restrict::read(r, 2)?;
-        let manage = match manages.get(&server) {
-            Some(m) => *m,
-            None => {
-                let m =
-                    effective_perms(db, &server, &member).await? & Perm::ManageChannels as i64 != 0;
-                manages.insert(server, m);
-                m
-            }
-        };
+        let everyone = everyone_mask(r.try_get(4)?);
+        if !standings.contains_key(&server) {
+            let found = standing(db, &server, Some(&member), VISITOR_CAPS).await?;
+            standings.insert(server.clone(), found);
+        }
         let list = rules.get(&id).map(Vec::as_slice).unwrap_or_default();
-        let manage = manage || opened.contains(&id);
-        out.insert(id, fold_access(list, &subjects, manage, restrict));
+        let viewer = match opened.contains(&id) {
+            true => &staff,
+            false => &standings[&server],
+        };
+        let mask = channel_mask(list, viewer, everyone, restrict, false, false);
+        out.insert(id, ChannelAccess::of(mask));
     }
     Ok(out)
 }
@@ -2293,6 +2353,10 @@ pub(crate) async fn ws_channel_seen(
 pub struct ViewRules {
     pub restrict: Restrict,
     pub rules: Vec<PermRow>,
+    /// The @everyone mask of the channel's server; a node that does not send it means the
+    /// default.
+    #[serde(default)]
+    pub everyone: Option<i64>,
 }
 
 /// The current view rules of channel `cid`, for `ws_view_under` once it is gone.
@@ -2890,6 +2954,7 @@ pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(Str
                 position: r.try_get(8)?,
                 sensitive: r.try_get::<i64, _>(9)? != 0,
                 text_only: r.try_get::<i64, _>(10)? != 0,
+                my_perms: None,
             },
         ))),
         None => Ok(None),
@@ -2904,18 +2969,33 @@ pub struct ChannelPolicy {
 }
 
 /// Channel rules shared by every connection: whether everyone in the server may view it,
-/// and whether a rule can grant view without read history.
+/// and whether someone who views it can lack read history.
 pub(crate) async fn ws_channel_policy(db: &Db, cid: i64) -> sqlx::Result<Option<ChannelPolicy>> {
-    sqlx::query("SELECT c.server,
-        CASE WHEN c.restrict_view = 0 AND NOT EXISTS (SELECT 1 FROM channel_perms p WHERE p.channel_id = c.id AND p.can_view = 0) THEN 1 ELSE 0 END,
-        CASE WHEN EXISTS (SELECT 1 FROM channel_perms p WHERE p.channel_id = c.id AND p.can_view <> 0 AND p.can_read_history = 0) THEN 1 ELSE 0 END
-        FROM channels c WHERE c.id = $1")
-        .bind(cid).fetch_optional(db).await?
-        .map(|r| Ok(ChannelPolicy {
-            server: r.try_get(0)?,
-            public_view: r.try_get::<i64, _>(1)? != 0,
-            limits_history: r.try_get::<i64, _>(2)? != 0,
-        })).transpose()
+    let sql = format!(
+        "SELECT c.server, CASE WHEN {} THEN 0 ELSE 1 END, CASE WHEN NOT {} OR {} THEN 1 ELSE 0 END FROM channels c WHERE c.id = $1",
+        private_sql(),
+        everyone_stage_sql(masks::HISTORY),
+        denied_to_some_sql(masks::HISTORY),
+    );
+    sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(cid)
+        .fetch_optional(db)
+        .await?
+        .map(|r| {
+            Ok(ChannelPolicy {
+                server: r.try_get(0)?,
+                public_view: r.try_get::<i64, _>(1)? != 0,
+                limits_history: r.try_get::<i64, _>(2)? != 0,
+            })
+        })
+        .transpose()
+}
+
+/// Whether someone who views channel `cid` can lack read history there.
+pub(crate) async fn limits_history(db: &Db, cid: i64) -> sqlx::Result<bool> {
+    Ok(ws_channel_policy(db, cid)
+        .await?
+        .is_some_and(|policy| policy.limits_history))
 }
 
 /// Realtime subscription checks: `None` when `server` doesn't exist, otherwise its password

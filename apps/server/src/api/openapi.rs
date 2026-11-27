@@ -212,6 +212,7 @@ impl Modify for Bearer {
         super::servers::revoke_admin,
         super::servers::transfer_admin,
         super::servers::set_admin_perms,
+        super::servers::set_everyone_perms,
         super::servers::create_role,
         super::servers::update_role,
         super::servers::delete_role,

@@ -1,8 +1,11 @@
 use sqlx::Row;
 
+use rchat_perms::eval::Who;
+use rchat_perms::{Mask, masks};
+
 use super::perms::{
-    ALL_PERMS, ChannelAccess, Perm, PermRow, Restrict, fold_access, perm_bits, perm_row,
-    perm_subjects,
+    ALL_PERMS, ChannelAccess, Perm, PermRow, Restrict, Standing, VISITOR_CAPS, channel_mask,
+    everyone_mask, member_who, perm_bits, perm_columns, perm_row,
 };
 use super::{ViewRules, member_role};
 use crate::db::{Db, GRANT_TOUCH_SECS, User, get_user, now, queue_grant_touches, secret_key};
@@ -65,21 +68,43 @@ pub(super) async fn channel_manager_servers(db: &Db, user: &User) -> sqlx::Resul
     Ok(out)
 }
 
-pub(super) async fn channel_restrict(db: &Db, channel_id: i64) -> sqlx::Result<Restrict> {
-    match sqlx::query("SELECT restrict_view, restrict_send FROM channels WHERE id = $1")
+/// The restrictions of a channel, whether it is a voice channel, and the @everyone mask of its
+/// server. A channel that is gone reads as an open text channel.
+pub(super) async fn channel_base(db: &Db, channel_id: i64) -> sqlx::Result<(Restrict, bool, Mask)> {
+    match sqlx::query("SELECT c.restrict_view, c.restrict_send, c.kind, s.everyone_perms FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1")
         .bind(channel_id)
         .fetch_optional(db)
         .await?
     {
-        Some(r) => Restrict::read(&r, 0),
-        None => Ok(Restrict::default()),
+        Some(r) => Ok((
+            Restrict::read(&r, 0)?,
+            r.try_get::<String, _>(2)? == "voice",
+            everyone_mask(r.try_get(3)?),
+        )),
+        None => Ok((Restrict::default(), false, everyone_mask(None))),
     }
 }
 
+/// The @everyone mask of `server`.
+pub(super) async fn server_everyone<'e, E>(ex: E, server: &str) -> sqlx::Result<Mask>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    let stored = sqlx::query("SELECT everyone_perms FROM servers WHERE name = $1")
+        .bind(server)
+        .fetch_optional(ex)
+        .await?
+        .map(|r| r.try_get::<Option<i64>, _>(0))
+        .transpose()?
+        .flatten();
+    Ok(everyone_mask(stored))
+}
+
 async fn channel_rules(db: &Db, channel_id: i64) -> sqlx::Result<Vec<PermRow>> {
-    sqlx::query(
-        "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1",
-    )
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM channel_perms cp WHERE cp.channel_id = $1",
+        perm_columns("cp")
+    )))
     .bind(channel_id)
     .fetch_all(db)
     .await?
@@ -88,10 +113,55 @@ async fn channel_rules(db: &Db, channel_id: i64) -> sqlx::Result<Vec<PermRow>> {
     .collect()
 }
 
+/// Who `user` is in `server`: staff, an admin or a member with their roles, or a visitor
+/// holding at most `caps`.
+pub(super) async fn standing(
+    db: &Db,
+    server: &str,
+    user: Option<&User>,
+    caps: Mask,
+) -> sqlx::Result<Standing> {
+    let Some(user) = user else {
+        return Ok(Standing::visitor(None, caps));
+    };
+    if user.is_site_admin {
+        return Ok(Standing {
+            who: Who::Staff,
+            subjects: vec![format!("u:{}", user.username)],
+        });
+    }
+    let rows = sqlx::query("SELECT m.is_admin, m.perms, ur.role_id, r.perms FROM members m LEFT JOIN user_roles ur ON ur.server = m.server AND ur.username = m.username LEFT JOIN roles r ON r.id = ur.role_id WHERE m.server = $1 AND m.username = $2")
+        .bind(server)
+        .bind(&user.username)
+        .fetch_all(db)
+        .await?;
+    let Some(first) = rows.first() else {
+        return Ok(Standing::visitor(Some(&user.username), caps));
+    };
+    let (is_admin, perms): (bool, i64) = (first.try_get::<i64, _>(0)? != 0, first.try_get(1)?);
+    let mut subjects = vec![format!("u:{}", user.username)];
+    let mut roles = 0i64;
+    for r in &rows {
+        if let (Some(id), Some(bits)) = (
+            r.try_get::<Option<i64>, _>(2)?,
+            r.try_get::<Option<i64>, _>(3)?,
+        ) {
+            subjects.push(format!("r:{id}"));
+            roles |= bits;
+        }
+    }
+    Ok(Standing {
+        who: member_who(is_admin, perms, roles),
+        subjects,
+    })
+}
+
 pub(super) async fn view_rules(db: &Db, channel_id: i64) -> sqlx::Result<ViewRules> {
+    let (restrict, _, everyone) = channel_base(db, channel_id).await?;
     Ok(ViewRules {
-        restrict: channel_restrict(db, channel_id).await?,
+        restrict,
         rules: channel_rules(db, channel_id).await?,
+        everyone: Some(everyone as i64),
     })
 }
 
@@ -101,39 +171,59 @@ pub(super) async fn view_under(
     rules: &ViewRules,
     user: Option<&User>,
 ) -> sqlx::Result<bool> {
-    let ViewRules { restrict, rules } = rules;
-    if rules.is_empty() && *restrict == Restrict::default() {
-        return Ok(true);
-    }
-    let Some(user) = user else {
-        return Ok(fold_access(rules, &[], false, *restrict).view);
-    };
-    if manages_channels(db, server, user).await? {
-        return Ok(true);
-    }
-    let subjects = perm_subjects(db, Some(server), &user.username).await?;
-    Ok(fold_access(rules, &subjects, false, *restrict).view)
+    let ViewRules {
+        restrict,
+        rules,
+        everyone,
+    } = rules;
+    let standing = standing(db, server, user, VISITOR_CAPS).await?;
+    let mask = channel_mask(
+        rules,
+        &standing,
+        everyone_mask(*everyone),
+        *restrict,
+        false,
+        false,
+    );
+    Ok(mask & masks::VIEW != 0)
 }
 
+/// What `user` holds in the channel. A visitor holds at most `caps`.
+#[cfg(test)]
+pub(super) async fn channel_access_within(
+    db: &Db,
+    server: &str,
+    channel_id: i64,
+    user: Option<&User>,
+    caps: Mask,
+) -> sqlx::Result<ChannelAccess> {
+    channel_access_under(db, server, channel_id, user, caps).await
+}
+
+async fn channel_access_under(
+    db: &Db,
+    server: &str,
+    channel_id: i64,
+    user: Option<&User>,
+    caps: Mask,
+) -> sqlx::Result<ChannelAccess> {
+    let (restrict, voice, everyone) = channel_base(db, channel_id).await?;
+    let rows = channel_rules(db, channel_id).await?;
+    let standing = standing(db, server, user, caps).await?;
+    Ok(ChannelAccess::of(channel_mask(
+        &rows, &standing, everyone, restrict, voice, false,
+    )))
+}
+
+/// What `user` holds in the channel. A visitor holds what the channel gives everyone within
+/// `VISITOR_CAPS`.
 pub(super) async fn channel_access(
     db: &Db,
     server: &str,
     channel_id: i64,
     user: Option<&User>,
 ) -> sqlx::Result<ChannelAccess> {
-    let restrict = channel_restrict(db, channel_id).await?;
-    let rows = channel_rules(db, channel_id).await?;
-    if rows.is_empty() && restrict == Restrict::default() {
-        return Ok(ChannelAccess::all(true));
-    }
-    let Some(user) = user else {
-        return Ok(fold_access(&rows, &[], false, restrict));
-    };
-    if manages_channels(db, server, user).await? {
-        return Ok(ChannelAccess::all(true));
-    }
-    let subjects = perm_subjects(db, Some(server), &user.username).await?;
-    Ok(fold_access(&rows, &subjects, false, restrict))
+    channel_access_under(db, server, channel_id, user, VISITOR_CAPS).await
 }
 
 /// Which of `usernames` are live members of `server` who can view the channel: the rules of
@@ -169,9 +259,12 @@ pub(super) async fn channel_viewers(
         return Ok(Vec::new());
     }
     let overrides = channel_rules(db, channel_id).await?;
-    let restrict = channel_restrict(db, channel_id).await?;
+    let (restrict, voice, everyone) = channel_base(db, channel_id).await?;
     let listed = usernames.iter().filter(|n| members.contains_key(*n));
-    if overrides.is_empty() && restrict == Restrict::default() {
+    if overrides.is_empty()
+        && restrict == Restrict::default()
+        && everyone & (masks::VIEW | masks::HISTORY) == masks::VIEW | masks::HISTORY
+    {
         return Ok(listed.cloned().collect());
     }
     let names: Vec<&String> = members.keys().collect();
@@ -195,10 +288,15 @@ pub(super) async fn channel_viewers(
         .filter(|name| {
             let (is_admin, perms, joined_at) = members[*name];
             let (role_subjects, role_perms) = roles.get(*name).cloned().unwrap_or_default();
-            let manages = perm_bits(is_admin, perms, role_perms) & Perm::ManageChannels as i64 != 0;
             let mut subjects = vec![format!("u:{name}")];
             subjects.extend(role_subjects);
-            let access = fold_access(&overrides, &subjects, manages, restrict);
+            let standing = Standing {
+                who: member_who(is_admin, perms, role_perms),
+                subjects,
+            };
+            let access = ChannelAccess::of(channel_mask(
+                &overrides, &standing, everyone, restrict, voice, false,
+            ));
             access.view && (access.history || readable.is_none_or(|at| at >= joined_at))
         })
         .cloned()

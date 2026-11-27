@@ -184,6 +184,52 @@ pub fn perms_channel_mask(
     ) as f64
 }
 
+/// What a channel gives everyone before any role or member row. `flags` holds the restrict
+/// bits and whether there is an @everyone row.
+#[wasm_bindgen]
+pub fn perms_everyone_stage(
+    everyone: f64,
+    ev_allow: f64,
+    ev_deny: f64,
+    flags: u32,
+    rules: i32,
+) -> f64 {
+    let Some(r) = ruleset(rules) else { return 0.0 };
+    let ch = Channel {
+        everyone: ow(ev_allow, ev_deny).filter(|_| flags & EVERYONE_ROW != 0),
+        restrict_view: flags & RESTRICT_VIEW != 0,
+        restrict_send: flags & RESTRICT_SEND != 0,
+        voice: false,
+        roles: &[],
+        member: None,
+    };
+    eval::everyone_stage(mask(everyone), &ch, r) as f64
+}
+
+/// The row a hosted rule stands for, as (allow, deny, 1 when it merges with role rows). `flags`
+/// is 1 can view, 2 can send, 4 can read history, 8 a member's row, 16 a merged row.
+#[wasm_bindgen]
+pub fn perms_derived_row(allow: f64, deny: f64, flags: u32) -> Vec<f64> {
+    let mode = match flags & 16 {
+        0 => Mode::Override,
+        _ => Mode::Merge,
+    };
+    let (Ow { allow, deny }, mode) = eval::derived_row(
+        mask(allow),
+        mask(deny),
+        mode,
+        flags & 1 != 0,
+        flags & 2 != 0,
+        flags & 4 != 0,
+        flags & 8 != 0,
+    );
+    vec![
+        allow as f64,
+        deny as f64,
+        f64::from(u8::from(mode == Mode::Merge)),
+    ]
+}
+
 /// A rank is (tier 0-5 from outside to staff, position, integer tie, string tie, admin mask).
 /// The string tie is used when it is given.
 #[wasm_bindgen]

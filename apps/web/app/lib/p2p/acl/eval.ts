@@ -24,6 +24,7 @@ import {
   authCore,
   type AclEv,
   type AuthCtx,
+  type ChanReader,
   type Ctx,
   type Rank,
 } from './rules'
@@ -379,11 +380,19 @@ export class Mono {
     }
     return r
   }
+  private chan(): ChanReader {
+    return {
+      channel: ch => this.Fr.channel(ch),
+      overwrite: (ch, subj) => this.Fr.overwrite(ch, subj),
+    }
+  }
   ctx(): AuthCtx {
     const me = () => this.me()
     return {
       Fr: this.Fr.facts(),
       Fo: this.Fo.facts(),
+      rules: this.ix.ev[this.ix.genesis]?.c.rules,
+      chan: this.chan(),
       get me() {
         return me()
       },
@@ -407,6 +416,8 @@ export class Mono {
     const ctx: AuthCtx = {
       Fr: Fr.facts(),
       Fo: Fo.facts(),
+      rules: ix.ev[ix.genesis]?.c.rules,
+      chan: this.chan(),
       me,
       rankOf: (R: string): Rank => (R === EVERYONE ? BOT : TOP),
       rankT: (T: string): Rank =>

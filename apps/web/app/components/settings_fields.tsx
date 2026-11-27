@@ -4,6 +4,7 @@ import { useEffect, useId, useState } from 'react'
 import { SLOWMODE_MAX } from '../lib/rules'
 import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '../lib/slowmode'
 import { restrictionItems, type RestrictKey } from '../lib/channel_access'
+import { hasBit, maskXor } from '../lib/perms'
 import { fieldCls, textBtn } from './ui'
 
 // Settings controls shared across the app: an on or off row, permission checks, a role's color,
@@ -82,7 +83,7 @@ export function PermChecks({
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-1">
       {items.map(({ label, bit, hint }) => {
-        const off = !!locked || (allowed !== undefined && !allowed(value ^ bit))
+        const off = !!locked || (allowed !== undefined && !allowed(maskXor(value, bit)))
         return (
           <label
             key={bit}
@@ -91,9 +92,9 @@ export function PermChecks({
           >
             <input
               type="checkbox"
-              checked={(value & bit) !== 0}
+              checked={hasBit(value, bit)}
               disabled={off}
-              onChange={() => onChange(value ^ bit)}
+              onChange={() => onChange(maskXor(value, bit))}
               className="accent-primary"
             />
             {label}

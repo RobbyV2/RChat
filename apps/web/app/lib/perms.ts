@@ -32,6 +32,14 @@ export interface PermsModule {
     memMode: number,
     rules: number
   ): number
+  perms_everyone_stage(
+    everyone: number,
+    evAllow: number,
+    evDeny: number,
+    flags: number,
+    rules: number
+  ): number
+  perms_derived_row(allow: number, deny: number, flags: number): Float64Array
   perms_outranks(...ranks: [...RankArgs, ...RankArgs]): boolean
   perms_at_least(...ranks: [...RankArgs, ...RankArgs]): boolean
   perms_may_moderate(...args: [...RankArgs, number, ...RankArgs, number, number, boolean]): boolean
@@ -117,6 +125,7 @@ const low = (x: number) => x % HALF
 export const maskAnd = (a: number, b: number) => (high(a) & high(b)) * HALF + (low(a) & low(b))
 export const maskOr = (a: number, b: number) => (high(a) | high(b)) * HALF + (low(a) | low(b))
 export const maskNot = (a: number) => (~high(a) & HIGH) * HALF + (~low(a) & LOW)
+export const maskXor = (a: number, b: number) => (high(a) ^ high(b)) * HALF + (low(a) ^ low(b))
 export const hasBit = (mask: number, bit: number) => maskAnd(mask, bit) !== 0
 
 export interface Bit {
@@ -136,6 +145,12 @@ export const bit = (name: string): number => {
   if (found === undefined) throw new Error(`unknown permission ${name}`)
   return found.value
 }
+
+// What everyone holds on a hosted server that stores no mask of its own.
+export const baseBits = (): number =>
+  registry()
+    .filter(b => b.everyone && b.hosted === 'live')
+    .reduce((m, b) => maskOr(m, b.value), 0)
 
 export const known = (ruleset: number) => rules().perms_known(ruleset)
 export const fromWire = (wire: number, ruleset: number) =>
@@ -209,6 +224,44 @@ export const channelMask = (
     ch.member?.merge === true ? 1 : 0,
     ruleset
   )
+
+// What a channel gives everyone before any role or member row.
+export const everyoneStage = (
+  everyone: number,
+  ch: Pick<ChannelRules, 'everyone' | 'restrictView' | 'restrictSend'>,
+  ruleset: number
+) =>
+  rules().perms_everyone_stage(
+    everyone,
+    ch.everyone?.allow ?? 0,
+    ch.everyone?.deny ?? 0,
+    (ch.restrictView === true ? 1 : 0) | (ch.restrictSend === true ? 2 : 0) | (ch.everyone ? 8 : 0),
+    ruleset
+  )
+
+// A hosted rule as stored: its masks and the three flags a rule with both masks 0 is read from.
+export interface StoredRule {
+  allow: number
+  deny: number
+  merge?: boolean
+  canView: boolean
+  canSend: boolean
+  canReadHistory: boolean
+}
+
+// The row a hosted rule stands for. `member` says it is a member's rule.
+export const derivedRow = (rule: StoredRule, member: boolean): Ow & { merge: boolean } => {
+  const [allow, deny, merge] = rules().perms_derived_row(
+    rule.allow,
+    rule.deny,
+    (rule.canView ? 1 : 0) |
+      (rule.canSend ? 2 : 0) |
+      (rule.canReadHistory ? 4 : 0) |
+      (member ? 8 : 0) |
+      (rule.merge === true ? 16 : 0)
+  )
+  return { allow, deny, merge: merge === 1 }
+}
 
 export type Tier = 'outside' | 'plain' | 'role' | 'admin' | 'owner' | 'staff'
 const TIERS: Tier[] = ['outside', 'plain', 'role', 'admin', 'owner', 'staff']

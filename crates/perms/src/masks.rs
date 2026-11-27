@@ -47,6 +47,14 @@ pub const VOICE: Mask = value("Connect") | value("Speak") | value("Video");
 pub const MANAGER_PASS: Mask = (BASE & CHANNEL) | value("BypassSlowmode");
 /// What a timed-out member keeps.
 pub const TIMED_OUT_KEEP: Mask = VIEW | HISTORY | value("ViewAuditLog");
+/// What an incoming webhook holds in its channel.
+pub const WEBHOOK: Mask = VIEW | HISTORY | SEND | value("AttachFiles") | value("EmbedLinks");
+/// What a read link holds in its channel, and what every visitor may hold.
+pub const READ_LINK: Mask = VIEW | HISTORY;
+/// What guest chat adds to a visitor.
+pub const GUEST_CHAT: Mask = SEND;
+/// What guest voice adds to a visitor.
+pub const GUEST_VOICE: Mask = value("Connect") | value("Speak");
 /// The management bits: every live bit @everyone does not start with.
 pub const MGMT: Mask = pick(Some(false), None);
 /// Every live hosted bit.

@@ -31,6 +31,7 @@ import type {
   ChannelKind,
   ChannelLayout,
   ChannelPerm,
+  ChannelPermInput,
   DmSummary,
   IceServers,
   InstanceInfo,
@@ -812,8 +813,13 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('DELETE', `/servers/${seg(server)}/roles/${id}/assign/${seg(username)}`),
   channelPerms: (id: number, cursor: string | null = null) =>
     c.page<ChannelPerm>(withCursor(`/channels/${id}/perms`, cursor)),
-  setChannelPerm: (id: number, perm: ChannelPerm) =>
+  setChannelPerm: (id: number, perm: ChannelPermInput) =>
     c.req<unknown>('PUT', `/channels/${id}/perms`, perm),
+  setEveryonePerms: (server: string, perms: number, mask?: number) =>
+    c.req<{ everyone_perms: number }>('PATCH', `/servers/${seg(server)}/everyone`, {
+      perms,
+      mask,
+    }),
   clearChannelPerm: (id: number, subject: string) =>
     c.req<unknown>('DELETE', `/channels/${id}/perms/${seg(subject)}`),
   channelMessages: (id: number, page: PageOpts = {}) =>

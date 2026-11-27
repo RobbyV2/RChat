@@ -1122,6 +1122,9 @@ mod tests {
             for name in ["bob", "nobody"] {
                 let what = format!("{name}, round {round}");
                 assert_eq!(untime(&state, "alice", name).await, ok, "{what}");
+            }
+            for name in ["bob", "dave"] {
+                let what = format!("{name}, round {round}: an account costs no miss");
                 assert_eq!(rule(&state, "alice", channel, name).await, ok, "{what}");
             }
         }
@@ -1139,9 +1142,18 @@ mod tests {
         rate_refusal(ban_answer(&state, "alice", "erin").await, TOO_MANY_BANS);
         for name in ["bob", "nobody"] {
             assert_eq!(untime(&state, "alice", name).await, ok, "{name}");
-            assert_eq!(rule(&state, "alice", channel, name).await, ok, "{name}");
+            assert_eq!(
+                rule(&state, "alice", channel, name).await,
+                too_many(),
+                "{name}: past the misses, an account outside the server and a missing name alike"
+            );
         }
         join(db, "probe", "frank").await;
+        assert_eq!(
+            rule(&state, "alice", channel, "frank").await,
+            ok,
+            "a member needs no miss"
+        );
         assert_eq!(
             ban(&state, "alice", "frank").await,
             ok,
@@ -1161,7 +1173,7 @@ mod tests {
         ] {
             assert_eq!(banned(db, name).await, n, "{name}");
         }
-        for name in ["bob", "nobody"] {
+        for (name, n) in [("bob", 1), ("dave", 1), ("frank", 1), ("nobody", 0)] {
             assert_eq!(
                 sqlx::query(
                     "SELECT COUNT(*) FROM channel_perms WHERE channel_id = $1 AND subject = $2"
@@ -1173,8 +1185,8 @@ mod tests {
                 .expect("rules")
                 .try_get::<i64, _>(0)
                 .expect("n"),
-                1,
-                "{name} has its rule either way"
+                n,
+                "{name}"
             );
         }
         for name in ["", "  ", "a@b"] {
@@ -1189,6 +1201,49 @@ mod tests {
             "Invalid subject",
             "subject",
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_rule_for_a_name_without_an_account_is_a_miss() {
+        let (state, path) = temp_state("lookup_rule_miss").await;
+        let state = state.with_limits(Arc::new(Limits {
+            lookup_misses_per_hour: 2,
+            ..Limits::default()
+        }));
+        let db = &state.db;
+        let channel = probe_world(db).await;
+        add_user(db, "dave").await;
+        join(db, "probe", "dave").await;
+        let ok = (StatusCode::OK, String::new());
+        for name in ["bob", "dave", "bob"] {
+            assert_eq!(rule(&state, "alice", channel, name).await, ok, "{name}");
+        }
+        for name in ["nobody", "nobody2"] {
+            invalid_refusal(
+                rule_answer(&state, "alice", channel, name).await,
+                "Invalid subject",
+                "subject",
+            );
+        }
+        for name in ["bob", "nobody", "nobody3"] {
+            assert_eq!(
+                rule(&state, "alice", channel, name).await,
+                too_many(),
+                "{name}: past the misses, every name outside the server alike"
+            );
+        }
+        rate_refusal(rule_answer(&state, "alice", channel, "bob").await, TOO_MANY);
+        assert_eq!(rule(&state, "alice", channel, "dave").await, ok);
+        let everyone = set_channel_perm(
+            State(state.clone()),
+            me("alice"),
+            Path(channel),
+            body(json!({ "subject": "everyone", "allow": 0, "deny": 262144 })),
+        )
+        .await
+        .map(|_| ());
+        assert_eq!(status(everyone), ok);
         done(state, path).await;
     }
 

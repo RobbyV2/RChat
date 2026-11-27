@@ -246,6 +246,9 @@ impl Side {
             "ids" | "message_ids" => Some(json!([self.message])),
             "channel_id" => Some(json!(self.channel)),
             "dm_id" => Some(json!(self.dm)),
+            "allow" => Some(json!(rchat_perms::masks::VIEW)),
+            "deny" => Some(json!(0)),
+            "can_view" | "can_send" | "can_read_history" => Some(Value::Null),
             _ => None,
         }
     }

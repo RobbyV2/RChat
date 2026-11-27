@@ -173,13 +173,7 @@ pub(crate) async fn pin_message(
     }
     tx.commit().await?;
     let history_rules = match scope.channel_id {
-        Some(cid) => sqlx::query(
-            "SELECT 1 FROM channel_perms WHERE channel_id = $1 AND can_read_history = 0",
-        )
-        .bind(cid)
-        .fetch_optional(&state.db)
-        .await?
-        .is_some(),
+        Some(cid) => crate::api::access::limits_history(&state.db, cid).await?,
         None => false,
     };
     let MsgScope {

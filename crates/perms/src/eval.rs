@@ -91,6 +91,26 @@ fn restricted(p: Mask, ch: &Channel, view: Mask) -> Mask {
     p & !flag(ch.restrict_view, view) & !flag(ch.restrict_send, SEND_GROUP)
 }
 
+/// What the @everyone stage of a channel grants before any role or member overwrite.
+pub fn everyone_stage(everyone: Mask, ch: &Channel, r: &Ruleset) -> Mask {
+    let mut p = everyone & r.known & r.scope;
+    if let Some(o) = ch.everyone {
+        p = apply(p, o) & r.scope;
+    }
+    restricted(p, ch, r.view_group)
+}
+
+/// Whether taking an overwrite away from a member can widen their access: it denies a bit the
+/// @everyone stage grants, for someone who views the channel without it. They do when the stage
+/// grants View, or when one of `others` (the channel's other role and member rows) allows View
+/// and says nothing about that bit.
+pub fn narrows(row: Ow, others: &[Ow], everyone: Mask, ch: &Channel, r: &Ruleset) -> bool {
+    let stage = everyone_stage(everyone, ch, r);
+    let lost = row.deny & stage;
+    let viewer = |o: &Ow| o.allow & VIEW != 0 && lost & !(o.allow | o.deny) != 0;
+    lost != 0 && (stage & VIEW != 0 || others.iter().any(viewer))
+}
+
 /// What `who` holds in a channel. `acting` applies a timeout; reads pass false.
 pub fn channel_mask(
     who: &Who,

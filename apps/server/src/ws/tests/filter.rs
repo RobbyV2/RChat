@@ -472,6 +472,7 @@ fn every_event() -> Vec<WsEvent> {
         topic: None,
         category_id: None,
         position: 0,
+        my_perms: None,
     };
     let mut evs = Vec::new();
     for server in [Some(s("a")), Some(s("b")), None] {

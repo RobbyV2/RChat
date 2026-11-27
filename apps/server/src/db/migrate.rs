@@ -117,6 +117,13 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("sso_grants", "grp TEXT"),
     ("sso_user_groups", "alias_key TEXT"),
     ("scim_groups", "alias_source TEXT"),
+    ("servers", "everyone_perms {INT}"),
+    ("channel_perms", "allow {INT} NOT NULL DEFAULT 0"),
+    ("channel_perms", "deny {INT} NOT NULL DEFAULT 0"),
+    (
+        "channel_perms",
+        "mode TEXT NOT NULL DEFAULT 'override' CHECK(mode IN ('override','merge'))",
+    ),
     ("tokens", "sso_sid TEXT"),
     ("servers", "upload_expiry {INT}"),
     ("media", "ttl {INT}"),
@@ -267,7 +274,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 49: timed bans with a reason (`server_bans.expires_at`, `server_bans.reason`).
 /// 50: account deletions their owners asked for (`pending_purges.self_requested`).
 /// 51: server descriptions and icon looks (`servers.description`, `servers.icon_kind`).
-pub const SCHEMA_VERSION: i64 = 51;
+/// 52: the @everyone permissions of a server and allow/deny channel overwrites.
+pub const SCHEMA_VERSION: i64 = 52;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

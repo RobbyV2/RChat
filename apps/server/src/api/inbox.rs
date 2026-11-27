@@ -290,6 +290,7 @@ impl Gate {
                 view,
                 send: _,
                 history,
+                mask: _,
             } = access;
             match (view, history) {
                 (false, _) => hidden.push(id),

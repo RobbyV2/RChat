@@ -41,7 +41,7 @@ import type {
   CallKind,
   CallRelays,
   ChannelKind,
-  ChannelPerm,
+  ChannelPermInput,
   ConfirmChoice,
   DmSummary,
   Friend,
@@ -764,7 +764,7 @@ export interface RChatState {
   deleteRole: (server: string, id: number) => Promise<void>
   assignRole: (server: string, id: number, username: string) => Promise<void>
   unassignRole: (server: string, id: number, username: string) => Promise<void>
-  setChannelPerm: (id: number, perm: ChannelPerm) => Promise<void>
+  setChannelPerm: (id: number, perm: ChannelPermInput) => Promise<void>
   clearChannelPerm: (id: number, subject: string) => Promise<void>
   adminDeleteUser: (username: string) => Promise<void>
   adminRemovePhrase: (username: string) => Promise<void>

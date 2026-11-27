@@ -3,6 +3,7 @@ import type { TimeoutWire } from './timeouts'
 import type { ProfileChoices, ProfileLevel } from './profile_choice'
 import type { FwdPlace } from './p2p/content'
 import type { ServerIconKind } from './server_about'
+import { hasBit } from './perms'
 
 export type AvatarKind = 'identicon' | 'color'
 
@@ -26,7 +27,24 @@ export const Perm = {
 
 export const ALL_PERMS = 127999
 
-export const hasPerm = (perms: number, perm: number) => (perms & perm) !== 0
+// The permissions a channel rule can allow or deny that are not server permissions above.
+export const ChannelPermBit = {
+  ViewChannels: 131072,
+  SendMessages: 262144,
+  ReadHistory: 524288,
+  AddReactions: 1048576,
+  AttachFiles: 2097152,
+  EmbedLinks: 4194304,
+  CreatePolls: 8388608,
+  StartThreads: 16777216,
+  Connect: 33554432,
+  Speak: 67108864,
+  Video: 134217728,
+  PinMessages: 536870912,
+  BypassSlowmode: 1073741824,
+} as const
+
+export const hasPerm = (perms: number, perm: number) => hasBit(perms, perm)
 
 export interface UserRef {
   username: string
@@ -112,6 +130,8 @@ export interface Channel {
   topic?: string | null
   category_id?: number | null
   position?: number
+  // What you hold in the channel (server details only; events leave it out).
+  my_perms?: number
 }
 
 export interface Category {
@@ -140,6 +160,10 @@ export interface ChannelPerm {
   can_view: boolean
   can_send: boolean
   can_read_history: boolean
+  // The bits the rule allows and denies, and how a member's rule combines with their roles.
+  allow?: number
+  deny?: number
+  mode?: 'override' | 'merge'
 }
 
 // What a member set for one server: each field null when they use the account's.
@@ -169,6 +193,12 @@ export interface ServerProfilePatch {
   avatar_color?: string | null
   banner_color?: string | null
 }
+
+// What a rule is set to: masks, the three flags, or a rule as listed with its flags changed.
+export type ChannelPermInput =
+  | { subject: string; allow: number; deny: number; mode?: 'override' | 'merge' }
+  | Pick<ChannelPerm, 'subject' | 'can_view' | 'can_send' | 'can_read_history'>
+  | ChannelPerm
 
 export interface Member extends UserRef {
   is_admin: boolean
@@ -311,6 +341,9 @@ export interface ServerDetail {
   layout_version?: number
   read_only?: number[]
   roles: Role[]
+  // What everyone in the server holds, and what you hold.
+  everyone_perms?: number
+  my_perms?: number
   role_limits?: RoleLimits
   member_count: number
   online_count: number

@@ -1,4 +1,4 @@
-use rchat_perms::eval::{self, Channel, Mode, Who};
+use rchat_perms::eval::{self, Channel, Mode, Ow, Who};
 use rchat_perms::hier::{self, Actor, Rank, Tier};
 use rchat_perms::rules::HOSTED;
 use rchat_perms::{Mask, delta, masks, registry};
@@ -43,11 +43,26 @@ pub fn update_bits(current: i64, sent: i64, mask: i64) -> i64 {
         ALL_PERMS as Mask,
     ) as i64
 }
+/// `update_bits` for a role, which may also hold the bits of everyone.
+pub fn update_role_bits(current: i64, sent: i64, mask: i64) -> i64 {
+    delta::update_bits(
+        current as Mask,
+        sent as Mask,
+        mask as Mask,
+        PRE_DELEGATION_PERMS as Mask,
+        ROLE_BITS as Mask,
+    ) as i64
+}
 /// Every permission before `ManageReports` existed.
 pub const PRE_REPORT_PERMS: i64 = 511;
 
 pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
-    let who = match is_admin {
+    eval::server_bits(&member_who(is_admin, perms, roles), 0, &HOSTED) as i64 & ALL_PERMS
+}
+
+/// A member as the evaluator reads them: an admin with its mask, or the union of their roles.
+pub fn member_who(is_admin: bool, perms: i64, roles: i64) -> Who {
+    match is_admin {
         true => Who::Admin {
             mask: perms as Mask,
             roles: roles as Mask,
@@ -55,8 +70,7 @@ pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
         false => Who::Member {
             roles: roles as Mask,
         },
-    };
-    eval::server_bits(&who, 0, &HOSTED) as i64 & ALL_PERMS
+    }
 }
 
 fn actor(site_admin: bool, bits: i64) -> Actor<'static> {
@@ -89,20 +103,67 @@ pub fn can_grant(actor: i64, actor_site_admin: bool, perms: i64) -> bool {
     .is_ok()
 }
 
-#[derive(Clone, Copy)]
+/// What a viewer holds in a channel: `mask`, and its View, Send and Read history bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChannelAccess {
     pub view: bool,
     pub send: bool,
     pub history: bool,
+    pub mask: i64,
 }
 
 impl ChannelAccess {
-    pub fn all(v: bool) -> ChannelAccess {
+    pub fn of(mask: Mask) -> ChannelAccess {
         ChannelAccess {
-            view: v,
-            send: v,
-            history: v,
+            view: mask & masks::VIEW != 0,
+            send: mask & masks::SEND != 0,
+            history: mask & masks::HISTORY != 0,
+            mask: mask as i64,
         }
+    }
+}
+
+/// The subject of the rule for everyone in the server.
+pub const EVERYONE: &str = "everyone";
+
+/// The bits @everyone may hold.
+pub const EVERYONE_BITS: i64 = masks::BASE as i64;
+/// The bits a role may hold.
+pub const ROLE_BITS: i64 = ALL_PERMS | EVERYONE_BITS;
+
+/// What someone who is not a member may hold at most in a channel. Whether a guest may send or
+/// join voice at all is `ResolvedChannel::guest_participation`.
+pub const VISITOR_CAPS: Mask = masks::READ_LINK | masks::GUEST_CHAT | masks::GUEST_VOICE;
+
+/// The @everyone mask of a server from its stored `everyone_perms`.
+pub fn everyone_mask(stored: Option<i64>) -> Mask {
+    match stored {
+        Some(bits) => bits as Mask,
+        None => eval::DEFAULT_EVERYONE,
+    }
+}
+
+/// Who a viewer is in a server, and the rule subjects that match them there.
+#[derive(Clone, Debug)]
+pub struct Standing {
+    pub who: Who,
+    pub subjects: Vec<String>,
+}
+
+impl Standing {
+    /// Someone who is not a member: a guest, or the account `user`.
+    pub fn visitor(user: Option<&str>, caps: Mask) -> Standing {
+        Standing {
+            who: Who::Visitor {
+                signed_in: user.is_some(),
+                caps,
+            },
+            subjects: user.map(|name| format!("u:{name}")).into_iter().collect(),
+        }
+    }
+
+    pub fn manages_channels(&self, everyone: Mask) -> bool {
+        eval::server_bits(&self.who, everyone, &HOSTED) & masks::MANAGE_CHANNELS != 0
     }
 }
 
@@ -162,12 +223,61 @@ where
     .is_some())
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+/// A channel rule as stored. A rule with both masks 0 is read from its three flags.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PermRow {
     pub subject: String,
     pub view: bool,
     pub send: bool,
     pub history: bool,
+    #[serde(default)]
+    pub allow: i64,
+    #[serde(default)]
+    pub deny: i64,
+    #[serde(default)]
+    pub merge: bool,
+}
+
+impl PermRow {
+    pub fn evaluated(&self) -> (Ow, Mode) {
+        let PermRow {
+            subject,
+            view,
+            send,
+            history,
+            allow,
+            deny,
+            merge,
+        } = self;
+        let mode = match merge {
+            true => Mode::Merge,
+            false => Mode::Override,
+        };
+        eval::derived_row(
+            *allow as Mask,
+            *deny as Mask,
+            mode,
+            *view,
+            *send,
+            *history,
+            subject.starts_with("u:"),
+        )
+    }
+}
+
+/// The columns `perm_row` reads, of the `channel_perms` table named `alias`.
+pub fn perm_columns(alias: &str) -> String {
+    [
+        "subject",
+        "can_view",
+        "can_send",
+        "can_read_history",
+        "allow",
+        "deny",
+        "mode",
+    ]
+    .map(|c| format!("{alias}.{c}"))
+    .join(", ")
 }
 
 pub fn perm_row(r: &AnyRow, at: usize) -> sqlx::Result<PermRow> {
@@ -176,7 +286,35 @@ pub fn perm_row(r: &AnyRow, at: usize) -> sqlx::Result<PermRow> {
         view: r.try_get::<i64, _>(at + 1)? != 0,
         send: r.try_get::<i64, _>(at + 2)? != 0,
         history: r.try_get::<i64, _>(at + 3)? != 0,
+        allow: r.try_get(at + 4)?,
+        deny: r.try_get(at + 5)?,
+        merge: r.try_get::<String, _>(at + 6)? == "merge",
     })
+}
+
+/// The permissions behind each flag of a rule: view, send and read history.
+const FLAG_BITS: [Mask; 3] = [masks::VIEW, masks::SEND_GROUP, masks::HISTORY];
+
+/// The three flags a rule with these masks stores, so a reader of the flags alone stays close.
+pub fn row_flags(allow: i64, deny: i64) -> [bool; 3] {
+    let (allow, deny) = (allow as Mask, deny as Mask);
+    FLAG_BITS.map(|bits| allow & bits != 0 || deny & bits == 0)
+}
+
+/// The masks of a rule after its flags change from `was` to `now`: a flag turned on allows its
+/// permissions, one turned off denies them, and every other bit stays.
+pub fn reflag(allow: i64, deny: i64, was: [bool; 3], now: [bool; 3]) -> (i64, i64) {
+    FLAG_BITS.into_iter().zip(was.into_iter().zip(now)).fold(
+        (allow, deny),
+        |(allow, deny), (bits, change)| {
+            let bits = bits as i64;
+            match change {
+                (false, true) => (allow | bits, deny & !bits),
+                (true, false) => (allow & !bits, deny | bits),
+                (true, true) | (false, false) => (allow, deny),
+            }
+        },
+    )
 }
 
 /// Which actions of a channel need an explicit allow from one of its rules (`restrict_view`,
@@ -196,78 +334,109 @@ impl Restrict {
     }
 }
 
-/// The channel rule: managers pass. Otherwise each action is allowed by any rule matching one of
-/// `subjects` that allows it; without a matching rule, actions are allowed unless the channel
-/// restricts them (history only follows view). No view means nothing.
-pub fn fold_access<'a>(
+/// The rules of one channel as the evaluator reads them for `standing`.
+fn channel_of<'a>(
     rows: impl IntoIterator<Item = &'a PermRow>,
-    subjects: &[String],
-    manages: bool,
+    standing: &Standing,
+) -> (Option<Ow>, Vec<Ow>, Option<(Ow, Mode)>) {
+    let (mut everyone, mut roles, mut member) = (None, Vec::new(), None);
+    for row in rows {
+        let subject = row.subject.as_str();
+        match (
+            subject == EVERYONE,
+            standing.subjects.iter().any(|s| s == subject),
+        ) {
+            (true, _) => everyone = Some(row.evaluated().0),
+            (false, true) if subject.starts_with("u:") => member = Some(row.evaluated()),
+            (false, true) => roles.push(row.evaluated().0),
+            (false, false) => {}
+        }
+    }
+    (everyone, roles, member)
+}
+
+/// What `standing` holds in a channel with these rules. `timed_out` is for acting while timed
+/// out; reads pass false.
+pub fn channel_mask<'a>(
+    rows: impl IntoIterator<Item = &'a PermRow>,
+    standing: &Standing,
+    everyone: Mask,
     restrict: Restrict,
-) -> ChannelAccess {
+    voice: bool,
+    timed_out: bool,
+) -> Mask {
     let Restrict {
         view: restrict_view,
         send: restrict_send,
     } = restrict;
-    let mut roles = Vec::new();
-    let mut member = None;
-    for row in rows {
-        let PermRow {
-            subject,
-            view,
-            send,
-            history,
-        } = row;
-        if subjects.contains(subject) {
-            let own = subject.starts_with("u:");
-            let (ow, mode) = eval::derived_row(0, 0, Mode::Override, *view, *send, *history, own);
-            match (own, member) {
-                (true, None) => member = Some((ow, mode)),
-                (true, Some(_)) | (false, _) => roles.push(ow),
-            }
-        }
-    }
-    let who = Who::Member {
-        roles: match manages {
-            true => masks::MANAGE_CHANNELS,
-            false => 0,
-        },
-    };
+    let (ev, roles, member) = channel_of(rows, standing);
     let channel = Channel {
-        everyone: None,
+        everyone: ev,
         restrict_view,
         restrict_send,
-        voice: false,
+        voice,
         roles: &roles,
         member,
     };
-    let mask = eval::channel_mask(
-        &who,
-        eval::DEFAULT_EVERYONE,
-        &channel,
-        false,
-        false,
-        &HOSTED,
-    );
-    ChannelAccess {
-        view: mask & masks::VIEW != 0,
-        send: mask & masks::SEND != 0,
-        history: mask & masks::HISTORY != 0,
-    }
+    eval::channel_mask(&standing.who, everyone, &channel, timed_out, true, &HOSTED)
 }
 
-/// Whether taking `rule` away from a member can widen their access: for a member it was the only
-/// match for, it allows less than a member matching no rule gets in that channel. Deleting or
-/// unassigning a role with such a rule needs Manage channels.
-pub fn rule_narrows(rule: &PermRow, restrict: Restrict) -> bool {
-    let subject = [rule.subject.clone()];
-    let ChannelAccess {
+/// Whether taking `rule` away from a member can widen their access: it denies something the
+/// channel (with all its `rows`) gives everyone who views it. Deleting or unassigning a role
+/// with such a rule needs Manage channels.
+pub fn rule_narrows<'a>(
+    rule: &PermRow,
+    rows: impl IntoIterator<Item = &'a PermRow>,
+    everyone: Mask,
+    restrict: Restrict,
+) -> bool {
+    let Restrict {
+        view: restrict_view,
+        send: restrict_send,
+    } = restrict;
+    let rows: Vec<&PermRow> = rows.into_iter().collect();
+    let others: Vec<Ow> = rows
+        .iter()
+        .filter(|r| r.subject != EVERYONE && r.subject != rule.subject)
+        .map(|r| r.evaluated().0)
+        .collect();
+    let (ev, _, _) = channel_of(rows, &Standing::visitor(None, 0));
+    let channel = Channel {
+        everyone: ev,
+        restrict_view,
+        restrict_send,
+        voice: false,
+        roles: &[],
+        member: None,
+    };
+    eval::narrows(rule.evaluated().0, &others, everyone, &channel, &HOSTED)
+}
+
+/// The allow-list reading of rules stored with flags only, the model they are checked against:
+/// managers pass. Otherwise each action is allowed by any rule matching one of `subjects` that
+/// allows it; without a matching rule, actions are allowed unless the channel restricts them
+/// (history only follows view). No view means nothing. The answer is (view, send, history).
+#[cfg(test)]
+pub(crate) fn allow_lists(
+    rows: &[PermRow],
+    subjects: &[String],
+    manages: bool,
+    restrict: Restrict,
+) -> [bool; 3] {
+    let matching: Vec<&PermRow> = rows
+        .iter()
+        .filter(|r| subjects.contains(&r.subject))
+        .collect();
+    let any = |f: fn(&PermRow) -> bool, open: bool| match matching.is_empty() {
+        true => open,
+        false => matching.iter().any(|r| f(r)),
+    };
+    let view = manages || any(|r| r.view, !restrict.view);
+    [
         view,
-        send,
-        history,
-    } = fold_access([rule], &subject, false, restrict);
-    let open = fold_access([], &subject, false, restrict);
-    (open.view && !view) || (open.send && !send) || (open.history && !history)
+        view && (manages || any(|r| r.send, !restrict.send)),
+        view && (manages || any(|r| r.history, true)),
+    ]
 }
 
 #[cfg(test)]
@@ -320,48 +489,167 @@ mod tests {
         assert!(can_grant(0, true, ALL_PERMS));
     }
 
+    fn flag_row(subject: &str, flags: u32) -> PermRow {
+        PermRow {
+            subject: subject.to_string(),
+            view: flags & 1 != 0,
+            send: flags & 2 != 0,
+            history: flags & 4 != 0,
+            allow: 0,
+            deny: 0,
+            merge: false,
+        }
+    }
+
     #[test]
-    fn channel_access_is_the_union_of_matching_rules() {
-        let subjects = ["u:a".to_string(), "r:1".to_string(), "r:2".to_string()];
-        let names = ["u:a", "r:1", "r:2", "u:b", "r:3"];
-        for bits in 0u32..1 << 12 {
-            let rows: Vec<PermRow> = (0..3)
-                .filter(|i| bits >> (i * 4) & 1 != 0)
-                .map(|i| PermRow {
-                    subject: names[(i + (bits as usize >> 11) * 3) % 5].to_string(),
-                    view: bits >> (i * 4 + 1) & 1 != 0,
-                    send: bits >> (i * 4 + 2) & 1 != 0,
-                    history: bits >> (i * 4 + 3) & 1 != 0,
+    fn derived_rules_match_allow_lists() {
+        let names = ["r:1", "r:2", "r:3", "u:a"];
+        let open = masks::BASE & masks::CHANNEL;
+        let mut evaluations = 0;
+        for world in 0..9u32.pow(4) {
+            let rows: Vec<PermRow> = (0..4)
+                .filter_map(|i| match world / 9u32.pow(i) % 9 {
+                    0 => None,
+                    flags => Some(flag_row(names[i as usize], flags - 1)),
                 })
                 .collect();
-            for flags in 0..8 {
+            for flags in 0..4 {
                 let restrict = Restrict {
                     view: flags & 1 != 0,
                     send: flags & 2 != 0,
                 };
-                let manages = flags & 4 != 0;
-                let matching: Vec<&PermRow> = rows
-                    .iter()
-                    .filter(|r| subjects.contains(&r.subject))
-                    .collect();
-                let any = |f: fn(&PermRow) -> bool, open: bool| match matching.is_empty() {
-                    true => open,
-                    false => matching.iter().any(|r| f(r)),
-                };
-                let view = manages || any(|r| r.view, !restrict.view);
-                let want = [
-                    view,
-                    view && (manages || any(|r| r.send, !restrict.send)),
-                    view && (manages || any(|r| r.history, true)),
-                ];
-                let ChannelAccess {
-                    view,
-                    send,
-                    history,
-                } = fold_access(&rows, &subjects, manages, restrict);
-                assert_eq!([view, send, history], want, "{bits} {flags}");
+                for held in 0..9u32 {
+                    let member = held < 8;
+                    let mut subjects = vec!["u:a".to_string()];
+                    subjects.extend(
+                        (0..3)
+                            .filter(|i| member && held >> i & 1 != 0)
+                            .map(|i| names[i].to_string()),
+                    );
+                    let standing = match member {
+                        true => Standing {
+                            who: Who::Member { roles: 0 },
+                            subjects: subjects.clone(),
+                        },
+                        false => Standing::visitor(Some("a"), open),
+                    };
+                    let mask = channel_mask(
+                        &rows,
+                        &standing,
+                        eval::DEFAULT_EVERYONE,
+                        restrict,
+                        false,
+                        false,
+                    );
+                    let ChannelAccess {
+                        view,
+                        send,
+                        history,
+                        mask: _,
+                    } = ChannelAccess::of(mask);
+                    let want = allow_lists(&rows, &subjects, false, restrict);
+                    assert_eq!([view, send, history], want, "{world} {flags} {held}");
+                    let group = mask & masks::SEND_GROUP;
+                    assert!(group == 0 || group == masks::SEND_GROUP);
+                    if member {
+                        assert_eq!(mask & masks::VOICE == masks::VOICE, view);
+                    }
+                    evaluations += 1;
+                }
             }
         }
+        assert_eq!(evaluations, 236_196);
+        let manager = Standing {
+            who: Who::Member {
+                roles: masks::MANAGE_CHANNELS,
+            },
+            subjects: vec!["u:a".to_string()],
+        };
+        let shut = Restrict {
+            view: true,
+            send: true,
+        };
+        let rows = [flag_row("u:a", 0)];
+        let mask = channel_mask(&rows, &manager, eval::DEFAULT_EVERYONE, shut, false, false);
+        assert_eq!(mask, masks::MANAGER_PASS);
+        assert_eq!(allow_lists(&rows, &manager.subjects, true, shut), [true; 3]);
+    }
+
+    #[test]
+    fn rules_narrow_when_they_deny_what_everyone_gets() {
+        let open = Restrict::default();
+        let private = Restrict {
+            view: true,
+            send: false,
+        };
+        let everyone = eval::DEFAULT_EVERYONE;
+        let quiet = flag_row("r:1", 1 | 4);
+        assert!(rule_narrows(&quiet, [], everyone, open));
+        assert!(!rule_narrows(&flag_row("r:1", 7), [], everyone, open));
+        let hidden = flag_row("r:1", 2 | 4);
+        assert!(rule_narrows(&hidden, [], everyone, open));
+        assert!(!rule_narrows(&hidden, [], everyone, private));
+        let deny_send = PermRow {
+            deny: masks::SEND as i64,
+            ..flag_row("r:1", 7)
+        };
+        assert!(rule_narrows(&deny_send, [], everyone, open));
+        assert!(!rule_narrows(&deny_send, [], everyone & !masks::SEND, open));
+        let ev = PermRow {
+            deny: masks::SEND as i64,
+            ..flag_row(EVERYONE, 7)
+        };
+        assert!(!rule_narrows(&deny_send, [&ev], everyone, open));
+        let allow_only = PermRow {
+            allow: masks::VIEW as i64,
+            ..flag_row("r:2", 0)
+        };
+        assert!(!rule_narrows(&allow_only, [], everyone, open));
+        assert!(!rule_narrows(&deny_send, [], everyone, private));
+        assert!(
+            rule_narrows(&deny_send, [&allow_only], everyone, private),
+            "another rule lets a member in, and this one holds them back there"
+        );
+        let with_flags = flag_row("r:2", 1 | 4);
+        assert!(
+            !rule_narrows(&deny_send, [&with_flags], everyone, private),
+            "the rule that lets them in denies it too"
+        );
+    }
+
+    #[test]
+    fn mask_writes_keep_close_flags() {
+        let (v, s, h) = (
+            masks::VIEW as i64,
+            masks::SEND as i64,
+            masks::HISTORY as i64,
+        );
+        assert_eq!(row_flags(v, 0), [true, true, true]);
+        assert_eq!(row_flags(v, s | h), [true, false, false]);
+        assert_eq!(row_flags(0, v), [false, true, true]);
+        assert_eq!(
+            row_flags(s, masks::SEND_GROUP as i64 & !s),
+            [true, true, true]
+        );
+    }
+
+    #[test]
+    fn a_changed_flag_moves_only_its_permissions() {
+        let group = masks::SEND_GROUP as i64;
+        let (v, mention, attach) = (
+            masks::VIEW as i64,
+            Perm::MentionEveryone as i64,
+            registry::value("AttachFiles") as i64,
+        );
+        let (on, off) = ([true; 3], [false, true, true]);
+        assert_eq!(reflag(0, mention, on, off), (0, mention | v));
+        assert_eq!(reflag(v, mention, on, off), (0, mention | v));
+        assert_eq!(reflag(0, attach, [true, false, true], on), (group, 0));
+        assert_eq!(
+            reflag(mention, attach, [true, false, true], [true, false, false]),
+            (mention, attach | masks::HISTORY as i64)
+        );
+        assert_eq!(reflag(mention, v, off, off), (mention, v));
     }
 
     #[test]

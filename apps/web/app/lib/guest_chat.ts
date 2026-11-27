@@ -2,7 +2,8 @@ import type { RChatState } from './store_types'
 import type { ApiClient } from './api'
 import { ApiError } from './api'
 import { device } from './platform'
-import type { ServerDetail, SiteSettings, Message } from './types'
+import { hasBit } from './perms'
+import { ChannelPermBit, type ServerDetail, type SiteSettings, type Message } from './types'
 
 const sessions = new Map<string, string>()
 
@@ -19,9 +20,9 @@ export function guestCanPost(
     settings.guest_chat_enabled === true &&
     detail?.guest_chat === true &&
     room?.kind === 'text' &&
-    !room.restrict_send &&
-    !room.restrict_view &&
-    !detail.read_only?.includes(room.id)
+    (room.my_perms === undefined
+      ? !room.restrict_send && !room.restrict_view && !detail.read_only?.includes(room.id)
+      : hasBit(room.my_perms, ChannelPermBit.SendMessages))
   )
 }
 

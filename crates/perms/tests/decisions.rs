@@ -1,5 +1,5 @@
 use rchat_perms::delta::{
-    Refusal, check_bits_edit, check_overwrite_edit, denied, granted, update_bits,
+    Refusal, check_bits_edit, check_overwrite_edit, denied, granted, taken, update_bits,
 };
 use rchat_perms::eval::{
     Channel, DEFAULT_EVERYONE, Mode, Ow, Who, channel_mask, derived_row, server_bits, visitor_mask,
@@ -343,6 +343,22 @@ fn edits_grant_only_what_the_actor_holds() {
         Err(Refusal::Outranked)
     );
     assert_eq!(check_overwrite_edit(2, false, None, ow(0, 2), true), Ok(()));
+    assert_eq!(taken(ow(2 | VIEW, 0), None), 2);
+    assert_eq!(taken(ow(2, 0), ow(0, 2 | SEND)), 2);
+    assert_eq!(taken(ow(VIEW, 0), ow(0, VIEW)), 0);
+    assert_eq!(
+        check_overwrite_edit(0, false, ow(2, 0), None, true),
+        Ok(()),
+        "deleting an allow the actor lacks"
+    );
+    assert_eq!(
+        check_overwrite_edit(0, false, ow(2, 0), None, false),
+        Err(Refusal::Outranked)
+    );
+    assert_eq!(
+        check_overwrite_edit(SEND, false, ow(2, 0), ow(SEND, 0), false),
+        Err(Refusal::Outranked)
+    );
     assert_eq!(check_bits_edit(4, false, 1, 1 | 4), Ok(()));
     assert_eq!(check_bits_edit(4, false, 0, 1 | 4), Err(Refusal::Grants(1)));
     assert_eq!(check_bits_edit(0, true, 0, ALL), Ok(()));

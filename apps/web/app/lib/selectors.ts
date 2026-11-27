@@ -22,6 +22,7 @@ import {
   type GroupPings,
 } from './group_pings'
 import { lockState } from './profile_reset'
+import { maskAnd } from './perms'
 import { canChangeRole, memberPerms, rolePerms } from './rules'
 import { shownParts } from './server_profile'
 import type { ConfigSource } from './config_transfer'
@@ -72,7 +73,7 @@ export const serverAdminPerms = (s: RChatState, server: string): number => {
     : (me.servers.find(x => x.name === server)?.is_admin ?? false)
       ? ALL_PERMS
       : 0
-  return myTimeoutEnds(s, server) === null ? perms : perms & TIMED_OUT_PERMS
+  return myTimeoutEnds(s, server) === null ? perms : maskAnd(perms, TIMED_OUT_PERMS)
 }
 
 export const myRolePerms = (s: RChatState, server: string): number =>

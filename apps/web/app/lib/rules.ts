@@ -1,5 +1,16 @@
 import {
+  HOSTED,
+  baseBits,
+  derivedRow,
+  everyoneStage,
+  hasBit,
+  maskAnd,
+  maskNot,
+  maskOr,
+} from './perms'
+import {
   ALL_PERMS,
+  ChannelPermBit,
   Perm,
   type Channel,
   type ChannelPerm,
@@ -133,20 +144,22 @@ export const memberPerms = (
   roles: Pick<Role, 'id' | 'perms'>[]
 ) => {
   if (!member) return 0
-  if (member.is_admin) return member.perms === 0 ? ALL_PERMS : member.perms & ALL_PERMS
-  return (
-    roles.filter(r => member.role_ids.includes(r.id)).reduce((acc, r) => acc | r.perms, 0) &
+  if (member.is_admin) return member.perms === 0 ? ALL_PERMS : maskAnd(member.perms, ALL_PERMS)
+  return maskAnd(
+    roles.filter(r => member.role_ids.includes(r.id)).reduce((acc, r) => maskOr(acc, r.perms), 0),
     ALL_PERMS
   )
 }
 
+const without = (bits: number, held: number) => maskAnd(bits, maskNot(held))
+
 export const canModerate = (perms: number, siteAdmin: boolean, target: number) =>
-  siteAdmin || ((target & ~perms) === 0 && target !== perms)
+  siteAdmin || (without(target, perms) === 0 && target !== perms)
 
 export const canGrant = (perms: number, siteAdmin: boolean, granted: number) =>
-  siteAdmin || (granted & ALL_PERMS & ~perms) === 0
+  siteAdmin || without(maskAnd(granted, ALL_PERMS), perms) === 0
 
-export const adminMask = (stored: number) => (stored === 0 ? ALL_PERMS : stored & ALL_PERMS)
+export const adminMask = (stored: number) => (stored === 0 ? ALL_PERMS : maskAnd(stored, ALL_PERMS))
 
 export const canPromote = (perms: number, siteAdmin: boolean) =>
   canGrant(perms, siteAdmin, ALL_PERMS)
@@ -160,7 +173,7 @@ export const REVOKE_RAISES =
   "They have roles with permissions you don't have, so removing their admin would give them those."
 
 export const canRevoke = (perms: number, siteAdmin: boolean, stored: number, roles: number) =>
-  (roles & ALL_PERMS & ~adminMask(stored)) === 0 || canGrant(perms, siteAdmin, roles)
+  without(maskAnd(roles, ALL_PERMS), adminMask(stored)) === 0 || canGrant(perms, siteAdmin, roles)
 
 export const canTransferTo = (
   perms: number,
@@ -234,18 +247,56 @@ export const roleDeleteBlock = (
 export const ROLE_DENY_HINT =
   'Members can lose a role by leaving and rejoining. Use Require roles for strict control.'
 
+// The row a channel rule stands for.
+export const ruleRow = (r: ChannelPerm) =>
+  r.allow !== undefined && r.deny !== undefined
+    ? { allow: r.allow, deny: r.deny, merge: r.mode === 'merge' }
+    : derivedRow(
+        {
+          allow: 0,
+          deny: 0,
+          canView: r.can_view,
+          canSend: r.can_send,
+          canReadHistory: r.can_read_history,
+        },
+        r.subject.startsWith('u:')
+      )
+
+export const EVERYONE_SUBJECT = 'everyone'
+
+// Whether a role rule denies something the channel gives everyone who views it: a member loses
+// that deny with the role. `everyone` is what everyone holds in the server (the default when
+// the server does not say). Needs the permission rules loaded.
 export const roleDenyEscapes = (
   channel: Pick<Channel, 'kind' | 'restrict_view' | 'restrict_send'>,
-  rules: ChannelPerm[]
-) =>
-  !channel.restrict_view &&
-  rules.some(
-    r =>
-      r.subject.startsWith('r:') &&
-      (!r.can_view ||
-        (channel.kind === 'text' &&
-          ((!r.can_send && !channel.restrict_send) || !r.can_read_history)))
+  rules: ChannelPerm[],
+  everyone?: number
+) => {
+  const all = rules.find(r => r.subject === EVERYONE_SUBJECT)
+  const stage = everyoneStage(
+    everyone ?? baseBits(),
+    {
+      everyone: all && ruleRow(all),
+      restrictView: channel.restrict_view === true,
+      restrictSend: channel.restrict_send === true,
+    },
+    HOSTED
   )
+  const used =
+    channel.kind === 'text'
+      ? stage
+      : maskAnd(
+          stage,
+          ChannelPermBit.ViewChannels |
+            ChannelPermBit.Connect |
+            ChannelPermBit.Speak |
+            ChannelPermBit.Video
+        )
+  return (
+    hasBit(stage, ChannelPermBit.ViewChannels) &&
+    rules.some(r => r.subject.startsWith('r:') && maskAnd(ruleRow(r).deny, used) !== 0)
+  )
+}
 
 export type PasswordVerb = 'Set' | 'Change' | 'Clear'
 

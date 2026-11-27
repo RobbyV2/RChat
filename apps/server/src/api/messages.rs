@@ -9,7 +9,8 @@ use sqlx::Row;
 use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::api::access::perms::{ChannelAccess, Perm, perm_subjects};
+use crate::api::access::overwrite_sql::overwrite_sql;
+use crate::api::access::perms::{ChannelAccess, Perm};
 use crate::api::access::{
     Proof, ResolvedMessage, channel_manager_servers, granted_servers, member_channel_rights,
     resolve_channel, resolve_dm, resolve_message,
@@ -37,6 +38,7 @@ use crate::limits::bucket::{Keyed, Policy};
 use crate::limits::shared::Rate;
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
+use rchat_perms::masks;
 
 const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews";
 const SNIPPET_MAX: usize = 200;
@@ -3691,11 +3693,6 @@ async fn search_scope(
                 "c.server IN (SELECT server FROM members WHERE username = ${})",
                 binds.len()
             ));
-            let mut ph = Vec::new();
-            for subject in perm_subjects(db, None, &u.username).await? {
-                binds.push(Bind::S(subject));
-                ph.push(format!("${}", binds.len()));
-            }
             let member = User {
                 is_site_admin: false,
                 ..u.clone()
@@ -3720,13 +3717,11 @@ async fn search_scope(
                 }
                 bypass.push_str(&format!("c.id IN ({}) OR ", opened.join(", ")));
             }
-            let mine = ph.join(", ");
             place.push(format!(
-                "({bypass}(c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.subject IN ({mine}))) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view != 0 AND cp.subject IN ({mine})))"
+                "({bypass}{})",
+                overwrite_sql(masks::VIEW, Some("$1"))
             ));
-            let history = format!(
-                "{bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.subject IN ({mine})) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_read_history != 0 AND cp.subject IN ({mine}))"
-            );
+            let history = format!("{bypass}{}", overwrite_sql(masks::HISTORY, Some("$1")));
             let joined = "(SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1)";
             row.push(format!(
                 "({history} OR (m.created_at >= {joined} AND COALESCE((SELECT rt.created_at FROM messages rt WHERE rt.id = m.thread_root_id), m.created_at) >= {joined}))"
@@ -3735,7 +3730,8 @@ async fn search_scope(
             since = Some(format!("CASE WHEN {history} THEN NULL ELSE {joined} END"));
         }
         None => {
-            place.push("c.restrict_view = 0".to_string());
+            place.push(overwrite_sql(masks::VIEW, None));
+            place.push(overwrite_sql(masks::HISTORY, None));
             let granted = granted_servers(db, proof).await?;
             let public = crate::api::access::Reading::now(db).await.servers_sql();
             match granted.is_empty() {
@@ -3778,6 +3774,36 @@ async fn search_scope(
         channels: None,
         staff,
     }))
+}
+
+/// The channels of `server` a search by `user` reads, and whether it reads each one's whole
+/// history.
+#[cfg(test)]
+pub(crate) async fn search_reach(
+    db: &Db,
+    user: Option<&User>,
+    server: &str,
+) -> Result<Vec<(i64, bool)>, ApiError> {
+    let servers = user.is_none().then(|| vec![server.to_string()]);
+    let Some(scope) = search_scope(db, user, &Proof::none(), servers).await? else {
+        return Ok(Vec::new());
+    };
+    let whole = match &scope.since {
+        Some(since) => format!("CASE WHEN ({since}) IS NULL THEN 1 ELSE 0 END"),
+        None => "1".to_string(),
+    };
+    let sql = format!(
+        "SELECT c.id, {whole} FROM channels c WHERE {} AND c.server = ${} ORDER BY c.id",
+        scope.place(),
+        scope.binds.len() + 1
+    );
+    bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &scope.binds)
+        .bind(server)
+        .fetch_all(db)
+        .await?
+        .iter()
+        .map(|r| Ok((r.try_get(0)?, r.try_get::<i64, _>(1)? != 0)))
+        .collect()
 }
 
 /// `scope` narrowed to the channels of `server` it may read, one bind per channel id, so a
@@ -4037,6 +4063,7 @@ pub(crate) async fn unreads(
                 view,
                 send: _,
                 history,
+                mask: _,
             }) => *view && (*history || latest_at.is_some_and(|t| t >= joined_at)),
         };
         let last_read: i64 = r.try_get(4)?;
@@ -4056,6 +4083,7 @@ pub(crate) async fn unreads(
                 view: false,
                 send: _,
                 history: _,
+                mask: _,
             }) => (ScopePings::default(), Vec::new()),
             _ => (pinged, grouped),
         };
@@ -6041,7 +6069,7 @@ mod tests {
         for name in ["alice", "bob", "mod", "kicker"] {
             let user = mem_user(name, false);
             let restricted = member_channel_rights(db, &user).await.expect("restricted");
-            let open = ChannelAccess::all(true);
+            let open = ChannelAccess::of(masks::BASE & masks::CHANNEL);
             for cid in [general, private, roled, empty, nohist] {
                 let want = channel_access(db, "rchat", cid, Some(&user))
                     .await

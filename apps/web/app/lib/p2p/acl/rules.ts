@@ -6,6 +6,7 @@ import {
   atLeast,
   channelMask,
   checkBitsEdit,
+  checkOverwriteEdit,
   fromWire,
   hasBit,
   outranks as above,
@@ -56,7 +57,11 @@ export const ALL = 0x7fffffff
 export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
 export const RULES_VERSION = 4
+// The next rules version: channel permissions follow the hosted semantics from it on.
 export const RULES_NEXT = 5
+// The rules version permissions are decided under: a room's own, or the current one.
+export const rulesOf = (rules: unknown): number =>
+  rules === 2 || rules === RULES_VERSION || rules === RULES_NEXT ? rules : RULES_VERSION
 const atNext = (rules: unknown) => typeof rules === 'number' && rules >= RULES_NEXT
 export const knownRules = (rules: unknown) => rules === 2 || rules === RULES_VERSION
 // The bit a moderator needs to reset another member's room profile under `rules`.
@@ -223,10 +228,25 @@ export interface AuthCtx {
   readonly me: Rank
   rankOf: (R: string) => Rank
   rankT: (T: string) => Rank
+  // The room's rules version, and the channels and overwrites of the state the author's
+  // resources are read in.
+  rules?: number
+  chan?: ChanReader
 }
+// The channels and overwrites of one state.
+export interface ChanReader {
+  channel: (ch: string) => AclContent | undefined
+  overwrite: (ch: string, subj: string) => AclContent | undefined
+}
+const readerOf = (F: Partial<Pick<Facts, 'overwrites' | 'channels'>>): ChanReader => ({
+  channel: ch => F.channels?.get(ch),
+  overwrite: (ch, subj) => F.overwrites?.get(ch)?.get(subj),
+})
 export const simpleCtx = (F: FactsQ, a: string): AuthCtx => ({
   Fr: F,
   Fo: F,
+  rules: (F as Partial<Facts>).rules,
+  chan: readerOf(F as Partial<Facts>),
   me: rank(F, a),
   rankOf: R => rankOf(F, R),
   rankT: T => rank(F, T),
@@ -267,7 +287,7 @@ const splitOf = (wire: number, rules: number) => {
 
 // The shared permission rules decide whether a mask holds a bit and whether a rank is above
 // another. Wire bits they do not know are compared bit for bit.
-export function authCore(e: AclEv, x: AuthCtx, rules = RULES_VERSION): boolean {
+export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolean {
   const a = e.a
   const c = e.c
   const Fr = x.Fr
@@ -371,9 +391,21 @@ export function authCore(e: AclEv, x: AuthCtx, rules = RULES_VERSION): boolean {
     case 'chperm': {
       if (!isMem || !has(CHANNELS)) return false
       const subj = typeof c.subj === 'string' ? c.subj : ''
-      if (subj.startsWith('r:')) return outranks(x.rankOf(subj.slice(2)))
-      if (subj.startsWith('u:')) return outranks(x.rankT(subj.slice(2)))
-      return false
+      const ranked = subj.startsWith('r:')
+        ? outranks(x.rankOf(subj.slice(2)))
+        : subj.startsWith('u:') && outranks(x.rankT(subj.slice(2)))
+      if (!ranked || rules < RULES_NEXT || Fr.owners.has(a)) return ranked
+      // The edit may allow, or stop denying, only what its author holds in the channel, and
+      // deny a moderation bit only when the author holds it.
+      const ch = typeof c.ch === 'string' ? c.ch : ''
+      const chan = x.chan ?? readerOf({})
+      const row = (o: AclContent | undefined) => {
+        const allow = fromWire(o?.allow ?? 0, rules)
+        const deny = fromWire(o?.deny ?? 0, rules)
+        return allow === 0 && deny === 0 ? undefined : { allow, deny }
+      }
+      const mine = maskIn(Fr, chan, a, ch, rules)
+      return checkOverwriteEdit(mine, false, row(chan.overwrite(ch, subj)), row(c), true) === null
     }
     case 'device_add':
       return isMem && !Fr.revoked.has(e.dev)
@@ -512,43 +544,59 @@ const mayLift = (F: Facts, a: string, R: string) =>
 
 // What channel permissions read (the page reads them from its summary too).
 export type ChanFacts = Pick<FactsQ, 'owners' | 'bits' | 'holds'> &
-  Pick<Facts, 'overwrites' | 'channels'>
+  Pick<Facts, 'overwrites' | 'channels' | 'rules'>
 
-// P's permissions in channel `ch`, in Discord order: owners and holders of Manage channels have
-// every bit; else P's permissions, the @everyone overwrite, the channel's restrictions
-// (restrict_view and restrict_send clear ViewChannel and SendMessages from that baseline), the
-// denies then the allows of P's roles' overwrites, and P's own overwrite.
-export function channelPerms(F: ChanFacts, P: string, ch: string, rules = RULES_VERSION): number {
-  const ov = F.overwrites.get(ch)
-  const c = F.channels.get(ch)
+// P's canonical mask in channel `ch` under `rules`.
+function maskIn(
+  F: Pick<FactsQ, 'owners' | 'bits' | 'holds'>,
+  chan: ChanReader,
+  P: string,
+  ch: string,
+  rules: number
+): number {
+  const c = chan.channel(ch)
   const row = (o: AclContent | undefined) =>
     o && { allow: fromWire(o.allow ?? 0, rules), deny: fromWire(o.deny ?? 0, rules) }
-  const owner = F.owners.has(P)
-  const held = permsQ(F, P)
-  const mask = channelMask(
-    owner ? { kind: 'owner' } : { kind: 'member', roles: fromWire(held, rules) },
+  return channelMask(
+    F.owners.has(P) ? { kind: 'owner' } : { kind: 'member', roles: fromWire(permsQ(F, P), rules) },
     0,
     {
-      everyone: row(ov?.get(`r:${EVERYONE}`)),
+      everyone: row(chan.overwrite(ch, `r:${EVERYONE}`)),
       restrictView: c?.restrict_view === true,
       restrictSend: c?.restrict_send === true,
-      roles: [...(F.holds.get(P) ?? [])].flatMap(R => row(ov?.get(`r:${R}`)) ?? []),
-      member: row(ov?.get(`u:${P}`)),
+      roles: [...(F.holds.get(P) ?? [])].flatMap(R => row(chan.overwrite(ch, `r:${R}`)) ?? []),
+      member: row(chan.overwrite(ch, `u:${P}`)),
     },
     rules
   )
-  return owner || (held & CHANNELS) !== 0 ? ALL : toWire(mask, rules)
 }
-export const canView = (F: ChanFacts, P: string, ch: string) =>
-  (channelPerms(F, P, ch) & VIEW) !== 0
+
+// P's permissions in channel `ch`, in Discord order: P's permissions, the @everyone overwrite,
+// the channel's restrictions (restrict_view and restrict_send clear ViewChannel and SendMessages
+// from that baseline), the denies then the allows of P's roles' overwrites, and P's own
+// overwrite. Below rules 5, owners and holders of Manage channels have every bit. From rules 5,
+// Manage channels passes the base bits, owners keep their moderation bits, and nobody holds
+// anything without ViewChannel.
+export function channelPerms(
+  F: ChanFacts,
+  P: string,
+  ch: string,
+  rules = rulesOf(F.rules)
+): number {
+  const mask = maskIn(F, readerOf(F), P, ch, rules)
+  const every = rules < RULES_NEXT && (F.owners.has(P) || (permsQ(F, P) & CHANNELS) !== 0)
+  return every ? ALL : toWire(mask, rules)
+}
+export const canView = (F: ChanFacts, P: string, ch: string, rules = rulesOf(F.rules)) =>
+  (channelPerms(F, P, ch, rules) & VIEW) !== 0
 // Whether everyone in the server sees channel `ch`: a member without roles may view it (no key
 // is the empty string), and no overwrite denies ViewChannel to anyone.
 export const everyoneSees = (F: ChanFacts, ch: string) =>
   canView(F, '', ch) &&
   ![...(F.overwrites.get(ch)?.values() ?? [])].some(o => ((o.deny ?? 0) & VIEW) !== 0)
 // Sending needs ViewChannel and SendMessages.
-export const canSend = (F: ChanFacts, P: string, ch: string) =>
-  (channelPerms(F, P, ch) & (VIEW | SEND)) === (VIEW | SEND)
+export const canSend = (F: ChanFacts, P: string, ch: string, rules = rulesOf(F.rules)) =>
+  (channelPerms(F, P, ch, rules) & (VIEW | SEND)) === (VIEW | SEND)
 
 // The signing device is live for its identity (a relayer's, for a relayed record); join,
 // device_add and primary_rotate establish their own device.

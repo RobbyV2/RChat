@@ -336,18 +336,21 @@ pub async fn channel_ref<'e, E>(ex: E, id: i64) -> sqlx::Result<Option<ChannelRe
 where
     E: sqlx::Executor<'e, Database = sqlx::Any>,
 {
-    sqlx::query("SELECT c.name, CASE WHEN c.restrict_view <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id) THEN 1 ELSE 0 END FROM channels c WHERE c.id = $1")
-        .bind(id)
-        .fetch_optional(ex)
-        .await?
-        .map(|r| {
-            Ok(ChannelRef {
-                id,
-                name: r.try_get(0)?,
-                private: r.try_get::<i64, _>(1)? != 0,
-            })
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT c.name, CASE WHEN {} THEN 1 ELSE 0 END FROM channels c WHERE c.id = $1",
+        crate::api::access::overwrite_sql::private_sql()
+    )))
+    .bind(id)
+    .fetch_optional(ex)
+    .await?
+    .map(|r| {
+        Ok(ChannelRef {
+            id,
+            name: r.try_get(0)?,
+            private: r.try_get::<i64, _>(1)? != 0,
         })
-        .transpose()
+    })
+    .transpose()
 }
 
 fn clip(value: Value) -> Value {
