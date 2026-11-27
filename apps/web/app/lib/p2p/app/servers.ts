@@ -1,10 +1,7 @@
 import { resolve as resolveNotify } from '../../notify'
-import { p2pBan, P2P_BAN_NOTE, p2pBanSupport } from '../../durations'
 import type { RoomExtras } from '../../profile_fields'
 import type { LockSecs, LockState, ResetField } from '../../profile_reset'
 import { lookOf, roomLookOf, shownUser } from '../../server_profile'
-import type { BanRequest, TimeoutRequest } from '../../store_types'
-import { peerTimeout } from '../../timeouts'
 import type { ProfilesMode, UserRef } from '../../types'
 import { BanExpiry } from '../ban_expiry'
 import type { P2pStore, RoomRecord, ServerCache } from '../db'
@@ -29,7 +26,7 @@ import {
   type ServerView,
 } from '../server'
 import { unsentText } from '../flows'
-import { membershipOf, P, roomColor, type HistoryVis } from '../state'
+import { membershipOf, roomColor, type HistoryVis } from '../state'
 import { p2pAbout, type AboutChange } from '../../server_about'
 import type { P2pThread } from './store'
 import type { IdentityScope, P2pParts } from './scope'
@@ -663,37 +660,6 @@ export function createServersPart(
   // The channel opened last in each server, for this tab.
   const lastChannel = new Map<string, string>()
 
-  // The ban dialog's P2P side: it closes once the ban is asked for; a ban waiting for the room
-  // to sync shows with the other moderation actions that wait.
-  const banRequest = (v: ServerView, ik: string, name: string): BanRequest => {
-    const support = p2pBanSupport(v.timedBans === true, (v.perms & P.ManageMessages) !== 0)
-    return {
-      title: 'Ban Member',
-      name,
-      note: P2P_BAN_NOTE,
-      support,
-      run: choice => {
-        void p2pServer.ban(v.id, ik, p2pBan(choice, support))
-        return true
-      },
-    }
-  }
-
-  // The timeout dialog's P2P side: like a ban, it closes once the timeout is asked for.
-  const timeoutRequest = (
-    v: Pick<ServerView, 'id'>,
-    m: { ik: string; timeoutUntil?: number; timeoutReason?: string },
-    name: string
-  ): TimeoutRequest => ({
-    name,
-    current: peerTimeout(m),
-    run: choice => {
-      void p2pServer.timeout(v.id, m.ik, choice.seconds, choice.reason ?? undefined)
-      return true
-    },
-    remove: () => void p2pServer.untimeout(v.id, m.ik),
-  })
-
   // Thread counters already checked on a read, at a stored-content position (`seq`: deletions and
   // hidden content move it too), so reading at the bottom again doesn't redo it.
   const threadsChecked = new Map<string, string>()
@@ -1115,8 +1081,6 @@ export function createServersPart(
     channelScope,
     serverArrived,
     withServers,
-    banRequest,
-    timeoutRequest,
     threadsSig,
     channelReadSkips,
     p2pServer,

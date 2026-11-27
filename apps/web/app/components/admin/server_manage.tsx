@@ -1,4 +1,6 @@
 'use client'
+import { askKick } from '../../lib/place/moderation'
+import { HostedServer } from '../../lib/place/place'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
@@ -254,7 +256,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
                 <Button
                   variant="danger"
                   onClick={() =>
-                    ownerSession.store.menu.confirmKick(name, m.username, reloadMembers)
+                    askKick(HostedServer.open(ownerSession, name), m.username, reloadMembers)
                   }
                 >
                   Kick

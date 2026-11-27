@@ -4,8 +4,6 @@ import { useState } from 'react'
 import {
   BAN_DURATIONS,
   BAN_REASON_MAX,
-  HOSTED_BAN,
-  HOSTED_BAN_NOTE,
   PURGE_ALL_NOTE,
   cleanReason,
   fitBan,
@@ -14,60 +12,27 @@ import {
   type BanChoice,
 } from '../lib/durations'
 import { useStore } from '../lib/store'
-import type { BanRequest } from '../lib/store_types'
-import type { UserRef } from '../lib/types'
+import { moderationOf } from '../lib/place/moderation'
+import { useLive, useWatch } from '../lib/place/react'
+import type { ModerationTarget } from '../lib/store_types'
 import { UserAvatar } from './user_avatar'
 import { Button, Chip } from './controls'
 import { Dialog, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
-import { useShown } from './shown_user'
 
-// The hosted adapter: a ban of an account from a server through the instance.
-export const hostedBanRequest = (
-  server: string,
-  user: UserRef,
-  ban: (server: string, username: string, choice: BanChoice) => Promise<boolean>
-): BanRequest => ({
-  title: 'Ban from Server',
-  name: user.display_name,
-  user,
-  note: HOSTED_BAN_NOTE,
-  support: HOSTED_BAN,
-  run: choice => ban(server, user.username, choice),
-})
-
-// Shows the ban dialog of either side: a hosted ban by server and account, a P2P ban by the
-// request its room built.
+// Shows the ban dialog for the member of a hosted server or a P2P room.
 export default function BanDialogHost() {
   const dialog = useStore(s => s.activeDialog)
   const close = useStore(s => s.closeDialog)
-  if (dialog?.kind === 'ban')
-    return (
-      <HostedBan
-        key={`${dialog.server}\n${dialog.user.username}`}
-        server={dialog.server}
-        account={dialog.user}
-        onClose={close}
-      />
-    )
-  return dialog?.kind === 'ban_request' ? (
-    <BanDialog request={dialog.request} onClose={close} />
+  return dialog?.kind === 'ban' ? (
+    <BanDialog
+      key={`${dialog.place.id}\n${dialog.who}`}
+      place={dialog.place}
+      who={dialog.who}
+      known={dialog.known}
+      onClose={close}
+    />
   ) : null
-}
-
-// A hosted ban names the member as the server shows them.
-function HostedBan({
-  server,
-  account,
-  onClose,
-}: {
-  server: string
-  account: UserRef
-  onClose: () => void
-}) {
-  const user = useShown(account, server)
-  const banMember = useStore(s => s.banMember)
-  return <BanDialog request={hostedBanRequest(server, user, banMember)} onClose={onClose} />
 }
 
 const heading = 'mt-4 text-xs font-medium tracking-wide text-on-surface-variant uppercase'
@@ -98,9 +63,17 @@ function Chips<T>({
 }
 
 // The ban dialog of hosted servers and P2P rooms: how long, why, and how far back the member's
-// messages go. The request says what its side supports and bans.
-export function BanDialog({ request, onClose }: { request: BanRequest; onClose: () => void }) {
-  const { title, name, user, note, support, run } = request
+// messages go. The place says what its side supports and bans.
+export function BanDialog({
+  place,
+  who,
+  known,
+  onClose,
+}: ModerationTarget & { onClose: () => void }) {
+  const { member, ban } = moderationOf(place)
+  const { title, note } = ban
+  const { name, user } = useWatch(() => member(who, known), [member, who, known])
+  const support = useLive(ban.support)
   const [seconds, setSeconds] = useState<number | null>(null)
   const [purge, setPurge] = useState(0)
   const [reason, setReason] = useState('')
@@ -110,7 +83,7 @@ export function BanDialog({ request, onClose }: { request: BanRequest; onClose: 
     if (busy) return
     setBusy(true)
     const choice: BanChoice = { seconds, reason: cleanReason(reason), purgeHours: purge }
-    const ok = await run(fitBan(choice, support))
+    const ok = await ban.run(who, fitBan(choice, support))
     setBusy(false)
     if (ok) onClose()
   }

@@ -2,6 +2,8 @@ import { client } from '../client/client'
 // A person's menu: a member row, someone who interacted, a friend or request row, a sidebar DM's
 // other person, and a message's author.
 
+import { askKick, openBan, openTimeout } from '../place/moderation'
+import { HostedServer } from '../place/place'
 import {
   AtSign,
   Check,
@@ -170,8 +172,8 @@ const onSeat = (f: (seat: Seat, ctx: ActionCtx) => void) => (ctx: ActionCtx) => 
   if (seat) f(seat, ctx)
 }
 
-const openTimeout = onSeat(({ server, user }, ctx) =>
-  ctx.acct.store.getState().openDialog({ kind: 'timeout', server, user: userRef(user) })
+const timeOut = onSeat(({ server, user }, ctx) =>
+  openTimeout(HostedServer.open(ctx.acct, server), user.username, userRef(user))
 )
 
 const openProfileReset = onSeat(({ server, user }, ctx) =>
@@ -269,7 +271,9 @@ export const memberActions: Action[] = [
     ...onMemberOrAuthor,
     order: 400,
     available: moderates(Perm.Kick),
-    run: onSeat(({ server, user }, ctx) => ctx.acct.store.menu.confirmKick(server, user.username)),
+    run: onSeat(({ server, user }, ctx) =>
+      askKick(HostedServer.open(ctx.acct, server), user.username)
+    ),
   },
   {
     id: 'member_ban',
@@ -278,7 +282,9 @@ export const memberActions: Action[] = [
     ...onMemberOrAuthor,
     order: 410,
     available: moderates(Perm.Kick),
-    run: onSeat(({ server, user }, ctx) => ctx.acct.store.menu.confirmBan(server, user.username)),
+    run: onSeat(({ server, user }, ctx) =>
+      openBan(HostedServer.open(ctx.acct, server), user.username)
+    ),
   },
   {
     id: 'member_timeout',
@@ -289,8 +295,8 @@ export const memberActions: Action[] = [
     ...onMemberOrAuthor,
     order: 420,
     available: moderates(Perm.TimeoutMembers),
-    menuRun: openTimeout,
-    run: openTimeout,
+    menuRun: timeOut,
+    run: timeOut,
   },
   {
     id: 'member_timeout_remove',

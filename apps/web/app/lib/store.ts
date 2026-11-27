@@ -736,10 +736,8 @@ export const getHomeSession = (() => {
 })()
 client.bindHome(getHomeSession)
 export {
-  confirmBan,
   noteMemberTimeouts,
   noteTimeout,
-  confirmKick,
   confirmTransfer,
   revokeAdminFor,
   confirmDeleteMessage,

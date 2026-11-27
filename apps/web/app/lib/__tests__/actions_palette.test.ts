@@ -1,4 +1,5 @@
 import { peerStorage } from '../client/keys'
+import { HostedServer } from '../place/place'
 import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
 import { Copy, Trash2 } from 'lucide-react'
@@ -563,7 +564,12 @@ const RUNS: Record<string, Record<string, unknown[]>> = {
     server_settings: [['openDialog', { kind: 'server_settings', server: 's' }]],
     audit_log: [['openDialog', { kind: 'audit_log', server: 's' }]],
     webhooks: [['openDialog', { kind: 'webhooks', server: 's' }]],
-    timeout_member: [['openDialog', { kind: 'timeout', server: 's', user: 'user:bob:Bob' }]],
+    timeout_member: [
+      [
+        'openDialog',
+        { kind: 'timeout', place: 'hostedServer:s', who: 'bob', known: 'user:bob:Bob' },
+      ],
+    ],
     untimeout_s_bob: [['removeTimeout', 's', 'bob']],
     leave_server: [
       [
@@ -698,6 +704,7 @@ const plain = (x: unknown): unknown => {
   return JSON.parse(
     JSON.stringify(x, (_k, v: unknown) => {
       if (typeof v === 'function') return 'fn'
+      if (v instanceof HostedServer) return v.id
       if (typeof v === 'string' && origin && v.startsWith(origin))
         return `ORIGIN${v.slice(origin.length)}`
       if (v && typeof v === 'object' && 'username' in v && 'display_name' in v)

@@ -1,4 +1,5 @@
 import { CAN_ALL } from '../channel_perms'
+import { moderationOf } from '../place/moderation'
 import { shownPeer } from './shown_peer'
 import { PURGE_ALL } from '../durations'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
@@ -197,7 +198,12 @@ const onServer = (v: ServerView, folder: string | null = null, at = 0): Target =
   at,
 })
 const onChannel = (v: ServerView, ch = TEXT): Target => ({ kind: 'p2p_channel', v, ch })
-const onMember = (v: ServerView, m: MemberView): Target => ({ kind: 'p2p_member', v, m })
+// A member row, with the room holding the member as the row shows them.
+const onMember = (v: ServerView, m: MemberView): Target => {
+  const members = [...(v.members ?? []).filter(x => x.ik !== m.ik), m]
+  shownPeer().useP2p.setState(s => ({ servers: { ...s.servers, [v.id]: { ...v, members } } }))
+  return { kind: 'p2p_member', v, m }
+}
 const onRole = (v: ServerView, r: RoleView): Target => ({ kind: 'p2p_role', v, r })
 
 const settle = () => new Promise(r => setTimeout(r, 0))
@@ -211,9 +217,10 @@ const recorder = () => {
   const openDialog = useStore.getState().openDialog
   useStore.setState({
     openDialog: d => {
-      if (d.kind !== 'ban_request') return openDialog(d)
-      const closes = d.request.run({ seconds: 3600, reason: 'spam', purgeHours: PURGE_ALL })
-      calls.push(['ban dialog', d.request.title, d.request.name, d.request.support, closes])
+      if (d.kind !== 'ban') return openDialog(d)
+      const { ban, member } = moderationOf(d.place)
+      const closes = ban.run(d.who, { seconds: 3600, reason: 'spam', purgeHours: PURGE_ALL })
+      calls.push(['ban dialog', ban.title, member(d.who).get().name, ban.support.get(), closes])
     },
     askConfirm: (c: ConfirmRequest) => {
       calls.push(['confirm', c.title, c.body, c.confirm])
@@ -687,8 +694,12 @@ describe("a P2P member's menu", () => {
     let closes: unknown
     useStore.setState({
       openDialog: d => {
-        if (d.kind === 'ban_request')
-          closes = d.request.run({ seconds: null, reason: null, purgeHours: 0 })
+        if (d.kind === 'ban')
+          closes = moderationOf(d.place).ban.run(d.who, {
+            seconds: null,
+            reason: null,
+            purgeHours: 0,
+          })
       },
     })
     try {
@@ -741,10 +752,12 @@ describe("a P2P member's menu", () => {
     const seen: unknown[] = []
     useStore.setState({
       openDialog: d => {
-        if (d.kind !== 'timeout_request') return
-        seen.push(d.request.name, d.request.current?.reason ?? null)
-        seen.push(d.request.run({ seconds: 600, reason: 'spam' }))
-        d.request.remove()
+        if (d.kind !== 'timeout') return
+        const { member, timeout, untimeout } = moderationOf(d.place)
+        const shown = member(d.who).get()
+        seen.push(shown.name, shown.timeout?.reason ?? null)
+        seen.push(timeout(d.who, { seconds: 600, reason: 'spam' }))
+        untimeout(d.who)
       },
     })
     try {

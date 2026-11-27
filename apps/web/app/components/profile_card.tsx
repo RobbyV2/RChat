@@ -2,6 +2,8 @@
 
 import { ActorLabel, useActorSuffix, useViewActor } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
+import { askKick, openBan, openTimeout } from '../lib/place/moderation'
+import { HostedServer } from '../lib/place/place'
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
@@ -206,12 +208,13 @@ export function ProfileCard() {
 }
 
 function Card({ target }: { target: ProfileTarget }) {
+  const account = useAccount()
   const {
     api,
     store,
     lifetime: { inSession, sessionMark },
-  } = useAccount()
-  const { confirmBan, confirmKick, confirmTransfer, noteTimeout, revokeAdminFor } = store.menu
+  } = account
+  const { confirmTransfer, noteTimeout, revokeAdminFor } = store.menu
   const { server, x, y, rev } = target
   const username = target.user.username
   const close = useStore(s => s.closeProfile)
@@ -454,23 +457,19 @@ function Card({ target }: { target: ProfileTarget }) {
     switch (action) {
       case 'kick':
         close()
-        confirmKick(server, username)
+        askKick(HostedServer.open(account, server), username)
         return
       case 'server_ban':
         close()
-        confirmBan(server, username)
+        openBan(HostedServer.open(account, server), username)
         return
       case 'timeout':
         close()
-        s.openDialog({
-          kind: 'timeout',
-          server,
-          user: {
-            username: user.username,
-            display_name: user.display_name,
-            avatar_kind: user.avatar_kind,
-            avatar_color: user.avatar_color,
-          },
+        openTimeout(HostedServer.open(account, server), username, {
+          username: user.username,
+          display_name: user.display_name,
+          avatar_kind: user.avatar_kind,
+          avatar_color: user.avatar_color,
         })
         return
       case 'untimeout':

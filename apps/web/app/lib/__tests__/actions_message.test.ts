@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { HostedServer } from '../place/place'
+import { client } from '../client/client'
 import {
   AtSign,
   Check,
@@ -276,6 +278,8 @@ const effects = async (rows: ContextMenuItem[]) => {
     }
   return out
 }
+
+const here = () => HostedServer.open(client.shown(), 's')
 
 test('own message in #general', () => {
   state({ perms: Perm.DeleteMessages })
@@ -1069,8 +1073,8 @@ test('each message row runs its action', async () => {
         ['kickMember', 's', 'bob'],
       ],
     ],
-    ['Ban from server', [['openDialog', { kind: 'ban', server: 's', user: bobRef }]]],
-    ['Time Out', [['openDialog', { kind: 'timeout', server: 's', user: bobRef }]]],
+    ['Ban from server', [['openDialog', { kind: 'ban', place: here(), who: 'bob' }]]],
+    ['Time Out', [['openDialog', { kind: 'timeout', place: here(), who: 'bob', known: bobRef }]]],
     ['Assign r1', [['assignRole', 's', 1, 'bob']]],
     ['Assign Moderator', [['assignRole', 's', 2, 'bob']]],
     ['Remove Helper', [['unassignRole', 's', 3, 'bob']]],

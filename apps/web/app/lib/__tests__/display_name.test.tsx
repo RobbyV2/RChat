@@ -1,4 +1,6 @@
 import { shownPeer } from './shown_peer'
+import { HostedServer } from '../place/place'
+import { client } from '../client/client'
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -328,7 +330,14 @@ test('the voice dock, poll voters, invite previews and staff tools name the acco
     )
   ).toBe(true)
   expect(note).toContain(shown)
-  Object.assign(initial, { activeDialog: { kind: 'timeout', server: 's', user: impostor } })
+  Object.assign(initial, {
+    activeDialog: {
+      kind: 'timeout',
+      place: HostedServer.open(client.shown(), 's'),
+      who: impostor.username,
+      known: impostor,
+    },
+  })
   expect(render(<TimeoutDialogHost />)).toContain(shown)
 })
 

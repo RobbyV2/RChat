@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
+import { HostedServer } from '../place/place'
+import { client } from '../client/client'
 import {
   AtSign,
   Bell,
@@ -493,6 +495,7 @@ const effects = async (rows: ContextMenuItem[]) => {
 }
 
 const bobRef = { username: 'bob', display_name: 'Bobby' }
+const here = () => HostedServer.open(client.shown(), 's')
 const KICK = 'Kick this member? They are removed from the server but can join again.'
 const TRANSFER =
   "Make this member the server admin? You lose your admin rights and can't take them back."
@@ -508,8 +511,8 @@ test('each member row runs its action', async () => {
         ['kickMember', 's', 'bob'],
       ],
     ],
-    ['Ban from server', [['openDialog', { kind: 'ban', server: 's', user: bobby }]]],
-    ['Time Out', [['openDialog', { kind: 'timeout', server: 's', user: bobby }]]],
+    ['Ban from server', [['openDialog', { kind: 'ban', place: here(), who: 'bob' }]]],
+    ['Time Out', [['openDialog', { kind: 'timeout', place: here(), who: 'bob', known: bobby }]]],
     ['Revoke Admin', [['revokeAdmin', 's', 'bob']]],
     [
       'Transfer Admin',
@@ -532,7 +535,10 @@ test('each member row runs its action', async () => {
     i => i.label.includes('Timeout') || i.label === 'Promote to Admin'
   )
   expect(await effects(timeout)).toEqual([
-    ['Change Timeout', [['openDialog', { kind: 'timeout', server: 's', user: bobby }]]],
+    [
+      'Change Timeout',
+      [['openDialog', { kind: 'timeout', place: here(), who: 'bob', known: bobby }]],
+    ],
     ['Remove Timeout', [['removeTimeout', 's', 'bob']]],
     ['Promote to Admin', [['grantAdmin', 's', 'bob']]],
   ])

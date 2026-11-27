@@ -8,8 +8,8 @@ describe('ui builders', () => {
     const ui = JSON.stringify(fileURLToPath(new URL('../slices/ui.ts', import.meta.url)))
     const run = spawnSync(process.execPath, [
       '-e',
-      `const { confirmKick, noteTimeout } = await import(${ui})
-      for (const call of [() => confirmKick('s', 'bob'), () => noteTimeout('s', 'bob', undefined)])
+      `const { confirmTransfer, noteTimeout } = await import(${ui})
+      for (const call of [() => confirmTransfer('s', 'bob'), () => noteTimeout('s', 'bob', undefined)])
         try { call() } catch (e) { console.log(e.message) }`,
     ])
     expect(run.stdout.toString().trim().split('\n')).toEqual([

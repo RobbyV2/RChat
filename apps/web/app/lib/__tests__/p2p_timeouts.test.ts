@@ -27,7 +27,6 @@ import {
   timeoutSeconds,
 } from '../durations'
 import { endWatch, peerTimeout, timedOutIn } from '../timeouts'
-import { hostedTimeoutRequest } from '../../components/timeout_dialog'
 import { AclWorld, devOwner } from './p2p_acl_world'
 import { timeout as signTimeout } from '../p2p/server/roles'
 import type { ServerCtx } from '../p2p/server/context'
@@ -461,33 +460,6 @@ describe('the end of our own timeout in a voice channel', () => {
     } finally {
       jest.useRealTimers()
     }
-  })
-})
-
-describe('the hosted timeout request', () => {
-  test('sets and removes through the instance', async () => {
-    const calls: unknown[][] = []
-    const user = { username: 'bob', display_name: 'Bob', avatar_kind: 'identicon' as const }
-    const r = hostedTimeoutRequest(
-      'club',
-      user as never,
-      { ends: 9, reason: 'old' },
-      async (...a) => {
-        calls.push(['set', ...a])
-        return true
-      },
-      async (...a) => void calls.push(['remove', ...a])
-    )
-    expect(r.name).toBe('Bob')
-    expect(r.current).toEqual({ ends: 9, reason: 'old' })
-    expect(await r.run({ seconds: 600, reason: 'spam' })).toBe(true)
-    expect(await r.run({ seconds: 60, reason: null })).toBe(true)
-    r.remove()
-    expect(calls).toEqual([
-      ['set', 'club', 'bob', 600, 'spam'],
-      ['set', 'club', 'bob', 60, ''],
-      ['remove', 'club', 'bob'],
-    ])
   })
 })
 

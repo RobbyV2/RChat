@@ -18,7 +18,7 @@ const draws = /\b(NameWithUsername|FitName|UserAvatar|KeyAvatar)\b|\.display_nam
 // What resolves a person to how a server shows them (lib/server_profile.ts and the hooks and
 // components over it).
 const resolves =
-  /\b(useShown|useShownOrNull|useShownMembers|useLook|ShownName|ShownAvatar|shownUser|shownIn|shownTypers|previewUser|roomLookOf|MemberAvatar|memberUser)\b/
+  /\b(useShown|useShownOrNull|useShownMembers|useLook|ShownName|ShownAvatar|shownUser|shownIn|shownTypers|previewUser|roomLookOf|MemberAvatar|memberUser|moderationOf)\b/
 
 // Components that draw a member or an author inside a server, hosted or P2P.
 const IN_A_SERVER = [

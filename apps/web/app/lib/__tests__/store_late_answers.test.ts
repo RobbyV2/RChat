@@ -1,4 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
+import { askKick } from '../place/moderation'
+import { HostedServer } from '../place/place'
+import { client } from '../client/client'
 import { paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { actionById } from '../actions/registry'
@@ -18,7 +21,6 @@ import { cachedProfile, profileKey, rememberProfile } from '../profile'
 import {
   getHomeSession,
   Ended,
-  confirmKick,
   inSession,
   revokeAdminFor,
   useStore,
@@ -2019,7 +2021,7 @@ describe('flows that wait on a step that drops a late answer', () => {
     await late({
       hold: 'POST /servers/s/kick',
       start: () => {
-        confirmKick('s', 'carol', () => (ran += 1))
+        askKick(HostedServer.open(client.shown(), 's'), 'carol', () => (ran += 1))
         st().confirm?.action('')
       },
       keys: [],

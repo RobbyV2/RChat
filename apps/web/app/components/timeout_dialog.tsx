@@ -10,7 +10,9 @@ import {
   customSeconds,
 } from '../lib/durations'
 import { useStore } from '../lib/store'
-import type { TimeoutRequest } from '../lib/store_types'
+import { moderationOf } from '../lib/place/moderation'
+import { useWatch } from '../lib/place/react'
+import type { ModerationTarget } from '../lib/store_types'
 import {
   peerTimeout,
   remainingText,
@@ -18,12 +20,10 @@ import {
   timedOutLine,
   type Timeout,
 } from '../lib/timeouts'
-import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { Button, Chip } from './controls'
 import { Dialog, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
-import { useShown } from './shown_user'
 
 // The current time, ticking every `ms` while `on`.
 export function useNow(on: boolean, ms = 1000): number {
@@ -111,76 +111,46 @@ export function TimedOutBar({ ends }: { ends: number }) {
   )
 }
 
-// The hosted adapter: a timeout of an account in a server through the instance.
-export const hostedTimeoutRequest = (
-  server: string,
-  user: UserRef,
-  current: Timeout | null,
-  set: (server: string, username: string, seconds: number, reason: string) => Promise<boolean>,
-  remove: (server: string, username: string) => Promise<void>
-): TimeoutRequest => ({
-  name: user.display_name,
-  user,
-  current,
-  run: choice => set(server, user.username, choice.seconds, choice.reason ?? ''),
-  remove: () => void remove(server, user.username),
-})
-
-function HostedTimeoutDialog({ server, user: account }: { server: string; user: UserRef }) {
-  const user = useShown(account, server)
-  const close = useStore(s => s.closeDialog)
-  const timeoutMember = useStore(s => s.timeoutMember)
-  const removeTimeout = useStore(s => s.removeTimeout)
-  const current = useMemberTimeout(server, user.username)
-  return (
-    <TimeoutDialog
-      request={hostedTimeoutRequest(server, user, current, timeoutMember, removeTimeout)}
-      onClose={close}
-    />
-  )
-}
-
-// Shows the timeout dialog of either side: a hosted timeout by server and account, a P2P
-// timeout by the request its room built.
+// Shows the timeout dialog for the member of a hosted server or a P2P room.
 export default function TimeoutDialogHost() {
   const dialog = useStore(s => s.activeDialog)
   const close = useStore(s => s.closeDialog)
-  if (dialog?.kind === 'timeout')
-    return (
-      <HostedTimeoutDialog
-        key={`${dialog.server}\n${dialog.user.username}`}
-        server={dialog.server}
-        user={dialog.user}
-      />
-    )
-  return dialog?.kind === 'timeout_request' ? (
-    <TimeoutDialog request={dialog.request} onClose={close} />
+  return dialog?.kind === 'timeout' ? (
+    <TimeoutDialog
+      key={`${dialog.place.id}\n${dialog.who}`}
+      place={dialog.place}
+      who={dialog.who}
+      known={dialog.known}
+      onClose={close}
+    />
   ) : null
 }
 
 // The timeout dialog of hosted servers and P2P rooms: how long and why, and the timeout that
-// runs with its reason. The request sets and removes it on its side.
+// runs with its reason. The place sets and removes it on its side.
 export function TimeoutDialog({
-  request,
+  place,
+  who,
+  known,
   onClose,
-}: {
-  request: TimeoutRequest
-  onClose: () => void
-}) {
-  const { name, user, run, remove } = request
-  const now = useNow(request.current !== null)
-  const current = request.current && request.current.ends > now ? request.current : null
+}: ModerationTarget & { onClose: () => void }) {
+  const { member, timeout, untimeout } = moderationOf(place)
+  const { name, user, timeout: set } = useWatch(() => member(who, known), [member, who, known])
+  const now = useNow(set !== null)
+  const current = set && set.ends > now ? set : null
   const [preset, setPreset] = useState<number | null>(600)
   const [amount, setAmount] = useState('')
   const [mult, setMult] = useState(60)
-  const [reason, setReason] = useState(() => request.current?.reason ?? '')
+  const [reason, setReason] = useState(() =>
+    set && set.ends > Date.now() ? (set.reason ?? '') : ''
+  )
   const [busy, setBusy] = useState(false)
   const custom = preset === null ? customSeconds(amount, mult) : null
   const seconds = preset ?? custom
   const submit = async () => {
     if (seconds === null || busy) return
     setBusy(true)
-    const ok = await run({ seconds, reason: cleanReason(reason) })
+    const ok = await timeout(who, { seconds, reason: cleanReason(reason) })
     setBusy(false)
     if (ok) onClose()
   }
@@ -222,7 +192,7 @@ export function TimeoutDialog({
           <Button
             variant="danger"
             onClick={() => {
-              remove()
+              untimeout(who)
               onClose()
             }}
           >

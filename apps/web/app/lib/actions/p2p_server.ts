@@ -1,6 +1,8 @@
 // The menus of a P2P server: its rail tile and header, a P2P rail folder, its channels, its
 // members and its roles.
 
+import { askKick, openBan, openTimeout } from '../place/moderation'
+import { P2pRoom } from '../place/place'
 import { viewingActions } from './viewing'
 
 import {
@@ -146,16 +148,6 @@ export const peerServer = identityActions(identity => {
       confirm: 'Remove',
       action: identity().inIdentity(() => void identity().p2pServer.forget(v.id)),
     })
-
-  const kickRequest = (v: ServerView, m: MemberView, acct = identity().owner): ConfirmRequest => ({
-    title: 'Kick Member',
-    body: `Kick ${who(m.name, acct)}? They can come back with a new invite.`,
-    confirm: 'Kick',
-    reason: true,
-    action: identity().inIdentity(
-      (_choice: string, reason?: string) => void identity().p2pServer.kick(v.id, m.ik, reason)
-    ),
-  })
 
   // Role names in our own server are our own text, never masked.
   const roleMask = (v: ServerView, acct = identity().owner) =>
@@ -581,13 +573,9 @@ export const peerServer = identityActions(identity => {
     return t && t.v.timeouts === true && t.m.m === 'join' && !t.m.owner ? t : null
   }
   const timedOut = (ctx: ActionCtx) => peerTimeout(memberOf(ctx)?.m) !== null
-  const openTimeout = (ctx: ActionCtx) => {
+  const timeOut = (ctx: ActionCtx) => {
     const t = memberOf(ctx)
-    if (t)
-      ctx.acct.store.getState().openDialog({
-        kind: 'timeout_request',
-        request: identity().timeoutRequest(t.v, t.m, who(t.m.name, ctx.acct)),
-      })
+    if (t) openTimeout(P2pRoom.open(identity(), t.v.id), t.m.ik)
   }
 
   const named = (ctx: ActionCtx, verb: string, alone: string) => {
@@ -646,7 +634,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => actsOn(ctx, P.Kick)?.m.m === 'join',
       run: ctx => {
         const t = memberOf(ctx)
-        if (t) ctx.acct.store.getState().askConfirm(kickRequest(t.v, t.m, ctx.acct))
+        if (t) askKick(P2pRoom.open(identity(), t.v.id), t.m.ik)
       },
     },
     {
@@ -730,11 +718,7 @@ export const peerServer = identityActions(identity => {
       },
       run: ctx => {
         const t = memberOf(ctx)
-        if (t)
-          ctx.acct.store.getState().openDialog({
-            kind: 'ban_request',
-            request: identity().banRequest(t.v, t.m.ik, who(t.m.name, ctx.acct)),
-          })
+        if (t) openBan(P2pRoom.open(identity(), t.v.id), t.m.ik)
       },
     },
     {
@@ -746,8 +730,8 @@ export const peerServer = identityActions(identity => {
       ...onMember,
       order: 440,
       available: ctx => timesOut(ctx) !== null,
-      menuRun: openTimeout,
-      run: openTimeout,
+      menuRun: timeOut,
+      run: timeOut,
     },
     {
       id: 'p2p_member_untimeout',
@@ -1027,7 +1011,6 @@ export const peerServer = identityActions(identity => {
     withdrawRequest,
     transferRequest,
     confirmForget,
-    kickRequest,
     roleMask,
     moveRoles,
     deleteRole,

@@ -1,11 +1,4 @@
-import { createPeerFixture } from './peer_fixture'
-import { AccountSession } from '../client/session'
-import { home } from './home_instance'
-const peerOwner = new AccountSession(home)
-afterAll(() => peerOwner.store.dispose())
-const peerApp = createPeerFixture(peerOwner, 'owner')
-const { banRequest } = peerApp
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { genCase } from './acl_model_rules2/gen'
 import { orphanDrops as referenceDrops } from '../p2p/acl/equivocation'
 import type { EvalResult } from '../p2p/acl/facts'
@@ -21,7 +14,6 @@ import { MODEL_LIMITS, prodReplica, testBinds } from './p2p_acl_world'
 import { headerOk } from '../p2p/event_v2'
 import { messageActs, type P2pMessage } from '../p2p/dm'
 
-import type { ServerView } from '../p2p/server'
 import { ServerWorld, type Sent } from './p2p_server_world'
 
 // Storage rules of P2P servers as the ACL core decides them (the orphan rule and headers,
@@ -734,15 +726,6 @@ describe('headers and the page', () => {
       reply: false,
       forward: false,
       copy: false,
-    })
-    const v = { id: 'room', perms: P.Ban } as ServerView
-    expect(banRequest(v, 'ik', 'Bob').name).toBe('Bob')
-    expect(banRequest(v, 'ik', 'Bob').support).toEqual({ timed: false, purge: 'none' })
-    const mod = { ...v, perms: P.Ban | P.ManageMessages }
-    expect(banRequest(mod, 'ik', 'Bob').support).toEqual({ timed: false, purge: 'all' })
-    expect(banRequest({ ...mod, timedBans: true }, 'ik', 'Bob').support).toEqual({
-      timed: true,
-      purge: 'window',
     })
   })
 })

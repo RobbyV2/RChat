@@ -78,7 +78,7 @@ import {
   profanityValue,
   setMasking,
 } from '../profanity'
-import { dmView, serverNames, userRefFor } from '../selectors'
+import { dmView, serverNames } from '../selectors'
 import { type ShowSpoilers, parseSpoilers, spoilersKey, spoilersValue } from '../spoilers'
 import type { RChatState } from '../store_types'
 import { type TimeoutWire, fromWire } from '../timeouts'
@@ -107,11 +107,6 @@ export function menuActions(
   store: Pick<StoreApi<RChatState>, 'getState' | 'setState'>,
   inSession: AccountSession['lifetime']['inSession']
 ) {
-  const confirmBan = (server: string, username: string) => {
-    const user = userRefFor(store.getState(), username)
-    store.getState().openDialog({ kind: 'ban', server, user })
-  }
-
   // Records the running timeouts (or none) of members of `server`, as a moderator sees them.
   const noteMemberTimeouts = (
     server: string,
@@ -131,19 +126,6 @@ export function menuActions(
 
   const noteTimeout = (server: string, username: string, timeout: TimeoutWire | undefined) =>
     noteMemberTimeouts(server, [{ username, timeout }])
-
-  const confirmKick = (server: string, username: string, after?: () => void) =>
-    store.getState().askConfirm({
-      title: 'Kick Member',
-      body: 'Kick this member? They are removed from the server but can join again.',
-      confirm: 'Kick',
-      reason: true,
-      action: (_choice, reason) =>
-        void store
-          .getState()
-          .kickMember(server, username, reason)
-          .then(after && inSession(after)),
-    })
 
   const confirmTransfer = (server: string, username: string) =>
     store.getState().askConfirm({
@@ -187,25 +169,19 @@ export function menuActions(
   }
 
   return {
-    confirmBan,
     noteMemberTimeouts,
     noteTimeout,
-    confirmKick,
     confirmTransfer,
     revokeAdminFor,
     confirmDeleteMessage,
   }
 }
 
-export const confirmBan = (...args: Parameters<ReturnType<typeof menuActions>['confirmBan']>) =>
-  shownMenu().confirmBan(...args)
 export const noteMemberTimeouts = (
   ...args: Parameters<ReturnType<typeof menuActions>['noteMemberTimeouts']>
 ) => shownMenu().noteMemberTimeouts(...args)
 export const noteTimeout = (...args: Parameters<ReturnType<typeof menuActions>['noteTimeout']>) =>
   shownMenu().noteTimeout(...args)
-export const confirmKick = (...args: Parameters<ReturnType<typeof menuActions>['confirmKick']>) =>
-  shownMenu().confirmKick(...args)
 export const confirmTransfer = (
   ...args: Parameters<ReturnType<typeof menuActions>['confirmTransfer']>
 ) => shownMenu().confirmTransfer(...args)

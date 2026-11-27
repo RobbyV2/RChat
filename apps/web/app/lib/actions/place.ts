@@ -2,6 +2,8 @@ import { client } from '../client/client'
 // Commands on the open place: its conversation (the open thread, else the channel or DM), the
 // channel, the DM and the server.
 
+import { openTimeout } from '../place/moderation'
+import { HostedServer } from '../place/place'
 import {
   AtSign,
   BarChart3,
@@ -444,9 +446,11 @@ export const placeActions: Action[] = [
     available: may(Perm.TimeoutMembers),
     run: ({ acct, s, server }, { value }) => {
       if (server)
-        acct.store
-          .getState()
-          .openDialog({ kind: 'timeout', server, user: userRefFor(s, username(value)) })
+        openTimeout(
+          HostedServer.open(acct, server),
+          username(value),
+          userRefFor(s, username(value))
+        )
     },
   },
   {

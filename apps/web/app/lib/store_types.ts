@@ -130,25 +130,12 @@ export interface ConfirmRequest {
   reason?: boolean
 }
 
-// A ban dialog for one member of a hosted server or a P2P room: what that side supports and how
-// it bans.
-export interface BanRequest {
-  title: string
-  name: string
-  user?: UserRef
-  note: string
-  support: import('./durations').BanSupport
-  run: (choice: import('./durations').BanChoice) => Promise<boolean> | boolean
-}
-
-// A timeout dialog for one member of a hosted server or a P2P room: the timeout that runs when
-// it opens, and how that side sets and removes one.
-export interface TimeoutRequest {
-  name: string
-  user?: UserRef
-  current: import('./timeouts').Timeout | null
-  run: (choice: import('./durations').TimeoutChoice) => Promise<boolean> | boolean
-  remove: () => void
+// The member a ban or timeout dialog is about, in the hosted server or P2P room that moderates
+// them. `known`: what its opener already shows of them.
+export interface ModerationTarget {
+  place: import('./place/moderation').ModerationPlace
+  who: string
+  known?: UserRef
 }
 
 export interface AdminPlace {
@@ -169,12 +156,10 @@ export type ActiveDialog =
   | { kind: 'audit_log'; server: string }
   | { kind: 'perms'; server: string; channel?: number; category?: number }
   | { kind: 'webhooks'; server: string }
-  | { kind: 'timeout'; server: string; user: UserRef }
+  | ({ kind: 'timeout' } & ModerationTarget)
   | { kind: 'server_profile'; server: string }
   | { kind: 'profile_reset'; server: string; user: UserRef }
-  | { kind: 'ban'; server: string; user: UserRef }
-  | { kind: 'ban_request'; request: BanRequest }
-  | { kind: 'timeout_request'; request: TimeoutRequest }
+  | ({ kind: 'ban' } & ModerationTarget)
   // The warning before a message's link opens another site; `label`: the link's own text.
   | { kind: 'external_link'; href: string; label: string | null }
   | { kind: 'ban_confirm'; username: string }
