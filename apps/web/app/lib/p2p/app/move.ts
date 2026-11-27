@@ -50,6 +50,7 @@ export interface FilesPart {
 // ----- Device move -----
 
 export const ELSEWHERE_IMPORT = 'P2P is open in another tab. Use it here first.'
+const NO_DATA_TEXT = 'There is no P2P data in this browser.'
 
 export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope: IdentityScope) {
   const state = parts.store
@@ -79,14 +80,19 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
   }
 
   // The database of this account, for a moment: the running node's, or opened just for this.
+  // `missing` answers when there is none.
   const withDb = async <T>(
     fn: (s: P2pStore) => Promise<T>,
-    op = operationFor(signedIn())
+    op = operationFor(signedIn()),
+    missing: () => T = () => {
+      throw new Error(NO_DATA_TEXT)
+    }
   ): Promise<T> => {
     op.check()
     const live = state.store ?? state.reader?.store
     const borrowed = live && !live.closed
     const s = borrowed ? live : await P2pStore.open(op.name)
+    if (!s) return missing()
     try {
       op.check()
       const result = await fn(s)
@@ -193,7 +199,11 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
       let already = false
       let destinationKey: string | null = null
       if (st.ik !== null || (await hasDb(op.name))) {
-        const local = await withDb(s => s.self(), op)
+        const local = await withDb(
+          s => s.self(),
+          op,
+          () => undefined
+        )
         destinationKey = local ? keyId(local.ik.pk) : null
         kind = importKind(local, dump)
         already = alreadyImported(local, dump)
@@ -218,7 +228,7 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
       const op = operationFor(username)
       const job = async () => {
         op.check()
-        const s = await P2pStore.open(op.name)
+        const s = await P2pStore.create(op.name)
         const close = () => s.close()
         try {
           op.check()
@@ -280,7 +290,7 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
         if (op.current() && state.leader === l)
           await parts.account.boot(
             username,
-            null,
+            { create: null },
             l,
             () => op.current() && state.leader === l && l.state === 'leading'
           )

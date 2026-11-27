@@ -109,7 +109,7 @@ describe('the account limits', () => {
       const d = startDeps('ann')
       expect(runtimeLimits(d.limits).leader.handoverMs).toBe(4000)
       // What `boot` makes with them.
-      const store = await P2pStore.open(`limits-${Math.random()}`)
+      const store = await P2pStore.create(`limits-${Math.random()}`)
       const n = (await openNode(d, store, { name: 'Ann' })) as P2pNode
       const { transport } = (n as unknown as { deps: NodeDeps }).deps
       expect((transport as unknown as { limits: TransportLimits }).limits.dialMs).toBe(20_000)

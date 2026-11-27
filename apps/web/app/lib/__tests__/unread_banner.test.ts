@@ -152,7 +152,7 @@ describe('the first unread message in storage', () => {
     }) as EventRecord
 
   test('is the first message from someone else after the read marker', async () => {
-    const store = await P2pStore.open(`unread_banner_${Date.now()}`)
+    const store = await P2pStore.create(`unread_banner_${Date.now()}`)
     try {
       for (const e of [
         ev(1),

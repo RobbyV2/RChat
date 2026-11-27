@@ -574,7 +574,7 @@ describe('P2P passphrase protection without WebAssembly', () => {
     try {
       await p2pAccount(username)
       const stored = async () => {
-        const s = await P2pStore.open(dbFor(username))
+        const s = await P2pStore.create(dbFor(username))
         const self = await s.self()
         s.close()
         return [self?.moving ?? null, self?.exported ?? null]

@@ -114,7 +114,7 @@ const makePeer = async (hub: Hub, name: string, clock: ManualClock) => {
 
 // A node on a database that already holds an identity (an imported one).
 const openPeer = async (hub: Hub, db: string, clock: ManualClock) => {
-  const store = await P2pStore.open(db)
+  const store = await P2pStore.create(db)
   const node = (await P2pNode.open({
     store,
     transport: hub.transport(),
@@ -162,7 +162,7 @@ const bodies = async (p: Peer, peerIk: string) =>
 const text = (v: unknown) =>
   JSON.stringify(v, (_, x: unknown) => (x instanceof Uint8Array ? Array.from(x) : x))
 
-const fresh = async () => P2pStore.open(`test-move-${Math.random()}`)
+const fresh = async () => P2pStore.create(`test-move-${Math.random()}`)
 
 const selfOf = async (s: P2pStore) => (await s.self()) as SelfRecord
 
@@ -726,7 +726,7 @@ describe('after the move', () => {
     a.node.stop()
     const dump = await unlockP2p(sec, PASS)
     const name = `test-move-new-${Math.random()}`
-    const store = await P2pStore.open(name)
+    const store = await P2pStore.create(name)
     await applyImport(store.db, dump, 'new', { now: clock.now() })
     store.close()
     const a2 = await openPeer(hub, name, clock)
@@ -993,7 +993,7 @@ describe('moving safely', () => {
     // still hold that session and the dial would back off on a clock that doesn't move.
     await waitFor(() => b.node.presence(a.node.ik) === 'offline', 'the old device gone')
     const name = `test-move-late-${Math.random()}`
-    const store = await P2pStore.open(name)
+    const store = await P2pStore.create(name)
     await applyImport(store.db, dump, 'new', { now: clock.now() })
     store.close()
     const a2 = await openPeer(hub, name, clock)
@@ -1012,7 +1012,7 @@ describe('moving safely', () => {
     a.dms.stop()
     a.node.stop()
     const xName = `test-move-x-${Math.random()}`
-    let st = await P2pStore.open(xName)
+    let st = await P2pStore.create(xName)
     await applyImport(st.db, dump, 'new', { now: clock.now() })
     st.close()
     const x = await openPeer(hub, xName, clock)
@@ -1025,7 +1025,7 @@ describe('moving safely', () => {
     // A thief with a copy of the key (a stolen device or file) revokes X in favour of T.
     clock.advance(1000)
     const tName = `test-move-t-${Math.random()}`
-    st = await P2pStore.open(tName)
+    st = await P2pStore.create(tName)
     await applyImport(st.db, dump, 'new', { now: clock.now() })
     await st.updateSelf(cur => ({
       ...cur!,
@@ -1063,7 +1063,7 @@ describe('moving safely', () => {
     a.node.stop()
     const open = async (tag: string) => {
       const name = `test-move-${tag}-${Math.random()}`
-      const st = await P2pStore.open(name)
+      const st = await P2pStore.create(name)
       await applyImport(st.db, dump, 'new', { now: clock.now() })
       st.close()
       return openPeer(hub, name, clock)

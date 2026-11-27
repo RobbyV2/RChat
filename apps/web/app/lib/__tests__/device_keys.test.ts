@@ -195,7 +195,7 @@ describe('the shell device key', () => {
   })
 
   test('makes one key for two instances over one P2P database, and leaves no stray wrapping key', async () => {
-    const store = await P2pStore.open(`test-device-keys-${Math.random()}`)
+    const store = await P2pStore.create(`test-device-keys-${Math.random()}`)
     const chain = keychain()
     const [a, b] = [shellDeviceKeys(store, chain, true), shellDeviceKeys(store, chain, true)]
     const [one, two] = await Promise.all([a.current(), b.current()])

@@ -307,7 +307,7 @@ describe('storage', () => {
     await v2.put('events', { id: 'e1', room: 'r', type: 'msg', sortKey: 'k', seq: 1 })
     await v2.put('meta', 2, 'schema')
     v2.close()
-    const store = await Store.open(name)
+    const store = (await Store.open(name))!
     expect(store.db.version).toBe(DB_VERSION)
     expect(store.db.objectStoreNames.contains('blobs')).toBe(true)
     expect(store.db.objectStoreNames.contains('blob_parts')).toBe(true)
@@ -315,9 +315,56 @@ describe('storage', () => {
     expect(await store.db.countFromIndex('events', 'att', 'x')).toBe(0)
     expect(await store.meta('schema')).toBe(DB_VERSION)
     store.close()
-    const again = await Store.open(name)
+    const again = (await Store.open(name))!
     expect((await again.event('e1'))?.room).toBe('r')
     again.close()
+  })
+
+  test('opening never makes a database: only create does', async () => {
+    const { P2pStore: Store, DB_VERSION, removeP2pDb } = await import('../p2p/db')
+    const name = `missing-${Math.random()}`
+    const names = async () => (await indexedDB.databases()).map(d => d.name)
+    expect(await Store.open(name)).toBeNull()
+    expect(await names()).not.toContain(name)
+    ;(await Store.create(name)).close()
+    const opened = await Store.open(name)
+    expect(opened?.db.version).toBe(DB_VERSION)
+    opened?.close()
+    await removeP2pDb(name)
+    expect(await Store.open(name)).toBeNull()
+    expect(await names()).not.toContain(name)
+  })
+
+  test('a stored database whose upgrade fails is an error, not a missing one', async () => {
+    const { openDB } = await import('idb')
+    const { P2pStore: Store, UPGRADES, removeP2pDb } = await import('../p2p/db')
+    const name = `broken-${Math.random()}`
+    ;(
+      await openDB(name, 2, {
+        upgrade(db, _old, _new, tx) {
+          UPGRADES[0](db as never, tx as never)
+          UPGRADES[1](db as never, tx as never)
+        },
+      })
+    ).close()
+    const step = UPGRADES[2]
+    // The step fails the way a full disk fails it: the upgrade is aborted.
+    UPGRADES[2] = (_db, tx) => {
+      tx.done.catch(() => {})
+      tx.abort()
+    }
+    try {
+      expect(
+        await Store.open(name).then(
+          () => 'opened',
+          () => 'failed'
+        )
+      ).toBe('failed')
+    } finally {
+      UPGRADES[2] = step
+    }
+    expect((await Store.open(name))?.db.version).toBe(UPGRADES.length)
+    await removeP2pDb(name)
   })
 })
 

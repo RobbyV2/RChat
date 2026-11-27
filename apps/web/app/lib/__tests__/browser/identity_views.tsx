@@ -158,7 +158,7 @@ async function dockFixture(voice: boolean, background: boolean) {
   if (!background) client.shown = () => account
   const peerRoom = dmRoomId(self, ik)
   sibling.callRtc.active = () => true
-  sibling.put.reader({ me: self, store: await P2pStore.open('dock-fixture') })
+  sibling.put.reader({ me: self, store: await P2pStore.create('dock-fixture') })
   const server = {
     id: 'server',
     name: 'Work server',

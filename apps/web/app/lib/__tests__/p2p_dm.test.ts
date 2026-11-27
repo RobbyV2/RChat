@@ -338,7 +338,7 @@ describe('storage', () => {
     await v1.put('contacts', { ik: 'kept', state: 'mutual' })
     await v1.put('meta', 1, 'schema')
     v1.close()
-    const store = await Store.open(name)
+    const store = await Store.create(name)
     expect(DB_VERSION).toBe(8)
     expect(store.db.version).toBe(8)
     expect([...store.db.objectStoreNames].sort()).toEqual([
@@ -364,7 +364,7 @@ describe('storage', () => {
     expect(await store.rooms()).toEqual([])
     store.close()
     // Opening again changes nothing.
-    const again = await Store.open(name)
+    const again = await Store.create(name)
     expect((await again.contact('kept'))?.state).toBe('mutual')
     again.close()
   })

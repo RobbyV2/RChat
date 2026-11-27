@@ -449,29 +449,53 @@ export const DB_VERSION = UPGRADES.length
 export const dbName = (instance: string, account: string) => `rchat-p2p:${instance}:${account}`
 
 // `onBlocking` runs when another tab needs a newer schema or deletes the database; closing lets
-// it go ahead.
-export const openP2pDb = (name: string, onBlocking: () => void = () => {}) =>
-  openDB<P2pSchema>(name, DB_VERSION, {
-    upgrade(db, oldVersion, _newVersion, tx) {
-      for (let v = oldVersion; v < DB_VERSION; v += 1) UPGRADES[v](db, tx)
-      void tx.objectStore('meta').put(DB_VERSION, 'schema')
-    },
-    blocking: onBlocking,
-  })
+// it go ahead. Without `create`, a database that does not exist is never made: its first upgrade
+// is aborted and the open answers null. Any other failure, an upgrade of a stored one too, throws.
+const openP2pDb = async (name: string, create: boolean, onBlocking: () => void) => {
+  let missing = false
+  try {
+    return await openDB<P2pSchema>(name, DB_VERSION, {
+      upgrade(db, oldVersion, _newVersion, tx) {
+        if (oldVersion === 0 && !create) {
+          missing = true
+          tx.done.catch(() => {})
+          return tx.abort()
+        }
+        for (let v = oldVersion; v < DB_VERSION; v += 1) UPGRADES[v](db, tx)
+        void tx.objectStore('meta').put(DB_VERSION, 'schema')
+      },
+      blocking: onBlocking,
+    })
+  } catch (e) {
+    if (missing) return null
+    throw e
+  }
+}
 
 export class P2pStore {
   closed = false
 
   private constructor(readonly db: P2pDatabase) {}
 
-  static async open(name: string, onBlocking?: () => void) {
+  private static async at(name: string, create: boolean, onBlocking?: () => void) {
     let store: P2pStore | null = null
-    const db = await openP2pDb(name, () => {
+    const db = await openP2pDb(name, create, () => {
       store?.close()
       onBlocking?.()
     })
+    if (!db) return null
     store = new P2pStore(db)
     return store
+  }
+
+  // The database as it is stored; null when there is none (never made, or deleted).
+  static open(name: string, onBlocking?: () => void) {
+    return P2pStore.at(name, false, onBlocking)
+  }
+
+  // The database, made empty when there is none yet: only for a new identity or an import.
+  static async create(name: string, onBlocking?: () => void) {
+    return (await P2pStore.at(name, true, onBlocking))!
   }
 
   close() {

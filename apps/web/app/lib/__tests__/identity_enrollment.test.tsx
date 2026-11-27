@@ -167,7 +167,7 @@ test('an encrypted identity import attaches its existing key to the selected sib
     db = slot.app.dbFor('importer')
     const result = await slot.app.p2pTransfer.apply(unlocked)
     expect(result.ok).toBe(true)
-    const stored = await P2pStore.open(db)
+    const stored = await P2pStore.create(db)
     try {
       expect((await stored.self())!.ik.pk).toEqual((await source.store.self())!.ik.pk)
     } finally {
@@ -299,7 +299,7 @@ test('overlapping encrypted applies protect both keys and recheck the preview in
     )
     const a = await reserveIdentity(account, 'A')
     const b = await reserveIdentity(account, 'B')
-    for (const slot of [a, b]) stores.push(await P2pStore.open(slot.app.dbFor(username)))
+    for (const slot of [a, b]) stores.push(await P2pStore.create(slot.app.dbFor(username)))
     const [first, second] = stores
     const pass = 'encrypted overlap fixture'
     const limits = kdfBounds(LOCAL.transfer).min

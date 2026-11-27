@@ -240,7 +240,7 @@ export const makeNode = async (
   } = {}
 ) => {
   const db = opts.db ?? `test-${name}-${dbSeq++}-${Math.random()}`
-  const store = await P2pStore.open(db)
+  const store = await P2pStore.create(db)
   const node = (await P2pNode.open(
     {
       store,

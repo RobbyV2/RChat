@@ -1293,7 +1293,7 @@ describe('where a forwarded copy’s original is', () => {
     ...over,
   })
   const setup = async (records: Record<string, EventRecord>) => {
-    const store = await P2pStore.open(crypto.randomUUID())
+    const store = await P2pStore.create(crypto.randomUUID())
     store.event = async ev => records[ev]
     p2pState({
       enabled: true,
@@ -1771,7 +1771,7 @@ describe('P2P conversations in the DM list', () => {
 
 describe('a tab that only reads', () => {
   test('delayed room reads cannot reopen Alice’s conversation on Bob’s home app', async () => {
-    const alice = await P2pStore.open(crypto.randomUUID())
+    const alice = await P2pStore.create(crypto.randomUUID())
     const room = blankRoom(dmRoomId(ALICE, CAROL), CAROL, NOW)
     const delayed = Promise.withResolvers<RoomRecord>()
     const aliceOwner = new AccountSession(home)

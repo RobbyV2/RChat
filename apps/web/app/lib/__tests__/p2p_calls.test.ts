@@ -416,7 +416,7 @@ const revokeBy = async (p: Peer, hub: Hub, clock: ManualClock, other: Peer) => {
   const dk2 = newKeyPair()
   const cert2 = signCert(self.ik, dk2.pk, clock.now(), 'Phone')
   const rev = signRevocation(self.ik, p.node.dk, clock.now(), keyId(dk2.pk))
-  const phone = await P2pStore.open(`phone-${Math.random()}`)
+  const phone = await P2pStore.create(`phone-${Math.random()}`)
   await phone.putSelf({ ...self, dk: dk2, cert: cert2, certs: [cert2], revocations: [rev] })
   await phone.putContact((await p.store.contact(other.node.ik))!)
   const p2 = (await P2pNode.open({

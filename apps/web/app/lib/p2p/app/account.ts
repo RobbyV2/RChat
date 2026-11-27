@@ -227,6 +227,7 @@ export function createAccountPart(
       const s = await P2pStore.open(dbFor(username), () => {
         if (state.reader?.store === s) stopReader()
       })
+      if (!s) return
       const self = await s.self()
       if (!live() || !self) return s.close()
       stopReader()
@@ -297,7 +298,9 @@ export function createAccountPart(
   }
 
   // Runs P2P in this tab once it holds the account's lock; until then the tab shows a notice.
-  // `create` is the name for a new identity, when one should be made.
+  // `create` is the name for a new identity, when one should be made: only the boot that first
+  // runs a node here can make it, so a later turn of the lock never brings back an identity that
+  // another tab deleted.
   // P2P decides through the shared permission rules, so nothing starts before they are loaded.
   const run = (username: string, create: string | null) => {
     if (loaded()) return start(username, create)
@@ -319,13 +322,14 @@ export function createAccountPart(
     const mine = state.gen
     // Bumped on every resign, so a boot still in flight stops instead of starting a second node.
     let term = 0
+    const intent = { create }
     const hooks = {
       lead: (): Promise<void> => {
         const t = ++term
         return mine === state.gen
           ? boot(
               username,
-              create,
+              intent,
               l,
               () => scope.current(username) && mine === state.gen && t === term
             )
@@ -477,31 +481,41 @@ export function createAccountPart(
 
   const storageManager = () => (typeof navigator === 'undefined' ? undefined : navigator.storage)
 
+  // `intent.create` is cleared once a node runs, whichever tab made the identity.
   const boot = async (
     username: string,
-    create: string | null,
+    intent: { create: string | null },
     l: TabLeader,
     live: () => boolean
   ) => {
     useP2p.setState({ loading: true, elsewhere: false })
     try {
-      const s = await P2pStore.open(dbFor(username), () => {
+      // Only while P2P is on for the account here: a deletion turns it off before it starts.
+      if (!readOn(username)) intent.create = null
+      const { create } = intent
+      const onBlocking = () => {
         // Another tab removed the data or upgraded the schema: start over from what is stored.
-        if (state.store !== s) return
+        if (state.store !== s || !s) return
         put.gen(state.gen + 1)
         shutdown()
         useP2p.setState({ loading: false })
         void p2pAccount(useP2p.getState().account)
-      })
-      if (!live()) return s.close()
+      }
+      const s =
+        create !== null
+          ? await P2pStore.create(dbFor(username), onBlocking)
+          : await P2pStore.open(dbFor(username), onBlocking)
+      if (!live()) return s?.close()
       const deps = startDeps(username)
-      const n = await openNode(deps, s, create !== null ? { name: create } : undefined)
+      const n = s && (await openNode(deps, s, create !== null ? { name: create } : undefined))
+      if (n) intent.create = null
       if (!live()) {
         n?.stop()
-        return s.close()
+        return s?.close()
       }
-      if (!n) {
-        s.close()
+      // No identity here: none was made, or another tab deleted it.
+      if (!s || !n) {
+        s?.close()
         writeOn(username, false)
         if (state.leader === l) put.leader(null)
         void l.stop()

@@ -306,7 +306,7 @@ describe('search index', () => {
       stopMember(cur)
       const dump = await unlockP2p(sec, 'correct horse battery')
       const db = `test-move-index-${move}-${Math.random()}`
-      const store = await P2pStore.open(db)
+      const store = await P2pStore.create(db)
       await applyImport(store.db, dump, 'new', { now: clock.now() })
       store.close()
       cur = await makeMember(hub, 'Alice', clock, { db })
@@ -836,7 +836,7 @@ describe('storage v8', () => {
     await v7.put('meta', 7, 'schema')
     await v7.put('meta', 4, 'events')
     v7.close()
-    const store = await Store.open(name)
+    const store = await Store.create(name)
     expect(DB_VERSION).toBe(8)
     expect(store.db.version).toBe(8)
     expect(await store.meta('schema')).toBe(8)
@@ -866,7 +866,7 @@ describe('storage v8', () => {
     )
     store.close()
     // Opening again changes nothing.
-    const again = await Store.open(name)
+    const again = await Store.create(name)
     expect(again.db.version).toBe(8)
     expect(await again.db.count('events')).toBe(4)
     expect(await again.db.count('search')).toBe(6)

@@ -141,7 +141,7 @@ describe('P2P node', () => {
     const ik = a.node.ik
     a.node.stop()
     a.store.close()
-    const again = await P2pStore.open(a.db)
+    const again = await P2pStore.create(a.db)
     const reopened = (await P2pNode.open({
       store: again,
       transport: hub.transport(),
@@ -156,7 +156,7 @@ describe('P2P node', () => {
     await reopened.start()
     await waitFor(() => reopened.presence(b.node.ik) === 'online', 'presence after reopen')
     // Without create, an empty database has no identity.
-    const empty = await P2pStore.open(`empty-${Math.random()}`)
+    const empty = await P2pStore.create(`empty-${Math.random()}`)
     expect(await P2pNode.open({ store: empty, transport: hub.transport(), host: 'x' })).toBeNull()
     again.close()
     await removeP2pDb(a.db)
@@ -757,7 +757,7 @@ describe('P2P node', () => {
     const dk2 = newKeyPair()
     const cert2 = signCert(bSelf.ik, dk2.pk, clock.now(), 'Phone')
     const rev = signRevocation(bSelf.ik, oldDk, clock.now(), keyId(dk2.pk))
-    const phone = await P2pStore.open(`phone-${Math.random()}`)
+    const phone = await P2pStore.create(`phone-${Math.random()}`)
     await phone.putSelf({ ...bSelf, dk: dk2, cert: cert2, certs: [cert2], revocations: [rev] })
     await phone.putContact((await out[1].store.contact(a.ik))!)
     const b2 = (await P2pNode.open({
@@ -796,7 +796,7 @@ describe('P2P node', () => {
     const dk2 = newKeyPair()
     const cert2 = signCert(bSelf.ik, dk2.pk, clock.now(), 'Phone')
     const rev = signRevocation(bSelf.ik, oldDk, clock.now(), keyId(dk2.pk))
-    const phone = await P2pStore.open(`phone-${Math.random()}`)
+    const phone = await P2pStore.create(`phone-${Math.random()}`)
     await phone.putSelf({ ...bSelf, dk: dk2, cert: cert2, certs: [cert2], revocations: [rev] })
     await phone.putContact((await out[1].store.contact(a.ik))!)
     const b2 = (await P2pNode.open({
@@ -820,7 +820,7 @@ describe('P2P node', () => {
     const [a, b] = out.map(x => x.node)
     await befriend(a, b, clock)
     // A second tab on the same database, loaded before the changes below.
-    const store2 = await P2pStore.open(out[0].db)
+    const store2 = await P2pStore.create(out[0].db)
     const stale = (await P2pNode.open({
       store: store2,
       transport: hub.transport(),
@@ -1077,7 +1077,7 @@ describe('one P2P node per database across tabs', () => {
         {
           lead: async () => {
             t.following = false
-            t.store = await P2pStore.open(db)
+            t.store = await P2pStore.create(db)
             t.node = (await P2pNode.open({
               store: t.store,
               transport: hub.transport(),

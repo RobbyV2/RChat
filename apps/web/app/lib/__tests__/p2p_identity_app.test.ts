@@ -251,12 +251,12 @@ test('a retained identity cannot delete data after disposal or retargeting', asy
   app.rememberImport(user, 'original-import')
   await app.p2pAccount(user)
   app.writeOn(user, true)
-  ;(await P2pStore.open(original)).close()
+  ;(await P2pStore.create(original)).close()
   account.conn.retarget(endpointsFrom('https://identity-replacement.test', null), null, false)
   const replacement = createP2pApp(account, 'main')
   const next = replacement.dbFor(user)
   try {
-    ;(await P2pStore.open(next)).close()
+    ;(await P2pStore.create(next)).close()
     replacement.writeOn(user, true)
     expect(app.dbFor(user)).toBe(original)
     expect(app.readImports(user)).toEqual(['original-import'])
@@ -296,8 +296,8 @@ test('signout while opening the import database cancels the write and both journ
   const dump = await parseDump(await dumpBytes(source.store.db))
   const opened = Promise.withResolvers<void>()
   const resume = Promise.withResolvers<void>()
-  const open = P2pStore.open
-  P2pStore.open = async name => {
+  const open = P2pStore.create
+  P2pStore.create = async name => {
     const store = await open(name)
     opened.resolve()
     await resume.promise
@@ -328,7 +328,7 @@ test('signout while opening the import database cancels the write and both journ
     expect(app.useP2p.getState().enabled).toBe(false)
   } finally {
     resume.resolve()
-    P2pStore.open = open
+    P2pStore.create = open
     app.dispose()
     source.node.stop()
     source.store.close()
@@ -645,7 +645,7 @@ test('a parked identity that runs here waits for its server to link, however lat
   }
 }, 60_000)
 
-test('an identity another tab runs moves here to leave its servers', async () => {
+test('an identity another tab runs moves here to leave its servers, and stays deleted in both tabs', async () => {
   const user = 'retire-tabs'
   const origin = 'https://identity-retire-tabs.test'
   const first = testAccount(user, origin)
@@ -690,6 +690,16 @@ test('an identity another tab runs moves here to leave its servers', async () =>
     expect(await two.p2p.retire(user)).toBe(true)
     expect(two.p2p.hasData(user)).toBe(false)
     await waitFor(() => gone(owner, room, ik), 'the owner sees the identity leave')
+
+    // The first tab gets the lock back and finds nothing to run: no new database or identity.
+    await waitFor(() => one.leader === null, 'the first tab to stop waiting for P2P')
+    expect(one.node).toBeNull()
+    expect(one.p2p.hasData(user)).toBe(false)
+    expect(one.useP2p.getState().enabled).toBe(false)
+    expect((await indexedDB.databases()).map(db => db.name)).not.toContain(dbs[0])
+    await one.p2pAccount(user)
+    expect(one.leader).toBeNull()
+    expect((await indexedDB.databases()).map(db => db.name)).not.toContain(dbs[0])
   } finally {
     await two.dispose()
     await one.dispose()
@@ -700,6 +710,47 @@ test('an identity another tab runs moves here to leave its servers', async () =>
     )
     await Promise.all(dbs.map(db => removeP2pDb(db)))
     for (const a of [first, second, bob]) a.store.dispose()
+  }
+}, 60_000)
+
+test('a tab that asked for an identity while another ran one makes none once that one is deleted', async () => {
+  const user = 'enable-elsewhere'
+  const origin = 'https://identity-enable-elsewhere.test'
+  const first = testAccount(user, origin)
+  const second = testAccount(user, origin)
+  for (const a of [first, second]) a.discovery.done()
+  const hub = new Hub()
+  const locks = new FakeLocks()
+  const buses = new Map<string, () => ChannelLike>()
+  const channel = (name: string) => {
+    if (!buses.has(name)) buses.set(name, bus())
+    return buses.get(name)!()
+  }
+  const tabs = {
+    transport: () => hub.transport(),
+    leaderDeps: () => ({ ...webLeaderDeps(), locks, channel }),
+  }
+  const one = createP2pApp(first, 'main', tabs)
+  const two = createP2pApp(second, 'main', tabs)
+  const db = one.dbFor(user)
+  try {
+    await two.p2pAccount(user)
+    await one.p2pAccount(user)
+    await one.p2p.enable('Alice')
+    await waitFor(() => one.node?.status === 'online', 'the first tab runs the identity')
+    await two.p2p.enable('Bee')
+    await waitFor(() => two.useP2p.getState().elsewhere, 'the second tab to follow')
+    expect(await one.p2p.removeData(user)).toBe(true)
+    await waitFor(() => two.leader === null, 'the second tab to stop waiting for P2P')
+    expect(two.node).toBeNull()
+    expect(two.p2p.hasData(user)).toBe(false)
+    expect((await indexedDB.databases()).map(d => d.name)).not.toContain(db)
+  } finally {
+    await two.dispose()
+    await one.dispose()
+    memoryStorage.removeItem(peerStorage(first.conn, user).scoped(one.p2pKey(user)))
+    await removeP2pDb(db)
+    for (const a of [first, second]) a.store.dispose()
   }
 }, 60_000)
 

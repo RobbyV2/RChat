@@ -203,7 +203,7 @@ describe('badge states', () => {
   })
 })
 
-const openStore = () => P2pStore.open(`badge-${Math.random()}`)
+const openStore = () => P2pStore.create(`badge-${Math.random()}`)
 
 describe('Badges', () => {
   const setup = async (verify: (token: string, ik: string) => Promise<BindingClaims>) => {
