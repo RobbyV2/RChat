@@ -12,27 +12,7 @@ import {
   type ReactNode,
   type SyntheticEvent,
 } from 'react'
-import {
-  Ban,
-  GripVertical,
-  Hash,
-  IdCard,
-  KeyRound,
-  LayoutDashboard,
-  Lock,
-  MessageSquare,
-  Paperclip,
-  Puzzle,
-  ScrollText,
-  Shield,
-  Ticket,
-  Trash2,
-  TriangleAlert,
-  Users,
-  Volume2,
-  Webhook,
-  type LucideIcon,
-} from 'lucide-react'
+import { GripVertical, Hash, Lock, Trash2, TriangleAlert, Volume2 } from 'lucide-react'
 import { registerAppActions } from '../lib/actions'
 import { itemFor, openActionMenu, openChoiceMenu } from '../lib/actions/menu'
 import { ctxFor } from '../lib/actions/ctx'
@@ -108,7 +88,7 @@ import { AboutEditor } from './server_about'
 import { hostedAbout, hostedAboutPatch } from '../lib/server_about'
 import { ServerHeader } from './server_header'
 import { SystemMessagesSection } from './system_messages'
-import { useHostedServer } from '../lib/place/react'
+import { PlaceProvider, useHostedServer } from '../lib/place/react'
 import { ProfilesModeField } from './server_profile_dialog'
 import { NameWithUsername } from './display_name'
 import { useShownMembers } from './shown_user'
@@ -140,13 +120,9 @@ import {
 } from './ui'
 import { LabelText } from './instance_badge'
 import { endsText } from '../lib/durations'
-import { SettingsPage, type PageSection } from './settings_page'
-import {
-  SERVER_SECTION_LABELS,
-  serverSettingsRows,
-  serverSettingsSections,
-  type ServerSettingsSection,
-} from '../lib/server_settings_sections'
+import { ServerSettingsPage } from './server_settings_page'
+import { HostedServer } from '../lib/place/place'
+import { type ServerSettingsSection } from '../lib/server_settings_sections'
 
 function HostedSystemMessages({ server }: { server: string }) {
   const place = useHostedServer(server)
@@ -1363,23 +1339,6 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
   )
 }
 
-const SERVER_SECTION_ICONS: Record<ServerSettingsSection, LucideIcon> = {
-  invites: Ticket,
-  overview: LayoutDashboard,
-  widgets: Puzzle,
-  messages: MessageSquare,
-  uploads: Paperclip,
-  profiles: IdCard,
-  access: KeyRound,
-  roles: Shield,
-  channels: Hash,
-  members: Users,
-  bans: Ban,
-  integrations: Webhook,
-  audit: ScrollText,
-  delete: Trash2,
-}
-
 export default function ServerSettings() {
   const dialog = useStore(s => s.activeDialog)
   return dialog?.kind === 'server_settings' ? (
@@ -1427,14 +1386,6 @@ function Settings({ server, section }: { server: string; section: ServerSettings
   const [renameError, setRenameError] = useState<string | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   const [q, setQ] = useState('')
-  const [picked, setPicked] = useState<string | null>(section)
-  const [seenSection, setSeenSection] = useState(section)
-  if (seenSection !== section) {
-    setSeenSection(section)
-    if (section !== null) setPicked(section)
-  }
-  const [row, setRow] = useState<string | null>(null)
-  const profilesOn = useStore(s => s.settings.server_profiles !== false)
   const canSettings = hasPerm(perms, Perm.ManageServer)
   // Member rows lead with the name the server shows, the username after it.
   const shownOf = useShownMembers(server)
@@ -1775,28 +1726,13 @@ function Settings({ server, section }: { server: string; section: ServerSettings
       </>
     ),
   }
-  const viewer = { perms, builtin: server === 'rchat', profiles: profilesOn }
-  const sections: PageSection[] = serverSettingsSections(viewer).map(id => ({
-    id,
-    label: SERVER_SECTION_LABELS[id],
-    icon: SERVER_SECTION_ICONS[id],
-    rows: serverSettingsRows(id, viewer),
-    render: body[id],
-  }))
-
   return (
-    <SettingsPage
-      title="Server Settings"
-      sections={sections}
-      active={picked}
-      row={row}
-      onSection={(id, at) => {
-        setPicked(id)
-        setRow(at ?? null)
-      }}
-      onClose={closeDialog}
-      actor={<ViewActorTag header />}
-      layer="dialog"
-    />
+    <PlaceProvider place={HostedServer.open(acct, server)}>
+      <ServerSettingsPage
+        first={section}
+        render={id => (id in body ? body[id as ServerSettingsSection]() : null)}
+        actor={<ViewActorTag header />}
+      />
+    </PlaceProvider>
   )
 }

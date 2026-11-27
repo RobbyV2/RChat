@@ -152,3 +152,33 @@ export const serverSettingsRows = (
       : ((builtin ? BUILTIN[section] : undefined) ?? ROWS[section])
   return [{ section, id: `server_${section}`, ...text }]
 }
+
+// The sections of a P2P room's settings. Every member sees them all; what someone may not
+// change shows read-only inside.
+export const ROOM_SECTIONS = [
+  'overview',
+  'roles',
+  'channels',
+  'invites',
+  'system',
+  'history',
+  'members',
+  'bans',
+  'modlog',
+  'leave',
+] as const
+export type RoomSettingsSection = (typeof ROOM_SECTIONS)[number]
+
+export const ROOM_SECTION_TEXT: Record<RoomSettingsSection, { label: string; keywords: string[] }> =
+  {
+    overview: { label: 'Overview', keywords: ['rename', 'server name', 'server profiles'] },
+    roles: { label: 'Roles', keywords: ['permissions', 'role'] },
+    channels: { label: 'Channels', keywords: ['category', 'topic', 'slowmode', 'voice'] },
+    invites: { label: 'Invites', keywords: ['invite', 'code', 'link'] },
+    system: { label: 'System messages', keywords: ['welcome', 'join', 'leave'] },
+    history: { label: 'History', keywords: ['earlier messages', 'new members'] },
+    members: { label: 'Members', keywords: ['member', 'kick', 'roles'] },
+    bans: { label: 'Bans', keywords: ['banned', 'unban'] },
+    modlog: { label: 'Moderation log', keywords: ['audit', 'reason', 'kick', 'ban', 'roles'] },
+    leave: { label: 'Leave', keywords: ['leave server', 'remove from this device'] },
+  }

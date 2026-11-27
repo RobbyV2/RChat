@@ -7,24 +7,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  Ban,
-  Clock,
-  Crown,
-  Hash,
-  History as HistoryIcon,
-  LayoutDashboard,
-  Lock,
-  LogOut,
-  MessageSquare,
-  ScrollText,
-  Shield,
-  Ticket,
-  Trash2,
-  Users,
-  Volume2,
-  type LucideIcon,
-} from 'lucide-react'
+import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { type ServerTab } from '../../lib/p2p/app'
 import {
@@ -42,14 +25,15 @@ import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { fieldCls, filledBtn, Masked, Sentinel, textBtn } from '../ui'
 import { Row, Stack, Surface } from '../layout'
-import { SettingsPage, type PageSection } from '../settings_page'
+import { ServerSettingsPage } from '../server_settings_page'
 import { page, PAGE } from '../../lib/paging'
 import { MemberAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
 import { SettingSwitch } from '../settings_fields'
 import { SystemMessagesSection } from '../system_messages'
-import { useP2pRoom } from '../../lib/place/react'
+import { PlaceProvider, useP2pRoom } from '../../lib/place/react'
+import { P2pRoom } from '../../lib/place/place'
 import { ServerProfilesMode } from './p2p_server_profile'
 import { ChannelAccess, MemberCard, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
@@ -74,49 +58,6 @@ import { usePermissionRules } from '../use_permission_rules'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
-
-const TABS: { tab: ServerTab; label: string; icon: LucideIcon; keywords: string[] }[] = [
-  {
-    tab: 'overview',
-    label: 'Overview',
-    icon: LayoutDashboard,
-    keywords: ['rename', 'server name', 'server profiles'],
-  },
-  { tab: 'roles', label: 'Roles', icon: Shield, keywords: ['permissions', 'role'] },
-  {
-    tab: 'channels',
-    label: 'Channels',
-    icon: Hash,
-    keywords: ['category', 'topic', 'slowmode', 'voice'],
-  },
-  { tab: 'invites', label: 'Invites', icon: Ticket, keywords: ['invite', 'code', 'link'] },
-  {
-    tab: 'system',
-    label: 'System messages',
-    icon: MessageSquare,
-    keywords: ['welcome', 'join', 'leave'],
-  },
-  {
-    tab: 'history',
-    label: 'History',
-    icon: HistoryIcon,
-    keywords: ['earlier messages', 'new members'],
-  },
-  { tab: 'members', label: 'Members', icon: Users, keywords: ['member', 'kick', 'roles'] },
-  { tab: 'bans', label: 'Bans', icon: Ban, keywords: ['banned', 'unban'] },
-  {
-    tab: 'modlog',
-    label: 'Moderation log',
-    icon: ScrollText,
-    keywords: ['audit', 'reason', 'kick', 'ban', 'roles'],
-  },
-  {
-    tab: 'leave',
-    label: 'Leave',
-    icon: LogOut,
-    keywords: ['leave server', 'remove from this device'],
-  },
-]
 
 const can = (v: ServerView, bit: number) => v.me === 'join' && (v.perms & bit) !== 0
 
@@ -832,7 +773,7 @@ function Leave({ v }: { v: ServerView }) {
   )
 }
 
-function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: ServerTab }) {
+function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: string }) {
   return (
     <Surface pad="2xs" tone="plain" radius="none">
       {tab === 'overview' && <Overview key={v.name} v={v} />}
@@ -849,37 +790,23 @@ function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: ServerTab
   )
 }
 
-const isTab = (id: string | null): id is ServerTab => TABS.some(t => t.tab === id)
-
 function ServerSettingsDialogBody({ room, tab: first }: { room: string; tab?: ServerTab }) {
   const identity = useP2pApp()!
-  const { p2p } = identity
-
   const v = useP2p(s => s.servers[room])
-  const [tab, setTab] = useState<ServerTab | null>(first ?? null)
   if (!v) return null
-  const sections: PageSection[] = TABS.map(t => ({
-    id: t.tab,
-    label: t.label,
-    icon: t.icon,
-    rows: [{ section: t.tab, id: `p2p_${t.tab}`, label: t.label, keywords: t.keywords }],
-    render: () => <TabBody v={v} room={room} tab={t.tab} />,
-  }))
   return (
-    <SettingsPage
-      title="Server settings"
-      sections={sections}
-      active={tab}
-      onSection={id => setTab(isTab(id) ? id : null)}
-      onClose={p2p.closeDialog}
-      actor={<PeerActorTag header />}
-      lead={
-        <div className="mb-3 empty:hidden">
-          <ServerNotices v={v} flush />
-        </div>
-      }
-      layer="dialog"
-    />
+    <PlaceProvider place={P2pRoom.open(identity, room)}>
+      <ServerSettingsPage
+        first={first ?? null}
+        render={tab => <TabBody v={v} room={room} tab={tab} />}
+        actor={<PeerActorTag header />}
+        lead={
+          <div className="mb-3 empty:hidden">
+            <ServerNotices v={v} flush />
+          </div>
+        }
+      />
+    </PlaceProvider>
   )
 }
 

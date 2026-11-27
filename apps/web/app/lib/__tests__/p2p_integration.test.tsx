@@ -2543,7 +2543,7 @@ describe('server settings in the settings dialog', () => {
 
   test('a deep-linked tab opens its section in the large dialog', () => {
     const html = open('channels')
-    expect(html).toContain('role="dialog" aria-modal="true" aria-label="Server settings"')
+    expect(html).toContain('role="dialog" aria-modal="true" aria-label="Server Settings"')
     expect(html).toContain('md:w-[min(94vw,1120px)]')
     expect(html).toContain('data-screen="section"')
     expect(html).toContain('data-settings-section="channels" aria-current="page"')
@@ -2564,6 +2564,7 @@ describe('server settings in the settings dialog', () => {
       'history',
       'members',
       'bans',
+      'modlog',
       'leave',
     ])
   })
