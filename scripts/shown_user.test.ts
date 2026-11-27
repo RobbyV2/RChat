@@ -33,7 +33,6 @@ const IN_A_SERVER = [
   'message_link_card.tsx',
   'message_pane.tsx',
   'p2p/p2p_badge.tsx',
-  'p2p/p2p_search.tsx',
   'p2p/p2p_server_profile.tsx',
   'p2p/p2p_server_roles.tsx',
   'p2p/p2p_server_settings.tsx',

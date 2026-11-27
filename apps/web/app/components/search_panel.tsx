@@ -2,10 +2,10 @@
 
 import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { FileText, Hash, Search } from 'lucide-react'
-import { useMask, useStore } from '../lib/store'
-import { dayEndTs, dayStartTs, endOfList, shortSearch, type SearchArgs } from '../lib/search'
+import { useMask } from '../lib/store'
+import { dayEndTs, dayStartTs, endOfList } from '../lib/search'
 import { Button, Chip } from './controls'
 import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { MessageListSkeleton } from './skeletons'
@@ -18,33 +18,18 @@ import { ForwardedTag, SpoilerLine } from './replies'
 import { PreviewRow, PreviewFilename, RevealChannelPreview } from './preview_reveal'
 import { spoilerParts } from '../lib/spoilers'
 import { useForwardAccess } from '../lib/forward_access'
-import type { ViewingTarget } from '../lib/viewing'
-import type { Message, SearchResult } from '../lib/types'
+import { isUnsupported } from '../lib/place/feature'
+import { useFeature, useLive } from '../lib/place/react'
+import {
+  accountSearch,
+  search,
+  type Search as SearchFeature,
+  type SearchFilters,
+  type SearchHit,
+} from '../lib/place/search'
+import { MemberAvatar } from './p2p/p2p_badge'
 
-// What the search panel lists, whichever source found it (the instance, or P2P servers stored
-// here): where it is, who wrote it (`avatar` and `name` as the source shows people), and what.
-export interface SearchHitView {
-  key: string
-  channel: ReactNode
-  server: ReactNode
-  avatar: ReactNode
-  name: ReactNode
-  createdAt: number
-  content: string
-  // Your own message: its text and file name are never masked for you.
-  own: boolean
-  forwarded: boolean
-  // The attachment's label, or null without one.
-  file: string | null
-  fileSpoiler?: boolean
-  // A forwarded instance copy, shown only when its source room is open here.
-  copy?: { message: Pick<Message, 'forward' | 'channel_id'>; server: string }
-  // A hit from a room closed here: the room to ask about before showing it.
-  reveal?: ViewingTarget
-  onOpen: () => void
-}
-
-function HitText({ r }: { r: SearchHitView }) {
+function HitText({ r }: { r: SearchHit }) {
   const copy = useForwardAccess(r.copy?.message, { server: r.copy?.server })
   if (r.reveal)
     return (
@@ -76,14 +61,39 @@ function HitText({ r }: { r: SearchHitView }) {
   )
 }
 
-// The filters as typed; `channel` is a channel id ('' for any).
-export interface SearchFilters {
-  q: string
-  from: string
-  channel: string
-  hasFile: boolean
-  beforeTs: number | null
-  afterTs: number | null
+// Who wrote a hit, as its side shows people.
+function HitAuthor({ r }: { r: SearchHit }) {
+  const store = useStoreApi()
+  const { author } = r
+  if (author === null) return <>Open channel</>
+  if (author.kind === 'key')
+    return (
+      <>
+        <span className="shrink-0">
+          <MemberAvatar members={author.of} ik={author.ik} size={20} />
+        </span>
+        <span className="streamer truncate text-sm font-medium">
+          <Masked text={author.name} own={r.own} />
+        </span>
+      </>
+    )
+  return (
+    <>
+      <span
+        {...profileTrigger(store, author.user, author.server, false)}
+        title="View profile"
+        className={`shrink-0 ${avatarTriggerCls}`}
+      >
+        <ShownAvatar user={author.user} server={author.server} size={20} />
+      </span>
+      <span
+        {...profileTrigger(store, author.user, author.server)}
+        className={`streamer truncate text-sm font-medium ${nameTriggerCls}`}
+      >
+        <ShownName user={author.user} server={author.server} />
+      </span>
+    </>
+  )
 }
 
 export function SearchView({
@@ -102,7 +112,7 @@ export function SearchView({
   peer?: boolean
   // The "in:" choices (the current server's channels), or none.
   channels: { id: string; name: string }[] | undefined
-  hits: SearchHitView[]
+  hits: SearchHit[]
   loading: boolean
   hasMore: boolean
   // Changes with every page, so the next one loads when the end shows again.
@@ -110,7 +120,7 @@ export function SearchView({
   // A query to start with; a new `n` puts its text in the field again.
   seed?: { q: string | null; n: number }
   // Shown under the filters (where the search looks).
-  note?: ReactNode
+  note?: string | null
   // Whether, for this text, the next page loads only when the member asks for it or scrolls to
   // the end of the list after the page arrived (one page a scroll), not as soon as the end
   // shows. Without it every page loads on sight.
@@ -266,13 +276,16 @@ export function SearchView({
           >
             <p className="flex min-w-0 items-center gap-1 text-xs text-on-surface-variant">
               <Hash size={12} className="shrink-0" />
-              <span className="truncate">{r.channel}</span>
+              <span className="truncate">
+                <Masked text={r.channel} own={r.ownPlace} />
+              </span>
               <span className="shrink-0">·</span>
-              <span className="streamer truncate">{r.server}</span>
+              <span className="streamer truncate">
+                <Masked text={r.server} own={r.ownPlace} />
+              </span>
             </p>
             <div className="mt-1 flex min-w-0 items-center gap-2">
-              {r.avatar}
-              {r.name}
+              <HitAuthor r={r} />
               <MessageTime ts={r.createdAt} className="shrink-0 text-xs text-on-surface-variant" />
               {r.forwarded && (
                 <span className="text-xs">
@@ -301,120 +314,29 @@ export function SearchView({
   )
 }
 
-const instanceHit = (
-  store: ReturnType<typeof useStoreApi>,
-  r: SearchResult,
-  me: string | null,
-  owns: (server: string) => boolean,
-  open: (r: SearchResult) => void
-): SearchHitView => ({
-  key: String(r.message.id),
-  channel: <Masked text={r.channel_name} own={owns(r.server)} />,
-  server: <Masked text={r.server} own={owns(r.server)} />,
-  avatar: (
-    <span
-      {...profileTrigger(store, r.message.author, r.server, false)}
-      title="View profile"
-      className={`shrink-0 ${avatarTriggerCls}`}
-    >
-      <ShownAvatar user={r.message.author} server={r.server} size={20} />
-    </span>
-  ),
-  name: (
-    <span
-      {...profileTrigger(store, r.message.author, r.server)}
-      className={`streamer truncate text-sm font-medium ${nameTriggerCls}`}
-    >
-      <ShownName user={r.message.author} server={r.server} />
-    </span>
-  ),
-  createdAt: r.message.created_at,
-  content: r.message.content,
-  own: !r.message.webhook && r.message.author.username === me,
-  forwarded: !!r.message.forward,
-  file: r.message.media?.filename ?? null,
-  fileSpoiler: r.message.media?.spoiler,
-  ...(r.message.forward ? { copy: { message: r.message, server: r.server } } : {}),
-  onOpen: () => open(r),
-})
-
+// The search panel of a hosted server or DM, or of a P2P room or conversation.
 export default function SearchPanel() {
-  const { store, viewing } = useAccount()
-  const channels = useStore(s =>
-    s.view?.kind === 'channel' ? s.servers[s.view.server]?.channels : undefined
-  )
-  const search = useStore(s => s.search)
-  const searchRun = useStore(s => s.searchRun)
-  const closePanel = useStore(s => s.closePanel)
-  const openResult = useStore(s => s.openResult)
-  const choices = useMemo(
-    () => channels?.map(c => ({ id: String(c.id), name: c.name })),
-    [channels]
-  )
-  const me = useStore(s => s.me?.username ?? null)
-  const mine = useStore(s => s.me?.servers)
-  const servers = useStore(s => s.servers)
-  const { useViewing, canView, instanceTarget } = viewing
-  const revision = useViewing(s => s.revision)
-  useEffect(() => {
-    for (const name of new Set(search.results.map(r => r.server))) {
-      if (!servers[name])
-        void store
-          .getState()
-          .discoverChannels(name)
-          .catch(() => {})
-    }
-  }, [store, search.results, servers])
-  const hits = useMemo<SearchHitView[]>(() => {
-    const owns = (server: string) =>
-      me !== null && mine?.find(x => x.name === server)?.creator === me
-    return search.results.map(r => {
-      const t = instanceTarget(store.getState(), r.server, r.message.channel_id ?? -1)
-      if (t && canView(t)) return instanceHit(store, r, me, owns, x => void openResult(x))
-      return {
-        key: String(r.message.id),
-        channel: <Masked text={r.channel_name} />,
-        server: <Masked text={r.server} />,
-        avatar: null,
-        name: 'Open channel',
-        createdAt: r.message.created_at,
-        content: '',
-        own: false,
-        forwarded: false,
-        file: null,
-        ...(t ? { reveal: t } : {}),
-        onOpen: (): void => {
-          void openResult(r)
-        },
-      }
-    })
-  }, [store, canView, instanceTarget, search.results, me, mine, openResult, servers, revision])
-  const run = useCallback(
-    (f: SearchFilters, fresh: boolean) =>
-      void searchRun(
-        {
-          q: f.q,
-          from: f.from,
-          channelId: f.channel ? Number(f.channel) : null,
-          hasFile: f.hasFile,
-          beforeTs: f.beforeTs,
-          afterTs: f.afterTs,
-        } satisfies SearchArgs,
-        fresh
-      ),
-    [searchRun]
-  )
+  const account = useAccount()
+  const here = useFeature(search)
+  return <SearchOf of={isUnsupported(here) ? accountSearch(account) : here} />
+}
+
+function SearchOf({ of }: { of: SearchFeature }) {
+  const state = useLive(of.state)
+  useEffect(() => of.watch(), [of])
   return (
     <SearchView
-      channels={choices}
-      hits={hits}
-      loading={search.loading}
-      hasMore={search.hasMore}
-      pageKey={`${search.results.length}:${search.cursor ?? ''}`}
-      seed={{ q: search.seed ?? null, n: search.seedN ?? 0 }}
-      scrollForMore={shortSearch}
-      onRun={run}
-      onClose={closePanel}
+      peer={state.byIdentity}
+      channels={state.channels}
+      hits={state.hits}
+      loading={state.loading}
+      hasMore={state.hasMore}
+      pageKey={state.pageKey}
+      seed={state.seed ?? undefined}
+      note={state.note}
+      scrollForMore={of.steps}
+      onRun={of.run}
+      onClose={of.close}
     />
   )
 }

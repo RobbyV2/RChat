@@ -1,16 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { endOfList, shortSearch } from '../search'
-import { SearchView, type SearchHitView } from '../../components/search_panel'
+import { SearchView } from '../../components/search_panel'
+import type { SearchHit } from '../place/search'
 
 const OLDER = 'Search older messages'
 
-const HIT: SearchHitView = {
+const HIT: SearchHit = {
   key: '1',
   channel: 'general',
   server: 'club',
-  avatar: null,
-  name: 'bob',
+  ownPlace: false,
+  author: null,
   createdAt: 1_700_000_000,
   content: 'we meet at noon',
   own: false,
@@ -25,7 +26,7 @@ const view = (
     loading = false,
     hasMore = true,
     hits = [],
-  }: { loading?: boolean; hasMore?: boolean; hits?: SearchHitView[] } = {},
+  }: { loading?: boolean; hasMore?: boolean; hits?: SearchHit[] } = {},
   scrollForMore: ((q: string) => boolean) | null = shortSearch
 ) =>
   renderToStaticMarkup(
