@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { dotGeometry } from '../favicon_badge'
-import { hostedPlace, p2pPlace, placeText, tabMark, tabTitle } from '../tab_title'
+import {
+  conversationPlace,
+  dmPlace,
+  placeText,
+  roomPlace,
+  serverPlace,
+  tabMark,
+  tabTitle,
+} from '../tab_title'
 
 const channel = {
   kind: 'channel',
@@ -46,99 +54,67 @@ describe('the tab title', () => {
   })
 })
 
-describe('the place on screen', () => {
+describe('the name of a place', () => {
   const channels = [
     { id: 1, name: 'general', kind: 'text' },
     { id: 2, name: 'Lounge', kind: 'voice' },
   ]
-  const hosted = (over: Partial<Parameters<typeof hostedPlace>[0]> = {}) =>
-    hostedPlace({
-      view: { kind: 'channel', server: 'club', channelId: 1 },
-      home: false,
-      dms: [
-        {
-          id: 7,
-          other: {
-            username: 'al',
-            display_name: 'Al',
-            avatar_kind: 'identicon',
-            avatar_color: null,
-          },
-          is_self: false,
-        },
-        {
-          id: 8,
-          other: {
-            username: 'me',
-            display_name: 'Me',
-            avatar_kind: 'identicon',
-            avatar_color: null,
-          },
-          is_self: true,
-        },
-      ] as never,
-      servers: { club: { display_name: 'Club', creator: 'me', channels } as never },
-      me: { username: 'me', servers: [] },
-      ...over,
-    })
+  const account = {
+    dms: [
+      {
+        id: 7,
+        other: { username: 'al', display_name: 'Al', avatar_kind: 'identicon', avatar_color: null },
+        is_self: false,
+      },
+      {
+        id: 8,
+        other: { username: 'me', display_name: 'Me', avatar_kind: 'identicon', avatar_color: null },
+        is_self: true,
+      },
+    ] as never,
+    servers: { club: { display_name: 'Club', creator: 'me', channels } as never },
+    me: { username: 'me', servers: [] },
+  }
 
-  test('a hosted channel, a voice channel, a DM, your own DM, a server, Home', () => {
-    expect(hosted()).toEqual({
+  test('a hosted channel, a voice channel, a server, a DM, your own DM, an unknown DM', () => {
+    expect(serverPlace(account, 'club', 1)).toEqual({
       kind: 'channel',
       channel: 'general',
       server: 'Club',
       voice: false,
       own: true,
     })
-    expect(
-      placeText(hosted({ view: { kind: 'channel', server: 'club', channelId: 2 } }), 'A', false)
-    ).toBe('Lounge · Club')
-    expect(hosted({ view: { kind: 'dm', dmId: 7 } })).toEqual({
-      kind: 'dm',
-      name: 'Al',
-      own: false,
-    })
-    expect(hosted({ view: { kind: 'dm', dmId: 8 } })).toEqual({ kind: 'dm', name: 'Me', own: true })
-    expect(hosted({ view: { kind: 'channel', server: 'club', channelId: 99 } })).toEqual({
+    expect(placeText(serverPlace(account, 'club', 2), 'A', false)).toBe('Lounge · Club')
+    expect(serverPlace(account, 'club', 99)).toEqual({ kind: 'server', server: 'Club', own: true })
+    expect(serverPlace(account, 'club', null)).toEqual({
       kind: 'server',
       server: 'Club',
       own: true,
     })
-    expect(hosted({ home: true })).toEqual({ kind: 'app' })
-    expect(hosted({ view: null })).toEqual({ kind: 'app' })
-    expect(hosted({ view: { kind: 'dm', dmId: 9 } })).toEqual({ kind: 'app' })
+    expect(dmPlace(account, 7)).toEqual({ kind: 'dm', name: 'Al', own: false })
+    expect(dmPlace(account, 8)).toEqual({ kind: 'dm', name: 'Me', own: true })
+    expect(dmPlace(account, 9)).toEqual({ kind: 'app' })
   })
 
-  test('P2P: a channel, a server that is loading, a conversation, the home, nothing', () => {
+  test('P2P: a channel, a room without that channel, a room that is loading, a conversation', () => {
     const v = {
       name: 'Den',
       owner: 'k1',
       owners: [],
-      channels: [{ id: 'z', name: 'Lounge', kind: 'voice' }],
+      channels: [{ id: 'a', name: 'general', kind: 'text' }],
     }
-    const name = (ik: string) => (ik === 'k2' ? 'Bob' : null)
-    const base = { home: false, server: null, servers: { r: v }, chat: null, me: 'k9' }
-    expect(p2pPlace({ ...base, server: { room: 'r', ch: '1' } }, name)).toMatchObject({
-      kind: 'server',
-      server: 'Den',
-    })
-    const withIds = { ...v, channels: [{ id: 'a', name: 'general', kind: 'text' }] }
-    expect(
-      p2pPlace({ ...base, servers: { r: withIds }, server: { room: 'r', ch: 'a' } }, name)
-    ).toEqual({
+    const identity = { servers: { r: v }, me: 'k9' }
+    expect(roomPlace(identity, 'r', '1')).toMatchObject({ kind: 'server', server: 'Den' })
+    expect(roomPlace(identity, 'r', 'a')).toEqual({
       kind: 'channel',
       server: 'Den',
       channel: 'general',
       voice: false,
       own: false,
     })
-    expect(p2pPlace({ ...base, server: { room: 'gone', ch: 'a' } }, name)).toEqual({ kind: 'app' })
-    expect(p2pPlace({ ...base, home: true, chat: { peer: 'k2' } }, name)).toEqual({
-      kind: 'dm',
-      name: 'Bob',
-      own: false,
-    })
-    expect(p2pPlace({ ...base, home: true }, name)).toEqual({ kind: 'app' })
-    expect(p2pPlace(base, name)).toBeNull()
+    expect(roomPlace({ ...identity, me: 'k1' }, 'r', null)).toMatchObject({ own: true })
+    expect(roomPlace(identity, 'gone', 'a')).toEqual({ kind: 'app' })
+    expect(conversationPlace('Bob')).toEqual({ kind: 'dm', name: 'Bob', own: false })
+    expect(conversationPlace(null)).toEqual({ kind: 'app' })
   })
 })

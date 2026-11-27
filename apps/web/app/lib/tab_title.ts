@@ -3,7 +3,6 @@
 import { badgeText } from './pings'
 import type { TabMark } from './platform/notifications'
 import type { DmSummary, Me, ServerDetail } from './types'
-import type { View } from './view'
 
 export type TabPlace =
   | { kind: 'channel'; channel: string; server: string; voice: boolean; own: boolean }
@@ -11,71 +10,73 @@ export type TabPlace =
   | { kind: 'server'; server: string; own: boolean }
   | { kind: 'app' }
 
-const APP: TabPlace = { kind: 'app' }
+// The app itself: Home, and a place that is not known yet.
+export const APP_PLACE: TabPlace = { kind: 'app' }
 
 export const tabMark = (pings: number, unread: boolean): TabMark =>
   pings > 0 ? 'pings' : unread ? 'unread' : 'none'
 
-// The instance place open in an account, or the app on Home and while nothing is open.
-export const hostedPlace = (s: {
-  view: View | null
-  home: boolean
-  dms: readonly DmSummary[]
-  servers: Record<string, Pick<ServerDetail, 'display_name' | 'creator' | 'channels'> | undefined>
-  me: Pick<Me, 'username' | 'servers'> | null
-}): TabPlace => {
-  const v = s.view
-  if (!v || s.home) return APP
-  if (v.kind === 'dm') {
-    const dm = s.dms.find(d => d.id === v.dmId)
-    return dm ? { kind: 'dm', name: dm.other.display_name, own: dm.is_self } : APP
-  }
-  const detail = s.servers[v.server]
-  const summary = s.me?.servers.find(x => x.name === v.server)
-  const server = detail?.display_name ?? summary?.display_name ?? v.server
+// A hosted server as its tab names it: with the channel `channelId` when the server has it.
+export const serverPlace = (
+  s: {
+    servers: Record<string, Pick<ServerDetail, 'display_name' | 'creator' | 'channels'> | undefined>
+    me: Pick<Me, 'username' | 'servers'> | null
+  },
+  name: string,
+  channelId: number | null
+): TabPlace => {
+  const detail = s.servers[name]
+  const summary = s.me?.servers.find(x => x.name === name)
+  const server = detail?.display_name ?? summary?.display_name ?? name
   const own = !!s.me && (summary?.creator ?? detail?.creator) === s.me.username
-  const channel = detail?.channels.find(c => c.id === v.channelId)
+  const channel = detail?.channels.find(c => c.id === channelId)
   return channel
     ? { kind: 'channel', server, channel: channel.name, voice: channel.kind === 'voice', own }
     : { kind: 'server', server, own }
 }
 
-export interface P2pPlaceSource {
-  home: boolean
-  server: { room: string; ch: string | null } | null
-  servers: Record<
-    string,
-    | {
-        name: string
-        owner: string | null
-        owners: readonly string[]
-        channels: readonly { id: string; name: string; kind: string }[]
-      }
-    | undefined
-  >
-  chat: { peer: string; ch?: string } | null
-  me: string | null
+// A hosted DM; the app while the account does not list it.
+export const dmPlace = (s: { dms: readonly DmSummary[] }, dmId: number): TabPlace => {
+  const dm = s.dms.find(d => d.id === dmId)
+  return dm ? { kind: 'dm', name: dm.other.display_name, own: dm.is_self } : APP_PLACE
 }
 
-// The P2P place open in an identity: a server channel, the server while it loads, a conversation,
-// the P2P home (the app); null while P2P isn't on screen.
-export const p2pPlace = (
-  s: P2pPlaceSource,
-  contactName: (ik: string) => string | null
-): TabPlace | null => {
-  if (s.server) {
-    const v = s.servers[s.server.room]
-    if (!v) return APP
-    const own = !!s.me && (v.owner === s.me || v.owners.includes(s.me))
-    const ch = v.channels.find(c => c.id === s.server?.ch)
-    return ch
-      ? { kind: 'channel', server: v.name, channel: ch.name, voice: ch.kind === 'voice', own }
-      : { kind: 'server', server: v.name, own }
-  }
-  if (!s.home) return null
-  const name = s.chat && !s.chat.ch ? contactName(s.chat.peer) : null
-  return name === null ? APP : { kind: 'dm', name, own: false }
+// A P2P room, with its channel `ch` when the room has it; the app while the room loads.
+export const roomPlace = (
+  s: {
+    servers: Record<
+      string,
+      | {
+          name: string
+          owner: string | null
+          owners: readonly string[]
+          channels: readonly { id: string; name: string; kind: string }[]
+        }
+      | undefined
+    >
+    me: string | null
+  },
+  room: string,
+  ch: string | null
+): TabPlace => {
+  const v = s.servers[room]
+  if (!v) return APP_PLACE
+  const own = !!s.me && (v.owner === s.me || v.owners.includes(s.me))
+  const channel = v.channels.find(c => c.id === ch)
+  return channel
+    ? {
+        kind: 'channel',
+        server: v.name,
+        channel: channel.name,
+        voice: channel.kind === 'voice',
+        own,
+      }
+    : { kind: 'server', server: v.name, own }
 }
+
+// A P2P conversation with the contact called `name`; the app without one.
+export const conversationPlace = (name: string | null): TabPlace =>
+  name === null ? APP_PLACE : { kind: 'dm', name, own: false }
 
 // "#general · Club", "Lounge · Club" (voice), "@Alice", "Club", or the app's name. Streamer mode
 // names no server, channel or person.

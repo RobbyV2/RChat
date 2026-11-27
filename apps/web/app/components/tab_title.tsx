@@ -1,15 +1,19 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useShallow } from 'zustand/react/shallow'
 import { useP2p } from '../lib/client/p2p_react'
-import { displayName } from '../lib/p2p/contacts'
 import { serverUnread as p2pServerUnread } from '../lib/p2p/alerts'
 import { notifications } from '../lib/platform'
 import { dmTile, serverNames, serverUnread } from '../lib/selectors'
 import { useMask, useStore } from '../lib/store'
-import { hostedPlace, p2pPlace, tabMark, tabTitle, type TabPlace } from '../lib/tab_title'
+import { featureAt, isUnsupported } from '../lib/place/feature'
+import { constant } from '../lib/place/live'
+import { named } from '../lib/place/named'
+import { useLive, usePlaceOnScreen } from '../lib/place/react'
+import { APP_PLACE, tabMark, tabTitle, type TabPlace } from '../lib/tab_title'
 import { useTotalInboxCount } from './inbox'
+
+const NOWHERE = constant(APP_PLACE)
 
 // The page's own title before this changes it: the app's name when the instance sent none.
 const opening = typeof document === 'undefined' ? '' : document.title
@@ -27,16 +31,9 @@ const masked = (place: TabPlace, mask: (text: string) => string): TabPlace => {
 // the login page) puts back the app's name and the plain icon.
 export function TabTitle() {
   const mask = useMask()
-  const hosted = useStore(useShallow(hostedPlace))
-  const p2p = useP2p(
-    useShallow(s =>
-      p2pPlace(s, ik => {
-        const c = s.contacts.find(x => x.ik === ik)
-        return c ? displayName(c) : null
-      })
-    )
-  )
-  const place = masked(p2p ?? hosted, mask)
+  const here = featureAt(named, usePlaceOnScreen())
+  const shown = useLive(isUnsupported(here) ? NOWHERE : here.shown)
+  const place = masked(shown, mask)
   const brand = useStore(s => s.brand?.app_name ?? null)
   const app = brand ?? opening
   const streamer = useStore(s => s.streamer)

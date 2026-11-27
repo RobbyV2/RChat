@@ -4,8 +4,8 @@ import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNod
 import { useAccount, useStore } from '../client/react'
 import { featureAt, type Feature, type Unsupported } from './feature'
 import type { Live } from './live'
-import { useP2pApp } from '../client/p2p_react'
-import { HostedDm, HostedServer, P2pRoom, type Place } from './place'
+import { useP2p, useP2pApp } from '../client/p2p_react'
+import { HostedDm, HostedServer, P2pDm, P2pRoom, type Place } from './place'
 
 const PlaceContext = createContext<Place | null>(null)
 
@@ -22,6 +22,22 @@ export function usePlace(): Place | null {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const dmId = useStore(s => (s.view?.kind === 'dm' ? s.view.dmId : null))
   if (given) return given
+  if (server !== null) return HostedServer.open(account, server)
+  return dmId === null ? null : HostedDm.open(account, dmId)
+}
+
+// The place on screen: the room or conversation the identity shows, else the server or DM the
+// account has open. Null on Home and while nothing is open.
+export function usePlaceOnScreen(): Place | null {
+  const account = useAccount()
+  const app = useP2pApp()
+  const room = useP2p(s => s.server?.room ?? null)
+  const peerHome = useP2p(s => s.home)
+  const conversation = useP2p(s => (s.home && s.chat && !s.chat.ch ? s.chat.room : null))
+  const server = useStore(s => (!s.home && s.view?.kind === 'channel' ? s.view.server : null))
+  const dmId = useStore(s => (!s.home && s.view?.kind === 'dm' ? s.view.dmId : null))
+  if (app && room !== null) return P2pRoom.open(app, room)
+  if (app && peerHome) return conversation === null ? null : P2pDm.open(app, conversation)
   if (server !== null) return HostedServer.open(account, server)
   return dmId === null ? null : HostedDm.open(account, dmId)
 }
