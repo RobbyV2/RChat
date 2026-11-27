@@ -63,6 +63,10 @@ const PLAIN: Record<string, string> = {
   p2p_role_show_up: 'changes where a role shows; Show Lower puts it back',
   p2p_role_show_down: 'changes where a role shows; Show Higher puts it back',
   p2p_role_show_ranked: 'changes where roles show; moving them again puts them back',
+  channel_system_here:
+    'chooses where join and leave messages go; another channel can be chosen again',
+  p2p_channel_system_here:
+    'chooses where join and leave messages go; another channel can be chosen again',
 }
 
 test('every action that changes standing or cannot be undone is marked as danger', () => {
