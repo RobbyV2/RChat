@@ -6,7 +6,7 @@ import { defineFeature, featureAt, isUnsupported, notInDms, unsupported } from '
 import { constant, derived, fromStore } from '../place/live'
 import { HostedDm, HostedServer, inDm, isHosted, P2pRoom } from '../place/place'
 import { PlaceProvider, useFeature, useLive, usePlace } from '../place/react'
-import { contractWorld, disposeWorld, placeContract, PLACE_KINDS } from './helpers/place_contract'
+import { contractWorld, placeContract, PLACE_KINDS } from './helpers/place_contract'
 import type { View } from '../view'
 import { testAccount } from './test_account'
 
@@ -55,13 +55,9 @@ test('a place opens to one handle per account and id', () => {
 test('the kinds of a place tell rooms and DMs apart', () => {
   for (const kind of PLACE_KINDS) {
     const world = contractWorld(kind)
-    try {
-      expect(inDm(world.ann.place)).toBe(kind === 'hostedDm' || kind === 'p2pDm')
-      expect(isHosted(world.ann.place)).toBe(kind === 'hostedServer' || kind === 'hostedDm')
-      expect(world.ann.place.account).toBe(world.ann.account)
-    } finally {
-      disposeWorld(world)
-    }
+    expect(inDm(world.ann.place)).toBe(kind === 'hostedDm' || kind === 'p2pDm')
+    expect(isHosted(world.ann.place)).toBe(kind === 'hostedServer' || kind === 'hostedDm')
+    expect(world.ann.place.account).toBe(world.ann.account)
   }
 })
 
@@ -94,20 +90,16 @@ test('components use the open hosted place unless a provider gives one', () => {
   open({ kind: 'dm', dmId: 9 })
   expect(render()).toBe('<p>hostedDm:9 not_in_dms</p>')
   const world = contractWorld('p2pRoom')
-  try {
-    expect(
-      renderToStaticMarkup(
-        <AccountProvider session={account}>
-          <PlaceProvider place={world.ann.place}>
-            <Shown />
-          </PlaceProvider>
-        </AccountProvider>
-      )
-    ).toBe('<p>p2pRoom:room room</p>')
-    expect(world.ann.place).toBe(P2pRoom.open(world.ann.app!, world.room))
-  } finally {
-    disposeWorld(world)
-  }
+  expect(
+    renderToStaticMarkup(
+      <AccountProvider session={account}>
+        <PlaceProvider place={world.ann.place}>
+          <Shown />
+        </PlaceProvider>
+      </AccountProvider>
+    )
+  ).toBe('<p>p2pRoom:room room</p>')
+  expect(world.ann.place).toBe(P2pRoom.open(world.ann.app!, world.room))
 })
 
 test('a live value keeps its identity until what it reads changes', () => {

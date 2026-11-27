@@ -67,11 +67,6 @@ export const contractWorld = (kind: PlaceKind): ContractWorld => {
   return { kind, ann, bob, server: SERVER, dmId: DM, room: ROOM }
 }
 
-export const disposeWorld = (world: ContractWorld) => {
-  world.ann.account.store.dispose()
-  world.bob.account.store.dispose()
-}
-
 // Runs one suite against every side of `feature`: a hosted server, a P2P room, a hosted DM and a
 // P2P DM, each with two parties. The suite reads the world of the running test from `world()`.
 export function placeContract<F>(
@@ -85,7 +80,6 @@ export function placeContract<F>(
         world = contractWorld(kind)
       })
       afterEach(() => {
-        if (world) disposeWorld(world)
         world = null
       })
       suite(kind, () => world as ContractWorld)

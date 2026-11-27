@@ -19,7 +19,6 @@ import type { RChatState } from '../store_types'
 import { member, paged } from './fixtures'
 import {
   contractWorld,
-  disposeWorld,
   placeContract,
   type ContractWorld,
   type Seat,
@@ -206,29 +205,25 @@ placeContract(moderation, (kind, world) => {
 
 test('a P2P ban offers what the room rules and your permissions allow', () => {
   const world = contractWorld('p2pRoom')
-  try {
-    const place = world.ann.place as ModerationPlace & { kind: 'p2pRoom' }
-    const support = (view: Partial<ServerView>) => {
-      place.app.useP2p.setState({
-        servers: { [world.room]: { id: world.room, members: [], ...view } as ServerView },
-      })
-      return moderationOf(place).ban.support.get()
-    }
-    expect(support({ perms: P.Ban })).toEqual({ timed: false, purge: 'none' })
-    expect(support({ perms: P.Ban | P.ManageMessages })).toEqual({ timed: false, purge: 'all' })
-    expect(support({ perms: P.Ban | P.ManageMessages, timedBans: true })).toEqual({
-      timed: true,
-      purge: 'window',
+  const place = world.ann.place as ModerationPlace & { kind: 'p2pRoom' }
+  const support = (view: Partial<ServerView>) => {
+    place.app.useP2p.setState({
+      servers: { [world.room]: { id: world.room, members: [], ...view } as ServerView },
     })
-    const calls: unknown[][] = []
-    place.app.p2pServer.ban = async (...a) => {
-      calls.push(a)
-      return null
-    }
-    support({ perms: P.Ban | P.ManageMessages })
-    moderationOf(place).ban.run('B', { seconds: 3600, reason: null, purgeHours: PURGE_ALL })
-    expect(calls).toEqual([[world.room, 'B', { wipe: true }]])
-  } finally {
-    disposeWorld(world)
+    return moderationOf(place).ban.support.get()
   }
+  expect(support({ perms: P.Ban })).toEqual({ timed: false, purge: 'none' })
+  expect(support({ perms: P.Ban | P.ManageMessages })).toEqual({ timed: false, purge: 'all' })
+  expect(support({ perms: P.Ban | P.ManageMessages, timedBans: true })).toEqual({
+    timed: true,
+    purge: 'window',
+  })
+  const calls: unknown[][] = []
+  place.app.p2pServer.ban = async (...a) => {
+    calls.push(a)
+    return null
+  }
+  support({ perms: P.Ban | P.ManageMessages })
+  moderationOf(place).ban.run('B', { seconds: 3600, reason: null, purgeHours: PURGE_ALL })
+  expect(calls).toEqual([[world.room, 'B', { wipe: true }]])
 })
