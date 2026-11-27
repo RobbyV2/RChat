@@ -4,7 +4,7 @@ import ExternalLinkDialog from '../../components/external_link_dialog'
 import { LinkSafetySection } from '../../components/link_safety_settings'
 import { AccountProvider } from '../client/react'
 import { openMessageLink, warnsBefore } from '../link_open'
-import { DEFAULT_LINK_PREFS, linkPrefsKey, parseLinkPrefs } from '../link_safety'
+import { DEFAULT_LINK_PREFS, linkPrefsKey, parseLinkPrefs, siteOf } from '../link_safety'
 import { readLocal } from '../instances'
 import { testAccount } from './test_account'
 import type { RChatState } from '../store_types'
@@ -70,6 +70,26 @@ test('a plain link shows no callout', () => {
   expect(html).not.toContain('role="alert"')
 })
 
+test('the offer to trust names the whole site, and never a public suffix', () => {
+  const offer = (href: string) => {
+    const a = account()
+    show(a, { activeDialog: { kind: 'external_link', href, label: null } })
+    const html = renderToStaticMarkup(
+      <AccountProvider session={a}>
+        <ExternalLinkDialog />
+      </AccountProvider>
+    )
+    return /Always trust <span[^>]*>([^<]+)<\/span>/.exec(html)?.[1] ?? null
+  }
+  expect(offer('https://docs.example.com/a')).toBe('example.com')
+  expect(offer('https://www.com/')).toBe('www.com')
+  expect(offer('https://www.co.uk/')).toBe('www.co.uk')
+  expect(offer('https://github.io/')).toBeNull()
+  expect(offer('http://localhost:8080/')).toBeNull()
+  expect(offer('https://a_b.example.com/')).toBe('example.com')
+  expect(offer('https://co.uk/')).toBeNull()
+})
+
 test('opening asks first until the site is trusted, and the choice is kept for the account', () => {
   const a = account('bob')
   expect(a.store.getState().linkPrefs).toEqual(DEFAULT_LINK_PREFS)
@@ -82,13 +102,13 @@ test('opening asks first until the site is trusted, and the choice is kept for t
     href: 'https://evil.io/x',
     label: 'evil',
   })
-  a.store.getState().trustLinkHost('www.evil.io')
-  expect(a.store.getState().linkPrefs.trusted).toEqual(['evil.io'])
+  a.store.getState().trustLinkSite(siteOf('www.evil.io')!)
+  expect<readonly string[]>(a.store.getState().linkPrefs.trusted).toEqual(['evil.io'])
   expect(warnsBefore(a, 'https://sub.evil.io/x', false)).toBe(false)
   expect(parseLinkPrefs(readLocal(a.conn.scoped(linkPrefsKey('bob'))))).toEqual({
     warn: true,
     strip: false,
-    trusted: ['evil.io'],
+    trusted: [siteOf('evil.io')!],
   })
   a.store.getState().setLinkPrefs({ ...a.store.getState().linkPrefs, warn: false })
   expect(warnsBefore(a, 'https://other.io/', false)).toBe(false)
@@ -96,7 +116,7 @@ test('opening asks first until the site is trusted, and the choice is kept for t
 
 test('Settings lists the trusted domains with a remove button each', () => {
   const a = account()
-  show(a, { linkPrefs: { warn: true, strip: true, trusted: ['github.com'] } })
+  show(a, { linkPrefs: { warn: true, strip: true, trusted: [siteOf('github.com')!] } })
   const html = renderToStaticMarkup(
     <AccountProvider session={a}>
       <LinkSafetySection />

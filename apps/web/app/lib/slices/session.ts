@@ -53,7 +53,7 @@ import { forwardKey } from '../forward'
 import { type FriendsDeps, friendsInitial, type friendsSlice } from '../friends_store'
 import { NO_GROUP_PINGS } from '../group_pings'
 import { iceKey, iceValue, parseIce } from '../ice'
-import { linkPrefsKey, linkPrefsValue, parseLinkPrefs, trustHost } from '../link_safety'
+import { linkPrefsKey, linkPrefsValue, parseLinkPrefs, trustSite } from '../link_safety'
 import { limitsOf } from '../instance_limits'
 import {
   fitsHome,
@@ -1615,7 +1615,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'setStreamer'
     | 'setIceHelpers'
     | 'setLinkPrefs'
-    | 'trustLinkHost'
+    | 'trustLinkSite'
     | 'setIceRelay'
     | 'saveRelays'
     | 'answerRelayPrompt'
@@ -1747,7 +1747,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       set({ linkPrefs: prefs })
     },
 
-    trustLinkHost: host => get().setLinkPrefs(trustHost(get().linkPrefs, host)),
+    trustLinkSite: site => get().setLinkPrefs(trustSite(get().linkPrefs, site)),
 
     setIceRelay: relay => {
       const on = get().iceHelpers

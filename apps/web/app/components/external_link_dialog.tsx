@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ArrowRight, TriangleAlert } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { RISK_TEXT, linkRisks, shownHost, trustable, webLink } from '../lib/link_safety'
+import { RISK_TEXT, linkRisks, siteOf, webLink } from '../lib/link_safety'
 import { Button } from './controls'
 import { Dialog } from './ui'
 
@@ -17,14 +17,14 @@ export default function ExternalLinkDialog() {
 
 function ExternalLinkBody({ href, label }: { href: string; label: string | null }) {
   const closeDialog = useStore(s => s.closeDialog)
-  const trustLinkHost = useStore(s => s.trustLinkHost)
+  const trustLinkSite = useStore(s => s.trustLinkSite)
   const [trust, setTrust] = useState(false)
   const url = webLink(href, typeof location === 'undefined' ? undefined : location.href)
   if (!url) return null
-  const host = shownHost(url)
+  const site = siteOf(url.hostname)
   const risks = linkRisks(url, label)
   const visit = () => {
-    if (trust) trustLinkHost(host)
+    if (trust && site) trustLinkSite(site)
     closeDialog()
     window.open(url.href, '_blank', 'noopener,noreferrer')
   }
@@ -67,7 +67,7 @@ function ExternalLinkBody({ href, label }: { href: string; label: string | null 
           </div>
         )}
       </div>
-      {trustable(host) && (
+      {site && (
         <label className="mt-4 flex cursor-pointer items-start gap-2 text-sm text-on-surface">
           <input
             type="checkbox"
@@ -76,7 +76,7 @@ function ExternalLinkBody({ href, label }: { href: string; label: string | null 
             className="mt-0.5 size-4 shrink-0 accent-primary"
           />
           <span>
-            Always trust <span className="font-semibold break-all">{host}</span> and skip this
+            Always trust <span className="font-semibold break-all">{site}</span> and skip this
             warning next time
           </span>
         </label>

@@ -2,13 +2,23 @@
 // a warning before an outside site opens, the domains a person trusts, and tracking parameters
 // taken off links before a message is sent.
 
+import { parse } from 'tldts'
+
+declare const siteMark: unique symbol
+
+// The site of a host, which is what a person trusts: its registrable domain (its public suffix
+// and one label more, so `docs.example.com` and `www.example.com` are `example.com`, `www.co.uk`
+// is itself), or an IPv4 address. Only `siteOf` makes one, so a public suffix (`com`, `co.uk`,
+// `github.io`) is never trusted as a whole.
+export type Site = string & { readonly [siteMark]: true }
+
 export interface LinkPrefs {
   // Warn before opening a link to a site that is not trusted.
   warn: boolean
   // Take tracking parameters off links when sending.
   strip: boolean
-  // Hostnames without `www.`, lowercase; each also covers its subdomains.
-  trusted: string[]
+  // Each covers the site's hosts: the domain and its subdomains.
+  trusted: readonly Site[]
 }
 
 export const DEFAULT_LINK_PREFS: LinkPrefs = { warn: true, strip: false, trusted: [] }
@@ -19,16 +29,30 @@ const HOST_MAX = 253
 
 export const linkPrefsKey = (username: string | null) => `rchat_links:${username ?? 'guest'}`
 
-const cleanHost = (raw: unknown): string | null => {
-  if (typeof raw !== 'string') return null
-  const host = raw
-    .trim()
-    .toLowerCase()
-    .replace(/^www\./, '')
-    .replace(/\.$/, '')
-  if (!host || host.length > HOST_MAX || !/^[a-z0-9.-]+$/.test(host) || host.includes('..'))
+// A host as URLs give it (lowercase ASCII, IDNs in punycode), without a trailing dot. IPv6
+// addresses are left out.
+const cleanHost = (raw: string): string | null => {
+  const host = raw.trim().toLowerCase().replace(/\.$/, '')
+  if (!host || host.length > HOST_MAX || !/^[a-z0-9._-]+$/.test(host) || host.includes('..'))
     return null
   return host
+}
+
+// The site a host belongs to, or null when it has none (a public suffix, a name without one,
+// an IPv6 address).
+export const siteOf = (raw: string): Site | null => {
+  const host = cleanHost(raw)
+  if (!host) return null
+  const parts = parse(host, { allowPrivateDomains: true, validateHostname: false })
+  if (parts.isIp) return host as Site
+  return parts.domain ? (parts.domain as Site) : null
+}
+
+// A stored entry counts only when it is a site itself; anything wider or narrower is dropped.
+const storedSite = (raw: unknown): Site | null => {
+  if (typeof raw !== 'string') return null
+  const site = siteOf(raw)
+  return site !== null && site === cleanHost(raw) ? site : null
 }
 
 export const parseLinkPrefs = (raw: string | null): LinkPrefs => {
@@ -37,11 +61,11 @@ export const parseLinkPrefs = (raw: string | null): LinkPrefs => {
     if (typeof v !== 'object' || v === null || (v as { v?: unknown }).v !== 1)
       return DEFAULT_LINK_PREFS
     const { warn, strip, trusted } = v as { warn?: unknown; strip?: unknown; trusted?: unknown }
-    const hosts = Array.isArray(trusted) ? trusted.map(cleanHost) : []
+    const sites = Array.isArray(trusted) ? trusted.map(storedSite) : []
     return {
       warn: warn !== false,
       strip: strip === true,
-      trusted: [...new Set(hosts.filter((h): h is string => h !== null))].slice(0, TRUSTED_MAX),
+      trusted: [...new Set(sites.filter(h => h !== null))].slice(0, TRUSTED_MAX),
     }
   } catch {
     return DEFAULT_LINK_PREFS
@@ -51,18 +75,14 @@ export const parseLinkPrefs = (raw: string | null): LinkPrefs => {
 export const linkPrefsValue = ({ warn, strip, trusted }: LinkPrefs) =>
   JSON.stringify({ v: 1, warn, strip, trusted })
 
-// Whether a host can go on the trusted list (a plain name, not an IP v6 address).
-export const trustable = (host: string) => cleanHost(host) !== null
+export const trustSite = (prefs: LinkPrefs, site: Site): LinkPrefs =>
+  prefs.trusted.includes(site)
+    ? prefs
+    : { ...prefs, trusted: [site, ...prefs.trusted].slice(0, TRUSTED_MAX) }
 
-export const trustHost = (prefs: LinkPrefs, host: string): LinkPrefs => {
-  const h = cleanHost(host)
-  if (!h || prefs.trusted.includes(h)) return prefs
-  return { ...prefs, trusted: [h, ...prefs.trusted].slice(0, TRUSTED_MAX) }
-}
-
-export const forgetHost = (prefs: LinkPrefs, host: string): LinkPrefs => ({
+export const forgetSite = (prefs: LinkPrefs, site: Site): LinkPrefs => ({
   ...prefs,
-  trusted: prefs.trusted.filter(h => h !== host),
+  trusted: prefs.trusted.filter(h => h !== site),
 })
 
 // An outside web link: http or https with a host, read against the page's address `base` the
@@ -78,12 +98,12 @@ export const webLink = (href: string | undefined, base?: string): URL | null => 
   }
 }
 
-// The host a person trusts or is warned about: lowercase, without `www.`.
+// The host a link's text is checked against: lowercase, without `www.`.
 export const shownHost = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, '')
 
 export const isTrusted = (prefs: LinkPrefs, url: URL) => {
-  const host = shownHost(url)
-  return prefs.trusted.some(t => host === t || host.endsWith(`.${t}`))
+  const site = siteOf(url.hostname)
+  return site !== null && prefs.trusted.includes(site)
 }
 
 // Whether opening `href` asks first: a web link to another site, from someone else's message

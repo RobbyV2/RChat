@@ -2,7 +2,7 @@
 
 import { X } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { forgetHost } from '../lib/link_safety'
+import { forgetSite } from '../lib/link_safety'
 import { SettingSwitch } from './settings_fields'
 import { IconButton } from './controls'
 import { sectionCls } from './ui'
@@ -46,7 +46,7 @@ export function LinkSafetySection() {
               <IconButton
                 icon={X}
                 label={`Remove ${host}`}
-                onClick={() => setLinkPrefs(forgetHost(prefs, host))}
+                onClick={() => setLinkPrefs(forgetSite(prefs, host))}
               />
             </li>
           ))}

@@ -8,7 +8,7 @@ import type { PollTarget } from './polls_store'
 import type { Selection } from './selection'
 import type { PendingUpload } from './attachments'
 import type { Decision, RelayChoice, RelayPrefs } from './relays'
-import type { LinkPrefs } from './link_safety'
+import type { LinkPrefs, Site } from './link_safety'
 import type { CallRoute } from './call_choice'
 import type { P2pApp } from './p2p/app/runtime'
 import type { ConfigDoc, SectionKey } from './config_transfer'
@@ -457,7 +457,7 @@ export interface RChatState {
   setStreamer: (streamer: boolean) => void
   setIceHelpers: (on: boolean) => void
   setLinkPrefs: (prefs: LinkPrefs) => void
-  trustLinkHost: (host: string) => void
+  trustLinkSite: (site: Site) => void
   setIceRelay: (on: boolean) => void
   saveRelays: (next: RelayPrefs) => void
   answerRelayPrompt: (decision: Decision) => void
