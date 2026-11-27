@@ -42,6 +42,7 @@ import {
   MovingBanner,
 } from './p2p_home'
 import { LabelText, useInstanceLabel } from '../instance_badge'
+import { time } from '../../lib/platform/time'
 
 function NameField() {
   const identity = useP2pApp()!
@@ -128,7 +129,7 @@ function BadgeSetting() {
   const ask = useStore(s => s.askConfirm)
   const on = !!badge?.on
   const live = on && !!badge?.token && badge.ik === ik
-  const tail = !on && badge && badge.exp * 1000 > Date.now() ? badge.exp * 1000 : null
+  const tail = !on && badge && badge.exp * 1000 > time().now() ? badge.exp * 1000 : null
   const change = (next: boolean) =>
     next
       ? ask({

@@ -29,6 +29,7 @@ import {
   type SearchHit,
 } from '../lib/place/search'
 import { MemberAvatar } from './p2p/p2p_badge'
+import { time } from '../lib/platform/time'
 
 function HitText({ r }: { r: SearchHit }) {
   const copy = useForwardAccess(r.copy?.message, { server: r.copy?.server })
@@ -178,8 +179,8 @@ export function SearchView({
 
   useEffect(() => {
     if (!active) return
-    const t = setTimeout(() => runRef.current(argsRef.current, true), 300)
-    return () => clearTimeout(t)
+    const t = time().after(300, () => runRef.current(argsRef.current, true))
+    return () => t()
   }, [args.q, args.from, channelId, hasFile, args.beforeTs, args.afterTs, active])
 
   const more = useCallback(() => runRef.current(argsRef.current, false), [])

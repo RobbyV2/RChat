@@ -8,6 +8,7 @@ import { PageGroup, PageRow } from '../settings_page'
 import { Button } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
 import { fieldCls } from '../ui'
+import { time } from '../../lib/platform/time'
 
 export function AnnouncementEditor() {
   const conn = useConn()
@@ -49,13 +50,13 @@ function Editor() {
     void load()
     window.addEventListener('rchat-announcements', load)
     window.addEventListener('online', load)
-    const timer = setInterval(load, 30000)
+    const timer = time().every(30000, load)
     return () => {
       mounted.current = false
       ++generation
       window.removeEventListener('rchat-announcements', load)
       window.removeEventListener('online', load)
-      clearInterval(timer)
+      timer()
     }
   }, [ownerSession, brand, available])
   async function save(id?: string) {

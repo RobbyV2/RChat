@@ -34,6 +34,7 @@ import { REVEAL_EVENT } from '../lib/masked_reveal'
 import { ThemeToggle } from './status_clock'
 import { Chip, IconButton } from './controls'
 import { buttonLook, iconButtonLook, sectionHeadingLook } from '../lib/controls'
+import { time } from '../lib/platform/time'
 
 export const fieldCls =
   'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm pointer-coarse:min-h-11'
@@ -139,8 +140,8 @@ export function useCopied() {
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!copied) return
-    const id = window.setTimeout(() => setCopied(false), 1500)
-    return () => window.clearTimeout(id)
+    const id = time().after(1500, () => setCopied(false))
+    return () => id()
   }, [copied])
   return [copied, () => setCopied(true)] as const
 }

@@ -137,6 +137,6 @@ export class ManualTime implements Time {
   }
 }
 
-// One turn of the event loop, taken before any test can replace the timer functions.
+// One turn of the event loop where the runtime has one, taken before any test can replace it.
 const settle: (fn: () => void) => unknown =
-  typeof setImmediate === 'function' ? setImmediate : fn => setTimeout(fn, 0)
+  typeof setImmediate === 'function' ? setImmediate : fn => Promise.resolve().then(fn)

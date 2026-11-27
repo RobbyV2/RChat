@@ -16,6 +16,7 @@ import {
   type Pill,
   type PillEvent,
 } from '../lib/follow'
+import { time } from '../lib/platform/time'
 
 const KEYBOARD_MIN = 120
 
@@ -180,7 +181,7 @@ export function useChatScroll(opts: {
     ro.observe(el)
     ro.observe(inner)
     const mark = () => {
-      input.current.at = performance.now()
+      input.current.at = time().elapsed()
     }
     const onWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) mark()
@@ -215,9 +216,7 @@ export function useChatScroll(opts: {
     const cur = live.current
     if (!el || !cur.scope || !cur.positioned) return
     const { touching, at } = input.current
-    apply(
-      scrolled(follow.current, el, userScrolling(touching, at, performance.now()), cur.detached)
-    )
+    apply(scrolled(follow.current, el, userScrolling(touching, at, time().elapsed()), cur.detached))
     anchor.current = firstVisible(el)
     if (nearBottom(el)) cur.onBottom()
   }, [list, apply])
@@ -348,8 +347,8 @@ export function useFocusMessage(
   }, [list, key, focus, deps, clearFocus])
   useEffect(() => {
     if (flash === null) return
-    const t = setTimeout(() => setFlash(null), 2200)
-    return () => clearTimeout(t)
+    const t = time().after(2200, () => setFlash(null))
+    return () => t?.()
   }, [flash])
   return flash
 }

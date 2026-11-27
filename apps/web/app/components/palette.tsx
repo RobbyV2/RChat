@@ -362,7 +362,7 @@ function useResults(text: string) {
   return useMemo(() => {
     const ctx: ResultCtx = {
       usage,
-      now: Date.now(),
+      now: acct.time.now(),
       index: acct.indexer.paletteIndex(),
       visible: d => acct.indexer.docVisible(s, d),
       ops,

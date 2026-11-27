@@ -30,6 +30,7 @@ import { KeyAvatar } from './p2p/p2p_badge'
 import { Button, IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { Masked, Sentinel, useOwn } from './ui'
+import { time } from '../lib/platform/time'
 
 function ThreadsToggle({ threads, className }: { threads: Threads; className: string }) {
   const open = useLive(threads.state).open !== null
@@ -80,20 +81,17 @@ export function useThreadPages(
   })
   useEffect(() => {
     const at = ++gen.current
-    const t = setTimeout(
-      () => {
-        loadRef
-          .current(query, null)
-          .then(page => {
-            if (gen.current === at) setList({ rows: page.items, next: page.next, failed: false })
-          })
-          .catch(() => {
-            if (gen.current === at) setList({ ...START, failed: true })
-          })
-      },
-      query.trim() ? 250 : 0
-    )
-    return () => clearTimeout(t)
+    const t = time().after(query.trim() ? 250 : 0, () => {
+      loadRef
+        .current(query, null)
+        .then(page => {
+          if (gen.current === at) setList({ rows: page.items, next: page.next, failed: false })
+        })
+        .catch(() => {
+          if (gen.current === at) setList({ ...START, failed: true })
+        })
+    })
+    return () => t()
   }, [query, retries])
   const more = useCallback(() => {
     const cursor = list.next

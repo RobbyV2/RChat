@@ -92,6 +92,8 @@ import {
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useP2pRoom } from '../lib/place/react'
 import { useStable } from '../lib/stable_key'
+import { time } from '../lib/platform/time'
+import type { Cancel } from '../lib/clock'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const seenShares = new WeakMap<object, ReadonlySet<string>>()
@@ -963,21 +965,21 @@ function useBox(ref: RefObject<HTMLDivElement | null>) {
 
 function useIdle(enabled: boolean, bar: RefObject<HTMLDivElement | null>) {
   const [idle, setIdle] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const timer = useRef<Cancel | null>(null)
   const arm = () => {
-    if (timer.current) clearTimeout(timer.current)
+    timer.current?.()
     const tick = () => {
       const el = bar.current
       if (el && (el.matches(':hover') || el.contains(document.activeElement)))
-        timer.current = setTimeout(tick, 1000)
+        timer.current = time().after(1000, tick)
       else setIdle(true)
     }
-    timer.current = setTimeout(tick, 3000)
+    timer.current = time().after(3000, tick)
   }
   const wake = () => {
     setIdle(false)
     if (enabled) arm()
-    else if (timer.current) clearTimeout(timer.current)
+    else timer.current?.()
   }
   const armRef = useRef(arm)
   useEffect(() => {
@@ -987,7 +989,7 @@ function useIdle(enabled: boolean, bar: RefObject<HTMLDivElement | null>) {
     if (!enabled) setIdle(false)
     else armRef.current()
     return () => {
-      if (timer.current) clearTimeout(timer.current)
+      timer.current?.()
     }
   }, [enabled])
   return { idle: enabled && idle, wake }

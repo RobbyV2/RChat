@@ -62,6 +62,7 @@ import { NameWithUsername } from './display_name'
 import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
+import { time } from '../lib/platform/time'
 
 type InviteVariant = 'embed' | 'page'
 
@@ -84,10 +85,10 @@ const fetchInvite = (
   results.set(mark, cache)
   const api = owner.api
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < maxAge) return hit.promise
+  if (hit && time().now() - hit.at < maxAge) return hit.promise
   const promise = code ? api.inviteByCode(code) : api.getInvite(server, password, 'metadata')
   cache.delete(key)
-  cache.set(key, { at: Date.now(), promise })
+  cache.set(key, { at: time().now(), promise })
   const oldest = cache.keys().next().value
   if (cache.size > CACHE_MAX && oldest !== undefined) cache.delete(oldest)
   promise.catch(() => {
@@ -122,22 +123,22 @@ function useSettledVersion(version: number, visible: boolean) {
   const stale = useRef<{ since: number; bump: number } | null>(null)
   const fetchedAt = useRef(0)
   useEffect(() => {
-    const now = Date.now()
+    const now = time().now()
     stale.current = { since: stale.current?.since ?? now, bump: now }
   }, [version])
   useEffect(() => {
     const due = stale.current
     if (version === settled) stale.current = null
     if (version === settled || !visible || !due) return
-    const timer = setTimeout(
+    const timer = time().after(
+      refreshDelay(due.since, due.bump, fetchedAt.current, time().now()),
       () => {
         stale.current = null
-        fetchedAt.current = Date.now()
+        fetchedAt.current = time().now()
         setSettled(version)
-      },
-      refreshDelay(due.since, due.bump, fetchedAt.current, Date.now())
+      }
     )
-    return () => clearTimeout(timer)
+    return () => timer()
   }, [version, settled, visible])
   return settled
 }
@@ -865,7 +866,7 @@ export function InviteCard({
   const errorCode = error instanceof ApiError ? error.status : null
   const ticketEnds = data?.password_expires_at ?? null
   const now = useNow(
-    ticketEnds === null ? 60_000 : tickMs(ticketEnds - Math.floor(Date.now() / 1000))
+    ticketEnds === null ? 60_000 : tickMs(ticketEnds - Math.floor(time().now() / 1000))
   )
   const ticketGone = ticketEnds !== null && ticketEnds <= now
   const hidden = !code && (needsPassword(error) || deniedAccess(error) || ticketGone)

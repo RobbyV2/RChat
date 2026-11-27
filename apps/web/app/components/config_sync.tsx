@@ -67,6 +67,7 @@ import { p2pTrustText } from '../lib/add_instance'
 import { shellInfo } from '../lib/platform'
 import { P2pExportOption, P2pImport, SlowNote, type PassState } from './p2p/p2p_transfer'
 import { useInstanceLabel } from './instance_badge'
+import { time } from '../lib/platform/time'
 
 const areaCls = `${fieldCls} w-full resize-none font-mono text-xs break-all md:text-xs`
 
@@ -575,14 +576,14 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
   const [shown, setShown] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [now, setNow] = useState(() => Date.now())
+  const [now, setNow] = useState(() => time().now())
   const streamer = useStore(s => s.streamer)
 
   const load = useCallback(async () => {
     try {
       const list = await api.configShares()
       setLinks(list)
-      setNow(Date.now())
+      setNow(time().now())
     } catch (e) {
       setError(errorText(e))
     }
@@ -773,7 +774,7 @@ function ImportBlock() {
     }
     const decoded = await (id
       ? decodeLink(input)
-      : decodeConfig(input, Date.now(), file ? FILE_LIMITS : undefined))
+      : decodeConfig(input, time().now(), file ? FILE_LIMITS : undefined))
     if (!current(request)) return
     if (!decoded.ok) setError(decoded.error)
     else setResult({ identity, files, request, mark, doc: decoded.doc })
@@ -1071,7 +1072,7 @@ function LinkCard({ id }: { id: string }) {
               {title}
               <p className="text-sm text-on-surface-variant">
                 Pick what to apply on this device. Link active{' '}
-                {untilText(state.expiresAt * 1000, Date.now())}.
+                {untilText(state.expiresAt * 1000, time().now())}.
               </p>
             </Stack>
             {done ? (

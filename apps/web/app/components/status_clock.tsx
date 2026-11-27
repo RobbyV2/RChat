@@ -8,6 +8,7 @@ import { Moon, Sun } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { restoreTheme } from '../lib/start'
 import type { WsStatus } from '../lib/types'
+import { time as appTime } from '../lib/platform/time'
 
 const dotClass: Record<WsStatus, string> = {
   green: 'bg-status-green',
@@ -43,10 +44,10 @@ export default function StatusClock({ timeCls = '' }: { timeCls?: string }) {
   const live = useStore(s => s.token !== null || s.guest)
   const [time, setTime] = useState('')
   useEffect(() => {
-    const tick = () => setTime(new Date().toTimeString().slice(0, 8))
+    const tick = () => setTime(new Date(appTime().now()).toTimeString().slice(0, 8))
     tick()
-    const id = setInterval(tick, 1000)
-    return () => clearInterval(id)
+    const id = appTime().every(1000, tick)
+    return () => id()
   }, [])
   return (
     <Row gap="sm">

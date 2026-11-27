@@ -11,6 +11,7 @@ import {
   railShapes,
   rowShapes,
 } from '../lib/skeletons'
+import { time } from '../lib/platform/time'
 
 const strong = 'bg-on-surface/10'
 const soft = 'bg-on-surface/7'
@@ -53,8 +54,8 @@ function Frame({
 export function Held({ ms = 250, children }: { ms?: number; children: ReactNode }) {
   const [shown, setShown] = useState(false)
   useEffect(() => {
-    const t = setTimeout(() => setShown(true), ms)
-    return () => clearTimeout(t)
+    const t = time().after(ms, () => setShown(true))
+    return () => t()
   }, [ms])
   return (
     <div hidden={!shown} className="contents">

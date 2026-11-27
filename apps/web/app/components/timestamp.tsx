@@ -6,6 +6,7 @@ import { openActionMenu } from '../lib/actions/menu'
 import { daySnapshot, snapshot, subscribe, subscribeDay, track } from '../lib/stamp_clock'
 import { formatStamp, fullTime, messageTime, type StampStyle } from '../lib/timestamps'
 import { longPress } from './context_menu'
+import { time } from '../lib/platform/time'
 
 // The shared clock's time, ticking while `target` (milliseconds) is set: each second within a
 // minute of it, else each minute.
@@ -19,7 +20,7 @@ export function Stamp({ ms, style, token }: { ms: number; style: StampStyle; tok
 
   const clock = useLiveNow(style === 'R' ? ms : null)
   const full = fullTime(ms)
-  const text = formatStamp(ms, style, style === 'R' ? clock : Date.now())
+  const text = formatStamp(ms, style, style === 'R' ? clock : acct.time.now())
   return (
     <time
       {...longPress((x, y) =>
@@ -57,7 +58,7 @@ export function MessageTime({ ts, className }: { ts: number; className?: string 
   useSyncExternalStore(subscribeDay, daySnapshot, daySnapshot)
   return (
     <time dateTime={new Date(ms).toISOString()} title={fullTime(ms)} className={className}>
-      {messageTime(ms, Date.now())}
+      {messageTime(ms, time().now())}
     </time>
   )
 }

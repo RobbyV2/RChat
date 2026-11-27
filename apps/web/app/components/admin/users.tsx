@@ -13,6 +13,7 @@ import { Button, ListRow } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
 import { Chips, Sentinel, fieldCls } from '../ui'
 import { useAccountChanges } from './account_state'
+import { time } from '../../lib/platform/time'
 
 function UserServers({ username }: { username: string }) {
   const ownerSession = useAccount()
@@ -77,7 +78,7 @@ function UserServers({ username }: { username: string }) {
 function AccountFacts({ account }: { account: AdminAccount }) {
   const facts: [string, string][] = [
     ['Created', new Date(account.created_at * 1000).toLocaleDateString()],
-    ['Sign-in', signInLine(account, Math.floor(Date.now() / 1000))],
+    ['Sign-in', signInLine(account, Math.floor(time().now() / 1000))],
     ['Sessions', account.sessions.toLocaleString()],
     ['Backup phrase', account.phrase ? 'Set' : 'None'],
     ['Servers', account.servers.toLocaleString()],
@@ -255,8 +256,8 @@ const useFiltered = (q: string, filter: AccountFilter, rev: number) => {
     [ownerSession, q, filter, setError]
   )
   useEffect(() => {
-    const t = setTimeout(() => fetchFrom(null), 300)
-    return () => clearTimeout(t)
+    const t = time().after(300, () => fetchFrom(null))
+    return () => t?.()
   }, [fetchFrom, rev])
   return { ...page, more: () => fetchFrom(page.next) }
 }
@@ -278,8 +279,8 @@ export function UsersSection() {
     void loadAdminOverview()
   }, [loadAdminOverview])
   useEffect(() => {
-    const t = setTimeout(() => void loadAdminUsers(q, true), 300)
-    return () => clearTimeout(t)
+    const t = acct.time.after(300, () => void loadAdminUsers(q, true))
+    return () => t?.()
   }, [q, loadAdminUsers])
   const more = useCallback(() => void loadAdminUsers(q), [q, loadAdminUsers])
   const all = filter === 'all'

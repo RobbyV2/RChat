@@ -15,6 +15,8 @@ import {
 } from '../lib/announcements'
 import { errorText, useStore } from '../lib/store'
 import { SettingSwitch } from './settings_fields'
+import { time } from '../lib/platform/time'
+import type { Cancel } from '../lib/clock'
 
 const preference = 'rchat_announcements_off_v1'
 const refresh = 'rchat-announcements'
@@ -68,37 +70,37 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
   useEffect(() => {
     if (!feed?.announcements.length) return
     const next = Math.min(...feed.announcements.map(a => a.ends_at))
-    const elapsed = performance.now() - feed.received
-    const timer = setTimeout(
+    const elapsed = time().elapsed() - feed.received
+    const timer = time().after(
+      Math.max(0, Math.min(2147483647, (next - feed.server_time) * 1000 - elapsed)),
       () => {
         setFeed(current =>
           current === feed
             ? {
                 ...feed,
                 announcements: feed.announcements.filter(
-                  a => a.ends_at > feed.server_time + (performance.now() - feed.received) / 1000
+                  a => a.ends_at > feed.server_time + (time().elapsed() - feed.received) / 1000
                 ),
               }
             : current
         )
-      },
-      Math.max(0, Math.min(2147483647, (next - feed.server_time) * 1000 - elapsed))
+      }
     )
-    return () => clearTimeout(timer)
+    return () => timer?.()
   }, [feed])
   useEffect(() => {
     let generation = 0
-    let timer: ReturnType<typeof setTimeout>
+    let timer: Cancel
     const mark = ownerSession.lifetime.sessionMark()
     async function load() {
       const id = ++generation
-      clearTimeout(timer)
+      timer?.()
       const current = () => id === generation && mark === ownerSession.lifetime.sessionMark()
       if (!current()) return
       try {
-        const received = performance.now()
+        const received = time().elapsed()
         const data = await ownerSession.api.announcements()
-        const elapsed = performance.now() - received
+        const elapsed = time().elapsed() - received
         if (!current()) return
         const hidden = guest ? guestDismissals(device().read(storageKey), data.server_time) : {}
         setFeed({
@@ -106,14 +108,14 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
           ...data,
           announcements: activeOnArrival(data, elapsed).filter(a => !Object.hasOwn(hidden, a.id)),
         })
-        timer = setTimeout(load, refreshDelay(data, elapsed))
+        timer = time().after(refreshDelay(data, elapsed), load)
       } catch (error) {
         if (!current()) return
         if (error instanceof ApiError && error.status === 404) {
           setFeed(null)
           return
         }
-        timer = setTimeout(load, 5000)
+        timer = time().after(5000, load)
       }
     }
     void load()
@@ -121,7 +123,7 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
     for (const event of [refresh, 'online', 'focus']) window.addEventListener(event, load)
     return () => {
       ++generation
-      clearTimeout(timer)
+      timer?.()
       stop?.()
       for (const event of [refresh, 'online', 'focus']) window.removeEventListener(event, load)
     }

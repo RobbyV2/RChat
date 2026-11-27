@@ -57,6 +57,7 @@ import { Button, IconButton, ListRow, Chip, Tab, LinkButton } from './controls'
 import { Dialog, fieldCls, FieldError, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { Row, Stack, Surface } from './layout'
+import { time } from '../lib/platform/time'
 
 // The unseen friend pings (requests and accepted requests), for badges.
 export const useFriendPings = () => useStore(s => scopePings(badgePings(s), FRIENDS_SCOPE))
@@ -255,8 +256,8 @@ function FriendList({ online, add }: { online: boolean; add?: () => void }) {
   const setTab = useStore(s => s.setFriendsTab)
   const [q, setQ] = useState('')
   useEffect(() => {
-    const t = setTimeout(() => void load(q, true), q ? 300 : 0)
-    return () => clearTimeout(t)
+    const t = time().after(q ? 300 : 0, () => void load(q, true))
+    return () => t()
   }, [q, load])
   const more = useCallback(() => void load(q), [q, load])
   const empty = !page.loading && !page.hasMore && page.list.length === 0

@@ -8,6 +8,7 @@ import { UserAvatar } from './user_avatar'
 import { useShownMembers } from './shown_user'
 import { Row, Stack, Surface } from './layout'
 import { Masked, fieldCls } from './ui'
+import { time } from '../lib/platform/time'
 
 // Searching a hosted server's members: the paged search, its field, and a picker that adds one.
 
@@ -67,8 +68,8 @@ export function useMemberSearch(server: string, q: string, admins = false, enabl
       setState({ list: [], next: null, loading: false })
       return
     }
-    const t = setTimeout(() => void fetchFrom(null, mine), needle ? SEARCH_DEBOUNCE : 0)
-    return () => clearTimeout(t)
+    const t = time().after(needle ? SEARCH_DEBOUNCE : 0, () => void fetchFrom(null, mine))
+    return () => t()
   }, [active, needle, fetchFrom, tick])
 
   const more = useCallback(() => {

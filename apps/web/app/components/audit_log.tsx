@@ -45,6 +45,7 @@ import { Grid, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
 import { usePermissionRules } from './use_permission_rules'
 import { useStable } from '../lib/stable_key'
+import { time } from '../lib/platform/time'
 
 const TEXT_DEBOUNCE = 300
 const SUGGESTIONS = 5
@@ -78,8 +79,8 @@ export default function AuditLogDialog() {
 function useDebounced<T>(value: T, ms: number): T {
   const [out, setOut] = useState(value)
   useEffect(() => {
-    const t = setTimeout(() => setOut(value), ms)
-    return () => clearTimeout(t)
+    const t = time().after(ms, () => setOut(value))
+    return () => t()
   }, [value, ms])
   return out
 }
@@ -286,7 +287,7 @@ function ActorField({
         onKeyDown={e => {
           if (e.key === 'Enter') pick(text.trim().toLowerCase(), text.trim())
         }}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onBlur={() => time().after(150, () => setOpen(false))}
         placeholder="Done by"
         title="Only entries by this member. Press Enter to use a username."
         aria-label="Done by"
@@ -378,7 +379,7 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
           className="block text-xs text-on-surface-variant"
           title={fullTimeOf(entry.created_at)}
         >
-          {relativeTime(ms, Date.now())}
+          {relativeTime(ms, time().now())}
           {entry.hidden && ' · Details hidden'}
         </span>
       </Stack>

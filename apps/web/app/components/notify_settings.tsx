@@ -12,6 +12,7 @@ import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { Masked, sectionCls } from './ui'
+import { time } from '../lib/platform/time'
 
 interface Override {
   key: string
@@ -202,7 +203,7 @@ export function NotificationsSection() {
   const resetAll = useStore(s => s.resetAllNotify)
   const { serverList, channelList, dmList, p2pList } = useOverrides()
   const any = serverList.length + channelList.length + dmList.length + p2pList.length > 0
-  const now = Date.now()
+  const now = time().now()
   return (
     <Stack gap="2xl">
       <section>

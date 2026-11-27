@@ -19,6 +19,7 @@ import { filesHead, type P2pSection } from '../../lib/p2p/transfer'
 import type { FilesPart } from '../../lib/p2p/app'
 import { P2pImport } from './p2p_transfer'
 import { fieldCls } from '../ui'
+import { time } from '../../lib/platform/time'
 
 type Slot = Awaited<ReturnType<typeof reserveIdentity>>
 export type ImportedSection = { section: P2pSection; files: FilesPart | null }
@@ -73,7 +74,7 @@ export function IdentityEnrollment({
         if (!blob) return
         const split = await splitFile(blob)
         if (!split) throw Error('Could not read the config file')
-        const decoded = await decodeConfig(split.text.trim(), Date.now(), FILE_LIMITS)
+        const decoded = await decodeConfig(split.text.trim(), time().now(), FILE_LIMITS)
         if (!decoded.ok) throw Error(decoded.error)
         if (!decoded.doc.p2p) throw Error('This file contains no P2P identity')
         const head = await filesHead(split.rest, target.identities.get()?.p2p.limits().transfer)

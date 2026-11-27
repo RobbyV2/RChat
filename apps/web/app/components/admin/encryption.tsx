@@ -19,6 +19,7 @@ import { errorText, useStore } from '../../lib/store'
 import { Pill } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { PageRow } from '../settings_page'
+import { time } from '../../lib/platform/time'
 
 const cardTitleCls = 'text-xs font-medium tracking-wide text-on-surface-variant uppercase'
 
@@ -43,7 +44,7 @@ function Warning({ kind, children }: { kind: string; children: ReactNode }) {
 
 export function EncryptionStatus({
   view,
-  now = Date.now(),
+  now = time().now(),
 }: {
   view: AdminEncryption
   now?: number

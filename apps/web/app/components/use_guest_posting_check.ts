@@ -3,6 +3,8 @@ import { useEffect } from 'react'
 import { guestCanPost, guestSessionHeaders } from '../lib/guest_chat'
 import { keyed } from '../lib/lists'
 import { useStore } from '../lib/store'
+import { time } from '../lib/platform/time'
+import type { Cancel } from '../lib/clock'
 
 export function useGuestPostingCheck(server: string | null, channel: number | null) {
   const { store, api } = useAccount()
@@ -17,7 +19,7 @@ export function useGuestPostingCheck(server: string | null, channel: number | nu
   useEffect(() => {
     if (!writable || !detail || channel === null) return
     let live = true
-    let timer: ReturnType<typeof setTimeout>
+    let timer: Cancel
     const check = async () => {
       try {
         const until = await api.req<number | null>(
@@ -31,17 +33,20 @@ export function useGuestPostingCheck(server: string | null, channel: number | nu
           guestPosting: { ...s.guestPosting, [channel]: until ? 'paused' : 'ready' },
         }))
         if (until)
-          timer = setTimeout(() => void check(), Math.max(1000, until * 1000 - Date.now() + 500))
+          timer = time().after(
+            Math.max(1000, until * 1000 - time().now() + 500),
+            () => void check()
+          )
       } catch {
         if (!live) return
         store.setState(s => ({ guestPosting: { ...s.guestPosting, [channel]: 'unavailable' } }))
-        timer = setTimeout(() => void check(), 15000)
+        timer = time().after(15000, () => void check())
       }
     }
     void check()
     return () => {
       live = false
-      clearTimeout(timer)
+      timer?.()
     }
   }, [api, store, channel, detail, writable])
 }

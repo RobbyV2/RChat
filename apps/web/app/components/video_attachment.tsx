@@ -22,6 +22,8 @@ import {
 } from '../lib/video_attachment'
 import { longPress } from './context_menu'
 import { useFileMenu, type FilePrimary } from './file_card'
+import { time } from '../lib/platform/time'
+import type { Cancel } from '../lib/clock'
 
 interface VideoProps {
   src: string
@@ -275,7 +277,7 @@ export function useNearView(): [(el: HTMLElement | null) => void, boolean, boole
   useEffect(() => {
     if (!el || typeof IntersectionObserver === 'undefined') return
     const root = scrollParent(el)
-    let settle: ReturnType<typeof setTimeout> | undefined
+    let settle: Cancel | undefined
     const watch = (margin: string, set: (on: boolean) => void) => {
       const io = new IntersectionObserver(
         entries => {
@@ -288,13 +290,13 @@ export function useNearView(): [(el: HTMLElement | null) => void, boolean, boole
       return io
     }
     const around = watch('100% 0px', on => {
-      clearTimeout(settle)
-      if (on) settle = setTimeout(() => setNear(true), NEAR_SETTLE_MS)
+      settle?.()
+      if (on) settle = time().after(NEAR_SETTLE_MS, () => setNear(true))
       else setNear(false)
     })
     const shown = watch('0px', setInView)
     return () => {
-      clearTimeout(settle)
+      settle?.()
       around.disconnect()
       shown.disconnect()
     }

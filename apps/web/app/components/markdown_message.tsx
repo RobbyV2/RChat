@@ -108,6 +108,7 @@ import { ViewableImage } from './media_lightbox'
 import { altText } from '../lib/alt_text'
 import { cause, logError } from '../lib/log'
 import { Row } from './layout'
+import { time } from '../lib/platform/time'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -523,7 +524,7 @@ const components: Components = {
 }
 
 const fmtExpiry = (ts: number | null) =>
-  ts === null ? 'Indefinite' : expiryText(ts - Math.floor(Date.now() / 1000))
+  ts === null ? 'Indefinite' : expiryText(ts - Math.floor(time().now() / 1000))
 
 // The cover of a hidden spoiler attachment.
 export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => void }) {
@@ -578,10 +579,10 @@ export function P2pFile({
 
   const [, tick] = useState(0)
   useEffect(() => {
-    const wait = expiryDelay(expires_at, Date.now())
+    const wait = expiryDelay(expires_at, time().now())
     if (wait === null) return
-    const t = setTimeout(() => tick(n => n + 1), wait)
-    return () => clearTimeout(t)
+    const t = time().after(wait, () => tick(n => n + 1))
+    return () => t()
   }, [expires_at])
 
   useEffect(
@@ -591,7 +592,7 @@ export function P2pFile({
     []
   )
 
-  const live = unexpired(expires_at, Math.floor(Date.now() / 1000))
+  const live = unexpired(expires_at, Math.floor(time().now() / 1000))
   const own = me !== null && hoster === me.username
   const localFile = live && own ? p2p.file(id) : null
   const hosted = live && avail?.online === true && avail.ids.includes(id)

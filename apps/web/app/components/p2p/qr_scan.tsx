@@ -5,6 +5,7 @@ import { Row, Stack } from '../layout'
 import { useEffect, useRef, useState } from 'react'
 import { Camera, ImageUp } from 'lucide-react'
 import { scanner } from '../../lib/platform'
+import { time } from '../../lib/platform/time'
 
 const FRAME_MS = 250
 const MAX_SIDE = 1024
@@ -47,7 +48,7 @@ export function QrScan({ onCode, label }: { onCode: (text: string) => void; labe
       void el.play().catch(() => {})
     }
     let busy = false
-    const timer = window.setInterval(() => {
+    const timer = time().every(FRAME_MS, () => {
       const v = video.current
       if (busy || !v || v.readyState < 2) return
       const image = pixels(v, v.videoWidth, v.videoHeight)
@@ -63,9 +64,9 @@ export function QrScan({ onCode, label }: { onCode: (text: string) => void; labe
         .finally(() => {
           busy = false
         })
-    }, FRAME_MS)
+    })
     return () => {
-      window.clearInterval(timer)
+      timer()
       stream.getTracks().forEach(t => t.stop())
     }
   }, [stream])

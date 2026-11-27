@@ -79,6 +79,7 @@ import { hex, memberLooks } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
 import { serversLoading } from '../../lib/p2p/conversations'
 import { ChannelListSkeleton, Held, MessageListSkeleton, ServerRailSkeleton } from '../skeletons'
+import { time } from '../../lib/platform/time'
 
 // P2P servers in the app: their group at the bottom of the rail (dashed rings, the Waypoints
 // badge, folders of their own), and the open server: channels, the channel's messages and the
@@ -166,7 +167,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   const pings = serverPings(v, prefs)
   const unread = serverUnread(v, prefs)
   const voice = useP2pVoice([v.id])
-  const muted = mutedOf(prefs, serverScope(v.id), Date.now())
+  const muted = mutedOf(prefs, serverScope(v.id), acct.time.now())
   const parent = folder === null ? null : zoneOfFolder(folder)
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const mask = useMask(own)
@@ -486,7 +487,8 @@ function P2pServerSidebarBody() {
   const facts = (c: ChannelEntry) => {
     const counts = v.chans[c.key]
     const scope = channelScope(v.id, c.key)
-    const muted = mutedOf(prefs, scope, Date.now()) || mutedOf(prefs, serverScope(v.id), Date.now())
+    const muted =
+      mutedOf(prefs, scope, time().now()) || mutedOf(prefs, serverScope(v.id), time().now())
     const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
     return { scope, muted, pings, unread: !!counts?.unread && !muted }
   }

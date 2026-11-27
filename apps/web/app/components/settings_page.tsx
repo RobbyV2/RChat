@@ -28,6 +28,7 @@ import { useMotionPlays } from '../lib/motion/use_motion'
 import { IconButton, ListRow } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { Dialog } from './ui'
+import { time } from '../lib/platform/time'
 
 export interface PageSection {
   id: string
@@ -359,9 +360,9 @@ export function SettingsPage({
     if (!el) return
     el.scrollIntoView({ block: 'center', behavior: smooth.current ? 'smooth' : 'auto' })
     el.setAttribute('data-flash', '')
-    const id = window.setTimeout(() => el.removeAttribute('data-flash'), 1600)
+    const id = time().after(1600, () => el.removeAttribute('data-flash'))
     return () => {
-      window.clearTimeout(id)
+      id()
       el.removeAttribute('data-flash')
     }
   }, [row, shown, jumps])

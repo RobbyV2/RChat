@@ -55,6 +55,7 @@ import { permItems } from '../../lib/perm_source'
 import { relativeTime } from '../../lib/timestamps'
 import type { LogPage } from '../../lib/p2p/server/modlog'
 import { usePermissionRules } from '../use_permission_rules'
+import { time } from '../../lib/platform/time'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
@@ -651,7 +652,7 @@ function ModerationLog({ v }: { v: ServerView }) {
     items: permItems(v.rules),
     reasonMax: p2p.limits().display.reason,
   })
-  const now = Date.now()
+  const now = time().now()
   return (
     <Stack data-p2p-modlog gap="sm">
       {lines.length === 0 && pages.length > 0 && <Note>Nothing yet.</Note>}

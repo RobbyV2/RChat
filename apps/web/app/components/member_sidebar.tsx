@@ -1,5 +1,6 @@
 'use client'
 
+import type { Cancel } from '../lib/clock'
 import { useEffect, useMemo, useState } from 'react'
 import { Crown } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
@@ -25,6 +26,7 @@ import { TimeoutBadge, useMemberTimeout, useNow } from './timeout_dialog'
 import { Masked, Sentinel } from './ui'
 import { UserAvatar } from './user_avatar'
 import { PeerActorTag, ViewActorTag } from './view_actor'
+import { time } from '../lib/platform/time'
 
 const rowFocus = 'outline-offset-[-2px] focus-visible:outline-2 focus-visible:outline-primary'
 
@@ -45,9 +47,9 @@ function useWindowed(items: MemberItem[]) {
   const [port, setPort] = useState({ top: 0, height: 800 })
   useEffect(() => {
     if (!el) return
-    let frame = 0
+    let frame: Cancel | null = null
     const read = () => {
-      frame = 0
+      frame = null
       setPort(p =>
         p.top === el.scrollTop && p.height === el.clientHeight
           ? p
@@ -55,7 +57,7 @@ function useWindowed(items: MemberItem[]) {
       )
     }
     const onScroll = () => {
-      if (!frame) frame = requestAnimationFrame(read)
+      if (!frame) frame = time().frame(read)
     }
     read()
     el.addEventListener('scroll', onScroll, { passive: true })
@@ -64,7 +66,7 @@ function useWindowed(items: MemberItem[]) {
     return () => {
       el.removeEventListener('scroll', onScroll)
       ro.disconnect()
-      if (frame) cancelAnimationFrame(frame)
+      frame?.()
     }
   }, [el])
   const prefix = useMemo(() => prefixHeights(items.map(heightOf)), [items])
@@ -103,7 +105,7 @@ const loadingCls = 'h-full w-60 shrink-0 overflow-hidden bg-surface-container-lo
 
 // The timer of a row's timeout, until it ends.
 function RowTimeout({ t }: { t: Timeout | null }) {
-  const now = useNow(t !== null && t.ends > Date.now())
+  const now = useNow(t !== null && t.ends > time().now())
   return t && t.ends > now ? <TimeoutBadge t={t} compact /> : null
 }
 

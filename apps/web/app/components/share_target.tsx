@@ -25,6 +25,7 @@ import {
 import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
+import { time } from '../lib/platform/time'
 
 function Destinations({
   owner,
@@ -387,7 +388,7 @@ export function ShareTarget() {
     const launched = revision.current
     let open = true,
       port: MessagePort | undefined
-    const timer = setTimeout(async () => {
+    const timer = time().after(0, async () => {
       if (!ticket || !navigator.serviceWorker) return
       const worker =
         navigator.serviceWorker.controller ?? (await navigator.serviceWorker.ready).active
@@ -417,10 +418,10 @@ export function ShareTarget() {
             .setError('This share expired or was already opened. Share it again.')
       }
       worker.postMessage({ kind: 'receive-share', ticket }, [channel.port2])
-    }, 0)
+    })
     return () => {
       open = false
-      clearTimeout(timer)
+      timer()
       port?.close()
     }
   }, [ready])

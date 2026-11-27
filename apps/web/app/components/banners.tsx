@@ -7,6 +7,7 @@ import { ViewActorTag } from './view_actor'
 import { DeletionBanner } from './account_deletion'
 import { LabelText } from './instance_badge'
 import { NoticeStack } from './notice_stack'
+import { time } from '../lib/platform/time'
 
 const bannerCls =
   'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:w-max sm:max-w-[calc(100vw-2rem)]'
@@ -25,7 +26,7 @@ function TemporaryPassword() {
       className={`${bannerCls} flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-tertiary-container text-on-tertiary-container`}
     >
       <ViewActorTag />
-      <span className="min-w-0">{temporaryNotice(temporary, Math.floor(Date.now() / 1000))}</span>
+      <span className="min-w-0">{temporaryNotice(temporary, Math.floor(time().now() / 1000))}</span>
       <button
         onClick={() => openDialog({ kind: 'settings', section: 'profile' })}
         className="rounded-full px-3 font-medium underline outline-offset-2 focus-visible:outline-2 focus-visible:outline-current pointer-coarse:min-h-11"

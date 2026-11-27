@@ -10,6 +10,7 @@ import { fmtDuration } from '../lib/voice_layout'
 import { useStore } from '../lib/store'
 import type { DmSummary } from '../lib/types'
 import { Row } from './layout'
+import { time } from '../lib/platform/time'
 
 export function DirectBadge({ label = 'Direct' }: { label?: string }) {
   return (
@@ -23,10 +24,10 @@ export function DirectBadge({ label = 'Direct' }: { label?: string }) {
 }
 
 export function CallDuration({ from }: { from: number }) {
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  const [now, setNow] = useState(() => Math.floor(time().now() / 1000))
   useEffect(() => {
-    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
-    return () => clearInterval(id)
+    const id = time().every(1000, () => setNow(Math.floor(time().now() / 1000)))
+    return () => id()
   }, [])
   return <>{fmtDuration(Math.max(0, now - from))}</>
 }

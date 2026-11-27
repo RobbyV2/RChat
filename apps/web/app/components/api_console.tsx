@@ -32,6 +32,7 @@ import { Row, Stack, Surface } from './layout'
 import { useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
 import { TO_SCREEN } from '../lib/secret'
+import { time } from '../lib/platform/time'
 
 const METHOD_CLS: Record<Method, string> = {
   GET: 'bg-secondary-container text-on-secondary-container',
@@ -415,7 +416,7 @@ export function ApiConsole({
     const at = sessionMark()
     const note = (status: number) =>
       noteRequest(
-        { op: op.id, method: op.method, path: op.path, status, at: Date.now(), values },
+        { op: op.id, method: op.method, path: op.path, status, at: time().now(), values },
         at
       )
     try {

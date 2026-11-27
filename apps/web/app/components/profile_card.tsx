@@ -79,6 +79,7 @@ import { COARSE_QUERY, useMedia } from './context_menu'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 import { WebhookProfile } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
+import { time } from '../lib/platform/time'
 
 export function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; children: string }) {
   const cls =
@@ -432,7 +433,7 @@ function Card({ target }: { target: ProfileTarget }) {
     myRolePerms: mine,
     timedOut: timeout !== null,
     profiles,
-    profileLocked: lockState(lockedUntil, Math.floor(Date.now() / 1000)).locked,
+    profileLocked: lockState(lockedUntil, Math.floor(time().now() / 1000)).locked,
     rank,
     order:
       ranked && rank

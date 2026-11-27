@@ -31,8 +31,9 @@ import { Row, Stack, Surface } from '../layout'
 import { Dialog, FieldError, fieldCls, useCopied } from '../ui'
 import { useAccountChanges } from './account_state'
 import { useControl } from './config_state'
+import { time } from '../../lib/platform/time'
 
-const now = () => Math.floor(Date.now() / 1000)
+const now = () => Math.floor(time().now() / 1000)
 
 // A temporary password, shown once. It lives in this component only: closing the dialog
 // forgets it.
@@ -131,7 +132,7 @@ function ServerSearch({
   useEffect(() => {
     const text = q.trim()
     let live = true
-    const t = setTimeout(() => {
+    const t = time().after(300, () => {
       if (text === '') return setFound([])
       api
         .adminServers(null, text)
@@ -139,10 +140,10 @@ function ServerSearch({
           if (live) setFound(page.items.slice(0, 6))
         })
         .catch(inSession((e: unknown) => setError(errorText(e))))
-    }, 300)
+    })
     return () => {
       live = false
-      clearTimeout(t)
+      t()
     }
   }, [q, setError])
   const open = found.filter(sv => !taken.includes(sv.name))

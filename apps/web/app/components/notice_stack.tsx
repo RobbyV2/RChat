@@ -22,6 +22,7 @@ import {
 } from '../lib/notices'
 import { UserAvatar } from './user_avatar'
 import { Masked } from './ui'
+import { time } from '../lib/platform/time'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
   return pieces.map((p, i) => (
@@ -33,7 +34,7 @@ function Pieces({ pieces }: { pieces: Piece[] }) {
 
 // Time left, from where the timer stood when this run of the toast began; pausing freezes it.
 function TimeBar({ notice, paused }: { notice: Notice; paused: boolean }) {
-  const [start] = useState(() => timeLeft(notice.timer, Date.now()))
+  const [start] = useState(() => timeLeft(notice.timer, time().now()))
   return (
     <div className="absolute inset-x-0 bottom-0 h-0.5 bg-on-surface/10">
       <div

@@ -58,12 +58,13 @@ import { GUEST_VOICE_OFF, GUEST_VOICE_ON } from '../lib/guest_voice'
 import { Button, IconButton } from './controls'
 import { Grid, Row, Stack, Surface } from './layout'
 import { Chips, Dialog, FieldError, fieldCls, useCopied } from './ui'
+import { time } from '../lib/platform/time'
 
 const UNTITLED = 'Untitled password'
 
 export const passwordName = (label: string | null) => label ?? UNTITLED
 
-const nowSeconds = () => Math.floor(Date.now() / 1000)
+const nowSeconds = () => Math.floor(time().now() / 1000)
 
 const readBook = (key: string) => {
   try {
@@ -350,7 +351,7 @@ function NewPasswordDialog({
   const [custom, setCustom] = useState(false)
   const [secret, setSecret] = useState('')
   const [expiry, setExpiry] = useState<ExpiryChoice>(`${86400}`)
-  const [expiryAt, setExpiryAt] = useState(() => toLocalInput(Date.now() + 86400 * 1000))
+  const [expiryAt, setExpiryAt] = useState(() => toLocalInput(time().now() + 86400 * 1000))
   const [uses, setUses] = useState<UsesChoice>('unlimited')
   const [usesRaw, setUsesRaw] = useState('3')
   const [error, setError] = useState<string | null>(null)
@@ -377,7 +378,7 @@ function NewPasswordDialog({
       body.password = secret.trim()
     }
     if (expiry === 'custom') {
-      const picked = customExpiry(expiryAt, Date.now())
+      const picked = customExpiry(expiryAt, time().now())
       if (picked.error !== null) return setError(picked.error)
       body.expires_at = picked.at
     } else if (expiry !== 'never') body.expires_in = Number(expiry)
@@ -401,7 +402,7 @@ function NewPasswordDialog({
   }
 
   const selectCls = `${fieldCls} w-full bg-surface-container-high`
-  const nowMs = Date.now()
+  const nowMs = time().now()
 
   return (
     <Dialog title={created ? 'Password Created' : 'New Password'} onClose={onClose} layer="confirm">

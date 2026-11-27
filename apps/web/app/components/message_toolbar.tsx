@@ -13,6 +13,7 @@ import type { Message } from '../lib/types'
 import { FULL_TITLE, canAddEmoji, reacted, reactionsFull } from '../lib/reactions'
 import { keptWhenTight, toolbarFit } from '../lib/toolbar_fit'
 import { EmojiPicker, useTopEmojis } from './emoji_picker'
+import { time } from '../lib/platform/time'
 
 // It straddles the row's top edge, so a pointer moving up from the row reaches it before leaving.
 const messageToolbarCls =
@@ -187,7 +188,7 @@ export function MessageToolbar({
           onPick={e => toggle(m, e, false)}
           onClose={() => {
             setOpen(false)
-            if (keyboard.current) requestAnimationFrame(() => addRef.current?.focus())
+            if (keyboard.current) time().frame(() => addRef.current?.focus())
           }}
         />
       )}

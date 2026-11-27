@@ -25,15 +25,16 @@ import { Button, Chip, Pill } from './controls'
 import { Dock, Row, Stack, Surface } from './layout'
 import { Dialog, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
+import { time } from '../lib/platform/time'
 
 // The current time, ticking every `ms` while `on`.
 export function useNow(on: boolean, ms = 1000): number {
-  const [now, setNow] = useState(() => Date.now())
+  const [now, setNow] = useState(() => time().now())
   useEffect(() => {
-    setNow(Date.now())
+    setNow(time().now())
     if (!on) return
-    const timer = setInterval(() => setNow(Date.now()), ms)
-    return () => clearInterval(timer)
+    const timer = time().every(ms, () => setNow(time().now()))
+    return () => timer()
   }, [on, ms])
   return now
 }
@@ -51,7 +52,7 @@ export function useMyTimeoutEnds(server: string | null | undefined): number | nu
     server ? s.me?.servers.find(x => x.name === server)?.timed_out_until : undefined
   )
   const ends = until === undefined ? null : until * 1000
-  const now = useNow(ends !== null && ends > Date.now())
+  const now = useNow(ends !== null && ends > time().now())
   return ends !== null && ends > now ? ends : null
 }
 
@@ -72,7 +73,7 @@ export function TimeoutBadge({ t, compact = false }: { t: Timeout; compact?: boo
 
 // When your own timeout in a P2P room ends (ms), ticking so it clears on time.
 export function usePeerTimeoutEnds(until: number | undefined): number | null {
-  const now = useNow(until !== undefined && until > Date.now())
+  const now = useNow(until !== undefined && until > time().now())
   return until !== undefined && until > now ? until : null
 }
 
@@ -84,7 +85,7 @@ export function PeerTimeoutBadge({
   m: { timeoutUntil?: number; timeoutReason?: string }
   compact?: boolean
 }) {
-  const now = useNow(m.timeoutUntil !== undefined && m.timeoutUntil > Date.now())
+  const now = useNow(m.timeoutUntil !== undefined && m.timeoutUntil > time().now())
   const t = peerTimeout(m, now)
   return t ? <TimeoutBadge t={t} compact={compact} /> : null
 }
@@ -136,7 +137,7 @@ export function TimeoutDialog({
   const [amount, setAmount] = useState('')
   const [mult, setMult] = useState(60)
   const [reason, setReason] = useState(() =>
-    set && set.ends > Date.now() ? (set.reason ?? '') : ''
+    set && set.ends > time().now() ? (set.reason ?? '') : ''
   )
   const [busy, setBusy] = useState(false)
   const custom = preset === null ? customSeconds(amount, mult) : null

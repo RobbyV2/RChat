@@ -53,6 +53,7 @@ import { useMedia } from './context_menu'
 import { Button, IconButton } from './controls'
 import { Sheet } from './ui'
 import { Stack, Surface } from './layout'
+import { time } from '../lib/platform/time'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
 
@@ -303,7 +304,7 @@ const PickerBody = memo(function PickerBody({
   const tone = useStore(s => s.emoji.tone)
   const noteEmoji = useStore(s => s.noteEmoji)
   const setSkinTone = useStore(s => s.setSkinTone)
-  const [opened] = useState(() => ({ prefs: store.getState().emoji, now: Date.now() }))
+  const [opened] = useState(() => ({ prefs: store.getState().emoji, now: time().now() }))
   const [query, setQuery] = useState('')
   const [hover, setHover] = useState<Emoji | null>(null)
   const [active, setActive] = useState<GridPos | null>(null)

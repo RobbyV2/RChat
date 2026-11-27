@@ -23,6 +23,7 @@ import { CloseButton, Masked, Sheet, useOwnCheck } from './ui'
 import { centerEmoji } from '../lib/emoji_center'
 import { useChat } from '../lib/place/use_chat'
 import { Surface } from './layout'
+import { time } from '../lib/platform/time'
 
 const EMPTY: Reaction[] = []
 
@@ -223,7 +224,7 @@ function AddReactionChip({ m }: { m: Message }) {
           onPick={e => toggle(m, e, false)}
           onClose={() => {
             setOpen(false)
-            if (keyboard.current) requestAnimationFrame(() => ref.current?.focus())
+            if (keyboard.current) time().frame(() => ref.current?.focus())
           }}
         />
       )}

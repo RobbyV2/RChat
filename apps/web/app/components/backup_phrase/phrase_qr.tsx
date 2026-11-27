@@ -17,6 +17,7 @@ import {
 import { useAccount } from '../../lib/client/react'
 import { sharing } from '../../lib/platform'
 import { useStore } from '../../lib/store'
+import { time } from '../../lib/platform/time'
 
 export const PNG_NAME = 'rchat-backup-phrase.png'
 export const SVG_NAME = 'rchat-backup-phrase.svg'
@@ -105,7 +106,7 @@ const qrPng = async (words: string[], logo: string) => {
 }
 
 const today = () => {
-  const d = new Date()
+  const d = new Date(time().now())
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }

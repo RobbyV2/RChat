@@ -25,6 +25,7 @@ import { Dialog, FieldError, Masked } from './ui'
 import { ServerGlyph } from './server_rail'
 import { AboutLine } from './server_about'
 import { aboutText } from '../lib/server_about'
+import { time } from '../lib/platform/time'
 
 function AddServerDialog({
   join,
@@ -79,7 +80,7 @@ function AddServerDialog({
       selection.current === mark &&
       allowsAccountOrigin(acting.conn.origin) &&
       client.live().includes(acting)
-    const timer = setTimeout(async () => {
+    const timer = time().after(400, async () => {
       if (!valid()) return
       try {
         if (joining) {
@@ -92,9 +93,9 @@ function AddServerDialog({
       } catch {
         /* Availability is optional. Submit still checks with the server. */
       }
-    }, 400)
+    })
     return () => {
-      clearTimeout(timer)
+      timer()
       controller.abort()
     }
   }, [id, joining, selecting, selection, acting, api])

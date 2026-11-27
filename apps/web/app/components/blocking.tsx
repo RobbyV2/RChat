@@ -11,6 +11,7 @@ import { DateDivider } from './date_divider'
 import { Button, LinkButton } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { fieldCls, FieldError, Masked, Sentinel } from './ui'
+import { time } from '../lib/platform/time'
 
 // Collapsed runs of blocked users' messages. A run opens with Show, or by itself when a jump
 // targets one of its messages.
@@ -238,8 +239,8 @@ export function BlockedUsersSection() {
   const unblockUser = useStore(s => s.unblockUser)
   const [q, setQ] = useState('')
   useEffect(() => {
-    const t = setTimeout(() => void loadBlockList(q, true), q ? 300 : 0)
-    return () => clearTimeout(t)
+    const t = time().after(q ? 300 : 0, () => void loadBlockList(q, true))
+    return () => t()
   }, [q, loadBlockList])
   const more = useCallback(() => void loadBlockList(q), [q, loadBlockList])
   const empty = !page.loading && !page.hasMore && page.list.length === 0

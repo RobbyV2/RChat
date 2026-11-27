@@ -41,6 +41,7 @@ import { Dialog, Masked } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { Row, Stack, Surface } from '../layout'
 import { andMore, fewOf, nextPage, page, PAGE } from '../../lib/paging'
+import { time as appTime } from '../../lib/platform/time'
 
 // The flows of P2P servers the user takes part in: actions waiting for sync, removals
 // that took others along, moderation to apply again, a device that conflicts with a copy of
@@ -670,7 +671,7 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
   const identity = useP2pApp()!
   const { p2p, p2pDevices } = identity
 
-  const [at] = useState(() => Date.now())
+  const [at] = useState(() => appTime().now())
   const times = lostTimes(p2p.limits().misc)
   const [t, setT] = useState(() => at - times[0].ms)
   const [list, setList] = useState<Preview | null>(null)
@@ -680,13 +681,13 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
   useEffect(() => {
     let live = true
     setList(null)
-    const timer = setTimeout(
-      () => void p2pDevices.preview(dk, t).then(r => live && setList(r)),
-      400
+    const timer = appTime().after(
+      400,
+      () => void p2pDevices.preview(dk, t).then(r => live && setList(r))
     )
     return () => {
       live = false
-      clearTimeout(timer)
+      timer()
     }
   }, [dk, t])
   const time = when(t)

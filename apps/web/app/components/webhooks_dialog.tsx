@@ -45,6 +45,7 @@ import { Button, IconButton, Tab } from './controls'
 import { Grid, Row, Stack, Surface } from './layout'
 import { Dialog, FieldError, fieldCls, Masked, sectionCls, useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
+import { time } from '../lib/platform/time'
 
 // Who made a webhook, on its own line under its details.
 export function CreatorNote({ creator }: { creator: UserRef }) {
@@ -60,7 +61,7 @@ export function CreatorNote({ creator }: { creator: UserRef }) {
 
 const DEFAULT_COLOR = '#5c6bc0'
 
-const ago = (seconds: number) => relativeTime(seconds * 1000, Date.now())
+const ago = (seconds: number) => relativeTime(seconds * 1000, time().now())
 
 export default function WebhooksDialog() {
   const dialog = useStore(s => s.activeDialog)
@@ -651,8 +652,8 @@ function DeliveryLog({ server, hook }: { server: string; hook: number }) {
   }, [server, hook])
   useEffect(() => {
     load()
-    const id = window.setInterval(load, 5000)
-    return () => window.clearInterval(id)
+    const id = time().every(5000, load)
+    return () => id()
   }, [load])
   if (error) return <FieldError message={error} />
   if (list === null) return <DeliveryNote>Loading…</DeliveryNote>

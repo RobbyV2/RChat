@@ -3,6 +3,7 @@
 import { BellOff } from 'lucide-react'
 import { scopeMuted, useStore } from '../lib/store'
 import { muteEnd, mutedText, parentScope, untilText, type NotifyScope } from '../lib/notify'
+import { time } from '../lib/platform/time'
 
 // The muted marker on rows and tiles; the tooltip says until when.
 export function MutedIcon({
@@ -16,7 +17,7 @@ export function MutedIcon({
 }) {
   const muted = useStore(s => scopeMuted(s, scope))
   const title = useStore(s => {
-    const now = Date.now()
+    const now = time().now()
     const own = muteEnd(s.notifyPrefs, scope, now)
     if (own !== null) return mutedText(own, now)
     const parent = parentScope(scope)

@@ -1,5 +1,6 @@
 'use client'
 
+import type { Cancel } from '../lib/clock'
 import {
   useCallback,
   useEffect,
@@ -36,6 +37,7 @@ import { dnd, type DragSpec } from './drag'
 import { IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { Overlay, Sheet } from './ui'
+import { time } from '../lib/platform/time'
 
 let press = idlePress
 let owner: HTMLElement | null = null
@@ -46,11 +48,11 @@ let dragSpec: DragSpec | null = null
 let pointerId: number | null = null
 let touchId: number | null = null
 let claimed: Event | null = null
-let holdTimer: number | null = null
-let pressedTimer: number | null = null
+let holdTimer: Cancel | null = null
+let pressedTimer: Cancel | null = null
 let guarded = false
 
-const onScroll = () => void drive({ kind: 'cancel', now: Date.now() })
+const onScroll = () => void drive({ kind: 'cancel', now: time().now() })
 
 // Opens a row's menu for `el`. A menu built by hand gets the registry's Show masked text row
 // too; action menus list it themselves.
@@ -69,8 +71,8 @@ const openFor = (el: Element | null, open: () => void) =>
   })
 
 const clearPress = () => {
-  if (holdTimer !== null) window.clearTimeout(holdTimer)
-  if (pressedTimer !== null) window.clearTimeout(pressedTimer)
+  holdTimer?.()
+  pressedTimer?.()
   holdTimer = null
   pressedTimer = null
   owner?.removeAttribute('data-pressed')
@@ -78,14 +80,14 @@ const clearPress = () => {
 }
 
 const armPress = () => {
-  holdTimer = window.setTimeout(() => {
+  holdTimer = time().after(HOLD_MS, () => {
     holdTimer = null
     drive({ kind: 'timer' })
-  }, HOLD_MS)
-  pressedTimer = window.setTimeout(() => {
+  })
+  pressedTimer = time().after(PRESSED_DELAY_MS, () => {
     pressedTimer = null
     owner?.setAttribute('data-pressed', '')
-  }, PRESSED_DELAY_MS)
+  })
   document.addEventListener('scroll', onScroll, { capture: true, passive: true })
 }
 
@@ -125,7 +127,7 @@ const onMouseMove = (e: PointerEvent) => {
 const onMouseUp = (e: PointerEvent) => {
   if (e.pointerId !== pointerId) return
   unwatchMouse()
-  drive({ kind: e.type === 'pointerup' ? 'end' : 'cancel', now: Date.now() })
+  drive({ kind: e.type === 'pointerup' ? 'end' : 'cancel', now: time().now() })
 }
 
 const watchMouse = () => {
@@ -147,7 +149,7 @@ const guardClicks = () => {
   window.addEventListener(
     'click',
     e => {
-      if (!swallowsClick(press, Date.now())) return
+      if (!swallowsClick(press, time().now())) return
       e.preventDefault()
       e.stopPropagation()
     },
@@ -176,7 +178,7 @@ const guardClicks = () => {
   )
   window.addEventListener('blur', () => {
     unwatchMouse()
-    drive({ kind: 'cancel', now: Date.now() })
+    drive({ kind: 'cancel', now: time().now() })
   })
 }
 
@@ -232,17 +234,17 @@ export function longPress(open: (x: number, y: number) => void, drag?: DragSpec)
     },
     onTouchEnd: e => {
       if (!claim(e) || !primary(e.changedTouches)) return
-      if (drive({ kind: 'end', now: Date.now() }).swallow && e.cancelable) e.preventDefault()
+      if (drive({ kind: 'end', now: time().now() }).swallow && e.cancelable) e.preventDefault()
     },
     onTouchCancel: e => {
       if (!claim(e) || !primary(e.changedTouches)) return
-      drive({ kind: 'cancel', now: Date.now() })
+      drive({ kind: 'cancel', now: time().now() })
     },
     onContextMenu: e => {
       if (!claim(e)) return
       e.preventDefault()
       nativeOwner = e.currentTarget
-      drive({ kind: 'native', x: e.clientX, y: e.clientY, now: Date.now() }, open)
+      drive({ kind: 'native', x: e.clientX, y: e.clientY, now: time().now() }, open)
       nativeOwner = null
     },
   }

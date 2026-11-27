@@ -1,5 +1,6 @@
 'use client'
 
+import type { Cancel } from '../lib/clock'
 import { create } from 'zustand'
 import {
   autoScrollStep,
@@ -14,6 +15,7 @@ import {
   type Slot,
   type Span,
 } from '../lib/drag'
+import { time } from '../lib/platform/time'
 
 export interface DragSpec {
   group: string
@@ -46,7 +48,7 @@ interface Active {
   y: number
   target: (DropTarget & Slot) | null
   merge: HTMLElement | null
-  frame: number
+  frame: Cancel | null
   abort: () => void
 }
 
@@ -198,7 +200,7 @@ const tick = () => {
   placeLine(a, rect, zoneEl)
   const zone = next && !next.noop ? next.zone : null
   if ((was && !was.noop ? was.zone : null) !== zone) useDrag.setState({ zone })
-  a.frame = requestAnimationFrame(tick)
+  a.frame = time().frame(tick)
 }
 
 const onKey = (e: KeyboardEvent) => {
@@ -257,7 +259,7 @@ export const dnd = {
       y: oy,
       target: null,
       merge: null,
-      frame: 0,
+      frame: null,
       abort,
     }
     useDrag.setState({ group: spec.group, key: spec.key, zone: null })
@@ -272,7 +274,7 @@ export const dnd = {
     const a = active
     if (!a) return
     active = null
-    cancelAnimationFrame(a.frame)
+    a.frame?.()
     window.removeEventListener('keydown', onKey, true)
     window.removeEventListener('blur', onBlur)
     a.ghost.remove()

@@ -48,16 +48,17 @@ import { Dialog, fieldCls, FieldError, Masked, Sentinel } from './ui'
 import { ShownAvatar, ShownName, useViewServer } from './shown_user'
 import { MessageTime } from './timestamp'
 import { Row, Stack } from './layout'
+import { time } from '../lib/platform/time'
 
-const nowSec = () => Math.floor(Date.now() / 1000)
+const nowSec = () => Math.floor(time().now() / 1000)
 
 // Seconds now, ticking every 30 seconds while `on`.
 function useNow(on: boolean) {
   const [now, setNow] = useState(nowSec)
   useEffect(() => {
     if (!on) return
-    const t = setInterval(() => setNow(nowSec()), 30_000)
-    return () => clearInterval(t)
+    const t = time().every(30_000, () => setNow(nowSec()))
+    return () => t()
   }, [on])
   return now
 }

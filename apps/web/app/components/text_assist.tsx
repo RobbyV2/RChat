@@ -40,6 +40,7 @@ import {
   stampChoices,
   type StampChoice,
 } from '../lib/timestamps'
+import { time } from '../lib/platform/time'
 
 const NO_MESSAGES: Message[] = []
 const NO_PEOPLE: UserRef[] = []
@@ -86,7 +87,7 @@ function useMentionSearch(listKey: string | null, query: string | null) {
     if (!server || !query) return
     const key = suggestKey(server, query)
     if (cache.has(key)) return
-    const t = setTimeout(() => {
+    const t = time().after(SUGGEST_DEBOUNCE, () => {
       api
         .suggestMembers(server, query)
         .then(found => {
@@ -95,8 +96,8 @@ function useMentionSearch(listKey: string | null, query: string | null) {
           setTick(n => n + 1)
         })
         .catch(() => {})
-    }, SUGGEST_DEBOUNCE)
-    return () => clearTimeout(t)
+    })
+    return () => t?.()
   }, [api, cache, server, query])
 
   return useCallback(
@@ -228,12 +229,12 @@ export function useTextAssist({
   )
   const { data: emoji } = useEmojiData(trigger !== null)
   const searchCodes = useCallback(
-    (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, Date.now())) : []),
+    (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, time().now())) : []),
     [emoji, prefs]
   )
 
   const searchStamps = useCallback((q: string) => {
-    const now = Date.now()
+    const now = time().now()
     return stampChoices(q ? Number(q) : Math.floor(now / 1000), now)
   }, [])
 

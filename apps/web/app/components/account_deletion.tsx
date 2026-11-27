@@ -14,6 +14,7 @@ import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
 import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { Dialog } from './ui'
+import { time } from '../lib/platform/time'
 
 // Settings > Account: asks the instance to delete the account after its wait.
 export function DeleteAccount({ links }: { links: LinkedProvider[] }) {
@@ -24,7 +25,7 @@ export function DeleteAccount({ links }: { links: LinkedProvider[] }) {
     return (
       <Stack data-account-deletion="pending" gap="sm" align="start">
         <p role="status" className="text-sm text-on-surface-variant">
-          {deletionNotice(pending, Math.floor(Date.now() / 1000))}
+          {deletionNotice(pending, Math.floor(time().now() / 1000))}
         </p>
         <Button onClick={() => void keep()}>Keep account</Button>
       </Stack>
@@ -96,7 +97,7 @@ export function DeletionBanner({ className }: { className: string }) {
       className={`${className} bg-error-container text-on-error-container`}
     >
       <Row gap="md" justify="center" wrap>
-        <span className="min-w-0">{deletionNotice(pending, Math.floor(Date.now() / 1000))}</span>
+        <span className="min-w-0">{deletionNotice(pending, Math.floor(time().now() / 1000))}</span>
         <button
           type="button"
           onClick={() => void keep()}

@@ -5,6 +5,7 @@ import { client } from '../lib/client/client'
 import type { AccountSession } from '../lib/client/session'
 import { inShell, mobileOs } from '../lib/platform'
 import { onBack, pressEscape } from '../lib/platform/mobile'
+import { time } from '../lib/platform/time'
 
 const LAYERS = '[role="dialog"], [role="menu"], [role="listbox"], [data-popover], [data-drawer]'
 
@@ -16,8 +17,7 @@ const openLayers = (account: AccountSession) => {
   return marks.includes('1') || count > 0 ? `${marks}:${count}` : ''
 }
 
-const frames = () =>
-  new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+const frames = () => new Promise<void>(resolve => time().frame(() => time().frame(() => resolve())))
 
 export function handleAndroidBack(canGoBack: boolean, active: () => boolean, exit: () => void) {
   const shown = client.shown()

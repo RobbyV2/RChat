@@ -97,6 +97,7 @@ import type { AccountSession } from '../lib/client/session'
 import { useAddingAllowed } from './add_instance'
 import { AccountTag, ActorAvatar } from './account_tag'
 import { holder } from '../lib/stable_key'
+import { time } from '../lib/platform/time'
 
 function showOwner(account: AccountSession, peer?: P2pApp | null) {
   if (client.shown() !== account) client.show(account)
@@ -195,7 +196,7 @@ function Greeting({ total, accounts = 1 }: { total?: number; accounts?: number }
   const me = useStore(s => s.me)
   const streamer = useStore(s => s.streamer)
   const pings = useInboxCount()
-  const [hour] = useState(() => new Date().getHours())
+  const [hour] = useState(() => new Date(time().now()).getHours())
   return (
     <Surface tone="plain" radius="none" pad="2xs" gap="2xs">
       <h1 className="text-2xl font-semibold text-on-surface sm:text-3xl">
@@ -674,7 +675,7 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
   const scope =
     ch === null ? ({ kind: 'p2p', room } as const) : ({ kind: 'p2pc', room, ch } as const)
   const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
-  const unread = !!counts?.unread && !mutedOf(prefs, scope, Date.now())
+  const unread = !!counts?.unread && !mutedOf(prefs, scope, acct.time.now())
   const label =
     ch === null
       ? peer
@@ -958,7 +959,7 @@ const useP2pUnread = () => {
   const contacts = useP2p(s => s.contacts)
   const prefs = useStore(s => s.notifyPrefs)
   return useMemo(
-    () => p2pUnread({ servers, rooms, contacts }, prefs, Date.now()),
+    () => p2pUnread({ servers, rooms, contacts }, prefs, time().now()),
     [servers, rooms, contacts, prefs]
   )
 }

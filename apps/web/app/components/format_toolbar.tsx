@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { applyFormat, FORMATS, formatKey, keysLabel, type Format } from '../lib/format'
+import { time } from '../lib/platform/time'
 
 const ICONS: Record<Format, LucideIcon> = {
   bold: Bold,
@@ -64,7 +65,7 @@ export function useFormatting({
     const out = applyFormat(getText(), el.selectionStart, el.selectionEnd, format)
     applying.current = true
     setText(out.text)
-    requestAnimationFrame(() => {
+    time().frame(() => {
       applying.current = false
       const now = inputRef.current
       if (!now) return setSelected(false)

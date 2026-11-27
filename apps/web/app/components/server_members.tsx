@@ -27,6 +27,8 @@ import { MemberFilterBar, MemberTable, MemberTableRow } from './member_table'
 import { Button } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { Sentinel } from './ui'
+import { time } from '../lib/platform/time'
+import type { Cancel } from '../lib/clock'
 
 // Server settings' members of a hosted server: the search route with filters, for members who
 // may kick, time out or handle roles.
@@ -45,7 +47,7 @@ function useHostedSearch(server: string, query: string) {
   const rememberMember = useStore(s => s.rememberMember)
   const [found, setFound] = useState<SearchPages<MemberHit>>(EMPTY_PAGES)
   const epoch = useRef(0)
-  const retry = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const retry = useRef<Cancel | null>(null)
   const fetchFrom = useCallback(
     async function fetchPage(cursor: string | null, mine: number) {
       setFound(f => ({ ...f, loading: true, failed: undefined }))
@@ -60,9 +62,9 @@ function useHostedSearch(server: string, query: string) {
         const wait = searchRetryAfter(e)
         setFound(f => pageFailed(f, cursor, wait))
         if (wait !== null)
-          retry.current = setTimeout(() => {
+          retry.current = time().after(wait * 1000, () => {
             if (epoch.current === mine) void fetchPage(cursor, mine)
-          }, wait * 1000)
+          })
         else inSession(setError)(errorText(e))
       }
     },
@@ -71,10 +73,10 @@ function useHostedSearch(server: string, query: string) {
   useEffect(() => {
     const mine = ++epoch.current
     setFound(EMPTY_PAGES)
-    const t = setTimeout(() => void fetchFrom(null, mine), SEARCH_DEBOUNCE)
+    const t = time().after(SEARCH_DEBOUNCE, () => void fetchFrom(null, mine))
     return () => {
-      clearTimeout(t)
-      if (retry.current !== null) clearTimeout(retry.current)
+      t()
+      retry.current?.()
     }
   }, [fetchFrom])
   const more = useCallback(() => {

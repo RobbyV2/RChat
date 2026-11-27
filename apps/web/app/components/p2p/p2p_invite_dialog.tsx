@@ -27,6 +27,7 @@ import {
   CODE_REVOKE_TEXT,
   OWNER_TEXT,
 } from '../../lib/p2p/flows'
+import { time } from '../../lib/platform/time'
 
 const IP_NOTE =
   'Members you connect with can see your IP address unless you use relay only (Settings, Voice and P2P).'
@@ -114,7 +115,7 @@ function CodeListBody({ room, version }: { room: string; version: number }) {
   }, [room, state])
   if (!list) return <p className="text-sm text-on-surface-variant">Loading invites…</p>
   if (!list.length) return <p className="text-sm text-on-surface-variant">No invites yet.</p>
-  const now = Date.now()
+  const now = time().now()
   const manage = !!v && (v.perms & P.ManageServer) !== 0
   return (
     <Stack as="ul" gap="sm">

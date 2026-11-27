@@ -86,6 +86,7 @@ import { useDrawerClose } from '../drawer'
 import { DmListSkeleton } from '../skeletons'
 import { Row, Stack, Surface } from '../layout'
 import { NoteBar } from './p2p_chat'
+import { time } from '../../lib/platform/time'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
@@ -408,7 +409,8 @@ function ContactRowBody({
   const prefs = useStore(s => s.notifyPrefs)
   const scope = room ? ({ kind: 'p2p', room } as const) : null
   const pings = summary && scope && levelOf(prefs, scope) !== 'nothing' ? summary.pings : 0
-  const unread = !!summary && !!scope && summary.unread > 0 && !mutedOf(prefs, scope, Date.now())
+  const unread =
+    !!summary && !!scope && summary.unread > 0 && !mutedOf(prefs, scope, acct.time.now())
   const notice = noticeText(c)
   const shield = shieldOf(c)
   const ownsContact = () =>
@@ -917,7 +919,7 @@ function ContactDialog({ ik }: { ik: string }) {
 // The account badge on the contact's card: the chip, when it was checked, and what it means.
 function BadgeRow({ ik }: { ik: string }) {
   const slot = useP2p(s => s.badges[ik])
-  const state = badgeState(slot, Date.now())
+  const state = badgeState(slot, time().now())
   if (!slot || !state) return null
   const ok = slot.ok
   return (

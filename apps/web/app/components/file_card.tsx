@@ -39,6 +39,7 @@ import { RowSelecting } from './selection'
 import { useLiveNow } from './timestamp'
 import { MaskedText, MaskedTogether } from './ui'
 import { Row } from './layout'
+import { time } from '../lib/platform/time'
 
 const ICONS: Record<FileKind, LucideIcon> = {
   archive: FileArchive,
@@ -261,7 +262,7 @@ export function ExpiryLine({ at }: { at: number }) {
   useLiveNow(at * 1000)
   return (
     <p title={expiryTitle(at)} className="mt-1.5 text-xs text-on-surface-variant">
-      {expiryLabel(at, Math.floor(Date.now() / 1000))}
+      {expiryLabel(at, Math.floor(time().now() / 1000))}
     </p>
   )
 }

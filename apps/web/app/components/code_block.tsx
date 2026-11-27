@@ -19,6 +19,7 @@ import { useHighlight, type CodeNode } from '../lib/highlight'
 import { sharing } from '../lib/platform'
 import { useChat } from '../lib/place/use_chat'
 import { Row, Surface } from './layout'
+import { time } from '../lib/platform/time'
 
 const CLASS = /^[a-z][\w-]*$/i
 
@@ -42,8 +43,8 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!copied) return
-    const t = setTimeout(() => setCopied(false), 1500)
-    return () => clearTimeout(t)
+    const t = time().after(1500, () => setCopied(false))
+    return () => t()
   }, [copied])
   const label = copied ? 'Copied' : 'Copy code'
   return (

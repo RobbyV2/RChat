@@ -30,6 +30,7 @@ import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
 import { longPress } from '../context_menu'
 import { Row, Stack } from '../layout'
+import { time } from '../../lib/platform/time'
 
 // The one mark everything P2P carries: Waypoints, "P2P", a dashed outline in the tertiary color.
 export function P2pBadge({ label = 'P2P', title }: { label?: string; title?: string }) {
@@ -248,7 +249,8 @@ function BadgeSheet({ state, slot }: { state: BadgeState; slot: BadgeSlot }) {
 }
 
 // Whether an account chip shows for this contact.
-export const useHasChip = (ik: string) => useP2p(s => badgeState(s.badges[ik], Date.now()) !== null)
+export const useHasChip = (ik: string) =>
+  useP2p(s => badgeState(s.badges[ik], time().now()) !== null)
 
 // "Confirmed as alice@host" next to the shield, or "Confirmation expired" / "Couldn't check".
 // `short` leaves out "Confirmed as" (and says "Expired"), `icon` keeps only the icon (a phone's
@@ -261,7 +263,7 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
 
   const slot = useP2p(s => s.badges[ik])
   const streamer = useStore(s => s.streamer)
-  const state = badgeState(slot, Date.now())
+  const state = badgeState(slot, acct.time.now())
   if (!slot || !state) return null
   const { Icon, cls, text, short } = CHIP[state]
   const line = badgeLine(state, slot, streamer)

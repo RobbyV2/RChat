@@ -54,6 +54,8 @@ import { useShown } from './shown_user'
 import { INSTANCE_INBOX } from '../lib/inbox_source'
 import { longPress, useMedia } from './context_menu'
 import { useStable } from '../lib/stable_key'
+import { time } from '../lib/platform/time'
+import type { Cancel } from '../lib/clock'
 
 const freshSources = (adapters: InboxAdapter[]): Record<string, SourceState> =>
   Object.fromEntries(adapters.map(a => [a.id, freshSource()]))
@@ -157,28 +159,28 @@ function useInbox(view: InboxView) {
   useEffect(reload, [reload])
 
   const markedHere = () => {
-    markedUntil.current = Date.now() + OWN_MARK_MS
+    markedUntil.current = time().now() + OWN_MARK_MS
   }
   const count = useInboxCount()
   const lastCount = useRef({ request, count })
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const timer = useRef<Cancel | null>(null)
   useEffect(() => {
     const before = lastCount.current
     lastCount.current = { request, count }
     if (
       before.request !== request ||
-      !refreshOnCount(before.count, count, markedUntil.current, Date.now())
+      !refreshOnCount(before.count, count, markedUntil.current, time().now())
     )
       return
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => {
+    timer.current?.()
+    timer.current = time().after(400, () => {
       timer.current = null
       reload()
-    }, 400)
+    })
   }, [count, reload, request])
   useEffect(
     () => () => {
-      if (timer.current) clearTimeout(timer.current)
+      timer.current?.()
     },
     []
   )

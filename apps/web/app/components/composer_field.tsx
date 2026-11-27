@@ -15,6 +15,7 @@ import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useTextAssist } from './text_assist'
 import { Surface } from './layout'
+import { time } from '../lib/platform/time'
 
 // Whether `text` can be sent as far as its size goes.
 export const fits = (compose: Compose, text: string, max: number) =>
@@ -110,7 +111,7 @@ export function ComposerField({
   const closePicker = () => {
     setPickerFor(null)
     if (sheet) return
-    requestAnimationFrame(() => {
+    time().frame(() => {
       const el = ownRef.current
       const active = document.activeElement
       if (!el || (active && active !== document.body)) return

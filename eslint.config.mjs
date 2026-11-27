@@ -179,6 +179,54 @@ const STORE_SINKS = ['apps/web/app/lib/client/credentials.ts']
 const SCREEN_SINKS = ['apps/web/app/components/**', 'apps/web/app/**/page.tsx']
 const TEST_FILES = ['apps/web/app/**/__tests__/**', 'apps/web/app/**/*.test.{ts,tsx}']
 
+// The time and timers come from the clock (app/lib/clock.ts); only its device adapter reads the
+// globals.
+const TIMERS = [
+  'setTimeout',
+  'setInterval',
+  'requestAnimationFrame',
+  'clearTimeout',
+  'clearInterval',
+  'cancelAnimationFrame',
+]
+const CLOCK_MESSAGE =
+  'The time and timers come from the clock: session.time, useClock() or time() (app/lib/clock.ts).'
+const networkGlobals = ['fetch', 'WebSocket', 'XMLHttpRequest', 'EventSource'].map(name => ({
+  name,
+  message: 'Requests and sockets leave through the API client (app/lib/api).',
+}))
+const networkProperties = [
+  ...['window', 'globalThis', 'self'].flatMap(object =>
+    ['fetch', 'WebSocket', 'XMLHttpRequest', 'EventSource'].map(property => ({
+      object,
+      property,
+      message: 'Requests and sockets leave through the API client (app/lib/api).',
+    }))
+  ),
+  {
+    object: 'navigator',
+    property: 'sendBeacon',
+    message: 'Requests leave through the API client (app/lib/api).',
+  },
+]
+const clockGlobals = TIMERS.map(name => ({ name, message: CLOCK_MESSAGE }))
+const clockProperties = [
+  ...['window', 'globalThis', 'self'].flatMap(object =>
+    TIMERS.map(property => ({ object, property, message: CLOCK_MESSAGE }))
+  ),
+  { object: 'Date', property: 'now', message: CLOCK_MESSAGE },
+  { object: 'performance', property: 'now', message: CLOCK_MESSAGE },
+  { object: 'AbortSignal', property: 'timeout', message: CLOCK_MESSAGE },
+]
+const clockSyntax = {
+  'no-restricted-syntax': [
+    'error',
+    { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: CLOCK_MESSAGE },
+  ],
+}
+const NETWORK_FILES = ['apps/web/app/lib/api.ts', 'apps/web/app/lib/api/**']
+const CLOCK_FILES = ['apps/web/app/lib/platform/time.ts']
+
 export default tseslint.config(
   ...excluded(),
   eslint.configs.recommended,
@@ -212,35 +260,27 @@ export default tseslint.config(
   },
   {
     files: ['apps/web/app/**/*.{ts,tsx}'],
-    ignores: [
-      'apps/web/app/lib/api.ts',
-      'apps/web/app/lib/api/**',
-      'apps/web/app/**/__tests__/**',
-      'apps/web/app/**/*.test.{ts,tsx}',
-    ],
+    ignores: [...NETWORK_FILES, ...CLOCK_FILES, ...TEST_FILES],
     rules: {
-      'no-restricted-globals': [
-        'error',
-        ...['fetch', 'WebSocket', 'XMLHttpRequest', 'EventSource'].map(name => ({
-          name,
-          message: 'Requests and sockets leave through the API client (app/lib/api).',
-        })),
-      ],
-      'no-restricted-properties': [
-        'error',
-        ...['window', 'globalThis', 'self'].flatMap(object =>
-          ['fetch', 'WebSocket', 'XMLHttpRequest', 'EventSource'].map(property => ({
-            object,
-            property,
-            message: 'Requests and sockets leave through the API client (app/lib/api).',
-          }))
-        ),
-        {
-          object: 'navigator',
-          property: 'sendBeacon',
-          message: 'Requests leave through the API client (app/lib/api).',
-        },
-      ],
+      'no-restricted-globals': ['error', ...networkGlobals, ...clockGlobals],
+      'no-restricted-properties': ['error', ...networkProperties, ...clockProperties],
+      ...clockSyntax,
+    },
+  },
+  {
+    files: NETWORK_FILES,
+    ignores: TEST_FILES,
+    rules: {
+      'no-restricted-globals': ['error', ...clockGlobals],
+      'no-restricted-properties': ['error', ...clockProperties],
+      ...clockSyntax,
+    },
+  },
+  {
+    files: CLOCK_FILES,
+    rules: {
+      'no-restricted-globals': ['error', ...networkGlobals],
+      'no-restricted-properties': ['error', ...networkProperties],
     },
   },
   {

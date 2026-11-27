@@ -27,6 +27,7 @@ import { ApiError } from '../lib/api'
 import { NAME_MAX } from '../lib/rules'
 import type { ExchangeResponse } from '../lib/types'
 import { sameSecret, Secret } from '../lib/secret'
+import { time } from '../lib/platform/time'
 export default function SsoPage() {
   const [fragment, setFragment] = useState<string | null>(null)
   useEffect(() => {
@@ -264,7 +265,7 @@ function LocalReturn() {
                     : undefined
                 const current = () =>
                   mounted.current &&
-                  (!signedOut || (signedOut() && Date.now() - retry.at < INTENT_TTL_MS))
+                  (!signedOut || (signedOut() && time().now() - retry.at < INTENT_TTL_MS))
                 if (
                   !current() ||
                   (retry.confirm &&

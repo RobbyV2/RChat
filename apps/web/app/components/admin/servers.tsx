@@ -26,6 +26,7 @@ import { FieldError, Sentinel, fieldCls } from '../ui'
 import { useControl } from './config_state'
 import { ServerManage } from './server_manage'
 import { SourceNote } from './source'
+import { time } from '../../lib/platform/time'
 
 // Whether a server has the key `key`.
 const serverExists = (api: ReturnType<typeof useAccount>['api'], key: string) =>
@@ -101,7 +102,7 @@ function DefaultServers() {
   useEffect(() => {
     const text = q.trim()
     let live = true
-    const t = setTimeout(() => {
+    const t = time().after(300, () => {
       if (text === '') return setFound([])
       ownerSession.api
         .adminServers(null, text)
@@ -109,10 +110,10 @@ function DefaultServers() {
           if (live) setFound(page.items.slice(0, 8))
         })
         .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
-    }, 300)
+    })
     return () => {
       live = false
-      clearTimeout(t)
+      t?.()
     }
   }, [ownerSession, q, setError])
   const save = (next: string[]) => {
@@ -353,8 +354,8 @@ export function ServersSection() {
     void loadAdminOverview()
   }, [loadAdminOverview])
   useEffect(() => {
-    const t = setTimeout(() => void loadAdminServers(q, true), 300)
-    return () => clearTimeout(t)
+    const t = time().after(300, () => void loadAdminServers(q, true))
+    return () => t?.()
   }, [q, loadAdminServers])
   const more = useCallback(() => void loadAdminServers(q), [q, loadAdminServers])
   return (
