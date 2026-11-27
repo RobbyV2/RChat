@@ -33,7 +33,8 @@ import { dmPlaceholder } from '../display_name'
 import { ReplyPreview } from '../../components/replies'
 import { Tile } from '../../components/voice_grid'
 import { VOICE_STATUS_ON } from '../voice_status'
-import { P2pVoiceRow } from '../../components/p2p/p2p_voice'
+import { VoiceRow } from '../../components/voice_row'
+import { P2pRoom } from '../place/place'
 import {
   ChannelAccess,
   MemberPicker,
@@ -510,11 +511,11 @@ describe('in messages', () => {
     expect(p2p('IK_ME')).toBe('shit')
     expect(p2p('alice')).toContain('>****</span>')
     const p2pInitial = () => shownPeer().useP2p.getInitialState()
-    const was = { me: p2pInitial().me, name: p2pInitial().name }
-    Object.assign(p2pInitial(), { me: 'IK_ME', name: 'shit head' })
+    const was = { me: p2pInitial().me, name: p2pInitial().name, servers: p2pInitial().servers }
     try {
       const view = {
         id: 'room',
+        channels: [{ id: 'c1', name: 'talk', kind: 'voice' }],
         voice: {
           c1: [
             { ik: 'IK_ME', video: false },
@@ -526,14 +527,22 @@ describe('in messages', () => {
           { ik: 'IK_PEER', name: 'shit face' },
         ],
       } as unknown as ServerView
+      Object.assign(p2pInitial(), { me: 'IK_ME', name: 'shit head', servers: { room: view } })
       const roster = renderToStaticMarkup(
-        <P2pVoiceRow
-          v={view}
-          c={{ id: 'c1', name: 'talk' }}
-          active
-          menu={() => {}}
-          memberMenu={() => () => {}}
-        />
+        <PlaceProvider place={P2pRoom.open(shownPeer(), 'room')}>
+          <VoiceRow
+            channel={{
+              key: 'c1',
+              name: 'talk',
+              kind: 'voice',
+              private: false,
+              active: true,
+              connected: false,
+            }}
+            own={false}
+            menu={() => {}}
+          />
+        </PlaceProvider>
       )
       const shown = roster.replace(/<[^>]+>/g, ' ')
       expect(shown).toContain('shit head')

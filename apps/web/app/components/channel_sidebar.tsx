@@ -8,7 +8,6 @@ import {
   FolderPlus,
   Hash,
   ListFilter,
-  Lock,
   Pin,
   Plus,
   UserPlus,
@@ -20,16 +19,11 @@ import {
   scopeMuted,
   scopeUnread,
   serverAdminPerms,
-  userRefFor,
-  useMask,
   useStore,
 } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
 import { useChannelEdit, type Editing } from '../lib/channel_edit'
-import { isGuestName, voiceSelf } from '../lib/guest_voice'
-import { voiceStatus } from '../lib/voice_status'
-import { VoiceStatusIcons } from './voice_status'
-import { useGuestMenu } from './guest_voice_menu'
+import { isGuestName } from '../lib/guest_voice'
 import { dmSections, type DmSections } from '../lib/nav_layout'
 import {
   clearDmFilters,
@@ -66,24 +60,21 @@ import { UserAvatar } from './user_avatar'
 import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
 import { ChannelList } from './channel_list'
+import { VoiceRow } from './voice_row'
 import { featureAt, isUnsupported } from '../lib/place/feature'
 import { channels as channelsFeature, noChannels, type ChannelEntry } from '../lib/place/channels'
 import { FriendsEntry } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
-import { profileTrigger } from './profile_card'
-import { LiveBadge, VoiceDock } from './voice_grid'
+import { VoiceDock } from './voice_grid'
 import { Button, IconButton, LinkButton } from './controls'
 import { Row, Surface } from './layout'
-import { Masked, Sentinel, useOwnServer } from './ui'
+import { Sentinel, useOwnServer } from './ui'
 import { NameWithUsername } from './display_name'
-import { useShown } from './shown_user'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { ChannelEnd, useHostedTypers } from './typing_indicator'
 import { scopePings } from '../lib/pings'
 import { MutedIcon } from './notify_menu'
-import { NO_CONNECT, shownMedia } from '../lib/timeouts'
-import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 
 import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
@@ -194,14 +185,6 @@ function HostedChannelEnd({
   return <ChannelEnd typers={typers} pings={pings} unread={unread} />
 }
 
-function PrivateIcon() {
-  return (
-    <span title="Private channel" aria-label="Private channel" role="img" className="flex shrink-0">
-      <Lock size={12} />
-    </span>
-  )
-}
-
 const NO_ROSTER: string[] = []
 // People in a room closed by a local viewing choice stay unnamed and uncounted.
 const rosterOf = (
@@ -214,133 +197,6 @@ const rosterOf = (
   owner.viewing.canView(channelTarget(account, 'instance', server, c, owner.conn))
     ? (rosters[c.id] ?? NO_ROSTER)
     : NO_ROSTER
-
-function VoiceChannelRow({
-  server,
-  channel,
-  own,
-  active,
-  connected,
-  count,
-  onJoin,
-  menu,
-  drag,
-}: {
-  server: string
-  channel: Channel
-  own: boolean
-  active: boolean
-  connected: boolean
-  count: number
-  onJoin: () => void
-  menu: (x: number, y: number) => void
-  drag?: DragSpec
-}) {
-  const mask = useMask(own)
-  const can = useChannelCan(useHostedServer(server), channel.id)
-  const locked = !connected && !can.connect
-  return (
-    <button
-      title={locked ? NO_CONNECT : connected ? 'Open voice channel' : 'Join voice channel'}
-      aria-label={`${connected ? 'Open' : 'Join'} voice channel ${mask(channel.name)}${
-        count ? `, ${count} connected` : ''
-      }${locked ? `. ${NO_CONNECT}` : ''}`}
-      aria-disabled={locked || undefined}
-      onClick={() => {
-        if (!locked) onJoin()
-      }}
-      {...longPress(menu, drag)}
-      className={`group mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] pointer-coarse:min-h-11 ${
-        active
-          ? 'bg-secondary-container text-on-secondary-container'
-          : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-      }`}
-    >
-      <Volume2 size={16} className={`shrink-0 ${connected ? 'text-status-green' : ''}`} />
-      <span className="truncate">
-        <Masked text={channel.name} own={own} />
-      </span>
-      {channel.restrict_view && <PrivateIcon />}
-      {count > 0 && (
-        <span
-          title={`${count} in voice`}
-          className="ml-auto shrink-0 rounded-full bg-surface-container-highest px-1.5 text-2xs leading-4 font-medium text-on-surface-variant tabular-nums"
-        >
-          {count}
-        </span>
-      )}
-    </button>
-  )
-}
-
-function VoiceMemberRow({
-  username,
-  server,
-  channelId,
-  inRoom,
-}: {
-  username: string
-  server: string
-  channelId: number
-  inRoom: boolean
-}) {
-  const store = useStoreApi()
-  const { rtc } = useAccount()
-  const mine = useStore(voiceSelf)
-  const selfAudio = useStore(s => s.selfAudio)
-  useStore(s => s.rtcTick)
-  const user = useStore(s => userRefFor(s, username))
-  const shown = useShown(user, server)
-  const self = mine === username
-  const silenced = useStore(s => Object.values(s.voiceMuted).some(l => l.includes(username)))
-  const hushed = useStore(s => Object.values(s.voiceHushed).some(l => l.includes(username)))
-  const roster = useStore(s => s.voiceAudio[channelId]?.[username] ?? null)
-  const menu = useGuestMenu(server, username)
-  const speaking = inRoom && rtc.isSpeaking(username) && !silenced && !hushed
-  const peer = inRoom && !self ? rtc.peer(username) : undefined
-  const status = voiceStatus({
-    self: self && inRoom,
-    selfAudio,
-    live: peer ? { muted: peer.muted } : null,
-    roster,
-    forced: hushed ? 'staff' : silenced ? 'timeout' : null,
-  })
-  const live = inRoom && (self ? rtc.sharing : shownMedia(rtc.peer(username), silenced).screen)
-  return (
-    <div
-      {...(isGuestName(username)
-        ? menu
-          ? longPress(menu)
-          : {}
-        : profileTrigger(store, user, server))}
-      className={`mr-2 ml-7 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant outline-offset-[-2px] ${
-        isGuestName(username)
-          ? ''
-          : 'cursor-pointer hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary active:bg-surface-container-high'
-      }`}
-    >
-      <span
-        className={`flex shrink-0 rounded-full transition-shadow ${
-          speaking ? 'ring-2 ring-status-green ring-offset-1 ring-offset-surface-container-low' : ''
-        }`}
-      >
-        <UserAvatar
-          username={shown.username}
-          avatarKind={shown.avatar_kind}
-          avatarColor={shown.avatar_color}
-          size={22}
-        />
-      </span>
-      <span className={`streamer min-w-0 flex-1 truncate ${speaking ? 'text-on-surface' : ''}`}>
-        <NameWithUsername user={shown} />
-      </span>
-      {live && (
-        <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />
-      )}
-      <VoiceStatusIcons status={status} self={self} size={14} variant="row" />
-    </div>
-  )
-}
 
 const DM_LIST_MENU = 'dm-list'
 
@@ -915,8 +771,6 @@ export function ChannelSidebar() {
   const moveCategory = useStore(s => s.moveCategory)
   const setCategoriesCollapsed = useStore(s => s.setCategoriesCollapsed)
   const renameChannel = useStore(s => s.renameChannel)
-  const joinVoice = useStore(s => s.joinVoice)
-  const voiceUsers = useStore(s => s.voiceUsers)
   const voice = useStore(s => s.voice)
   useStore(s => s.reads)
   useStore(s => s.notifyPrefs)
@@ -931,7 +785,6 @@ export function ChannelSidebar() {
   const name = useChannelEdit(e => e.name)
   const voiceServer = view?.kind === 'channel' ? view.server : null
   acct.viewing.useViewing(s => s.revision)
-  const account = useStore(s => s.me?.username ?? null)
   const voiceKey = useStore(s => {
     const channels = voiceServer ? s.servers[voiceServer]?.channels : undefined
     if (!channels || !voiceServer) return ''
@@ -1109,34 +962,6 @@ export function ChannelSidebar() {
       </Surface>
     ) : null
 
-  const voiceRow = (c: Channel) => {
-    const roster = rosterOf(acct, account, voiceUsers, server, c)
-    return (
-      <div key={c.id} data-drag-box className="flex flex-col rounded-lg">
-        <VoiceChannelRow
-          server={server}
-          channel={c}
-          own={ownServer}
-          active={activeId === c.id}
-          connected={voice?.channelId === c.id}
-          count={roster.length}
-          onJoin={() => void joinVoice(server, c.id)}
-          menu={(x, y) => listed.channelMenu(String(c.id), x, y)}
-          drag={channelDragSpec(c)}
-        />
-        {roster.map(u => (
-          <VoiceMemberRow
-            key={u}
-            username={u}
-            server={server}
-            channelId={c.id}
-            inRoom={voice?.channelId === c.id}
-          />
-        ))}
-      </div>
-    )
-  }
-
   const byKey = new Map(detail.channels.map(c => [String(c.id), c]))
   const categoryByKey = new Map((detail.categories ?? []).map(c => [String(c.id), c]))
   const channelOf = (entry: ChannelEntry) => byKey.get(entry.key)
@@ -1208,7 +1033,15 @@ export function ChannelSidebar() {
         )}
         voice={entry => {
           const c = channelOf(entry)
-          return c ? voiceRow(c) : null
+          return (
+            <VoiceRow
+              key={entry.key}
+              channel={entry}
+              own={ownServer}
+              menu={(x, y) => listed.channelMenu(entry.key, x, y)}
+              drag={c ? channelDragSpec(c) : undefined}
+            />
+          )
         }}
         categoryEnd={(_category, hidden) => {
           const hiddenPings = hidden.reduce((n, c) => n + pingsOf(`c${c.key}`), 0)

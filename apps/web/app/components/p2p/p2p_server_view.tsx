@@ -16,6 +16,7 @@ import {
   type ChannelEntry,
 } from '../../lib/place/channels'
 import { ChannelList } from '../channel_list'
+import { VoiceRow } from '../voice_row'
 import { IconButton } from '../controls'
 import { P2pRoom } from '../../lib/place/place'
 import MemberSidebar from '../member_sidebar'
@@ -71,7 +72,6 @@ import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
 import { SYNCING_TEXT, TRANSFERRED_TEXT } from '../../lib/p2p/flows'
 import { NoteBar, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
-import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
 import { TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
@@ -458,8 +458,6 @@ function P2pServerSidebarBody() {
   const identity = useP2pApp()!
   const { p2pServer, p2p } = identity
 
-  const acct = useAccount()
-
   const { room, v } = useOpen()
   const loading = useP2p(serversLoading)
   const prefs = useStore(s => s.notifyPrefs)
@@ -481,21 +479,6 @@ function P2pServerSidebarBody() {
     const muted = mutedOf(prefs, scope, Date.now()) || mutedOf(prefs, serverScope(v.id), Date.now())
     const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
     return { scope, muted, pings, unread: !!counts?.unread && !muted }
-  }
-  const voiceRow = (entry: ChannelEntry) => {
-    const c = v.channels.find(x => x.id === entry.key)
-    return c ? (
-      <P2pVoiceRow
-        key={c.id}
-        v={v}
-        c={c}
-        active={entry.active}
-        menu={(x, y) => listed.channelMenu(c.id, x, y)}
-        memberMenu={m => (x, y) =>
-          openActionMenu(x, y, { kind: 'p2p_member', v, m }, undefined, acct, identity)
-        }
-      />
-    ) : null
   }
   const submit = () => {
     const name = (adding ?? '').trim()
@@ -540,52 +523,61 @@ function P2pServerSidebarBody() {
           )}
         </Row>
       </Surface>
-      <ChannelList
-        channels={listed}
-        state={listState}
-        look={c => {
-          const { muted, unread } = facts(c)
-          return { muted, bold: unread }
-        }}
-        end={c => {
-          const { scope, pings, unread } = facts(c)
-          return (
-            <>
-              <MutedIcon scope={scope} />
-              <P2pChannelEnd room={v.id} ch={c.key} pings={pings} unread={unread} />
-            </>
-          )
-        }}
-        voice={voiceRow}
-        rowProps={c => ({ 'data-p2p-channel': c.name })}
-        categoryProps={category => ({ 'data-p2p-category': category.name })}
-        createRow={category =>
-          category === null && adding !== null ? (
-            <Surface as="span" pad="sm" tone="plain" radius="none">
-              <Row as="span" gap="sm">
-                <Row as="span" gap="3xs" place="shrink-0">
-                  {kindBtn('text')}
-                  {kindBtn('voice')}
+      <PlaceProvider place={place ?? P2pRoom.open(identity, v.id)}>
+        <ChannelList
+          channels={listed}
+          state={listState}
+          look={c => {
+            const { muted, unread } = facts(c)
+            return { muted, bold: unread }
+          }}
+          end={c => {
+            const { scope, pings, unread } = facts(c)
+            return (
+              <>
+                <MutedIcon scope={scope} />
+                <P2pChannelEnd room={v.id} ch={c.key} pings={pings} unread={unread} />
+              </>
+            )
+          }}
+          voice={entry => (
+            <VoiceRow
+              key={entry.key}
+              channel={entry}
+              own={listState.ownPlace}
+              menu={(x, y) => listed.channelMenu(entry.key, x, y)}
+            />
+          )}
+          rowProps={c => ({ 'data-p2p-channel': c.name })}
+          categoryProps={category => ({ 'data-p2p-category': category.name })}
+          createRow={category =>
+            category === null && adding !== null ? (
+              <Surface as="span" pad="sm" tone="plain" radius="none">
+                <Row as="span" gap="sm">
+                  <Row as="span" gap="3xs" place="shrink-0">
+                    {kindBtn('text')}
+                    {kindBtn('voice')}
+                  </Row>
+                  <input
+                    autoFocus
+                    value={adding}
+                    maxLength={p2p.limits().server.nameMax}
+                    onChange={e => setAdding(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') submit()
+                      if (e.key === 'Escape') setAdding(null)
+                    }}
+                    onBlur={submit}
+                    placeholder="channel name"
+                    aria-label="New channel name"
+                    className="min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+                  />
                 </Row>
-                <input
-                  autoFocus
-                  value={adding}
-                  maxLength={p2p.limits().server.nameMax}
-                  onChange={e => setAdding(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') submit()
-                    if (e.key === 'Escape') setAdding(null)
-                  }}
-                  onBlur={submit}
-                  placeholder="channel name"
-                  aria-label="New channel name"
-                  className="min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
-                />
-              </Row>
-            </Surface>
-          ) : null
-        }
-      />
+              </Surface>
+            ) : null
+          }
+        />
+      </PlaceProvider>
       <VoiceDock />
     </aside>
   )

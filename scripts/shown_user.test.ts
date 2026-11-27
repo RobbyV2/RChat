@@ -38,7 +38,6 @@ const IN_A_SERVER = [
   'p2p/p2p_server_settings.tsx',
   'p2p/p2p_server_view.tsx',
   'p2p/p2p_thread.tsx',
-  'p2p/p2p_voice.tsx',
   'perm_dialog.tsx',
   'pins.tsx',
   'poll_card.tsx',
@@ -57,6 +56,7 @@ const IN_A_SERVER = [
   'timeout_dialog.tsx',
   'typing_indicator.tsx',
   'voice_grid.tsx',
+  'voice_row.tsx',
 ]
 
 // Components that draw people as their account or P2P identity has them, each with the reason.
