@@ -153,6 +153,9 @@ pub struct CopyNote {
     pub build: String,
     /// Whether it reads and writes sealed records.
     pub seal: bool,
+    /// Whether it opens sealed bus frames.
+    #[serde(default)]
+    pub bus: bool,
     /// The ids of the root keys it holds.
     pub keks: Vec<String>,
     #[serde(default)]
@@ -603,6 +606,8 @@ pub enum Op {
         #[serde(default)]
         seal: bool,
         #[serde(default)]
+        bus: bool,
+        #[serde(default)]
         keks: Vec<String>,
     },
     Depart,
@@ -733,6 +738,7 @@ impl Op {
             | Op::Copy {
                 build: _,
                 seal: _,
+                bus: _,
                 keks: _,
             }
             | Op::Depart => false,
@@ -2459,10 +2465,16 @@ impl Replica {
                 Outcome::Done
             }
             Op::Heartbeat => Outcome::Done,
-            Op::Copy { build, seal, keks } => {
+            Op::Copy {
+                build,
+                seal,
+                bus,
+                keks,
+            } => {
                 self.peers.entry(origin).or_default().copy = Some(CopyNote {
                     build,
                     seal,
+                    bus,
                     keks,
                     at: t_ms,
                 });

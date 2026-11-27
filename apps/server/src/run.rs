@@ -250,6 +250,7 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
                 &config.redis_prefix,
                 config.limits.redis_hub_maxlen,
                 roles,
+                Arc::new(crate::crypt::frames::Frames::new(ring.clone(), db.clone())),
             )
             .await?;
             info!("Realtime bus: redis (prefix {})", config.redis_prefix);
@@ -300,13 +301,14 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
         .with_sso(Arc::new(crate::sso::Sso::new(config.sso.clone())?))
         .with_crypt(ring);
     crate::api::seal::start(&state).await?;
-    if state.bus.is_some() {
-        let (hub, ring, db) = (state.hub.clone(), state.crypt.clone(), state.db.clone());
+    if let Some(bus) = state.bus.clone() {
+        let (hub, db) = (state.hub.clone(), state.db.clone());
         held.spawn(async move {
             let mut every = tokio::time::interval(crate::crypt::ring::COPY_EVERY);
             loop {
                 every.tick().await;
-                hub.announce_copy(crate::crypt::ring::SEALS, ring.kek_ids());
+                let frames = bus.frames();
+                hub.announce_copy(crate::crypt::ring::SEALS, frames.opens(), frames.keks());
                 crate::api::seal::note_copies(&db, &hub);
             }
         });

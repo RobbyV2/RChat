@@ -1978,6 +1978,7 @@ mod tests {
                     &prefix,
                     crate::bus::DEFAULT_HUB_MAXLEN,
                     crate::config::Roles::ALL,
+                    std::sync::Arc::new(crate::crypt::frames::Frames::plain()),
                 )
                 .await
                 .expect("redis");

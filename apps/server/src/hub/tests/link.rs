@@ -518,10 +518,10 @@ async fn unconfirmed_cleanup_finishes_in_the_background() {
 async fn copies_announce_their_build_and_keys_and_go_stale() {
     let (hub, mut out) = Hub::replicated();
     assert!(hub.other_copies().is_empty());
-    hub.announce_copy(true, vec!["k1".to_string()]);
+    hub.announce_copy(true, true, vec!["k1".to_string()]);
     let mine = out.try_recv().unwrap();
     assert!(
-        matches!(&mine.op, Op::Copy { build, seal: true, keks } if !build.is_empty() && keks == &["k1"])
+        matches!(&mine.op, Op::Copy { build, seal: true, bus: true, keks } if !build.is_empty() && keks == &["k1"])
     );
     hub.ingest(&format!("{T0}-0"), mine.clone(), true);
     assert!(
@@ -543,7 +543,10 @@ async fn copies_announce_their_build_and_keys_and_go_stale() {
     let [Some(note)] = &heard[..] else {
         panic!("{heard:?}");
     };
-    assert_eq!((note.build.as_str(), note.seal), ("9.9.9", true));
+    assert_eq!(
+        (note.build.as_str(), note.seal, note.bus),
+        ("9.9.9", true, false)
+    );
     assert_eq!(note.keks, ["k1", "k2"]);
     let mut seq = 2;
     for t in (20_000..=100_000).step_by(20_000) {
@@ -553,8 +556,10 @@ async fn copies_announce_their_build_and_keys_and_go_stale() {
     assert_eq!(hub.other_copies(), [None], "unheard for 90 seconds");
     let bare: Envelope =
         serde_json::from_str(r#"{"origin":1,"seq":9,"op":{"op":"copy","build":"1"}}"#).unwrap();
-    assert!(matches!(bare.op, Op::Copy { seal: false, ref keks, .. } if keks.is_empty()));
+    assert!(
+        matches!(bare.op, Op::Copy { seal: false, bus: false, ref keks, .. } if keks.is_empty())
+    );
     let (plain, _) = (Hub::new(), ());
-    plain.announce_copy(true, Vec::new());
+    plain.announce_copy(true, true, Vec::new());
     assert!(plain.other_copies().is_empty());
 }

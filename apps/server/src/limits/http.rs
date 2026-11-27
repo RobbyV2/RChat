@@ -328,10 +328,15 @@ mod tests {
         let copy = |prefix: String| {
             let (url, state) = (url.clone(), state.clone());
             async move {
-                let (hub, bus) =
-                    crate::bus::connect(&url, &prefix, crate::bus::DEFAULT_HUB_MAXLEN, Roles::ALL)
-                        .await
-                        .expect("redis");
+                let (hub, bus) = crate::bus::connect(
+                    &url,
+                    &prefix,
+                    crate::bus::DEFAULT_HUB_MAXLEN,
+                    Roles::ALL,
+                    Arc::new(crate::crypt::frames::Frames::plain()),
+                )
+                .await
+                .expect("redis");
                 let copy = AppState::new(
                     state.db.clone(),
                     hub,

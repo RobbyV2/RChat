@@ -14,6 +14,7 @@ use zeroize::Zeroizing;
 pub mod body;
 pub mod cli;
 pub mod copies;
+pub mod frames;
 pub mod grams;
 pub mod media;
 pub mod ring;
@@ -258,6 +259,18 @@ pub fn row_aad(table: &str, column: &str, binding: &str, key_id: u32) -> Vec<u8>
         &[
             table.as_bytes(),
             column.as_bytes(),
+            binding.as_bytes(),
+            key_id.to_string().as_bytes(),
+        ],
+    )
+}
+
+/// `"rchat-bus1\0" stream "\0" binding "\0" key_id`: the associated data of a bus frame.
+pub fn bus_aad(stream: &str, binding: &str, key_id: u32) -> Vec<u8> {
+    joined(
+        b"rchat-bus1",
+        &[
+            stream.as_bytes(),
             binding.as_bytes(),
             key_id.to_string().as_bytes(),
         ],

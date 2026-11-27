@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 
 use crate::api::embeds::{UnfurlJob, unfurl};
 use crate::config::Roles;
+use crate::crypt::frames::{Frames, Stream};
 use crate::hub::{Envelope, Hub, READ_FLUSH, stream_pos};
 use crate::state::AppState;
 use crate::ws::{LogGate, to_bus_json};
@@ -33,7 +34,16 @@ fn skip(line: &str) {
     }
 }
 
+static UNDECIDED: LogGate = LogGate::new(SKIP_LOG_EVERY, |n| {
+    warn!(
+        "{n} more decisions on sealing realtime frames failed in the last {}s",
+        SKIP_LOG_EVERY.as_secs()
+    )
+});
+
 pub const DEFAULT_HUB_MAXLEN: u64 = 100_000;
+/// The field of a stream entry that holds a sealed frame.
+const SEALED: &str = "sealed";
 const JOBS_MAXLEN: u64 = 10_000;
 const BLOCK_MS: u64 = 5_000;
 const TICK: Duration = Duration::from_secs(5);
@@ -85,6 +95,7 @@ pub struct Bus {
     roles: Roles,
     instance: u32,
     tasks: Arc<Mutex<Vec<AbortHandle>>>,
+    frames: Arc<Frames>,
 }
 
 #[derive(Clone)]
@@ -92,6 +103,7 @@ struct Log {
     stream: String,
     snapshot: String,
     maxlen: u64,
+    frames: Arc<Frames>,
 }
 
 fn manager_config(response: Duration) -> ConnectionManagerConfig {
@@ -186,15 +198,18 @@ fn xadd_batch(log: &Log, batch: &[Envelope]) -> redis::Pipeline {
     for env in batch {
         match to_bus_json(env) {
             Ok(payload) => {
-                pipe.cmd("XADD")
+                let add = pipe
+                    .cmd("XADD")
                     .arg(&log.stream)
                     .arg("MAXLEN")
                     .arg("~")
                     .arg(log.maxlen)
-                    .arg("*")
-                    .arg("op")
-                    .arg(payload)
-                    .ignore();
+                    .arg("*");
+                match log.frames.seal(Stream::Hub, "", payload.as_bytes()) {
+                    Some(sealed) => add.arg(SEALED).arg(sealed),
+                    None => add.arg("op").arg(payload),
+                }
+                .ignore();
             }
             Err(e) => warn!("dropping unserializable realtime op: {e}"),
         }
@@ -202,11 +217,32 @@ fn xadd_batch(log: &Log, batch: &[Envelope]) -> redis::Pipeline {
     pipe
 }
 
+/// The text of a stream entry: its plain `field`, or its sealed frame opened.
+async fn entry_text(
+    frames: &Frames,
+    stream: Stream,
+    entry: &StreamId,
+    field: &str,
+) -> Result<String, String> {
+    if let Some(raw) = entry.get::<String>(field) {
+        return Ok(raw);
+    }
+    let Some(sealed) = entry.get::<Vec<u8>>(SEALED) else {
+        return Err(format!("without {field}"));
+    };
+    let plain = frames
+        .open(stream, "", &sealed)
+        .await
+        .map_err(|e| e.to_string())?;
+    String::from_utf8(plain).map_err(|e| e.to_string())
+}
+
 pub async fn connect(
     url: &str,
     prefix: &str,
     hub_maxlen: u64,
     roles: Roles,
+    frames: Arc<Frames>,
 ) -> anyhow::Result<(Hub, Bus)> {
     let client = Client::open(url)?;
     let mut conn = client
@@ -218,14 +254,17 @@ pub async fn connect(
         stream: format!("{prefix}:hub"),
         snapshot: format!("{prefix}:hub:snapshot"),
         maxlen: hub_maxlen,
+        frames: frames.clone(),
     };
     let (hub, out) = Hub::replicated();
     hub.coalesce_reads();
+    hub.announce_copy(crate::crypt::ring::SEALS, frames.opens(), frames.keks());
     let tasks = Arc::new(Mutex::new(vec![
         tokio::spawn(publish(out, conn.clone(), log.clone(), hub.clone())).abort_handle(),
         tokio::spawn(follow(tail, log.clone(), hub.clone())).abort_handle(),
         tokio::spawn(heartbeats(hub.clone())).abort_handle(),
         tokio::spawn(reads(hub.clone())).abort_handle(),
+        tokio::spawn(seal_frames(hub.clone(), frames.clone())).abort_handle(),
     ]));
     let bus = Bus {
         conn,
@@ -238,6 +277,7 @@ pub async fn connect(
         roles,
         instance: hub.instance(),
         tasks,
+        frames,
     };
     let snapshots = tokio::spawn(snapshots(bus.clone(), log.snapshot, hub.clone()));
     bus.hold(snapshots.abort_handle());
@@ -270,14 +310,14 @@ async fn publish(
 }
 
 struct Probe {
-    snapshot: Option<(String, String)>,
+    snapshot: Option<(String, Vec<u8>)>,
     in_stream: bool,
     newest: Option<String>,
     trimmed: bool,
 }
 
 async fn probe(conn: &mut ConnectionManager, log: &Log) -> RedisResult<Probe> {
-    let (mut saved, newest, len): (HashMap<String, String>, StreamRangeReply, u64) = redis::pipe()
+    let (mut saved, newest, len): (HashMap<String, Vec<u8>>, StreamRangeReply, u64) = redis::pipe()
         .cmd("HGETALL")
         .arg(&log.snapshot)
         .cmd("XREVRANGE")
@@ -291,7 +331,7 @@ async fn probe(conn: &mut ConnectionManager, log: &Log) -> RedisResult<Probe> {
         .query_async(conn)
         .await?;
     let snapshot = match (saved.remove("id"), saved.remove("state")) {
-        (Some(id), Some(state)) => Some((id, state)),
+        (Some(id), Some(state)) => String::from_utf8(id).ok().map(|id| (id, state)),
         (_, _) => None,
     };
     let in_stream = match &snapshot {
@@ -339,9 +379,14 @@ async fn bootstrap(
             }
         };
         hub.set_following(true);
-        let usable = match (&snapshot, in_stream) {
-            (Some((id, state)), true) => match hub.restore(id, state) {
-                Ok(()) => Some(id.clone()),
+        let usable = match (snapshot, in_stream) {
+            (Some((id, state)), true) => match log
+                .frames
+                .text(Stream::Snapshot, &id, state)
+                .await
+                .and_then(|state| Ok(hub.restore(&id, &state)?))
+            {
+                Ok(()) => Some(id),
                 Err(e) => {
                     warn!("ignoring unreadable realtime snapshot {id}: {e}");
                     None
@@ -428,13 +473,12 @@ async fn follow(mut conn: ConnectionManager, log: Log, hub: Hub) {
         }
         for entry in entries(reply) {
             let live = is_live(&entry.id, boundary.as_deref());
-            match entry
-                .get::<String>("op")
-                .map(|raw| serde_json::from_str::<Envelope>(&raw))
+            match entry_text(&log.frames, Stream::Hub, &entry, "op")
+                .await
+                .and_then(|raw| serde_json::from_str::<Envelope>(&raw).map_err(|e| e.to_string()))
             {
-                Some(Ok(env)) => hub.ingest(&entry.id, env, live),
-                Some(Err(e)) => skip(&format!("skipping realtime entry {}: {e}", entry.id)),
-                None => skip(&format!("skipping realtime entry {} without op", entry.id)),
+                Ok(env) => hub.ingest(&entry.id, env, live),
+                Err(e) => skip(&format!("skipping realtime entry {}: {e}", entry.id)),
             }
             last = entry.id;
         }
@@ -452,6 +496,41 @@ async fn heartbeats(hub: Hub) {
         every.tick().await;
         hub.heartbeat();
     }
+}
+
+async fn seal_frames(hub: Hub, frames: Arc<Frames>) {
+    let mut every = tokio::time::interval(TICK);
+    loop {
+        every.tick().await;
+        decide_frames(&hub, &frames).await;
+    }
+}
+
+/// Seals frames from now on when every live copy opens them, else writes them plain. A switch to
+/// plain has every copy announce its connections again and the snapshot written again, in plain
+/// frames, so a copy that can't open sealed ones gets the state it skipped. Nothing changes while
+/// the hub is not ready. Answers whether frames are sealed, or `None` while not ready.
+async fn decide_frames(hub: &Hub, frames: &Frames) -> Option<bool> {
+    if !hub.ready() {
+        return None;
+    }
+    let was = frames.sealed();
+    let decided = frames.decide(&hub.other_copies()).await;
+    if let Err(e) = &decided
+        && UNDECIDED.admit(tokio::time::Instant::now())
+    {
+        warn!("realtime frames go plain, the decision on sealing them failed: {e}");
+    }
+    match (was, frames.sealed()) {
+        (false, true) => info!("Realtime bus: frames are stored encrypted"),
+        (true, false) => {
+            info!("Realtime bus: frames are stored plain until every copy opens them");
+            hub.mark_dirty();
+            hub.reannounce_all();
+        }
+        (true, true) | (false, false) => {}
+    }
+    Some(frames.sealed())
 }
 
 async fn reads(hub: Hub) {
@@ -474,7 +553,7 @@ async fn save_snapshot(
     sha: &mut Option<String>,
     key: &str,
     id: &str,
-    json: &str,
+    state: &[u8],
 ) -> RedisResult<i64> {
     let mut attempt = 0;
     loop {
@@ -495,7 +574,7 @@ async fn save_snapshot(
             .arg(1)
             .arg(key)
             .arg(id)
-            .arg(json)
+            .arg(state)
             .query_async(conn)
             .await;
         match saved {
@@ -550,8 +629,12 @@ async fn snapshots(bus: Bus, key: String, hub: Hub) {
         };
         drop(replica);
         size = json.len();
+        let state = match bus.frames.seal(Stream::Snapshot, &id, json.as_bytes()) {
+            Some(sealed) => sealed,
+            None => json.into_bytes(),
+        };
         let mut conn = bus.conn.clone();
-        match save_snapshot(&mut conn, &mut sha, &key, &id, &json).await {
+        match save_snapshot(&mut conn, &mut sha, &key, &id, &state).await {
             Ok(_) => {
                 saved_at = Some(Instant::now());
                 failures = 0;
@@ -581,19 +664,25 @@ impl Bus {
         self.roles.embeds
     }
 
+    /// How this bus seals and opens its frames.
+    pub fn frames(&self) -> &Arc<Frames> {
+        &self.frames
+    }
+
     pub async fn enqueue_unfurl(&self, job: &UnfurlJob) -> anyhow::Result<()> {
         let payload = serde_json::to_string(job)?;
         let mut conn = self.conn.clone();
-        let _: String = redis::cmd("XADD")
-            .arg(self.key("embeds"))
+        let mut add = redis::cmd("XADD");
+        add.arg(self.key("embeds"))
             .arg("MAXLEN")
             .arg("~")
             .arg(JOBS_MAXLEN)
-            .arg("*")
-            .arg("job")
-            .arg(payload)
-            .query_async(&mut conn)
-            .await?;
+            .arg("*");
+        match self.frames.seal(Stream::Jobs, "", payload.as_bytes()) {
+            Some(sealed) => add.arg(SEALED).arg(sealed),
+            None => add.arg("job").arg(payload),
+        };
+        let _: String = add.query_async(&mut conn).await?;
         Ok(())
     }
 
@@ -616,6 +705,7 @@ impl Bus {
             Ok(conn) => {
                 let worker = tokio::spawn(embeds_worker(
                     state.clone(),
+                    self.frames.clone(),
                     conn,
                     self.key("embeds"),
                     format!("{:08x}", self.instance),
@@ -720,6 +810,7 @@ async fn prune_consumers(
 
 async fn embeds_worker(
     state: AppState,
+    frames: Arc<Frames>,
     mut conn: ConnectionManager,
     stream: String,
     consumer: String,
@@ -785,21 +876,27 @@ async fn embeds_worker(
         }
         let mut jobs = JoinSet::new();
         for entry in batch {
-            let state = state.clone();
+            let (state, frames) = (state.clone(), frames.clone());
             jobs.spawn(async move {
-                match entry
-                    .get::<String>("job")
-                    .map(|raw| serde_json::from_str::<UnfurlJob>(&raw))
-                {
-                    Some(Ok(job)) => unfurl(&state, job).await,
-                    Some(Err(e)) => warn!("dropping malformed embed job {}: {e}", entry.id),
-                    None => warn!("dropping embed job {} without payload", entry.id),
+                match entry_text(&frames, Stream::Jobs, &entry, "job").await {
+                    Ok(raw) => match serde_json::from_str::<UnfurlJob>(&raw) {
+                        Ok(job) => unfurl(&state, job).await,
+                        Err(e) => warn!("dropping malformed embed job {}: {e}", entry.id),
+                    },
+                    Err(e) if entry.contains_key(SEALED) => {
+                        warn!(
+                            "embed job {} does not open here, left for a retry: {e}",
+                            entry.id
+                        );
+                        return None;
+                    }
+                    Err(e) => warn!("dropping embed job {}: {e}", entry.id),
                 }
-                entry.id
+                Some(entry.id)
             });
         }
         while let Some(done) = jobs.join_next().await {
-            if let Ok(id) = done {
+            if let Ok(Some(id)) = done {
                 let acked: RedisResult<()> = redis::pipe()
                     .cmd("XACK")
                     .arg(&stream)
@@ -899,6 +996,7 @@ mod tests {
             stream: "p:hub".to_string(),
             snapshot: "p:hub:snapshot".to_string(),
             maxlen: 4242,
+            frames: Arc::new(Frames::plain()),
         };
         let batch = [env(1, 1, Op::Heartbeat), env(1, 2, Op::Heartbeat)];
         let packed =
@@ -906,6 +1004,96 @@ mod tests {
         assert_eq!(packed.matches("XADD").count(), 2);
         assert_eq!(packed.matches("\r\n4242\r\n").count(), 2);
         assert!(packed.contains("\"seq\":2"));
+    }
+
+    #[tokio::test]
+    async fn frames_are_published_sealed_once_decided_and_read_either_way() {
+        let path = crate::db::temp_db_path("bus_sealed_frames");
+        let _ = std::fs::remove_file(&path);
+        let db = crate::db::open_keyed(path.to_str()).await.expect("open db");
+        let frames = Arc::new(Frames::new(crate::db::ring(&db), db.clone()));
+        let log = Log {
+            stream: "p:hub".to_string(),
+            snapshot: "p:hub:snapshot".to_string(),
+            maxlen: 4242,
+            frames: frames.clone(),
+        };
+        let batch = [env(1, 1, viewing("alice", 1, "rchat"))];
+        let packed = |log: &Log| {
+            String::from_utf8_lossy(&xadd_batch(log, &batch).get_packed_pipeline()).into_owned()
+        };
+        let plain = packed(&log);
+        assert!(plain.contains("\r\nop\r\n") && plain.contains("alice"));
+        assert!(frames.decide(&[]).await.expect("decide"));
+        let sealed = packed(&log);
+        assert!(sealed.contains("\r\nsealed\r\n"));
+        assert!(!sealed.contains("alice") && !sealed.contains("\r\nop\r\n"));
+        let json = to_bus_json(&batch[0]).expect("json");
+        let entry = |field: &str, value: Vec<u8>| StreamId {
+            id: "1-0".to_string(),
+            map: HashMap::from([(field.to_string(), redis::Value::BulkString(value))]),
+            ..StreamId::default()
+        };
+        let record = frames
+            .seal(Stream::Hub, "", json.as_bytes())
+            .expect("sealed");
+        for read in [
+            entry("op", json.clone().into_bytes()),
+            entry(SEALED, record.clone()),
+        ] {
+            let text = entry_text(&frames, Stream::Hub, &read, "op").await;
+            assert_eq!(text.as_deref(), Ok(json.as_str()));
+        }
+        let jobs = entry_text(&frames, Stream::Jobs, &entry(SEALED, record), "job").await;
+        assert!(jobs.is_err(), "a hub frame is not a job");
+        let other = entry_text(&frames, Stream::Hub, &entry("x", b"{}".to_vec()), "op").await;
+        assert_eq!(other, Err("without op".to_string()));
+        crate::db::close(&db).await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn a_switch_to_plain_frames_writes_the_snapshot_and_asks_for_connections_again() {
+        let path = crate::db::temp_db_path("bus_frames_switch");
+        let _ = std::fs::remove_file(&path);
+        let db = crate::db::open_keyed(path.to_str()).await.expect("open db");
+        let frames = Frames::new(crate::db::ring(&db), db.clone());
+        let (hub, mut out) = Hub::replicated();
+        let copy = |seq: u64, bus: bool| {
+            let op = Op::Copy {
+                build: "0".to_string(),
+                seal: true,
+                bus,
+                keks: vec!["k1".to_string()],
+            };
+            env(hub.instance().wrapping_add(1), seq, op)
+        };
+        hub.ingest("1-0", copy(1, true), true);
+        assert_eq!(decide_frames(&hub, &frames).await, None, "not ready yet");
+        assert!(!frames.sealed());
+        hub.set_publishing(true);
+        hub.set_following(true);
+        hub.set_caught_up(true);
+        assert_eq!(decide_frames(&hub, &frames).await, Some(true));
+        assert!(
+            out.try_recv().is_err(),
+            "sealing asks nothing of the others"
+        );
+        hub.ingest("2-0", copy(2, false), true);
+        let _ = hub.snapshot_state(true);
+        assert!(hub.snapshot_state(false).is_none());
+        assert_eq!(decide_frames(&hub, &frames).await, Some(false));
+        assert!(
+            hub.snapshot_state(false).is_some(),
+            "the snapshot is written again"
+        );
+        assert!(matches!(out.try_recv().map(|e| e.op), Ok(Op::Reannounce)));
+        assert_eq!(decide_frames(&hub, &frames).await, Some(false));
+        assert!(out.try_recv().is_err(), "once per switch");
+        hub.ingest("3-0", copy(3, true), true);
+        assert_eq!(decide_frames(&hub, &frames).await, Some(true));
+        crate::db::close(&db).await;
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -1462,10 +1650,11 @@ mod tests {
             return;
         };
         let prefix = format!("rchat-test-{:08x}", rand::random::<u32>());
-        let (a, bus) = connect(&url, &prefix, DEFAULT_HUB_MAXLEN, Roles::ALL)
+        let plain = || Arc::new(Frames::plain());
+        let (a, bus) = connect(&url, &prefix, DEFAULT_HUB_MAXLEN, Roles::ALL, plain())
             .await
             .unwrap();
-        let (b, _) = connect(&url, &prefix, DEFAULT_HUB_MAXLEN, Roles::ALL)
+        let (b, _) = connect(&url, &prefix, DEFAULT_HUB_MAXLEN, Roles::ALL, plain())
             .await
             .unwrap();
         until("both ready", || a.ready() && b.ready()).await;
@@ -1532,5 +1721,157 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a Redis-protocol server at REDIS_URL"]
+    async fn sealed_frames_round_trip() {
+        let Ok(url) = std::env::var("REDIS_URL") else {
+            return;
+        };
+        let path = crate::db::temp_db_path("bus_sealed_round_trip");
+        let _ = std::fs::remove_file(&path);
+        let db = crate::db::open_keyed(path.to_str()).await.unwrap();
+        let prefix = format!("rchat-test-{:08x}", rand::random::<u32>());
+        let keyed = || Arc::new(Frames::new(crate::db::keyed_ring(), db.clone()));
+        let (fa, fb) = (keyed(), keyed());
+        let (a, bus) = connect(&url, &prefix, DEFAULT_HUB_MAXLEN, Roles::ALL, fa.clone())
+            .await
+            .unwrap();
+        let (b, _) = connect(&url, &prefix, DEFAULT_HUB_MAXLEN, Roles::ALL, fb.clone())
+            .await
+            .unwrap();
+        until("both seal their frames", || fa.sealed() && fb.sealed()).await;
+        let alice = a.next_conn();
+        a.set_online("alice", alice, &["rchat"]);
+        let mut epoch = a.epoch();
+        let again = a.clone();
+        tokio::spawn(async move {
+            while epoch.changed().await.is_ok() {
+                again.set_online("alice", alice, &["rchat"]);
+            }
+        });
+        until("sealed presence reaches b", || {
+            b.is_online("rchat", "alice")
+        })
+        .await;
+        let job: UnfurlJob = serde_json::from_value(serde_json::json!({
+            "server": "rchat", "channel_id": 1, "dm_id": null, "dm_users": null,
+            "message_id": 7, "urls": ["https://example.com/hidden-path"]
+        }))
+        .unwrap();
+        bus.enqueue_unfurl(&job).await.unwrap();
+        let mut conn = bus.conn.clone();
+        let reader = bus.conn.clone();
+        let range = |key: String| {
+            let mut conn = reader.clone();
+            async move {
+                let reply: StreamRangeReply = redis::cmd("XRANGE")
+                    .arg(key)
+                    .arg("-")
+                    .arg("+")
+                    .query_async(&mut conn)
+                    .await
+                    .unwrap();
+                reply.ids
+            }
+        };
+        let hub_entries = range(format!("{prefix}:hub")).await;
+        assert!(hub_entries.iter().any(|e| e.contains_key(SEALED)));
+        for entry in &hub_entries {
+            if let Some(op) = entry.get::<String>("op") {
+                assert!(!op.contains("alice"), "a plain entry after sealing: {op}");
+            }
+        }
+        let jobs = range(format!("{prefix}:embeds")).await;
+        let [queued] = &jobs[..] else {
+            panic!("one job: {jobs:?}");
+        };
+        assert!(queued.get::<String>("job").is_none());
+        let opened = entry_text(&fb, Stream::Jobs, queued, "job").await.unwrap();
+        assert!(opened.contains("hidden-path"));
+        let snapshot_key = format!("{prefix}:hub:snapshot");
+        let started = Instant::now();
+        let snapshot_id = loop {
+            let (id, state): (Option<String>, Option<Vec<u8>>) = redis::pipe()
+                .cmd("HGET")
+                .arg(&snapshot_key)
+                .arg("id")
+                .cmd("HGET")
+                .arg(&snapshot_key)
+                .arg("state")
+                .query_async(&mut conn)
+                .await
+                .unwrap();
+            match (id, state) {
+                (Some(id), Some(state))
+                    if crate::crypt::frames::is_sealed(&state)
+                        && stream_pos(&id) > stream_pos(&hub_entries.last().unwrap().id) =>
+                {
+                    break id;
+                }
+                (_, _) => {}
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "no sealed snapshot after alice"
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        let before: Vec<String> = range(format!("{prefix}:hub"))
+            .await
+            .into_iter()
+            .map(|e| e.id)
+            .filter(|id| stream_pos(id) < stream_pos(&snapshot_id))
+            .collect();
+        let _: i64 = redis::cmd("XDEL")
+            .arg(format!("{prefix}:hub"))
+            .arg(&before)
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let (c, _) = connect(&url, &prefix, DEFAULT_HUB_MAXLEN, Roles::ALL, keyed())
+            .await
+            .unwrap();
+        until(
+            "a new copy reads alice from the sealed snapshot alone",
+            || c.ready() && c.is_online("rchat", "alice"),
+        )
+        .await;
+        let (d, _) = connect(
+            &url,
+            &prefix,
+            DEFAULT_HUB_MAXLEN,
+            Roles::ALL,
+            Arc::new(Frames::plain()),
+        )
+        .await
+        .unwrap();
+        until("frames go plain once a copy can't open them", || {
+            !fa.sealed() && !fb.sealed()
+        })
+        .await;
+        until(
+            "the copy that can't open them gets the state it skipped",
+            || d.ready() && d.is_online("rchat", "alice"),
+        )
+        .await;
+        let bob = b.next_conn();
+        b.set_online("bob", bob, &["rchat"]);
+        until("plain presence reaches it", || d.is_online("rchat", "bob")).await;
+        let keys: Vec<String> = redis::cmd("KEYS")
+            .arg(format!("{prefix}:*"))
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        if !keys.is_empty() {
+            let _: i64 = redis::cmd("DEL")
+                .arg(&keys)
+                .query_async(&mut conn)
+                .await
+                .unwrap();
+        }
+        crate::db::close(&db).await;
+        let _ = std::fs::remove_file(path);
     }
 }

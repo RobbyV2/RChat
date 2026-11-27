@@ -366,7 +366,7 @@ pub(crate) fn test_ring() -> Arc<Ring> {
 }
 
 #[cfg(test)]
-fn keyed_ring() -> Arc<Ring> {
+pub(crate) fn keyed_ring() -> Arc<Ring> {
     keyed_ring_with(false)
 }
 

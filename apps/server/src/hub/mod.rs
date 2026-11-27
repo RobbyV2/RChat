@@ -698,11 +698,12 @@ impl Hub {
     }
 
     /// Tells the other copies what this one runs and which root keys it holds.
-    pub fn announce_copy(&self, seal: bool, keks: Vec<String>) {
+    pub fn announce_copy(&self, seal: bool, bus: bool, keks: Vec<String>) {
         if self.is_replicated() {
             self.post(Op::Copy {
                 build: env!("CARGO_PKG_VERSION").to_owned(),
                 seal,
+                bus,
                 keks,
             });
         }

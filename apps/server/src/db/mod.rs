@@ -37,7 +37,9 @@ pub use pool::{
     ring, sqlite_file, stored_schema_version, take_config_start, writer_connections,
 };
 #[cfg(test)]
-pub(crate) use pool::{open_keyed, open_keyed_scan, open_started, test_ring, test_sources};
+pub(crate) use pool::{
+    keyed_ring, open_keyed, open_keyed_scan, open_started, test_ring, test_sources,
+};
 pub use schema::has_fts;
 #[cfg(test)]
 pub(crate) use schema::set_fts;
