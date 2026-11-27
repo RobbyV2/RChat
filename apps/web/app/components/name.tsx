@@ -1,0 +1,169 @@
+'use client'
+
+import { createElement, type HTMLAttributes, type ReactNode, type Ref } from 'react'
+import type { LayoutPlace, Look } from '../lib/controls'
+import {
+  masksName,
+  nameLabel,
+  nameParts,
+  nameTitle,
+  revealKeyOf,
+  type NameValue,
+  type NameView,
+} from '../lib/names'
+import { useMask, useStore } from '../lib/store'
+import { Row } from './layout'
+import { Masked, MaskedTogether, RevealScope, useOwn, useOwnServer, useRevealed } from './ui'
+
+// Whether a name is the viewer's own: their account or identity, a server they named, one of
+// their accounts.
+const useOwnName = (name: NameValue) => {
+  const mine = useOwn(name.kind === 'person' ? name.who : null)
+  const myServer = useOwnServer(name.kind === 'server' ? name.server : null)
+  if (name.kind === 'account') return true
+  if (name.kind === 'instance') return false
+  if (name.own !== undefined) return name.own
+  return name.kind === 'person' ? mine : name.kind === 'server' ? myServer : false
+}
+
+const useNameView = (name: NameValue, revealed = false): NameView => {
+  const own = useOwnName(name)
+  const mask = useMask(own || revealed)
+  const streamer = useStore(s => s.streamer)
+  return { streamer, mask, own }
+}
+
+// A name as text for a label or a tooltip: `generic` (what kind of thing it is) in streamer
+// mode, else the name as the viewer's filter shows it.
+export function useNameLabel(name: NameValue, generic?: string, withUsername = false) {
+  return nameLabel(name, useNameView(name), generic, withUsername)
+}
+
+// The same for several names at once: a function from a name to its label.
+export function useNameLabels() {
+  const streamer = useStore(s => s.streamer)
+  const mask = useMask()
+  return (name: NameValue, generic?: string, withUsername = false) =>
+    nameLabel(name, { streamer, mask, own: name.kind === 'account' }, generic, withUsername)
+}
+
+function Body({
+  of,
+  withUsername,
+  fit,
+  marked = false,
+}: {
+  of: NameValue
+  withUsername: boolean
+  fit: boolean
+  marked?: boolean
+}) {
+  const mark = marked ? 'streamer ' : ''
+  const own = useOwnName(of)
+  const shown = !masksName(of, own)
+  const { main, handle } = nameParts(of, withUsername)
+  if (handle === null) return shown ? main : <Masked text={main} />
+  if (fit)
+    return (
+      <MaskedTogether word={revealKeyOf(of)}>
+        <span className="flex h-[1lh] min-w-0 flex-wrap items-baseline overflow-hidden text-ellipsis">
+          <span dir="auto" className="max-w-max min-w-0 flex-[1_1_4rem] truncate">
+            <Masked text={main} own={shown} />
+          </span>
+          <span className={`${mark}shrink-0 pl-1 text-on-surface-variant`}>
+            (<Masked text={handle} own={shown} />)
+          </span>
+        </span>
+      </MaskedTogether>
+    )
+  return (
+    <MaskedTogether word={revealKeyOf(of)}>
+      <Row as="span" gap="2xs" align="baseline" place="inline-flex max-w-full">
+        <span className="min-w-0 truncate">
+          <Masked text={main} own={shown} />
+        </span>
+        <span className={`${mark}max-w-full shrink-0 truncate text-on-surface-variant`}>
+          (<Masked text={handle} own={shown} />)
+        </span>
+      </Row>
+    </MaskedTogether>
+  )
+}
+
+type Tag = 'span' | 'p' | 'div' | 'h1' | 'h2' | 'h3' | 'strong' | 'dt' | 'dd' | 'li'
+
+type NameProps<S extends string, L extends string> = Omit<
+  HTMLAttributes<HTMLElement>,
+  'className' | 'style' | 'title' | 'children' | 'color'
+> & {
+  of: NameValue
+  // A person's username after their display name, when the two differ.
+  withUsername?: boolean
+  // For a row the name fills: the display name is cut short first, then the username.
+  fit?: boolean
+  // The whole name as the element's tooltip (always with `fit`).
+  titled?: boolean
+  as?: Tag
+  place?: LayoutPlace<S>
+  look?: Look<L>
+  // A role's color.
+  color?: string
+  // Text drawn with the name, inside its element: an `@`, a label.
+  before?: ReactNode
+  after?: ReactNode
+  ref?: Ref<HTMLElement>
+}
+
+function Drawn<const S extends string, const L extends string>({
+  of,
+  withUsername = false,
+  fit = false,
+  titled = fit,
+  as = 'span',
+  place,
+  look,
+  color,
+  before,
+  after,
+  ...rest
+}: NameProps<S, L>) {
+  const revealed = useRevealed(revealKeyOf(of))
+  const view = useNameView(of, revealed)
+  return createElement(
+    as,
+    {
+      ...rest,
+      title: titled ? nameTitle(of, view, withUsername) : undefined,
+      style: color === undefined ? undefined : { color },
+      className: ['streamer', place, look].filter(Boolean).join(' '),
+    },
+    before,
+    <Body of={of} withUsername={withUsername} fit={fit} />,
+    after
+  )
+}
+
+// A name on screen. Streamer mode hides it, the viewer's own filter masks it (never their own
+// names), and a reveal of one masked word shows the whole name.
+export function Name<const S extends string = never, const L extends string = never>(
+  props: NameProps<S, L>
+) {
+  if (!(props.titled ?? props.fit)) return <Drawn {...props} />
+  return (
+    <RevealScope>
+      <Drawn {...props} />
+    </RevealScope>
+  )
+}
+
+// The inside of a name for a caller that draws the element around it: the username carries the
+// streamer mark itself.
+export function NameBody({ of, fit = false }: { of: NameValue; fit?: boolean }) {
+  return <Body of={of} withUsername fit={fit} marked />
+}
+
+// The tooltip of a name drawn that way, under the reveal scope around it.
+export function useNameTitle(of: NameValue) {
+  const revealed = useRevealed(revealKeyOf(of))
+  return nameTitle(of, useNameView(of, revealed), true)
+}

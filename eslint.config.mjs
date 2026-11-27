@@ -27,8 +27,8 @@ const excluded = () => {
   return file && existsSync(file) ? [includeIgnoreFile(file, 'git info/exclude')] : []
 }
 
-// The layout boxes and the controls: they carry the spacing scale themselves.
-const SPACING_SOURCES = ['apps/web/app/components/{layout,controls,ui}.tsx']
+// The layout boxes, the controls and the name: they carry the spacing scale themselves.
+const SPACING_SOURCES = ['apps/web/app/components/{layout,controls,ui,name}.tsx']
 
 // Screens that set spacing classes of their own. On every other screen one fails the lint.
 const HAND_SPACED = [
