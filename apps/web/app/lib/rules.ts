@@ -30,7 +30,13 @@ export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   {
     label: 'Manage messages',
     bit: Perm.DeleteMessages,
-    hint: "Delete and pin others' messages",
+    hint: "Delete others' messages and close their polls",
+  },
+  { label: 'Pin messages', bit: Perm.PinMessages },
+  {
+    label: 'Bypass slow mode',
+    bit: Perm.BypassSlowmode,
+    hint: 'Send without waiting in slow mode channels',
   },
   { label: 'Kick', bit: Perm.Kick },
   { label: 'Delete server', bit: Perm.DeleteServer },

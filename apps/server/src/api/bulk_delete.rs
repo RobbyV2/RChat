@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 use sqlx::{AnyConnection, Row};
 use utoipa::ToSchema;
 
-use crate::api::access::perms::Perm;
 use crate::api::access::{
     MsgScope, Proof, ResolvedChannel, ResolvedMessage, StaffUse, ThreadHome, not_found,
     resolve_channel_for, resolve_dm, resolve_message_for, typing_scope,
@@ -156,16 +155,17 @@ pub struct BulkJob {
 }
 
 /// The outcome of a bulk delete. With `ids`: `deleted` messages (their ids in `ids`), `others`
-/// that belong to other people and need Manage messages, and `missing` ones (unknown, unreadable
-/// or outside the scope; the same for every reason). With `all`: the counts the job starts
-/// from and the `job`. A dry run deletes nothing: `deletable` is what you could delete now.
+/// that belong to other people and need Manage messages in the channel, and `missing` ones
+/// (unknown, unreadable or outside the scope; the same for every reason). With `all`: the counts
+/// the job starts from and the `job`. A dry run deletes nothing: `deletable` is what you could
+/// delete now.
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct BulkDeleteResp {
     /// Messages selected: the ids given, or every message in the scope (an estimate).
     pub total: i64,
     /// How many of them you may delete.
     pub deletable: i64,
-    /// How many belong to others and need the Manage messages permission.
+    /// How many belong to others and need the Manage messages permission in the channel.
     pub others: i64,
     /// Ids that are unknown, unreadable or outside the scope.
     pub missing: i64,
@@ -221,7 +221,7 @@ impl Place {
 
     async fn moderator(&self, db: &Db) -> bool {
         match self.channel() {
-            Some(c) => c.server().has_perm(db, Perm::DeleteMessages).await,
+            Some(c) => c.moderates_messages(db).await.unwrap_or(false),
             None => false,
         }
     }
@@ -692,10 +692,10 @@ fn dedup(ids: &[i64]) -> Vec<i64> {
 /// Delete many messages
 ///
 /// Deletes messages of one channel, thread or DM with the same rule as deleting one: your own
-/// messages always; in server channels others' with the Manage messages permission; in DMs only
-/// your own. Requires a bearer token. With `ids` (at most 200) it deletes now and answers what
-/// happened; unknown, unreadable and out-of-scope ids are counted as `missing`, others' messages
-/// you may not delete as `others`. With `all: true` it starts a background job for every message
+/// messages always; in server channels others' with the Manage messages permission in the
+/// channel; in DMs only your own. Requires a bearer token. With `ids` (at most 200) it deletes
+/// now and answers what happened; unknown, unreadable and out-of-scope ids are counted as
+/// `missing`, others' messages you may not delete as `others`. With `all: true` it starts a background job for every message
 /// in the scope you can read and may delete (messages posted after the start are kept; on
 /// Postgres a send still committing at the start can be included), minus `except` (at most 1000
 /// ids), only between `after` and `before`, and only `author`'s when given. Send the dry run's

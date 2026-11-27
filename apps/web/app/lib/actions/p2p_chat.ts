@@ -343,14 +343,14 @@ export const peerChat = identityActions(identity => {
       title: 'Open thread',
       label: ctx => {
         const t = actsOf(ctx)
-        return (t && threadAct(t.p, t.write)) ?? 'Open thread'
+        return (t && threadAct(t.p, t.write && t.chat.can.threads)) ?? 'Open thread'
       },
       icon: MessageSquareText,
       ...onMessage,
       order: 130,
       available: ctx => {
         const t = actsOf(ctx)
-        return !!t && t.chat.threads && threadAct(t.p, t.write) !== null
+        return !!t && t.chat.threads && threadAct(t.p, t.write && t.chat.can.threads) !== null
       },
       run: ctx => {
         const t = rowOf(ctx)

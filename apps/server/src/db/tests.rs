@@ -22,6 +22,10 @@ const DELEGATED_RIGHTS: i64 = Perm::ManageServer as i64
     | Perm::ManageRoles as i64
     | Perm::AssignRoles as i64;
 
+// Roles holding Manage channels and Manage messages before Pin messages and Bypass slow mode
+// existed gain both in v54.
+const SPLIT_RIGHTS: i64 = Perm::PinMessages as i64 | Perm::BypassSlowmode as i64;
+
 /// A server start with nothing set in the env, which is what these tests mean by opening a
 /// database. `super::open` is the tool's way in.
 async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
@@ -1359,10 +1363,11 @@ async fn the_reset_profiles_permission_reaches_kick_holders_once() {
             assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
             assert_eq!(count(&db, &member("every")).await, 0);
             assert_eq!(count(&db, &member("explicit")).await, ALL_PERMS);
-            assert_eq!(count(&db, &member("kicker")).await, kick | 1 | bit);
-            assert_eq!(count(&db, &member("channels")).await, 1);
+            let bypass = Perm::BypassSlowmode as i64;
+            assert_eq!(count(&db, &member("kicker")).await, kick | 1 | bit | bypass);
+            assert_eq!(count(&db, &member("channels")).await, 1 | bypass);
             assert_eq!(count(&db, &member("plain")).await, kick);
-            assert_eq!(count(&db, &role("helpers")).await, 2);
+            assert_eq!(count(&db, &role("helpers")).await, 2 | SPLIT_RIGHTS);
             assert_eq!(count(&db, &role("all")).await, ALL_PERMS);
             assert_eq!(count(&db, "SELECT COUNT(*) FROM members WHERE server = 'old' AND joined_at = 8").await, 5);
             let mods = match round {
@@ -1754,7 +1759,7 @@ async fn group_mentions_are_added_to_an_old_database() {
         assert_eq!(
             count(
                 &db,
-                &format!("SELECT COUNT(*) FROM roles WHERE name = 'old' AND perms = {} AND mentionable = 0", 543 | DELEGATED_RIGHTS | RESET_PROFILES)
+                &format!("SELECT COUNT(*) FROM roles WHERE name = 'old' AND perms = {} AND mentionable = 0", 543 | DELEGATED_RIGHTS | RESET_PROFILES | SPLIT_RIGHTS)
             )
             .await,
             1
@@ -1936,7 +1941,7 @@ async fn audit_log_is_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            575 | DELEGATED_RIGHTS | RESET_PROFILES
+            575 | DELEGATED_RIGHTS | RESET_PROFILES | SPLIT_RIGHTS
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_audit_log_%'").await,
@@ -2041,7 +2046,7 @@ async fn timeouts_are_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            639 | DELEGATED_RIGHTS | RESET_PROFILES
+            639 | DELEGATED_RIGHTS | RESET_PROFILES | SPLIT_RIGHTS
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_member_timeouts_until'").await,
@@ -2139,7 +2144,7 @@ async fn webhooks_are_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            767 | DELEGATED_RIGHTS | RESET_PROFILES
+            767 | DELEGATED_RIGHTS | RESET_PROFILES | SPLIT_RIGHTS
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%webhook%'").await,
@@ -3649,7 +3654,7 @@ async fn upgraded_report_perms(db: &Db, mod_perms: i64) {
         ("all", ALL_PERMS),
         ("zero", 0),
         ("kick", 516 | RESET_PROFILES),
-        ("chan", 1),
+        ("chan", 1 | Perm::BypassSlowmode as i64),
         ("plain", 511),
     ] {
         assert_eq!(
@@ -3664,7 +3669,7 @@ async fn upgraded_report_perms(db: &Db, mod_perms: i64) {
     }
     for (name, perms) in [
         ("mod", mod_perms),
-        ("chanrole", 1),
+        ("chanrole", 1 | Perm::BypassSlowmode as i64),
         ("full", ALL_PERMS),
         ("settingsrole", 8 | 4096 | 8192),
         ("rolesadmin", 16 | 16384 | 32768),
@@ -8158,6 +8163,88 @@ async fn channel_overwrites_are_added_to_an_old_database() {
                     1,
                     "a rule written with masks survives the next start"
                 );
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn pin_and_slow_mode_bits_are_granted_to_an_old_database() {
+    on_each_database("split_grants_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let (channels, messages, kick) = (
+            Perm::ManageChannels as i64,
+            Perm::DeleteMessages as i64,
+            Perm::Kick as i64,
+        );
+        let (pin, bypass) = (Perm::PinMessages as i64, Perm::BypassSlowmode as i64);
+        let old_full = crate::api::access::perms::PRE_SPLIT_PERMS;
+        let sets = [
+            ("full", old_full, ALL_PERMS),
+            ("zero", 0, 0),
+            ("chan", channels, channels | bypass),
+            ("msgs", messages | kick, messages | kick | pin | bypass),
+            ("kick", kick, kick),
+        ];
+        for (name, perms, _) in sets {
+            for sql in [
+                format!("INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', '{name}', 1, {perms}, 1)"),
+                format!("INSERT INTO roles(server, name, color, perms) VALUES('rchat', '{name}', '#ffffff', {perms})"),
+            ] {
+                sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                    .execute(&db)
+                    .await
+                    .expect(&sql);
+            }
+        }
+        let plain = format!(
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'plain', 0, {old_full}, 1)"
+        );
+        let previous = format!(
+            "UPDATE settings SET value = '{}' WHERE key = 'schema_version'",
+            SCHEMA_VERSION - 1
+        );
+        for sql in [plain, previous] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&db)
+                .await
+                .expect(&sql);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            for (name, _, want) in sets {
+                let want_role = match (name, round) {
+                    ("msgs", 1) => messages | kick,
+                    (_, _) => want,
+                };
+                for (table, key, want) in [("members", "username", want), ("roles", "name", want_role)] {
+                    assert_eq!(
+                        count(&db, &format!("SELECT perms FROM {table} WHERE {key} = '{name}'")).await,
+                        want,
+                        "{round}: {table} {name}"
+                    );
+                }
+            }
+            assert_eq!(
+                count(&db, "SELECT perms FROM members WHERE username = 'plain'").await,
+                old_full,
+                "{round}: the stored permissions of a member who is no admin stay"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM members WHERE server = 'rchat' AND joined_at = 1").await,
+                6,
+                "{round}"
+            );
+            if round == 0 {
+                sqlx::query("UPDATE roles SET perms = $1 WHERE name = 'msgs'")
+                    .bind(messages | kick)
+                    .execute(&db)
+                    .await
+                    .expect("taken away by hand");
             }
             close(&db).await;
         }

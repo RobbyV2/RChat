@@ -5,13 +5,14 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
+import { ChannelCanContext, useChannelPerms } from '../../lib/client/use_channel_perms'
+import { CAN_ALL, type ChannelCan } from '../../lib/channel_perms'
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { roomLooksKey } from '../../lib/server_profile'
 import { useStore } from '../../lib/store'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
-import { P } from '../../lib/p2p/state'
 import type { ServerView } from '../../lib/p2p/server'
 import { newSince } from '../../lib/lists'
 import type { Message, UserRef } from '../../lib/types'
@@ -61,6 +62,8 @@ interface ThreadFacts {
   // A server thread's rules for acting, a timeout among them; a conversation follows `disabled`.
   canAct?: boolean
   timedOut?: boolean
+  // What we hold in a server thread's channel; a conversation holds nothing back.
+  can?: ChannelCan
 }
 
 function P2pThreadPanelBody() {
@@ -93,7 +96,8 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
     [members]
   )
   const timedOut = usePeerTimeoutEnds(v.timedOutUntil)
-  const moderator = v.me === 'join' && (v.perms & P.ManageMessages) !== 0 && timedOut === null
+  const held = useChannelPerms(t.ch ? { p2pRoom: v.id, ch: t.ch } : null)
+  const moderator = held.manage && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
   const ownName = useCallback((ik: string) => profileName(ik, room), [room])
   const channel = v.channels.find(c => c.id === t.ch)
@@ -120,6 +124,7 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
         pendingTip: 'Waiting for a member to come online',
         canAct,
         timedOut: timedOut !== null,
+        can: held,
       }}
     />
   )
@@ -168,6 +173,7 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
   const contentRef = useRef<HTMLDivElement>(null)
   const canAct = f.canAct ?? !disabled
   const timedOut = f.timedOut ?? false
+  const held = f.can ?? CAN_ALL
   const replies = t.messages ?? EMPTY
   const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])
   const { rows, num, idOf, source, editing, editingState, rowMenu, copyRow, picker, setPicker } =
@@ -185,6 +191,7 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
       mayDelete,
       forwardSkip: null,
       threads: false,
+      can: held,
     })
   const head = t.head ? rows[0] : null
   const list = useMemo(() => (t.head ? rows.slice(1) : rows), [rows, t.head])
@@ -272,76 +279,80 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
   }
 
   return (
-    <ChatSourceProvider value={source}>
-      <div data-p2p-thread className="contents">
-        <ThreadPanelView
-          peer
-          onClose={p2pThread.close}
-          overlays={
-            scroll.positioned && fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />
-          }
-          listRef={listRef}
-          contentRef={contentRef}
-          onScroll={scroll.onScroll}
-          head={
-            t.more && (
-              <div className="flex justify-center py-2">
-                <button onClick={() => void p2pThread.loadOlder()} className={textBtn}>
-                  Show older replies
-                </button>
-              </div>
-            )
-          }
-          root={
-            head ? (
-              row(head, true, ALONE)
-            ) : (
-              <p className="px-4 py-1.5 text-sm text-on-surface-variant italic">
-                {t.loading ? 'Loading…' : 'Message unavailable'}
-              </p>
-            )
-          }
-          count={t.head?.replies ?? replies.length}
-          replies={list.map((r, i) => (
-            <Fragment key={r.p.id}>
-              {days.has(i) && <DateDivider at={r.m.created_at} />}
-              {row(r, false, places[i] ?? ALONE)}
-            </Fragment>
-          ))}
-          tail={
-            t.loading &&
-            replies.length === 0 &&
-            (t.head?.replies ?? 1) > 0 && (
-              <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
-            )
-          }
-          footer={
-            <>
-              <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
-              <P2pComposer
-                draftKey={key}
-                channelTextOnly={f.textOnly}
-                scope={scope}
-                title="the thread"
-                placeholder="Message thread"
-                nameOf={nameOf}
-                disabled={disabled}
-              />
-            </>
-          }
-        />
-        {picker && (
-          <EmojiPicker
-            anchor={picker.anchor?.isConnected ? picker.anchor : null}
-            side="top"
-            align="end"
-            label="Add reaction"
-            onPick={e => source.toggleReaction(picker.m, e, false)}
-            onClose={() => setPicker(null)}
+    <ChannelCanContext.Provider value={held}>
+      <ChatSourceProvider value={source}>
+        <div data-p2p-thread className="contents">
+          <ThreadPanelView
+            peer
+            onClose={p2pThread.close}
+            overlays={
+              scroll.positioned &&
+              fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />
+            }
+            listRef={listRef}
+            contentRef={contentRef}
+            onScroll={scroll.onScroll}
+            head={
+              t.more && (
+                <div className="flex justify-center py-2">
+                  <button onClick={() => void p2pThread.loadOlder()} className={textBtn}>
+                    Show older replies
+                  </button>
+                </div>
+              )
+            }
+            root={
+              head ? (
+                row(head, true, ALONE)
+              ) : (
+                <p className="px-4 py-1.5 text-sm text-on-surface-variant italic">
+                  {t.loading ? 'Loading…' : 'Message unavailable'}
+                </p>
+              )
+            }
+            count={t.head?.replies ?? replies.length}
+            replies={list.map((r, i) => (
+              <Fragment key={r.p.id}>
+                {days.has(i) && <DateDivider at={r.m.created_at} />}
+                {row(r, false, places[i] ?? ALONE)}
+              </Fragment>
+            ))}
+            tail={
+              t.loading &&
+              replies.length === 0 &&
+              (t.head?.replies ?? 1) > 0 && (
+                <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
+              )
+            }
+            footer={
+              <>
+                <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
+                <P2pComposer
+                  draftKey={key}
+                  channelTextOnly={f.textOnly}
+                  unstarted={!t.loading && !t.head?.replies && replies.length === 0}
+                  scope={scope}
+                  title="the thread"
+                  placeholder="Message thread"
+                  nameOf={nameOf}
+                  disabled={disabled}
+                />
+              </>
+            }
           />
-        )}
-      </div>
-    </ChatSourceProvider>
+          {picker && (
+            <EmojiPicker
+              anchor={picker.anchor?.isConnected ? picker.anchor : null}
+              side="top"
+              align="end"
+              label="Add reaction"
+              onPick={e => source.toggleReaction(picker.m, e, false)}
+              onClose={() => setPicker(null)}
+            />
+          )}
+        </div>
+      </ChatSourceProvider>
+    </ChannelCanContext.Provider>
   )
 }
 

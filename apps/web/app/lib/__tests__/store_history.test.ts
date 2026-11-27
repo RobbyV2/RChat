@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { getHomeSession, useStore, resetSessionCaches } from '../store'
-import type { Message, WsEvent } from '../types'
+import { ChannelPermBit, type Message, type WsEvent } from '../types'
 import { textChannel, me, media, msg, result, serverDetail, user } from './fixtures'
 
 const { files: p2p } = getHomeSession()
@@ -409,6 +409,31 @@ describe('pending uploads', () => {
     expect(keys()).toEqual(['c9', 'd6'])
     dispatch({ type: 'channel_deleted', server: 'o', channel_id: 9 })
     expect(keys()).toEqual(['d6'])
+  })
+
+  test('a channel where you hold no Attach files takes no file', () => {
+    hang()
+    const held =
+      ChannelPermBit.ViewChannels | ChannelPermBit.ReadHistory | ChannelPermBit.SendMessages
+    const chan = (id: number, mask: number) => ({ ...textChannel(id), my_perms: mask })
+    useStore.setState({
+      me: me('alice', {
+        servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+      }),
+      servers: {
+        s: serverDetail('s', {
+          channels: [chan(1, held), chan(2, held | ChannelPermBit.AttachFiles)],
+        }),
+      },
+    })
+    st().uploadFile('c1', new File(['x'], 'one'))
+    st().uploadFile('c2', new File(['x'], 'two'))
+    useStore.setState({ panel: { kind: 'thread', root: msg(40, { channel_id: 1 }) } })
+    st().uploadFile('t40', new File(['x'], 'three'))
+    useStore.setState({ panel: { kind: 'thread', root: msg(50, { channel_id: 2 }) } })
+    st().uploadFile('t50', new File(['x'], 'four'))
+    useStore.setState({ panel: null })
+    expect(Object.keys(st().pending).sort()).toEqual(['c2', 't50'])
   })
 
   test('thread attachments are kept per thread', () => {

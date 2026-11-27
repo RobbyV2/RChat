@@ -444,7 +444,7 @@ pub struct Channel {
     /// Text or voice.
     pub kind: ChannelKind,
     /// Minimum seconds between two messages from the same member, 0 (off) to 21600; members
-    /// with Manage channels or Manage messages are exempt.
+    /// with Bypass slow mode in the channel (Manage channels passes it) are exempt.
     pub slowmode_seconds: i64,
     /// Only the roles and members a rule allows View channels, and people who manage channels,
     /// can see it.
@@ -527,12 +527,13 @@ pub struct Role {
     /// Name color as `#rrggbb`.
     #[schema(example = "#e91e63")]
     pub color: String,
-    /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete and pin messages
-    /// of others), 4 Kick (also bans), 8 Delete server, 16 Manage admins,
+    /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete messages of
+    /// others and close their polls), 4 Kick (also bans), 8 Delete server, 16 Manage admins,
     /// 32 Mention everyone and roles (`@everyone`, `@here` and every role), 64 View audit log,
     /// 128 Timeout members, 256 Manage webhooks, 512 Manage reports (see and act on reports in the
     /// server), 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign
-    /// roles, 65536 Reset server profiles (clear and lock the server profile of another member).
+    /// roles, 65536 Reset server profiles (clear and lock the server profile of another member),
+    /// 536870912 Pin messages, 1073741824 Bypass slow mode.
     /// A role can also hold the bits everyone can hold (see
     /// `PATCH /api/v1/servers/{name}/everyone`).
     #[schema(example = 6)]

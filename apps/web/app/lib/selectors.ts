@@ -22,6 +22,7 @@ import {
   type GroupPings,
 } from './group_pings'
 import { lockState } from './profile_reset'
+import { CAN_ALL, canOf, hostedMask, type ChannelCan } from './channel_perms'
 import { maskAnd } from './perms'
 import { canChangeRole, memberPerms, rolePerms } from './rules'
 import { shownParts } from './server_profile'
@@ -81,6 +82,22 @@ export const myRolePerms = (s: RChatState, server: string): number =>
 
 export const myPerms = (s: RChatState, server: string): number =>
   s.me?.is_site_admin ? ALL_PERMS : serverAdminPerms(s, server)
+
+// What the viewer holds in a hosted channel. Outside a server (a DM) nothing is held back.
+export const channelCan = (
+  s: RChatState,
+  server: string | null,
+  channelId: number | null
+): ChannelCan => (server === null ? CAN_ALL : canOf(channelMask(s, server, channelId)))
+
+// The mask behind `channelCan`.
+export const channelMask = (s: RChatState, server: string, channelId: number | null): number =>
+  hostedMask(
+    s.servers[server],
+    channelId,
+    myPerms(s, server),
+    s.me?.servers.some(x => x.name === server) ?? false
+  )
 
 export const roleColor = (roles: Role[] | undefined, roleIds: number[]): string | undefined =>
   roles?.find(r => roleIds.includes(r.id))?.color

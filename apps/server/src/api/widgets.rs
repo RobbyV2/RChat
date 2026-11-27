@@ -8,6 +8,7 @@ use sqlx::Row;
 use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
+use super::access::perms::held;
 use super::access::{
     Proof, ResolvedChannel, ServerAccess, Via, not_found, perms::Perm, resolve_channel,
     resolve_reading, resolve_server,
@@ -20,6 +21,7 @@ use crate::db::{ChannelKind, Db, User, now};
 use crate::identity::random_id;
 use crate::state::AppState;
 use crate::ws::WsEvent;
+use rchat_perms::masks;
 
 /// A request without account credentials can use guest access. A presented account
 /// credential must still identify a live session.
@@ -534,7 +536,11 @@ pub(crate) async fn room(
         && match user {
             None => channel.guest_participation(db).await?,
             Some(_) => {
-                channel.server().via() != Via::Staff && channel.member_rights(db).await?.view
+                channel.server().via() != Via::Staff
+                    && channel
+                        .member_rights(db)
+                        .await?
+                        .holds(masks::VIEW | held::CONNECT)
             }
         };
     let participate = if channel.kind() == ChannelKind::Voice {

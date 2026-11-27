@@ -38,7 +38,7 @@ import { EMPTY_NOTIFY } from '../notify'
 import { setSharing, sharing } from '../platform'
 import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import type { RChatState } from '../store_types'
-import { Perm, type Member, type Message, type Poll } from '../types'
+import { ChannelPermBit, Perm, type Member, type Message, type Poll } from '../types'
 import { drain, embed, me, member, msg, paged, role, serverDetail, user } from './fixtures'
 
 const realSharing = sharing()
@@ -137,6 +137,8 @@ interface State {
   friends?: string[]
   view?: 'c1' | 'c2' | 'd9'
   thread?: Message
+  // What alice holds in #news, when the server says so.
+  news?: number
 }
 
 // Alice in server s (#general 1, read-only #news 2): her role r1 carries `perms`; bob holds
@@ -176,7 +178,13 @@ const state = (o: State = {}) => {
         ],
         channels: [
           { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 },
-          { id: 2, name: 'news', kind: 'text', slowmode_seconds: 0 },
+          {
+            id: 2,
+            name: 'news',
+            kind: 'text',
+            slowmode_seconds: 0,
+            ...(o.news === undefined ? {} : { my_perms: o.news }),
+          },
         ],
         read_only: [2],
       }),
@@ -795,14 +803,41 @@ test('timed out, read-only and not a member: no edit, reply or pin', () => {
   state({ view: 'c2', perms: Perm.DeleteMessages })
   expect(labels(at(readOnlyBob))).toEqual([
     'Forward',
-    'Reply in thread',
     'Direct Message',
-    'Pin Message',
     ...PERSON,
     'Select Message',
     'Delete Message',
     ...COPY_ALL,
   ])
+})
+
+test('a channel that says what you hold decides each action', () => {
+  const B = ChannelPermBit
+  const seen = B.ViewChannels + B.ReadHistory
+  const news = (held: number) => {
+    state({ view: 'c2', news: seen + held })
+    return labels(at(readOnlyBob))
+  }
+  const rest = ['Forward', 'Direct Message', ...PERSON, 'Select Message']
+  expect(news(0)).toEqual([...rest, ...COPY_ALL])
+  expect(news(B.PinMessages)).toEqual([...rest, ...COPY_ALL])
+  expect(news(B.PinMessages + B.SendMessages)).toEqual([
+    'Reply',
+    'Forward',
+    'Direct Message',
+    'Pin Message',
+    ...PERSON,
+    'Select Message',
+    ...COPY_ALL,
+  ])
+  expect(news(B.SendMessages + B.StartThreads)).toContain('Reply in thread')
+  expect(news(B.SendMessages)).not.toContain('Reply in thread')
+  expect(news(Perm.DeleteMessages)).toEqual([...rest, 'Delete Message', ...COPY_ALL])
+  expect(news(B.AddReactions)).toEqual([...rest, ...COPY_ALL])
+  state({ view: 'c2', news: seen + B.AddReactions })
+  expect(messageRights(useStore.getState(), readOnlyBob, 'c2').react).toBe(true)
+  state({ view: 'c2', news: seen + B.SendMessages })
+  expect(messageRights(useStore.getState(), readOnlyBob, 'c2').react).toBe(false)
 })
 
 test('in a DM: threads and no moderation', () => {

@@ -7,11 +7,14 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount, useStoreApi } from '../../lib/client/react'
+import { ChannelCanContext } from '../../lib/client/use_channel_perms'
+import { NO_THREADS_TEXT, type ChannelCan } from '../../lib/channel_perms'
 
 import {
   Fragment,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -27,6 +30,7 @@ import {
   Clock,
   EyeOff,
   History,
+  Lock,
   MessageSquareText,
   Plus,
   Reply,
@@ -258,9 +262,10 @@ export const P2pRow = memo(function P2pRow({
   const actions: ToolbarAction[] = []
   // From the old copy: read-only here.
   const act = canAct && !p.archived
+  const held = useContext(ChannelCanContext)
   const write = act && !timedOut
   const can = messageActs(p, write, mine)
-  const thread = threads ? peerChat.forIdentity(identity).threadAct(p, write) : null
+  const thread = threads ? peerChat.forIdentity(identity).threadAct(p, write && held.threads) : null
   if (can.edit && !editing) actions.push(editAction(() => p2pDm.startEdit(draftKey, p.id)))
   if (can.reply)
     actions.push({
@@ -349,7 +354,7 @@ export const P2pRow = memo(function P2pRow({
         canFetch={canAct}
         own={!p.fwd && mine}
       />
-      <ReactionBar m={m} canReact={write} canRemove={write} />
+      <ReactionBar m={m} canReact={write && held.react} canRemove={write} />
       {threads && !!p.replies && !p.archived && (
         <button
           title="Open thread"
@@ -416,7 +421,7 @@ export const P2pRow = memo(function P2pRow({
         )}
         <MessageToolbar
           m={m}
-          react={canAct && !timedOut}
+          react={canAct && !timedOut && held.react}
           actions={actions}
           onMore={(x, y) => onMenu(p, m, x, y)}
         />
@@ -579,6 +584,7 @@ const shownRow = (
 function P2pComposerBody({
   draftKey: key,
   channelTextOnly = false,
+  unstarted = false,
   scope,
   title,
   placeholder,
@@ -586,6 +592,8 @@ function P2pComposerBody({
   disabled,
 }: {
   channelTextOnly?: boolean
+  // A thread without replies: its first reply needs Start threads.
+  unstarted?: boolean
   // Where the draft, files, reply and sends go (a conversation, channel or thread).
   draftKey: string
   scope: string
@@ -615,7 +623,9 @@ function P2pComposerBody({
   // A thread's replies count in its channel's slow mode: the channel's countdown.
   const slowLeft = useCountdown(useP2p(s => s.slowUntil[key.split('#')[0]] ?? 0))
   const siteTextOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
-  const textOnly = channelTextOnly || siteTextOnly
+  const held = useContext(ChannelCanContext)
+  const noFiles = channelTextOnly || !held.attach
+  const textOnly = noFiles || siteTextOnly
   const sel = useRef({ start: 0, end: 0 })
   const typedAt = useRef(0)
   const getText = () => identity.useP2p.getState().drafts[key] ?? ''
@@ -645,12 +655,20 @@ function P2pComposerBody({
   }, [typing, text, key])
 
   if (disabled) return <>{disabled}</>
+  if (unstarted && !held.threads)
+    return (
+      <div data-no-send className={noteBarCls}>
+        <span className="flex min-w-0 items-center gap-2">
+          <Lock size={16} className="shrink-0" />
+          <span>{NO_THREADS_TEXT}</span>
+        </span>
+      </div>
+    )
 
   const count = charCount(text)
   const tooLong = count > BODY_MAX || bodyTooLong(text)
   const send = () => {
-    if ((channelTextOnly && files > 0) || (!text.trim() && !files) || tooLong || slowLeft > 0)
-      return
+    if ((noFiles && files > 0) || (!text.trim() && !files) || tooLong || slowLeft > 0) return
     const sent = text
     void p2pDm.send(key, sent).then(ok => {
       if (ok && getText() === sent) setText('')
@@ -846,7 +864,7 @@ function P2pComposerBody({
           }
           aria-label="Send"
           onClick={send}
-          disabled={tooLong || slowLeft > 0 || (channelTextOnly && files > 0)}
+          disabled={tooLong || slowLeft > 0 || (noFiles && files > 0)}
           className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
         >
           <SendHorizontal size={16} />
@@ -875,6 +893,8 @@ export interface ListOpts {
   forwardSkip: string | null
   // A server channel's own list: its messages can start threads.
   threads: boolean
+  // What we hold in the list's channel, where its caller knows it (else the context's).
+  can?: ChannelCan
 }
 
 export function useP2pList({
@@ -891,9 +911,12 @@ export function useP2pList({
   mayDelete,
   forwardSkip,
   threads,
+  can,
 }: ListOpts) {
   const identity = useP2pApp()!
   const { p2pUser, p2pDm } = identity
+  const around = useContext(ChannelCanContext)
+  const held = can ?? around
 
   const acct = useAccount()
   const { store } = acct
@@ -1016,12 +1039,22 @@ export function useP2pList({
   const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
     if (p.system?.kind === 'pin')
       return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m }, undefined, acct, identity)
-    const chat = { draftKey, canAct, timedOut, mayPin, mayDelete, forwardSkip, threads, ownName }
+    const chat = {
+      draftKey,
+      canAct,
+      timedOut,
+      can: held,
+      mayPin,
+      mayDelete,
+      forwardSkip,
+      threads,
+      ownName,
+    }
     openActionMenu(
       x,
       y,
       { kind: 'p2p_message', p, m, chat },
-      canAct && !timedOut && !p.archived
+      canAct && !timedOut && held.react && !p.archived
         ? {
             header: (
               <ChatSourceProvider value={source}>
@@ -1196,7 +1229,8 @@ function IdentityChatBody(props: ChatBodyProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const siteTextOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
-  const textOnly = props.channelTextOnly || siteTextOnly
+  const held = useContext(ChannelCanContext)
+  const textOnly = props.channelTextOnly || siteTextOnly || !held.attach
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
 

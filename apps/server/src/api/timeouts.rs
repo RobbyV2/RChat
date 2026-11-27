@@ -347,7 +347,7 @@ pub(crate) async fn remove_timeout(
     tx.commit().await?;
     if before.is_some() {
         state.hub.broadcast(timeout_event(&key, &target, None));
-        announce_voice_mute(&state.hub, &key, &target, false);
+        crate::ws::end_voice_mute(&state, &key, &target).await;
     }
     Ok(ok())
 }
@@ -380,7 +380,7 @@ pub async fn announce_expired_timeouts(
             continue;
         }
         state.hub.broadcast(timeout_event(&server, &username, None));
-        announce_voice_mute(&state.hub, &server, &username, false);
+        crate::ws::end_voice_mute(state, &server, &username).await;
     }
     Ok(())
 }
@@ -459,8 +459,8 @@ mod tests {
         for name in ["mo", "bob", "carol"] {
             add_member(db, "club", name, 0, 0, 0).await;
         }
-        let mods = id_of(db, "INSERT INTO roles(server, name, color, perms) VALUES('club', 'mods', '#ffffff', 130) RETURNING id").await;
-        let pins = id_of(db, "INSERT INTO roles(server, name, color, perms) VALUES('club', 'pins', '#ffffff', 2) RETURNING id").await;
+        let mods = id_of(db, "INSERT INTO roles(server, name, color, perms) VALUES('club', 'mods', '#ffffff', 536871042) RETURNING id").await;
+        let pins = id_of(db, "INSERT INTO roles(server, name, color, perms) VALUES('club', 'pins', '#ffffff', 536870914) RETURNING id").await;
         exec(db, &format!("INSERT INTO user_roles(server, username, role_id) VALUES('club', 'mo', {mods}), ('club', 'bob', {pins})")).await;
         let carols = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({general}, 'carol', 'hi', {}) RETURNING id", now())).await;
         let bobs = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({general}, 'bob', 'mine', {}) RETURNING id", now())).await;

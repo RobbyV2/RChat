@@ -16,6 +16,8 @@ import { LiveBadge } from '../voice_grid'
 import { MemberAvatar } from './p2p_badge'
 
 import { useAccount } from '../../lib/client/react'
+import { useChannelPerms } from '../../lib/client/use_channel_perms'
+import { NO_CONNECT } from '../../lib/timeouts'
 
 // Voice channels of a P2P server in its sidebar: the row joins (and opens the stage), and who is
 // in the channel shows under it with identicons, as in instance servers.
@@ -45,11 +47,12 @@ function VoiceMember({
   const name = m?.name ?? (self ? myName : 'Member')
   const peer = inRoom && !self ? callRtc.peer(u.ik) : undefined
   const speaking = inRoom && callRtc.isSpeaking(u.ik)
+  const silenced = u.silenced === true
   const status = voiceStatus({
     self: self && inRoom,
-    selfAudio,
-    live: peer ? { muted: peer.muted } : null,
-    roster: { muted: u.muted, deafened: u.deafened },
+    selfAudio: silenced ? { ...selfAudio, muted: true } : selfAudio,
+    live: peer ? { muted: peer.muted || silenced } : null,
+    roster: { muted: u.muted || silenced, deafened: u.deafened },
     forced: null,
   })
   const live = inRoom && (self ? callRtc.sharing : (peer?.screenOn ?? false))
@@ -111,17 +114,20 @@ function P2pVoiceRowBody({
   })
   const users = (!closed && v.voice[c.id]) || NONE
   const count = users.length
+  const can = useChannelPerms({ p2pRoom: v.id, ch: c.id })
+  const locked = !connected && !can.connect
   return (
     <div className="flex flex-col rounded-lg">
       <button
         data-p2p-voice-channel={c.name}
-        title={connected ? 'Open voice channel' : 'Join voice channel'}
+        title={locked ? NO_CONNECT : connected ? 'Open voice channel' : 'Join voice channel'}
         aria-label={`${connected ? 'Open' : 'Join'} voice channel ${c.name}${
           count ? `, ${count} connected` : ''
-        }`}
+        }${locked ? `. ${NO_CONNECT}` : ''}`}
+        aria-disabled={locked || undefined}
         onClick={() => {
           if (connected) void p2pServer.openChannel(c.id)
-          else void p2pVoice.join(v.id, c.id)
+          else if (!locked) void p2pVoice.join(v.id, c.id)
         }}
         {...longPress(menu)}
         className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] ${

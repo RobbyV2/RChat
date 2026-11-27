@@ -3,7 +3,7 @@ import { client } from '../client/client'
 import { home } from './home_instance'
 import { getHomeSession, useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from '../voice_layout'
-import type { VoiceMsg } from '../types'
+import { ChannelPermBit, type VoiceMsg } from '../types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
 import { drain, me, serverDetail, until } from './fixtures'
 import { AUDIO_SEND_MS } from '../slices/rtc'
@@ -826,6 +826,113 @@ describe('timeouts in voice', () => {
       reason: null,
     })
     expect(st().timeouts.lounge).toEqual({})
+  })
+})
+
+describe('what you hold in the voice channel', () => {
+  const FULL =
+    ChannelPermBit.ViewChannels |
+    ChannelPermBit.ReadHistory |
+    ChannelPermBit.Connect |
+    ChannelPermBit.Speak |
+    ChannelPermBit.Video
+  const details = (mask: number) =>
+    useStore.setState({
+      servers: {
+        lounge: serverDetail('lounge', {
+          channels: [{ id: 1, name: 'v', kind: 'voice', slowmode_seconds: 0, my_perms: mask }],
+        }),
+      },
+    })
+  const listed = (muted: boolean) =>
+    st().applyWsEvent({
+      type: 'voice_muted',
+      server: 'lounge',
+      channel_id: 1,
+      username: 'alice',
+      muted,
+    })
+  const join = async (mask: number) => {
+    useStore.setState({
+      me: me('alice', {
+        servers: [{ name: 'lounge', display_name: 'Lounge', creator: null, is_admin: false }],
+      }),
+    })
+    details(mask)
+    await st().joinVoice('lounge', 1)
+    expect(st().voice?.channelId).toBe(1)
+  }
+  const camera = () => {
+    const live = rtc as unknown as { videoTrack: unknown; screen: unknown }
+    live.videoTrack = { kind: 'video', enabled: true, stop: () => {} }
+    live.screen = { video: { kind: 'video', enabled: true, stop: () => {} }, audio: null }
+  }
+
+  afterEach(() => useStore.setState({ servers: {} }))
+
+  for (const detailsFirst of [true, false]) {
+    const order = detailsFirst ? 'the details first' : 'the mute first'
+    test(`getting Speak back opens the mic (${order})`, async () => {
+      await join(FULL & ~ChannelPermBit.Speak)
+      listed(true)
+      expect(lastTrack().enabled).toBe(false)
+      if (detailsFirst) details(FULL)
+      listed(false)
+      if (!detailsFirst) {
+        expect(lastTrack().enabled).toBe(false)
+        details(FULL)
+      }
+      expect(rtc.muted).toBe(false)
+      expect(lastTrack().enabled).toBe(true)
+    })
+
+    test(`losing Speak closes the mic (${order})`, async () => {
+      await join(FULL)
+      expect(lastTrack().enabled).toBe(true)
+      if (detailsFirst) details(FULL & ~ChannelPermBit.Speak)
+      else listed(true)
+      expect(lastTrack().enabled).toBe(false)
+      if (detailsFirst) listed(true)
+      else details(FULL & ~ChannelPermBit.Speak)
+      st().toggleMute()
+      st().toggleMute()
+      expect(lastTrack().enabled).toBe(false)
+    })
+
+    test(`losing Video turns the camera and the share off (${order})`, async () => {
+      await join(FULL)
+      camera()
+      if (detailsFirst) details(FULL & ~ChannelPermBit.Video)
+      listed(false)
+      if (!detailsFirst) {
+        expect(rtc.videoTrack).not.toBeNull()
+        details(FULL & ~ChannelPermBit.Video)
+      }
+      await Promise.resolve()
+      expect(rtc.videoTrack).toBeNull()
+      expect(rtc.sharing).toBe(false)
+      expect(lastTrack().enabled).toBe(true)
+    })
+  }
+
+  test('a change elsewhere leaves the mic and camera alone', async () => {
+    await join(FULL)
+    camera()
+    useStore.setState({
+      servers: {
+        ...st().servers,
+        other: serverDetail('other', {
+          channels: [{ id: 9, name: 'v', kind: 'voice', slowmode_seconds: 0, my_perms: 0 }],
+        }),
+      },
+    })
+    details(FULL)
+    await Promise.resolve()
+    expect(rtc.videoTrack).not.toBeNull()
+    expect(lastTrack().enabled).toBe(true)
+    const live = rtc as unknown as { videoTrack: unknown; screen: unknown }
+    live.videoTrack = null
+    live.screen = null
   })
 })
 

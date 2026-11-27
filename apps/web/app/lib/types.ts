@@ -23,11 +23,13 @@ export const Perm = {
   ManageRoles: 16384,
   AssignRoles: 32768,
   ManageProfiles: 65536,
+  PinMessages: 536870912,
+  BypassSlowmode: 1073741824,
 } as const
 
-export const ALL_PERMS = 127999
+export const ALL_PERMS = 1610740735
 
-// The permissions a channel rule can allow or deny that are not server permissions above.
+// The permissions a channel rule can allow or deny besides Manage messages and Mention everyone.
 export const ChannelPermBit = {
   ViewChannels: 131072,
   SendMessages: 262144,

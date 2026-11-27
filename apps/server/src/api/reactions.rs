@@ -100,7 +100,7 @@ struct Target {
 }
 
 /// The message `user` reacts to. Reading it is enough to take a reaction back; adding one also
-/// needs `react_gate` (send permission, live DM).
+/// needs `react_gate` (the Add reactions permission, live DM).
 async fn react_target(
     state: &AppState,
     id: i64,
@@ -268,7 +268,7 @@ async fn unping_author(state: &AppState, message_id: i64, actor: &str, emoji: &s
 /// emoji list are accepted (skin tones, ZWJ sequences, keycaps, flags). The server stores the
 /// fully qualified form, so U+2764 and U+2764 U+FE0F (red heart) are one reaction. Requires a bearer token.
 /// Guests cannot react. Needs read access to the message. In server channels, also needs membership and the
-/// send permission. In DMs, needs to be a participant. Only normal messages take reactions (not
+/// channel's Add reactions permission. In DMs, needs to be a participant. Only normal messages take reactions (not
 /// call logs). A message has at most 20 different emojis. A repeated reaction changes nothing. A
 /// new reaction emits `reaction_added` (`{server, channel_id, dm_id, dm_users, message_id,
 /// thread_root_id, emoji, username, count}`, `count` = reactors of that emoji after the change)
@@ -319,8 +319,8 @@ pub(crate) async fn add_reaction(
 ///
 /// Removes the caller's reaction with one emoji (percent-encoded in the path, matched like
 /// adding one, so U+2764 removes U+2764 U+FE0F). Requires a bearer token and read access to the
-/// message; unlike adding, no send permission is needed, so reactions can be taken back in read-only
-/// channels. Removing a reaction that does not exist changes nothing. A removed reaction emits
+/// message; unlike adding, no channel permission is needed, so reactions can be taken back in
+/// channels where you may no longer react. Removing a reaction that does not exist changes nothing. A removed reaction emits
 /// `reaction_removed` (same fields as `reaction_added`) and retracts the author's unseen ping
 /// for it; the author then gets `ping_count` with the scope's new unseen count. General
 /// rate-limit bucket.

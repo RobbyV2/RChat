@@ -8,6 +8,7 @@ import type { Contact } from '../p2p/contacts'
 import type { P2pMessage } from '../p2p/dm'
 import type { ChannelView, MemberView, RoleView, ServerView } from '../p2p/server/types'
 import type { PaletteGroup } from '../palette'
+import type { ChannelCan } from '../channel_perms'
 import type { RChatState } from '../store_types'
 import type { Category, Channel, DmSummary, Message, UserRef } from '../types'
 
@@ -39,6 +40,8 @@ export interface ChatFacts {
   draftKey: string
   canAct: boolean
   timedOut?: boolean
+  // What the viewer holds in the channel the message is in.
+  can: ChannelCan
   mayPin: boolean
   mayDelete(p: P2pMessage): boolean
   forwardSkip: string | null

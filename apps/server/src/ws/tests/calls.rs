@@ -897,6 +897,115 @@ async fn site_admins_get_member_view_in_voice() {
     crate::api::test_util::done(state, path).await;
 }
 
+fn mutes(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<(String, bool)> {
+    let mut seen = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let WsEvent::VoiceMuted {
+            server: _,
+            channel_id: _,
+            username,
+            muted,
+            staff: false,
+        } = ev
+        {
+            seen.push((username, muted));
+        }
+    }
+    seen
+}
+
+#[tokio::test]
+async fn voice_follows_connect_speak_and_video() {
+    use crate::api::access::perms::held;
+    use crate::ws::calls::{NO_CONNECT, NO_VIDEO};
+    let (state, path) = crate::api::test_util::temp_state("voice_bits").await;
+    let db = &state.db;
+    for name in ["alice", "bob", "carol"] {
+        add_user_row(db, name).await;
+        crate::api::test_util::add_member(db, "rchat", name, 0, 0, 0).await;
+    }
+    let cid = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let rule = async |subject: &str, deny: u64| {
+        let clear =
+            format!("DELETE FROM channel_perms WHERE channel_id = {cid} AND subject = '{subject}'");
+        let store = format!(
+            "INSERT INTO channel_perms(channel_id, subject, allow, deny) SELECT {cid}, '{subject}', 0, {deny} WHERE {deny} <> 0"
+        );
+        for sql in [clear, store] {
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(db)
+                .await
+                .expect("rule");
+        }
+    };
+    let join = |user| {
+        voice_msg(
+            &state,
+            user,
+            1,
+            ClientMsg::VoiceJoin {
+                channel_id: cid,
+                muted: false,
+                deafened: false,
+            },
+        )
+    };
+    let cam = |from: &'static str, to: &'static str| {
+        voice_msg(
+            &state,
+            from,
+            1,
+            ClientMsg::RtcSignal {
+                to: s(to),
+                channel_id: Some(cid),
+                dm_id: None,
+                payload: serde_json::json!({"cam": true}),
+            },
+        )
+    };
+    rule("u:bob", held::CONNECT).await;
+    rule("u:carol", held::SPEAK | held::VIDEO).await;
+    let mut rx = state.hub.subscribe();
+    assert_eq!(join("bob").await, Err(NO_CONNECT.into()));
+    join("alice").await.expect("alice joins");
+    join("carol").await.expect("Connect is enough to join");
+    assert_eq!(mutes(&mut rx), vec![(s("carol"), true)], "no Speak");
+    assert_eq!(cam("carol", "alice").await, Err(NO_VIDEO.into()));
+    cam("alice", "carol").await.expect("alice holds Video");
+
+    crate::ws::end_voice_mute(&state, "rchat", "carol").await;
+    assert_eq!(
+        mutes(&mut rx),
+        vec![(s("carol"), true)],
+        "a timeout that ends leaves a member without Speak muted"
+    );
+    rule("u:carol", 0).await;
+    crate::ws::voice_rules_changed(&state, "rchat", Some(cid)).await;
+    let mut now = mutes(&mut rx);
+    now.sort();
+    assert_eq!(now, vec![(s("alice"), false), (s("carol"), false)]);
+    cam("carol", "alice")
+        .await
+        .expect("carol holds Video again");
+
+    rule("u:alice", held::SPEAK).await;
+    rule("u:carol", held::CONNECT).await;
+    crate::ws::voice_rules_changed(&state, "rchat", None).await;
+    for _ in 0..50 {
+        if state.hub.rooms_in("rchat", None) == vec![(cid, vec![s("alice")])] {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        state.hub.rooms_in("rchat", None),
+        vec![(cid, vec![s("alice")])],
+        "losing Connect takes a member out"
+    );
+    assert!(mutes(&mut rx).contains(&(s("alice"), true)));
+    crate::api::test_util::done(state, path).await;
+}
+
 #[test]
 fn calls_name_only_plain_peer_ids() {
     assert_eq!(call_peer_id(None), Ok(None));

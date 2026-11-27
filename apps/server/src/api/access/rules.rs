@@ -226,21 +226,15 @@ pub(super) async fn channel_access(
     channel_access_under(db, server, channel_id, user, VISITOR_CAPS).await
 }
 
-/// Which of `usernames` are live members of `server` who can view the channel: the rules of
-/// `channel_access` evaluated for all of them with one query each for members, overrides and
-/// roles, a site admin counting as a plain member. With `readable` (a message's `created_at`),
-/// also only those who can read that message: members without read history only see messages
-/// from their join on. Order is kept.
-pub(super) async fn channel_viewers(
+/// A member row as the batch evaluators read it: admin, admin permissions and join.
+type Seat = (bool, i64, i64);
+
+/// The live members of `server` among `usernames`.
+async fn seats(
     db: &Db,
     server: &str,
-    channel_id: i64,
     usernames: &[String],
-    readable: Option<i64>,
-) -> sqlx::Result<Vec<String>> {
-    if usernames.is_empty() {
-        return Ok(Vec::new());
-    }
+) -> sqlx::Result<std::collections::HashMap<String, Seat>> {
     let sql = format!(
         "SELECT m.username, m.is_admin, m.perms, m.joined_at FROM members m JOIN users u ON u.username = m.username WHERE m.server = $1 AND u.password_hash <> '!purging' AND m.username IN ({})",
         crate::api::placeholders(2, usernames.len())
@@ -255,18 +249,15 @@ pub(super) async fn channel_viewers(
             (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
         members.insert(name, (is_admin != 0, perms, joined_at));
     }
-    if members.is_empty() {
-        return Ok(Vec::new());
-    }
-    let overrides = channel_rules(db, channel_id).await?;
-    let (restrict, voice, everyone) = channel_base(db, channel_id).await?;
-    let listed = usernames.iter().filter(|n| members.contains_key(*n));
-    if overrides.is_empty()
-        && restrict == Restrict::default()
-        && everyone & (masks::VIEW | masks::HISTORY) == masks::VIEW | masks::HISTORY
-    {
-        return Ok(listed.cloned().collect());
-    }
+    Ok(members)
+}
+
+/// Who each of `members` is in `server`, a site admin counting as a plain member.
+async fn standings(
+    db: &Db,
+    server: &str,
+    members: &std::collections::HashMap<String, Seat>,
+) -> sqlx::Result<std::collections::HashMap<String, Standing>> {
     let names: Vec<&String> = members.keys().collect();
     let sql = format!(
         "SELECT ur.username, ur.role_id, r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username IN ({})",
@@ -284,23 +275,109 @@ pub(super) async fn channel_viewers(
         entry.0.push(format!("r:{role}"));
         entry.1 |= perms;
     }
-    Ok(listed
-        .filter(|name| {
-            let (is_admin, perms, joined_at) = members[*name];
-            let (role_subjects, role_perms) = roles.get(*name).cloned().unwrap_or_default();
+    Ok(members
+        .iter()
+        .map(|(name, (is_admin, perms, _))| {
+            let (role_subjects, role_perms) = roles.remove(name).unwrap_or_default();
             let mut subjects = vec![format!("u:{name}")];
             subjects.extend(role_subjects);
-            let standing = Standing {
-                who: member_who(is_admin, perms, role_perms),
-                subjects,
-            };
+            let who = member_who(*is_admin, *perms, role_perms);
+            (name.clone(), Standing { who, subjects })
+        })
+        .collect())
+}
+
+/// Which of `usernames` are live members of `server` who can view the channel: the rules of
+/// `channel_access` evaluated for all of them with one query each for members, overrides and
+/// roles, a site admin counting as a plain member. With `readable` (a message's `created_at`),
+/// also only those who can read that message: members without read history only see messages
+/// from their join on. Order is kept.
+pub(super) async fn channel_viewers(
+    db: &Db,
+    server: &str,
+    channel_id: i64,
+    usernames: &[String],
+    readable: Option<i64>,
+) -> sqlx::Result<Vec<String>> {
+    if usernames.is_empty() {
+        return Ok(Vec::new());
+    }
+    let members = seats(db, server, usernames).await?;
+    if members.is_empty() {
+        return Ok(Vec::new());
+    }
+    let overrides = channel_rules(db, channel_id).await?;
+    let (restrict, voice, everyone) = channel_base(db, channel_id).await?;
+    let listed = usernames.iter().filter(|n| members.contains_key(*n));
+    if overrides.is_empty()
+        && restrict == Restrict::default()
+        && everyone & (masks::VIEW | masks::HISTORY) == masks::VIEW | masks::HISTORY
+    {
+        return Ok(listed.cloned().collect());
+    }
+    let standings = standings(db, server, &members).await?;
+    Ok(listed
+        .filter(|name| {
+            let (_, _, joined_at) = members[*name];
             let access = ChannelAccess::of(channel_mask(
-                &overrides, &standing, everyone, restrict, voice, false,
+                &overrides,
+                &standings[*name],
+                everyone,
+                restrict,
+                voice,
+                false,
             ));
             access.view && (access.history || readable.is_none_or(|at| at >= joined_at))
         })
         .cloned()
         .collect())
+}
+
+/// What each live member of `server` among `usernames` holds in the channel through membership
+/// alone: a site admin counts as a plain member.
+pub(super) async fn member_masks(
+    db: &Db,
+    server: &str,
+    channel_id: i64,
+    usernames: &[String],
+) -> sqlx::Result<std::collections::HashMap<String, Mask>> {
+    if usernames.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let members = seats(db, server, usernames).await?;
+    if members.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let overrides = channel_rules(db, channel_id).await?;
+    let (restrict, voice, everyone) = channel_base(db, channel_id).await?;
+    Ok(standings(db, server, &members)
+        .await?
+        .into_iter()
+        .map(|(name, standing)| {
+            let mask = channel_mask(&overrides, &standing, everyone, restrict, voice, false);
+            (name, mask)
+        })
+        .collect())
+}
+
+/// What `username` holds in the channel, and whether it names an account. With `as_member`, a
+/// site admin counts as a plain member.
+pub(super) async fn channel_access_of(
+    db: &Db,
+    server: &str,
+    channel_id: i64,
+    username: Option<&str>,
+    as_member: bool,
+) -> sqlx::Result<(ChannelAccess, bool)> {
+    let user = match username {
+        Some(name) => get_user(db, name).await?.map(|user| User {
+            is_site_admin: user.is_site_admin && !as_member,
+            ..user
+        }),
+        None => None,
+    };
+    let access = channel_access(db, server, channel_id, user.as_ref()).await?;
+    Ok((access, user.is_some()))
 }
 
 /// Whether `username` can view the channel. With `as_member`, a site admin counts as a plain
@@ -312,20 +389,9 @@ pub(super) async fn channel_viewable(
     username: Option<&str>,
     as_member: bool,
 ) -> bool {
-    let user = match username {
-        Some(name) => match get_user(db, name).await {
-            Ok(Some(user)) => Some(User {
-                is_site_admin: user.is_site_admin && !as_member,
-                ..user
-            }),
-            Ok(None) => None,
-            Err(_) => return false,
-        },
-        None => None,
-    };
-    channel_access(db, server, channel_id, user.as_ref())
+    channel_access_of(db, server, channel_id, username, as_member)
         .await
-        .is_ok_and(|a| a.view)
+        .is_ok_and(|(access, _)| access.view)
 }
 
 pub(super) async fn is_banned(db: &Db, server: &str, username: &str) -> sqlx::Result<bool> {

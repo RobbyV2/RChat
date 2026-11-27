@@ -100,6 +100,7 @@ export function createCallsPart(
   })
 
   const ELSEWHERE_TEXT = 'P2P is open in another tab.'
+  const NO_VIDEO_TEXT = "You can't share video in this voice channel"
 
   const callFailed = (e: unknown) => p2pHost.toast(e instanceof Error ? e.message : String(e))
 
@@ -140,7 +141,8 @@ export function createCallsPart(
             const plan = await relayBook.check(relayBook.prefs.choice)
             return { config: plan.config, declared: plan.declared, hidesIp: hidesIp(plan) }
           },
-          muted: () => account.store.getState().selfAudio.muted,
+          muted: () =>
+            account.store.getState().selfAudio.muted || !sv.voice.rights(room, ch, sv.me).speak,
         })
         if (
           !parts.viewing.peerVisible(useP2p.getState(), room, ch) &&
@@ -152,6 +154,9 @@ export function createCallsPart(
       }
     },
     leave: () => state.servers?.voice.leave(),
+    // Whether the channel we are in takes our audio, and our camera or screen.
+    speaks: () => state.servers?.voice.myRights().speak ?? true,
+    shows: () => state.servers?.voice.myRights().video ?? true,
     // A camera or a screen share went on or off (the others show the notice for video).
     videoChanged: () => state.servers?.voice.setVideo(mediaVideo()),
     // Our mic or sound went on or off.
@@ -159,6 +164,7 @@ export function createCallsPart(
     async camera() {
       try {
         const on = callRtc.videoTrack === null
+        if (on && !p2pVoice.shows()) throw new Error(NO_VIDEO_TEXT)
         if (on && p2pVoice.timedOut()) throw new Error(TIMED_OUT_CAMERA)
         await callRtc.camera(on)
       } catch (e) {
@@ -169,6 +175,7 @@ export function createCallsPart(
     async share() {
       try {
         const on = !callRtc.sharing
+        if (on && !p2pVoice.shows()) throw new Error(NO_VIDEO_TEXT)
         if (on && p2pVoice.timedOut()) throw new Error(TIMED_OUT_SHARE)
         await callRtc.share(on)
       } catch (e) {

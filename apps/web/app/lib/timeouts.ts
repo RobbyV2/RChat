@@ -35,6 +35,9 @@ export const localUntil = (remaining: number, now = Date.now()) =>
 export const TIMED_OUT_MIC = 'Muted while you are timed out'
 export const TIMED_OUT_CAMERA = 'Camera is off while you are timed out'
 export const TIMED_OUT_SHARE = 'Screen share is off while you are timed out'
+export const NO_SPEAK = "You can't speak in this voice channel"
+export const NO_VIDEO = "You can't share video in this voice channel"
+export const NO_CONNECT = "You can't join this voice channel"
 
 // What a listener shows of someone's camera and screen share: nothing while a timeout mutes
 // them, whatever their app announces.

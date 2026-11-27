@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::access::{Proof, ws_channel_now, ws_server_open, ws_voice_viewable};
+use crate::api::access::perms::held;
+use crate::api::access::{
+    Proof, ws_channel_now, ws_server_open, ws_voice_rights, ws_voice_silenced, ws_voice_viewable,
+};
 use crate::db::Db;
 pub use crate::hub::Hub;
 use crate::limits::Limits;
@@ -99,6 +102,43 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
             if !open || !ws_voice_viewable(&state.read(), server, cid, &user).await {
                 state.hub.evict_voice(&user, cid);
             }
+        }
+    }
+}
+
+/// Ends the mute of a timeout for `username` in the voice channel of `server` they are in,
+/// unless they hold no Speak there.
+pub(crate) async fn end_voice_mute(state: &AppState, server: &str, username: &str) {
+    for (channel_id, users) in state.hub.rooms_in(server, None) {
+        if users.iter().any(|u| u == username) {
+            let rights = ws_voice_rights(&state.read(), server, channel_id, username).await;
+            state.hub.broadcast(WsEvent::VoiceMuted {
+                server: server.to_string(),
+                channel_id,
+                username: username.to_string(),
+                muted: !rights.holds(held::SPEAK),
+                staff: false,
+            });
+        }
+    }
+}
+
+/// After the permissions of `server` (or of one of its channels) changed: takes out of its voice
+/// who may no longer be there, and tells the rooms who is muted there now.
+pub(crate) async fn voice_rules_changed(state: &AppState, server: &str, channel_id: Option<i64>) {
+    evict_unviewable(state, server, channel_id).await;
+    for (cid, users) in state.hub.rooms_in(server, channel_id) {
+        let Ok(silenced) = ws_voice_silenced(&state.read(), server, cid, &users).await else {
+            continue;
+        };
+        for username in users.into_iter().filter(|u| !is_guest(u)) {
+            state.hub.broadcast(WsEvent::VoiceMuted {
+                server: server.to_string(),
+                channel_id: cid,
+                muted: silenced.contains(&username),
+                username,
+                staff: false,
+            });
         }
     }
 }

@@ -1,7 +1,7 @@
 use rchat_perms::eval::{self, Channel, Mode, Ow, Who};
 use rchat_perms::hier::{self, Actor, Rank, Tier};
 use rchat_perms::rules::HOSTED;
-use rchat_perms::{Mask, delta, masks, registry};
+use rchat_perms::{Mask, delta, masks};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::any::AnyRow;
@@ -25,11 +25,13 @@ pub enum Perm {
     ManageRoles = 16384,
     AssignRoles = 32768,
     ManageProfiles = 65536,
+    PinMessages = 1 << 29,
+    BypassSlowmode = 1 << 30,
 }
 
-/// Channel moderation bits without a server gate stay out of stored masks.
-const UNGATED: Mask = registry::value("PinMessages") | registry::value("BypassSlowmode");
-pub const ALL_PERMS: i64 = (masks::MGMT & !UNGATED) as i64;
+pub const ALL_PERMS: i64 = masks::MGMT as i64;
+/// Every permission before `PinMessages` and `BypassSlowmode` existed.
+pub const PRE_SPLIT_PERMS: i64 = 127999;
 pub const PRE_DELEGATION_PERMS: i64 = 1023;
 
 /// A client may echo newer bits it read without having controls for them.
@@ -103,6 +105,24 @@ pub fn can_grant(actor: i64, actor_site_admin: bool, perms: i64) -> bool {
     .is_ok()
 }
 
+/// The channel permissions the gates ask for.
+pub mod held {
+    use rchat_perms::{Mask, registry::value};
+
+    pub const DELETE: Mask = value("DeleteMessages");
+    pub const MENTION: Mask = value("MentionEveryone");
+    pub const REACT: Mask = value("AddReactions");
+    pub const ATTACH: Mask = value("AttachFiles");
+    pub const EMBED: Mask = value("EmbedLinks");
+    pub const POLLS: Mask = value("CreatePolls");
+    pub const THREADS: Mask = value("StartThreads");
+    pub const CONNECT: Mask = value("Connect");
+    pub const SPEAK: Mask = value("Speak");
+    pub const VIDEO: Mask = value("Video");
+    pub const PIN: Mask = value("PinMessages");
+    pub const BYPASS_SLOWMODE: Mask = value("BypassSlowmode");
+}
+
 /// What a viewer holds in a channel: `mask`, and its View, Send and Read history bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChannelAccess {
@@ -120,6 +140,11 @@ impl ChannelAccess {
             history: mask & masks::HISTORY != 0,
             mask: mask as i64,
         }
+    }
+
+    /// Whether the viewer holds every one of `bits` here.
+    pub fn holds(&self, bits: Mask) -> bool {
+        self.mask as Mask & bits == bits
     }
 }
 
@@ -442,6 +467,7 @@ pub(crate) fn allow_lists(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rchat_perms::registry;
 
     #[test]
     fn permissions_follow_the_shared_registry() {
@@ -461,6 +487,8 @@ mod tests {
             Perm::ManageRoles,
             Perm::AssignRoles,
             Perm::ManageProfiles,
+            Perm::PinMessages,
+            Perm::BypassSlowmode,
         ];
         for perm in all {
             let name = format!("{perm:?}");
@@ -476,10 +504,11 @@ mod tests {
 
     #[test]
     fn stored_masks_keep_the_gated_management_bits() {
-        assert_eq!(ALL_PERMS, 127999);
+        let split = Perm::PinMessages as i64 | Perm::BypassSlowmode as i64;
+        assert_eq!(ALL_PERMS, PRE_SPLIT_PERMS | split);
         assert_eq!(perm_bits(true, 0, 5), ALL_PERMS);
         assert_eq!(perm_bits(true, 4 | 1024 | 1 << 17, 1), 4);
-        assert_eq!(perm_bits(false, 4, 1 | 2048 | 1 << 29), 1);
+        assert_eq!(perm_bits(false, 4, 1 | 2048 | 1 << 29), 1 | 1 << 29);
         assert_eq!(perm_bits(false, 0, -1), ALL_PERMS);
         assert_eq!(update_bits(1 | 4 | 4096, 4096 | 8192 | 2, 8192), 12295);
         assert_eq!(update_bits(0, -1, 0), PRE_DELEGATION_PERMS);

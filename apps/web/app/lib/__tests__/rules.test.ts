@@ -27,7 +27,7 @@ import {
   sameOriginImage,
   serverInitial,
 } from '../rules'
-import { ALL_PERMS, Perm, type Channel } from '../types'
+import { ALL_PERMS, hasPerm, Perm, type Channel } from '../types'
 
 const ch = (id: number, kind: Channel['kind']): Channel => ({
   id,
@@ -72,9 +72,9 @@ describe('memberPerms', () => {
 describe('Manage reports', () => {
   test('is included in the full permission mask', () => {
     expect(Perm.ManageReports).toBe(512)
-    expect(ALL_PERMS).toBe(127999)
-    expect(memberPerms({ is_admin: true, perms: 0, role_ids: [] }, [])).toBe(127999)
-    expect(adminMask(0)).toBe(127999)
+    expect(hasPerm(ALL_PERMS, Perm.ManageReports)).toBe(true)
+    expect(memberPerms({ is_admin: true, perms: 0, role_ids: [] }, [])).toBe(ALL_PERMS)
+    expect(adminMask(0)).toBe(ALL_PERMS)
     expect(adminMask(Perm.Kick | Perm.ManageReports)).toBe(516)
     expect(PERM_ITEMS.find(p => p.bit === Perm.ManageReports)).toEqual({
       label: 'Manage reports',

@@ -1,9 +1,14 @@
 import { bytesOf } from './canonical'
+import { bit, fromWire, hasBit, maskAnd, maskNot, maskOr } from '../perms'
 import {
   channelPerms,
   textOnlyChannel,
   cmp,
   EVERYONE,
+  permsQ,
+  RULES_NEXT,
+  rulesOf,
+  skipsSlowMode,
   P as ACL_P,
   resetBit,
   type AclContent,
@@ -203,6 +208,21 @@ const buildChanFacts = (s: Summary): ChanFacts => ({
 // `ik`'s permissions in channel `ch` (owners and Manage channels have every bit).
 export const channelPermsOf = (s: Summary, ik: string, ch: string, F = chanFactsOf(s)) =>
   channelPerms(F, ik, ch)
+
+// What `ik` holds in channel `ch` as the shared permission rules read it. Up to rules 4 the
+// room decides deletes, pins and everyone mentions by the member's permissions whatever the
+// channel says, and whoever slow mode leaves out there also holds Bypass slow mode.
+export const channelMaskOf = (s: Summary, ik: string, ch: string, F = chanFactsOf(s)) => {
+  const rules = rulesOf(F.rules)
+  const mask = fromWire(channelPerms(F, ik, ch, rules), rules)
+  if (rules >= RULES_NEXT || !hasBit(mask, bit('ViewChannels'))) return mask
+  const roomWide = ['DeleteMessages', 'PinMessages', 'MentionEveryone']
+    .map(bit)
+    .reduce((a, b) => maskOr(a, b), 0)
+  const held = maskAnd(fromWire(permsQ(F, ik), rules), roomWide)
+  const base = maskOr(maskAnd(mask, maskNot(roomWide)), held)
+  return skipsSlowMode(F, ik, ch, rules) ? maskOr(base, bit('BypassSlowmode')) : base
+}
 
 // Roles, the highest first (rank order, position, then id).
 export const rolesOf = (s: Summary): ({ id: string } & RoleSum)[] =>

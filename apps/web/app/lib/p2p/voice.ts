@@ -345,9 +345,20 @@ export interface VoiceUser {
   video: boolean
   muted: boolean
   deafened: boolean
+  // Holds no Speak in the channel: nobody plays their audio.
+  silenced?: true
+  // Holds no Video in the channel: nobody shows their camera or screen.
+  unseen?: true
 }
 
 const NO_AUDIO = { muted: false, deafened: false }
+
+// What a member may send in a voice channel.
+export interface VoiceRights {
+  speak: boolean
+  video: boolean
+}
+const EVERY_RIGHT: VoiceRights = { speak: true, video: true }
 
 export interface VoiceDeps {
   clock: Clock
@@ -365,8 +376,10 @@ export interface VoiceDeps {
   signer: () => { dk: string; sk: Uint8Array } | null
   // What we say about our own mic and sound.
   audio: () => { muted: boolean; deafened: boolean }
-  // A member who may view the channel.
+  // A member who may be in the channel.
   allowed: (room: string, ch: string, ik: string) => boolean | Promise<boolean>
+  // Whether a member's audio and video count there (default: both).
+  rights?: (room: string, ch: string, ik: string) => VoiceRights
   certs: (ik: string) => { ik: string; certs: Cert[] } | null
   onChange: (room: string) => void
   // Dials participants we have no session with.
@@ -464,6 +477,17 @@ export class Voice implements Signaler {
   current(): { room: string; ch: string } | null {
     const m = this.mine
     return m ? { room: m.room, ch: m.ch } : null
+  }
+
+  // What `ik` may send in a voice channel of the room.
+  rights(room: string, ch: string, ik: string): VoiceRights {
+    return this.deps.rights?.(room, ch, ik) ?? EVERY_RIGHT
+  }
+
+  // What we may send in the channel we are in.
+  myRights(): VoiceRights {
+    const m = this.mine
+    return m ? this.rights(m.room, m.ch, this.deps.me()) : EVERY_RIGHT
   }
 
   config(): RTCConfiguration {
@@ -851,8 +875,13 @@ export class Voice implements Signaler {
       all.push({ ik: this.deps.me(), ch: m.ch, video: m.video, muted, deafened, since: m.since })
     }
     all.sort((a, b) => a.since - b.since || (a.ik < b.ik ? -1 : 1))
-    for (const { ik, ch, video, muted, deafened } of all)
-      (out[ch] ??= []).push({ ik, video, muted, deafened })
+    for (const { ik, ch, video, muted, deafened } of all) {
+      const may = this.rights(room, ch, ik)
+      const user: VoiceUser = { ik, video: video && may.video, muted, deafened }
+      if (!may.speak) user.silenced = true
+      if (!may.video) user.unseen = true
+      ;(out[ch] ??= []).push(user)
+    }
     return out
   }
 

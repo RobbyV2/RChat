@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use utoipa::ToSchema;
 
 use super::access::overwrite_sql::overwrite_sql;
-use super::access::perms::Perm;
+use super::access::perms::{Perm, held};
 use super::access::{Proof, forbidden, not_found, resolve_channel, resolve_message};
 use super::audit::{self, Action, Details, Entry, Target};
 use super::budget;
@@ -122,7 +122,9 @@ pub(crate) async fn status(
 ///
 /// A first send returns a private session. Present it in X-Guest-Session for later sends.
 /// Private servers also require their live X-Guest-Grant. Guest replies never notify anyone.
-#[utoipa::path(post, path = "/api/v1/channels/{id}/guest-messages", tag = "Messages", params(("id" = i64, Path, description = "Text channel id")), request_body = GuestText, responses((status = 200, description = "Message sent", body = Posted), (status = 400, description = "Invalid text or reply"), (status = 401, description = "Guest session expired"), (status = 403, description = "Guest posting paused"), (status = 404, description = "Channel unavailable"), (status = 429, description = "Slow mode, the message rate of the client address (`Sending too fast, try again in a moment`, with `Retry-After`) or request limit")))]
+/// Guests hold what everyone holds in the channel: the first reply of a thread needs Start
+/// threads, and without Embed links the message gets no link previews.
+#[utoipa::path(post, path = "/api/v1/channels/{id}/guest-messages", tag = "Messages", params(("id" = i64, Path, description = "Text channel id")), request_body = GuestText, responses((status = 200, description = "Message sent", body = Posted), (status = 400, description = "Invalid text or reply"), (status = 401, description = "Guest session expired"), (status = 403, description = "Guest posting paused"), (status = 404, description = "Channel unavailable, or the first reply of a thread where everyone may not start threads"), (status = 429, description = "Slow mode, the message rate of the client address (`Sending too fast, try again in a moment`, with `Retry-After`) or request limit")))]
 pub(crate) async fn post(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -270,8 +272,9 @@ struct Stored<'a> {
 impl Stored<'_> {
     /// Stores the message only if, at the moment of the write, the server is still readable to
     /// this guest (publicly or with a live grant), the channel is a text channel where everyone
-    /// may view and send, the
-    /// server takes guest text and the site's guest switches are on.
+    /// may view and send (and, for the first reply of a thread, start threads), the server takes
+    /// guest text and the site's guest switches are on. Where everyone may not embed links, the
+    /// message gets no link previews.
     async fn insert(
         &self,
         tx: &mut sqlx::AnyConnection,
@@ -281,8 +284,10 @@ impl Stored<'_> {
         let public = reading.readable_sql();
         let view = overwrite_sql(masks::VIEW, None);
         let send = overwrite_sql(masks::SEND, None);
+        let threads = overwrite_sql(held::THREADS, None);
+        let embed = overwrite_sql(held::EMBED, None);
         let insert = format!(
-            "INSERT INTO messages(channel_id, thread_root_id, author, content, reply_to, created_at, no_previews) SELECT $1, $2, $3, $4, $5, $6, c.text_only FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND s.name = $7 AND ($8 = 1 OR ({public})) AND COALESCE(s.password_hash, '') <> '!purging' AND c.kind = 'text' AND {view} AND {send} AND s.guest_chat_opt_in = 1 AND (SELECT COUNT(*) FROM settings WHERE key IN ('guests_enabled', 'guest_chat_enabled') AND value = '1') = 2 RETURNING id"
+            "INSERT INTO messages(channel_id, thread_root_id, author, content, reply_to, created_at, no_previews) SELECT $1, $2, $3, $4, $5, $6, CASE WHEN c.text_only <> 0 OR NOT {embed} THEN 1 ELSE 0 END FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND s.name = $7 AND ($8 = 1 OR ({public})) AND COALESCE(s.password_hash, '') <> '!purging' AND c.kind = 'text' AND {view} AND {send} AND ($2 IS NULL OR {threads} OR EXISTS(SELECT 1 FROM messages tm WHERE tm.thread_root_id = $2)) AND s.guest_chat_opt_in = 1 AND (SELECT COUNT(*) FROM settings WHERE key IN ('guests_enabled', 'guest_chat_enabled') AND value = '1') = 2 RETURNING id"
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(insert))
             .bind(self.channel)
@@ -492,6 +497,12 @@ mod tests {
     /// The built-in server with guest text on at both levels, its text channel, and a moderator.
     async fn open_world(tag: &str) -> (AppState, PathBuf, i64) {
         let (state, path) = temp_state(tag).await;
+        let general = open_in(&state).await;
+        (state, path, general)
+    }
+
+    /// `open_world` on a state already made: its text channel.
+    async fn open_in(state: &AppState) -> i64 {
         let db = &state.db;
         crate::db::NewUser::plain("moderator")
             .hash("x")
@@ -500,14 +511,13 @@ mod tests {
         crate::db::NewUser::plain("member").hash("x").add(db).await;
         add_member(db, "rchat", "moderator", 1, 0, 0).await;
         add_member(db, "rchat", "member", 0, 0, 0).await;
-        switches(&state, true, true, false).await;
+        switches(state, true, true, false).await;
         opt_in(db, "rchat", true, false).await;
-        let general = scalar(
+        scalar(
             db,
             "SELECT id FROM channels WHERE server = 'rchat' AND kind = 'text' ORDER BY id LIMIT 1",
         )
-        .await;
-        (state, path, general)
+        .await
     }
 
     #[tokio::test]
@@ -833,6 +843,52 @@ mod tests {
             "a reply is no root"
         );
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guests_start_threads_and_get_previews_only_where_everyone_may() {
+        for (state, temp) in crate::api::test_util::each_db("guest_text_bits").await {
+            let general = open_in(&state).await;
+            let db = &state.db;
+            let insert = |sql: String| async move { scalar(db, &sql).await };
+            let root = insert(format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({general}, 'member', 'root', 1) RETURNING id")).await;
+            let busy = insert(format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({general}, 'member', 'busy', 1) RETURNING id")).await;
+            insert(format!("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) VALUES({general}, {busy}, 'member', 'in the thread', 2) RETURNING id")).await;
+            let deny = held::THREADS | held::EMBED;
+            exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, allow, deny) VALUES({general}, 'everyone', 0, {deny})")).await;
+            let post =
+                |body: serde_json::Value| send(&state, general, headers(None, None), 1, body);
+            let link = "see https://example.com";
+            assert_eq!(
+                code(
+                    &post(serde_json::json!({ "content": "first", "thread_root_id": root })).await
+                ),
+                404,
+                "the first reply of a thread"
+            );
+            let joined = post(serde_json::json!({ "content": link, "thread_root_id": busy }))
+                .await
+                .expect("a reply in a thread already started");
+            assert!(
+                joined.message.no_previews,
+                "no previews without Embed links"
+            );
+            let top = post(serde_json::json!({ "content": link }))
+                .await
+                .expect("a message in the channel");
+            assert!(top.message.no_previews);
+            exec(
+                db,
+                &format!("DELETE FROM channel_perms WHERE channel_id = {general}"),
+            )
+            .await;
+            let first = post(serde_json::json!({ "content": link, "thread_root_id": root }))
+                .await
+                .expect("the first reply where everyone may start threads");
+            assert_eq!(first.message.thread_root_id, Some(root));
+            assert!(!first.message.no_previews);
+            temp.done(state).await;
+        }
     }
 
     #[tokio::test]

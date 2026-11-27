@@ -11,7 +11,7 @@ import { messageLinkUrl } from './message_links'
 import { canPin, isPinned } from './pins'
 import { chunked } from './reads'
 import { sharing } from './platform'
-import { messageServer, myPerms } from './selectors'
+import { channelCan, messageServer } from './selectors'
 import {
   EXPORT_VERSION,
   clear,
@@ -33,7 +33,7 @@ import {
   type Selection,
 } from './selection'
 import type { RChatState } from './store_types'
-import { Perm, hasPerm, type BulkJob, type Message, type WsEvent } from './types'
+import type { BulkJob, Message, WsEvent } from './types'
 
 type SetState = (partial: Partial<RChatState> | ((s: RChatState) => Partial<RChatState>)) => void
 
@@ -63,10 +63,11 @@ export const selectionInitial = () => ({
   selectionBusy: null as string | null,
 })
 
-// Where a scope is: its server (channels and threads), whether it is a DM, and how the confirm
-// text names it.
+// Where a scope is: its server and channel (channels and threads), whether it is a DM, and how
+// the confirm text names it.
 export interface ScopePlace {
   server: string | null
+  channelId: number | null
   dm: boolean
   where: string
   root: Message | null
@@ -74,7 +75,8 @@ export interface ScopePlace {
 
 export const scopePlace = (s: RChatState, scope: string): ScopePlace => {
   const id = Number(scope.slice(1))
-  if (scope.startsWith('d')) return { server: null, dm: true, where: 'in this DM', root: null }
+  if (scope.startsWith('d'))
+    return { server: null, channelId: null, dm: true, where: 'in this DM', root: null }
   if (scope.startsWith('t')) {
     const root =
       s.panel?.kind === 'thread' && s.panel.root.id === id
@@ -84,6 +86,7 @@ export const scopePlace = (s: RChatState, scope: string): ScopePlace => {
             .find(m => m.id === id) ?? null)
     return {
       server: root ? messageServer(s, root) : null,
+      channelId: root?.channel_id ?? null,
       dm: false,
       where: 'in this thread',
       root,
@@ -91,15 +94,16 @@ export const scopePlace = (s: RChatState, scope: string): ScopePlace => {
   }
   for (const [server, detail] of Object.entries(s.servers)) {
     const channel = detail.channels.find(c => c.id === id)
-    if (channel) return { server, dm: false, where: `in #${channel.name}`, root: null }
+    if (channel)
+      return { server, channelId: id, dm: false, where: `in #${channel.name}`, root: null }
   }
-  return { server: null, dm: false, where: 'here', root: null }
+  return { server: null, channelId: null, dm: false, where: 'here', root: null }
 }
 
 // Whether the viewer may delete other people's messages in `scope`.
 export const moderates = (s: RChatState, scope: string) => {
-  const { server, dm } = scopePlace(s, scope)
-  return !dm && server !== null && hasPerm(myPerms(s, server), Perm.DeleteMessages)
+  const { server, channelId, dm } = scopePlace(s, scope)
+  return !dm && server !== null && channelCan(s, server, channelId).manage
 }
 
 export const canDeleteIn = (s: RChatState, scope: string, m: Message) =>
@@ -107,13 +111,10 @@ export const canDeleteIn = (s: RChatState, scope: string, m: Message) =>
 
 export const canPinIn = (s: RChatState, scope: string) => {
   if (!s.me || s.guest || scope.startsWith('t')) return false
-  const { server, dm } = scopePlace(s, scope)
+  const { server, channelId, dm } = scopePlace(s, scope)
   if (dm) return true
-  return (
-    server !== null &&
-    s.me.servers.some(x => x.name === server) &&
-    hasPerm(myPerms(s, server), Perm.DeleteMessages)
-  )
+  const can = channelCan(s, server, channelId)
+  return server !== null && s.me.servers.some(x => x.name === server) && can.pin && can.send
 }
 
 export const scopeList = (s: RChatState, scope: string): Message[] => s.messages[scope] ?? []

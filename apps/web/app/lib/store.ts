@@ -79,6 +79,7 @@ export function createChatStore(acct: AccountSession) {
 
   let sessionHub!: ReturnType<typeof sessionSlice>
   let bindRtcMedia!: () => () => void
+  let followVoiceRights!: (s: RChatState, prev: RChatState) => void
   let unbindMedia: (() => void) | undefined
   const chatStore = createStore<RChatState>()((set, get) => {
     const { confirmDeleteMessage, noteMemberTimeouts, noteTimeout } = menuActions(
@@ -140,6 +141,7 @@ export function createChatStore(acct: AccountSession) {
 
     const rtcHub = rtcSlice(set, get, { acct, act, fail, saveCallRoute })
     bindRtcMedia = rtcHub.bindMedia
+    followVoiceRights = rtcHub.followVoiceRights
     const { applyMic, endRtc, endVoiceMedia, joins } = rtcHub
 
     const readsHub = readsSlice(set, get, {
@@ -651,6 +653,7 @@ export function createChatStore(acct: AccountSession) {
   }
   const unsubscribeStore = chatStore.subscribe((s, prev) => {
     if (s.servers !== prev.servers) hideClosedRoom(s)
+    followVoiceRights(s, prev)
     if (s.settings !== prev.settings) sessionHub.p2pGate.settings(s.settings)
     if (
       (acct.mode === 'lite' || acct.mode === 'parked') &&

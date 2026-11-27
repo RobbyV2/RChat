@@ -3,11 +3,11 @@ import {
   everyoneSees,
   gt,
   restricts,
+  skipsSlowMode,
   timedBans,
   timeouts,
   type Rank,
 } from '../acl/rules'
-import { fromWire } from '../../perms'
 import type { MemberSum, Summary } from '../acl/summary'
 import { cleanName } from '../keys'
 import { roomLock, shownRoomProfile } from '../../profile_reset'
@@ -22,6 +22,7 @@ import type { Local } from '../limits'
 import {
   can,
   chanFactsOf,
+  channelMaskOf,
   channelPermsOf,
   channelsOf,
   historyOf,
@@ -254,8 +255,8 @@ export function channelViews(
     out.push({
       ...c,
       send: me === 'join' && (p & P.SendMessages) !== 0,
-      exempt: (p & (P.ManageChannels | P.ManageMessages)) !== 0,
-      perms: fromWire(p, RULES_VERSION),
+      exempt: skipsSlowMode(F, myIk, c.id),
+      perms: channelMaskOf(s, myIk, c.id, F),
       over: s.overwrites?.[c.id] ?? {},
       everyoneSees: everyoneSees(F, c.id),
     })

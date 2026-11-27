@@ -7,9 +7,9 @@ import { ChartColumn, FileText, Pin, X, type LucideIcon } from 'lucide-react'
 import { PreviewSpoiler, RevealChannelPreview } from './preview_reveal'
 import { useMediaSrc } from '../lib/media_src'
 import { PINS_TITLE, noPinsText, pinPlace } from '../lib/pins'
-import { myPerms, useMask, useStore, viewKey } from '../lib/store'
+import { channelCan, useMask, useStore, viewKey } from '../lib/store'
 import { useForwardAccess } from '../lib/forward_access'
-import { Perm, hasPerm, type Message, type MessageMedia } from '../lib/types'
+import type { Message, MessageMedia } from '../lib/types'
 import { longPress, useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
@@ -20,7 +20,7 @@ import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
 
-// Pinning and unpinning: either DM participant, or a member with Manage messages.
+// Pinning and unpinning: either DM participant, or a member with Pin messages in the channel.
 export function useCanPin() {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const timedOut = useMyTimeoutEnds(server) !== null
@@ -28,10 +28,8 @@ export function useCanPin() {
     const v = s.view
     if (!v || !s.me || s.guest) return false
     if (v.kind === 'dm') return true
-    return (
-      s.me.servers.some(x => x.name === v.server) &&
-      hasPerm(myPerms(s, v.server), Perm.DeleteMessages)
-    )
+    const held = channelCan(s, v.server, v.channelId)
+    return s.me.servers.some(x => x.name === v.server) && held.pin && held.send
   })
   return can && !timedOut
 }

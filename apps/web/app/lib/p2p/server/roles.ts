@@ -1,18 +1,16 @@
-import { BAN_REASON_MAX, gt, timedBans, timeouts, TIMEOUT_MAX_MS } from '../acl/rules'
+import {
+  BAN_REASON_MAX,
+  gt,
+  skipsSlowMode,
+  timedBans,
+  timeouts,
+  TIMEOUT_MAX_MS,
+} from '../acl/rules'
 import { cacheKey, countOf, moveCounts, storedSize } from '../dag'
 import { CANT_TEXT } from '../flows'
 import { cleanName } from '../keys'
 import { memberExtras } from '../../profile_fields'
-import {
-  can,
-  channelPermsOf,
-  channelsOf,
-  memberOf,
-  membershipOf,
-  P,
-  rankOf,
-  roleRank,
-} from '../state'
+import { can, chanFactsOf, channelsOf, memberOf, membershipOf, P, rankOf, roleRank } from '../state'
 import { unindexRoom } from '../search'
 import type { ServerCtx } from './context'
 import { ServerError, NO_ROOM_TEXT, newRolePos } from './types'
@@ -89,7 +87,7 @@ export function revokeRole(cx: ServerCtx, room: string, ik: string, role: string
 export async function slowLeft(cx: ServerCtx, room: string, ch: string) {
   const s = cx.sumOf(room)
   const c = channelsOf(s, cx.local.display).find(x => x.id === ch)
-  if (!c?.slow || channelPermsOf(s, cx.me, ch) & (P.ManageChannels | P.ManageMessages)) return 0
+  if (!c?.slow || skipsSlowMode(chanFactsOf(s), cx.me, ch)) return 0
   const last = await cx.host.lastSent(room, cx.me, ch)
   return last === null ? 0 : Math.max(0, last + c.slow * 1000 - cx.clock.now())
 }

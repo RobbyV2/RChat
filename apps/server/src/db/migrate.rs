@@ -277,7 +277,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 52: the @everyone permissions of a server and allow/deny channel overwrites.
 /// 53: the indexes of thread replies by channel and by DM (`idx_messages_channel_threads`,
 /// `idx_messages_dm_threads`), for the thread lists.
-pub const SCHEMA_VERSION: i64 = 53;
+/// 54: the Pin messages and Bypass slow mode permission bits.
+pub const SCHEMA_VERSION: i64 = 54;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -690,6 +691,9 @@ pub(super) async fn init_schema(
     if version < MANAGE_PROFILES_SINCE {
         grant_manage_profiles(conn).await?;
     }
+    if version < 54 {
+        grant_split_bits(conn).await?;
+    }
     if stored_setting(conn, BUILTIN_STATE).await?.is_none() {
         let t = now();
         sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
@@ -720,6 +724,35 @@ pub(super) async fn init_schema(
     }
     store_setting(conn, "schema_version", &SCHEMA_VERSION.to_string()).await?;
     Ok(started)
+}
+
+/// Gives Pin messages to every admin permission set and role that includes Manage messages, and
+/// Bypass slow mode to those that include Manage channels or Manage messages.
+async fn grant_split_bits(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    let (channels, messages) = (Perm::ManageChannels as i64, Perm::DeleteMessages as i64);
+    let mut n = 0;
+    for (bit, holders) in [
+        (Perm::PinMessages as i64, messages),
+        (Perm::BypassSlowmode as i64, channels | messages),
+    ] {
+        for sql in [
+            "UPDATE members SET perms = perms | $1 WHERE is_admin <> 0 AND perms <> 0 AND (perms & $2) <> 0 AND (perms & $1) = 0",
+            "UPDATE roles SET perms = perms | $1 WHERE (perms & $2) <> 0 AND (perms & $1) = 0",
+        ] {
+            n += sqlx::query(sql)
+                .bind(bit)
+                .bind(holders)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected();
+        }
+    }
+    if n > 0 {
+        tracing::info!(
+            "gave Pin messages and Bypass slow mode to {n} admin and role permission sets"
+        );
+    }
+    Ok(())
 }
 
 /// Gives Manage reports to admins with every permission, and to every admin permission set and

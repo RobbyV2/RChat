@@ -10,9 +10,9 @@ use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::overwrite_sql::overwrite_sql;
-use crate::api::access::perms::{ChannelAccess, Perm};
+use crate::api::access::perms::{ChannelAccess, held};
 use crate::api::access::{
-    Proof, ResolvedMessage, ThreadHome, channel_manager_servers, granted_servers,
+    Proof, ResolvedMessage, ThreadHome, channel_manager_servers, forbidden, granted_servers,
     member_channel_rights, resolve_channel, resolve_dm, resolve_message,
 };
 use crate::api::admin::like_pattern;
@@ -1288,6 +1288,7 @@ pub(crate) async fn insert_message(
     quote: Option<&Quoted>,
     groups: Vec<GroupMention>,
     hook: Option<&crate::api::webhooks::HookPost>,
+    plain: bool,
 ) -> Result<Message, ApiError> {
     let SendReq {
         content,
@@ -1328,6 +1329,7 @@ pub(crate) async fn insert_message(
             || hook.is_some_and(|h| !h.embeds.is_empty()),
     )
     .await?;
+    let no_previews = text_only || plain;
     let media = match (&media_id, p2p) {
         (Some(_), Some(_)) => {
             return Err(bad("Choose server or P2P attachment, not both"));
@@ -1391,7 +1393,7 @@ pub(crate) async fn insert_message(
     .bind(hook.map(|h| h.name.clone()))
     .bind(hook.map(|h| h.avatar.clone()))
     .bind(hook.and_then(|h| crate::api::webhooks::stored_embeds(&h.embeds)))
-    .bind(i64::from(text_only))
+    .bind(i64::from(no_previews))
     .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
@@ -1410,7 +1412,7 @@ pub(crate) async fn insert_message(
         reply_count: 0,
         media,
         embeds: Vec::new(),
-        no_previews: text_only,
+        no_previews,
         kind: match poll {
             Some(_) => "poll",
             None => "user",
@@ -1495,6 +1497,21 @@ pub(crate) async fn shown_source(
                     false => Some(channel.name().to_string()),
                 },
             }))
+        }
+    }
+}
+
+impl Forwarded {
+    /// The copy for a place that takes no file from its sender: the file is left out by name.
+    fn without_file(self) -> Forwarded {
+        let dropped = match &self.media {
+            Some(media) => Some(media.filename.clone()),
+            None => self.dropped.clone(),
+        };
+        Forwarded {
+            media: None,
+            dropped,
+            ..self
         }
     }
 }
@@ -1649,6 +1666,7 @@ async fn insert_forward(
     thread_root_id: Option<i64>,
     user: &User,
     fwd: Forwarded,
+    plain: bool,
 ) -> Result<(Message, bool), ApiError> {
     let Forwarded {
         id: source_id,
@@ -1677,6 +1695,7 @@ async fn insert_forward(
         media.is_some() || dropped.is_some() || snapshot.is_some(),
     )
     .await?;
+    let text_only = text_only || plain;
     let (media, dropped) = match media {
         Some(media)
             if !crate::api::media::may_carry(
@@ -1824,14 +1843,30 @@ async fn deliver(
         PingScope::Dm { id, users } => (None, None, Some(*id), Some(users.to_vec())),
     };
     let db = &state.db;
+    let rights = match &scope {
+        PingScope::Channel(channel) => Some(channel.member_rights(db).await?),
+        PingScope::Dm { id: _, users: _ } => None,
+    };
+    let lacks = |bits| rights.is_some_and(|held| !held.holds(bits));
+    let plain = lacks(held::EMBED);
     let (message, quote, previews) = match req.forward_of {
         Some(source) => {
             let fwd = forwarded(db, user, source, server.as_deref(), req.show_source).await?;
+            let fwd = match lacks(held::ATTACH) {
+                true => fwd.without_file(),
+                false => fwd,
+            };
             let (message, previews) =
-                insert_forward(db, channel_id, dm_id, thread_root_id, user, fwd).await?;
+                insert_forward(db, channel_id, dm_id, thread_root_id, user, fwd, plain).await?;
             (message, None, previews)
         }
         None => {
+            if (req.media_id.is_some() || req.p2p.is_some()) && lacks(held::ATTACH) {
+                return Err(forbidden("No permission to attach files in this channel"));
+            }
+            if req.poll.is_some() && lacks(held::POLLS) {
+                return Err(forbidden("No permission to create polls in this channel"));
+            }
             let quote = quoted(db, user, place, req.reply_to, req.mention_reply).await?;
             let groups = match (&scope, place) {
                 (PingScope::Channel(channel), Place::Channel(_)) => {
@@ -1850,6 +1885,7 @@ async fn deliver(
                 quote.as_ref(),
                 groups,
                 None,
+                plain,
             )
             .await?;
             (message, quote, false)
@@ -2272,9 +2308,10 @@ async fn read_channel_page(
 ///
 /// Posts a top-level message with an optional attachment (an uploaded file with `media_id` or a
 /// P2P file with `p2p`). Requires a bearer token. The profanity filter checks the text when it is
-/// on. In server channels, needs membership and the send permission. With slow mode, members
-/// without Manage channels or Manage messages wait `slowmode_seconds` between messages in the
-/// channel (thread replies count). Voice channels take no messages. Emits `message` to clients in
+/// on. In server channels, needs membership and the channel's Send messages permission; a file
+/// also needs Attach files and a poll Create polls, and without Embed links the message gets no
+/// link previews. With slow mode, members without Bypass slow mode in the channel wait
+/// `slowmode_seconds` between messages in the channel (thread replies count). Voice channels take no messages. Emits `message` to clients in
 /// the server that can see the channel. If the text has links, `embeds_resolved` follows when the
 /// previews are fetched. Each `@username` outside code pings that user if they are a member who
 /// can see the channel (at most 20 users, not yourself). The ping is stored for
@@ -2282,7 +2319,7 @@ async fn read_channel_page(
 /// channel. With `mention_reply` (default), its author gets one `reply` ping instead. With
 /// `forward_of`, the message is a copy of a message you can read (see `SendReq`). Forwards never
 /// ping. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), voice channel, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (`Too Many Requests! Wait for Ns`). Or `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): more messages from your account than `MESSAGE_RATE_BURST` at once (by default 100) or `MESSAGE_RATE_PER_MINUTE` a minute after that (by default 2400), counted across copies when `REDIS_URL` is set", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), voice channel, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel (or to attach files, create polls or start a thread there, for a message that does), or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (`Too Many Requests! Wait for Ns`). Or `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): more messages from your account than `MESSAGE_RATE_BURST` at once (by default 100) or `MESSAGE_RATE_PER_MINUTE` a minute after that (by default 2400), counted across copies when `REDIS_URL` is set", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2347,11 +2384,13 @@ pub(crate) async fn thread_messages(
 /// Posts a reply to a top-level channel or DM message and starts the thread if needed. The reply
 /// is in the channel or DM of the root and has `thread_root_id` set. Requires a bearer token. In
 /// a channel, the profanity filter checks the text when it is on, and it needs membership and
-/// the send permission. In a DM, it needs being a participant while neither blocked the other,
-/// and DM text is not checked by the profanity filter. With slow mode, members without Manage
-/// channels or Manage messages wait `slowmode_seconds` between messages in the channel (thread
-/// replies count). Emits `message` to clients in the server that can see the channel, or to both
-/// DM participants. If the text has links, `embeds_resolved` follows when the previews are
+/// the channel's Send messages permission, and the first reply of a thread also its Start threads
+/// permission; a file also needs Attach files and a poll Create polls, and without Embed links the
+/// reply gets no link previews. In a DM, it needs being a participant while neither blocked the
+/// other, and DM text is not checked by the profanity filter. With slow mode, members without
+/// Bypass slow mode in the channel wait `slowmode_seconds` between messages in the channel
+/// (thread replies count). Emits `message` to clients in the server that can see the channel, or
+/// to both DM participants. If the text has links, `embeds_resolved` follows when the previews are
 /// fetched. Each `@username` outside code pings that user if they are a member who can see the
 /// channel, or the other DM participant (at most 20 users, not yourself). The ping is stored for
 /// `GET /api/v1/unreads` and sent as a `ping` event. `reply_to` can quote the root or another
@@ -2372,6 +2411,7 @@ pub(crate) async fn send_thread_message(
                 check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
             }
             channel.send_gate(&state.db).await?;
+            root.thread_start_gate(&state.db, id).await?;
             deliver(
                 &state,
                 &user,
@@ -2460,11 +2500,11 @@ pub(crate) async fn send_dm_message(
 /// Permanently deletes a channel, thread or DM message; deleting a thread root also deletes
 /// its replies. Pings on the deleted messages are removed; each affected user gets
 /// `ping_count` with the scope's new unseen count. Requires a bearer token. The author may
-/// always delete their own message; in servers, members with the Manage messages permission
-/// may delete anyone's. Emits `message_deleted` (with `thread_root_id` for replies) to clients
+/// always delete their own message; in servers, members with the Manage messages permission in
+/// the channel may delete anyone's. Emits `message_deleted` (with `thread_root_id` for replies) to clients
 /// in the server that can see the channel, or to both DM participants. General rate-limit
 /// bucket.
-#[utoipa::path(delete, path = "/api/v1/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the channel (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2551,10 +2591,7 @@ pub(crate) async fn moderated(
         },
         None => false,
     };
-    let actor = server
-        .audit_actor(db, Perm::DeleteMessages)
-        .await?
-        .staff_if(bypassed);
+    let actor = server.channel_actor(bypassed);
     Ok(Some((server.name().to_string(), actor, found)))
 }
 
@@ -2620,6 +2657,11 @@ pub(crate) async fn edit_message(
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
         let (mut tx, text_only) =
             begin_message_write(&state.db, message.scope().channel_id, false).await?;
+        let text_only = text_only
+            || match message.channel() {
+                Some(channel) => !channel.member_rights(&state.db).await?.holds(held::EMBED),
+                None => false,
+            };
         sqlx::query(
             "UPDATE messages SET content = $1, edited_at = $2, no_previews = $4 WHERE id = $3",
         )
@@ -5463,8 +5505,8 @@ mod tests {
         let db = &state.db;
         for (holder, perms) in [
             ("chanmod", Perm::ManageChannels as i64),
-            ("msgmod", Perm::DeleteMessages as i64),
-            ("kicker", Perm::Kick as i64),
+            ("msgmod", Perm::BypassSlowmode as i64),
+            ("kicker", Perm::Kick as i64 | Perm::DeleteMessages as i64),
             ("writer", 0),
         ] {
             add_member(db, "rchat", holder, 0, 0, now()).await;

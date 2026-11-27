@@ -12,8 +12,8 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from 'react'
-import { serverAdminPerms, useStore, viewKey } from '../lib/store'
-import { Perm, hasPerm, type Message, type Role, type UserRef } from '../lib/types'
+import { channelCan, useStore, viewKey } from '../lib/store'
+import type { Message, Role, UserRef } from '../lib/types'
 import {
   dmPeople,
   withYouLast,
@@ -141,9 +141,8 @@ type Suggestion =
 function useGroupSearch(listKey: string | null) {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const member = useStore(s => !!server && !!s.me?.servers.some(x => x.name === server))
-  const allowed = useStore(s =>
-    server ? hasPerm(serverAdminPerms(s, server), Perm.MentionEveryone) : false
-  )
+  const channelId = useStore(s => (s.view?.kind === 'channel' ? s.view.channelId : null))
+  const allowed = useStore(s => (server ? channelCan(s, server, channelId).mention : false))
   const roles = useStore(s => (server ? s.servers[server]?.roles : undefined)) ?? NO_ROLES
   const open = member && listKey?.[0] === 'c'
   return useCallback(

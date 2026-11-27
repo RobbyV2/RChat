@@ -264,6 +264,7 @@ export class Servers {
       },
       audio: () => deps.audio?.() ?? { muted: false, deafened: false },
       allowed: (room, ch, ik) => this.voiceAllowed(room, ch, ik),
+      rights: (room, ch, ik) => search.voiceRights(ctx(this), room, ch, ik),
       certs: ik => {
         const d = node.anyDevicesOf(ik)
         return d ? { ik, certs: liveCerts(d.certs, d.revocations) } : null

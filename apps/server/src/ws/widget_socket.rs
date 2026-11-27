@@ -279,9 +279,13 @@ impl Seat<'_> {
                 if !self.owns() || !send(socket, ev, self.state.limits.ws_send_timeout()).await {
                     return false;
                 }
-                let Ok(timeouts) =
-                    crate::api::timeouts::running_timeouts(&self.state.db, self.server, users)
-                        .await
+                let Ok(silenced) = crate::api::access::ws_voice_silenced(
+                    &self.state.db,
+                    self.server,
+                    self.channel,
+                    users,
+                )
+                .await
                 else {
                     return false;
                 };
@@ -291,7 +295,7 @@ impl Seat<'_> {
                     .collect();
                 let muted: Vec<_> = users
                     .iter()
-                    .filter(|u| staff.contains(u) || timeouts.contains_key(*u))
+                    .filter(|u| staff.contains(u) || silenced.contains(*u))
                     .collect();
                 send(
                     socket,

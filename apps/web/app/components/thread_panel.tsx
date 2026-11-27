@@ -6,11 +6,11 @@ import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'reac
 import { MessageSquareText, Trash2 } from 'lucide-react'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { ReactionBar } from './reactions'
-import { readOnly } from '../lib/reactions'
+import { useChannelPerms } from '../lib/client/use_channel_perms'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { openActionMenu } from '../lib/actions/menu'
-import { myPerms, roleColor, threadKey, useStore } from '../lib/store'
-import { Perm, hasPerm, type Message } from '../lib/types'
+import { roleColor, threadKey, useStore } from '../lib/store'
+import type { Message } from '../lib/types'
 import type { Outgoing } from '../lib/store_types'
 import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
@@ -142,7 +142,6 @@ export default function ThreadPanel() {
     EMPTY
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
-  const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
   const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : undefined))
   const roles = detail?.roles
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
@@ -229,23 +228,24 @@ export default function ThreadPanel() {
 
   const canUnreact = me !== null && !guest
   const inDm = root !== null && root.dm_id !== null
-  const canReact =
+  const can = useChannelPerms(
+    server !== null && root?.channel_id != null ? { server, channelId: root.channel_id } : null
+  )
+  const acting =
     canUnreact &&
     root !== null &&
     (inDm
       ? !dmOther
-      : server !== null &&
-        me.servers.some(x => x.name === server) &&
-        !readOnly(detail, root.channel_id) &&
-        timedOutEnds === null)
+      : server !== null && me.servers.some(x => x.name === server) && timedOutEnds === null)
+  const canWrite = acting && can.send
+  const canReact = acting && can.react
   const canQuoteHere = useStore(
-    s => replyAccess(s, server, root?.channel_id ?? null, canReact, inDm).quote
+    s => replyAccess(s, server, root?.channel_id ?? null, canWrite, inDm).quote
   )
 
   if (!root || !key) return null
   const positioned = scroll.positioned
-  const canDelete = (m: Message) =>
-    me !== null && (m.author.username === me.username || hasPerm(perms, Perm.DeleteMessages))
+  const canDelete = (m: Message) => me !== null && (m.author.username === me.username || can.manage)
 
   const onScroll = () => {
     scroll.onScroll()
@@ -261,7 +261,7 @@ export default function ThreadPanel() {
   const canReply = (m: Message) => canQuoteHere && canQuote(m)
   const forwardable = (m: Message) => canUnreact && canForward(m)
   const replyTo = (m: Message) => startReply(key, m)
-  const canEdit = (m: Message) => canReact && ownEditable(m, me?.username)
+  const canEdit = (m: Message) => canWrite && ownEditable(m, me?.username)
   const editMsg = (m: Message) => startEdit(key, m)
   const jump = (id: number) => void jumpTo(key, id)
   const jumpMain = (id: number) => {
@@ -309,7 +309,7 @@ export default function ThreadPanel() {
         {m.forward ? (
           <ForwardCard m={m} canDelete={canDelete(m)} />
         ) : m.kind === 'poll' ? (
-          <PollCard m={m} canVote={canReact} />
+          <PollCard m={m} canVote={canWrite} />
         ) : (
           <MarkdownMessage
             message={m}

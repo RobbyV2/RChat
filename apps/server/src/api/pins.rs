@@ -76,9 +76,8 @@ fn cannot_pin() -> ApiError {
 /// Pin a message
 ///
 /// Pins a top-level message of a channel or DM. Requires a bearer token. Guests cannot pin.
-/// Needs read access to the message. In server channels, also needs membership, the Manage
-/// messages permission (bit 2, which also lets you delete messages of others) and the right to
-/// send in the channel. In DMs, needs to be a participant. Only normal messages can be pinned
+/// Needs read access to the message. In server channels, also needs membership and the channel's
+/// Pin messages and Send messages permissions. In DMs, needs to be a participant. Only normal messages can be pinned
 /// (not thread replies, call logs or pin notices). A channel or DM has at most 100 pins by default
 /// (`CHANNEL_PINS_MAX`). Pinning
 /// a pinned message changes nothing. A new pin adds a `pin` message ("alice pinned a message";
@@ -88,7 +87,7 @@ fn cannot_pin() -> ApiError {
 /// `message_pinned` (`{server, channel_id, dm_id, dm_users, message_id, pinned_at, pinned_by}`,
 /// ids only) to clients that can see the channel, or to both DM participants. General rate-limit
 /// bucket.
-#[utoipa::path(put, path = "/api/v1/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Pinned (or already pinned); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`Cannot pin this message`: a thread reply, a call log or a pin notice. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Manage messages permission, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 409, description = "`This channel has reached the pin limit` or `This conversation has reached the pin limit`: 100 pinned messages by default (`CHANNEL_PINS_MAX`, reason `limit`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket, or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/api/v1/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Pinned (or already pinned); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`Cannot pin this message`: a thread reply, a call log or a pin notice. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Pin messages permission in the channel, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 409, description = "`This channel has reached the pin limit` or `This conversation has reached the pin limit`: 100 pinned messages by default (`CHANNEL_PINS_MAX`, reason `limit`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket, or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn pin_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -223,7 +222,7 @@ pub(crate) async fn pin_message(
 /// as pinning. Unpinning adds no message. Unpinning a message that is not pinned changes
 /// nothing. Emits `message_unpinned` (`{server, channel_id, dm_id, dm_users, message_id}`) to
 /// clients that can see the channel, or to both DM participants. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/v1/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Unpinned (or was not pinned); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Manage messages permission, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket, or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Unpinned (or was not pinned); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Pin messages permission in the channel, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket, or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn unpin_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -431,7 +430,8 @@ mod tests {
         for name in ["alice", "bob", "carol", "dora", "nina"] {
             add_user(db, name).await;
         }
-        add_member(db, "rchat", "alice", 1, Perm::DeleteMessages as i64, 1).await;
+        let pins = Perm::DeleteMessages as i64 | Perm::PinMessages as i64;
+        add_member(db, "rchat", "alice", 1, pins, 1).await;
         add_member(db, "rchat", "bob", 0, 0, 1).await;
         add_member(db, "rchat", "carol", 1, Perm::Kick as i64, 1).await;
         add_member(db, "rchat", "dora", 0, 0, 100).await;
@@ -452,7 +452,7 @@ mod tests {
 
         let forbidden = Some((
             StatusCode::FORBIDDEN,
-            "No permission to manage messages".to_string(),
+            "No permission to pin messages in this channel".to_string(),
         ));
         assert_eq!(code(pin(&state, "bob", msg).await), forbidden);
         assert_eq!(

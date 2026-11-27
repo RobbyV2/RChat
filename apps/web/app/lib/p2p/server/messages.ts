@@ -1,4 +1,14 @@
-import { richMessage, textOnlyChannel } from '../acl/rules'
+import {
+  contentLack,
+  holdsIn,
+  mayDelete,
+  mayMentionEveryone,
+  mayPin,
+  richMessage,
+  RULES_NEXT,
+  rulesOf,
+  textOnlyChannel,
+} from '../acl/rules'
 import { getEvents } from '../dag'
 import { deadCounts, liveThreadPings } from '../thread_pings'
 import { serverWire, type ChanCounts, type EventRecord } from '../db'
@@ -11,7 +21,7 @@ import {
   type MsgContent,
 } from '../content'
 import { TOO_BIG_TEXT, slowText } from '../flows'
-import { can, isOwner, membersOf, outranks, P } from '../state'
+import { chanFactsOf, isOwner, membersOf, outranks } from '../state'
 import { DmError, mentionsIn } from '../dm'
 import { cleanName } from '../keys'
 import { shownRoomProfile } from '../../profile_reset'
@@ -24,6 +34,42 @@ import {
   MENTION_EVERYONE,
   lessPings,
 } from './types'
+
+export const NO_SEND_TEXT = "You can't send messages in this channel"
+export const NO_FILES_TEXT = "You can't attach files in this channel"
+export const NO_REACT_TEXT = "You can't react in this channel"
+export const NO_THREAD_TEXT = "You can't start threads in this channel"
+const LACK_TEXT = {
+  send: NO_SEND_TEXT,
+  react: NO_REACT_TEXT,
+  pin: PIN_TEXT,
+  attach: NO_FILES_TEXT,
+}
+
+// From rules 5, content the channel would not admit from us is refused before it is signed.
+function requireHeld(
+  cx: ServerCtx,
+  room: string,
+  ch: string,
+  t: string,
+  c: Record<string, unknown>
+) {
+  const F = chanFactsOf(cx.sumOf(room))
+  if (rulesOf(F.rules) < RULES_NEXT) return
+  const lack = contentLack(F, cx.me, ch, t, c)
+  if (lack !== null) throw new ServerError(LACK_TEXT[lack])
+}
+
+// Whether the thread of `root` has a reply held here.
+async function threadStarted(cx: ServerCtx, room: string, root: string) {
+  const range = IDBKeyRange.bound([room, root, ''], [room, root, '\uffff'])
+  let cursor = await cx.db.transaction('events').store.index('room_thread_sort').openCursor(range)
+  while (cursor) {
+    if (cursor.value.type === 'msg') return true
+    cursor = await cursor.continue()
+  }
+  return false
+}
 
 // Member names a message may mention, by member.
 export function mentionables(cx: ServerCtx, room: string) {
@@ -71,8 +117,16 @@ export async function send(
   }
 ) {
   const content: MsgContent = { body: msg.body, ch: msg.ch }
+  const F = chanFactsOf(cx.sumOf(room))
   if (msg.thread) {
     await cx.threadRoot(room, msg.thread, msg.ch)
+    // From rules 5 the first reply of a thread needs Start threads.
+    if (
+      rulesOf(F.rules) >= RULES_NEXT &&
+      !holdsIn(F, cx.me, msg.ch, 'StartThreads') &&
+      !(await threadStarted(cx, room, msg.thread))
+    )
+      throw new ServerError(NO_THREAD_TEXT)
     content.thread = msg.thread
   }
   if (msg.reply) content.reply = msg.reply
@@ -85,9 +139,10 @@ export async function send(
       .map(m => m.ik)
       .slice(0, EV.mentions)
     if (mentions.length) content.mentions = mentions
-    if (MENTION_EVERYONE.test(msg.body) && can(cx.sumOf(room), cx.me, P.MentionEveryone))
+    if (MENTION_EVERYONE.test(msg.body) && mayMentionEveryone(F, cx.me, msg.ch))
       content.everyone = true
   }
+  requireHeld(cx, room, msg.ch, 'msg', content as unknown as Record<string, unknown>)
   const fitted = fitContent(fitForward(content))
   if (!fitted) throw new ServerError(TOO_BIG_TEXT)
   return cx.content(room, 'msg', fitted as unknown as Record<string, unknown>)
@@ -148,7 +203,7 @@ export async function redact(cx: ServerCtx, room: string, target: string) {
   if (
     r.sender !== cx.me &&
     !isOwner(s, cx.me) &&
-    !(can(s, cx.me, P.ManageMessages) && outranks(s, cx.me, r.sender))
+    !(mayDelete(chanFactsOf(s), cx.me, r.chan) && outranks(s, cx.me, r.sender))
   )
     throw new ServerError("You can't delete this message")
   const id = await cx.content(room, 'redact', { target, ch: r.chan })
@@ -160,13 +215,17 @@ export async function redact(cx: ServerCtx, room: string, target: string) {
 
 export async function react(cx: ServerCtx, room: string, target: string, key: string, on: boolean) {
   const r = await cx.message(room, target)
-  return cx.content(room, 'react', { target, key, on, ch: r.chan })
+  const c = { target, key, on, ch: r.chan }
+  if (r.chan) requireHeld(cx, room, r.chan, 'react', c)
+  return cx.content(room, 'react', c)
 }
 
-// Manage messages (owners have it), top-level messages only, at most `dm.pinsMax` per channel.
+// Manage messages up to rules 4 and Pin messages in the channel from rules 5 (owners have
+// both), top-level messages only, at most `dm.pinsMax` per channel.
 export async function pin(cx: ServerCtx, room: string, target: string, on: boolean) {
   const r = await cx.message(room, target)
-  if (!can(cx.sumOf(room), cx.me, P.ManageMessages)) throw new ServerError(PIN_TEXT)
+  if (!mayPin(chanFactsOf(cx.sumOf(room)), cx.me, r.chan ?? '')) throw new ServerError(PIN_TEXT)
+  if (r.chan) requireHeld(cx, room, r.chan, 'pin', { target, on, ch: r.chan })
   if (await cx.rootOf(r)) throw new ServerError(PIN_THREAD_TEXT)
   if (on && r.chan) {
     const pins = await cx.loadPins(room, r.chan)

@@ -6,18 +6,17 @@ import { EMPTY, type Ix } from './reach'
 import { uncontested, witnessed } from './storage'
 import {
   banWipes,
-  channelPerms,
-  CHANNELS,
   cmp,
   CONTENT_PIN,
   CONTENT_REDACT,
   exposedTo,
   gt,
-  MESSAGES,
+  mayDelete,
+  mayMentionEveryone,
+  mayPin,
   minR,
-  P,
-  permsQ,
   rank,
+  skipsSlowMode,
   type AclContent,
   type AclEv,
   type Rank,
@@ -63,6 +62,7 @@ const target = (m: ContentEv) => (typeof m.c?.target === 'string' ? (m.c.target 
 const later = (x: ContentEv, y: ContentEv) => x.ts > y.ts || (x.ts === y.ts && x.id > y.id)
 // A targeting event acts only in its target's channel (admission checked its own `ch`).
 const sameCh = (t: ContentEv, r: ContentEv) => typeof t.c?.ch === 'string' && r.c?.ch === t.c.ch
+const chOf = (m: ContentEv) => (typeof m.c?.ch === 'string' ? m.c.ch : '')
 const msgKey = (m: ContentEv) =>
   m.t === 'msg' && typeof m.c?.ch === 'string' ? `${m.a}\u0001${m.c.ch}` : null
 // Where m goes in a list by (ts, id): the first entry not before it.
@@ -235,7 +235,10 @@ export class ContentView {
         seq: m.seq,
         ap: m.ap,
         ts: m.ts,
-        c: (tm ? { to: tm.a } : {}) as AclContent,
+        c: {
+          ...(tm ? { to: tm.a } : {}),
+          ...(typed && typeof m.c?.ch === 'string' ? { ch: m.c.ch } : {}),
+        } as AclContent,
       }
       const li = lo.idx && lo.idx.ix === this.ix ? lo.idx : undefined
       a = { e, inB: x => this.inC(m, x), hi, lo, li }
@@ -370,7 +373,7 @@ export class ContentView {
     const F = this.stateOf(m).facts
     const slow = F.channels.get(ch)?.slow
     if (!Number.isSafeInteger(slow) || (slow as number) <= 0) return false
-    if ((channelPerms(F, m.a, ch) & (CHANNELS | MESSAGES)) !== 0) return false
+    if (skipsSlowMode(F, m.a, ch)) return false
     const l = this.msgs.get(msgKey(m)!) ?? []
     let prev: ContentEv | undefined
     for (let i = slot(l, m) - 1; i >= 0 && !prev; i--) if (!this.base(l[i])) prev = l[i]
@@ -478,7 +481,7 @@ export class ContentView {
       if (r.t !== 'redact' || !sameCh(t, r) || !this.after(t, r) || !this.visible(r)) continue
       if (r.a === t.a || this.ix.owners.has(r.a)) return r
       const F = this.stateOf(r).facts
-      if (permsQ(F, r.a) & MESSAGES && gt(rank(F, r.a), rank(F, t.a))) return r
+      if (mayDelete(F, r.a, chOf(r)) && gt(rank(F, r.a), rank(F, t.a))) return r
     }
     return null
   }
@@ -490,7 +493,7 @@ export class ContentView {
     let best: ContentEv | null = null
     for (const p of this.aimed.get(t.id) ?? []) {
       if (p.t !== 'pin' || !sameCh(t, p) || !this.after(t, p) || !this.visible(p)) continue
-      if (!(permsQ(this.stateOf(p).facts, p.a) & MESSAGES)) continue
+      if (!mayPin(this.stateOf(p).facts, p.a, chOf(p))) continue
       if (!best || later(p, best)) best = p
     }
     return best
@@ -525,7 +528,7 @@ export class ContentView {
 
   // A mention of everyone counts only if the author held Mention everyone at its position.
   mentionsEveryone(m: ContentEv): boolean {
-    return m.c?.everyone === true && (permsQ(this.stateOf(m).facts, m.a) & P.MentionEveryone) !== 0
+    return m.c?.everyone === true && mayMentionEveryone(this.stateOf(m).facts, m.a, chOf(m))
   }
 
   // m belongs to X's history under `joined` if m is X's own or its position holds the live

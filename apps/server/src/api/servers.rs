@@ -53,7 +53,7 @@ use crate::api::{
 use crate::db::{ChannelKind, Db, NO_PERMANENT_HASH, User, lock_server, now, shift_member_count};
 use crate::limits::Limits;
 use crate::state::AppState;
-use crate::ws::{Hub, WsEvent, evict_unviewable};
+use crate::ws::{Hub, WsEvent, voice_rules_changed};
 use rchat_perms::delta::{self, Refusal};
 use rchat_perms::eval::{self, Mode, Ow, Who};
 use rchat_perms::rules::HOSTED;
@@ -313,15 +313,17 @@ pub struct UsernameReq {
 /// Request body for setting a server admin's permissions.
 #[derive(Deserialize, ToSchema)]
 pub struct PermsReq {
-    /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin messages of
-    /// others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and roles, 64 View
-    /// audit log, 128 Timeout members, 256 Manage webhooks, 512 Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles and 65536 Reset server profiles. Bits outside 127999
-    /// are dropped. For an admin, 0 means all permissions.
+    /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete messages of others and
+    /// close their polls), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and
+    /// roles, 64 View audit log, 128 Timeout members, 256 Manage webhooks, 512 Manage reports,
+    /// 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles,
+    /// 65536 Reset server profiles, 536870912 Pin messages and 1073741824 Bypass slow mode. Bits
+    /// outside 1610740735 are dropped. For an admin, 0 means all permissions.
     #[schema(example = 7)]
     perms: i64,
-    /// The permission bits `perms` sets; send 127999. The admin keeps the bits they hold outside
-    /// it. Set bits within 1023 are also added for compatibility. Defaults to 511.
-    #[schema(example = 127999)]
+    /// The permission bits `perms` sets; send 1610740735. The admin keeps the bits they hold
+    /// outside it. Set bits within 1023 are also added for compatibility. Defaults to 511.
+    #[schema(example = 1610740735)]
     mask: Option<i64>,
 }
 
@@ -336,9 +338,11 @@ pub struct RoleReq {
     #[schema(example = "#22c55e")]
     color: String,
     /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
-    /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention
-    /// everyone and roles, 64 View audit log, 128 Timeout members, 256 Manage webhooks, 512
-    /// Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles and 65536 Reset server profiles,
+    /// messages of others and close their polls), 4 Kick, 8 Delete server, 16 Manage admins, 32
+    /// Mention everyone and roles, 64 View audit log, 128 Timeout members, 256 Manage webhooks, 512
+    /// Manage reports, 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768
+    /// Assign roles, 65536 Reset server profiles, 536870912 Pin messages and 1073741824 Bypass slow
+    /// mode,
     /// and the bits everyone can hold (see `PATCH /api/v1/servers/{name}/everyone`). Other bits
     /// are dropped. Roles only add permissions to members who are not admins. Admins use their
     /// own admin permissions and get only the bits everyone can hold from their roles.
@@ -3676,7 +3680,7 @@ pub(crate) async fn update_server(
     });
     crate::ws::announce_purge(&state.hub, &server.name, &removed);
     if password_hash.is_some() || public_read.is_some() || closing {
-        evict_unviewable(&state, &server.name, None).await;
+        voice_rules_changed(&state, &server.name, None).await;
     }
     if guest_voice == Some(false) {
         crate::ws::guests_out_of_voice(&state.hub, &server.name);
@@ -4299,7 +4303,7 @@ pub(crate) async fn update_channel(
             server: server.clone(),
             channel_id: id,
         });
-        evict_unviewable(&state, &server, Some(id)).await;
+        voice_rules_changed(&state, &server, Some(id)).await;
     }
     state.hub.broadcast(match channel.name == old_name {
         true => WsEvent::ChannelUpdated {
@@ -4878,7 +4882,7 @@ async fn set_admin(
                 is_admin,
                 perms: 0,
             });
-            evict_unviewable(state, server, None).await;
+            voice_rules_changed(state, server, None).await;
             Ok(ok())
         }
     }
@@ -5063,14 +5067,14 @@ pub(crate) async fn transfer_admin(
             perms: 0,
         });
     }
-    evict_unviewable(&state, &key, None).await;
+    voice_rules_changed(&state, &key, None).await;
     Ok(ok())
 }
 
 /// Set an admin's permissions
 ///
 /// Replaces the permission bits of the admin `username` that `mask` covers and also adds set bits
-/// within 1023 (bits outside 127999 are dropped; 0 means all permissions). Taking permissions away
+/// within 1023 (bits outside 1610740735 are dropped; 0 means all permissions). Taking permissions away
 /// works on any admin, like revoking admin. When the new permissions add any the admin did not
 /// have, all of the new permissions must be ones you have (equal is fine), so only callers holding
 /// every permission can set 0. A nonzero update must leave a supported permission. Requires the Manage admins server permission. Emits
@@ -5163,7 +5167,7 @@ pub(crate) async fn set_admin_perms(
         is_admin: true,
         perms,
     });
-    evict_unviewable(&state, &key, None).await;
+    voice_rules_changed(&state, &key, None).await;
     Ok(ok())
 }
 
@@ -5673,7 +5677,7 @@ pub(crate) async fn update_role(
     state.hub.broadcast(WsEvent::RolesChanged {
         server: key.clone(),
     });
-    evict_unviewable(&state, &key, None).await;
+    voice_rules_changed(&state, &key, None).await;
     Ok(Json(role))
 }
 
@@ -5766,7 +5770,7 @@ pub(crate) async fn delete_role(
     state.hub.broadcast(WsEvent::RolesChanged {
         server: key.clone(),
     });
-    evict_unviewable(&state, &key, None).await;
+    voice_rules_changed(&state, &key, None).await;
     Ok(ok())
 }
 
@@ -6016,7 +6020,7 @@ pub(crate) async fn announce_roles_changed(state: &AppState, server: &str) {
     state.hub.broadcast(WsEvent::RolesChanged {
         server: server.to_owned(),
     });
-    evict_unviewable(state, server, None).await;
+    voice_rules_changed(state, server, None).await;
 }
 
 /// A channel rule subject for the audit log: `{kind: "user", name}` or `{kind: "role", id,
@@ -6536,7 +6540,7 @@ pub(crate) async fn set_channel_perm(
         server: server.clone(),
         channel_id: id,
     });
-    evict_unviewable(&state, &server, Some(id)).await;
+    voice_rules_changed(&state, &server, Some(id)).await;
     Ok(ok())
 }
 
@@ -6618,7 +6622,7 @@ pub(crate) async fn clear_channel_perm(
                 server: server.clone(),
                 channel_id: id,
             });
-            evict_unviewable(&state, &server, Some(id)).await;
+            voice_rules_changed(&state, &server, Some(id)).await;
             Ok(ok())
         }
     }
@@ -6739,7 +6743,7 @@ pub(crate) async fn set_everyone_perms(
         state.hub.broadcast(WsEvent::RolesChanged {
             server: key.clone(),
         });
-        evict_unviewable(&state, &key, None).await;
+        voice_rules_changed(&state, &key, None).await;
     }
     Ok(Json(EveryonePerms {
         everyone_perms: after,

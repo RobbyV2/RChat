@@ -289,6 +289,7 @@ test('a running timeout in a P2P room disables the mic and camera controls of it
       server: {
         id: 'server',
         name: 'Server',
+        me: 'join',
         channels: [],
         chans: {},
         members: [],

@@ -20,6 +20,8 @@ use crate::limits::Limits;
 use crate::limits::bucket::{Keyed, Policy};
 use crate::ws::UserScope;
 
+#[cfg(test)]
+mod bit_gates_tests;
 pub mod overwrite_sql;
 #[cfg(test)]
 mod overwrite_tests;
@@ -32,12 +34,13 @@ mod subjects_walk;
 use overwrite_sql::{denied_to_some_sql, everyone_stage_sql, overwrite_sql, private_sql};
 use perms::{
     ChannelAccess, Perm, PermRow, Restrict, Standing, VISITOR_CAPS, can_grant, can_moderate,
-    channel_mask, everyone_mask, perm_columns, perm_row,
+    channel_mask, everyone_mask, held, perm_columns, perm_row,
 };
 use rchat_perms::{Mask, masks};
 use rules::{
-    channel_access, channel_viewable, channel_viewers, effective_perms, grants_open, is_banned,
-    live_grant_servers, member_perms, server_everyone, standing, view_rules, view_under,
+    channel_access, channel_access_of, channel_viewable, channel_viewers, effective_perms,
+    grants_open, is_banned, live_grant_servers, member_masks, member_perms, server_everyone,
+    standing, view_rules, view_under,
 };
 pub use subjects::{
     Caller, Level, Seen, SeenUser, UserView, candidates, level_of, resolve_user, seen_among,
@@ -1096,6 +1099,16 @@ impl ServerAccess {
         Ok(Actor::of(user, staff))
     }
 
+    /// Who an action on a channel's messages is logged as: the viewer, or the unnamed instance
+    /// staff when a site admin acts as staff or the action `bypassed` what their membership
+    /// allows in that channel.
+    pub fn channel_actor(&self, bypassed: bool) -> Actor {
+        match &self.user {
+            Some(user) => Actor::of(user, self.via == Via::Staff || bypassed),
+            None => Actor::Staff,
+        }
+    }
+
     /// This access as the viewer's plain membership without instance powers: `Some` only for a
     /// site admin who isn't already acting as staff.
     pub fn as_member(&self) -> Option<ServerAccess> {
@@ -1703,16 +1716,6 @@ impl ResolvedChannel {
         self.rights
     }
 
-    /// The server permissions that membership alone gives (see `member_rights`).
-    pub async fn member_bits(&self, db: &Db) -> Result<i64, ApiError> {
-        match &self.server.user {
-            Some(user) if user.is_site_admin => {
-                Ok(member_perms(db, self.server.name(), &user.username).await?)
-            }
-            Some(_) | None => self.server.perms(db).await,
-        }
-    }
-
     /// Refuses a viewer who is timed out in this channel's server. Every write in a server
     /// channel (sending, replies, threads, forwards, edits, reactions, pins, typing, voice and
     /// polls) goes through this; reading never does. Site admins are not exempt, so a timeout
@@ -1779,13 +1782,40 @@ impl ResolvedChannel {
         if self.slowmode <= 0 {
             return Ok(());
         }
-        let exempt = self.member_bits(db).await?
-            & (Perm::ManageChannels as i64 | Perm::DeleteMessages as i64)
-            != 0;
-        if exempt {
+        if self.member_rights(db).await?.holds(held::BYPASS_SLOWMODE) {
             return Ok(());
         }
         self.slowmode_for(db, &user.username).await
+    }
+
+    /// Refuses a viewer who does not hold `bits` here through membership alone.
+    pub(crate) async fn require_held(
+        &self,
+        db: &Db,
+        bits: Mask,
+        refusal: &str,
+    ) -> Result<(), ApiError> {
+        match self.member_rights(db).await?.holds(bits) {
+            true => Ok(()),
+            false => Err(forbidden(refusal)),
+        }
+    }
+
+    /// Whether the viewer may delete what other members posted here: Manage messages in this
+    /// channel, which a timeout takes away. A site admin reaching the server as staff
+    /// holds it.
+    pub(crate) async fn moderates_messages(&self, db: &Db) -> Result<bool, ApiError> {
+        if !self.rights.holds(held::DELETE) {
+            return Ok(false);
+        }
+        match &self.server.user {
+            Some(user) if self.server.via != Via::Staff => {
+                Ok(timed_out(db, self.server.name(), &user.username)
+                    .await?
+                    .is_none())
+            }
+            Some(_) | None => Ok(true),
+        }
     }
 
     /// Slow mode for `author` without exemptions: the wait since their last message here.
@@ -2084,6 +2114,24 @@ impl ResolvedMessage {
         }
     }
 
+    /// Replying in the thread of this message (`id`), after its channel's `send_gate`: the first
+    /// reply also needs the channel's Start threads permission.
+    pub async fn thread_start_gate(&self, db: &Db, id: i64) -> Result<(), ApiError> {
+        let channel = self.thread_channel()?;
+        if channel.member_rights(db).await?.holds(held::THREADS) {
+            return Ok(());
+        }
+        let started = sqlx::query("SELECT 1 FROM messages WHERE thread_root_id = $1 LIMIT 1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?
+            .is_some();
+        match started {
+            true => Ok(()),
+            false => Err(forbidden("No permission to start threads in this channel")),
+        }
+    }
+
     fn own(&self) -> bool {
         self.user
             .as_ref()
@@ -2102,16 +2150,15 @@ impl ResolvedMessage {
         }
     }
 
-    /// Adding or removing a reaction: in a channel like sending (a signed-in member with the
-    /// channel's send permission), in a DM being a participant while both accounts are live and
-    /// neither blocked the other.
+    /// Adding a reaction: in a channel a signed-in member with its Add reactions permission, in
+    /// a DM being a participant while both accounts are live and neither blocked the other.
     pub async fn react_gate(&self, db: &Db) -> Result<(), ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
-                if !channel.member_rights(db).await?.send {
-                    return Err(forbidden("No permission to react in this channel"));
-                }
+                channel
+                    .require_held(db, held::REACT, "No permission to react in this channel")
+                    .await?;
                 channel.timeout_gate(db).await
             }
             (None, Some(did)) => self.dm_writer(db, did).await,
@@ -2138,8 +2185,9 @@ impl ResolvedMessage {
 
     /// Closing or reopening a poll: its author while they are still a member who may view and
     /// send in the channel (or a participant of a live DM where neither blocked the other), or
-    /// in a channel a member with the Manage messages (`DeleteMessages`) permission. Nobody who is
-    /// timed out in the channel's server. `Ok(true)` when a moderator acts on someone else's poll.
+    /// in a channel a member with the Manage messages (`DeleteMessages`) permission there. Nobody
+    /// who is timed out in the channel's server. `Ok(true)` when a moderator acts on someone
+    /// else's poll.
     pub async fn poll_manage_gate(&self, db: &Db) -> Result<bool, ApiError> {
         let refused = || forbidden("Only the author or a moderator can do this");
         match (&self.channel, self.scope.dm_id) {
@@ -2152,7 +2200,7 @@ impl ResolvedMessage {
                         return Ok(false);
                     }
                 }
-                match channel.member_bits(db).await? & Perm::DeleteMessages as i64 != 0 {
+                match channel.member_rights(db).await?.holds(held::DELETE) {
                     true => Ok(!self.own()),
                     false => Err(refused()),
                 }
@@ -2163,18 +2211,18 @@ impl ResolvedMessage {
         }
     }
 
-    /// Pinning or unpinning: in a channel a signed-in member with the Manage messages
-    /// (`DeleteMessages`) permission, in a DM either participant while both accounts are live and
-    /// neither blocked the other.
+    /// Pinning or unpinning: in a channel a signed-in member with its Pin messages and Send
+    /// messages permissions, in a DM either participant while both accounts are live and neither
+    /// blocked the other.
     pub async fn pin_gate(&self, db: &Db) -> Result<(), ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
                 channel.timeout_gate(db).await?;
-                let manage = channel.member_bits(db).await? & Perm::DeleteMessages as i64 != 0;
-                match (manage, channel.member_rights(db).await?.send) {
+                let rights = channel.member_rights(db).await?;
+                match (rights.holds(held::PIN), rights.send) {
                     (true, true) => Ok(()),
-                    (false, _) => Err(forbidden("No permission to manage messages")),
+                    (false, _) => Err(forbidden("No permission to pin messages in this channel")),
                     (true, false) => Err(forbidden("No permission to send in this channel")),
                 }
             }
@@ -2208,7 +2256,7 @@ impl ResolvedMessage {
         let own = self.own();
         let allowed = own
             || match &self.channel {
-                Some(channel) => channel.server.has_perm(db, Perm::DeleteMessages).await,
+                Some(channel) => channel.moderates_messages(db).await?,
                 None => false,
             };
         match allowed {
@@ -2535,10 +2583,53 @@ pub(crate) async fn ws_channel_viewable(
     channel_viewable(db, server, cid, username, false).await
 }
 
-/// Voice: whether `username` can view the channel through membership alone. A site admin gets
+/// Voice: whether `username` may be in the voice channel through membership alone: an account
+/// that holds View and Connect there, or a guest who holds Connect and Speak. A site admin gets
 /// no more than a plain member here, so nobody sees them in a voice channel hidden from them.
 pub(crate) async fn ws_voice_viewable(db: &Db, server: &str, cid: i64, username: &str) -> bool {
-    channel_viewable(db, server, cid, Some(username), true).await
+    match channel_access_of(db, server, cid, Some(username), true).await {
+        Ok((access, true)) => access.holds(masks::VIEW | held::CONNECT),
+        Ok((access, false)) => access.holds(masks::VIEW | masks::GUEST_VOICE),
+        Err(_) => false,
+    }
+}
+
+/// Voice: what `username` holds in the channel through membership alone. Nothing on an error.
+pub(crate) async fn ws_voice_rights(
+    db: &Db,
+    server: &str,
+    cid: i64,
+    username: &str,
+) -> ChannelAccess {
+    match channel_access_of(db, server, cid, Some(username), true).await {
+        Ok((access, _)) => access,
+        Err(_) => ChannelAccess::of(0),
+    }
+}
+
+/// Voice: which of `users` in the voice channel are muted for everyone there: those who are
+/// timed out in `server` or hold no Speak in the channel.
+pub(crate) async fn ws_voice_silenced(
+    db: &Db,
+    server: &str,
+    cid: i64,
+    users: &[String],
+) -> Result<HashSet<String>, ApiError> {
+    let timed_out = crate::api::timeouts::running_timeouts(db, server, users).await?;
+    let masks = member_masks(db, server, cid, users).await?;
+    let mut silenced = HashSet::new();
+    for name in users {
+        let speaks = match masks.get(name) {
+            Some(mask) => mask & held::SPEAK != 0,
+            None => ws_voice_rights(db, server, cid, name)
+                .await
+                .holds(held::SPEAK),
+        };
+        if !speaks || timed_out.contains_key(name) {
+            silenced.insert(name.clone());
+        }
+    }
+    Ok(silenced)
 }
 
 /// `member_timeout` fan-out: whether `username` sees the timeouts of `server` (the Timeout
@@ -6703,7 +6794,7 @@ mod tests {
         assert_eq!(
             resolved.pin_gate(db).await.map_err(|e| e.0.as_u16()),
             Err(403),
-            "pinning needs Manage messages as a member"
+            "pinning needs Pin messages as a member"
         );
         let _ = f;
         server.abort();
@@ -6715,7 +6806,7 @@ mod tests {
         let (state, path) = temp_state("access_pin_send").await;
         fixture(&state).await;
         let db = &state.db;
-        add_member(db, "rchat", "carl", 1, Perm::DeleteMessages as i64, 0).await;
+        add_member(db, "rchat", "carl", 1, Perm::PinMessages as i64, 0).await;
         let carl = mem_user("carl", false);
         let news = id_of(db, "INSERT INTO channels(server, name, created_at, restrict_send) VALUES('rchat', 'news', 0, 1) RETURNING id").await;
         let msg = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({news}, 'alice', 'x', 1) RETURNING id")).await;

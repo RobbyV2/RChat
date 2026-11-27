@@ -4,6 +4,7 @@ import { AGREED, LOCAL, type Agreed, type Local } from '../limits'
 import type { EvalResult, Facts, FactsQ } from './facts'
 import {
   atLeast,
+  bit,
   channelMask,
   checkBitsEdit,
   checkOverwriteEdit,
@@ -48,6 +49,7 @@ export const INVITE = P.Invite
 export const SERVER = P.ManageServer
 export const CHANNELS = P.ManageChannels
 export const MESSAGES = P.ManageMessages
+export const MENTION = P.MentionEveryone
 export const SEND = P.SendMessages
 export const VIEW = P.ViewChannel
 // Reset server profiles: read from rules RULES_NEXT on. Up to rules 4, Kick stands in for it.
@@ -412,10 +414,18 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
     case 'upgrade':
     case 'migrate':
       return isMem && Fr.owners.has(a)
-    case CONTENT_REDACT:
-      return isMem && (c.to === a || Fr.owners.has(a) || (has(MESSAGES) && outranks(x.rankT(c.to))))
+    case CONTENT_REDACT: {
+      if (!isMem) return false
+      if (c.to === a || Fr.owners.has(a)) return true
+      const holds =
+        rules < RULES_NEXT ? has(MESSAGES) : heldBy(Fr, x.chan, a, c.ch, 'DeleteMessages', rules)
+      return holds && outranks(x.rankT(c.to))
+    }
     case CONTENT_PIN:
-      return isMem && has(MESSAGES)
+      return (
+        isMem &&
+        (rules < RULES_NEXT ? has(MESSAGES) : heldBy(Fr, x.chan, a, c.ch, 'PinMessages', rules))
+      )
     default:
       return isMem
   }
@@ -569,6 +579,67 @@ function maskIn(
     },
     rules
   )
+}
+
+// Whether P holds the permission `name` of the shared rules in channel `ch`.
+const heldBy = (
+  F: Pick<FactsQ, 'owners' | 'bits' | 'holds'>,
+  chan: ChanReader | undefined,
+  P: string,
+  ch: unknown,
+  name: string,
+  rules: number
+) => hasBit(maskIn(F, chan ?? readerOf({}), P, typeof ch === 'string' ? ch : '', rules), bit(name))
+export const holdsIn = (
+  F: ChanFacts,
+  P: string,
+  ch: string,
+  name: string,
+  rules = rulesOf(F.rules)
+) => heldBy(F, readerOf(F), P, ch, name, rules)
+
+// What content of P in channel `ch` relies on besides sending. Up to rules 4, Manage messages
+// pins and deletes, and with Manage channels it leaves slow mode out; from rules 5 each has its
+// own permission in the channel.
+export const mayPin = (F: ChanFacts, P: string, ch: string, rules = rulesOf(F.rules)) =>
+  rules < RULES_NEXT ? (permsQ(F, P) & MESSAGES) !== 0 : holdsIn(F, P, ch, 'PinMessages', rules)
+export const mayDelete = (F: ChanFacts, P: string, ch: string, rules = rulesOf(F.rules)) =>
+  rules < RULES_NEXT ? (permsQ(F, P) & MESSAGES) !== 0 : holdsIn(F, P, ch, 'DeleteMessages', rules)
+export const mayMentionEveryone = (
+  F: ChanFacts,
+  P: string,
+  ch: string,
+  rules = rulesOf(F.rules)
+) =>
+  rules < RULES_NEXT ? (permsQ(F, P) & MENTION) !== 0 : holdsIn(F, P, ch, 'MentionEveryone', rules)
+export const skipsSlowMode = (F: ChanFacts, P: string, ch: string, rules = rulesOf(F.rules)) =>
+  rules < RULES_NEXT
+    ? (channelPerms(F, P, ch, rules) & (CHANNELS | MESSAGES)) !== 0
+    : holdsIn(F, P, ch, 'BypassSlowmode', rules)
+
+// What a content event of kind `t` with content `c` (null: held without it) needs its author
+// to hold in its channel from rules 5 on: a reaction Add reactions (taking one back only View),
+// a deletion View (whose message it may take is authCore's), a pin Pin messages and Send
+// messages, a message with files Attach files with Send messages, anything else Send messages.
+// The answer names the first one missing, or null.
+export function contentLack(
+  F: ChanFacts,
+  P: string,
+  ch: string,
+  t: string,
+  c: Record<string, unknown> | null,
+  rules = rulesOf(F.rules)
+): 'send' | 'react' | 'pin' | 'attach' | null {
+  const holds = (name: string) => holdsIn(F, P, ch, name, rules)
+  if (t === 'react') {
+    if (c !== null && c.on === true) return holds('AddReactions') ? null : 'react'
+    return holds('ViewChannels') ? null : 'react'
+  }
+  if (t === 'redact') return holds('ViewChannels') ? null : 'send'
+  if (!holds('SendMessages')) return 'send'
+  if (t === 'pin') return holds('PinMessages') ? null : 'pin'
+  const files = c !== null && (c.att !== undefined || (isRecord(c.fwd) && c.fwd.att !== undefined))
+  return t === 'msg' && files && !holds('AttachFiles') ? 'attach' : null
 }
 
 // P's permissions in channel `ch`, in Discord order: P's permissions, the @everyone overwrite,

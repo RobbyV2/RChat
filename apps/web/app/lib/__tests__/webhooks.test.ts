@@ -17,7 +17,7 @@ import {
   webhookUrl,
   type Delivery,
 } from '../webhooks'
-import { ALL_PERMS, Perm } from '../types'
+import { ALL_PERMS, hasPerm, Perm } from '../types'
 import { PERM_ITEMS } from '../rules'
 
 const author = (username: string) => ({
@@ -43,7 +43,7 @@ describe('webhooks', () => {
 
   test('the permission bit follows timeouts', () => {
     expect(Perm.ManageWebhooks).toBe(256)
-    expect(ALL_PERMS).toBe(127999)
+    expect(hasPerm(ALL_PERMS, Perm.ManageWebhooks)).toBe(true)
     expect(PERM_ITEMS.some(p => p.bit === Perm.ManageWebhooks)).toBe(true)
   })
 

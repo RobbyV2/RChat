@@ -7,6 +7,7 @@ import type { P2pApp } from '../../lib/p2p/app/runtime'
 
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
+import { ChannelCanContext, useChannelPerms } from '../../lib/client/use_channel_perms'
 
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { roomLooksKey } from '../../lib/server_profile'
@@ -896,7 +897,8 @@ function P2pChannelPaneBody({
     [members]
   )
   const timedOut = usePeerTimeoutEnds(v?.timedOutUntil)
-  const moderator = can(v, P.ManageMessages) && timedOut === null
+  const held = useChannelPerms(v && chat?.ch ? { p2pRoom: v.id, ch: chat.ch } : null)
+  const moderator = held.manage && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
 
   if (!v)
@@ -1077,43 +1079,45 @@ function P2pChannelPaneBody({
   )
 
   return (
-    <P2pChatBody
-      chat={chat}
-      channelTextOnly={channel.text_only}
-      header={header}
-      above={<ServerNotices v={v} />}
-      intro={<ServerIntro />}
-      disabled={disabled}
-      canAct={canAct}
-      timedOut={timedOut !== null}
-      nameOf={nameOf}
-      userOf={userOf}
-      people={people}
-      title={`#${mask(channel.name)}`}
-      placeholder={`Message #${mask(channel.name)}`}
-      pendingTip="Waiting for a member to come online"
-      peerFull={false}
-      gap={v.gap}
-      online={others}
-      gapOffline="Older messages unavailable until a member who has them is online"
-      empty={
-        <>
-          <span className="text-2xl font-semibold">
-            Welcome to #<Masked text={channel.name} own={own} />
-          </span>
-          <span className="text-sm">
-            This is the start of the channel. Messages are stored on members&apos; devices.
-          </span>
-        </>
-      }
-      typingNames={typingIks.map(nameOf)}
-      mayDelete={mayDelete}
-      mayPin={moderator}
-      forwardSkip={null}
-      pinsEmpty="This channel doesn't have any pinned messages yet."
-      pinsPlace="channel"
-      dataAttr={{ 'data-p2p-channel-pane': '' }}
-    />
+    <ChannelCanContext.Provider value={held}>
+      <P2pChatBody
+        chat={chat}
+        channelTextOnly={channel.text_only}
+        header={header}
+        above={<ServerNotices v={v} />}
+        intro={<ServerIntro />}
+        disabled={disabled}
+        canAct={canAct}
+        timedOut={timedOut !== null}
+        nameOf={nameOf}
+        userOf={userOf}
+        people={people}
+        title={`#${mask(channel.name)}`}
+        placeholder={`Message #${mask(channel.name)}`}
+        pendingTip="Waiting for a member to come online"
+        peerFull={false}
+        gap={v.gap}
+        online={others}
+        gapOffline="Older messages unavailable until a member who has them is online"
+        empty={
+          <>
+            <span className="text-2xl font-semibold">
+              Welcome to #<Masked text={channel.name} own={own} />
+            </span>
+            <span className="text-sm">
+              This is the start of the channel. Messages are stored on members&apos; devices.
+            </span>
+          </>
+        }
+        typingNames={typingIks.map(nameOf)}
+        mayDelete={mayDelete}
+        mayPin={held.pin && timedOut === null}
+        forwardSkip={null}
+        pinsEmpty="This channel doesn't have any pinned messages yet."
+        pinsPlace="channel"
+        dataAttr={{ 'data-p2p-channel-pane': '' }}
+      />
+    </ChannelCanContext.Provider>
   )
 }
 

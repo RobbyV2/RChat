@@ -11,7 +11,6 @@ use sha2::Sha256;
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ResolvedMessage, not_found, resolve_message};
 use crate::api::audit;
 use crate::api::reactions::canonical_emoji;
@@ -1321,10 +1320,7 @@ async fn moderated(
         },
         None => false,
     };
-    let actor = server
-        .audit_actor(db, Perm::DeleteMessages)
-        .await?
-        .staff_if(bypassed);
+    let actor = server.channel_actor(bypassed);
     Ok(Some((server.name().to_string(), actor, found)))
 }
 
@@ -1683,9 +1679,9 @@ async fn set_closed(
 /// Close a poll
 ///
 /// Ends voting now. Only the poll's author (while they can still send there) or, in server
-/// channels, a member with the Manage messages permission. Closing a closed poll changes
-/// nothing. Votes that were still on their way are refused. Emits `poll_updated`. Shares the
-/// reactions, pins and edits limit.
+/// channels, a member with the Manage messages permission in the channel. Closing a closed poll
+/// changes nothing. Votes that were still on their way are refused. Emits `poll_updated`. Shares
+/// the reactions, pins and edits limit.
 #[utoipa::path(post, path = "/api/v1/polls/{id}/close", tag = "Polls", params(("id" = i64, Path, description = "Id of the poll message")), responses((status = 200, description = "The closed poll", body = Poll), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Only the author or a moderator can do this`, not a member of the server, timed out in the server (`You are timed out in this server`), or a block or the DM setting between DM participants", body = ApiErrorBody), (status = 404, description = "`Not found`: no such poll, or you cannot read it; identical responses", body = ApiErrorBody), (status = 429, description = "As for voting", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn close_poll(
     State(state): State<AppState>,
@@ -3117,10 +3113,10 @@ mod tests {
             Authed(account("alice", true)),
         )
         .await;
-        assert!(pinned.is_err(), "alice has no Manage messages");
+        assert!(pinned.is_err(), "alice has no Pin messages");
         exec(
             db,
-            "UPDATE members SET is_admin = 1, perms = 2 WHERE username = 'dave'",
+            "UPDATE members SET is_admin = 1, perms = 536870914 WHERE username = 'dave'",
         )
         .await;
         let _ = crate::api::pins::pin_message(

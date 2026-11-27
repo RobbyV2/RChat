@@ -854,6 +854,29 @@ describe('voice participant sets', () => {
     expect(inCh(a)).toEqual([])
   })
 
+  test('the list marks who is not heard and whose video is not shown', async () => {
+    const net = new Net()
+    const [a, b] = ['A', 'B'].map(n => net.add(n))
+    const told = new Voice({
+      ...(a.voice as unknown as { deps: ConstructorParameters<typeof Voice>[0] }).deps,
+      rights: (_room, _ch, x) => ({ speak: x !== b.ik, video: x !== b.ik }),
+    })
+    told.media = new FakeMedia()
+    a.voice = told
+    net.connect(a, b)
+    await b.voice.join(ROOM, CH, { plan, muted: false })
+    b.voice.setVideo(true)
+    await net.flush()
+    expect(told.channels(ROOM)[CH]).toEqual([
+      { ik: b.ik, video: false, muted: false, deafened: false, silenced: true, unseen: true },
+    ])
+    expect(b.voice.channels(ROOM)[CH]).toEqual([
+      { ik: b.ik, video: true, muted: false, deafened: false },
+    ])
+    expect(told.rights(ROOM, CH, a.ik)).toEqual({ speak: true, video: true })
+    expect(told.myRights()).toEqual({ speak: true, video: true })
+  })
+
   test('at most keepMax participants hold sessions outside the budget', async () => {
     const net = new Net()
     const a = net.add('A')

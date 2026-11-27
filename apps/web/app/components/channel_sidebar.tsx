@@ -78,7 +78,8 @@ import { PingBadge } from './ping_badge'
 import { ChannelEnd, useHostedTypers } from './typing_indicator'
 import { scopePings } from '../lib/pings'
 import { MutedIcon } from './notify_menu'
-import { shownMedia } from '../lib/timeouts'
+import { NO_CONNECT, shownMedia } from '../lib/timeouts'
+import { useChannelPerms } from '../lib/client/use_channel_perms'
 
 import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
 import { ContactRow, lastTsOf } from './p2p/p2p_home'
@@ -210,6 +211,7 @@ const rosterOf = (
     : NO_ROSTER
 
 function VoiceChannelRow({
+  server,
   channel,
   own,
   active,
@@ -219,6 +221,7 @@ function VoiceChannelRow({
   menu,
   drag,
 }: {
+  server: string
   channel: Channel
   own: boolean
   active: boolean
@@ -229,13 +232,18 @@ function VoiceChannelRow({
   drag?: DragSpec
 }) {
   const mask = useMask(own)
+  const can = useChannelPerms({ server, channelId: channel.id })
+  const locked = !connected && !can.connect
   return (
     <button
-      title={connected ? 'Open voice channel' : 'Join voice channel'}
+      title={locked ? NO_CONNECT : connected ? 'Open voice channel' : 'Join voice channel'}
       aria-label={`${connected ? 'Open' : 'Join'} voice channel ${mask(channel.name)}${
         count ? `, ${count} connected` : ''
-      }`}
-      onClick={onJoin}
+      }${locked ? `. ${NO_CONNECT}` : ''}`}
+      aria-disabled={locked || undefined}
+      onClick={() => {
+        if (!locked) onJoin()
+      }}
       {...longPress(menu, drag)}
       className={`group mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] ${
         active
@@ -1125,6 +1133,7 @@ export function ChannelSidebar() {
     return (
       <div key={c.id} data-drag-box className="flex flex-col rounded-lg">
         <VoiceChannelRow
+          server={server}
           channel={c}
           own={ownServer}
           active={activeId === c.id}

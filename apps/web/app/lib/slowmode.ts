@@ -1,4 +1,3 @@
-import { Perm, hasPerm } from './types'
 import { SLOWMODE_MAX } from './rules'
 import { fmtDuration } from './voice_layout'
 
@@ -33,8 +32,5 @@ export const slowWait = (message: string): number | null => {
   const hit = /^Slow mode: wait (\d+)s$/.exec(message)
   return hit ? Number(hit[1]) : null
 }
-
-export const slowExempt = (perms: number) =>
-  hasPerm(perms, Perm.ManageChannels) || hasPerm(perms, Perm.DeleteMessages)
 
 export const clock = (ms: number): string => fmtDuration(Math.max(0, Math.ceil(ms / 1000)))

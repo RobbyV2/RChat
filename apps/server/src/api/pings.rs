@@ -648,8 +648,8 @@ pub fn parse_group_mentions(stored: Option<&str>) -> Vec<GroupMention> {
 }
 
 /// The group mentions in `content` that `actor` may use in `channel`: `@everyone`, `@here` and
-/// every role with the Mention everyone permission, and roles that allow anyone to mention them
-/// without it. Uses the same candidates as `@username` mentions (code is skipped). The
+/// every role with the Mention everyone permission in that channel, and roles that allow anyone
+/// to mention them without it. Uses the same candidates as `@username` mentions (code is skipped). The
 /// permission is the one membership gives, so a site admin gets nothing extra.
 pub async fn group_mentions(
     db: &Db,
@@ -660,9 +660,10 @@ pub async fn group_mentions(
     if mention_candidates(content).is_empty() {
         return Ok(Vec::new());
     }
-    let allowed = channel.member_bits(db).await?
-        & crate::api::access::perms::Perm::MentionEveryone as i64
-        != 0;
+    let allowed = channel
+        .member_rights(db)
+        .await?
+        .holds(crate::api::access::perms::held::MENTION);
     group_mentions_as(
         db,
         channel.server().name(),

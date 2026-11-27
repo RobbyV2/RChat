@@ -1489,6 +1489,7 @@ async fn post(
         quote.as_ref(),
         groups,
         Some(&extra),
+        false,
     )
     .await?;
     sqlx::query("UPDATE webhooks SET last_used_at = $1 WHERE id = $2")

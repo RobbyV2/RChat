@@ -1,3 +1,4 @@
+import { CAN_ALL } from '../channel_perms'
 import { shownPeer } from './shown_peer'
 import { PURGE_ALL } from '../durations'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
@@ -871,6 +872,7 @@ const shown = { id: 7, created_at: TS / 1000 } as Message
 const facts = (over: Partial<ChatFacts> = {}): ChatFacts => ({
   draftKey: 'room-d',
   canAct: true,
+  can: CAN_ALL,
   mayPin: false,
   mayDelete: () => false,
   forwardSkip: CAROL,

@@ -4,12 +4,10 @@ import {
   clock,
   customSeconds,
   isPreset,
-  slowExempt,
   slowLabel,
   slowTitle,
   slowWait,
 } from '../slowmode'
-import { Perm } from '../types'
 
 describe('slow mode', () => {
   test('presets match the channel settings list', () => {
@@ -49,13 +47,6 @@ describe('slow mode', () => {
   test('the server wait message', () => {
     expect(slowWait('Slow mode: wait 12s')).toBe(12)
     expect(slowWait('Too many requests')).toBeNull()
-  })
-
-  test('managers and message managers are exempt', () => {
-    expect(slowExempt(Perm.ManageChannels)).toBe(true)
-    expect(slowExempt(Perm.DeleteMessages)).toBe(true)
-    expect(slowExempt(Perm.Kick)).toBe(false)
-    expect(slowExempt(0)).toBe(false)
   })
 
   test('countdown clock', () => {

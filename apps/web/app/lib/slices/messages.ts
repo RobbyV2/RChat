@@ -3,7 +3,7 @@ import type { AccountSession } from '../client/session'
 // Messages and DMs: the loaded windows with their tails and heads, live appends, quotes and
 // edits, pins, link cards, the outbox, embeds, P2P availability and the DM list.
 
-import { textOnlyDestination } from '../channel_content'
+import { destinationChannel, textOnlyDestination } from '../channel_content'
 
 import { ApiError, type PageOpts, type SearchParams, type SendOpts } from '../api'
 import {
@@ -83,9 +83,9 @@ import {
 } from '../search'
 import { clockSample } from '../send_clock'
 import { type Sed, applySed, lastEditable } from '../sed'
-import { myPerms, scopeRule } from '../selectors'
+import { channelCan, scopeRule } from '../selectors'
 import { hashBlob } from '../sha256'
-import { slowExempt, slowWait } from '../slowmode'
+import { slowWait } from '../slowmode'
 import type { Focus, Outgoing, OutgoingStatus, RChatState } from '../store_types'
 import { isSystem, systemText } from '../system_messages'
 import { offsetOf, pushOffset } from '../trust/token'
@@ -1465,12 +1465,24 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     }
   }
 
+  // Whether the place `key` takes no files: a text-only channel, or one where you hold no Attach
+  // files.
+  const refusesFiles = (key: string) => {
+    const s = get()
+    const at = destinationChannel(s, key)
+    return (
+      at !== null &&
+      (at.channel.text_only === true || !channelCan(s, at.server, at.channel.id).attach)
+    )
+  }
+
   const noteSlow = (channelId: number | null, wait: number | null) => {
     if (channelId === null) return
     const s = get()
     const detail = Object.values(s.servers).find(d => d.channels.some(c => c.id === channelId))
     const seconds = detail?.channels.find(c => c.id === channelId)?.slowmode_seconds ?? 0
-    if (wait === null && (!detail || seconds <= 0 || slowExempt(myPerms(s, detail.name)))) return
+    const exempt = detail && channelCan(s, detail.name, channelId).bypassSlowmode
+    if (wait === null && (!detail || seconds <= 0 || exempt)) return
     const until = Date.now() + (wait ?? seconds) * 1000
     set(st => ({ slowUntil: { ...st.slowUntil, [channelId]: until } }))
   }
@@ -2104,7 +2116,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       }),
 
     uploadFile: (key, file) => {
-      if (file && textOnlyDestination(get(), key)) return
+      if (file && refusesFiles(key)) return
       const max = limitsOf(get().instance).upload_bytes
       const mode = file ? startMode(get().settings, file.size, max) : null
       if (file && mode === null) return

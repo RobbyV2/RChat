@@ -1,5 +1,6 @@
 'use client'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
+import { useShallow } from 'zustand/react/shallow'
 
 import {
   useEffect,
@@ -78,12 +79,16 @@ import { ownsP2pServer } from '../lib/p2p/server/types'
 import { ChannelTopic } from './channel_topic'
 import { useMyTimeoutEnds, useNow, usePeerTimeoutEnds } from './timeout_dialog'
 import {
+  NO_CONNECT,
+  NO_SPEAK,
+  NO_VIDEO,
   shownMedia,
   timedOutIn,
   TIMED_OUT_CAMERA,
   TIMED_OUT_MIC,
   TIMED_OUT_SHARE,
 } from '../lib/timeouts'
+import { useChannelPerms } from '../lib/client/use_channel_perms'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const seenShares = new WeakMap<object, ReadonlySet<string>>()
@@ -246,7 +251,15 @@ function usePeerSilenced(room: string | undefined): string[] {
   return useMemo(() => (key === '' ? [] : key.split('\n')), [key])
 }
 
-// Whether a timeout mutes you in the voice channel you are in, a hosted one or a P2P room's.
+const NO_NAMES: string[] = []
+// The members of a P2P voice channel whose audio nobody plays: they hold no Speak there.
+const unheardIn = (users: readonly VoiceUser[] | undefined): string[] => {
+  const out = (users ?? []).filter(u => u.silenced).map(u => u.ik)
+  return out.length ? out : NO_NAMES
+}
+
+// Whether a timeout or the server's listing mutes you in the voice channel you are in, a hosted
+// one or a P2P room's.
 function useForcedMute(): boolean {
   const voice = useStore(s => s.voice)
   const me = useStore(s => s.me?.username)
@@ -274,7 +287,12 @@ function VoiceAudio() {
   const { connected, p2pCall, roomCall, roomVoice, deafened, voice } = useCallMedia()
   const hosted = useStore(s => voiceMutedIn(s, voice?.channelId ?? null))
   const peers = usePeerSilenced(roomVoice?.room)
-  const silenced = roomVoice ? peers : hosted
+  const quiet = useP2p(
+    useShallow(s =>
+      roomVoice ? unheardIn(s.servers[roomVoice.room]?.voice[roomVoice.ch]) : NO_NAMES
+    )
+  )
+  const silenced = roomVoice ? [...peers, ...quiet] : hosted
   const hushed = useStore(s => voiceHushedIn(s, voice?.channelId ?? null))
   useEffect(() => {
     if (!connected) useAudioGate.setState({ blocked: false })
@@ -530,9 +548,33 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
     camera,
     sharing,
   } = useCallMedia()
-  const forced = useForcedMute() && (voice !== null || roomVoice !== null)
+  const can = useChannelPerms(
+    voice
+      ? { server: voice.server, channelId: voice.channelId }
+      : roomVoice
+        ? { p2pRoom: roomVoice.room, ch: roomVoice.ch }
+        : null
+  )
+  const listed = useForcedMute() && (voice !== null || roomVoice !== null)
+  const timeout = useMyTimeoutEnds(voice?.server) !== null && voice !== null
+  // A mute listed for someone who holds Speak is a timeout's.
+  const timedOut = timeout || (listed && can.speak)
+  const forced = listed || !can.speak
+  const sightless = timedOut || !can.video
   const hushed = useStaffMuted() && voice !== null
   const muted = selfMuted || forced || hushed
+  const micTitle = !can.speak
+    ? NO_SPEAK
+    : forced
+      ? TIMED_OUT_MIC
+      : hushed
+        ? STAFF_MUTED
+        : muted
+          ? 'Unmute'
+          : 'Mute'
+  const off = (timed: string, on: string) => (!can.video ? NO_VIDEO : timedOut ? timed : on)
+  const camTitle = off(TIMED_OUT_CAMERA, camera ? 'Turn off camera' : 'Turn on camera')
+  const shareTitle = off(TIMED_OUT_SHARE, sharing ? 'Stop sharing' : 'Share screen')
   const toggleMute = useStore(s => s.toggleMute)
   const toggleDeafen = useStore(s => s.toggleDeafen)
   const toggleCamera = useStore(s => s.toggleCamera)
@@ -563,8 +605,8 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
   return (
     <div className={`flex items-center ${lg ? 'gap-2 sm:gap-3' : 'w-full gap-1.5'}`}>
       <button
-        title={forced ? TIMED_OUT_MIC : hushed ? STAFF_MUTED : muted ? 'Unmute' : 'Mute'}
-        aria-label={forced ? TIMED_OUT_MIC : hushed ? STAFF_MUTED : muted ? 'Unmute' : 'Mute'}
+        title={micTitle}
+        aria-label={micTitle}
         aria-pressed={muted}
         disabled={forced || hushed}
         onClick={toggleMute}
@@ -582,10 +624,10 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
         {deafened ? <HeadphoneOff size={icon} /> : <Headphones size={icon} />}
       </button>
       <button
-        title={forced ? TIMED_OUT_CAMERA : camera ? 'Turn off camera' : 'Turn on camera'}
-        aria-label={forced ? TIMED_OUT_CAMERA : camera ? 'Turn off camera' : 'Turn on camera'}
+        title={camTitle}
+        aria-label={camTitle}
         aria-pressed={camera}
-        disabled={forced}
+        disabled={sightless}
         onClick={() => void toggleCamera()}
         className={`${btn(camera ? 'on' : 'idle')} disabled:cursor-not-allowed disabled:opacity-60`}
       >
@@ -593,10 +635,10 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
       </button>
       {canShareScreen() && (
         <button
-          title={forced ? TIMED_OUT_SHARE : sharing ? 'Stop sharing' : 'Share screen'}
-          aria-label={forced ? TIMED_OUT_SHARE : sharing ? 'Stop sharing' : 'Share screen'}
+          title={shareTitle}
+          aria-label={shareTitle}
           aria-pressed={sharing}
-          disabled={forced}
+          disabled={sightless}
           onClick={() => void toggleShare()}
           className={`${btn(sharing ? 'on' : 'idle')} disabled:cursor-not-allowed disabled:opacity-60`}
         >
@@ -1015,9 +1057,8 @@ export function VoiceGrid({
   const selfAudio = useStore(s => s.selfAudio)
   const roomUsers = useStore(s => (channelId !== undefined ? s.voiceUsers[channelId] : undefined))
   const roomAudio = useStore(s => (channelId !== undefined ? s.voiceAudio[channelId] : undefined))
-  const hosted = useStore(s => voiceMutedIn(s, channelId ?? null))
+  const listed = useStore(s => voiceMutedIn(s, channelId ?? null))
   const peers = usePeerSilenced(p2pCh === undefined ? undefined : p2pRoom)
-  const silenced = p2pCh === undefined ? hosted : peers
   const hushed = useStore(s => voiceHushedIn(s, channelId ?? null))
   const view = useStore(s => s.view)
   const joinVoice = useStore(s => s.joinVoice)
@@ -1043,6 +1084,15 @@ export function VoiceGrid({
   const forVoice =
     p2pRoom !== undefined && p2pCh !== undefined ? { room: p2pRoom, ch: p2pCh } : null
   const voiceUsers = (p2pCh !== undefined && sv?.voice[p2pCh]) || NO_USERS
+  const silenced = forVoice ? [...peers, ...unheardIn(voiceUsers)] : listed
+  const unseen = forVoice ? voiceUsers.filter(u => u.unseen).map(u => u.ik) : NO_NAMES
+  const here = useChannelPerms(
+    forVoice
+      ? { p2pRoom: forVoice.room, ch: forVoice.ch }
+      : server !== null && channelId !== undefined
+        ? { server, channelId }
+        : null
+  )
 
   const forRoom =
     !forVoice && p2pRoom !== undefined && contactCall?.room === p2pRoom && !voice && !call
@@ -1150,7 +1200,7 @@ export function VoiceGrid({
     return {
       ...base,
       stream: peer?.stream ?? null,
-      hasVideo: shownMedia(peer, silenced.includes(u)).cam,
+      hasVideo: shownMedia(peer, silenced.includes(u) || unseen.includes(u)).cam,
       status: status(false, peer ? { muted: peer.muted } : null),
       speaking: joined && mgr.isSpeaking(u) && !quiet,
       mirror: false,
@@ -1168,7 +1218,7 @@ export function VoiceGrid({
           ? { stream: p2p.remoteScreenOn ? p2p.remoteScreen : null, id: p2p.remoteShareId }
           : (() => {
               const peer = mgr.peer(u)
-              const shown = shownMedia(peer, silenced.includes(u)).screen
+              const shown = shownMedia(peer, silenced.includes(u) || unseen.includes(u)).screen
               return { stream: shown ? (peer?.screen ?? null) : null, id: peer?.shareId ?? null }
             })()
     if (!share.stream || share.id === null) return null
@@ -1367,8 +1417,10 @@ export function VoiceGrid({
             !p2pElsewhere && (
               <button
                 data-p2p-voice-join
+                disabled={!here.connect}
+                title={here.connect ? undefined : NO_CONNECT}
                 onClick={() => void p2pVoice?.join(forVoice.room, forVoice.ch)}
-                className={`${ctlBase} h-11 gap-2 bg-status-green px-6 text-sm font-semibold text-surface hover:brightness-110`}
+                className={`${ctlBase} h-11 gap-2 bg-status-green px-6 text-sm font-semibold text-surface hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
               >
                 <Phone size={18} />
                 Join voice
@@ -1385,10 +1437,12 @@ export function VoiceGrid({
               )
             ) : (
               <button
+                disabled={!here.connect}
+                title={here.connect ? undefined : NO_CONNECT}
                 onClick={() => {
                   if (view?.kind === 'channel') void joinVoice(view.server, channelId)
                 }}
-                className={`${ctlBase} h-11 gap-2 bg-status-green px-6 text-sm font-semibold text-surface hover:brightness-110`}
+                className={`${ctlBase} h-11 gap-2 bg-status-green px-6 text-sm font-semibold text-surface hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
               >
                 <Phone size={18} />
                 Join voice

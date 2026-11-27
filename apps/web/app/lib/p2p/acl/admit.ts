@@ -10,6 +10,7 @@ import {
   admissible,
   canSend,
   classify,
+  contentLack,
   idOp,
   introduces,
   poster,
@@ -19,6 +20,8 @@ import {
   perms,
   rank,
   knownRules,
+  rulesOf,
+  RULES_NEXT,
   textOnlyChannel,
   richMessage,
   SERVER,
@@ -454,7 +457,8 @@ export interface ContentHead {
 // its last ACL event in B, at most W4 events past it), the causal ts bound, and the content
 // authority in St(m): Mem, Dev, the server not upgraded, no timeout of the author past the
 // event's time for the kinds a timeout stops, and for the known kinds with content a channel `ch`
-// that exists and lets it send.
+// that exists and lets it send. From rules 5 the channel has to give its author what the kind
+// needs there (rules.ts contentLack).
 export function decideContent(
   m: ContentHead,
   B: Past,
@@ -474,9 +478,17 @@ export function decideContent(
   if (TIMEOUT_CONTENT.includes(m.t) && (F.timeouts.get(m.a) ?? -Infinity) > m.ts)
     return { ok: false, why: 'timeout' }
   // A content event held without its content (redacted where it came from) shows nothing and its
-  // channel can't be read: its author must be able to send in some live channel.
+  // channel can't be read: its author must hold what its kind needs in some live channel (up to
+  // rules 4, Send messages).
+  const rules = rulesOf(F.rules)
+  const lack = (ch: string) =>
+    rules < RULES_NEXT
+      ? canSend(F, m.a, ch, rules)
+        ? null
+        : 'send'
+      : contentLack(F, m.a, ch, m.t, m.c, rules)
   if (CHANNEL_CONTENT.includes(m.t) && m.c === null) {
-    for (const [id, c] of F.channels) if (c.gone !== true && canSend(F, m.a, id)) return ok(m, F)
+    for (const [id, c] of F.channels) if (c.gone !== true && lack(id) === null) return ok(m, F)
     return { ok: false, why: 'send' }
   }
   if (CHANNEL_CONTENT.includes(m.t)) {
@@ -486,7 +498,8 @@ export function decideContent(
     if (!c || c.gone === true) return { ok: false, why: 'channel' }
     if (m.t === 'msg' && m.c && textOnlyChannel(ix.ev[ix.genesis]?.c.rules, c) && richMessage(m.c))
       return { ok: false, why: 'text-only' }
-    if (!canSend(F, m.a, ch)) return { ok: false, why: 'send' }
+    const why = lack(ch)
+    if (why !== null) return { ok: false, why }
   }
   return ok(m, F)
 }

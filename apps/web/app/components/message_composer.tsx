@@ -34,7 +34,8 @@ import { spliceText } from '../lib/autocomplete'
 import { loadEmojiData } from '../lib/emoji'
 import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
 import { parseSed } from '../lib/sed'
-import { readOnly } from '../lib/reactions'
+import { useChannelPerms } from '../lib/client/use_channel_perms'
+import { NO_THREADS_TEXT } from '../lib/channel_perms'
 import { textOnlyDestination } from '../lib/channel_content'
 import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
@@ -266,7 +267,21 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const p2pOn = useStore(s => s.settings.p2p_attachments)
   const uploadMax = useStore(s => limitsOf(s.instance).upload_bytes)
   const max = useStore(s => limitsOf(s.instance).message_chars)
-  const canAttach = !textOnly && (uploadsOn || p2pOn)
+  const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
+  const placeChannel = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
+  const can = useChannelPerms(
+    view?.kind === 'channel' && placeChannel !== null
+      ? { server: view.server, channelId: placeChannel }
+      : null
+  )
+  const unstarted = useStore(
+    s =>
+      thread &&
+      s.panel?.kind === 'thread' &&
+      s.panel.root.reply_count === 0 &&
+      !s.messages[`t${s.panel.root.id}`]?.length
+  )
+  const canAttach = !textOnly && (uploadsOn || p2pOn) && can.attach
   const uploadFile = useStore(s => s.uploadFile)
   const toggleSpoiler = useStore(s => s.toggleSpoiler)
   const toggleUploadMode = useStore(s => s.toggleUploadMode)
@@ -276,7 +291,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
   const replying = useStore(s => (draftKey ? s.replying[draftKey] !== undefined : false))
   const forwarding = useForwardClip() !== null
-  const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
   const cancelReply = useStore(s => s.cancelReply)
   const focusAsk = useStore(s => s.composerFocus)
   const editLast = useStore(s => s.editLast)
@@ -432,14 +446,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   if (view?.kind === 'channel' && timedOutEnds !== null) return <TimedOutBar ends={timedOutEnds} />
 
-  if (view?.kind === 'channel' && readOnly(servers[view.server], channelId)) {
+  if (view?.kind === 'channel' && (!can.send || (unstarted && !can.threads))) {
     return (
       <div
         data-no-send
         className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 items-center gap-2 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3"
       >
         <Lock size={16} className="shrink-0" />
-        <span>{NO_SEND}</span>
+        <span>{can.send ? NO_THREADS_TEXT : NO_SEND}</span>
       </div>
     )
   }
@@ -454,17 +468,18 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     if (draftKey) setDraft(draftKey, value)
   }
 
-  const pollTarget: PollTarget | null = textOnly
-    ? null
-    : thread
-      ? rootId !== null
-        ? { kind: 'thread', id: rootId }
-        : null
-      : view?.kind === 'channel'
-        ? { kind: 'channel', id: view.channelId }
-        : view?.kind === 'dm'
-          ? { kind: 'dm', id: view.dmId }
+  const pollTarget: PollTarget | null =
+    textOnly || !can.polls
+      ? null
+      : thread
+        ? rootId !== null
+          ? { kind: 'thread', id: rootId }
           : null
+        : view?.kind === 'channel'
+          ? { kind: 'channel', id: view.channelId }
+          : view?.kind === 'dm'
+            ? { kind: 'dm', id: view.dmId }
+            : null
 
   const switchable = pending !== null && uploadsOn && p2pOn && pending.file.size <= uploadMax
 
@@ -658,7 +673,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               !e.ctrlKey &&
               !composing(e) &&
               draftKey &&
-              !(view?.kind === 'channel' && readOnly(servers[view.server], view.channelId)) &&
+              can.send &&
               editLast(draftKey)
             ) {
               e.preventDefault()

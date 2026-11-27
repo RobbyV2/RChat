@@ -31,12 +31,11 @@ import { messageLinkUrl } from '../message_links'
 import { sharing } from '../platform'
 import { canPin } from '../pins'
 import { pollClosed, votersShown } from '../polls'
-import { readOnly } from '../reactions'
 import { canQuote } from '../replies'
 import { canEdit as ownEditable } from '../sed'
 import { selectable } from '../selection'
 import { canDeleteIn } from '../selection_store'
-import { messageServer, myPerms, myTimeoutEnds } from '../store'
+import { channelCan, messageServer, myPerms, myTimeoutEnds } from '../store'
 import type { RChatState } from '../store_types'
 import { isNotice } from '../system_messages'
 import { messageStampToken } from '../timestamps'
@@ -80,18 +79,26 @@ export const messageRights = (s: RChatState, m: Message, list: string): MessageR
   const server = dm ? null : messageServer(s, m)
   const member = server !== null && !!me?.servers.some(x => x.name === server)
   const free = myTimeoutEnds(s, server) === null
-  const manages = server !== null && hasPerm(myPerms(s, server), Perm.DeleteMessages)
-  const writable = server !== null && !readOnly(s.servers[server], m.channel_id)
-  const react = signed && (dm || (member && writable && free))
-  const replies = replyAccess(s, server, m.channel_id, react, dm)
+  const can = channelCan(s, server, m.channel_id)
+  const write = signed && (dm || (member && can.send && free))
+  const replies = replyAccess(s, server, m.channel_id, write, dm)
   return {
-    react,
-    edit: react && ownEditable(m, me?.username),
+    react: signed && (dm || (member && can.react && free)),
+    edit: write && ownEditable(m, me?.username),
     quote: canQuote(m) && replies.quote,
-    thread: !list.startsWith('t') && canQuote(m) && replies.thread,
+    thread:
+      !list.startsWith('t') &&
+      canQuote(m) &&
+      replies.thread &&
+      (m.reply_count > 0 || !member || can.threads),
     forward: signed && canForward(m),
-    delete: signed && (m.author.username === me?.username || manages),
-    pin: signed && !list.startsWith('t') && (dm || (member && manages)) && free && canPin(m),
+    delete: signed && (m.author.username === me?.username || (server !== null && can.manage)),
+    pin:
+      signed &&
+      !list.startsWith('t') &&
+      (dm || (member && can.pin && can.send)) &&
+      free &&
+      canPin(m),
   }
 }
 
@@ -102,7 +109,7 @@ export const managesPoll = (s: RChatState, m: Message) => {
   const server = messageServer(s, m)
   if (myTimeoutEnds(s, server) !== null) return false
   if (m.author.username === s.me.username) return true
-  return server !== null && hasPerm(myPerms(s, server), Perm.DeleteMessages)
+  return server !== null && channelCan(s, server, m.channel_id).manage
 }
 
 // The message a menu is on, with its list.

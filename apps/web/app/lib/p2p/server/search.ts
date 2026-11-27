@@ -1,6 +1,9 @@
+import { bit, hasBit } from '../../perms'
+import { RULES_NEXT, rulesOf } from '../acl/rules'
 import type { PackedRec } from '../acl_room'
 import type { EventRecord } from '../db'
-import { channelOf, isShortId } from '../state'
+import { channelMaskOf, channelOf, isShortId } from '../state'
+import type { VoiceRights } from '../voice'
 import { candidates, matches, words } from '../search'
 import type { P2pMessage } from '../dm'
 import type { ServerCtx } from './context'
@@ -158,8 +161,17 @@ export function voiceMember(cx: ServerCtx, room: string, ik: string | undefined)
   return !!ik && cx.myMembership(room) === 'join' && cx.may(room, ik) === 'full'
 }
 
-// Who may be in a voice channel, and hear who is: a joined member who may view it.
-// At once when the answer is cached.
+// What a member's audio and video count for in a voice channel: everything up to rules 4, from
+// rules 5 audio with Speak and a camera or a screen with Video.
+export function voiceRights(cx: ServerCtx, room: string, ch: string, ik: string): VoiceRights {
+  const s = cx.sumOf(room)
+  if (rulesOf(s.rules) < RULES_NEXT) return { speak: true, video: true }
+  const mask = channelMaskOf(s, ik, ch)
+  return { speak: hasBit(mask, bit('Speak')), video: hasBit(mask, bit('Video')) }
+}
+
+// Who may be in a voice channel, and hear who is: a joined member who may view it, and from
+// rules 5 holds Connect there. At once when the answer is cached.
 export function voiceAllowed(
   cx: ServerCtx,
   room: string,
@@ -168,6 +180,9 @@ export function voiceAllowed(
 ): boolean | Promise<boolean> {
   if (!cx.isVoiceChannel(room, ch) || cx.myMembership(room) !== 'join') return false
   if (ik !== cx.me && cx.may(room, ik) !== 'full') return false
+  const s = cx.sumOf(room)
+  if (rulesOf(s.rules) >= RULES_NEXT && !hasBit(channelMaskOf(s, ik, ch), bit('Connect')))
+    return false
   const rt = cx.ensureRt(room)
   const key = `${ik}\n${ch}`
   const hit = rt.views.get(key)

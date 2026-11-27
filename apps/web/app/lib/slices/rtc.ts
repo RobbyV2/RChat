@@ -10,9 +10,10 @@ import { client } from '../client/client'
 import type { CallClaim } from '../client/calls'
 import { DENIED_CALL, hidesIp } from '../relays'
 import { JoinAborted } from '../rtc'
-import { myTimeoutEnds, voiceHushedIn, voiceMutedIn } from '../selectors'
+import { CAN_ALL } from '../channel_perms'
+import { channelCan, channelMask, myTimeoutEnds, voiceHushedIn, voiceMutedIn } from '../selectors'
 import type { RChatState } from '../store_types'
-import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../timeouts'
+import { NO_VIDEO, TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../timeouts'
 import type { CallKind, VoiceMsg, WsEvent } from '../types'
 import { SELF_AUDIO_IDLE, type SelfAudio, toggleDeafenAudio, toggleMicAudio } from '../voice_layout'
 import type { SeatAudio } from '../voice_status'
@@ -360,8 +361,9 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     return next
   }
 
-  // Muted by a timeout in the voice channel you are in: by the server, or by your own clock; in
-  // a P2P room's voice channel, by the room's timeout of you.
+  // Muted in the voice channel you are in: by the server (a timeout, or no Speak there), by
+  // your own clock, or by what you hold in the channel; in a P2P room's voice channel, by the
+  // room's timeout of you.
   const forcedMute = () => {
     const s = get()
     const claim = client.calls.current()
@@ -370,9 +372,30 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     if (!s.voice || !s.me) return false
     return (
       voiceMutedIn(s, s.voice.channelId).includes(s.me.username) ||
-      myTimeoutEnds(s, s.voice.server) !== null
+      myTimeoutEnds(s, s.voice.server) !== null ||
+      !voiceCan().speak
     )
   }
+
+  // What you hold in the voice channel you are in.
+  const voiceCan = () => {
+    const s = get()
+    return s.voice ? channelCan(s, s.voice.server, s.voice.channelId) : CAN_ALL
+  }
+
+  // Whether a timeout mutes you there: one your clock knows, or a mute the server lists while
+  // you hold Speak.
+  const timedOutInVoice = () => {
+    const s = get()
+    if (!s.voice || !s.me) return false
+    return (
+      myTimeoutEnds(s, s.voice.server) !== null ||
+      (voiceMutedIn(s, s.voice.channelId).includes(s.me.username) && voiceCan().speak)
+    )
+  }
+
+  // Whether your camera and screen stay off there: a timeout, or no Video in the channel.
+  const sightless = () => timedOutInVoice() || !voiceCan().video
 
   // Muted for everyone by staff in the voice channel you are in, as a guest.
   const staffMuted = () => {
@@ -389,12 +412,14 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   }
   const applyMic = () => {
     const forced = forcedMute()
-    const muted = get().selfAudio.muted || forced || staffMuted()
+    const peerVoice = peerMedia()?.p2pVoice
+    const unheard = peerVoice !== undefined && peerVoice.active() && !peerVoice.speaks()
+    const muted = get().selfAudio.muted || forced || staffMuted() || unheard
     if (rtc.active() && rtc.muted !== muted) rtc.setMuted(muted)
     if (p2p.mediaActive() && p2p.muted !== muted) p2p.setMuted(muted)
     const callRtc = peerMedia()?.callRtc
     if (callRtc?.active() && callRtc.muted !== muted) callRtc.setMuted(muted)
-    if (forced && rtc.active()) {
+    if (sightless() && rtc.active()) {
       if (rtc.videoTrack) void rtc.camera(false)
       if (rtc.sharing) void rtc.share(false)
     }
@@ -437,6 +462,22 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     const claim = client.calls.current()
     if (claim?.account === acct && claim.kind === 'p2p-voice')
       acct.identities.get(claim.identity)?.p2pVoice.audioChanged()
+  }
+
+  // After a change to what you hold in the voice channel you are in (new server details, your
+  // roles or your membership): the mic, camera and share follow it.
+  const followVoiceRights = (s: RChatState, prev: RChatState) => {
+    const v = s.voice
+    if (!v || prev.voice?.server !== v.server || prev.voice.channelId !== v.channelId) return
+    if (
+      s.servers === prev.servers &&
+      s.me === prev.me &&
+      s.members === prev.members &&
+      s.memberInfo === prev.memberInfo
+    )
+      return
+    if (channelMask(s, v.server, v.channelId) !== channelMask(prev, v.server, v.channelId))
+      applyMic()
   }
 
   const setSelfAudio = (selfAudio: SelfAudio) => {
@@ -630,7 +671,8 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
         }
         if (attempt?.kind === 'p2p') return await p2p.toggleCamera()
         const on = rtc.videoTrack === null
-        if (on && forcedMute()) throw new Error(TIMED_OUT_CAMERA)
+        if (on && !voiceCan().video) throw new Error(NO_VIDEO)
+        if (on && timedOutInVoice()) throw new Error(TIMED_OUT_CAMERA)
         await rtc.camera(on)
       }),
     toggleShare: () =>
@@ -644,7 +686,8 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
         }
         if (attempt?.kind === 'p2p') return await p2p.toggleShare()
         const on = !rtc.sharing
-        if (on && forcedMute()) throw new Error(TIMED_OUT_SHARE)
+        if (on && !voiceCan().video) throw new Error(NO_VIDEO)
+        if (on && timedOutInVoice()) throw new Error(TIMED_OUT_SHARE)
         await rtc.share(on)
       }),
 
@@ -923,6 +966,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     handlers,
     actions,
     applyMic,
+    followVoiceRights,
     endRtc,
     resetCallEvents,
     recoverCallHistory,

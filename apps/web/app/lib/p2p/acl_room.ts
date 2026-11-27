@@ -21,9 +21,8 @@ import {
   canView,
   gt,
   idOp,
-  MESSAGES,
   introduces,
-  permsQ,
+  mayPin,
   poster,
   rank,
   rkey,
@@ -957,7 +956,8 @@ export class AclRoom {
         pin: pin ? { id: pin.id, on: pin.c?.on === true } : null,
         everyone: v.mentionsEveryone(m),
       }
-      if (m.t === 'pin') out.pins = (permsQ(v.stateOf(m).facts, m.a) & MESSAGES) !== 0
+      if (m.t === 'pin')
+        out.pins = mayPin(v.stateOf(m).facts, m.a, typeof m.c?.ch === 'string' ? m.c.ch : '')
       return out
     })
   }

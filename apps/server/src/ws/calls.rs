@@ -12,12 +12,17 @@ use super::p2p::{CALLING_TOO_OFTEN, RECONNECTING, TOO_FAST};
 use super::protocol::{ClientMsg, Refused};
 use super::{CallKind, SIGNAL_MAX};
 
-use crate::api::access::{ws_dm_users, ws_voice_channel};
+use crate::api::access::perms::held;
+use crate::api::access::{ws_dm_users, ws_voice_channel, ws_voice_rights, ws_voice_silenced};
 use crate::api::messages::load_broadcast;
-use crate::api::timeouts::running_timeouts;
 use crate::db::{ChannelKind, now, touch_interaction};
 use crate::hub::{Audio, CallEnd, VOICE_EVERY};
 use crate::state::AppState;
+
+/// The refusal of a voice join without Connect in the channel.
+pub(crate) const NO_CONNECT: &str = "You can't join this voice channel";
+/// The refusal of a camera or a screen share without Video in the channel.
+pub(crate) const NO_VIDEO: &str = "You can't share video in this voice channel";
 
 async fn insert_call_log(
     state: &AppState,
@@ -205,8 +210,12 @@ pub(super) async fn voice_msg(
             if channel.server().via() == crate::api::access::Via::Staff {
                 return Err("Join this server to use voice".into());
             }
-            if !channel.member_rights(&state.read()).await?.view {
+            let rights = channel.member_rights(&state.read()).await?;
+            if !rights.view {
                 return Err("Channel not found".into());
+            }
+            if !rights.holds(held::CONNECT) {
+                return Err(NO_CONNECT.into());
             }
             channel.timeout_gate(&state.db).await?;
             let server = channel.server().name().to_string();
@@ -224,9 +233,10 @@ pub(super) async fn voice_msg(
                 finalize_call_log(state, end, false).await;
             }
             still_on(state, CallKind::Rtc).await?;
-            if crate::api::access::timed_out(&state.db, &server, user)
-                .await?
-                .is_some()
+            if !rights.holds(held::SPEAK)
+                || crate::api::access::timed_out(&state.db, &server, user)
+                    .await?
+                    .is_some()
             {
                 state.hub.broadcast(WsEvent::VoiceMuted {
                     server: server.clone(),
@@ -402,11 +412,19 @@ pub(super) async fn relay_signal(
     if let Some(cid) = channel_id
         && shows_video(&payload)
         && let Some(server) = state.hub.room_server(cid)
-        && crate::api::access::timed_out(&state.db, &server, user)
+    {
+        if crate::api::access::timed_out(&state.db, &server, user)
             .await?
             .is_some()
-    {
-        return Err(crate::api::access::TIMED_OUT.into());
+        {
+            return Err(crate::api::access::TIMED_OUT.into());
+        }
+        if !ws_voice_rights(&state.read(), &server, cid, user)
+            .await
+            .holds(held::VIDEO)
+        {
+            return Err(NO_VIDEO.into());
+        }
     }
     if dm_id.is_some() {
         crate::api::blocks::check_dm(&state.db, user, &to).await?;
@@ -462,10 +480,10 @@ pub(super) async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mu
         } = &ev
             && !users.is_empty()
         {
-            let muted = running_timeouts(&state.read(), server, users)
+            let muted = ws_voice_silenced(&state.read(), server, *channel_id, users)
                 .await
                 .unwrap_or_default();
-            for username in users.iter().filter(|u| muted.contains_key(*u)) {
+            for username in users.iter().filter(|u| muted.contains(*u)) {
                 let ev = WsEvent::VoiceMuted {
                     server: server.clone(),
                     channel_id: *channel_id,

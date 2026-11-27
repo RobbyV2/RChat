@@ -374,9 +374,9 @@ pub enum WsEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         audio: Option<Vec<SeatAudio>>,
     },
-    /// A user in a voice channel was muted there by a timeout, or the timeout ended; or, with
-    /// `staff`, staff muted a guest for everyone in the server's voice, or ended that. Apps stop
-    /// sending and playing a muted user's audio.
+    /// A user in a voice channel is muted there (a timeout, or no Speak permission in the
+    /// channel), or no longer is; or, with `staff`, staff muted a guest for everyone in the
+    /// server's voice, or ended that. Apps stop sending and playing a muted user's audio.
     VoiceMuted {
         server: String,
         channel_id: i64,

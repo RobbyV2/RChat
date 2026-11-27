@@ -44,7 +44,7 @@ import { SELF_DM_TEXT, SELF_DM_TITLE } from '../lib/dm_list'
 import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
-import { readOnly } from '../lib/reactions'
+import { useChannelPerms } from '../lib/client/use_channel_perms'
 import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
 import { messageRights, replyAccess } from '../lib/actions/message'
@@ -53,7 +53,6 @@ import type { Target } from '../lib/actions/types'
 import {
   byUsername,
   confirmDeleteMessage,
-  myPerms,
   roleColor,
   userRefFor,
   useStore,
@@ -63,7 +62,7 @@ import {
   type ContextMenuOptions,
   type Outgoing,
 } from '../lib/store'
-import { Perm, hasPerm, type CallLog, type Member, type Message, type UserRef } from '../lib/types'
+import type { CallLog, Member, Message, UserRef } from '../lib/types'
 import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
@@ -501,6 +500,7 @@ interface RowProps {
   flash: boolean
   canDelete: boolean
   canReact: boolean
+  canVote: boolean
   canUnreact: boolean
   canReply: boolean
   canThread: boolean
@@ -525,6 +525,7 @@ const MessageRow = memo(function MessageRow({
   flash,
   canDelete,
   canReact,
+  canVote,
   canUnreact,
   canReply,
   canThread,
@@ -575,7 +576,7 @@ const MessageRow = memo(function MessageRow({
       {m.forward ? (
         <ForwardCard m={m} canDelete={canDelete} />
       ) : m.kind === 'poll' ? (
-        <PollCard m={m} canVote={canReact} />
+        <PollCard m={m} canVote={canVote} />
       ) : (
         <MarkdownMessage
           message={m}
@@ -873,7 +874,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const memberServer = view?.kind === 'channel' ? view.server : null
   const memberFor = useMemberLookup(memberServer)
   useAuthorMembers(memberServer, usePeopleKey(messages, me ? [me.username] : []))
-  const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
   const loadOlder = useStore(s => s.loadOlder)
   const loadNewer = useStore(s => s.loadNewer)
   const jumpToUnread = useStore(s => s.jumpToUnread)
@@ -898,7 +898,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
 
   const channel =
     view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
-  const canAttach = attachmentsEnabled && !channel?.text_only
+  const can = useChannelPerms(
+    view?.kind === 'channel' ? { server: view.server, channelId: view.channelId } : null
+  )
+  const canAttach = attachmentsEnabled && !channel?.text_only && can.attach
   const channelName = channel?.name
   const isVoice = channel?.kind === 'voice'
   const scope = view && !isVoice ? viewKey(view) : null
@@ -1022,31 +1025,30 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
 
   const canUnreact = me !== null && !guest
   const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
-  const canReact =
+  const acting =
     canUnreact &&
     (view?.kind === 'dm' ||
       (view?.kind === 'channel' &&
         me.servers.some(x => x.name === view.server) &&
-        !readOnly(detail, view.channelId) &&
         timedOutEnds === null))
+  const canWrite = acting && can.send
+  const canReact = acting && can.react
   const replies = useStore(
     useShallow(s =>
       replyAccess(
         s,
         memberServer,
         view?.kind === 'channel' ? view.channelId : null,
-        canReact,
+        canWrite,
         view?.kind === 'dm'
       )
     )
   )
 
   const canDelete = (m: Message) =>
-    me !== null &&
-    (m.author.username === me.username ||
-      (view?.kind === 'channel' && hasPerm(perms, Perm.DeleteMessages)))
+    me !== null && (m.author.username === me.username || (view?.kind === 'channel' && can.manage))
 
-  const canEdit = (m: Message) => canReact && ownEditable(m, me?.username)
+  const canEdit = (m: Message) => canWrite && ownEditable(m, me?.username)
 
   const forwardable = (m: Message) => canUnreact && canForward(m)
 
@@ -1285,6 +1287,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                         flash={flash === m.id}
                         canDelete={canDelete(m)}
                         canReact={canReact}
+                        canVote={canWrite}
                         canUnreact={canUnreact}
                         canReply={replies.quote}
                         canThread={replies.thread}
