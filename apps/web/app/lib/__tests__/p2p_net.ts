@@ -181,6 +181,49 @@ export class Hub {
   }
 }
 
+// A slow or loaded link for one side: while `held`, what that side sends waits until `release`.
+// A frame whose pipe closed in the meantime is lost, as on a real link.
+export class SlowLink {
+  held = false
+  private waiting: (() => void)[] = []
+
+  constructor(private inner: () => Transport) {}
+
+  get pending() {
+    return this.waiting.length
+  }
+
+  release() {
+    this.held = false
+    for (const send of this.waiting.splice(0)) send()
+  }
+
+  transport(): Transport {
+    const inner = this.inner()
+    return {
+      listen: (id, onPipe, onLost) => inner.listen(id, p => onPipe(this.pipe(p)), onLost),
+      dial: async (from, to, kind) => this.pipe(await inner.dial(from, to, kind)),
+    }
+  }
+
+  private pipe(p: Pipe): Pipe {
+    return {
+      ...p,
+      send: data => {
+        const send = () => {
+          try {
+            p.send(data)
+          } catch {
+            // Closed while the frame waited.
+          }
+        }
+        if (this.held) this.waiting.push(send)
+        else p.send(data)
+      },
+    }
+  }
+}
+
 let dbSeq = 0
 
 export const makeNode = async (

@@ -1528,7 +1528,8 @@ export class Servers {
     return devices.myDevices(ctx(this))
   }
 
-  private joinedRooms() {
+  // Servers we are in and can still sign in: the ones a leave can be written for.
+  joinedRooms() {
     return devices.joinedRooms(ctx(this))
   }
 

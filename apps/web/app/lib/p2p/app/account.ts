@@ -722,8 +722,9 @@ export function createAccountPart(
     },
 
     // Runs this identity in this tab, for steps that sign with it: a parked identity starts here
-    // and one that another tab runs moves here. Then the members of its servers get a moment to
-    // connect. False when it is not online here within `ms`.
+    // and one that another tab runs moves here. Then each server it can leave gets a moment to
+    // link to a member, told by the servers' changes. False when it is not online here within
+    // `ms`.
     async runHere(username: string, ms = RETIRE_START_MS): Promise<boolean> {
       const until = Date.now() + ms
       while (!onlineHere()) {
@@ -734,10 +735,26 @@ export function createAccountPart(
         await pause(RETIRE_POLL_MS)
       }
       const sv = state.servers!
-      const reach = Math.min(until, Date.now() + RETIRE_REACH_MS)
-      const unreached = () =>
-        sv.serverRooms().some(r => sv.myMembership(r.id) === 'join' && !sv.online(r.id))
-      while (state.servers === sv && unreached() && Date.now() < reach) await pause(RETIRE_POLL_MS)
+      const n = state.node!
+      const unreached = () => sv.joinedRooms().some(room => !sv.online(room))
+      await new Promise<void>(resolve => {
+        const done = () => {
+          off()
+          stopped()
+          clearTimeout(bound)
+          resolve()
+        }
+        const check = () => {
+          if (state.servers !== sv || !unreached()) done()
+        }
+        const off = sv.onChange(check)
+        const stopped = n.onChange(check)
+        const bound = setTimeout(
+          done,
+          Math.max(0, Math.min(until, Date.now() + RETIRE_REACH_MS) - Date.now())
+        )
+        if (!unreached()) done()
+      })
       return onlineHere()
     },
 

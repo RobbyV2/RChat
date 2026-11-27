@@ -86,6 +86,7 @@
     "isServer",
     "isVoiceChannel",
     "issueCode",
+    "joinedRooms",
     "kick",
     "leave",
     "listThreads",

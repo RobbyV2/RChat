@@ -241,6 +241,7 @@ export class Sync {
     const link = new Link(s, ik, room)
     byRoom.set(room, link)
     void this.sendHeads(link)
+    this.deps.onState?.(room)
     return link
   }
 

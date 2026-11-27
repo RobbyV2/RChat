@@ -8,7 +8,7 @@ import { dumpBytes, parseDump, summarize } from '../p2p/transfer'
 import { P2pStore, removeP2pDb } from '../p2p/db'
 import { webLeaderDeps, type ChannelLike, type LeaderDeps } from '../p2p/leader'
 import { drain, memoryStorage } from './fixtures'
-import { bus, FakeLocks, Hub, makeNode, waitFor } from './p2p_net'
+import { bus, FakeLocks, Hub, makeNode, SlowLink, waitFor } from './p2p_net'
 import { testAccount } from './test_account'
 
 test('the main identity reads historical storage and a sibling writes its own settings', async () => {
@@ -530,7 +530,8 @@ test('parking a managed identity keeps only its own drafts until signout', async
 
 const quiet = () => ({ ...webLeaderDeps(), locks: null, channel: () => null })
 
-// `owner` makes a server and lets `app`'s identity in through a contact invite.
+// `owner` makes a server and lets `app`'s identity in through a contact invite. Both sides have
+// it joined (an invited member is listed too) and the identity is linked to the owner there.
 async function shareRoom(owner: P2pApp, app: P2pApp) {
   const room = await owner.servers!.create('Shared room')
   await owner.p2p.addContact(await app.node!.myCard())
@@ -542,8 +543,11 @@ async function shareRoom(owner: P2pApp, app: P2pApp) {
   await app.servers!.acceptInvite(room)
   const ik = app.node!.ik
   await waitFor(
-    () => owner.servers!.view(room)?.members.some(m => m.ik === ik) === true,
-    'the owner sees the identity join'
+    () =>
+      owner.servers!.view(room)?.members.some(m => m.ik === ik && m.m === 'join') === true &&
+      app.servers!.myMembership(room) === 'join' &&
+      app.servers!.online(room),
+    'the identity joined on both sides'
   )
   return room
 }
@@ -592,6 +596,48 @@ test('a parked identity keeps its data until it runs here, then leaves its serve
     memoryStorage.removeItem(peerStorage(alice.conn, user).scoped(app.p2pKey(user)))
     memoryStorage.removeItem(
       peerStorage(bob.conn, 'retire-owner').scoped(owner.p2pKey('retire-owner'))
+    )
+    await Promise.all(dbs.map(db => removeP2pDb(db)))
+    alice.store.dispose()
+    bob.store.dispose()
+  }
+}, 60_000)
+
+test('a parked identity that runs here waits for its server to link, however late', async () => {
+  const user = 'retire-late'
+  const alice = testAccount(user, 'https://identity-retire-late.test')
+  const bob = testAccount('retire-late-owner', alice.conn.origin)
+  alice.discovery.done()
+  bob.discovery.done()
+  const hub = new Hub()
+  const link = new SlowLink(() => hub.transport())
+  const app = createP2pApp(alice, 'main', { transport: () => link.transport(), leaderDeps: quiet })
+  const owner = createP2pApp(bob, 'main', { transport: () => hub.transport(), leaderDeps: quiet })
+  const dbs = [app.dbFor(user), owner.dbFor('retire-late-owner')]
+  try {
+    await app.p2pAccount(user)
+    await app.p2p.enable('Alice')
+    await owner.p2pAccount('retire-late-owner')
+    await owner.p2p.enable('Bob')
+    await waitFor(
+      () => app.node?.status === 'online' && owner.node?.status === 'online',
+      'both identities'
+    )
+    const room = await shareRoom(owner, app)
+    app.park()
+    link.held = true
+    const here = app.p2p.runHere(user)
+    await waitFor(() => app.node?.status === 'online' && link.pending > 0, 'the identity dials out')
+    expect(app.servers!.online(room)).toBe(false)
+    link.release()
+    expect(await here).toBe(true)
+    expect(app.servers!.online(room)).toBe(true)
+  } finally {
+    await app.dispose()
+    await owner.dispose()
+    memoryStorage.removeItem(peerStorage(alice.conn, user).scoped(app.p2pKey(user)))
+    memoryStorage.removeItem(
+      peerStorage(bob.conn, 'retire-late-owner').scoped(owner.p2pKey('retire-late-owner'))
     )
     await Promise.all(dbs.map(db => removeP2pDb(db)))
     alice.store.dispose()
