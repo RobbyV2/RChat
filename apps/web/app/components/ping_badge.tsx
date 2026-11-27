@@ -1,3 +1,4 @@
+import { badgeLook, placed } from '../lib/controls'
 import { badgeText } from '../lib/pings'
 
 export const pingLabel = (n: number) => `${n} ${n === 1 ? 'notification' : 'notifications'}`
@@ -8,7 +9,7 @@ export function PingBadge({ count, className = '' }: { count: number; className?
     <span
       data-ping-badge={count}
       title={pingLabel(count)}
-      className={`flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-danger px-1 text-2xs leading-none font-bold text-on-danger tabular-nums ${className}`}
+      className={placed('flex', badgeLook('danger'), className)}
     >
       <span aria-hidden>{badgeText(count)}</span>
       <span className="sr-only">{pingLabel(count)}</span>

@@ -21,6 +21,7 @@ import { canDeleteIn } from '../lib/selection_store'
 import { allKey, selectKey } from '../lib/shortcuts'
 import type { Message, UserRef } from '../lib/types'
 import { useMedia } from './context_menu'
+import { Row } from './layout'
 
 // Clicks on these never pick a row.
 const INTERACTIVE =
@@ -336,7 +337,7 @@ export function SelectionBar({
         aria-label="Selected messages"
         className="shrink-0 rounded-t-2xl border-t border-outline-variant bg-surface-container-high px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-elevation-2"
       >
-        <div className="flex items-center gap-2">
+        <Row gap="sm">
           {exit}
           {status}
           <button
@@ -348,7 +349,7 @@ export function SelectionBar({
             <ListChecks size={16} />
             Select range
           </button>
-        </div>
+        </Row>
         {selection.ranging && (
           <p className="px-2 pt-1 text-xs text-on-surface-variant">
             {selection.anchor === null ? 'Tap the first message' : 'Tap the last message'}

@@ -78,6 +78,7 @@ import { AltBadge } from './alt_text'
 import { longPress } from './context_menu'
 import { useFileMenu } from './file_card'
 import { Masked, useCopied, useEscape } from './ui'
+import { Row } from './layout'
 
 // An image as the viewer shows it. `src` is the address its message shows it from, held while it
 // is on screen; `w` and `h` the size its sender gave, until the image tells its own; `placeholder`
@@ -962,19 +963,19 @@ export function LightboxView({
         </div>
         <div className="flex shrink-0 items-center gap-3 border-t border-outline-variant/40 bg-surface-container-lowest/95 pb-[env(safe-area-inset-bottom)] px-safe-2 md:h-12 md:px-safe-3">
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto py-1 max-md:justify-center-safe">
-            <div className="flex items-center gap-0.5 max-md:hidden">
+            <Row gap="3xs" place="max-md:hidden">
               <BarButton icon={X} label="Close" onClick={close} />
               {outward}
-            </div>
+            </Row>
             {tools}
           </div>
           <div className="flex min-w-0 shrink items-center gap-2 text-xs text-on-surface-variant tabular-nums max-md:hidden">
-            <span aria-live="polite" className="flex min-w-0 items-center gap-2">
+            <Row as="span" gap="sm" aria-live="polite">
               {counter && <span className="shrink-0">{counter}</span>}
               <span className="max-w-60 min-w-0 truncate text-on-surface" title={shown}>
                 {name}
               </span>
-            </span>
+            </Row>
             <span className="shrink-0">{detail}</span>
           </div>
         </div>

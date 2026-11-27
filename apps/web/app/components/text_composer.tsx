@@ -2,6 +2,7 @@
 import { useRef, useState, type Ref } from 'react'
 import { errorText } from '../lib/store'
 import { Button, LinkButton } from './controls'
+import { Row, Surface } from './layout'
 
 export function TextComposer({
   send,
@@ -44,8 +45,13 @@ export function TextComposer({
     }
   }
   return (
-    <form
-      className="min-w-0 shrink-0 space-y-1 p-2"
+    <Surface
+      as="form"
+      tone="plain"
+      radius="none"
+      pad="sm"
+      gap="2xs"
+      place="shrink-0"
       onSubmit={e => {
         e.preventDefault()
         void submit()
@@ -59,7 +65,7 @@ export function TextComposer({
           <LinkButton onClick={cancelReply}>Cancel reply</LinkButton>
         </div>
       )}
-      <div className="flex items-end gap-2">
+      <Row gap="sm" align="end">
         <textarea
           ref={inputRef}
           aria-label={label}
@@ -79,12 +85,12 @@ export function TextComposer({
         <Button type="submit" variant="filled" size="md" disabled={busy || !text.trim()}>
           Send
         </Button>
-      </div>
+      </Row>
       {error && (
         <p role="alert" className="text-sm text-error">
           {error}
         </p>
       )}
-    </form>
+    </Surface>
   )
 }

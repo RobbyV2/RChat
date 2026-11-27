@@ -16,6 +16,7 @@ import { BlockedQuote } from './blocking'
 import { Button } from './controls'
 import { Masked } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
+import { Row } from './layout'
 
 export const WidgetLinkCards = createContext<ReadonlyMap<number, MessageLocation> | null>(null)
 // Whether a frame may show a forwarded copy from this source, and the room to ask about.
@@ -144,13 +145,13 @@ function LinkCard({
       className="mt-1 flex max-w-160 min-w-0 items-center gap-3 rounded-xl border border-outline-variant bg-surface-container px-3 py-2"
     >
       <PreviewRow tabIndex={-1} onOpen={jump} className="min-w-0 flex-1 text-left">
-        <div className="flex min-w-0 items-center gap-2">
+        <Row gap="sm">
           <ShownAvatar user={author} server={card.server} size={20} />
           <span className="streamer min-w-0 truncate text-sm font-medium">
             <ShownName user={author} server={card.server} />
           </span>
           <MessageTime ts={created_at} className="shrink-0 text-xs text-on-surface-variant" />
-        </div>
+        </Row>
         <div className="mt-0.5 flex min-w-0 items-center gap-1 text-sm text-on-surface-variant">
           {gated ? (
             <>
@@ -177,12 +178,12 @@ function LinkCard({
 
 function Label({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
-    <span className="flex min-w-0 items-center gap-1 italic">
+    <Row as="span" gap="2xs">
       {icon}
-      <span className="truncate">
+      <span className="truncate italic">
         <Masked text={text} />
       </span>
-    </span>
+    </Row>
   )
 }
 

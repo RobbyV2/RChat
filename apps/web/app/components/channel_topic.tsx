@@ -19,6 +19,7 @@ import { useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { MessageLink } from './markdown_message'
 import { CloseButton, fieldCls, FieldError, Masked, Sheet, useOwnServer } from './ui'
+import { Row, Surface } from './layout'
 
 const topicFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -179,14 +180,19 @@ function TopicWindow({
         </h2>
         {!sheet && <CloseButton onClick={onClose} />}
       </div>
-      <div
+      <Surface
+        tone="plain"
+        radius="none"
+        border="top"
+        inset="bar"
+        pad="lg"
+        place="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         onClickCapture={e => {
           if (e.target instanceof Element && e.target.closest('a')) onClose()
         }}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-outline-variant px-4 pt-3 pb-3"
       >
         <TopicText topic={topic} />
-      </div>
+      </Surface>
     </>
   )
 
@@ -284,7 +290,7 @@ export function TopicEditor({
           over || error !== null ? 'border-error' : 'border-outline focus:border-primary'
         }`}
       />
-      <div className="flex items-start justify-between gap-3">
+      <Row gap="md" align="start" justify="between">
         <div className="min-w-0">
           <FieldError id={`${id}-error`} message={error} />
           {done && !error && <p className="pt-1.5 text-xs text-on-surface-variant">Saved</p>}
@@ -298,8 +304,8 @@ export function TopicEditor({
         >
           {count}/{TOPIC_MAX}
         </span>
-      </div>
-      <div className="flex justify-end gap-2">
+      </Row>
+      <Row gap="sm" justify="end">
         <Button
           size="md"
           onClick={() => {
@@ -319,7 +325,7 @@ export function TopicEditor({
         >
           Save
         </Button>
-      </div>
+      </Row>
     </div>
   )
 }

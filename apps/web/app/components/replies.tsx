@@ -17,6 +17,7 @@ import { IconButton } from './controls'
 import { Masked, useOwn } from './ui'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
+import { Row } from './layout'
 
 // A small marker for forwarded messages where only a line of them is shown (search, quotes).
 export function ForwardedTag() {
@@ -40,21 +41,21 @@ export function Snippet({
 }) {
   if (!quote.content)
     return (
-      <span className="flex min-w-0 items-center gap-1 italic">
-        <span className="truncate">
+      <Row as="span" gap="2xs">
+        <span className="truncate italic">
           {quote.has_media ? 'Click to see attachment' : 'Click to see message'}
         </span>
         {quote.has_media && <ImageIcon size={14} className="shrink-0" />}
-      </span>
+      </Row>
     )
   const parts = snippetParts(plainStamps(quote.content))
   return (
-    <span className="flex min-w-0 items-center gap-1">
+    <Row as="span" gap="2xs">
       <span className={parts.some(p => p.spoiler) ? 'min-w-0 break-words' : 'truncate'}>
         <SpoilerLine parts={parts} own={own} />
       </span>
       {quote.has_media && <ImageIcon size={14} className="shrink-0" />}
-    </span>
+    </Row>
   )
 }
 

@@ -14,6 +14,7 @@ import { useMedia } from './context_menu'
 import { useTextAssist } from './text_assist'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { fullTimeOf } from '../lib/timestamps'
+import { Row, Stack } from './layout'
 
 export const editAction = (onClick: () => void): ToolbarAction => ({
   key: 'edit',
@@ -126,57 +127,59 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
       onContextMenu={e => e.stopPropagation()}
       onTouchStart={e => e.stopPropagation()}
     >
-      <div className="relative flex items-end gap-2 rounded-xl bg-surface-container-high px-3 py-2">
-        {assist.popups}
-        <FormatToolbar open={formatting.selected} onFormat={formatting.apply} below={below} />
-        <textarea
-          ref={inputRef}
-          rows={1}
-          aria-label="Edit message"
-          {...assist.textarea}
-          onKeyDown={e => {
-            if (assist.popupKey(e)) return
-            if (formatting.onKeyDown(e)) return
-            if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              cancel()
-              return
-            }
-            if (sendKey(e)) {
-              e.preventDefault()
-              save()
-            }
-          }}
-          className="max-h-80 min-w-0 flex-1 resize-none bg-transparent py-0.5 text-base leading-relaxed outline-none md:text-sm"
-        />
-        {count > counterFrom(max) && (
-          <span
-            title={`Messages can be up to ${max} characters`}
-            className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
-          >
-            {max - count}
-          </span>
-        )}
-      </div>
-      {alt && (
-        <div data-alt-field className="mt-1.5 w-full max-w-md">
-          <AltField value={alt.text} onChange={alt.set} />
+      <Stack gap="xs">
+        <div className="relative flex items-end gap-2 rounded-xl bg-surface-container-high px-3 py-2">
+          {assist.popups}
+          <FormatToolbar open={formatting.selected} onFormat={formatting.apply} below={below} />
+          <textarea
+            ref={inputRef}
+            rows={1}
+            aria-label="Edit message"
+            {...assist.textarea}
+            onKeyDown={e => {
+              if (assist.popupKey(e)) return
+              if (formatting.onKeyDown(e)) return
+              if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                cancel()
+                return
+              }
+              if (sendKey(e)) {
+                e.preventDefault()
+                save()
+              }
+            }}
+            className="max-h-80 min-w-0 flex-1 resize-none bg-transparent py-0.5 text-base leading-relaxed outline-none md:text-sm"
+          />
+          {count > counterFrom(max) && (
+            <span
+              title={`Messages can be up to ${max} characters`}
+              className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
+            >
+              {max - count}
+            </span>
+          )}
         </div>
-      )}
-      <div className="mt-1 text-xs text-on-surface-variant pointer-coarse:hidden">
-        escape to <LinkButton onClick={cancel}>cancel</LinkButton> • enter to{' '}
-        <LinkButton onClick={save} disabled={blocked}>
-          save
-        </LinkButton>
-      </div>
-      <div className="mt-1.5 flex justify-end gap-2 pointer-fine:hidden">
-        <Button size="md" onClick={cancel}>
-          Cancel
-        </Button>
-        <Button variant="filled" size="md" onClick={save} disabled={blocked}>
-          Save
-        </Button>
-      </div>
+        {alt && (
+          <div data-alt-field className="w-full max-w-md">
+            <AltField value={alt.text} onChange={alt.set} />
+          </div>
+        )}
+        <div className="text-xs text-on-surface-variant pointer-coarse:hidden">
+          escape to <LinkButton onClick={cancel}>cancel</LinkButton> • enter to{' '}
+          <LinkButton onClick={save} disabled={blocked}>
+            save
+          </LinkButton>
+        </div>
+        <Row gap="sm" justify="end" place="pointer-fine:hidden">
+          <Button size="md" onClick={cancel}>
+            Cancel
+          </Button>
+          <Button variant="filled" size="md" onClick={save} disabled={blocked}>
+            Save
+          </Button>
+        </Row>
+      </Stack>
     </div>
   )
 }

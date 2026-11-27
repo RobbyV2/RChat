@@ -10,6 +10,7 @@ import { typingParts, typingTitle } from '../lib/typing'
 import { useLooksFor } from './shown_user'
 import { Masked } from './ui'
 import { PingBadge } from './ping_badge'
+import { Row } from './layout'
 
 const NONE: string[] = []
 
@@ -19,7 +20,7 @@ const DELAYS = ['0ms', '150ms', '300ms']
 function Dots({ still }: { still: string }) {
   const moves = useMotionPlays()
   return (
-    <span className="flex shrink-0 items-center gap-0.5" aria-hidden>
+    <Row as="span" gap="3xs" place="shrink-0" aria-hidden>
       {DELAYS.map(d => (
         <span
           key={d}
@@ -27,7 +28,7 @@ function Dots({ still }: { still: string }) {
           className={`size-1 rounded-full bg-current ${moves ? 'animate-typing-dot' : still}`}
         />
       ))}
-    </span>
+    </Row>
   )
 }
 
@@ -69,10 +70,10 @@ export function ChannelEnd({
 }) {
   if (typers.length)
     return (
-      <span className="ml-auto flex shrink-0 items-center gap-1.5">
+      <Row as="span" gap="xs" place="ml-auto shrink-0">
         <TypingEllipsis names={typers} />
         <PingBadge count={pings} />
-      </span>
+      </Row>
     )
   if (pings > 0) return <PingBadge count={pings} className="ml-auto" />
   return unread ? (

@@ -18,6 +18,7 @@ import {
 import { useHighlight, type CodeNode } from '../lib/highlight'
 import { sharing } from '../lib/platform'
 import { useChat } from '../lib/place/use_chat'
+import { Surface } from './layout'
 
 const CLASS = /^[a-z][\w-]*$/i
 
@@ -137,7 +138,7 @@ export function CodePreviewLoading({ filename }: { filename: string }) {
   return (
     <div
       aria-label={`Loading ${filename}`}
-      className="mt-1 h-40 w-[42rem] max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container"
+      className="mt-1 h-40 w-2xl max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container"
     />
   )
 }
@@ -172,7 +173,7 @@ export function CodePreview({
   return (
     <div
       data-code-preview=""
-      className="mt-1 w-[42rem] max-w-full overflow-hidden rounded-xl border border-outline-variant bg-surface-container"
+      className="mt-1 w-2xl max-w-full overflow-hidden rounded-xl border border-outline-variant bg-surface-container"
     >
       <div className="flex items-center gap-2 py-1.5 pr-1.5 pl-3">
         <FileCode size={18} className="shrink-0 text-primary" />
@@ -191,7 +192,7 @@ export function CodePreview({
         role="region"
         aria-label={`Preview of ${filename}`}
         tabIndex={0}
-        className="code-hl flex max-h-[25rem] overflow-auto border-t border-outline-variant bg-surface-container-high font-mono text-xs leading-5"
+        className="code-hl flex max-h-100 overflow-auto border-t border-outline-variant bg-surface-container-high font-mono text-xs leading-5"
       >
         <pre
           aria-hidden
@@ -207,15 +208,19 @@ export function CodePreview({
         </pre>
       </div>
       {(cut || note) && (
-        <div className="space-y-0.5 border-t border-outline-variant px-3 py-1.5 text-xs text-on-surface-variant">
-          {cut && <p>Showing the first 1 MB. Download to view all.</p>}
+        <Surface tone="plain" radius="none" border="top" inset="bar" pad="md" gap="3xs">
+          {cut && (
+            <p className="text-xs text-on-surface-variant">
+              Showing the first 1 MB. Download to view all.
+            </p>
+          )}
           {note && (
-            <p className="flex items-center gap-1 text-error">
+            <p className="flex items-center gap-1 text-xs text-error">
               <ShieldAlert size={12} className="shrink-0" />
               {note}
             </p>
           )}
-        </div>
+        </Surface>
       )}
       {footer}
     </div>

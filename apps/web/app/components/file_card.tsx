@@ -38,6 +38,7 @@ import { longPress } from './context_menu'
 import { RowSelecting } from './selection'
 import { useLiveNow } from './timestamp'
 import { MaskedText, MaskedTogether } from './ui'
+import { Row } from './layout'
 
 const ICONS: Record<FileKind, LucideIcon> = {
   archive: FileArchive,
@@ -196,7 +197,7 @@ export function FileCardBody({
         }`}
       >
         {preview}
-        <div className="flex items-center gap-3">
+        <Row gap="md">
           <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-surface-container-highest text-on-surface-variant">
             <Icon size={24} aria-hidden />
           </span>
@@ -235,7 +236,7 @@ export function FileCardBody({
               )
             })}
           {button}
-        </div>
+        </Row>
         {percent !== null && (
           <div
             role="progressbar"

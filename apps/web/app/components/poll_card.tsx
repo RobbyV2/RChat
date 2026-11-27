@@ -47,6 +47,7 @@ import { Button, IconButton, LinkButton, Tab } from './controls'
 import { Dialog, fieldCls, FieldError, Masked, Sentinel } from './ui'
 import { ShownAvatar, ShownName, useViewServer } from './shown_user'
 import { MessageTime } from './timestamp'
+import { Row, Stack } from './layout'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
@@ -130,7 +131,7 @@ function ChoiceList({
         const body = (
           <>
             {r && <Bar share={share} mine={mine} lead={winner === o.id} />}
-            <span className="relative flex min-w-0 flex-1 items-center gap-2">
+            <Row as="span" gap="sm" place="relative flex-1">
               {live &&
                 (ranked ? (
                   <span
@@ -162,7 +163,7 @@ function ChoiceList({
                 ) : (
                   <Check size={14} className="shrink-0 text-primary" aria-label="Your vote" />
                 ))}
-            </span>
+            </Row>
             {r && (
               <span className="relative shrink-0 text-xs text-on-surface-variant tabular-nums">
                 {ranked ? `${count} first` : `${share}% · ${count}`}
@@ -174,7 +175,7 @@ function ChoiceList({
           sel && live ? 'border-primary' : 'border-outline-variant'
         }`
         return (
-          <li key={o.id} className="flex items-center gap-1">
+          <Row as="li" key={o.id} gap="2xs">
             {onPick ? (
               <button
                 type="button"
@@ -190,7 +191,7 @@ function ChoiceList({
                 {body}
               </div>
             )}
-          </li>
+          </Row>
         )
       })}
     </ul>
@@ -213,7 +214,7 @@ function RankOrder({
         const o = poll.options.find(x => x.id === id)
         if (!o) return null
         return (
-          <li key={id} className="flex items-center gap-2">
+          <Row as="li" key={id} gap="sm">
             <span className="w-5 shrink-0 text-center text-xs font-medium text-primary tabular-nums">
               {i + 1}
             </span>
@@ -236,7 +237,7 @@ function RankOrder({
               disabled={i === order.length - 1}
               onClick={() => onMove(id, 1)}
             />
-          </li>
+          </Row>
         )
       })}
     </ol>
@@ -248,12 +249,12 @@ function Rounds({ poll }: { poll: Poll }) {
   return (
     <div data-poll-rounds className="mt-2 flex flex-col gap-3">
       {rounds.map(round => (
-        <div key={round.n}>
+        <Stack key={round.n} gap="2xs">
           <p className="text-xs font-medium text-on-surface-variant">
             Round {round.n}
             {round.exhausted > 0 && ` · ${round.exhausted} without a choice left`}
           </p>
-          <ul className="mt-1 flex flex-col gap-1">
+          <Stack as="ul" gap="2xs">
             {round.rows.map(row =>
               row.option ? (
                 <li
@@ -276,8 +277,8 @@ function Rounds({ poll }: { poll: Poll }) {
                 </li>
               ) : null
             )}
-          </ul>
-        </div>
+          </Stack>
+        </Stack>
       ))}
     </div>
   )
@@ -350,7 +351,7 @@ function Rating({
           </div>
           <div className="flex h-16 min-w-0 flex-1 items-end gap-1" aria-label="Scores">
             {r.distribution.map((n, i) => (
-              <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-0.5">
+              <Stack key={i} gap="3xs" align="center" place="flex-1">
                 <div
                   title={`${i + 1}: ${n}`}
                   className={`w-full rounded-t-md ${
@@ -359,7 +360,7 @@ function Rating({
                   style={{ height: `${Math.max(4, (n / top) * 48)}px` }}
                 />
                 <span className="text-3xs text-on-surface-variant tabular-nums">{i + 1}</span>
-              </div>
+              </Stack>
             ))}
           </div>
         </div>
@@ -386,7 +387,7 @@ function AddOption({ id, onDone }: { id: number; onDone: () => void }) {
   }
   return (
     <div className="mt-2">
-      <div className="flex items-center gap-1.5">
+      <Row gap="xs">
         <button
           ref={emojiRef}
           type="button"
@@ -417,7 +418,7 @@ function AddOption({ id, onDone }: { id: number; onDone: () => void }) {
           Add
         </Button>
         <IconButton icon={X} label="Cancel" onClick={onDone} />
-      </div>
+      </Row>
       <FieldError message={error} />
       {picker && (
         <EmojiPicker
@@ -480,13 +481,13 @@ function VoterList({ id, option }: { id: number; option: number | null }) {
   return (
     <>
       <FieldError message={error} />
-      <ul data-poll-voters className="mt-3 flex flex-col">
+      <Stack as="ul" gap="none" data-poll-voters>
         {list.map(v => (
           <VoterRow key={v.user.username} v={v} />
         ))}
-      </ul>
+      </Stack>
       {!error && !more && list.length === 0 && (
-        <p className="py-4 text-center text-sm text-on-surface-variant">No votes yet</p>
+        <p className="text-center text-sm text-on-surface-variant">No votes yet</p>
       )}
       {more && !error && <Sentinel onVisible={() => void load()} />}
     </>
@@ -509,27 +510,29 @@ function PollVoters({ m, onClose }: { m: Message; onClose: () => void }) {
   return (
     <OwnPoll.Provider value={ownPoll(m, me)}>
       <Dialog title="Votes" onClose={onClose} full>
-        <p className="text-sm break-words text-on-surface-variant">
-          <PollText text={poll.question} />
-        </p>
-        <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by option">
-          {chips.map(c => (
-            <Tab
-              key={c.key ?? 'all'}
-              selected={option === c.key}
-              onClick={() => setOption(c.key)}
-              place="max-w-full"
-            >
-              <span className="truncate">
-                <PollText text={c.label} option />
-              </span>
-            </Tab>
-          ))}
-        </div>
-        {poll.kind === 'ranked' && option !== null && (
-          <p className="mt-2 text-xs text-on-surface-variant">Voters who ranked it first</p>
-        )}
-        <VoterList key={option ?? 'all'} id={m.id} option={option} />
+        <Stack gap="md">
+          <p className="text-sm break-words text-on-surface-variant">
+            <PollText text={poll.question} />
+          </p>
+          <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by option">
+            {chips.map(c => (
+              <Tab
+                key={c.key ?? 'all'}
+                selected={option === c.key}
+                onClick={() => setOption(c.key)}
+                place="max-w-full"
+              >
+                <span className="truncate">
+                  <PollText text={c.label} option />
+                </span>
+              </Tab>
+            ))}
+          </div>
+          {poll.kind === 'ranked' && option !== null && (
+            <p className="text-xs text-on-surface-variant">Voters who ranked it first</p>
+          )}
+          <VoterList key={option ?? 'all'} id={m.id} option={option} />
+        </Stack>
       </Dialog>
     </OwnPoll.Provider>
   )

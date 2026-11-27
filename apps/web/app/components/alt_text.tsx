@@ -5,6 +5,7 @@ import { X } from 'lucide-react'
 import { charCount } from '../lib/rules'
 import { ALT_MAX, altAnnouncement, altError, cleanAlt } from '../lib/alt_text'
 import { Masked } from './ui'
+import { Stack } from './layout'
 
 // The ALT pill in the bottom-right corner of an image that has a description; pressing it shows
 // the description over the image, below the pill or, with `up`, above it where there is no room
@@ -92,7 +93,7 @@ export function AltField({
   const count = charCount(cleanAlt(value))
   const tooLong = altError(value)
   return (
-    <span className={`flex min-w-0 flex-col gap-0.5 ${compact ? '' : 'w-full'}`}>
+    <Stack as="span" gap="3xs" place={compact ? undefined : 'w-full'}>
       <input
         value={value}
         onChange={e => onChange(e.target.value)}
@@ -109,6 +110,6 @@ export function AltField({
           {tooLong ?? altAnnouncement(count)}
         </span>
       )}
-    </span>
+    </Stack>
   )
 }

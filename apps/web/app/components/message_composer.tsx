@@ -61,6 +61,7 @@ import type { PollTarget } from '../lib/polls_store'
 import { RelayPicker } from './relay_settings'
 import type { RelayChoice } from '../lib/relays'
 import { useInstanceLabel } from './instance_badge'
+import { Row, Stack } from './layout'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -95,49 +96,51 @@ function ExpiryDialog({
   const customOk = Number.isFinite(custom) && custom > 0
   return (
     <Dialog title="P2P file expiration" onClose={onClose}>
-      <p className="text-sm text-on-surface-variant">
-        Choose how long the P2P files in this message stay stored in your browser. Others can only
-        download them while you are online.
-      </p>
-      <div className="mt-3">
-        <RelayPicker value={relay} onChange={setRelay} prefs={prefs} />
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {PRESETS.map(p => (
-          <button
-            key={p.label}
-            onClick={() => onPick(p.seconds, relay)}
-            className="rounded-full border border-outline px-3 py-1.5 text-sm hover:bg-surface-container-highest"
+      <Stack gap="lg">
+        <Stack gap="md">
+          <p className="text-sm text-on-surface-variant">
+            Choose how long the P2P files in this message stay stored in your browser. Others can
+            only download them while you are online.
+          </p>
+          <RelayPicker value={relay} onChange={setRelay} prefs={prefs} />
+          <div className="flex flex-wrap gap-2">
+            {PRESETS.map(p => (
+              <button
+                key={p.label}
+                onClick={() => onPick(p.seconds, relay)}
+                className="rounded-full border border-outline px-3 py-1.5 text-sm hover:bg-surface-container-highest"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </Stack>
+        <Row gap="sm">
+          <input
+            type="number"
+            min={1}
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            placeholder="Custom"
+            className={`${fieldCls} w-24 flex-1`}
+          />
+          <select value={mult} onChange={e => setMult(Number(e.target.value))} className={fieldCls}>
+            {UNITS.map(u => (
+              <option key={u.mult} value={u.mult}>
+                {u.label}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="filled"
+            size="md"
+            disabled={!customOk}
+            onClick={() => onPick(Math.round(custom * mult), relay)}
           >
-            {p.label}
-          </button>
-        ))}
-      </div>
-      <div className="mt-4 flex items-center gap-2">
-        <input
-          type="number"
-          min={1}
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
-          placeholder="Custom"
-          className={`${fieldCls} w-24 flex-1`}
-        />
-        <select value={mult} onChange={e => setMult(Number(e.target.value))} className={fieldCls}>
-          {UNITS.map(u => (
-            <option key={u.mult} value={u.mult}>
-              {u.label}
-            </option>
-          ))}
-        </select>
-        <Button
-          variant="filled"
-          size="md"
-          disabled={!customOk}
-          onClick={() => onPick(Math.round(custom * mult), relay)}
-        >
-          Send
-        </Button>
-      </div>
+            Send
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
@@ -575,7 +578,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           </button>
           <div className="flex items-center justify-between">
             <FileIcon size={20} className="text-primary" />
-            <div className="flex items-center gap-1">
+            <Row gap="2xs">
               <button
                 title={modeTitle(pending.mode, switchable, uploadHint)}
                 onClick={() => draftKey && toggleUploadMode(draftKey)}
@@ -600,7 +603,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               >
                 {pending.spoiler ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
-            </div>
+            </Row>
           </div>
           <span className="truncate text-xs">
             {pending.spoiler ? 'Spoiler · ' : ''}

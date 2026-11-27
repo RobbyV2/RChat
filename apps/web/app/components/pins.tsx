@@ -20,6 +20,7 @@ import { ShownAvatar, ShownName } from './shown_user'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
+import { Row, Stack, Surface } from './layout'
 
 // Pinning and unpinning: either DM participant, or a member with Pin messages in the channel.
 export function useCanPin() {
@@ -267,7 +268,7 @@ function PinEntry({
           {target && <RevealChannelPreview target={target} />}
         </p>
       )}
-      <div className="absolute top-2 right-2 flex items-center gap-1">
+      <Row gap="2xs" place="absolute top-2 right-2">
         <Button
           variant="tonal"
           onClick={() => onJump(m.id)}
@@ -284,7 +285,7 @@ function PinEntry({
             onClick={() => onUnpin(m.id)}
           />
         )}
-      </div>
+      </Row>
     </li>
   )
 }
@@ -443,28 +444,36 @@ export function PinsPanel({
 }) {
   return (
     <HeaderPopover icon={Pin} title={PINS_TITLE} button="[data-pins-button]" onClose={onClose}>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-outline-variant px-3 pt-3 pb-3">
+      <Surface
+        tone="plain"
+        radius="none"
+        border="top"
+        pad="md"
+        place="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      >
         {list === null && !failed && (
-          <p className="px-1 py-6 text-center text-sm text-on-surface-variant">
-            Loading pinned messages
-          </p>
+          <Surface tone="plain" radius="none" pad="xl">
+            <p className="text-center text-sm text-on-surface-variant">Loading pinned messages</p>
+          </Surface>
         )}
         {list === null && failed && (
-          <div className="flex flex-col items-center gap-2 py-6 text-sm text-on-surface-variant">
-            <span>Couldn&apos;t load pinned messages.</span>
+          <Surface tone="plain" radius="none" pad="xl" gap="sm" align="center">
+            <span className="text-sm text-on-surface-variant">
+              Couldn&apos;t load pinned messages.
+            </span>
             <Button onClick={onRetry}>Retry</Button>
-          </div>
+          </Surface>
         )}
         {list !== null && list.length === 0 && (
-          <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+          <Surface tone="plain" radius="none" pad="2xl" gap="md" align="center">
             <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant">
               <Pin size={26} />
             </span>
-            <p className="text-sm text-on-surface-variant">{empty}</p>
-          </div>
+            <p className="text-center text-sm text-on-surface-variant">{empty}</p>
+          </Surface>
         )}
         {list !== null && list.length > 0 && (
-          <ul className="flex flex-col gap-2" aria-label={`Pinned messages in this ${place}`}>
+          <Stack as="ul" gap="sm" aria-label={`Pinned messages in this ${place}`}>
             {list.map(m => (
               <PinEntry
                 key={m.id}
@@ -475,9 +484,9 @@ export function PinsPanel({
                 profiles={profiles}
               />
             ))}
-          </ul>
+          </Stack>
         )}
-      </div>
+      </Surface>
     </HeaderPopover>
   )
 }

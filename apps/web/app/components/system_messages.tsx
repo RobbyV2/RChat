@@ -13,6 +13,7 @@ import { MessageTime } from './timestamp'
 import { profileTrigger } from './profile_card'
 import { fieldCls, FieldError, textBtn } from './ui'
 import { ShownName } from './shown_user'
+import { Stack } from './layout'
 
 // "alice joined the party." with a green arrow, "alice left the server." with a red one.
 export function SystemNotice({
@@ -107,7 +108,7 @@ export function ServerSystemMessages({ server }: { server: string }) {
   return (
     <>
       {saved ? (
-        <div className="flex flex-col gap-2">
+        <Stack gap="sm">
           <label htmlFor={selectId} className="text-sm text-on-surface">
             Channel for join and leave messages
           </label>
@@ -145,7 +146,7 @@ export function ServerSystemMessages({ server }: { server: string }) {
             </span>
           )}
           <FieldError message={error} />
-        </div>
+        </Stack>
       ) : failed ? (
         <p className="flex items-center gap-2 text-sm text-on-surface-variant">
           Couldn&apos;t load these settings.

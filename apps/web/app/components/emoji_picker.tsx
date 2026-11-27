@@ -52,6 +52,7 @@ import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { useMedia } from './context_menu'
 import { Button, IconButton } from './controls'
 import { Sheet } from './ui'
+import { Stack, Surface } from './layout'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
 
@@ -554,10 +555,12 @@ const PickerBody = memo(function PickerBody({
   let content: ReactNode
   if (failed) {
     content = (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-on-surface-variant">
-        <p>Emoji could not load.</p>
-        <Button onClick={retry}>Try again</Button>
-      </div>
+      <Surface tone="plain" radius="none" pad="xl" place="h-full">
+        <Stack gap="md" align="center" justify="center" place="flex-1">
+          <p className="text-center text-sm text-on-surface-variant">Emoji could not load.</p>
+          <Button onClick={retry}>Try again</Button>
+        </Stack>
+      </Surface>
     )
   } else if (!data) {
     content = (
@@ -576,11 +579,13 @@ const PickerBody = memo(function PickerBody({
     )
   } else if (!hasGrid) {
     content = (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-        <SearchX size={36} className="text-on-surface-variant" />
-        <p className="text-sm font-medium text-on-surface">No emoji found</p>
-        <p className="text-xs text-on-surface-variant">Try a different word.</p>
-      </div>
+      <Surface tone="plain" radius="none" pad="xl" place="h-full">
+        <Stack gap="sm" align="center" justify="center" place="flex-1">
+          <SearchX size={36} className="text-on-surface-variant" />
+          <p className="text-center text-sm font-medium text-on-surface">No emoji found</p>
+          <p className="text-center text-xs text-on-surface-variant">Try a different word.</p>
+        </Stack>
+      </Surface>
     )
   } else {
     content = (
@@ -641,7 +646,6 @@ const PickerBody = memo(function PickerBody({
                 setActive(null)
                 if (!sheet) searchRef.current?.focus()
               }}
-              place="-mr-1"
             />
           )}
         </div>

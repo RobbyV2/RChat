@@ -57,6 +57,7 @@ import { useInstanceLabel } from './instance_badge'
 import { ServerGlyph } from './server_rail'
 import { useStableSelector } from '../lib/stable_key'
 import type { P2pState } from '../lib/p2p/app/store'
+import { Row, Stack } from './layout'
 
 const DELETED_USER = 'Deleted user'
 
@@ -214,7 +215,7 @@ export function ForwardBar({
         </>
       }
     >
-      <span data-forward-bar className="flex min-w-0 items-center gap-2">
+      <Row as="span" gap="sm" data-forward-bar>
         <Forward size={14} className="shrink-0 text-primary" />
         <span className="shrink-0">
           Forward{' '}
@@ -227,8 +228,8 @@ export function ForwardBar({
           )}
           &apos;s message
         </span>
-        <span className="flex min-w-0 items-center gap-1 text-xs">
-          <span className="truncate">
+        <Row as="span" gap="2xs">
+          <span className="truncate text-xs">
             <SpoilerLine
               key={JSON.stringify([me, clip.source, clip.id])}
               parts={snippetParts(plainStamps(clip.snippet))}
@@ -236,8 +237,8 @@ export function ForwardBar({
             />
           </span>
           {clip.has_media && <ImageIcon size={12} className="shrink-0" aria-label="Attachment" />}
-        </span>
-      </span>
+        </Row>
+      </Row>
       {show !== null && (
         <span data-forward-source className="block truncate text-xs">
           {waiting ? (
@@ -614,12 +615,12 @@ export function ForwardCard({
   )
   if (blocked && !shown)
     return (
-      <div data-forward={fwd.source_id} className="min-w-0">
+      <Stack gap="2xs" data-forward={fwd.source_id}>
         {head}
-        <div className="mt-1 max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
+        <div className="max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
           <BlockedQuote onShow={() => setShown(true)} />
         </div>
-      </div>
+      </Stack>
     )
   if (!local && access !== 'open')
     return (
@@ -636,11 +637,11 @@ export function ForwardCard({
       </div>
     )
   return (
-    <div data-forward={fwd.source_id} className="min-w-0">
+    <Stack gap="2xs" data-forward={fwd.source_id}>
       {head}
-      <div className="mt-1 max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
+      <div className="max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2">
-          <span data-forward-author className="flex max-w-full min-w-0 items-center gap-2">
+          <Row as="span" gap="sm" place="max-w-full" data-forward-author>
             {author ? (
               <>
                 <span
@@ -674,7 +675,7 @@ export function ForwardCard({
                 </span>
               </>
             )}
-          </span>
+          </Row>
           <MessageTime ts={fwd.created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>
         {m.poll?.snapshot ? (
@@ -693,6 +694,6 @@ export function ForwardCard({
           <HostedSourcePill m={m} when={when} active={!sending} />
         )}
       </div>
-    </div>
+    </Stack>
   )
 }

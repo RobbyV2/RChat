@@ -119,6 +119,7 @@ import { MessageTime, ShortTime } from './timestamp'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
+import { Row, Stack, Surface } from './layout'
 import {
   BulkJobBar,
   SelectButton,
@@ -194,7 +195,7 @@ function CallLogRow({ message }: { message: Message }) {
       }
     >
       {tone === 'ringing' && incoming && (
-        <span className="flex items-center gap-1.5">
+        <Row as="span" gap="xs">
           <button
             title="Accept"
             aria-label="Accept"
@@ -216,7 +217,7 @@ function CallLogRow({ message }: { message: Message }) {
             <PhoneOff size={12} />
             Decline
           </button>
-        </span>
+        </Row>
       )}
     </CallLogLine>
   )
@@ -320,7 +321,7 @@ export function AuthorRow({
   const store = useStoreApi()
   const shown = useShown(author, server)
   return (
-    <div className="flex gap-3">
+    <Row gap="md" align="stretch">
       <div className="shrink-0 pt-0.5">
         <span
           {...profileTrigger(store, author, server, false)}
@@ -349,7 +350,7 @@ export function AuthorRow({
         </div>
         {children}
       </div>
-    </div>
+    </Row>
   )
 }
 
@@ -370,7 +371,7 @@ export function GroupedRow({
   children: ReactNode
 }) {
   return (
-    <div data-grouped className="flex gap-3">
+    <Row gap="md" align="stretch" data-grouped>
       <span className="streamer sr-only">{name}</span>
       <div className="relative shrink-0" style={{ width: size }}>
         {status ? (
@@ -380,7 +381,7 @@ export function GroupedRow({
         )}
       </div>
       <div className="min-w-0 flex-1">{children}</div>
-    </div>
+    </Row>
   )
 }
 
@@ -802,25 +803,24 @@ export function OutboxRows({
 function SelfDmEmpty() {
   const me = useStore(s => s.me)
   return (
-    <div
-      data-self-dm-empty
-      className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
-    >
-      {me ? (
-        <span className="rounded-full ring-4 ring-secondary-container">
-          <UserAvatar
-            username={me.username}
-            avatarKind={me.avatar_kind}
-            avatarColor={me.avatar_color}
-            size={64}
-          />
-        </span>
-      ) : (
-        <NotebookPen size={40} className="text-on-surface-variant" />
-      )}
-      <span className="text-2xl font-semibold text-on-surface">{SELF_DM_TITLE}</span>
-      <span className="max-w-md text-sm text-on-surface-variant">{SELF_DM_TEXT}</span>
-    </div>
+    <Surface tone="plain" radius="none" pad="xl" place="h-full" data-self-dm-empty>
+      <Stack gap="md" align="center" justify="center" place="flex-1">
+        {me ? (
+          <span className="rounded-full ring-4 ring-secondary-container">
+            <UserAvatar
+              username={me.username}
+              avatarKind={me.avatar_kind}
+              avatarColor={me.avatar_color}
+              size={64}
+            />
+          </span>
+        ) : (
+          <NotebookPen size={40} className="text-on-surface-variant" />
+        )}
+        <span className="text-center text-2xl font-semibold text-on-surface">{SELF_DM_TITLE}</span>
+        <span className="max-w-md text-center text-sm text-on-surface-variant">{SELF_DM_TEXT}</span>
+      </Stack>
+    </Surface>
   )
 }
 
@@ -855,17 +855,21 @@ export function HeaderMore({ scope, search }: { scope: string | null; search: bo
 function StaffShut({ channel }: { channel: number }) {
   const ask = useStore(s => s.askStaffView)
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-on-surface-variant">
-      <Lock size={32} />
-      <span className="text-lg font-semibold">Confirm to open this channel</span>
-      <button
-        type="button"
-        onClick={() => ask(channel)}
-        className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90"
-      >
-        Open channel
-      </button>
-    </div>
+    <Surface tone="plain" radius="none" pad="xl" place="flex-1">
+      <Stack gap="md" align="center" justify="center" place="flex-1">
+        <Lock size={32} className="text-on-surface-variant" />
+        <span className="text-center text-lg font-semibold text-on-surface-variant">
+          Confirm to open this channel
+        </span>
+        <button
+          type="button"
+          onClick={() => ask(channel)}
+          className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90"
+        >
+          Open channel
+        </button>
+      </Stack>
+    </Surface>
   )
 }
 
@@ -1281,20 +1285,26 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               className={`flex-1 overflow-y-auto py-3 ${loading ? 'invisible' : ''}`}
             >
               {!view && (
-                <div className="flex h-full flex-col items-center justify-center gap-3 text-on-surface-variant">
-                  <MessagesSquare size={40} />
-                  <span>Select a conversation</span>
-                </div>
+                <Stack gap="md" align="center" justify="center" place="h-full">
+                  <MessagesSquare size={40} className="text-on-surface-variant" />
+                  <span className="text-on-surface-variant">Select a conversation</span>
+                </Stack>
               )}
               {view &&
                 messages.length === 0 &&
                 (dm?.is_self ? (
                   <SelfDmEmpty />
                 ) : (
-                  <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant opacity-70">
-                    <span className="text-2xl font-semibold">No messages here yet</span>
-                    <span className="text-sm">Be the first to say something.</span>
-                  </div>
+                  <Surface tone="plain" radius="none" pad="xl" place="h-full">
+                    <Stack gap="2xs" align="center" justify="center" place="flex-1">
+                      <span className="text-center text-2xl font-semibold text-on-surface-variant opacity-70">
+                        No messages here yet
+                      </span>
+                      <span className="text-center text-sm text-on-surface-variant opacity-70">
+                        Be the first to say something.
+                      </span>
+                    </Stack>
+                  </Surface>
                 ))}
               <LightboxList
                 rows={() => ({ ids: messages.map(m => m.id), places })}
