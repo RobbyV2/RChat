@@ -655,6 +655,68 @@ describe("a P2P member's menu", () => {
     }
   })
 
+  test('timing out is offered for a joined member below us where the room reads timeouts', () => {
+    state()
+    const v = server({ perms: P.TimeoutMembers, timeouts: true })
+    expect(labels(onMember(v, MEMBERS.carol))).toEqual([
+      'Contact details',
+      'Time Out',
+      'Copy Identity Key',
+    ])
+    const running = { ...MEMBERS.carol, timeoutUntil: Date.now() + 60_000 }
+    expect(items(onMember(v, running)).map(i => [i.label, !!i.danger])).toEqual([
+      ['Contact details', false],
+      ['Change Timeout', false],
+      ['Remove Timeout', false],
+      ['Copy Identity Key', false],
+    ])
+    const over = { ...MEMBERS.carol, timeoutUntil: Date.now() - 1 }
+    expect(labels(onMember(v, over))).not.toContain('Remove Timeout')
+    for (const m of [MEMBERS.me, MEMBERS.bob, MEMBERS.dave])
+      expect(labels(onMember(v, m)).join()).not.toContain('Time')
+    expect(labels(onMember({ ...v, timeouts: undefined }, MEMBERS.carol))).not.toContain('Time Out')
+    expect(labels(onMember({ ...v, perms: MOD }, MEMBERS.carol))).not.toContain('Time Out')
+  })
+
+  test('the timeout dialog closes once the timeout is asked for; removing asks the room', async () => {
+    state({ streamer: true })
+    const v = server({ perms: P.TimeoutMembers, timeouts: true })
+    const rec = recorder()
+    const { p2pServer } = shownPeer()
+    const asked: unknown[][] = []
+    p2pServer.timeout = (...a: unknown[]) => {
+      asked.push(['timeout', ...a])
+      return new Promise<null>(() => {})
+    }
+    p2pServer.untimeout = (...a: unknown[]) => {
+      asked.push(['untimeout', ...a])
+      return new Promise<null>(() => {})
+    }
+    const seen: unknown[] = []
+    useStore.setState({
+      openDialog: d => {
+        if (d.kind !== 'timeout_request') return
+        seen.push(d.request.name, d.request.current?.reason ?? null)
+        seen.push(d.request.run({ seconds: 600, reason: 'spam' }))
+        d.request.remove()
+      },
+    })
+    try {
+      const running = { ...MEMBERS.carol, timeoutUntil: Date.now() + 60_000, timeoutReason: 'old' }
+      row(onMember(v, running), 'Change Timeout')?.action?.()
+      row(onMember(v, running), 'Remove Timeout')?.action?.()
+      await settle()
+      expect(seen).toEqual(['this member', 'old', true])
+      expect(asked).toEqual([
+        ['timeout', SRV, CAROL, 600, 'spam'],
+        ['untimeout', SRV, CAROL],
+        ['untimeout', SRV, CAROL],
+      ])
+    } finally {
+      rec.restore()
+    }
+  })
+
   test('a role choice gives or takes the role; taking your own asks first', async () => {
     state()
     const v = server({ perms: P.ManageRoles })
@@ -922,6 +984,35 @@ describe("a P2P message's menu", () => {
       'Reply',
       'Forward',
       'Delete Message',
+      'Copy Text',
+      'Copy Timestamp',
+      'Copy Message ID',
+    ])
+  })
+
+  test('timed out: your own message can be deleted and its file downloaded, nothing written', async () => {
+    chatState()
+    const chat = facts({
+      timedOut: true,
+      mayPin: true,
+      mayDelete: p => p.sender === ME,
+      threads: true,
+    })
+    const own = onMessage(msg({ sender: ME, pinned: 5, att: [att('h1', 'a.txt')] }), chat)
+    shownPeer().useP2p.setState({ files: { h1: file('none') } as never })
+    expect(labels(own)).toEqual([
+      'Forward',
+      'Delete Message',
+      'Download attachment',
+      'Copy Text',
+      'Copy Timestamp',
+      'Copy Message ID',
+    ])
+    expect(row(own, 'Download attachment')?.disabled ?? false).toBe(false)
+    expect(await run(row(own, 'Download attachment'))).toEqual([['files.download', 'h1']])
+    expect(labels(onMessage(msg({ replies: 2 }), chat))).toEqual([
+      'Forward',
+      'View thread',
       'Copy Text',
       'Copy Timestamp',
       'Copy Message ID',

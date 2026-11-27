@@ -1,4 +1,4 @@
-import type { EvalResult } from './facts'
+import { timeoutWrite, type EvalResult } from './facts'
 import type { Ix } from './reach'
 import { roomMode } from '../../profile_fields'
 import type { ResetFact } from '../../profile_reset'
@@ -14,6 +14,8 @@ import {
   poster,
   rank,
   evalLimits,
+  timeoutEnd,
+  timeoutReason,
   type AclContent,
   type Rank,
 } from './rules'
@@ -63,6 +65,10 @@ export interface MemberSum {
   banBy?: string
   // The reason the standing bans give (`banReason`).
   banReason?: string
+  // A member timed out: when it ends (ms), who made it and the reason given.
+  timeoutUntil?: number
+  timeoutBy?: string
+  timeoutReason?: string
   // An invitee whose invites are all a non-owner's that no third member acknowledged yet: its
   // join waits (W3(e)).
   waits?: true
@@ -458,6 +464,18 @@ function memberSum(src: SummarySource, ik: string): MemberSum | undefined {
     if (reset) sum.reset = reset
     const b = sum.profile?.binding ?? (j >= 0 ? ix.ev[j].c.binding : undefined)
     if (typeof b === 'string') sum.binding = b
+    const t = timeoutWrite(
+      ix,
+      ik,
+      x => fe.inS(x) && !fe.isVoidI(x),
+      x => fe.inS(x) && fe.isEffI(x)
+    )
+    if (t !== undefined) {
+      sum.timeoutUntil = timeoutEnd(ix.ev[t])
+      sum.timeoutBy = ix.ev[t].a
+      const reason = timeoutReason(ix.ev[t].c)
+      if (reason !== null) sum.timeoutReason = reason
+    }
   }
   return sum
 }

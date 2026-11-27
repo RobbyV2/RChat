@@ -30,7 +30,7 @@ import {
   type Rank,
   type Rec,
 } from './rules'
-import { CHANNEL_CONTENT } from '../event_v2'
+import { CHANNEL_CONTENT, TIMEOUT_CONTENT } from '../event_v2'
 
 // Admission: a pure function of an event and its causal past. `decide` is the port of
 // the model's; `AclReplica.receive` decides receipt without the wire checks (signatures,
@@ -151,7 +151,7 @@ const known = (T: string, B: Past) =>
   inPast(B, B.ix.joinEv.get(T)).length > 0 || inPast(B, B.ix.addEv.get(T)).length > 0
 // W3 charges the denies that remove nothing from a member or invitee.
 export const chargedDeny = (e: AclEv, B: Past) =>
-  (e.t === 'ban' && !known(e.c.to, B)) || e.t === 'role_move'
+  (e.t === 'ban' && !known(e.c.to, B)) || e.t === 'role_move' || e.t === 'timeout'
 const exemptOf = (e: AclEv, cls: Cls, B: Past) =>
   (cls === 'D' && !chargedDeny(e, B)) || e.t === 'upgrade'
 
@@ -452,8 +452,9 @@ export interface ContentHead {
 // Content admission: the same decide with B = C(m.ap) (content never introduces a
 // device, so its binding is Dev in St(m)): the device's chain (seq past
 // its last ACL event in B, at most W4 events past it), the causal ts bound, and the content
-// authority in St(m): Mem, Dev, the server not upgraded, and for the known kinds with content a
-// channel `ch` that exists and lets it send.
+// authority in St(m): Mem, Dev, the server not upgraded, no timeout of the author past the
+// event's time for the kinds a timeout stops, and for the known kinds with content a channel `ch`
+// that exists and lets it send.
 export function decideContent(
   m: ContentHead,
   B: Past,
@@ -470,6 +471,8 @@ export function decideContent(
   for (const p of m.ap) if (m.ts < ix.ev[ix.at.get(p)!].ts) return { ok: false, why: 'ts' }
   if (F.upgraded.length) return { ok: false, why: 'auth' }
   if (!F.mem.has(m.a) || !(F.devs.get(m.a)?.has(m.dev) ?? false)) return { ok: false, why: 'auth' }
+  if (TIMEOUT_CONTENT.includes(m.t) && (F.timeouts.get(m.a) ?? -Infinity) > m.ts)
+    return { ok: false, why: 'timeout' }
   // A content event held without its content (redacted where it came from) shows nothing and its
   // channel can't be read: its author must be able to send in some live channel.
   if (CHANNEL_CONTENT.includes(m.t) && m.c === null) {

@@ -19,8 +19,7 @@ import { peerServer } from '../../lib/actions/p2p_server'
 import type { Target } from '../../lib/actions/types'
 import {
   ALLOW_BOTH,
-  EVERYONE_ITEMS,
-  PERM_ITEMS,
+  permItems,
   ROLE_LOCKED,
   fromHex,
   hex,
@@ -47,6 +46,7 @@ import {
   SlowmodeField,
 } from '../settings_fields'
 import { dangerBtn, fieldCls, Masked, textBtn } from '../ui'
+import { PeerTimeoutBadge } from '../timeout_dialog'
 import { MemberAvatar } from './p2p_badge'
 
 // Roles and channel permissions of a P2P server: the role editor (drag order,
@@ -180,7 +180,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
       <p className="text-xs text-on-surface-variant">
         {r.holders} {r.holders === 1 ? 'member' : 'members'}
       </p>
-      <PermChecks items={PERM_ITEMS} locked={locked} {...bitChecks(identity)(v, r.id, r.bits)} />
+      <PermChecks items={permItems(v)} locked={locked} {...bitChecks(identity)(v, r.id, r.bits)} />
       {locked && can(v, P.ManageRoles) && <Note>{locked}</Note>}
     </div>
   )
@@ -213,7 +213,7 @@ function RolesTabBody({ v }: { v: ServerView }) {
           <span className="shrink-0 text-xs text-on-surface-variant">Every member</span>
         </div>
         <PermChecks
-          items={EVERYONE_ITEMS}
+          items={permItems(v, true)}
           locked={everyoneLocked}
           {...bitChecks(identity)(v, EVERYONE, v.everyone)}
         />
@@ -304,6 +304,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
             {m.owner ? 'Owner' : m.m === 'join' ? 'Member' : 'Invited'}
           </span>
         </span>
+        {(m.ik === me || can(v, P.TimeoutMembers)) && <PeerTimeoutBadge m={m} />}
         {m.owner && (
           <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">
             <Crown size={14} />

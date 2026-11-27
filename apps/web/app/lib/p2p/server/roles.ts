@@ -1,4 +1,4 @@
-import { BAN_REASON_MAX, gt, timedBans } from '../acl/rules'
+import { BAN_REASON_MAX, gt, timedBans, timeouts, TIMEOUT_MAX_MS } from '../acl/rules'
 import { cacheKey, countOf, moveCounts, storedSize } from '../dag'
 import { CANT_TEXT } from '../flows'
 import { can, channelPermsOf, channelsOf, membershipOf, P, rankOf, roleRank } from '../state'
@@ -122,6 +122,18 @@ export function ban(
 
 export function unban(cx: ServerCtx, room: string, ik: string) {
   return cx.emit(room, 'unban', () => ({ to: ik }))
+}
+
+// Times a member out for `seconds` from the time it is signed, in rooms whose rules read
+// timeouts. 0 seconds ends the member's timeout.
+export function timeout(cx: ServerCtx, room: string, ik: string, seconds: number, reason?: string) {
+  if (!timeouts(cx.sumOf(room).rules)) throw new ServerError(CANT_TEXT)
+  const ms = Math.min(Math.max(0, Math.floor(seconds)) * 1000, TIMEOUT_MAX_MS)
+  return cx.emit(room, 'timeout', plan => ({
+    to: ik,
+    until: Math.max(cx.clock.now(), plan.ts) + ms,
+    ...(reason && ms > 0 ? { reason: [...reason].slice(0, BAN_REASON_MAX).join('') } : {}),
+  }))
 }
 
 export async function leave(cx: ServerCtx, room: string) {

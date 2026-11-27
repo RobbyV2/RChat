@@ -212,7 +212,7 @@ describe('P2P server flows: devices and roles', () => {
 
 describe('P2P server flows: what a lost device removal signs again', () => {
   const holds = (t: string, c: Record<string, unknown>, s: Summary, id = 'e1') =>
-    flows.effectHolds(t, c, id, 'me', s)
+    flows.effectHolds(t, c, id, 'me', s, 0)
   test('our changes whose effect holds, never cut or superseded ones', () => {
     const s: Summary = {
       ...sum({

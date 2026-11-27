@@ -304,7 +304,8 @@ export interface Reapply {
 
 export interface Disowned {
   seq: number
-  acts: { id: string; t: string; ts: number; to?: string }[]
+  // `ends`: a timeout that ends one.
+  acts: { id: string; t: string; ts: number; to?: string; ends?: true }[]
   content: number
   lose: string[]
   ap: string[] | null

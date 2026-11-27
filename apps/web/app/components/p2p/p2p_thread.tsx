@@ -32,6 +32,7 @@ import {
   type Mentionable,
 } from './p2p_chat'
 import { sendBlockFor } from './p2p_server_view'
+import { usePeerTimeoutEnds } from '../timeout_dialog'
 import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
@@ -79,16 +80,16 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
       members.filter(m => m.m === 'join').map(m => ({ ik: m.ik, name: m.name, handle: m.name })),
     [members]
   )
-  const moderator = v.me === 'join' && (v.perms & P.ManageMessages) !== 0
+  const timedOut = usePeerTimeoutEnds(v.timedOutUntil)
+  const moderator = v.me === 'join' && (v.perms & P.ManageMessages) !== 0 && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
   const channel = v.channels.find(c => c.id === t.ch)
-  const disabled = sendBlockFor(identity)(
+  const { bar: disabled, canAct } = sendBlockFor(identity)(
     v,
-    { reader, elsewhere, status, movedAt, movingAt },
+    { reader, elsewhere, status, movedAt, movingAt, timedOut },
     channel,
     acct
   )
-  const canAct = !disabled
   const replies = t.messages ?? EMPTY
   const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])
   const ownName = useCallback((ik: string) => profileName(ik, room), [room])
@@ -102,6 +103,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
       draftKey: key,
       scope,
       canAct,
+      timedOut: timedOut !== null,
       mayPin: false,
       mayDelete,
       forwardSkip: null,
@@ -180,6 +182,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
         divider={false}
         flash={flash === m.id}
         canAct={canAct}
+        timedOut={timedOut !== null}
         canDelete={!root && mayDelete(p)}
         editing={editing && editingState?.id === p.id ? editing : null}
         draftKey={key}

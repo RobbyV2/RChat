@@ -56,6 +56,21 @@ export const EVERYONE_ITEMS = [
   { label: 'Send messages', bit: P.SendMessages },
 ]
 
+// The permissions of a room, with those only its rules read: a role's, or @everyone's.
+export const permItems = (v: Pick<ServerView, 'timeouts'>, everyone = false) => [
+  ...PERM_ITEMS,
+  ...(v.timeouts
+    ? [
+        {
+          label: 'Timeout members',
+          bit: P.TimeoutMembers,
+          hint: 'Stop members from chatting for a while',
+        },
+      ]
+    : []),
+  ...(everyone ? EVERYONE_ITEMS.slice(PERM_ITEMS.length) : []),
+]
+
 export const ROLE_LOCKED = 'Only someone with a higher role can change this role.'
 
 // A line of the Re-apply list: the act, whom it is about and the role it names.

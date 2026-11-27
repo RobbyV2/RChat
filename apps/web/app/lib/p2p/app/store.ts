@@ -235,6 +235,8 @@ export interface P2pHost {
   toast: (text: string, name?: string) => void
   // The instance is text and emoji only: no attachments anywhere, P2P ones included.
   textOnly: () => boolean
+  // A timeout of ours started or ended in the voice channel we are in.
+  micChanged: () => void
 }
 export const emptySearch = (): P2pSearch => ({
   hits: [],
@@ -526,6 +528,7 @@ export function createStorePart(scope: IdentityScope) {
     typingOn: () => true,
     toast: () => {},
     textOnly: () => false,
+    micChanged: () => {},
   }
 
   const readAuto = (username: string | null) => {

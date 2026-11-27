@@ -102,7 +102,13 @@ const p: P2pMessage = {
   call: null,
 }
 
-const p2pRow = (first: boolean, last: boolean, over: Partial<P2pMessage> = {}, mine = false) => {
+const p2pRow = (
+  first: boolean,
+  last: boolean,
+  over: Partial<P2pMessage> = {},
+  mine = false,
+  rights: { timedOut?: boolean; canDelete?: boolean } = {}
+) => {
   const owner = testAccount('bob')
   try {
     createPeerFixture(owner, 'bob')
@@ -123,7 +129,8 @@ const p2pRow = (first: boolean, last: boolean, over: Partial<P2pMessage> = {}, m
           divider={false}
           flash={false}
           canAct
-          canDelete={false}
+          timedOut={rights.timedOut}
+          canDelete={rights.canDelete ?? false}
           editing={null}
           draftKey="room"
           threads={false}
@@ -168,6 +175,23 @@ describe('a P2P row', () => {
     expect(gutter).toContain('data-pending')
     expect(gutter).toContain('aria-label="Not delivered yet"')
     expect(gutter).toContain('title="Waiting for them to come online"')
+  })
+
+  test('timed out, your own message keeps Delete and its download, and loses Reply, Edit and reactions', () => {
+    const file = { h: 'h1', size: 10, blocks: 1, name: 'a.txt', mime: 'text/plain' }
+    const own = (timedOut: boolean) =>
+      p2pRow(true, true, { att: [file] }, true, { timedOut, canDelete: true })
+    const free = own(false)
+    for (const label of ['Edit', 'Reply', 'Add reaction'])
+      expect(free).toContain(`aria-label="${label}"`)
+    const timed = own(true)
+    expect(timed).toContain('aria-label="Delete message (hold Shift to skip confirmation)"')
+    expect(timed).toContain('aria-label="Download a.txt"')
+    for (const label of ['Edit', 'Reply', 'Add reaction'])
+      expect(timed).not.toContain(`aria-label="${label}"`)
+    const failed = p2pRow(true, true, { failed: true }, true, { timedOut: true, canDelete: true })
+    expect(failed).toContain('>Delete</button>')
+    expect(failed).not.toContain('>Retry</button>')
   })
 
   test('a grouped own delivered send shows the time in the gutter', () => {

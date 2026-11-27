@@ -1,22 +1,14 @@
 // Timeouts: a moderator stops a member from chatting in a server for a while.
 
-export const TIMEOUT_MAX = 28 * 86400
-export const REASON_MAX = 300
+import { TIMEOUT_PRESETS } from './durations'
 
-export const TIMEOUT_PRESETS: { label: string; seconds: number }[] = [
-  { label: '60 seconds', seconds: 60 },
-  { label: '5 minutes', seconds: 300 },
-  { label: '10 minutes', seconds: 600 },
-  { label: '1 hour', seconds: 3600 },
-  { label: '1 day', seconds: 86400 },
-  { label: '1 week', seconds: 604800 },
-]
-
-export const TIMEOUT_UNITS: { label: string; mult: number }[] = [
-  { label: 'minutes', mult: 60 },
-  { label: 'hours', mult: 3600 },
-  { label: 'days', mult: 86400 },
-]
+export {
+  TIMEOUT_MAX,
+  TIMEOUT_PRESETS,
+  TIMEOUT_REASON_MAX as REASON_MAX,
+  TIMEOUT_UNITS,
+  customSeconds,
+} from './durations'
 
 // A running timeout as the app keeps it: when it ends on this device's clock (ms).
 export interface Timeout {
@@ -57,12 +49,51 @@ export const shownMedia = (
 export const running = (t: Timeout | undefined, now = Date.now()): t is Timeout =>
   t !== undefined && t.ends > now
 
-// Seconds for a custom timeout, or null when it is not a positive amount up to 28 days.
-export const customSeconds = (amount: string, mult: number): number | null => {
-  const n = Number(amount.trim())
-  if (!amount.trim() || !Number.isFinite(n) || n <= 0) return null
-  const seconds = Math.round(n * mult)
-  return seconds >= 1 && seconds <= TIMEOUT_MAX ? seconds : null
+// The members of a P2P room whose timeout runs at `now`.
+export const timedOutIn = (
+  members: readonly { ik: string; timeoutUntil?: number }[] | undefined,
+  now = Date.now()
+): string[] =>
+  (members ?? []).filter(m => m.timeoutUntil !== undefined && m.timeoutUntil > now).map(m => m.ik)
+
+// A P2P member's running timeout as the badge and the dialog read it.
+export const peerTimeout = (
+  m: { timeoutUntil?: number; timeoutReason?: string } | undefined,
+  now = Date.now()
+): Timeout | null =>
+  m?.timeoutUntil !== undefined && m.timeoutUntil > now
+    ? { ends: m.timeoutUntil, reason: m.timeoutReason ?? null }
+    : null
+
+// The longest wait a timer takes: a longer one fires at once.
+const TIMER_MAX = 2 ** 31 - 1
+
+// Watches an end time (ms, null while none runs) that `read` gives: `changed` runs when it
+// changes on `sync`, and when it passes by the clock.
+export function endWatch(read: () => number | null, changed: () => void) {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let ends: number | null = null
+  const stop = () => {
+    if (timer !== null) clearTimeout(timer)
+    timer = null
+  }
+  const sync = () => {
+    const next = read()
+    if (next === ends && (next === null || timer !== null)) return
+    const moved = next !== ends
+    ends = next
+    stop()
+    if (next !== null)
+      timer = setTimeout(
+        () => {
+          timer = null
+          sync()
+        },
+        Math.min(Math.max(0, next - Date.now()) + 50, TIMER_MAX)
+      )
+    if (moved) changed()
+  }
+  return { sync, stop }
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')

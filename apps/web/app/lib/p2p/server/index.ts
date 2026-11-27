@@ -1389,6 +1389,11 @@ export class Servers {
     return roles.unban(ctx(this), room, ik)
   }
 
+  // `seconds` 0 ends the member's timeout.
+  timeout(room: string, ik: string, seconds: number, reason?: string) {
+    return roles.timeout(ctx(this), room, ik, seconds, reason)
+  }
+
   leave(room: string) {
     return roles.leave(ctx(this), room)
   }

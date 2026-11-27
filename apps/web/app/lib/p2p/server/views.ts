@@ -1,4 +1,4 @@
-import { RULES_VERSION, gt, restricts, timedBans, type Rank } from '../acl/rules'
+import { RULES_VERSION, gt, restricts, timedBans, timeouts, type Rank } from '../acl/rules'
 import type { MemberSum, Summary } from '../acl/summary'
 import { cleanName } from '../keys'
 import { roomLock, shownRoomProfile } from '../../profile_reset'
@@ -113,8 +113,10 @@ export function serverView(
   const online = env.online()
   const clock = env.now()
   const owners = s.owners
-  const meRank = memberOf(s, env.me)?.rank
+  const mine = memberOf(s, env.me)
+  const meRank = mine?.rank
   const banner = membershipOf(s, env.me) === 'join' && can(s, env.me, P.Ban)
+  const timer = membershipOf(s, env.me) === 'join' && can(s, env.me, P.TimeoutMembers)
   const order = rolesOf(s)
   const at = new Map(order.map((r, i) => [r.id, i]))
   const members: MemberView[] = membersOf(s)
@@ -143,6 +145,12 @@ export function serverView(
       ...(m.m === 'ban' && m.banReason !== undefined
         ? { banReason: clip(m.banReason, env.lim.display.reason) }
         : {}),
+      ...(m.m === 'join' && m.timeoutUntil !== undefined
+        ? {
+            timeoutUntil: m.timeoutUntil,
+            ...(timer && m.timeoutReason !== undefined ? { timeoutReason: m.timeoutReason } : {}),
+          }
+        : {}),
       roles: m.m === 'join' ? sortRoles(m.roles, at) : [],
       top: m.m === 'join' ? topRoleOf(s, m.ik) : null,
     }))
@@ -154,6 +162,10 @@ export function serverView(
     id: room,
     textOnlyChannels: s.rules === RULES_VERSION,
     ...(timedBans(s.rules) ? { timedBans: true as const } : {}),
+    ...(timeouts(s.rules) ? { timeouts: true as const } : {}),
+    ...(me === 'join' && mine?.timeoutUntil !== undefined
+      ? { timedOutUntil: mine.timeoutUntil }
+      : {}),
     name: n?.name ?? r.name ?? 'P2P server',
     color: n?.color ?? null,
     me,

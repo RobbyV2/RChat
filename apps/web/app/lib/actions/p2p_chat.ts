@@ -182,12 +182,15 @@ export const peerChat = identityActions(identity => {
 
   const rowOf = ({ target }: ActionCtx) => (target.kind === 'p2p_message' ? target : null)
 
-  // What may be done with the message: `act` (not read-only, nor from an old copy), and its acts.
+  // What may be done with the message: `act` (not read-only, nor from an old copy), `write` (no
+  // timeout of ours either), and its acts.
   const actsOf = (ctx: ActionCtx) => {
     const t = rowOf(ctx)
     if (!t) return null
     const act = t.chat.canAct && !t.p.archived
-    return { ...t, act, can: messageActs(t.p, act, t.p.sender === identity().useP2p.getState().me) }
+    const write = act && !t.chat.timedOut
+    const me = identity().useP2p.getState().me
+    return { ...t, act, write, can: messageActs(t.p, write, t.p.sender === me) }
   }
 
   const filesOf = (ctx: ActionCtx) => {
@@ -269,14 +272,14 @@ export const peerChat = identityActions(identity => {
       title: 'Open thread',
       label: ctx => {
         const t = actsOf(ctx)
-        return (t && threadAct(t.p, t.act)) ?? 'Open thread'
+        return (t && threadAct(t.p, t.write)) ?? 'Open thread'
       },
       icon: MessageSquareText,
       ...onMessage,
       order: 130,
       available: ctx => {
         const t = actsOf(ctx)
-        return !!t && t.chat.threads && threadAct(t.p, t.act) !== null
+        return !!t && t.chat.threads && threadAct(t.p, t.write) !== null
       },
       run: ctx => {
         const t = rowOf(ctx)
@@ -291,7 +294,7 @@ export const peerChat = identityActions(identity => {
       order: 300,
       available: ctx => {
         const t = actsOf(ctx)
-        return !!t && t.act && t.chat.mayPin && !t.p.thread && t.p.pinned === null
+        return !!t && t.write && t.chat.mayPin && !t.p.thread && t.p.pinned === null
       },
       run: ctx => {
         const t = rowOf(ctx)
@@ -306,7 +309,7 @@ export const peerChat = identityActions(identity => {
       order: 300,
       available: ctx => {
         const t = actsOf(ctx)
-        return !!t && t.act && t.chat.mayPin && !t.p.thread && t.p.pinned !== null
+        return !!t && t.write && t.chat.mayPin && !t.p.thread && t.p.pinned !== null
       },
       run: ctx => {
         const t = rowOf(ctx)

@@ -209,6 +209,9 @@ export interface MemberView {
   banMine?: true
   // Banned: the reason given.
   banReason?: string
+  // Timed out: when it ends (ms). The reason only for those who may time members out.
+  timeoutUntil?: number
+  timeoutReason?: string
   // Their roles, the highest first, and the highest (the member list groups by it).
   roles: string[]
   top: string | null
@@ -261,6 +264,10 @@ export interface ServerView {
   textOnlyChannels?: boolean
   // Bans may end by themselves and wipe a window of messages.
   timedBans?: true
+  // Members can be timed out.
+  timeouts?: true
+  // When our own timeout here ends (ms).
+  timedOutUntil?: number
   id: string
   name: string
   color: number | null
@@ -422,6 +429,7 @@ export const RESIGN_ACL = [
   'kick',
   'ban',
   'unban',
+  'timeout',
   'role_create',
   'role_move',
   'role_bits',
@@ -445,7 +453,7 @@ export interface LostRoom extends Disowned {
   room: string
   at: Record<string, number>
   // This browser's own ACL changes the new key signs again (its key came after the trusted point).
-  resign: { id: string; t: string; to?: string }[]
+  resign: { id: string; t: string; to?: string; ends?: true }[]
   // Our other devices added since the trusted point: the rotation signs them out too.
   others: string[]
 }

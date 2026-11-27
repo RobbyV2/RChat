@@ -1,5 +1,13 @@
 import type { EvalResult } from './acl/facts'
-import { authority, EVERYONE, guards, introduces, type AclContent, type AclEv } from './acl/rules'
+import {
+  authority,
+  endsTimeout,
+  EVERYONE,
+  guards,
+  introduces,
+  type AclContent,
+  type AclEv,
+} from './acl/rules'
 import { dict, overwritesOf, rolesOf, type RoleSum } from './acl/summary'
 import type { RoomCtx } from './acl_room_ctx'
 import type { Carried, Disowned, Reapply } from './acl_room'
@@ -19,6 +27,8 @@ const standing = (t: string, c: AclContent, F: EvalResult['facts']) => {
       return !F.mem.has(to)
     case 'ban':
       return F.ban.has(to)
+    case 'timeout':
+      return F.timeouts.get(to) === c.until
     case 'uninvite':
       return !F.mem.has(to) && !F.invited.get(to)?.length
     case 'revoke':
@@ -284,7 +294,13 @@ export function disown(
     acts: D.map(i => {
       const e = ix.ev[i]
       const to = typeof e.c.to === 'string' ? e.c.to : undefined
-      return { id: ix.ids[i], t: e.t, ts: e.ts, ...(to ? { to } : {}) }
+      return {
+        id: ix.ids[i],
+        t: e.t,
+        ts: e.ts,
+        ...(to ? { to } : {}),
+        ...(endsTimeout(e.t, e) ? { ends: true as const } : {}),
+      }
     }),
     content: held.filter(m => m.seq > seq).length,
     lose,

@@ -28,6 +28,7 @@ export const P = {
   MentionEveryone: 128,
   ViewChannel: 256,
   SendMessages: 512,
+  TimeoutMembers: 16777216,
 } as const
 export const KICK = P.Kick
 export const BAN = P.Ban
@@ -40,11 +41,13 @@ export const SEND = P.SendMessages
 export const VIEW = P.ViewChannel
 // Reset server profiles: read from rules RULES_NEXT on. Up to rules 4, Kick stands in for it.
 export const PROFILES = 8388608
+export const TIMEOUT = P.TimeoutMembers
 export const ALL = 0x7fffffff
 export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
 export const RULES_VERSION = 4
 export const RULES_NEXT = 5
+const atNext = (rules: unknown) => typeof rules === 'number' && rules >= RULES_NEXT
 export const knownRules = (rules: unknown) => rules === 2 || rules === RULES_VERSION
 // The bit a moderator needs to reset another member's room profile under `rules`.
 export const resetBit = (rules: unknown) =>
@@ -263,6 +266,9 @@ export function authCore(e: AclEv, x: AuthCtx): boolean {
       )
     case 'unban':
       return isMem && has(BAN) && (Fr.effBanK.get(c.to) ?? []).every(kb => cmp(x.me, kb) >= 0)
+    case 'timeout':
+      if (!atNext(Fr.rules)) return isMem
+      return isMem && has(TIMEOUT) && !Fr.owners.has(c.to) && outranks(x.rankT(c.to))
     case 'role_create':
       return isMem && has(ROLES) && outranks([c.pos, e.id]) && (c.bits & ~permsQ(Fr, a)) === 0
     case 'role_move':
@@ -359,6 +365,8 @@ export function guards(e: AclEv, F: Facts, L: Agreed): boolean {
       return c.to !== a && !F.ban.has(c.to)
     case 'unban':
       return F.ban.has(c.to)
+    case 'timeout':
+      return !atNext(F.rules) || (c.to !== a && F.mem.has(c.to))
     case 'role_create':
       return c.pos >= 0
     case 'role_move':
@@ -551,6 +559,8 @@ export function classify(e: AclEv, F: FactsQ): { cls: Cls; self: boolean } {
       return { cls: e.c.pos < (F.pos.get(e.c.role) ?? -1) ? 'D' : 'G', self: false }
     case 'role_bits':
       return { cls: e.c.on ? 'G' : 'D', self: false }
+    case 'timeout':
+      return { cls: !atNext(F.rules) ? 'A' : timeoutEnds(e) ? 'G' : 'D', self: false }
     case 'profile':
     case 'settings':
     case 'channel':
@@ -581,6 +591,10 @@ export function target(
     case 'ban':
     case 'uninvite':
       return { kind: 'member', who: e.c.to }
+    case 'timeout':
+      return atNext(F.rules) && typeof e.c.to === 'string'
+        ? { kind: 'member', who: e.c.to }
+        : { kind: 'self', who: e.a }
     case 'revoke':
       return e.c.to === e.a ? { kind: 'self', who: e.a } : { kind: 'member', who: e.c.to }
     case 'role_move':
@@ -674,6 +688,13 @@ const SCHEMA: Record<string, Record<string, Kind>> = {
   chperm: { ch: 'str', subj: 'str', allow: 'mask', deny: 'mask' },
   proof: { x: 'rec', y: 'rec' },
 }
+// Read from RULES_NEXT on; rooms on earlier rules keep the type unread.
+const NEXT_SCHEMA: Record<string, Record<string, Kind>> = {
+  timeout: { to: 'str', until: 'int', reason: 'str' },
+}
+const NEXT_REQUIRED: Record<string, string[]> = {
+  timeout: ['to', 'until'],
+}
 const REQUIRED: Record<string, string[]> = {
   add: ['to'],
   uninvite: ['to'],
@@ -696,15 +717,16 @@ const REQUIRED: Record<string, string[]> = {
 
 export const BAN_REASON_MAX = 300
 export const BAN_PURGE_H_MAX = 168
-const atNext = (rules: unknown) => typeof rules === 'number' && rules >= RULES_NEXT
 // Whether a room of these rules reads the end, reason and wipe window of a ban.
 export const timedBans = atNext
+
+const reasonFits = (x: unknown) =>
+  x === undefined || (isStr(x) && [...(x as string)].length <= BAN_REASON_MAX)
 
 // The fields a ban carries from RULES_NEXT on, each with its type and range.
 const banFieldsOk = (c: Record<string, unknown>) =>
   (c.until === undefined || (isInt(c.until, -Infinity) && (c.until as number) > 0)) &&
-  (c.reason === undefined ||
-    (isStr(c.reason) && [...(c.reason as string)].length <= BAN_REASON_MAX)) &&
+  reasonFits(c.reason) &&
   (c.purge_h === undefined ||
     (isInt(c.purge_h, -Infinity) &&
       (c.purge_h as number) >= 0 &&
@@ -779,6 +801,22 @@ export function banWipes(
   return ts === undefined || ts >= from
 }
 
+// The longest a timeout lasts from its own time: 28 days, as on hosted servers.
+export const TIMEOUT_MAX_MS = 28 * 86_400_000
+// When a timeout ends: its `until`, at most 28 days after its own time.
+export const timeoutEnd = (e: { ts: number; c: Record<string, unknown> }) =>
+  Math.min(e.c.until as number, e.ts + TIMEOUT_MAX_MS)
+// Whether a room of these rules reads timeouts.
+export const timeouts = atNext
+// A timeout whose end is at or before its own time ends the member's timeout.
+export const timeoutEnds = (e: { ts: number; c: Record<string, unknown> }) =>
+  !isInt(e.c.until, -Infinity) || (e.c.until as number) <= e.ts
+// An event of type `t` that ends a member's timeout.
+export const endsTimeout = (t: string, e: { ts: number; c: Record<string, unknown> }) =>
+  t === 'timeout' && timeoutEnds(e)
+// The reason a timeout gives, read at display.
+export const timeoutReason = (c: Record<string, unknown>) => reasonOf(c)
+
 // A genesis nonce: 16 random bytes, b64u.
 export const NONCE_LEN = 16
 
@@ -794,6 +832,12 @@ export function aclContentOk(t: string, c: unknown, rules?: number | null): c is
   )
     return false
   if (t === 'ban' && atNext(rules) && !banFieldsOk(c)) return false
+  if (atNext(rules)) {
+    for (const f of NEXT_REQUIRED[t] ?? []) if (c[f] === undefined) return false
+    for (const [f, k] of Object.entries(NEXT_SCHEMA[t] ?? {}))
+      if (c[f] !== undefined && !KINDS[k](c[f])) return false
+    if (t === 'timeout' && !reasonFits(c.reason)) return false
+  }
   if (t === 'genesis')
     return (
       isInt(c.rules, -Infinity) &&

@@ -10,6 +10,8 @@ import { InstanceConnection, endpointsFrom } from '../instances'
 import { AccountProvider } from '../client/react'
 import { me, member, memoryStorage, serverDetail, textChannel } from './fixtures'
 import { testAccount } from './test_account'
+import type { ServerView } from '../p2p/server'
+import { TIMED_OUT_CAMERA, TIMED_OUT_MIC } from '../timeouts'
 
 const router = {
   back() {},
@@ -267,6 +269,56 @@ test('contact call and server voice audio and controls follow the claimed siblin
         claim?.release()
         expect(client.calls.expandedCall()).toBeNull()
       }
+    }
+  } finally {
+    account.store.dispose()
+    memoryStorage.removeItem(key)
+  }
+})
+
+test('a running timeout in a P2P room disables the mic and camera controls of its voice channel', async () => {
+  const account = testAccount('reader', 'https://timed-voice.test')
+  const key = account.keys.local('rchat_p2p_identities')
+  try {
+    account.identities.setAccount('reader')
+    const peer = account.identities.get()!
+    peer.callRtc.active = () => true
+    peer.callRtc.remoteStreams = () => []
+    const voice = { room: 'server', ch: 'voice' }
+    const room = (timedOutUntil?: number) => ({
+      server: {
+        id: 'server',
+        name: 'Server',
+        channels: [],
+        chans: {},
+        members: [],
+        voice: {},
+        ...(timedOutUntil === undefined ? {} : { timedOutUntil }),
+      } as unknown as ServerView,
+    })
+    const claim = await client.calls.request(
+      { account, identity: peer.localId, kind: 'p2p-voice' },
+      () => {}
+    )
+    try {
+      const controls = (timedOutUntil?: number) => {
+        const state = { voice, servers: room(timedOutUntil) }
+        peer.useP2p.setState(state)
+        Object.assign(peer.useP2p.getInitialState(), state)
+        return renderToStaticMarkup(<VoiceDock />)
+      }
+      const timed = controls(Date.now() + 60_000)
+      for (const label of [TIMED_OUT_MIC, TIMED_OUT_CAMERA]) {
+        const off = new RegExp(`<button title="${label}" aria-label="${label}"[^>]* disabled=""`)
+        expect(off.test(timed)).toBe(true)
+      }
+      expect(timed).not.toContain('aria-label="Mute"')
+      const over = controls(Date.now() - 1)
+      expect(over).toContain('aria-label="Mute"')
+      expect(over).toContain('aria-label="Turn on camera"')
+      expect(over).not.toContain(TIMED_OUT_MIC)
+    } finally {
+      claim?.release()
     }
   } finally {
     account.store.dispose()

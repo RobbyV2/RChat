@@ -3,6 +3,7 @@ import { P2pStore } from '../db'
 import type { MissedCall } from '../dm'
 import { JoinAborted, RtcManager } from '../../rtc'
 import { hidesIp } from '../../relays'
+import { endWatch, TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../../timeouts'
 import { Calls, type CallView } from '../calls'
 import type { P2pState } from './store'
 import type { IdentityScope, P2pParts } from './scope'
@@ -104,14 +105,24 @@ export function createCallsPart(
 
   const mediaVideo = () => callRtc.videoTrack !== null || callRtc.sharing
 
+  // When our timeout in `room` ends (ms), while it runs.
+  const timedOutEnds = (room: string | undefined) => {
+    const until = room === undefined ? undefined : useP2p.getState().servers[room]?.timedOutUntil
+    return until !== undefined && until > Date.now() ? until : null
+  }
+
   // Voice channels of P2P servers: joining leaves any other call or voice channel first.
   const p2pVoice = {
     active: () => !!state.servers?.voice.current() && callRtc.active(),
+    // A timeout in the room of the voice channel we are in mutes us and stops our video.
+    timedOut: () => timedOutEnds(state.servers?.voice.current()?.room) !== null,
     async join(room: string, ch: string) {
       const account = scope.owner
       const relayBook = account.relays
       const sv = state.servers
       if (!sv) return p2pHost.toast(ELSEWHERE_TEXT)
+      const ends = timedOutEnds(room)
+      if (ends !== null) return p2pHost.toast(timedOutLine(ends))
       const at = useP2p.getState().server
       if (
         at?.room !== room ||
@@ -147,7 +158,9 @@ export function createCallsPart(
     audioChanged: () => state.servers?.voice.setAudio(),
     async camera() {
       try {
-        await callRtc.camera(callRtc.videoTrack === null)
+        const on = callRtc.videoTrack === null
+        if (on && p2pVoice.timedOut()) throw new Error(TIMED_OUT_CAMERA)
+        await callRtc.camera(on)
       } catch (e) {
         callFailed(e)
       }
@@ -155,13 +168,28 @@ export function createCallsPart(
     },
     async share() {
       try {
-        await callRtc.share(!callRtc.sharing)
+        const on = !callRtc.sharing
+        if (on && p2pVoice.timedOut()) throw new Error(TIMED_OUT_SHARE)
+        await callRtc.share(on)
       } catch (e) {
         callFailed(e)
       }
       p2pVoice.videoChanged()
     },
   }
+
+  // Our timeout in the room of the voice channel we are in: the mic limits are applied when it
+  // starts, changes or is removed, and again when it ends by the clock.
+  const micWatch = endWatch(
+    () => timedOutEnds(state.servers?.voice.current()?.room),
+    () => p2pHost.micChanged()
+  )
+  scope.onDispose(
+    useP2p.subscribe((s, prev) => {
+      if (s.servers !== prev.servers || s.voice !== prev.voice) micWatch.sync()
+    })
+  )
+  scope.onDispose(micWatch.stop)
 
   const p2pCall = {
     async start(ik: string, video: boolean, choice?: string) {

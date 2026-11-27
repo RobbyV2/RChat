@@ -1,4 +1,4 @@
-import { EVERYONE } from './acl/rules'
+import { EVERYONE, timeoutEnd, timeoutEnds } from './acl/rules'
 import type { Summary } from './acl/summary'
 import type { Local } from './limits'
 
@@ -80,6 +80,7 @@ export const OWN_RESIGN_TEXT =
   'Your own messages and changes from this browser since then stay. These changes are signed again from its new key:'
 export const TOO_OFTEN_TEXT = "You've done that too often. Try again later."
 export const CANT_TEXT = "You can't do that here"
+export const TIMED_OUT_TEXT = 'You are timed out in this server.'
 export const TOO_BIG_TEXT = 'Too long to send. Make it shorter.'
 
 // What a refusal of one of our own events says: W3(a) and a ban of someone who never
@@ -95,6 +96,8 @@ export const refusalText = (why: string) => {
       return VOUCH_WAIT_TEXT
     case 'forked':
       return CONFLICT_TEXT
+    case 'timeout':
+      return TIMED_OUT_TEXT
     case 'W3c':
     case 'W3d':
     case 'W3f':
@@ -185,12 +188,13 @@ export const lostTimes = (lim: Pick<Local['misc'], 'lostTimes'>) =>
   LOST_LABELS.map((label, i) => ({ label, ms: lim.lostTimes[i] }))
 
 // What an ACL action did, for lists (re-apply, a lost device's actions): the act, and the member
-// it names (shown as a name, masked in streamer mode).
-export const actParts = (t: string, to?: string): { act: string; who?: string } => {
+// it names (shown as a name, masked in streamer mode). `ends`: a timeout that ends one.
+export const actParts = (t: string, to?: string, ends = false): { act: string; who?: string } => {
   const named: Record<string, string> = {
     kick: 'Kick',
     ban: 'Ban',
     unban: 'Lift the ban of',
+    timeout: ends ? 'Remove the timeout of' : 'Time out',
     uninvite: 'Withdraw the invite of',
     add: 'Invite',
     assign: 'Give a role to',
@@ -224,9 +228,9 @@ export const actParts = (t: string, to?: string): { act: string; who?: string } 
 export const carryWaitText = (why: string | undefined) =>
   why === QUICK_TEXT ? CARRY_HOURLY_TEXT : why === LONE_TEXT ? CARRY_WAIT_TEXT : CARRY_SYNC_TEXT
 
-// Whether the effect of our ACL event `id` (type `t`, content `c`) holds in `s`: what signing it
-// again would bring back after a lost device's removal. Cut or superseded changes
-// don't hold; types the summary can't show are never signed again.
+// Whether the effect of our ACL event `id` (type `t`, content `c`, time `ts`) holds in `s` at
+// `now`: what signing it again would bring back after a lost device's removal. Cut or superseded
+// changes don't hold; types the summary can't show are never signed again.
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 
 export const effectHolds = (
@@ -234,7 +238,9 @@ export const effectHolds = (
   c: Record<string, unknown>,
   id: string,
   me: string,
-  s: Summary
+  s: Summary,
+  ts: number,
+  now = Date.now()
 ): boolean => {
   const to = typeof c.to === 'string' ? s.members[c.to] : undefined
   const role = typeof c.role === 'string' ? c.role : ''
@@ -254,6 +260,13 @@ export const effectHolds = (
       return !!to && to.rem === id
     case 'unban':
       return !!to && to.m !== 'ban'
+    case 'timeout': {
+      if (!to) return false
+      const until = to.timeoutUntil
+      return timeoutEnds({ ts, c })
+        ? until === undefined || until <= now
+        : until === timeoutEnd({ ts, c })
+    }
     case 'assign':
       return !!to && to.roles.includes(role)
     case 'revoke':

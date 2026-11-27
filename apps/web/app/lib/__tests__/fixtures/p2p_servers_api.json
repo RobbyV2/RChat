@@ -147,6 +147,7 @@
     "sync",
     "threadCounts",
     "threadOf",
+    "timeout",
     "transfer",
     "transferAsks",
     "typing",

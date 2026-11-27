@@ -34,9 +34,11 @@ export type MemberWhere =
 
 // What a P2P message list knows about its rows: where replies and edits go, who may do what, the
 // contact a forward skips, whether rows start threads, and a sender's own profile name.
+// `timedOut`: a timeout of ours leaves deleting and downloads only.
 export interface ChatFacts {
   draftKey: string
   canAct: boolean
+  timedOut?: boolean
   mayPin: boolean
   mayDelete(p: P2pMessage): boolean
   forwardSkip: string | null

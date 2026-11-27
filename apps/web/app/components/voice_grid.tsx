@@ -4,6 +4,7 @@ import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -75,8 +76,14 @@ import { NameWithUsername } from './display_name'
 import { tileName } from '../lib/display_name'
 import { ownsP2pServer } from '../lib/p2p/server/types'
 import { ChannelTopic } from './channel_topic'
-import { useMyTimeoutEnds } from './timeout_dialog'
-import { shownMedia, TIMED_OUT_CAMERA, TIMED_OUT_MIC, TIMED_OUT_SHARE } from '../lib/timeouts'
+import { useMyTimeoutEnds, useNow, usePeerTimeoutEnds } from './timeout_dialog'
+import {
+  shownMedia,
+  timedOutIn,
+  TIMED_OUT_CAMERA,
+  TIMED_OUT_MIC,
+  TIMED_OUT_SHARE,
+} from '../lib/timeouts'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const seenShares = new WeakMap<object, ReadonlySet<string>>()
@@ -231,12 +238,24 @@ function AudioUnblock() {
   )
 }
 
-// Whether a timeout mutes you in the voice channel you are in.
+// The members of P2P room `room` a timeout mutes, by this device's clock.
+function usePeerSilenced(room: string | undefined): string[] {
+  const members = useP2p(s => (room === undefined ? undefined : s.servers[room]?.members))
+  const now = useNow(timedOutIn(members).length > 0)
+  const key = timedOutIn(members, now).join('\n')
+  return useMemo(() => (key === '' ? [] : key.split('\n')), [key])
+}
+
+// Whether a timeout mutes you in the voice channel you are in, a hosted one or a P2P room's.
 function useForcedMute(): boolean {
   const voice = useStore(s => s.voice)
   const me = useStore(s => s.me?.username)
   const listed = useStore(s => voiceMutedIn(s, voice?.channelId ?? null).includes(me ?? ''))
-  return useMyTimeoutEnds(voice?.server) !== null || listed
+  const peerRoom = useP2p(s => s.voice?.room)
+  const peer = usePeerTimeoutEnds(
+    useP2p(s => (peerRoom === undefined ? undefined : s.servers[peerRoom]?.timedOutUntil))
+  )
+  return useMyTimeoutEnds(voice?.server) !== null || listed || peer !== null
 }
 
 // Whether staff muted you for everyone in the voice channel you are in, as a guest.
@@ -253,7 +272,9 @@ function VoiceAudio() {
 
   const { rtc, files: p2p } = useAccount()
   const { connected, p2pCall, roomCall, roomVoice, deafened, voice } = useCallMedia()
-  const silenced = useStore(s => voiceMutedIn(s, voice?.channelId ?? null))
+  const hosted = useStore(s => voiceMutedIn(s, voice?.channelId ?? null))
+  const peers = usePeerSilenced(roomVoice?.room)
+  const silenced = roomVoice ? peers : hosted
   const hushed = useStore(s => voiceHushedIn(s, voice?.channelId ?? null))
   useEffect(() => {
     if (!connected) useAudioGate.setState({ blocked: false })
@@ -509,7 +530,7 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
     camera,
     sharing,
   } = useCallMedia()
-  const forced = useForcedMute() && voice !== null
+  const forced = useForcedMute() && (voice !== null || roomVoice !== null)
   const hushed = useStaffMuted() && voice !== null
   const muted = selfMuted || forced || hushed
   const toggleMute = useStore(s => s.toggleMute)
@@ -994,7 +1015,9 @@ export function VoiceGrid({
   const selfAudio = useStore(s => s.selfAudio)
   const roomUsers = useStore(s => (channelId !== undefined ? s.voiceUsers[channelId] : undefined))
   const roomAudio = useStore(s => (channelId !== undefined ? s.voiceAudio[channelId] : undefined))
-  const silenced = useStore(s => voiceMutedIn(s, channelId ?? null))
+  const hosted = useStore(s => voiceMutedIn(s, channelId ?? null))
+  const peers = usePeerSilenced(p2pCh === undefined ? undefined : p2pRoom)
+  const silenced = p2pCh === undefined ? hosted : peers
   const hushed = useStore(s => voiceHushedIn(s, channelId ?? null))
   const view = useStore(s => s.view)
   const joinVoice = useStore(s => s.joinVoice)

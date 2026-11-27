@@ -69,6 +69,7 @@ import { noteBarCls, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
 import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
+import { PeerTimeoutBadge, TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
 import { hex, memberGroups, nameColor } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
 
@@ -660,6 +661,7 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
             </span>
           )}
         </span>
+        {(m.ik === me || can(v, P.TimeoutMembers)) && <PeerTimeoutBadge m={m} compact />}
         {m.owner && (
           <span title="Owner" aria-label="Owner" role="img" className="flex shrink-0 text-tertiary">
             <Crown size={14} />
@@ -731,7 +733,8 @@ const NONE: string[] = []
 
 const NO_SEND_TEXT = 'You do not have permission to send messages in this channel.'
 
-// Why this device can't send in a server's channels (in place of the composer), or null.
+// Why this device can't send in a server's channels (in place of the composer), or null, and
+// whether it may act on messages there: a timeout leaves deleting and downloads.
 export const sendBlockFor =
   (identity: P2pApp) =>
   (
@@ -742,11 +745,13 @@ export const sendBlockFor =
       status: string
       movedAt: number | null
       movingAt: number | null
+      // When our timeout here ends, while it runs.
+      timedOut: number | null
     },
     // The channel: may we send there?
     channel?: { send: boolean },
     acct = client.shown()
-  ): ReactNode => {
+  ): { bar: ReactNode; canAct: boolean } => {
     const { p2pServer } = identity
 
     const out = v.readOnly
@@ -760,46 +765,54 @@ export const sendBlockFor =
             : v.me !== 'join'
               ? (v.joinWait ?? 'Joining. You can write once a member has let you in.')
               : null
-    return st.reader || st.elsewhere ? (
-      <div className={noteBarCls}>
-        <ElsewhereNotice />
-      </div>
-    ) : st.status === 'moved' ? (
-      <div className={noteBarCls}>{movedText(st.movedAt)}</div>
-    ) : st.movingAt !== null ? (
-      <MovingBanner className={noteBarCls} />
-    ) : out ? (
-      <div data-p2p-out className={noteBarCls}>
-        {v.joinWait && v.me !== 'join' ? <span data-p2p-join-wait>{out}</span> : out}
-        {v.upgraded && v.next && (
-          <button
-            onClick={() => p2pServer.open(v.next as string)}
-            className="font-medium text-primary hover:underline"
-          >
-            Open the new copy
-          </button>
-        )}
-        {v.me !== 'join' && v.me !== 'invite' && v.me !== null && (
-          <button
-            onClick={() => peerServer.forIdentity(identity).confirmForget(v, acct)}
-            className="font-medium text-primary hover:underline"
-          >
-            Remove from this device
-          </button>
-        )}
-      </div>
-    ) : channel && !channel.send ? (
-      <div data-no-send className={noteBarCls}>
-        <span className="flex min-w-0 items-center gap-2">
-          <Lock size={16} className="shrink-0" />
-          <span>{NO_SEND_TEXT}</span>
-        </span>
-      </div>
-    ) : v.full ? (
-      <div className={noteBarCls} role="status">
-        This server reached its storage limit on this device.
-      </div>
-    ) : null
+    const away =
+      st.reader || st.elsewhere ? (
+        <div className={noteBarCls}>
+          <ElsewhereNotice />
+        </div>
+      ) : st.status === 'moved' ? (
+        <div className={noteBarCls}>{movedText(st.movedAt)}</div>
+      ) : st.movingAt !== null ? (
+        <MovingBanner className={noteBarCls} />
+      ) : out ? (
+        <div data-p2p-out className={noteBarCls}>
+          {v.joinWait && v.me !== 'join' ? <span data-p2p-join-wait>{out}</span> : out}
+          {v.upgraded && v.next && (
+            <button
+              onClick={() => p2pServer.open(v.next as string)}
+              className="font-medium text-primary hover:underline"
+            >
+              Open the new copy
+            </button>
+          )}
+          {v.me !== 'join' && v.me !== 'invite' && v.me !== null && (
+            <button
+              onClick={() => peerServer.forIdentity(identity).confirmForget(v, acct)}
+              className="font-medium text-primary hover:underline"
+            >
+              Remove from this device
+            </button>
+          )}
+        </div>
+      ) : null
+    if (away) return { bar: away, canAct: false }
+    const block =
+      channel && !channel.send ? (
+        <div data-no-send className={noteBarCls}>
+          <span className="flex min-w-0 items-center gap-2">
+            <Lock size={16} className="shrink-0" />
+            <span>{NO_SEND_TEXT}</span>
+          </span>
+        </div>
+      ) : v.full ? (
+        <div className={noteBarCls} role="status">
+          This server reached its storage limit on this device.
+        </div>
+      ) : null
+    return {
+      bar: st.timedOut !== null ? <TimedOutBar ends={st.timedOut} /> : block,
+      canAct: block === null,
+    }
   }
 
 function P2pChannelPaneBody({
@@ -847,7 +860,8 @@ function P2pChannelPaneBody({
         .map(m => ({ ik: m.ik, name: m.name, handle: m.name })),
     [members]
   )
-  const moderator = can(v, P.ManageMessages)
+  const timedOut = usePeerTimeoutEnds(v?.timedOutUntil)
+  const moderator = can(v, P.ManageMessages) && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
 
   if (!v) return <main className="flex min-w-0 flex-1 flex-col bg-surface" />
@@ -997,9 +1011,9 @@ function P2pChannelPaneBody({
     )
   }
 
-  const disabled = sendBlockFor(identity)(
+  const { bar: disabled, canAct } = sendBlockFor(identity)(
     v,
-    { reader, elsewhere, status, movedAt, movingAt },
+    { reader, elsewhere, status, movedAt, movingAt, timedOut },
     channel,
     acct
   )
@@ -1012,7 +1026,8 @@ function P2pChannelPaneBody({
       above={<ServerNotices v={v} />}
       intro={<ServerIntro />}
       disabled={disabled}
-      canAct={!disabled}
+      canAct={canAct}
+      timedOut={timedOut !== null}
       nameOf={nameOf}
       userOf={userOf}
       people={people}

@@ -46,6 +46,7 @@ const marked = (a: Action) => !!a.danger || !!a.dangerFor
 const PLAIN: Record<string, string> = {
   untimeout: 'lifts a restriction and is easily redone',
   member_timeout_remove: 'lifts a restriction and is easily redone',
+  p2p_member_untimeout: 'lifts a restriction and is easily redone',
   member_promote_admin: 'gives rights; Revoke Admin takes them back',
   member_roles: 'opens the role list; taking a role away is marked there',
   p2p_limits_reset: 'puts your own storage limits back to the defaults',
@@ -111,6 +112,7 @@ test('the actions marked as danger', () => {
     'p2p_member_withdraw',
     'p2p_member_transfer',
     'p2p_member_ban',
+    'p2p_member_timeout',
     'p2p_role_delete',
     'p2p_message_delete',
   ])

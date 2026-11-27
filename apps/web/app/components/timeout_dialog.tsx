@@ -2,14 +2,20 @@
 
 import { useEffect, useState } from 'react'
 import { Timer } from 'lucide-react'
-import { useStore } from '../lib/store'
 import {
-  REASON_MAX,
   TIMEOUT_PRESETS,
+  TIMEOUT_REASON_MAX,
   TIMEOUT_UNITS,
+  cleanReason,
   customSeconds,
+} from '../lib/durations'
+import { useStore } from '../lib/store'
+import type { TimeoutRequest } from '../lib/store_types'
+import {
+  peerTimeout,
   remainingText,
   remainingWords,
+  timedOutLine,
   type Timeout,
 } from '../lib/timeouts'
 import type { UserRef } from '../lib/types'
@@ -67,14 +73,87 @@ export function TimeoutBadge({ t, compact = false }: { t: Timeout; compact?: boo
   )
 }
 
+// When your own timeout in a P2P room ends (ms), ticking so it clears on time.
+export function usePeerTimeoutEnds(until: number | undefined): number | null {
+  const now = useNow(until !== undefined && until > Date.now())
+  return until !== undefined && until > now ? until : null
+}
+
+// The timer badge of a P2P member whose timeout runs.
+export function PeerTimeoutBadge({
+  m,
+  compact = false,
+}: {
+  m: { timeoutUntil?: number; timeoutReason?: string }
+  compact?: boolean
+}) {
+  const now = useNow(m.timeoutUntil !== undefined && m.timeoutUntil > Date.now())
+  const t = peerTimeout(m, now)
+  return t ? <TimeoutBadge t={t} compact={compact} /> : null
+}
+
+// In place of the composer while you are timed out.
+export function TimedOutBar({ ends }: { ends: number }) {
+  const now = useNow(true)
+  return (
+    <div
+      data-timed-out
+      role="status"
+      className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 items-center gap-2 rounded-2xl bg-error-container px-4 py-3 text-sm text-on-error-container keyboard:mb-3"
+    >
+      <Timer size={16} className="shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1">{timedOutLine(ends, now)}</span>
+      <span title="Time left" className="shrink-0 font-medium tabular-nums">
+        {remainingText(ends - now)}
+      </span>
+    </div>
+  )
+}
+
+// The hosted adapter: a timeout of an account in a server through the instance.
+export const hostedTimeoutRequest = (
+  server: string,
+  user: UserRef,
+  current: Timeout | null,
+  set: (server: string, username: string, seconds: number, reason: string) => Promise<boolean>,
+  remove: (server: string, username: string) => Promise<void>
+): TimeoutRequest => ({
+  name: user.display_name,
+  user,
+  current,
+  run: choice => set(server, user.username, choice.seconds, choice.reason ?? ''),
+  remove: () => void remove(server, user.username),
+})
+
+function HostedTimeoutDialog({ server, user: account }: { server: string; user: UserRef }) {
+  const user = useShown(account, server)
+  const close = useStore(s => s.closeDialog)
+  const timeoutMember = useStore(s => s.timeoutMember)
+  const removeTimeout = useStore(s => s.removeTimeout)
+  const current = useMemberTimeout(server, user.username)
+  return (
+    <TimeoutDialog
+      request={hostedTimeoutRequest(server, user, current, timeoutMember, removeTimeout)}
+      onClose={close}
+    />
+  )
+}
+
+// Shows the timeout dialog of either side: a hosted timeout by server and account, a P2P
+// timeout by the request its room built.
 export default function TimeoutDialogHost() {
   const dialog = useStore(s => s.activeDialog)
-  return dialog?.kind === 'timeout' ? (
-    <TimeoutDialog
-      key={`${dialog.server}\n${dialog.user.username}`}
-      server={dialog.server}
-      user={dialog.user}
-    />
+  const close = useStore(s => s.closeDialog)
+  if (dialog?.kind === 'timeout')
+    return (
+      <HostedTimeoutDialog
+        key={`${dialog.server}\n${dialog.user.username}`}
+        server={dialog.server}
+        user={dialog.user}
+      />
+    )
+  return dialog?.kind === 'timeout_request' ? (
+    <TimeoutDialog request={dialog.request} onClose={close} />
   ) : null
 }
 
@@ -85,57 +164,71 @@ const chip = (on: boolean) =>
       : 'border-outline text-on-surface hover:bg-surface-container-highest'
   }`
 
-function TimeoutDialog({ server, user: account }: { server: string; user: UserRef }) {
-  const user = useShown(account, server)
-  const close = useStore(s => s.closeDialog)
-  const timeoutMember = useStore(s => s.timeoutMember)
-  const removeTimeout = useStore(s => s.removeTimeout)
-  const current = useMemberTimeout(server, user.username)
-  const now = useNow(current !== null)
+// The timeout dialog of hosted servers and P2P rooms: how long and why, and the timeout that
+// runs with its reason. The request sets and removes it on its side.
+export function TimeoutDialog({
+  request,
+  onClose,
+}: {
+  request: TimeoutRequest
+  onClose: () => void
+}) {
+  const { name, user, run, remove } = request
+  const now = useNow(request.current !== null)
+  const current = request.current && request.current.ends > now ? request.current : null
   const [preset, setPreset] = useState<number | null>(600)
   const [amount, setAmount] = useState('')
   const [mult, setMult] = useState(60)
-  const [reason, setReason] = useState(() => current?.reason ?? '')
+  const [reason, setReason] = useState(() => request.current?.reason ?? '')
   const [busy, setBusy] = useState(false)
   const custom = preset === null ? customSeconds(amount, mult) : null
   const seconds = preset ?? custom
   const submit = async () => {
     if (seconds === null || busy) return
     setBusy(true)
-    const ok = await timeoutMember(server, user.username, seconds, reason)
+    const ok = await run({ seconds, reason: cleanReason(reason) })
     setBusy(false)
-    if (ok) close()
+    if (ok) onClose()
   }
   return (
-    <Dialog title={current ? 'Change timeout' : 'Time out member'} onClose={close}>
+    <Dialog title={current ? 'Change timeout' : 'Time out member'} onClose={onClose}>
       <div className="flex items-center gap-3">
-        <UserAvatar
-          username={user.username}
-          avatarKind={user.avatar_kind}
-          avatarColor={user.avatar_color}
-          size={36}
-        />
+        {user && (
+          <UserAvatar
+            username={user.username}
+            avatarKind={user.avatar_kind}
+            avatarColor={user.avatar_color}
+            size={36}
+          />
+        )}
         <div className="min-w-0">
           <p className="streamer truncate text-sm font-medium text-on-surface">
-            <NameWithUsername user={user} />
+            {user ? <NameWithUsername user={user} /> : name}
           </p>
-          <p className="streamer truncate text-xs text-on-surface-variant">@{user.username}</p>
+          {user && (
+            <p className="streamer truncate text-xs text-on-surface-variant">@{user.username}</p>
+          )}
         </div>
       </div>
       <p className="mt-3 text-sm text-on-surface-variant">
         They can still read, but can&apos;t send messages, react, or talk in voice until it ends.
       </p>
       {current && (
-        <div className="mt-3 flex items-center gap-2 rounded-xl bg-error-container px-3 py-2 text-sm text-on-error-container">
+        <div
+          data-timeout-current
+          className="mt-3 flex items-center gap-2 rounded-xl bg-error-container px-3 py-2 text-sm text-on-error-container"
+        >
           <Timer size={16} className="shrink-0" aria-hidden />
           <span className="min-w-0 flex-1">
             <span className="tabular-nums">{remainingText(current.ends - now)}</span> left
-            {current.reason && <span className="block truncate text-xs">{current.reason}</span>}
+            {current.reason && (
+              <span className="block text-xs break-words">Reason: {current.reason}</span>
+            )}
           </span>
           <button
             onClick={() => {
-              void removeTimeout(server, user.username)
-              close()
+              remove()
+              onClose()
             }}
             className={dangerBtn}
           >
@@ -202,7 +295,7 @@ function TimeoutDialog({ server, user: account }: { server: string; user: UserRe
         Reason
         <input
           value={reason}
-          maxLength={REASON_MAX}
+          maxLength={TIMEOUT_REASON_MAX}
           onChange={e => setReason(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter') void submit()
@@ -212,7 +305,7 @@ function TimeoutDialog({ server, user: account }: { server: string; user: UserRe
         />
       </label>
       <div className="mt-5 flex justify-end gap-2">
-        <button onClick={close} className={textBtn}>
+        <button onClick={onClose} className={textBtn}>
           Cancel
         </button>
         <button

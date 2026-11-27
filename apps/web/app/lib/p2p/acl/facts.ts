@@ -27,6 +27,9 @@ import {
   resetBit,
   ROLES,
   SERVER,
+  timeoutEnd,
+  timeoutEnds,
+  timeouts as atRules,
   TOP,
   type AclContent,
   type Ctx,
@@ -68,6 +71,8 @@ export interface CodeFact {
 
 // What authority, rank and protection read.
 export interface FactsQ {
+  // The rules version of the room's genesis.
+  rules: number | undefined
   owners: ReadonlySet<string>
   mem: Has<string>
   ban: Has<string>
@@ -84,6 +89,8 @@ export interface FactsQ {
   consumed: Has<string>
   codeOk: Has<string>
   codeDead: Has<string>
+  // When each member's timeout ends (ms), while one is in force.
+  timeouts: Get<string, number>
 }
 
 // The whole state, with the registers.
@@ -116,6 +123,7 @@ export interface Facts extends FactsQ {
   consumed: RSet<string>
   codeOk: RSet<string>
   codeDead: RSet<string>
+  timeouts: RMap<string, number>
   from: string | undefined
 }
 
@@ -183,6 +191,41 @@ function race<T>(a: (limit: number) => T | undefined, b: (limit: number) => T | 
     const y = b(limit)
     if (y !== undefined) return y
   }
+}
+
+// The maximal writes of a register among `live` and the winner: the most senior k(w), then the
+// lowest id.
+export function registerOf(
+  ix: Ix,
+  live: readonly number[]
+): { win: number; maxes: number[] } | undefined {
+  const maxes = live.filter(w => !live.some(w2 => w2 !== w && ix.before(w, w2)))
+  let win = -1
+  for (const w of maxes) {
+    if (win < 0) {
+      win = w
+      continue
+    }
+    const c = cmp(ix.k(w), ix.k(win))
+    if (c > 0 || (c === 0 && ix.ids[w] < ix.ids[win])) win = w
+  }
+  return win < 0 ? undefined : { win, maxes }
+}
+
+// The timeout of T in force, in rooms whose rules read timeouts: the winner of the register over
+// the effective timeouts of T and the live writes that end one, unless it ends one.
+export function timeoutWrite(
+  ix: Ix,
+  T: string,
+  live: (x: number) => boolean,
+  eff: (x: number) => boolean
+): number | undefined {
+  if (!atRules(ix.ev[ix.genesis]?.c.rules)) return undefined
+  const r = registerOf(
+    ix,
+    (ix.timeoutEv.get(T) ?? EMPTY).filter(x => (ix.isD[x] ? eff(x) : live(x)))
+  )
+  return !r || timeoutEnds(ix.ev[r.win]) ? undefined : r.win
 }
 
 // A view: (event set E, void set, effective denies) as predicates over event indices. Every fact
@@ -707,19 +750,23 @@ export abstract class View {
 
   // The maximal live writes of a register and the winner: the most senior k(w), then the lowest id.
   register(ws: readonly number[]): { win: number; maxes: number[] } | undefined {
-    const ix = this.ix
-    const live = ws.filter(x => this.live(x))
-    const maxes = live.filter(w => !live.some(w2 => w2 !== w && ix.before(w, w2)))
-    let win = -1
-    for (const w of maxes) {
-      if (win < 0) {
-        win = w
-        continue
-      }
-      const c = cmp(ix.k(w), ix.k(win))
-      if (c > 0 || (c === 0 && ix.ids[w] < ix.ids[win])) win = w
-    }
-    return win < 0 ? undefined : { win, maxes }
+    return registerOf(
+      this.ix,
+      ws.filter(x => this.live(x))
+    )
+  }
+  get rules(): number | undefined {
+    return this.ix.ev[this.ix.genesis]?.c.rules
+  }
+  // When T's timeout in force ends (`timeoutWrite`).
+  timeoutOf(T: string): number | undefined {
+    const w = timeoutWrite(
+      this.ix,
+      T,
+      x => this.live(x),
+      x => this.effIn(x)
+    )
+    return w === undefined ? undefined : timeoutEnd(this.ix.ev[w])
   }
   profileOf(T: string): AclContent | undefined {
     const r = this.register(this.ix.profileBy.get(T) ?? EMPTY)
@@ -878,6 +925,7 @@ export abstract class View {
   facts(): FactsQ {
     if (this.lf) return this.lf
     const lf: FactsQ = {
+      rules: this.rules,
       owners: this.ix.owners,
       mem: { has: T => this.mem(T) },
       ban: { has: T => this.ban(T) },
@@ -914,6 +962,7 @@ export abstract class View {
       },
       codeOk: { has: c => this.codeOk(c) },
       codeDead: { has: c => this.codeDead(c) },
+      timeouts: { get: T => this.timeoutOf(T) },
     }
     return (this.lf = lf)
   }
@@ -1009,7 +1058,13 @@ export function fullFacts(V: View): Facts {
     if (!m) overwrites.set(ch ?? '', (m = new Map()))
     m.set(subj ?? key, o)
   }
+  const timeouts = new Map<string, number>()
+  for (const T of ix.timeoutEv.keys()) {
+    const until = V.timeoutOf(T)
+    if (until !== undefined) timeouts.set(T, until)
+  }
   return {
+    rules: V.rules,
     owners: new Set(ix.owners),
     upgraded: ix.upgradeEv.filter(x => V.inE(x)).map(x => ix.ids[x]),
     mem,
@@ -1036,6 +1091,7 @@ export function fullFacts(V: View): Facts {
     consumed,
     codeOk,
     codeDead,
+    timeouts,
     from: fromOf(ix),
   }
 }
@@ -1079,6 +1135,7 @@ export function facts(
 }
 
 const EMPTY_FACTS: Facts = {
+  rules: undefined,
   owners: new Set(),
   upgraded: [],
   mem: new Set(),
@@ -1105,6 +1162,7 @@ const EMPTY_FACTS: Facts = {
   consumed: new Set(),
   codeOk: new Set(),
   codeDead: new Set(),
+  timeouts: new Map(),
   from: undefined,
 }
 

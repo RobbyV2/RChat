@@ -24,6 +24,7 @@ import { mayTakeRole, movesWarn, placeRole, type Move } from '../p2p/roles'
 import { ownsP2pServer, type MemberView, type RoleView, type ServerView } from '../p2p/server/types'
 import { P } from '../p2p/state'
 import { editsRoomProfile } from '../server_profile_editor'
+import { peerTimeout } from '../timeouts'
 import { sharing } from '../platform'
 import { maskOf } from '../store'
 import type { ConfirmRequest } from '../store_types'
@@ -518,6 +519,21 @@ export const peerServer = identityActions(identity => {
     return t && t.m.resetProfile && t.v.profiles !== 'off' && !t.v.upgraded ? t : null
   }
 
+  // A joined member below us we may time out, in a room whose rules read timeouts.
+  const timesOut = (ctx: ActionCtx) => {
+    const t = actsOn(ctx, P.TimeoutMembers)
+    return t && t.v.timeouts === true && t.m.m === 'join' && !t.m.owner ? t : null
+  }
+  const timedOut = (ctx: ActionCtx) => peerTimeout(memberOf(ctx)?.m) !== null
+  const openTimeout = (ctx: ActionCtx) => {
+    const t = memberOf(ctx)
+    if (t)
+      ctx.acct.store.getState().openDialog({
+        kind: 'timeout_request',
+        request: identity().timeoutRequest(t.v, t.m, who(t.m.name, ctx.acct)),
+      })
+  }
+
   const named = (ctx: ActionCtx, verb: string, alone: string) => {
     const t = memberOf(ctx)
     return ctx.s.streamer || !t ? alone : `${verb} ${maskOf(ctx.s)(t.m.name)}`
@@ -663,6 +679,29 @@ export const peerServer = identityActions(identity => {
             kind: 'ban_request',
             request: identity().banRequest(t.v, t.m.ik, who(t.m.name, ctx.acct)),
           })
+      },
+    },
+    {
+      id: 'p2p_member_timeout',
+      title: 'Time Out',
+      label: ctx => (timedOut(ctx) ? 'Change Timeout' : 'Time Out'),
+      danger: true,
+      dangerFor: ctx => !timedOut(ctx),
+      ...onMember,
+      order: 440,
+      available: ctx => timesOut(ctx) !== null,
+      menuRun: openTimeout,
+      run: openTimeout,
+    },
+    {
+      id: 'p2p_member_untimeout',
+      title: 'Remove Timeout',
+      ...onMember,
+      order: 450,
+      available: ctx => timesOut(ctx) !== null && timedOut(ctx),
+      run: ctx => {
+        const t = memberOf(ctx)
+        if (t) void identity().p2pServer.untimeout(t.v.id, t.m.ik)
       },
     },
     {

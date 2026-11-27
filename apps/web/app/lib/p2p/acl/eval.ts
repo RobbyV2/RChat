@@ -1235,6 +1235,8 @@ export class FastEval extends Equiv {
       case 'uninvite':
         each(ix.joinEv.get(c.to))
         break
+      case 'timeout':
+        break
       case 'code_revoke':
         codeUsers(c.code ?? '')
         break

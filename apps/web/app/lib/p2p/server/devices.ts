@@ -1,5 +1,5 @@
 import type { Disowned, Reapply } from '../acl_room'
-import { banOver } from '../acl/rules'
+import { banOver, endsTimeout, timeouts } from '../acl/rules'
 import { getEvents } from '../dag'
 import { serverWire, type EventRecord } from '../db'
 import { signRevocation2, signRotation2, RESIGN_CONTENT } from '../event_v2'
@@ -32,9 +32,15 @@ export async function reapplyAll(cx: ServerCtx, room: string) {
     )
 }
 
-// A timed ban whose end has passed: not made again.
-const ended = (cx: ServerCtx, room: string, r: Reapply) =>
-  r.t === 'ban' && banOver(cx.sumOf(room).rules, r.c as Record<string, unknown>, cx.clock.now())
+// A timed ban or a timeout whose end has passed: not made again.
+const ended = (cx: ServerCtx, room: string, r: Reapply) => {
+  const rules = cx.sumOf(room).rules
+  const c = r.c as Record<string, unknown>
+  if (r.t === 'ban') return banOver(rules, c, cx.clock.now())
+  return (
+    r.t === 'timeout' && timeouts(rules) && typeof c.until === 'number' && c.until <= cx.clock.now()
+  )
+}
 
 // Our denies to apply again; in a new copy, our kicks and bans in the old one
 // that its upgrade didn't have in its past too (not carried over).
@@ -126,8 +132,9 @@ export async function resignable(cx: ServerCtx, room: string, dev: string) {
   return own.filter((r, i) => {
     if (!counts[i]) return false
     if (r.layer === 'c') return true
-    const c = (serverWire(r).c ?? {}) as Record<string, unknown>
-    return effectHolds(r.type, c, r.id, cx.me, s)
+    const w = serverWire(r)
+    const c = (w.c ?? {}) as Record<string, unknown>
+    return effectHolds(r.type, c, r.id, cx.me, s, w.ev.ts, cx.clock.now())
   })
 }
 
@@ -153,8 +160,15 @@ export async function lostPreview(cx: ServerCtx, dk: string, t: number): Promise
     const resign = own
       .filter(r => r.layer !== 'c')
       .map(r => {
-        const to = (serverWire(r).c as { to?: unknown } | null)?.to
-        return { id: r.id, t: r.type, ...(typeof to === 'string' ? { to } : {}) }
+        const w = serverWire(r)
+        const to = (w.c as { to?: unknown } | null)?.to
+        const ends = w.c !== null && endsTimeout(r.type, { ts: w.ev.ts, c: w.c })
+        return {
+          id: r.id,
+          t: r.type,
+          ...(typeof to === 'string' ? { to } : {}),
+          ...(ends ? { ends: true as const } : {}),
+        }
       })
     const live = memberOf(cx.sumOf(room), cx.me)?.devs ?? []
     const others = d.ap ? live.filter(v => v !== dk && v !== mine && !d.devs.includes(v)) : []
@@ -264,7 +278,11 @@ export async function resign(cx: ServerCtx, room: string, recs: EventRecord[]) {
     if (!stopped[i]) continue
     const w = serverWire(r)
     if (!w.c) continue
-    if (w.ev.L !== 'c' && effectHolds(w.ev.t, w.c, r.id, cx.me, cx.sumOf(room))) continue
+    if (
+      w.ev.L !== 'c' &&
+      effectHolds(w.ev.t, w.c, r.id, cx.me, cx.sumOf(room), w.ev.ts, cx.clock.now())
+    )
+      continue
     const c = signedAgain(w.c, ids)
     const content = w.ev.L === 'c'
     const to = !content && typeof c.to === 'string' ? c.to : undefined

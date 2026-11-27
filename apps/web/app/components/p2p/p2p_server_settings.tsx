@@ -35,7 +35,7 @@ import { ServerProfilesMode } from './p2p_server_profile'
 import { ChannelAccess, MemberCard, roleMenuItems, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
 import { banStateText, timedBan } from '../../lib/p2p/ban_expiry'
-import { useNow } from '../timeout_dialog'
+import { PeerTimeoutBadge, useNow } from '../timeout_dialog'
 import { hex, nameColor } from '../../lib/p2p/roles'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
@@ -430,7 +430,7 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
 
 function Members({ v }: { v: ServerView }) {
   const identity = useP2pApp()!
-  const { p2pServer, banRequest } = identity
+  const { p2pServer, banRequest, timeoutRequest } = identity
 
   const acct = useAccount()
   const who = (name: string) => (acct.store.getState().streamer ? 'this member' : name)
@@ -440,6 +440,7 @@ function Members({ v }: { v: ServerView }) {
   const openDialog = useStore(s => s.openDialog)
   const kick = can(v, P.Kick)
   const ban = can(v, P.Ban)
+  const timeout = v.timeouts === true && can(v, P.TimeoutMembers)
   const list = v.members
     .filter(m => m.m === 'join' || m.m === 'invite')
     .sort((a, b) => a.name.localeCompare(b.name))
@@ -497,6 +498,20 @@ function Members({ v }: { v: ServerView }) {
                 Kick
               </button>
             )}
+            {(m.ik === me || timeout) && <PeerTimeoutBadge m={m} />}
+            {m.ik !== me && !m.owner && timeout && m.m === 'join' && m.below && (
+              <button
+                onClick={() =>
+                  openDialog({
+                    kind: 'timeout_request',
+                    request: timeoutRequest(v, m, who(m.name)),
+                  })
+                }
+                className={textBtn}
+              >
+                Time out
+              </button>
+            )}
             {m.ik !== me && !m.owner && ban && m.below && (
               <button
                 onClick={() =>
@@ -511,7 +526,7 @@ function Members({ v }: { v: ServerView }) {
         ))}
       </ul>
       {paged.more && <Sentinel key={shown} onVisible={more} />}
-      {(kick || ban) && (
+      {(kick || ban || timeout) && (
         <div className="flex flex-col gap-1">
           <Note>{EQUAL_ROLES_TEXT}</Note>
           <Note>{HIGHER_ROLES_TEXT}</Note>

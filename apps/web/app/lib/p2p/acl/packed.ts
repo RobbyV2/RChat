@@ -156,8 +156,20 @@ class SnapFacts implements Facts {
     const l = this.V.invited(T)
     return l.length ? l : undefined
   }
+  get rules() {
+    return this.V.rules
+  }
   get owners() {
     return this.ix.owners
+  }
+  get timeouts() {
+    return this.one('timeouts', () =>
+      lazyMap(
+        T => this.V.timeoutOf(T) !== undefined,
+        T => this.V.timeoutOf(T),
+        () => this.full().timeouts as ReadonlyMap<string, number>
+      )
+    )
   }
   get upgraded() {
     return this.ix.upgradeEv.filter(x => this.V.inE(x)).map(x => this.ix.ids[x])

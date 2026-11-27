@@ -3,7 +3,8 @@ import { p2pBan, P2P_BAN_NOTE, p2pBanSupport } from '../../durations'
 import type { RoomExtras } from '../../profile_fields'
 import type { LockSecs, LockState, ResetField } from '../../profile_reset'
 import { lookOf, roomLookOf, shownUser } from '../../server_profile'
-import type { BanRequest } from '../../store_types'
+import type { BanRequest, TimeoutRequest } from '../../store_types'
+import { peerTimeout } from '../../timeouts'
 import type { ProfilesMode, UserRef } from '../../types'
 import { BanExpiry } from '../ban_expiry'
 import type { P2pStore, RoomRecord, ServerCache } from '../db'
@@ -618,6 +619,21 @@ export function createServersPart(
     }
   }
 
+  // The timeout dialog's P2P side: like a ban, it closes once the timeout is asked for.
+  const timeoutRequest = (
+    v: Pick<ServerView, 'id'>,
+    m: { ik: string; timeoutUntil?: number; timeoutReason?: string },
+    name: string
+  ): TimeoutRequest => ({
+    name,
+    current: peerTimeout(m),
+    run: choice => {
+      void p2pServer.timeout(v.id, m.ik, choice.seconds, choice.reason ?? undefined)
+      return true
+    },
+    remove: () => void p2pServer.untimeout(v.id, m.ik),
+  })
+
   // Thread counters already checked on a read, at a stored-content position (`seq`: deletions and
   // hidden content move it too), so reading at the bottom again doesn't redo it.
   const threadsChecked = new Map<string, string>()
@@ -838,6 +854,14 @@ export function createServersPart(
       withServers(s =>
         s.moderate(room, { act: 'Lift the ban of', who: ik }, () => s.unban(room, ik))
       ),
+    timeout: (room: string, ik: string, seconds: number, reason?: string) =>
+      withServers(s =>
+        s.moderate(room, { act: 'Time out', who: ik }, () => s.timeout(room, ik, seconds, reason))
+      ),
+    untimeout: (room: string, ik: string) =>
+      withServers(s =>
+        s.moderate(room, { act: 'Remove the timeout of', who: ik }, () => s.timeout(room, ik, 0))
+      ),
     applyAnyway: (room: string, id: number) => state.servers?.applyAnyway(room, id),
     cancelMod: (room: string, id: number) => state.servers?.cancelMod(room, id),
     inviteAgain: (room: string, by: string) => withServers(s => s.inviteAgain(room, by)),
@@ -1003,6 +1027,7 @@ export function createServersPart(
     serverArrived,
     withServers,
     banRequest,
+    timeoutRequest,
     threadsSig,
     channelReadSkips,
     p2pServer,

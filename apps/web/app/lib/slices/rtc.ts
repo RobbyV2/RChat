@@ -360,9 +360,13 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     return next
   }
 
-  // Muted by a timeout in the voice channel you are in: by the server, or by your own clock.
+  // Muted by a timeout in the voice channel you are in: by the server, or by your own clock; in
+  // a P2P room's voice channel, by the room's timeout of you.
   const forcedMute = () => {
     const s = get()
+    const claim = client.calls.current()
+    if (claim?.account === acct && claim.kind === 'p2p-voice')
+      return acct.identities.get(claim.identity)?.p2pVoice.timedOut() ?? false
     if (!s.voice || !s.me) return false
     return (
       voiceMutedIn(s, s.voice.channelId).includes(s.me.username) ||
@@ -393,6 +397,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     if (forced && rtc.active()) {
       if (rtc.videoTrack) void rtc.camera(false)
       if (rtc.sharing) void rtc.share(false)
+    }
+    if (forced && callRtc?.active()) {
+      if (callRtc.videoTrack) void callRtc.camera(false)
+      if (callRtc.sharing) void callRtc.share(false)
     }
   }
 
@@ -550,6 +558,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     | 'leaveVoice'
     | 'toggleMute'
     | 'toggleDeafen'
+    | 'applyMic'
     | 'toggleCamera'
     | 'toggleShare'
     | 'canStartCall'
@@ -609,6 +618,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     toggleMute: () => setSelfAudio(toggleMicAudio(get().selfAudio)),
 
     toggleDeafen: () => setSelfAudio(toggleDeafenAudio(get().selfAudio)),
+    applyMic,
     toggleCamera: () =>
       act(async () => {
         const owner = client.calls.current()

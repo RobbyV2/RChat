@@ -136,6 +136,16 @@ export interface BanRequest {
   run: (choice: import('./durations').BanChoice) => Promise<boolean> | boolean
 }
 
+// A timeout dialog for one member of a hosted server or a P2P room: the timeout that runs when
+// it opens, and how that side sets and removes one.
+export interface TimeoutRequest {
+  name: string
+  user?: UserRef
+  current: import('./timeouts').Timeout | null
+  run: (choice: import('./durations').TimeoutChoice) => Promise<boolean> | boolean
+  remove: () => void
+}
+
 export interface AdminPlace {
   section: AdminSection | null
   item: string | null
@@ -158,6 +168,7 @@ export type ActiveDialog =
   | { kind: 'profile_reset'; server: string; user: UserRef }
   | { kind: 'ban'; server: string; user: UserRef }
   | { kind: 'ban_request'; request: BanRequest }
+  | { kind: 'timeout_request'; request: TimeoutRequest }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
   | { kind: 'remove_phrase_confirm'; username: string }
@@ -748,6 +759,9 @@ export interface RChatState {
   leaveVoice: () => void
   toggleMute: () => void
   toggleDeafen: () => void
+  // Applies the mic, camera and share limits of the call you are in again, after a timeout
+  // there started or ended.
+  applyMic: () => void
   toggleCamera: () => Promise<void>
   toggleShare: () => Promise<void>
   canStartCall: (dmId: number) => boolean

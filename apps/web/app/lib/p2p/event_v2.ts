@@ -30,6 +30,9 @@ export const CHANNEL_CONTENT: readonly string[] = [
   'move',
 ]
 
+// The kinds a timed-out member can't post: everything in a channel but deleting.
+export const TIMEOUT_CONTENT: readonly string[] = ['msg', 'edit', 'react', 'pin', 'call']
+
 // What this browser signs again from a new key when a rotation drops its old one.
 export const RESIGN_CONTENT = ['msg', 'edit', 'redact', 'react', 'pin']
 
@@ -369,6 +372,7 @@ const KNOWN_ACL: readonly string[] = [
   'kick',
   'ban',
   'unban',
+  'timeout',
   'role_create',
   'role_move',
   'role_bits',

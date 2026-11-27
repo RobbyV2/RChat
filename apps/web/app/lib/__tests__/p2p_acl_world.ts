@@ -4,7 +4,7 @@ import { AclReplica, decideContent, identityHead, pastOf, type Verdict } from '.
 import { orphanDrops } from '../p2p/acl/equivocation'
 import { evaluate } from '../p2p/acl/eval'
 import { ContentView, type ContentEv } from '../p2p/acl/visibility'
-import type { EvalResult, Facts } from '../p2p/acl/facts'
+import { emptyResult, type EvalResult, type Facts } from '../p2p/acl/facts'
 import {
   BAN,
   EVERYONE,
@@ -14,8 +14,10 @@ import {
   PRODUCTION_LIMITS,
   rkey,
   ROLES,
+  RULES_NEXT,
   SEND,
   SERVER,
+  TOP,
   VIEW,
   type AclContent,
   type AclEv,
@@ -487,6 +489,37 @@ export class AclWorld {
     }
     this.all.push(e)
     this.ref.receive(e)
+    return e
+  }
+  // A genesis of the rules after the current ones, taken as stored: receipt refuses rules this
+  // version doesn't join yet.
+  genesisNext(dev: string, owners: string[], everyone = 0, ts = 0): AclEv {
+    const e: AclEv = {
+      id: `g${this.n++}`,
+      t: 'genesis',
+      a: devOwner(dev),
+      dev,
+      seq: 0,
+      ap: [],
+      ts,
+      c: {
+        rules: RULES_NEXT,
+        nonce: NONCE,
+        owners: owners.map(ik => ({ ik })),
+        everyone_bits: everyone | VIEW | SEND,
+        name: 'S',
+      } as unknown as AclContent,
+    }
+    this.all.push(e)
+    this.ref.restore(e, {
+      k: TOP,
+      cls: 'G',
+      self: false,
+      exempt: true,
+      depth: 0,
+      epoch: '',
+      local: emptyResult(),
+    })
     return e
   }
   // A channel that content posts to by default.

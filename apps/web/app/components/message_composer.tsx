@@ -17,7 +17,6 @@ import {
   Share2,
   ShieldAlert,
   Smile,
-  Timer,
   X,
 } from 'lucide-react'
 import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
@@ -49,8 +48,7 @@ import { ReplyBar } from './replies'
 import { ForwardBar, useForwardClip } from './forwards'
 import { useTextAssist } from './text_assist'
 import { FormatToolbar, useFormatting } from './format_toolbar'
-import { useMyTimeoutEnds, useNow } from './timeout_dialog'
-import { remainingText, timedOutLine } from '../lib/timeouts'
+import { TimedOutBar, useMyTimeoutEnds } from './timeout_dialog'
 import { previewFor } from '../lib/apps/preview'
 import { CreatePollDialog } from './poll_dialog'
 import type { PollTarget } from '../lib/polls_store'
@@ -138,23 +136,6 @@ function ExpiryDialog({
 }
 
 const NO_SEND = 'You do not have permission to send messages in this channel.'
-
-function TimedOutBar({ ends }: { ends: number }) {
-  const now = useNow(true)
-  return (
-    <div
-      data-timed-out
-      role="status"
-      className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 items-center gap-2 rounded-2xl bg-error-container px-4 py-3 text-sm text-on-error-container keyboard:mb-3"
-    >
-      <Timer size={16} className="shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1">{timedOutLine(ends, now)}</span>
-      <span title="Time left" className="shrink-0 font-medium tabular-nums">
-        {remainingText(ends - now)}
-      </span>
-    </div>
-  )
-}
 
 const useSlowLeft = (channelId: number | null): number =>
   useCountdown(useStore(s => (channelId === null ? 0 : (s.slowUntil[channelId] ?? 0))))

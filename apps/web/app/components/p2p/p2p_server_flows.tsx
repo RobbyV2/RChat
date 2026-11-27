@@ -693,7 +693,7 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
                   <ul className="mt-1 flex flex-col text-xs text-on-surface-variant">
                     <Capped
                       items={p.acts.map(x => {
-                        const { act, who } = actParts(x.t, x.to)
+                        const { act, who } = actParts(x.t, x.to, x.ends)
                         return (
                           <li key={x.id}>
                             {act}
@@ -729,7 +729,7 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
                     <ul className="mt-1 text-on-surface">
                       <Capped
                         items={p.resign.map(x => {
-                          const { act, who } = actParts(x.t, x.to)
+                          const { act, who } = actParts(x.t, x.to, x.ends)
                           return (
                             <li key={x.id}>
                               {act}

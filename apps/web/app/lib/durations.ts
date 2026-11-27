@@ -27,7 +27,43 @@ export const PURGE_WINDOWS: Choice<number>[] = [
   { label: '7 days', value: 168 },
 ]
 
+// How long a timeout lasts, in seconds: 1 second to 28 days on both sides.
+export const TIMEOUT_MIN = 1
+export const TIMEOUT_MAX = 28 * 86400
+export const TIMEOUT_REASON_MAX = 300
+
+export const TIMEOUT_PRESETS: { label: string; seconds: number }[] = [
+  { label: '60 seconds', seconds: 60 },
+  { label: '5 minutes', seconds: 300 },
+  { label: '10 minutes', seconds: 600 },
+  { label: '1 hour', seconds: 3600 },
+  { label: '1 day', seconds: 86400 },
+  { label: '1 week', seconds: 604800 },
+]
+
+export const TIMEOUT_UNITS: { label: string; mult: number }[] = [
+  { label: 'minutes', mult: 60 },
+  { label: 'hours', mult: 3600 },
+  { label: 'days', mult: 86400 },
+]
+
 const whole = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x)
+
+export const timeoutSeconds = (x: unknown): number | null =>
+  whole(x) && x >= TIMEOUT_MIN && x <= TIMEOUT_MAX ? x : null
+
+// Seconds for a custom timeout, or null when it is not a positive amount up to 28 days.
+export const customSeconds = (amount: string, mult: number): number | null => {
+  const n = Number(amount.trim())
+  if (!amount.trim() || !Number.isFinite(n) || n <= 0) return null
+  return timeoutSeconds(Math.round(n * mult))
+}
+
+// What a timeout dialog hands to its adapter.
+export interface TimeoutChoice {
+  seconds: number
+  reason: string | null
+}
 
 export const banSeconds = (x: unknown): number | null =>
   whole(x) && x >= BAN_MIN && x <= BAN_MAX ? x : null

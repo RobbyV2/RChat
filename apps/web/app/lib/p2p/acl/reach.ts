@@ -104,6 +104,7 @@ export class Ix {
   remEv = new Map<string, number[]>()
   banEv = new Map<string, number[]>()
   unbanEv = new Map<string, number[]>()
+  timeoutEv = new Map<string, number[]>()
   roleCreate = new Map<string, number>()
   roleDel = new Map<string, number[]>()
   bitW = new Map<string, Map<number, BitW>>()
@@ -212,6 +213,9 @@ export class Ix {
         break
       case 'unban':
         pushM(this.unbanEv, c.to, i)
+        break
+      case 'timeout':
+        if (typeof c.to === 'string') pushM(this.timeoutEv, c.to, i)
         break
       case 'role_create':
         this.roleCreate.set(id, i)

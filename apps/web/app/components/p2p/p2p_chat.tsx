@@ -204,6 +204,8 @@ interface RowProps {
   divider: boolean
   flash: boolean
   canAct: boolean
+  // A timeout of ours: the row can be deleted and its files downloaded, nothing more.
+  timedOut?: boolean
   canDelete: boolean
   editing: EditBinding | null
   // Where replies and edits of this row are written (the conversation, channel or thread).
@@ -227,6 +229,7 @@ export const P2pRow = memo(function P2pRow({
   divider,
   flash,
   canAct,
+  timedOut = false,
   canDelete,
   editing,
   draftKey,
@@ -243,8 +246,9 @@ export const P2pRow = memo(function P2pRow({
   const actions: ToolbarAction[] = []
   // From the old copy: read-only here.
   const act = canAct && !p.archived
-  const can = messageActs(p, act, mine)
-  const thread = threads ? peerChat.forIdentity(identity).threadAct(p, act) : null
+  const write = act && !timedOut
+  const can = messageActs(p, write, mine)
+  const thread = threads ? peerChat.forIdentity(identity).threadAct(p, write) : null
   if (can.edit && !editing) actions.push(editAction(() => p2pDm.startEdit(draftKey, p.id)))
   if (can.reply)
     actions.push({
@@ -276,9 +280,14 @@ export const P2pRow = memo(function P2pRow({
         Not sent
         {canAct && (
           <>
-            <button onClick={() => void p2pDm.retry(p.id)} className="font-medium hover:underline">
-              Retry
-            </button>
+            {!timedOut && (
+              <button
+                onClick={() => void p2pDm.retry(p.id)}
+                className="font-medium hover:underline"
+              >
+                Retry
+              </button>
+            )}
             <button
               onClick={e => peerChat.forIdentity(identity).confirmDelete(p.id, e.shiftKey, acct)}
               className="font-medium hover:underline"
@@ -324,7 +333,7 @@ export const P2pRow = memo(function P2pRow({
         )
       )}
       <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} own={!p.fwd && mine} />
-      <ReactionBar m={m} canReact={act} canRemove={act} />
+      <ReactionBar m={m} canReact={write} canRemove={write} />
       {threads && !!p.replies && !p.archived && (
         <button
           title="Open thread"
@@ -391,7 +400,7 @@ export const P2pRow = memo(function P2pRow({
         )}
         <MessageToolbar
           m={m}
-          react={canAct}
+          react={canAct && !timedOut}
           actions={actions}
           onMore={(x, y) => onMenu(p, m, x, y)}
         />
@@ -848,6 +857,7 @@ export interface ListOpts {
   draftKey: string
   scope: string
   canAct: boolean
+  timedOut?: boolean
   mayPin: boolean
   mayDelete: (p: P2pMessage) => boolean
   forwardSkip: string | null
@@ -864,6 +874,7 @@ export function useP2pList({
   draftKey,
   scope,
   canAct,
+  timedOut = false,
   mayPin,
   mayDelete,
   forwardSkip,
@@ -993,12 +1004,12 @@ export function useP2pList({
   const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
     if (p.system?.kind === 'pin')
       return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m }, undefined, acct, identity)
-    const chat = { draftKey, canAct, mayPin, mayDelete, forwardSkip, threads, ownName }
+    const chat = { draftKey, canAct, timedOut, mayPin, mayDelete, forwardSkip, threads, ownName }
     openActionMenu(
       x,
       y,
       { kind: 'p2p_message', p, m, chat },
-      canAct && !p.archived
+      canAct && !timedOut && !p.archived
         ? {
             header: (
               <ChatSourceProvider value={source}>
@@ -1051,6 +1062,8 @@ export interface ChatBodyProps {
   // In place of the composer, with the reason; null when sending works.
   disabled: ReactNode
   canAct: boolean
+  // A timeout of ours: messages can be deleted and files downloaded, nothing more.
+  timedOut?: boolean
   // Display names, and who a message may mention.
   nameOf: (ik: string) => string
   userOf?: (ik: string) => UserRef
@@ -1101,6 +1114,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   const store = useStoreApi()
   const { chat, canAct, nameOf, people, mayDelete, mayPin, disabled, forwardSkip, typingNames } =
     props
+  const timedOut = props.timedOut ?? false
   const key = chatKey(chat)
   const me = useP2p(s => s.me)
   const movingAt = useP2p(s => s.movingAt)
@@ -1119,7 +1133,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   const scope = identityScopeKey(identity.localId, chatScope(chat.room, chat.ch))
   const ownRoom = chat.ch ? chat.room : undefined
   const ownName = useCallback((ik: string) => profileName(ik, ownRoom), [ownRoom])
-  const canDrop = canAct && !textOnly && movingAt === null
+  const canDrop = canAct && !timedOut && !textOnly && movingAt === null
 
   const {
     user,
@@ -1143,6 +1157,7 @@ function IdentityChatBody(props: ChatBodyProps) {
     draftKey: key,
     scope,
     canAct,
+    timedOut,
     mayPin,
     mayDelete,
     forwardSkip,
@@ -1320,6 +1335,7 @@ function IdentityChatBody(props: ChatBodyProps) {
                       divider={i === divider}
                       flash={flash === m.id}
                       canAct={canAct && !p.archived}
+                      timedOut={timedOut}
                       canDelete={mayDelete(p)}
                       editing={editing && editingState?.id === p.id ? editing : null}
                       draftKey={key}
@@ -1381,7 +1397,7 @@ function IdentityChatBody(props: ChatBodyProps) {
             failed={false}
             place={props.pinsPlace}
             empty={props.pinsEmpty}
-            canUnpin={canAct && mayPin}
+            canUnpin={canAct && !timedOut && mayPin}
             profiles={false}
             onClose={p2pDm.closePins}
             onRetry={() => void p2pDm.openPins()}
