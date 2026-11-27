@@ -4,7 +4,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { AuditRow } from '../../components/audit_log'
-import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
+import { PlaceProvider } from '../place/react'
+import { createPeerFixture } from './peer_fixture'
+import { peerPlace } from './helpers/peer_place'
+import { testAccount } from './test_account'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { MemberAvatar } from '../../components/p2p/p2p_badge'
 import {
@@ -130,24 +133,23 @@ test('a mention pill keeps the handle: the username with the server name as its 
   expect(hosted).toContain('title="Robert"')
   expect(hosted).toContain('>@Bob</span>')
   const key = 'Bx7pW2'.padEnd(43, 'b')
-  const source: ChatSource = {
-    toggleReaction: () => {},
-    loadReactors: () => Promise.resolve([]),
-    openReactPicker: () => {},
-    known: (_m, names) => names.filter(n => n === 'skipper').join('\n'),
-    user: () => user(key, { display_name: 'Skipper' }),
-    mine: () => false,
-    self: 'me',
-    people: () => [],
+  const peer = testAccount('peer')
+  try {
+    const place = peerPlace(createPeerFixture(peer, 'peer'), {
+      names: new Map([['skipper', key]]),
+      user: () => user(key, { display_name: 'Skipper' }),
+    })
+    const p2p = render(
+      <PlaceProvider place={place}>
+        <MarkdownMessage message={msg(2, { author: user('me'), content: 'hi @Skipper' })} />
+      </PlaceProvider>
+    )
+    expect(p2p).toContain('>@Skipper</span>')
+    expect(p2p.includes(key)).toBe(false)
+    expect(p2p.includes('title="Robert"')).toBe(false)
+  } finally {
+    peer.store.dispose()
   }
-  const p2p = render(
-    <ChatSourceProvider value={source}>
-      <MarkdownMessage message={msg(2, { author: user('me'), content: 'hi @Skipper' })} />
-    </ChatSourceProvider>
-  )
-  expect(p2p).toContain('>@Skipper</span>')
-  expect(p2p.includes(key)).toBe(false)
-  expect(p2p.includes('title="Robert"')).toBe(false)
 })
 
 test('a P2P member avatar keeps the key picture under the avatar set for the server', () => {

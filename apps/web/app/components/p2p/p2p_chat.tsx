@@ -55,7 +55,6 @@ import {
   PEER_FULL_TEXT,
   type P2pMessage,
 } from '../../lib/p2p/dm'
-import { emojiBase } from '../../lib/reactions'
 import { LIMITS as P2P_LIMITS, readFwdSrc } from '../../lib/p2p/content'
 import { charCount, counterFrom } from '../../lib/rules'
 import { clock } from '../../lib/slowmode'
@@ -67,7 +66,10 @@ import { newSince } from '../../lib/lists'
 import { plainLine } from '../../lib/replies'
 import { systemParts } from '../../lib/system_messages'
 import type { Message, UserRef } from '../../lib/types'
-import { ChatSourceProvider, type ChatSource } from '../chat_source'
+import { P2pDm, P2pRoom, type P2pList } from '../../lib/place/place'
+import { PlaceProvider } from '../../lib/place/react'
+import { chat as chatFeature } from '../../lib/place/chat'
+import { featureAt, isUnsupported } from '../../lib/place/feature'
 import { MarkdownMessage } from '../markdown_message'
 import { MessageEditor, editAction, type EditBinding } from '../message_editor'
 import { MessageToolbar, type ToolbarAction } from '../message_toolbar'
@@ -908,6 +910,9 @@ export interface ListOpts {
   // The sender's own profile name, for forwards (never a petname or a masked name).
   ownName: (ik: string) => string
   people: Mentionable[]
+  // The conversation or room the list is in, and the channel of a room.
+  room: string
+  ch: string | null
   draftKey: string
   scope: string
   canAct: boolean
@@ -927,6 +932,8 @@ export function useP2pList({
   userOf,
   ownName,
   people,
+  room,
+  ch,
   draftKey,
   scope,
   canAct,
@@ -943,7 +950,6 @@ export function useP2pList({
   const held = can ?? around
 
   const acct = useAccount()
-  const { store } = acct
 
   const me = useP2p(s => s.me)
   const editingState = useP2p(s => (s.editing?.room === draftKey ? s.editing : null))
@@ -1006,28 +1012,13 @@ export function useP2pList({
     [rows, replyNums]
   )
 
-  const source = useMemo<ChatSource>(
-    () => ({
-      toggleReaction: (m, emoji, note = true) => {
-        const id = idOf(m.id)
-        if (!id) return
-        const adding = !m.reactions?.some(r => r.emoji === emoji && r.me)
-        if (adding && note) {
-          const s = store.getState()
-          s.noteEmoji(emojiBase(s.emoji, emoji), emoji)
-        }
-        void p2pDm.react(id, emoji, adding)
-      },
-      loadReactors: async (n, emoji) => {
-        const id = idOf(n)
-        const p = rows.find(r => r.p.id === id)?.p
-        return (p?.reactions.find(r => r.key === emoji)?.by ?? []).map(user)
-      },
-      openReactPicker: (m, anchor) => setPicker({ m, anchor }),
-      known: (_m, candidates) => candidates.filter(c => names.has(c)).join('\n'),
-      user: name => user(names.get(name) ?? ''),
-      mine: name => names.get(name) === me,
-      self: me ?? '',
+  const place = useMemo(() => {
+    const list: P2pList = {
+      me,
+      idOf,
+      message: id => rows.find(r => r.p.id === id)?.p,
+      user,
+      names,
       people: q => {
         const needle = q.toLowerCase()
         return people
@@ -1039,8 +1030,17 @@ export function useP2pList({
           .slice(0, 20)
           .map(p => ({ ...p2pUser(p.ik, p.name), username: p.handle }))
       },
-    }),
-    [store, idOf, rows, user, names, me, people]
+      openPicker: (m, anchor) => setPicker({ m, anchor }),
+    }
+    return (ch === null ? P2pDm.open(identity, room) : P2pRoom.open(identity, room)).shownBy(list)
+  }, [identity, room, ch, idOf, rows, user, names, me, people])
+  // The picker of this list reacts through its own place.
+  const react = useCallback(
+    (m: Message, emoji: string, note?: boolean) => {
+      const here = featureAt(chatFeature, place)
+      if (!isUnsupported(here)) here.toggleReaction(m, emoji, note)
+    },
+    [place]
   )
 
   const editing = useMemo<EditBinding | null>(
@@ -1089,9 +1089,9 @@ export function useP2pList({
       canAct && !timedOut && held.react && !p.archived
         ? {
             header: (
-              <ChatSourceProvider value={source}>
+              <PlaceProvider place={place}>
                 <QuickReactions m={m} anchor={rowAt(x, y)} />
-              </ChatSourceProvider>
+              </PlaceProvider>
             ),
           }
         : undefined,
@@ -1128,7 +1128,8 @@ export function useP2pList({
     shared,
     num,
     idOf,
-    source,
+    place,
+    react,
     editing,
     editingState,
     rowMenu,
@@ -1290,7 +1291,8 @@ function IdentityChatBody(props: ChatBodyProps) {
     shared,
     num,
     idOf,
-    source,
+    place,
+    react,
     editing,
     editingState,
     rowMenu,
@@ -1304,6 +1306,8 @@ function IdentityChatBody(props: ChatBodyProps) {
     userOf: props.userOf,
     ownName,
     people,
+    room: chat.room,
+    ch: chat.ch ?? null,
     draftKey: key,
     scope,
     canAct,
@@ -1403,7 +1407,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   )
 
   return (
-    <ChatSourceProvider value={source}>
+    <PlaceProvider place={place}>
       <main
         {...props.dataAttr}
         className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
@@ -1589,7 +1593,7 @@ function IdentityChatBody(props: ChatBodyProps) {
             side="top"
             align="end"
             label="Add reaction"
-            onPick={e => source.toggleReaction(picker.m, e, false)}
+            onPick={e => react(picker.m, e, false)}
             onClose={() => setPicker(null)}
           />
         )}
@@ -1599,7 +1603,7 @@ function IdentityChatBody(props: ChatBodyProps) {
           </div>
         )}
       </main>
-    </ChatSourceProvider>
+    </PlaceProvider>
   )
 }
 

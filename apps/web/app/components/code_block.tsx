@@ -17,7 +17,7 @@ import {
 } from '../lib/code'
 import { useHighlight, type CodeNode } from '../lib/highlight'
 import { sharing } from '../lib/platform'
-import { useChatSource } from './chat_source'
+import { useChat } from '../lib/place/use_chat'
 
 const CLASS = /^[a-z][\w-]*$/i
 
@@ -66,8 +66,8 @@ export function CodeBlock({ code, tag }: { code: string; tag: string | null }) {
   const named = tag !== null ? fenceLang(tag) : null
   const [head, tail] = highlightSplit(code)
   // P2P messages don't fetch the grammars; they are used once something else loaded them.
-  const chat = useChatSource()
-  const hl = useHighlight(head, named, tag === null || named !== null, !chat)
+  const { fetches } = useChat()
+  const hl = useHighlight(head, named, tag === null || named !== null, fetches)
   const label = hl ? LANGS[hl.lang] : named ? LANGS[named] : tag || 'Text'
   return (
     <div data-code-block="" className="my-1 max-w-full rounded-lg bg-surface-container-high">

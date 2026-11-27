@@ -21,7 +21,8 @@ import { VOICE_STATUS_ON } from '../voice_status'
 import { CreatorNote } from '../../components/webhooks_dialog'
 import { ReplyPreview } from '../../components/replies'
 import { asMessage, P2pRow } from '../../components/p2p/p2p_chat'
-import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
+import { PlaceProvider } from '../place/react'
+import { peerPlace } from './helpers/peer_place'
 import { paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { actionById, runAction } from '../actions/registry'
@@ -421,9 +422,9 @@ test('a P2P reply quote masks the P2P name of others only', async () => {
   try {
     const quote = (self: string) =>
       render(
-        <ChatSourceProvider value={{ ...source, self }}>
+        <PlaceProvider place={peerPlace(shownPeer(), { me: self })}>
           <ReplyPreview quote={quoteOf(named)} avatar={36} local onJump={() => {}} />
-        </ChatSourceProvider>
+        </PlaceProvider>
       )
     const theirs = quote('someone else')
     expect(theirs).toContain('data-masked-word')
@@ -458,23 +459,12 @@ const p2pMessage = (over: Partial<P2pMessage> = {}): P2pMessage => ({
   ...over,
 })
 
-const source: ChatSource = {
-  toggleReaction: () => {},
-  loadReactors: () => Promise.resolve([]),
-  openReactPicker: () => {},
-  known: () => '',
-  user: username => user(username),
-  mine: () => false,
-  self: BOB_KEY,
-  people: () => [],
-}
-
 test('a P2P message quotes the sender it answers by P2P name', () => {
   const names: Record<string, string> = { [KEY]: 'Alice', [BOB_KEY]: 'Bob' }
   const p = p2pMessage()
   const m = asMessage(p, 2, 1, ik => shownPeer().p2pUser(ik, names[ik]), BOB_KEY)
   const html = render(
-    <ChatSourceProvider value={source}>
+    <PlaceProvider place={peerPlace(shownPeer(), { me: BOB_KEY })}>
       <P2pRow
         p={p}
         m={m}
@@ -494,7 +484,7 @@ test('a P2P message quotes the sender it answers by P2P name', () => {
         onCopy={() => {}}
         onJump={() => {}}
       />
-    </ChatSourceProvider>
+    </PlaceProvider>
   )
   const quote = html.slice(html.indexOf('data-reply-to'), html.indexOf('sounds good'))
   expect(quote).toContain(P2P_NAME(KEY, 'Alice'))

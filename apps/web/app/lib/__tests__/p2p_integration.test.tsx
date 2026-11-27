@@ -1091,6 +1091,8 @@ describe('forwarding', () => {
       nameOf: ik => maskOf(accountStore.getState())(ik === ALICE ? 'Mom' : 'Carol'),
       ownName: ik => profileName(ik),
       people: [],
+      room: draftKey,
+      ch: null,
       draftKey,
       scope: `d:${draftKey}`,
       canAct: true,

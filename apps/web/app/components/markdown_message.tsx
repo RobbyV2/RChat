@@ -75,17 +75,10 @@ import { markSpoilers, spoilerParts } from '../lib/spoilers'
 import { hideSpoilers, type MdNode as SpoilerNode } from '../lib/spoiler_tree'
 import { openActionMenu } from '../lib/actions/menu'
 import { warnsBefore } from '../lib/link_open'
-import {
-  Ended,
-  errorText,
-  groupPills,
-  knownMentions,
-  useMask,
-  userRefFor,
-  useStore,
-} from '../lib/store'
-import { useChatSource } from './chat_source'
-import type { Embed, Message, MessageMedia, UserRef } from '../lib/types'
+import { Ended, errorText, groupPills, useMask, userRefFor, useStore } from '../lib/store'
+import { useChat } from '../lib/place/use_chat'
+import { useWatch } from '../lib/place/react'
+import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard, WidgetLinkCards, WidgetMessageLinkCard } from './message_link_card'
@@ -105,7 +98,6 @@ import { Stamp } from './timestamp'
 import { splitStamps, type StampStyle } from '../lib/timestamps'
 import { useLook } from './shown_user'
 import { MaskControl, Masked, MaskedWord, MaskedWords, MaskPlain, useOwn } from './ui'
-import { mentionHandle } from '../lib/display_name'
 import { removedLifetime, removedTail } from '../lib/upload_expiry'
 import { useUploadLifetime } from './upload_expiry'
 import { ExpiryLine, FileCard } from './file_card'
@@ -221,9 +213,9 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const inLink = useContext(InLink)
   // A P2P message never loads anything by itself: an image from the instance would tell it what
   // was said and when it was read.
-  const chat = useChatSource()
+  const { fetches } = useChat()
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
-  const { href, shown } = useLinkedSrc(src, server, !chat, previews && !plain)
+  const { href, shown } = useLinkedSrc(src, server, fetches, previews && !plain)
   if (shown === undefined)
     return (
       <span className="my-1 block h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
@@ -316,20 +308,15 @@ function SpoilerText({
 
 function Mention({ username }: { username: string }) {
   const store = useStoreApi()
-  const src = useChatSource()
-  const stored = useStore(s => (src ? null : userRefFor(s, username)))
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const storeMine = useStore(s => s.me?.username === username)
-  const user = src ? src.user(username) : (stored as UserRef)
-  const mine = src ? src.mine(username) : storeMine
-  // The pill keeps the handle that resolves; the name the server shows is its tooltip. A P2P
-  // identity carries its key where an account carries its username: its handle is its name.
-  const named = useLook(src ? null : server, username)?.name ?? null
+  const chat = useChat()
+  const { user, mine, label, card } = useWatch(() => chat.mention(username), [chat, username])
+  // The pill keeps the handle that resolves; the name the server shows is its tooltip.
+  const named = useLook(card?.server ?? null, username)?.name ?? null
   const streamer = useStore(s => s.streamer)
   const mask = useMask(mine)
   return (
     <span
-      {...(src ? {} : profileTrigger(store, user, server))}
+      {...(card ? profileTrigger(store, user, card.server) : {})}
       data-mention={username}
       title={named === null || streamer ? undefined : mask(named)}
       className={`streamer cursor-pointer rounded px-0.5 font-medium hover:underline ${
@@ -338,7 +325,7 @@ function Mention({ username }: { username: string }) {
     >
       @
       <MaskControl>
-        <Masked text={src ? user.display_name : mentionHandle(user)} own={mine} />
+        <Masked text={label} own={mine} />
       </MaskControl>
     </span>
   )
@@ -1296,9 +1283,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     () => (content.includes('@') ? mentionCandidates(content) : []),
     [content]
   )
-  const src = useChatSource()
-  const stored = useStore(s => (src ? '' : knownMentions(s, message, candidates)))
-  const known = src ? src.known(message, candidates) : stored
+  const chat = useChat()
+  const known = useWatch(() => chat.known(message, candidates), [chat, message, candidates])
   const pills = useStore(s => groupPills(s, message))
   const own = useOwn(message.webhook || message.forward ? null : message.author.username)
   const mask = useMask(own)
@@ -1356,7 +1342,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   return (
     <OwnLinks.Provider value={own}>
       <div className="min-w-0 text-sm leading-relaxed break-words">
-        {!editor && !widget && <PeerCodeButton text={content} peer={!!src} />}
+        {!editor && !widget && <PeerCodeButton text={content} peer={!chat.fetches} />}
         {editor ??
           (content.trim() !== '' ? (
             <MaskPlain>
@@ -1424,7 +1410,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           />
         )}
         {!message.no_previews &&
-          !src &&
+          chat.fetches &&
           messageLinks.map(l =>
             widgetCards ? (
               <WidgetMessageLinkCard key={l.id} link={l} card={widgetCards.get(l.id)} />
@@ -1433,7 +1419,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
             )
           )}
         {!message.no_previews &&
-          !src &&
+          chat.fetches &&
           !widget &&
           invites.map(i => (
             <InviteCard
@@ -1445,13 +1431,13 @@ export const MarkdownMessage = memo(function MarkdownMessage({
             />
           ))}
         {previews &&
-          !src &&
+          chat.fetches &&
           !widget &&
           remotes.map(i => (
             <RemoteInviteCard key={remoteKey(i)} invite={i} onResolved={onResolved} />
           ))}
         {previews &&
-          !src &&
+          chat.fetches &&
           links.map(e => (
             <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />
           ))}

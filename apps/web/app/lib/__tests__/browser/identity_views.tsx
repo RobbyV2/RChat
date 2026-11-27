@@ -1,5 +1,6 @@
 import { MarkdownMessage } from '../../../components/markdown_message'
-import { ChatSourceProvider } from '../../../components/chat_source'
+import { PlaceProvider } from '../../place/react'
+import { peerPlace } from '../helpers/peer_place'
 import { ServerDialogs } from '../../../components/server_dialogs'
 import { IdentityEnrollment } from '../../../components/p2p/identity_enrollment'
 import { addAccount, addIdentity, addInstance } from '../../client/book'
@@ -428,18 +429,7 @@ function peerCodeFixture() {
         Join a server
       </button>
       <P2pProvider identity={sibling}>
-        <ChatSourceProvider
-          value={{
-            known: () => '',
-            self,
-            mine: () => false,
-            user: () => me,
-            people: () => [],
-            toggleReaction: () => {},
-            loadReactors: async () => [],
-            openReactPicker: () => {},
-          }}
-        >
+        <PlaceProvider place={peerPlace(sibling, { me: self, user: () => me })}>
           {['rcp1.fixture', 'rci1.fixture'].map((content, i) => (
             <MarkdownMessage
               key={i}
@@ -459,7 +449,7 @@ function peerCodeFixture() {
               }}
             />
           ))}
-        </ChatSourceProvider>
+        </PlaceProvider>
       </P2pProvider>
       <ServerDialogs />
     </AccountProvider>

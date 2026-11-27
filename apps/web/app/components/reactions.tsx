@@ -21,7 +21,7 @@ import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { ShownAvatar, useShown, useViewServer } from './shown_user'
 import { CloseButton, Masked, Sheet, useOwnCheck } from './ui'
 import { centerEmoji } from '../lib/emoji_center'
-import { useReactionActions } from './chat_source'
+import { useChat } from '../lib/place/use_chat'
 
 const EMPTY: Reaction[] = []
 
@@ -48,7 +48,7 @@ const chipOtherCls =
   'border-transparent bg-surface-container-high text-on-surface-variant hover:border-outline-variant hover:text-on-surface'
 
 function useReactors(messageId: number, emoji: string, count: number, enabled: boolean) {
-  const { load } = useReactionActions()
+  const { loadReactors: load } = useChat()
   const key = `${messageId}:${emoji}:${count}`
   const [got, setGot] = useState<{ key: string; list: UserRef[] } | null>(null)
   useEffect(() => {
@@ -144,7 +144,7 @@ function ReactionChip({
   canRemove: boolean
   onList: (emoji: string) => void
 }) {
-  const { toggle } = useReactionActions()
+  const { toggleReaction: toggle } = useChat()
   const coarse = useMedia(COARSE_QUERY)
   const ref = useRef<HTMLButtonElement>(null)
   const [tip, setTip] = useState(false)
@@ -189,7 +189,7 @@ function ReactionChip({
 }
 
 function AddReactionChip({ m }: { m: Message }) {
-  const { toggle } = useReactionActions()
+  const { toggleReaction: toggle } = useChat()
   const ref = useRef<HTMLButtonElement>(null)
   const keyboard = useRef(false)
   const [open, setOpen] = useState(false)
@@ -379,7 +379,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
 export function QuickReactions({ m, anchor }: { m: Message; anchor: HTMLElement | null }) {
   const top = useTopEmojis(3)
   const coarse = useMedia(COARSE_QUERY)
-  const { toggle, openPicker } = useReactionActions()
+  const { toggleReaction: toggle, openReactPicker: openPicker } = useChat()
   const close = useStore(s => s.closeContextMenu)
   const size = coarse ? 'h-12 w-12 text-2xl' : 'h-9 w-9 text-xl'
   const full = reactionsFull(m)

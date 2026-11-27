@@ -45,7 +45,8 @@ import { AuditRow } from '../../components/audit_log'
 import type { ChannelView, MemberView, RoleView, ServerView } from '../p2p/server'
 import { P } from '../p2p/state'
 import { nestedInteractive } from './nesting'
-import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
+import { PlaceProvider } from '../place/react'
+import { peerPlace } from './helpers/peer_place'
 import type { Message } from '../types'
 import { ownsP2pServer } from '../p2p/server/types'
 import { embed, me, media, memoryStorage, msg, user } from './fixtures'
@@ -501,12 +502,12 @@ describe('in messages', () => {
 
   test('in a P2P conversation your own identity is you', async () => {
     await masking({})
-    const source = { self: 'IK_ME' } as unknown as ChatSource
+    const place = peerPlace(shownPeer(), { me: 'IK_ME' })
     const p2p = (by: string) =>
       renderToStaticMarkup(
-        <ChatSourceProvider value={source}>
+        <PlaceProvider place={place}>
           <Masked text="shit" by={by} />
-        </ChatSourceProvider>
+        </PlaceProvider>
       )
     expect(p2p('IK_ME')).toBe('shit')
     expect(p2p('alice')).toContain('>****</span>')

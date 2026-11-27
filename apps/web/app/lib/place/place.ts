@@ -1,5 +1,7 @@
 import type { AccountSession } from '../client/session'
 import type { P2pApp } from '../p2p/app/runtime'
+import type { P2pMessage } from '../p2p/dm'
+import type { Message, UserRef } from '../types'
 
 // Where a feature runs: a hosted server, a P2P room, a hosted DM or a P2P DM. A feature is
 // written against these four handles and nothing else, so it reaches the account's store or the
@@ -40,19 +42,37 @@ export class HostedDm {
   }
 }
 
+// The message list a P2P place is shown through: its rows carry numbers where the shared
+// components expect them, and names where they expect usernames.
+export interface P2pList {
+  me: string | null
+  idOf: (num: number) => string | null
+  message: (id: string) => P2pMessage | undefined
+  user: (ik: string) => UserRef
+  // The names that mention someone here, lowercased, to their identity keys.
+  names: ReadonlyMap<string, string>
+  people: (query: string) => UserRef[]
+  openPicker: (m: Message, anchor: HTMLElement | null) => void
+}
+
 export class P2pRoom {
   readonly kind = 'p2pRoom' as const
   readonly id: PlaceId
   readonly account: AccountSession
   private constructor(
     readonly app: P2pApp,
-    readonly room: string
+    readonly room: string,
+    readonly list: P2pList | null
   ) {
     this.id = idOf(this.kind, room)
     this.account = app.owner
   }
   static open(app: P2pApp, room: string) {
-    return held(app, idOf('p2pRoom', room), () => new P2pRoom(app, room))
+    return held(app, idOf('p2pRoom', room), () => new P2pRoom(app, room, null))
+  }
+  // The room as one of its message lists shows it.
+  shownBy(list: P2pList) {
+    return new P2pRoom(this.app, this.room, list)
   }
 }
 
@@ -63,13 +83,18 @@ export class P2pDm {
   private constructor(
     readonly app: P2pApp,
     // The conversation's key in the identity's store.
-    readonly room: string
+    readonly room: string,
+    readonly list: P2pList | null
   ) {
     this.id = idOf(this.kind, room)
     this.account = app.owner
   }
   static open(app: P2pApp, room: string) {
-    return held(app, idOf('p2pDm', room), () => new P2pDm(app, room))
+    return held(app, idOf('p2pDm', room), () => new P2pDm(app, room, null))
+  }
+  // The conversation as one of its message lists shows it.
+  shownBy(list: P2pList) {
+    return new P2pDm(this.app, this.room, list)
   }
 }
 

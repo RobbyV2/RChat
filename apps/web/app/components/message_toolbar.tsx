@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from 'react'
 import { MoreHorizontal, SmilePlus, type LucideIcon } from 'lucide-react'
-import { useReactionActions } from './chat_source'
+import { useChat } from '../lib/place/use_chat'
 import type { Message } from '../lib/types'
 import { FULL_TITLE, canAddEmoji, reacted, reactionsFull } from '../lib/reactions'
 import { keptWhenTight, toolbarFit } from '../lib/toolbar_fit'
@@ -93,7 +93,7 @@ export function MessageToolbar({
   onMore?: (x: number, y: number) => void
 }) {
   const top = useTopEmojis(3)
-  const { toggle } = useReactionActions()
+  const { toggleReaction: toggle } = useChat()
   const addRef = useRef<HTMLButtonElement>(null)
   const keyboard = useRef(false)
   const [open, setOpen] = useState(false)

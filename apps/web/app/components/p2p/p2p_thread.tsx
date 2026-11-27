@@ -17,7 +17,7 @@ import type { P2pMessage } from '../../lib/p2p/dm'
 import type { ServerView } from '../../lib/p2p/server'
 import { newSince } from '../../lib/lists'
 import type { Message, UserRef } from '../../lib/types'
-import { ChatSourceProvider } from '../chat_source'
+import { PlaceProvider } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
 import { ThreadPanelView } from '../thread_panel'
 import { TypingIndicator } from '../typing_indicator'
@@ -191,7 +191,8 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
     rows,
     num,
     idOf,
-    source,
+    place,
+    react,
     editing,
     editingState,
     rowMenu,
@@ -205,6 +206,8 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
     userOf,
     ownName,
     people,
+    room: t.room,
+    ch: t.ch,
     draftKey: key,
     scope,
     canAct,
@@ -303,7 +306,7 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
 
   return (
     <ChannelCanContext.Provider value={held}>
-      <ChatSourceProvider value={source}>
+      <PlaceProvider place={place}>
         <div data-p2p-thread className="contents">
           <LightboxList rows={() => ({ ids: list.map(r => r.p.id), places })} forward={forwardRow}>
             <ThreadPanelView
@@ -371,12 +374,12 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
               side="top"
               align="end"
               label="Add reaction"
-              onPick={e => source.toggleReaction(picker.m, e, false)}
+              onPick={e => react(picker.m, e, false)}
               onClose={() => setPicker(null)}
             />
           )}
         </div>
-      </ChatSourceProvider>
+      </PlaceProvider>
     </ChannelCanContext.Provider>
   )
 }

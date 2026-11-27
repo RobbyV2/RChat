@@ -28,7 +28,8 @@ import { dialogBlurs, dialogLayout, type DialogChrome, type DialogSize } from '.
 import { useMotionPlays } from '../lib/motion/use_motion'
 import { maskOutsideCode, maskRuns } from '../lib/profanity'
 import { useMask, useStore } from '../lib/store'
-import { useChatSource } from './chat_source'
+import { useChat } from '../lib/place/use_chat'
+import { useLive } from '../lib/place/react'
 import { REVEAL_EVENT } from '../lib/masked_reveal'
 import { ThemeToggle } from './status_clock'
 import { Chip, IconButton } from './controls'
@@ -673,9 +674,8 @@ export function MaskedWord({
 // Whether text written or owned by `by` is your own: your username, or your P2P identity inside
 // a P2P conversation.
 export const useOwnCheck = () => {
-  const src = useChatSource()
-  const me = useStore(s => s.me?.username ?? null)
-  return (by?: string | null) => !!by && (src ? src.self === by : me === by)
+  const self = useLive(useChat().self)
+  return (by?: string | null) => !!by && self === by
 }
 
 export const useOwn = (by?: string | null) => useOwnCheck()(by)

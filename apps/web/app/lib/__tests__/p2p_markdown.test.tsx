@@ -2,7 +2,9 @@ import { addInstance, parseBook } from '../client/book'
 import { client } from '../client/client'
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
+import { PlaceProvider } from '../place/react'
+import { createPeerFixture } from './peer_fixture'
+import { peerPlace } from './helpers/peer_place'
 import { MarkdownMessage, messageLinkAction } from '../../components/markdown_message'
 import { AccountProvider } from '../client/react'
 import { api } from './home_instance'
@@ -24,22 +26,6 @@ const withWindow = <T,>(fn: () => T): T => {
   } finally {
     g.window = real
   }
-}
-
-const source: ChatSource = {
-  toggleReaction: () => {},
-  loadReactors: async () => [],
-  openReactPicker: () => {},
-  known: () => '',
-  user: username => ({
-    username,
-    display_name: username,
-    avatar_kind: 'identicon',
-    avatar_color: null,
-  }),
-  mine: () => false,
-  self: 'me',
-  people: () => [],
 }
 
 const message = (content: string): Message =>
@@ -73,9 +59,14 @@ const message = (content: string): Message =>
 
 const render = (content: string, p2p: boolean) => {
   const el = <MarkdownMessage message={message(content)} />
-  return p2p
-    ? renderToStaticMarkup(<ChatSourceProvider value={source}>{el}</ChatSourceProvider>)
-    : withWindow(() => renderToStaticMarkup(el))
+  if (!p2p) return withWindow(() => renderToStaticMarkup(el))
+  const peer = testAccount('peer')
+  try {
+    const place = peerPlace(createPeerFixture(peer, 'peer'))
+    return renderToStaticMarkup(<PlaceProvider place={place}>{el}</PlaceProvider>)
+  } finally {
+    peer.store.dispose()
+  }
 }
 
 describe('P2P messages fetch nothing', () => {
