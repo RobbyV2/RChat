@@ -1,11 +1,25 @@
 ---
 title: RChat
-description: Chat servers, direct messages, calls and P2P rooms that you run yourself.
+description: Chat servers, direct messages, calls and P2P rooms on an instance you run.
 ---
 
-RChat is a chat app with servers, channels, roles, direct messages, voice and video calls, and peer-to-peer rooms. One instance serves the app, the API and these pages from one address.
+RChat is a chat app with servers, channels and roles, direct messages and friends, voice and video calls, and P2P rooms that live on their members' devices. An instance is one server that serves the app, the API, realtime connections and these pages from one address. Outside services (email, tracking, third-party APIs) stay out unless you set one up.
 
-- The [settings reference](/docs/reference/settings/) lists every server setting with its default and range.
-- The [permissions reference](/docs/reference/permissions/) lists the role permission bits.
-- The [command line reference](/docs/reference/command-line/) lists the server's commands and flags.
-- The [REST API reference](/docs/reference/api/) lists every endpoint.
+## Where to start
+
+| You want to             | Read                                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Use the app             | [Accounts](/docs/use/accounts/), [Servers](/docs/use/servers/), [P2P contacts and servers](/docs/use/p2p/)       |
+| Run an instance         | [Install and first run](/docs/run/install/), [Docker](/docs/run/docker/), [Proxy and TLS](/docs/run/proxy/)      |
+| Write a client or a bot | [Authentication](/docs/api/authentication/), [REST API](/docs/api/rest/), [Realtime events](/docs/api/realtime/) |
+| Understand P2P          | [Identities](/docs/p2p/identities/), [Rooms and sessions](/docs/p2p/rooms/)                                      |
+| Change the code         | [Repository layout](/docs/contribute/layout/), [Gates](/docs/contribute/gates/)                                  |
+
+## Reference
+
+Four pages come straight from the code and its data files:
+
+- [Settings](/docs/reference/settings/): every server setting, from `.env.local.example`.
+- [Permissions](/docs/reference/permissions/): the role permission bits, from `assets/perm_bits.json`.
+- [Command line](/docs/reference/command-line/): the server binary's commands and flags.
+- [REST API](/docs/reference/api/): every endpoint, from the server's OpenAPI document.

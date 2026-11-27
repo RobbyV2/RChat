@@ -30,6 +30,11 @@ export default defineConfig({
       ],
       sidebar: [
         { label: 'Start', link: '/' },
+        { label: 'Using RChat', items: [{ autogenerate: { directory: 'use' } }] },
+        { label: 'Running an instance', items: [{ autogenerate: { directory: 'run' } }] },
+        { label: 'API', items: [{ autogenerate: { directory: 'api' } }] },
+        { label: 'P2P protocol', items: [{ autogenerate: { directory: 'p2p' } }] },
+        { label: 'Contributing', items: [{ autogenerate: { directory: 'contribute' } }] },
         {
           label: 'Reference',
           items: [{ autogenerate: { directory: 'reference' } }, ...openAPISidebarGroups],

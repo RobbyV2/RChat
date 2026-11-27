@@ -1,0 +1,82 @@
+---
+title: Realtime events
+description: The WebSocket at /api/v1/ws, the frames a client sends and the events the server pushes.
+sidebar:
+  order: 3
+---
+
+`GET /api/v1/ws` upgrades to a WebSocket on the instance's own address. Every frame in both directions is a JSON object tagged by `type` in snake_case, and a frame holds at most 64 KiB. Client frames are defined in `apps/server/src/ws/protocol.rs` and server events in `apps/server/src/ws/event.rs`. Field lists of the payload types (`Message`, `Member`, `Channel` and others) are in the [REST API reference](/docs/reference/api/).
+
+## Opening a connection
+
+The first frame authenticates:
+
+```json
+{ "type": "auth", "token": "<session token>" }
+```
+
+Without a token, or with an unknown one, the connection becomes a guest connection, which works only while the instance has guest access on. A connection that sends no `auth` frame within 10 seconds closes with code 4001. Guests get `guest_name` first (`{name}`): `@guest:` and 16 hex digits, new for each connection.
+
+The server sends a WebSocket ping every 30 seconds and closes a connection it has not heard from in 90 seconds. Client frames pass at 50 a second after a burst of 200. Frames past that are dropped, and a connection that keeps sending far past the burst is closed.
+
+## Frames the client sends
+
+| `type`                       | Fields                                                     | What it does                                                                                                         |
+| ---------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `auth`                       | `token`                                                    | The first frame, see above.                                                                                          |
+| `viewing`                    | `server`                                                   | The server open on screen, for its `presence_snapshot` and `presence_changed` events.                                |
+| `subscribe`                  | `servers`, `grants`                                        | Servers to follow (at most 100 per frame, 50 for guests), with guest grants for password-protected ones.             |
+| `voice_join`                 | `channel_id`, `muted`, `deafened`                          | Joins a voice channel.                                                                                               |
+| `voice_leave`                |                                                            | Leaves it.                                                                                                           |
+| `voice_audio`                | `muted`, `deafened`                                        | Changes the mic and sound state of the voice seat this connection holds.                                             |
+| `call_start`                 | `dm_id`, `p2p`, `video`, `attempt_id`, `peer_id`, `relays` | Rings the other side of a DM.                                                                                        |
+| `call_accept`                | `dm_id`, `attempt_id`, `peer_id`, `relays`                 | Answers a ringing call.                                                                                              |
+| `call_decline`, `call_leave` | `dm_id`                                                    | Declines or leaves a call.                                                                                           |
+| `rtc_signal`                 | `to`, `channel_id` or `dm_id`, `payload`                   | One WebRTC negotiation step for a voice room or call, at most 20 KiB.                                                |
+| `typing`, `typing_stop`      | `scope`                                                    | Shows or clears a typing indicator in `c{channel}`, `t{root}` or `d{dm}`. Clients repeat `typing` every few seconds. |
+| `p2p_hosting`                | `peer_id`, `ids`, `relays`, `relay_sets`                   | Announces the P2P attachments this tab holds.                                                                        |
+| `p2p_who`                    | `hosters`                                                  | Asks which of these accounts host P2P files now.                                                                     |
+| `p2p_peer`                   | `message_id`, `peer_id`                                    | Asks for the hoster of a message's P2P file and a short-lived download token.                                        |
+
+Guests are read-only: no presence, typing or DM calls. A guest may join voice channels it can view in the servers it follows, change its `voice_audio` there and send `rtc_signal` to the others in its room, when the site and the server allow guest voice. `subscribe`, `voice_join`, `voice_leave`, `voice_audio`, `call_start`, `call_accept` and `rtc_signal` are paced per account or per connection. A frame past its pace either waits (and a later one of the same kind replaces it) or gets an `error` frame.
+
+## Events the server sends
+
+Most events about a channel carry `server` and `channel_id`, and most events about a DM carry `dm_id`. The server sends only what the connection may see. A connection without read history of a channel misses the events about threads whose root came before it joined, and positions of channels count only the channels that connection can see.
+
+| Group                   | Events                                                                                                                                                                                                                                        |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Messages                | `message`, `message_updated`, `message_deleted`, `messages_deleted`, `media_removed`, `embeds_resolved`, `embeds_removed`, `reaction_added`, `reaction_removed`, `poll_updated`, `poll_voted`, `message_pinned`, `message_unpinned`, `typing` |
+| Channels and layout     | `channel_created`, `channel_renamed`, `channel_updated`, `channel_deleted`, `channel_perms_changed`, `channels_perms_changed`, `layout_changed`                                                                                               |
+| Servers                 | `server_created`, `server_renamed`, `server_updated`, `server_deleted`, `upload_expiry_changed`, `reports_changed`                                                                                                                            |
+| Members and roles       | `member_joined`, `member_left`, `member_kicked`, `members_purged`, `server_banned`, `admin_changed`, `roles_changed`, `role_updated`, `roles_reordered`, `member_roles_changed`, `member_timeout`, `member_profile`                           |
+| Presence                | `presence_changed`, `presence_snapshot`, `presence_mode`                                                                                                                                                                                      |
+| Users                   | `user_updated`, `user_registered`, `banned`, `privacy_changed`                                                                                                                                                                                |
+| Read state and pings    | `read_updated`, `ping`, `ping_count`, `group_pings_seen`                                                                                                                                                                                      |
+| DMs, friends and blocks | `dm_created`, `dm_closed`, `dm_reopened`, `friend_request_added`, `friend_request_removed`, `friend_added`, `friend_removed`, `friend_presence`, `user_blocked`, `user_unblocked`                                                             |
+| Voice and calls         | `voice_state`, `voice_audio`, `voice_muted`, `voice_ended`, `call_state`, `rtc_signal`                                                                                                                                                        |
+| P2P files               | `p2p_availability`, `p2p_hosted`, `p2p_peer`                                                                                                                                                                                                  |
+| Instance                | `settings_changed`, `brand_changed`                                                                                                                                                                                                           |
+| Your account            | `bulk_delete_progress`, `staff_view_opened`                                                                                                                                                                                                   |
+| Connection              | `guest_name`, `error`, `resync`                                                                                                                                                                                                               |
+
+### Notes on some events
+
+- `message` carries the whole message. `message_updated` in a server channel carries only `{id, thread_root_id, edited_at, stub: true}`, and clients read the edited message again through the REST list. In a DM it carries the whole message.
+- `ping` (`{username, ping}`) reaches only the mentioned account. Mentions of `@everyone`, `@here` and roles reach people through the `message` event alone: it carries `group_mentions`, and each client decides whether it is addressed.
+- `read_updated` (`{username, scope, last_read, pings_until}`) tells the reader's other connections that a read position was stored.
+- `layout_changed` (`{server, layout}`) carries the channel order with only the channels the connection can see.
+- `settings_changed` (`{settings}`) carries the same object as `GET /api/v1/settings` after a site switch changed.
+- `error` (`{message, request, reason}`) answers a refused frame, with the `reason` object of REST errors when the error has one.
+- `resync` says the connection missed events. Clients load their state again.
+
+## Close codes
+
+| Code | Reason                                                                                                                                                                                                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4001 | No `auth` frame within 10 seconds.                                                                                                                                                                                |
+| 4008 | The account opened more than `WS_CONNECTIONS_PER_USER` connections (20 by default). The oldest closes.                                                                                                            |
+| 4029 | Too many connection attempts for the account (`WS_CONNECT_BURST`, `WS_CONNECTS_PER_MINUTE`), too many guest connections from the address (`WS_GUEST_SOCKETS_PER_IP`) or on the instance (`WS_GUEST_SOCKETS_MAX`). |
+| 4403 | The session signed in with a temporary password and has not changed it yet.                                                                                                                                       |
+
+An upgrade past `WS_SOCKETS_PER_IP` connections from one address answers 429. A copy that holds `WS_SOCKETS_MAX` connections answers 503 `Realtime is busy, try again in a moment` with reason `capacity` and `Retry-After: 5`.
