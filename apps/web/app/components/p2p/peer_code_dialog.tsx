@@ -9,6 +9,7 @@ import type { PeerLinkRequest } from '../../lib/client/peer_links'
 import { AddContactDialog } from './add_contact'
 import { ServerNewDialog } from './p2p_invite_dialog'
 import { Button } from '../controls'
+import { Stack } from '../layout'
 import { Dialog, Masked } from '../ui'
 
 export function PeerCodeDialog({ request }: { request: PeerLinkRequest }) {
@@ -63,7 +64,7 @@ export function PeerCodeDialog({ request }: { request: PeerLinkRequest }) {
   }
   return (
     <Dialog title="Choose a P2P identity" onClose={close} compact>
-      <div className="flex flex-col items-start gap-2">
+      <Stack gap="sm" align="start">
         {chosen || !available.includes('1') ? (
           <p role="status">This P2P identity is no longer available.</p>
         ) : (
@@ -87,7 +88,7 @@ export function PeerCodeDialog({ request }: { request: PeerLinkRequest }) {
           )
         )}
         <Button onClick={close}>Cancel</Button>
-      </div>
+      </Stack>
     </Dialog>
   )
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import { Button } from '../controls'
+import { Row, Stack } from '../layout'
 import { useEffect, useRef, useState } from 'react'
 import { Camera, ImageUp } from 'lucide-react'
 import { scanner } from '../../lib/platform'
@@ -100,9 +101,9 @@ export function QrScan({ onCode, label }: { onCode: (text: string) => void; labe
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       {stream ? (
-        <div className="flex flex-col items-center gap-2">
+        <Stack gap="sm" align="center">
           <video
             ref={video}
             muted
@@ -111,9 +112,9 @@ export function QrScan({ onCode, label }: { onCode: (text: string) => void; labe
             className="aspect-square w-full max-w-72 rounded-2xl bg-black object-cover"
           />
           <Button onClick={() => setStream(null)}>Stop camera</Button>
-        </div>
+        </Stack>
       ) : (
-        <div className="flex flex-wrap gap-2">
+        <Row gap="sm" wrap>
           {scanner().canUseCamera() && (
             <Button onClick={() => void start()}>
               <Camera size={16} />
@@ -135,9 +136,9 @@ export function QrScan({ onCode, label }: { onCode: (text: string) => void; labe
               e.target.value = ''
             }}
           />
-        </div>
+        </Row>
       )}
       {note && <p className="text-xs text-on-surface-variant">{note}</p>}
-    </div>
+    </Stack>
   )
 }

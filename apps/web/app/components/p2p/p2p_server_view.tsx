@@ -58,6 +58,7 @@ import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
 import { iconBtn, Masked, Sentinel } from '../ui'
+import { Row, Stack, Surface } from '../layout'
 import { PAGE, pageGroups } from '../../lib/paging'
 import {
   AccountChip,
@@ -70,7 +71,7 @@ import {
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
 import { SYNCING_TEXT, TRANSFERRED_TEXT, VOUCH_INVITER_TEXT } from '../../lib/p2p/flows'
-import { noteBarCls, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
+import { NoteBar, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
 import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
@@ -319,26 +320,25 @@ function P2pFolderEntryBody({
       </button>
     )
   return (
-    <div
-      data-drag-box
-      style={style}
-      className="folder-group flex w-14 shrink-0 flex-col items-center rounded-[20px] py-1"
-    >
-      <button
-        {...header}
-        className={`${tile} text-(--folder-icon,var(--color-tertiary)) hover:bg-(--folder-hover,var(--color-tertiary-container)) hover:text-(--folder-icon,var(--color-on-tertiary-container))`}
-      >
-        <FolderOpen size={22} />
-      </button>
-      <div
-        data-drop-zone={zoneOfFolder(folder.id)}
-        data-drop-label="Add to folder"
-        className="flex flex-col items-center gap-2 pt-2"
-      >
-        {list.map(v => (
-          <P2pServerTile key={v.id} v={v} folder={folder.id} at={at} />
-        ))}
-      </div>
+    <div data-drag-box style={style} className="folder-group w-14 shrink-0 rounded-group">
+      <Surface pad="2xs" gap="sm" tone="plain" radius="none" align="center">
+        <button
+          {...header}
+          className={`${tile} text-(--folder-icon,var(--color-tertiary)) hover:bg-(--folder-hover,var(--color-tertiary-container)) hover:text-(--folder-icon,var(--color-on-tertiary-container))`}
+        >
+          <FolderOpen size={22} />
+        </button>
+        <Stack
+          data-drop-zone={zoneOfFolder(folder.id)}
+          data-drop-label="Add to folder"
+          gap="sm"
+          align="center"
+        >
+          {list.map(v => (
+            <P2pServerTile key={v.id} v={v} folder={folder.id} at={at} />
+          ))}
+        </Stack>
+      </Surface>
     </div>
   )
 }
@@ -388,12 +388,14 @@ function P2pServerRailBody({ actorLabel }: { actorLabel?: string }) {
           <KeyAvatar ik={identity.useP2p.getState().ik ?? identity.localId} size={24} />
         </span>
       )}
-      <div
+      <Stack
         data-peer-section
         data-rail="p2p-servers"
         data-drop-zone="p2p"
         data-drop-label="Remove from folder"
-        className="flex shrink-0 flex-col items-center gap-2"
+        gap="sm"
+        align="center"
+        place="shrink-0"
       >
         {items.map((item, at) =>
           item.kind === 'server' ? (
@@ -403,7 +405,7 @@ function P2pServerRailBody({ actorLabel }: { actorLabel?: string }) {
           )
         )}
         {!list.length && <ServerRailSkeleton seed={identity.localId} few />}
-      </div>
+      </Stack>
     </>
   )
   return list.length ? section : <Held>{section}</Held>
@@ -436,12 +438,12 @@ function ServerHead({ v }: { v: ServerView }) {
         }}
         className="flex min-w-0 flex-1 flex-col items-start rounded-lg px-1 py-0.5 text-left hover:bg-surface-container"
       >
-        <span className="flex w-full min-w-0 items-center gap-1.5">
+        <Row as="span" gap="xs" place="w-full">
           <span data-p2p-server-name className="streamer truncate font-medium">
             <Masked text={v.name} own={own} />
           </span>
           <P2pBadge />
-        </span>
+        </Row>
         <span data-p2p-online-count className="truncate text-xs text-on-surface-variant">
           {v.online} of {v.joined} online
         </span>
@@ -511,7 +513,7 @@ function P2pServerSidebarBody() {
         {...longPress((x, y) =>
           openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
         )}
-        className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
+        className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
           active === c.id
             ? 'bg-secondary-container text-on-secondary-container'
             : `hover:bg-surface-container hover:text-on-surface ${unread ? 'font-semibold text-on-surface' : 'text-on-surface-variant'} ${muted ? 'opacity-60' : ''}`
@@ -570,90 +572,100 @@ function P2pServerSidebarBody() {
       className="flex h-full w-60 shrink-0 flex-col border-r border-dashed border-tertiary/40 bg-surface-container-low"
     >
       <ServerHead v={v} />
-      <div className="flex items-center justify-between px-4 pt-3 pb-1">
-        <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-          Channels
-        </span>
-        {can(v, P.ManageChannels) && (
-          <button
-            title="Create channel"
-            aria-label="Create channel"
-            onClick={() => {
-              setKind('text')
-              setAdding('')
-            }}
-            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-          >
-            <Plus size={16} />
-          </button>
-        )}
-      </div>
-      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
-        {groups.uncategorized.map(row)}
-        {groups.categories.map(({ category, channels }) => {
-          const open = !shut.has(category.id)
-          return (
-            <div key={category.id} className="flex flex-col gap-0.5 pt-2">
-              <button
-                data-p2p-category={category.name}
-                aria-expanded={open}
-                onClick={() =>
-                  setShut(prev => {
-                    const next = new Set(prev)
-                    if (open) next.add(category.id)
-                    else next.delete(category.id)
-                    return next
-                  })
-                }
-                {...longPress((x, y) =>
-                  openActionMenu(
-                    x,
-                    y,
-                    { kind: 'p2p_category', v, cat: category },
-                    undefined,
-                    acct,
-                    identity
-                  )
-                )}
-                className="mx-2 flex min-w-0 items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-medium tracking-wider text-on-surface-variant uppercase hover:text-on-surface"
-              >
-                <ChevronDown size={12} className={`shrink-0 ${open ? '' : '-rotate-90'}`} />
-                <span className="truncate">
-                  <Masked text={category.name} own={own} />
-                </span>
-              </button>
-              {(open ? channels : channels.filter(c => c.id === active)).map(row)}
-            </div>
-          )
-        })}
-        {adding !== null && (
-          <span className="flex items-center">
-            <span className="flex shrink-0 gap-0.5 pl-2">
-              {kindBtn('text')}
-              {kindBtn('voice')}
+      <Surface pad="sm" tone="plain" radius="none" place="min-h-0 flex-1">
+        <Surface pad="sm" inset="bar" tone="plain" radius="none">
+          <Row gap="sm" justify="between">
+            <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+              Channels
             </span>
-            <input
-              autoFocus
-              value={adding}
-              maxLength={p2p.limits().server.nameMax}
-              onChange={e => setAdding(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') submit()
-                if (e.key === 'Escape') setAdding(null)
-              }}
-              onBlur={submit}
-              placeholder="channel name"
-              aria-label="New channel name"
-              className="mx-2 my-0.5 min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
-            />
-          </span>
-        )}
-        {shown.length === 0 && (
-          <p className="px-4 py-2 text-sm text-on-surface-variant">
-            {v.me === null ? 'Waiting for the server to arrive from a member…' : 'No channels yet.'}
-          </p>
-        )}
-      </nav>
+            {can(v, P.ManageChannels) && (
+              <button
+                title="Create channel"
+                aria-label="Create channel"
+                onClick={() => {
+                  setKind('text')
+                  setAdding('')
+                }}
+                className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+              >
+                <Plus size={16} />
+              </button>
+            )}
+          </Row>
+        </Surface>
+        <Stack as="nav" gap="sm" place="min-h-0 flex-1 overflow-y-auto">
+          {groups.uncategorized.length > 0 && (
+            <Stack gap="3xs">{groups.uncategorized.map(row)}</Stack>
+          )}
+          {groups.categories.map(({ category, channels }) => {
+            const open = !shut.has(category.id)
+            return (
+              <Stack key={category.id} gap="3xs">
+                <button
+                  data-p2p-category={category.name}
+                  aria-expanded={open}
+                  onClick={() =>
+                    setShut(prev => {
+                      const next = new Set(prev)
+                      if (open) next.add(category.id)
+                      else next.delete(category.id)
+                      return next
+                    })
+                  }
+                  {...longPress((x, y) =>
+                    openActionMenu(
+                      x,
+                      y,
+                      { kind: 'p2p_category', v, cat: category },
+                      undefined,
+                      acct,
+                      identity
+                    )
+                  )}
+                  className="flex min-w-0 items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-medium tracking-wider text-on-surface-variant uppercase hover:text-on-surface"
+                >
+                  <ChevronDown size={12} className={`shrink-0 ${open ? '' : '-rotate-90'}`} />
+                  <span className="truncate">
+                    <Masked text={category.name} own={own} />
+                  </span>
+                </button>
+                {(open ? channels : channels.filter(c => c.id === active)).map(row)}
+              </Stack>
+            )
+          })}
+          {adding !== null && (
+            <Row as="span" gap="sm">
+              <Row as="span" gap="3xs" align="stretch" place="shrink-0">
+                {kindBtn('text')}
+                {kindBtn('voice')}
+              </Row>
+              <input
+                autoFocus
+                value={adding}
+                maxLength={p2p.limits().server.nameMax}
+                onChange={e => setAdding(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') submit()
+                  if (e.key === 'Escape') setAdding(null)
+                }}
+                onBlur={submit}
+                placeholder="channel name"
+                aria-label="New channel name"
+                className="min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+              />
+            </Row>
+          )}
+          {shown.length === 0 && (
+            <Surface pad="sm" tone="plain" radius="none">
+              <p className="text-sm text-on-surface-variant">
+                {v.me === null
+                  ? 'Waiting for the server to arrive from a member…'
+                  : 'No channels yet.'}
+              </p>
+            </Surface>
+          )}
+        </Stack>
+      </Surface>
       <VoiceDock />
     </aside>
   )
@@ -718,12 +730,12 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
           )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex min-w-0 items-center gap-1">
+          <Row as="span" gap="2xs">
             <span className="streamer truncate text-sm" style={{ color: look.color }}>
               <Masked text={m.name} own={m.ik === me} />
             </span>
             <RoleIcon emoji={look.icon?.emoji} role={look.icon && mask(look.icon.role)} />
-          </span>
+          </Row>
           {m.ik !== me && (
             <span className="flex min-w-0 empty:hidden">
               <AccountChip ik={m.ik} size="short" />
@@ -763,9 +775,11 @@ function P2pMemberListBody() {
   }
   if (!v)
     return open && loading ? (
-      <aside className="flex h-full w-60 shrink-0 flex-col overflow-hidden bg-surface-container-low pb-3">
+      <aside className="flex h-full w-60 shrink-0 flex-col overflow-hidden bg-surface-container-low">
         <PeerActorTag header />
-        <MemberListSkeleton seed={open} className="px-1" />
+        <Surface pad="2xs" tone="plain" radius="none">
+          <MemberListSkeleton seed={open} />
+        </Surface>
       </aside>
     ) : null
   const paged = pageGroups(memberGroups(v.members, v.roles, me), shown)
@@ -773,32 +787,38 @@ function P2pMemberListBody() {
     <aside
       data-p2p-members
       aria-label="Members"
-      className="flex h-full w-60 shrink-0 flex-col overflow-y-auto bg-surface-container-low pb-3"
+      className="flex h-full w-60 shrink-0 flex-col overflow-y-auto bg-surface-container-low"
     >
       <PeerActorTag header />
-      {paged.groups.map(g => (
-        <section key={g.key} data-p2p-member-group={g.label}>
-          <p className="flex items-center gap-1.5 px-3 pt-4 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-            {g.key.startsWith('r:') && (
-              <span
-                aria-hidden
-                className="h-2 w-2 shrink-0 rounded-full"
-                style={{ backgroundColor: hex(g.color) ?? 'var(--color-outline)' }}
-              />
-            )}
-            <span className="min-w-0 truncate">
-              <Masked text={g.label} />
-            </span>
-            <span className="shrink-0">({g.total})</span>
-          </p>
-          <ul className="flex flex-col px-1">
-            {g.list.map(m => (
-              <MemberRow key={m.ik} v={v} m={m} />
-            ))}
-          </ul>
-        </section>
-      ))}
-      {paged.more && <Sentinel key={shown} onVisible={more} />}
+      <Surface pad="2xs" gap="sm" tone="plain" radius="none">
+        {paged.groups.map(g => (
+          <Stack as="section" key={g.key} data-p2p-member-group={g.label} gap="none">
+            <Surface pad="sm" inset="bar" tone="plain" radius="none">
+              <Row as="p" gap="xs">
+                {g.key.startsWith('r:') && (
+                  <span
+                    aria-hidden
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: hex(g.color) ?? 'var(--color-outline)' }}
+                  />
+                )}
+                <span className="min-w-0 truncate text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                  <Masked text={g.label} />
+                </span>
+                <span className="shrink-0 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                  ({g.total})
+                </span>
+              </Row>
+            </Surface>
+            <Stack as="ul" gap="none">
+              {g.list.map(m => (
+                <MemberRow key={m.ik} v={v} m={m} />
+              ))}
+            </Stack>
+          </Stack>
+        ))}
+        {paged.more && <Sentinel key={shown} onVisible={more} />}
+      </Surface>
     </aside>
   )
 }
@@ -848,15 +868,15 @@ export const sendBlockFor =
               : null
     const away =
       st.reader || st.elsewhere ? (
-        <div className={noteBarCls}>
+        <NoteBar>
           <ElsewhereNotice />
-        </div>
+        </NoteBar>
       ) : st.status === 'moved' ? (
-        <div className={noteBarCls}>{movedText(st.movedAt)}</div>
+        <NoteBar>{movedText(st.movedAt)}</NoteBar>
       ) : st.movingAt !== null ? (
-        <MovingBanner className={noteBarCls} />
+        <MovingBanner bar />
       ) : out ? (
-        <div data-p2p-out className={noteBarCls}>
+        <NoteBar data-p2p-out>
           {v.joinWait && v.me !== 'join' ? <span data-p2p-join-wait>{out}</span> : out}
           {v.upgraded && v.next && (
             <button
@@ -874,21 +894,19 @@ export const sendBlockFor =
               Remove from this device
             </button>
           )}
-        </div>
+        </NoteBar>
       ) : null
     if (away) return { bar: away, canAct: false }
     const block =
       channel && !channel.send ? (
-        <div data-no-send className={noteBarCls}>
-          <span className="flex min-w-0 items-center gap-2">
+        <NoteBar data-no-send>
+          <Row as="span" gap="sm">
             <Lock size={16} className="shrink-0" />
             <span>{NO_SEND_TEXT}</span>
-          </span>
-        </div>
+          </Row>
+        </NoteBar>
       ) : v.full ? (
-        <div className={noteBarCls} role="status">
-          This server reached its storage limit on this device.
-        </div>
+        <NoteBar role="status">This server reached its storage limit on this device.</NoteBar>
       ) : null
     return {
       bar: st.timedOut !== null ? <TimedOutBar ends={st.timedOut} /> : block,
@@ -1023,7 +1041,7 @@ function P2pChannelPaneBody({
       <span className={voiceCh ? 'flex' : 'max-sm:hidden'}>
         <P2pBadge />
       </span>
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      <Row gap="2xs" place="ml-auto shrink-0">
         {chat && !voiceCh && (
           <PinsButton
             toggle={{
@@ -1060,7 +1078,7 @@ function P2pChannelPaneBody({
         >
           <Users size={20} />
         </button>
-      </div>
+      </Row>
     </header>
   )
 
@@ -1080,9 +1098,9 @@ function P2pChannelPaneBody({
     return (
       <main data-p2p-channel-pane className="flex min-w-0 flex-1 flex-col bg-surface">
         {header}
-        <div className="mx-auto flex max-w-2xl flex-col p-4">
+        <Surface pad="lg" tone="plain" radius="none" place="mx-auto max-w-2xl">
           <ElsewhereNotice />
-        </div>
+        </Surface>
       </main>
     )
 
@@ -1091,34 +1109,38 @@ function P2pChannelPaneBody({
     return (
       <main data-p2p-channel-pane className="flex min-w-0 flex-1 flex-col bg-surface">
         {header}
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-on-surface-variant">
-          {v.readOnly ? (
-            <>
-              <span data-p2p-readonly className="text-sm">
-                {v.readOnly}
-              </span>
-              <button
-                onClick={() => peerServer.forIdentity(identity).confirmForget(v, acct)}
-                className="text-sm font-medium text-primary hover:underline"
-              >
-                Remove from this device
-              </button>
-            </>
-          ) : waiting ? (
-            <>
-              <span data-p2p-joining className="text-lg font-medium text-on-surface">
-                Joining <Masked text={v.name} own={own} />…
-              </span>
-              <span data-p2p-join-wait className="max-w-md text-sm">
-                {v.joinWait ??
-                  'Waiting for a member to send the server. Someone who can invite must be online.'}
-              </span>
-              {v.syncing !== null && <span className="text-xs">{SYNCING_TEXT(v.syncing)}</span>}
-            </>
-          ) : (
-            <span>No channel open.</span>
-          )}
-        </div>
+        <Surface pad="xl" tone="plain" radius="none" place="flex-1">
+          <div className="flex flex-1 flex-col text-center text-on-surface-variant">
+            <Stack gap="sm" align="center" justify="center" place="flex-1">
+              {v.readOnly ? (
+                <>
+                  <span data-p2p-readonly className="text-sm">
+                    {v.readOnly}
+                  </span>
+                  <button
+                    onClick={() => peerServer.forIdentity(identity).confirmForget(v, acct)}
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    Remove from this device
+                  </button>
+                </>
+              ) : waiting ? (
+                <>
+                  <span data-p2p-joining className="text-lg font-medium text-on-surface">
+                    Joining <Masked text={v.name} own={own} />…
+                  </span>
+                  <span data-p2p-join-wait className="max-w-md text-sm">
+                    {v.joinWait ??
+                      'Waiting for a member to send the server. Someone who can invite must be online.'}
+                  </span>
+                  {v.syncing !== null && <span className="text-xs">{SYNCING_TEXT(v.syncing)}</span>}
+                </>
+              ) : (
+                <span>No channel open.</span>
+              )}
+            </Stack>
+          </div>
+        </Surface>
       </main>
     )
   }
@@ -1183,52 +1205,63 @@ function ServerInviteRowsBody() {
   const contacts = useP2p(s => s.contacts)
   if (!invites.length) return null
   return (
-    <section aria-label="P2P server invites">
-      <p className="px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-        P2P server invites ({invites.length})
-      </p>
-      <ul className="flex flex-col gap-2">
+    <Stack as="section" aria-label="P2P server invites" gap="none">
+      <Surface pad="md" inset="bar" tone="plain" radius="none">
+        <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+          P2P server invites ({invites.length})
+        </p>
+      </Surface>
+      <Stack as="ul" gap="sm">
         {invites.map(i => {
           const c = contacts.find(x => x.ik === i.from)
           return (
             <li
               key={i.room}
               data-p2p-server-invite={i.name}
-              className="flex items-center gap-3 rounded-2xl border border-dashed border-tertiary bg-surface-container px-3 py-2"
+              className="rounded-2xl border border-dashed border-tertiary bg-surface-container"
             >
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-tertiary font-semibold">
-                <ServerIcon seed={i.room} name={i.name} kind={i.about.icon} color={hex(i.color)} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="streamer truncate text-sm font-medium">
-                  <Masked text={i.name} />
-                </p>
-                <AboutLine text={i.about.text} oneLine />
-                <p className="truncate text-xs text-on-surface-variant">
-                  From{' '}
-                  <span className="streamer">
-                    {c ? <Masked text={displayName(c)} /> : 'a contact'}
+              <Surface pad="md" tone="plain" radius="none">
+                <Row gap="md">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-tertiary font-semibold">
+                    <ServerIcon
+                      seed={i.room}
+                      name={i.name}
+                      kind={i.about.icon}
+                      color={hex(i.color)}
+                    />
                   </span>
-                  . Someone in it must be online to let you in.
-                </p>
-              </div>
-              <button
-                onClick={() => void p2pServer.declineInvite(i.room)}
-                className="rounded-full px-3 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container-highest"
-              >
-                Decline
-              </button>
-              <button
-                onClick={() => void p2pServer.acceptInvite(i.room)}
-                className="rounded-full bg-primary px-3 py-1.5 text-sm font-medium text-on-primary"
-              >
-                Join
-              </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="streamer truncate text-sm font-medium">
+                      <Masked text={i.name} />
+                    </p>
+                    <AboutLine text={i.about.text} oneLine />
+                    <p className="truncate text-xs text-on-surface-variant">
+                      From{' '}
+                      <span className="streamer">
+                        {c ? <Masked text={displayName(c)} /> : 'a contact'}
+                      </span>
+                      . Someone in it must be online to let you in.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void p2pServer.declineInvite(i.room)}
+                    className="rounded-full px-3 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container-highest"
+                  >
+                    Decline
+                  </button>
+                  <button
+                    onClick={() => void p2pServer.acceptInvite(i.room)}
+                    className="rounded-full bg-primary px-3 py-1.5 text-sm font-medium text-on-primary"
+                  >
+                    Join
+                  </button>
+                </Row>
+              </Surface>
             </li>
           )
         })}
-      </ul>
-    </section>
+      </Stack>
+    </Stack>
   )
 }
 

@@ -41,6 +41,7 @@ import { voiceNotice } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { fieldCls, filledBtn, Masked, Sentinel, textBtn } from '../ui'
+import { Row, Stack, Surface } from '../layout'
 import { SettingsPage, type PageSection } from '../settings_page'
 import { page, PAGE } from '../../lib/paging'
 import { MemberAvatar } from './p2p_badge'
@@ -132,9 +133,9 @@ function Overview({ v }: { v: ServerView }) {
   const edit = can(v, P.ManageServer)
   const dirty = name.trim() !== v.name && name.trim() !== ''
   return (
-    <div className="flex flex-col gap-3">
-      <label className="flex flex-col gap-1 text-sm">
-        Server name
+    <Stack gap="md">
+      <Stack as="label" gap="2xs">
+        <span className="text-sm">Server name</span>
         <input
           value={name}
           maxLength={p2p.limits().server.nameMax}
@@ -143,7 +144,7 @@ function Overview({ v }: { v: ServerView }) {
           aria-label="Server name"
           className={`${fieldCls} streamer`}
         />
-      </label>
+      </Stack>
       {edit ? (
         <button
           disabled={!dirty}
@@ -165,31 +166,31 @@ function Overview({ v }: { v: ServerView }) {
         locked="Only members with Manage server can change this."
         onSave={change => p2pServer.setAbout(v.id, change)}
       />
-      <div className="flex flex-col gap-1">
+      <Stack gap="2xs">
         <p className="text-sm">Server profiles</p>
         <ServerProfilesMode v={v} />
         {!edit && <Note>Only members with Manage server can change this.</Note>}
-      </div>
+      </Stack>
       <Note>
         This server is stored on its members&apos; devices. {v.joined}{' '}
         {v.joined === 1 ? 'member' : 'members'}, {v.online} online now.
       </Note>
-      <div className="flex flex-col gap-1">
+      <Stack gap="2xs">
         <p className="text-sm">{v.owners.length > 1 ? 'Owners' : 'Owner'}</p>
-        <ul className="flex flex-col">
+        <Stack as="ul" gap="sm">
           {v.owners.map(ik => (
-            <li key={ik} className="flex items-center gap-2 py-1">
+            <Row as="li" key={ik} gap="sm">
               <MemberAvatar members={v.members} ik={ik} size={24} />
               <span className="streamer min-w-0 truncate text-sm">
                 <Masked text={memberName(v.id, ik)} own={ik === me} />
               </span>
               <Crown size={14} className="shrink-0 text-tertiary" aria-hidden />
-            </li>
+            </Row>
           ))}
-        </ul>
+        </Stack>
         <Note>{OWNER_TEXT}</Note>
-      </div>
-    </div>
+      </Stack>
+    </Stack>
   )
 }
 
@@ -211,15 +212,18 @@ function Channels({ v }: { v: ServerView }) {
   const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
   const [openCat, setOpenCat] = useState<string | null>(null)
   return (
-    <div className="flex flex-col gap-3">
+    <Stack gap="md">
       {edit &&
         v.categories.map(cat => {
           const synced = v.channels.filter(c => c.cat === cat.id && c.sync).length
           return (
-            <div
+            <Surface
               key={cat.id}
               data-p2p-category-row={cat.name}
-              className="flex flex-col gap-2 rounded-xl bg-surface-container px-3 py-2"
+              pad="md"
+              gap="sm"
+              tone="base"
+              radius="lg"
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">
@@ -237,11 +241,11 @@ function Channels({ v }: { v: ServerView }) {
                 </button>
               </div>
               {openCat === cat.id && <ChannelAccess v={v} cat={cat} />}
-            </div>
+            </Surface>
           )
         })}
       {edit && !v.textOnlyChannels && !v.readOnly && (
-        <div className="flex flex-col items-start gap-2">
+        <Stack gap="sm" align="start">
           <Note>
             Text-only channels require an upgraded server. Members need an updated app to use the
             new copy.
@@ -266,7 +270,7 @@ function Channels({ v }: { v: ServerView }) {
               approve.
             </Note>
           )}
-        </div>
+        </Stack>
       )}
       {shown.map(c => {
         const voice = c.kind === 'voice'
@@ -275,12 +279,15 @@ function Channels({ v }: { v: ServerView }) {
         const topic = topics[c.id] ?? c.topic ?? ''
         const dirty = (name.trim() && name.trim() !== c.name) || topic !== (c.topic ?? '')
         return (
-          <div
+          <Surface
             key={c.id}
             data-p2p-channel-row={c.name}
-            className="flex flex-col gap-2 rounded-xl bg-surface-container px-3 py-2"
+            pad="md"
+            gap="sm"
+            tone="base"
+            radius="lg"
           >
-            <div className="flex items-center gap-2">
+            <Row gap="sm">
               {voice ? (
                 <Volume2 size={16} className="shrink-0 text-on-surface-variant" />
               ) : (
@@ -333,7 +340,7 @@ function Channels({ v }: { v: ServerView }) {
                   <Trash2 size={16} />
                 </button>
               )}
-            </div>
+            </Row>
             <input
               value={topic}
               disabled={!edit}
@@ -373,11 +380,11 @@ function Channels({ v }: { v: ServerView }) {
               />
             )}
             {edit && open === c.id && <ChannelAccess v={v} c={c} />}
-          </div>
+          </Surface>
         )
       })}
       {edit ? (
-        <div className="flex gap-2">
+        <Row gap="sm" align="stretch">
           <select
             value={kind}
             onChange={e => setKind(e.target.value === 'voice' ? 'voice' : 'text')}
@@ -405,12 +412,12 @@ function Channels({ v }: { v: ServerView }) {
           >
             Add channel
           </button>
-        </div>
+        </Row>
       ) : (
         <Note>Only members with Manage channels can change channels.</Note>
       )}
       <Note>{voiceNotice(p2p.limits().voice)}</Note>
-    </div>
+    </Stack>
   )
 }
 
@@ -424,9 +431,9 @@ function System({ v }: { v: ServerView }) {
   const set = (patch: Partial<ServerView['system']>) =>
     void p2pServer.setSystem(v.id, { ...v.system, ...patch })
   return (
-    <div className="flex flex-col gap-4">
-      <label className="flex flex-col gap-1 text-sm">
-        Channel for join and leave messages
+    <Stack gap="lg">
+      <Stack as="label" gap="2xs">
+        <span className="text-sm">Channel for join and leave messages</span>
         <select
           value={v.system.ch ?? ''}
           disabled={!edit}
@@ -439,27 +446,27 @@ function System({ v }: { v: ServerView }) {
             </option>
           ))}
         </select>
-      </label>
-      <label className="flex items-center gap-3 text-sm">
+      </Stack>
+      <Row as="label" gap="md">
         <input
           type="checkbox"
           checked={v.system.join}
           disabled={!edit}
           onChange={e => set({ join: e.target.checked })}
         />
-        Show when someone joins
-      </label>
-      <label className="flex items-center gap-3 text-sm">
+        <span className="text-sm">Show when someone joins</span>
+      </Row>
+      <Row as="label" gap="md">
         <input
           type="checkbox"
           checked={v.system.leave}
           disabled={!edit}
           onChange={e => set({ leave: e.target.checked })}
         />
-        Show when someone leaves
-      </label>
+        <span className="text-sm">Show when someone leaves</span>
+      </Row>
       <Note>Every member&apos;s device writes these lines itself from who joins and leaves.</Note>
-    </div>
+    </Stack>
   )
 }
 
@@ -469,7 +476,7 @@ function History({ v }: { v: ServerView }) {
 
   const edit = can(v, P.ManageServer)
   return (
-    <div className="flex flex-col gap-3">
+    <Stack gap="md">
       {(
         [
           ['shared', 'Everything', 'New members get earlier messages from members who have them.'],
@@ -480,52 +487,49 @@ function History({ v }: { v: ServerView }) {
           ],
         ] as const
       ).map(([vis, label, hint]) => (
-        <label
-          key={vis}
-          className="flex items-start gap-3 rounded-xl bg-surface-container px-3 py-2 text-sm"
-        >
-          <input
-            type="radio"
-            name="p2p-history"
-            className="mt-1"
-            checked={v.history === vis}
-            disabled={!edit}
-            onChange={() => void p2pServer.setHistory(v.id, vis)}
-          />
-          <span className="flex flex-col">
-            <span className="font-medium">{label}</span>
-            <span className="text-xs text-on-surface-variant">{hint}</span>
-          </span>
-        </label>
+        <Surface as="label" key={vis} pad="md" tone="base" radius="lg">
+          <Row as="span" gap="md" align="baseline">
+            <input
+              type="radio"
+              name="p2p-history"
+              checked={v.history === vis}
+              disabled={!edit}
+              onChange={() => void p2pServer.setHistory(v.id, vis)}
+            />
+            <Stack as="span" gap="none">
+              <span className="text-sm font-medium">{label}</span>
+              <span className="text-xs text-on-surface-variant">{hint}</span>
+            </Stack>
+          </Row>
+        </Surface>
       ))}
       <Note>
         Members keep to this. Anyone who is in the server can still pass on what they can read.
       </Note>
-    </div>
+    </Stack>
   )
 }
 
 function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children?: ReactNode }) {
   const me = useP2p(s => s.me)
   return (
-    <li
-      data-p2p-member-line={m.name}
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-2 py-1.5"
-    >
-      <MemberAvatar members={v.members} ik={m.ik} size={32} />
-      <span
-        className="streamer min-w-0 flex-1 truncate text-sm"
-        style={{ color: nameColor(m, v.roles) }}
-      >
-        <Masked text={m.name} own={m.ik === me} />
-      </span>
-      {m.owner && (
-        <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">
-          <Crown size={14} />
+    <Surface as="li" data-p2p-member-line={m.name} pad="sm" tone="plain" radius="lg">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <MemberAvatar members={v.members} ik={m.ik} size={32} />
+        <span
+          className="streamer min-w-0 flex-1 truncate text-sm"
+          style={{ color: nameColor(m, v.roles) }}
+        >
+          <Masked text={m.name} own={m.ik === me} />
         </span>
-      )}
-      {children}
-    </li>
+        {m.owner && (
+          <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">
+            <Crown size={14} />
+          </span>
+        )}
+        {children}
+      </div>
+    </Surface>
   )
 }
 
@@ -616,7 +620,7 @@ function Members({ v }: { v: ServerView }) {
     }
   }, [all, v.roles, invites, mask])
   return (
-    <div className="flex flex-col gap-3">
+    <Stack gap="md">
       {search && (
         <MemberFilterBar
           value={shown}
@@ -634,18 +638,20 @@ function Members({ v }: { v: ServerView }) {
           ))}
         </MemberTable>
         {list.length === 0 && (
-          <p className="px-2 text-sm text-on-surface-variant">No matching members.</p>
+          <Surface pad="sm" inset="bar" tone="plain" radius="none">
+            <p className="text-sm text-on-surface-variant">No matching members.</p>
+          </Surface>
         )}
       </div>
       {paged.more && <Sentinel key={shownRows} onVisible={more} />}
       {(kick || ban || timeout) && (
-        <div className="flex flex-col gap-1">
+        <Stack gap="2xs">
           <Note>{EQUAL_ROLES_TEXT}</Note>
           <Note>{HIGHER_ROLES_TEXT}</Note>
           <Note>{OFFLINE_TEXT}</Note>
-        </div>
+        </Stack>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -661,8 +667,8 @@ function Bans({ v }: { v: ServerView }) {
   if (!list.length) return <Note>Nobody is banned.</Note>
   const paged = page(list, shown)
   return (
-    <div className="flex flex-col gap-3">
-      <ul data-p2p-bans-tab className="flex flex-col">
+    <Stack gap="md">
+      <Stack as="ul" data-p2p-bans-tab gap="none">
         {paged.items.map(m => (
           <MemberLine key={m.ik} v={v} m={m}>
             {m.unban && (
@@ -677,10 +683,10 @@ function Bans({ v }: { v: ServerView }) {
             )}
           </MemberLine>
         ))}
-      </ul>
+      </Stack>
       {paged.more && <Sentinel key={shown} onVisible={more} />}
       {lift && <Note>{UNBAN_TEXT}</Note>}
-    </div>
+    </Stack>
   )
 }
 
@@ -818,7 +824,7 @@ function Leave({ v }: { v: ServerView }) {
   const owner = v.owner === me
   const inside = v.me === 'join' || v.me === 'invite'
   return (
-    <div className="flex flex-col items-start gap-3">
+    <Stack gap="md" align="start">
       {inside ? (
         <>
           <Note>
@@ -864,13 +870,13 @@ function Leave({ v }: { v: ServerView }) {
           </button>
         </>
       )}
-    </div>
+    </Stack>
   )
 }
 
 function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: ServerTab }) {
   return (
-    <div className="px-1">
+    <Surface pad="2xs" tone="plain" radius="none">
       {tab === 'overview' && <Overview key={v.name} v={v} />}
       {tab === 'roles' && <RolesTab v={v} />}
       {tab === 'channels' && <Channels v={v} />}
@@ -881,7 +887,7 @@ function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: ServerTab
       {tab === 'bans' && <Bans v={v} />}
       {tab === 'modlog' && <ModerationLog v={v} />}
       {tab === 'leave' && <Leave v={v} />}
-    </div>
+    </Surface>
   )
 }
 
@@ -910,8 +916,8 @@ function ServerSettingsDialogBody({ room, tab: first }: { room: string; tab?: Se
       onClose={p2p.closeDialog}
       actor={<PeerActorTag header />}
       lead={
-        <div className="-mx-3 mb-3 empty:hidden">
-          <ServerNotices v={v} />
+        <div className="mb-3 empty:hidden">
+          <ServerNotices v={v} flush />
         </div>
       }
       layer="dialog"

@@ -19,6 +19,7 @@ import { useAccount } from '../../lib/client/react'
 import { useChannelCan } from '../../lib/place/use_rights'
 import { useP2pRoom } from '../../lib/place/react'
 import { NO_CONNECT } from '../../lib/timeouts'
+import { Stack } from '../layout'
 
 // Voice channels of a P2P server in its sidebar: the row joins (and opens the stage), and who is
 // in the channel shows under it with identicons, as in instance servers.
@@ -67,7 +68,7 @@ function VoiceMember({
         const r = e.currentTarget.getBoundingClientRect()
         open(r.left + 24, r.bottom)
       }}
-      className="mr-2 ml-7 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant hover:bg-surface-container hover:text-on-surface active:bg-surface-container-high"
+      className="ml-5 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant hover:bg-surface-container hover:text-on-surface active:bg-surface-container-high"
     >
       <span
         data-speaking={speaking || undefined}
@@ -118,7 +119,7 @@ function P2pVoiceRowBody({
   const can = useChannelCan(useP2pRoom(v.id), c.id)
   const locked = !connected && !can.connect
   return (
-    <div className="flex flex-col rounded-lg">
+    <Stack gap="none">
       <button
         data-p2p-voice-channel={c.name}
         title={locked ? NO_CONNECT : connected ? 'Open voice channel' : 'Join voice channel'}
@@ -131,7 +132,7 @@ function P2pVoiceRowBody({
           else if (!locked) void p2pVoice.join(v.id, c.id)
         }}
         {...longPress(menu)}
-        className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] ${
+        className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] ${
           active
             ? 'bg-secondary-container text-on-secondary-container'
             : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
@@ -163,7 +164,7 @@ function P2pVoiceRowBody({
       {users.map(u => (
         <VoiceMember key={u.ik} v={v} u={u} inRoom={connected} menu={memberMenu} />
       ))}
-    </div>
+    </Stack>
   )
 }
 

@@ -689,7 +689,7 @@ describe('the P2P DM header', () => {
       expect(element(ids[1])?.[1]).toContain(`data-shield="${kind}"`)
       expect(text(ids[2])).toContain(long)
       const column = header.match(
-        /<span class="([^"]*)"><span class="flex min-w-0 items-center gap-1.5">/
+        new RegExp(`<span class="([^"]*)"><span class="[^"]*"><span id="${ids[0]}"`)
       )
       expect(column?.[1].split(' ')).toContain('max-[360px]:hidden')
       const avatar =

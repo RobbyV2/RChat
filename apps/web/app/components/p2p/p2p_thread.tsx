@@ -44,6 +44,7 @@ import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
 import { MessageListSkeleton } from '../skeletons'
 import { LightboxList } from '../media_lightbox'
+import { Surface } from '../layout'
 
 // The thread of a P2P server channel or conversation beside it (full screen on phones): its root,
 // the replies stored here and a composer, through the same panel as instance threads.
@@ -321,20 +322,22 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
               onScroll={scroll.onScroll}
               head={
                 t.more && (
-                  <div className="flex justify-center py-2">
+                  <Surface pad="sm" tone="plain" radius="none" align="center">
                     <button onClick={() => void p2pThread.loadOlder()} className={textBtn}>
                       Show older replies
                     </button>
-                  </div>
+                  </Surface>
                 )
               }
               root={
                 head ? (
                   row(head, true, ALONE)
                 ) : (
-                  <p className="px-4 py-1.5 text-sm text-on-surface-variant italic">
-                    {t.loading ? 'Loading…' : 'Message unavailable'}
-                  </p>
+                  <Surface pad="lg" tone="plain" radius="none">
+                    <p className="text-sm text-on-surface-variant italic">
+                      {t.loading ? 'Loading…' : 'Message unavailable'}
+                    </p>
+                  </Surface>
                 )
               }
               count={t.head?.replies ?? replies.length}

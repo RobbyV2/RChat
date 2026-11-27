@@ -1,10 +1,11 @@
 'use client'
 import { Button } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { client } from '../../lib/client/client'
 import { useStore } from '../../lib/store'
 import { type FilesPart, type Unlocked } from '../../lib/p2p/app'
@@ -38,6 +39,7 @@ function FilesOption({ value, onChange }: { value: boolean; onChange: (on: boole
   const { p2pTransfer } = identity
 
   const [size, setSize] = useState<number | null>(null)
+  const id = useId()
   useEffect(() => {
     let live = true
     void p2pTransfer.filesSize().then(n => live && setSize(n))
@@ -46,26 +48,29 @@ function FilesOption({ value, onChange }: { value: boolean; onChange: (on: boole
     }
   }, [])
   return (
-    <div className="flex flex-col gap-0.5">
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={value}
-          disabled={size === 0}
-          onChange={e => onChange(e.target.checked)}
-          className="accent-primary"
-          data-p2p-include-files
-        />
-        Include downloaded attachments
-        {size !== null && (
-          <span className="text-xs text-on-surface-variant tabular-nums">({fmtSize(size)})</span>
-        )}
-      </label>
-      <p className="pl-6 text-xs text-on-surface-variant">
-        Files you sent go too, in the downloaded file only (not the text or QR code). Without this,
-        the new device downloads them again from contacts who have them.
-      </p>
-    </div>
+    <Row gap="sm" align="baseline">
+      <input
+        id={id}
+        type="checkbox"
+        checked={value}
+        disabled={size === 0}
+        onChange={e => onChange(e.target.checked)}
+        className="accent-primary"
+        data-p2p-include-files
+      />
+      <Stack gap="3xs">
+        <Row as="label" htmlFor={id} gap="sm">
+          <span className="text-sm">Include downloaded attachments</span>
+          {size !== null && (
+            <span className="text-xs text-on-surface-variant tabular-nums">({fmtSize(size)})</span>
+          )}
+        </Row>
+        <p className="text-xs text-on-surface-variant">
+          Files you sent go too, in the downloaded file only (not the text or QR code). Without
+          this, the new device downloads them again from contacts who have them.
+        </p>
+      </Stack>
+    </Row>
   )
 }
 
@@ -100,54 +105,61 @@ function P2pExportOptionBody({
 
   const strength = passStrength(value.pass, p2p.limits().transfer)
   const problem = value.again ? passProblem(value.pass, value.again, p2p.limits().transfer) : null
+  const id = useId()
   usePreloadKdf(on)
   return (
-    <div className="flex flex-col gap-2">
-      <label className="flex cursor-pointer items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={on}
-          onChange={e => onToggle(e.target.checked)}
-          className="cursor-pointer accent-primary"
-        />
-        Include P2P identity and history
-      </label>
-      {on && (
-        <div className="flex flex-col gap-2 pl-6">
-          <p className="text-xs text-on-surface-variant">
-            Encrypted with a passphrase. Anyone with the file and the passphrase can use your P2P
-            identity. Sending pauses here after the export, and stops for good once the new device
-            has it. Never in share links. This is for moving, not for a lost or stolen device: reset
-            your identity for that.
-          </p>
-          <input
-            type="password"
-            autoComplete="new-password"
-            value={value.pass}
-            onChange={e => onChange({ ...value, pass: e.target.value })}
-            placeholder="Passphrase (at least 10 characters)"
-            aria-label="Passphrase"
-            className={fieldCls}
-          />
-          <input
-            type="password"
-            autoComplete="new-password"
-            value={value.again}
-            onChange={e => onChange({ ...value, again: e.target.value })}
-            placeholder="Passphrase again"
-            aria-label="Passphrase again"
-            className={fieldCls}
-          />
-          {value.pass && (
-            <p data-strength={strength.score} className={`text-xs ${strengthCls[strength.score]}`}>
-              {strength.label}
+    <Row gap="sm" align="baseline">
+      <input
+        id={id}
+        type="checkbox"
+        checked={on}
+        onChange={e => onToggle(e.target.checked)}
+        className="cursor-pointer accent-primary"
+      />
+      <Stack gap="sm" place="flex-1">
+        <label htmlFor={id} className="cursor-pointer text-sm">
+          Include P2P identity and history
+        </label>
+        {on && (
+          <>
+            <p className="text-xs text-on-surface-variant">
+              Encrypted with a passphrase. Anyone with the file and the passphrase can use your P2P
+              identity. Sending pauses here after the export, and stops for good once the new device
+              has it. Never in share links. This is for moving, not for a lost or stolen device:
+              reset your identity for that.
             </p>
-          )}
-          <FieldError message={problem} />
-          <FilesOption value={!!value.files} onChange={files => onChange({ ...value, files })} />
-        </div>
-      )}
-    </div>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={value.pass}
+              onChange={e => onChange({ ...value, pass: e.target.value })}
+              placeholder="Passphrase (at least 10 characters)"
+              aria-label="Passphrase"
+              className={fieldCls}
+            />
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={value.again}
+              onChange={e => onChange({ ...value, again: e.target.value })}
+              placeholder="Passphrase again"
+              aria-label="Passphrase again"
+              className={fieldCls}
+            />
+            {value.pass && (
+              <p
+                data-strength={strength.score}
+                className={`text-xs ${strengthCls[strength.score]}`}
+              >
+                {strength.label}
+              </p>
+            )}
+            <FieldError message={problem} />
+            <FilesOption value={!!value.files} onChange={files => onChange({ ...value, files })} />
+          </>
+        )}
+      </Stack>
+    </Row>
   )
 }
 
@@ -267,10 +279,7 @@ function P2pImportBody({
       : void apply(u)
 
   return (
-    <section
-      aria-label="P2P identity"
-      className="flex flex-col gap-3 rounded-2xl bg-surface-container-high p-4"
-    >
+    <Surface as="section" aria-label="P2P identity" pad="lg" gap="md">
       <p className="text-sm font-medium text-on-surface">P2P identity and history</p>
       {!signedIn ? (
         <p className="text-sm text-on-surface-variant">Sign in to import a P2P identity.</p>
@@ -290,11 +299,11 @@ function P2pImportBody({
         </div>
       ) : !unlocked ? (
         <form
-          className="flex flex-wrap gap-2"
           onSubmit={e => {
             e.preventDefault()
             if (pass && !busy) void unlock()
           }}
+          className="flex flex-wrap gap-2"
         >
           <input
             type="password"
@@ -316,13 +325,13 @@ function P2pImportBody({
             <Button onClick={() => stop.current?.abort()}>Cancel</Button>
           )}
           {busy === 'unlock' && part !== null && late && (
-            <div className="w-full">
+            <Stack gap="none" place="w-full">
               <SlowNote />
-            </div>
+            </Stack>
           )}
         </form>
       ) : (
-        <div className="flex flex-col gap-2">
+        <Stack gap="sm">
           <p data-p2p-preview className="streamer text-sm break-words text-on-surface">
             {summaryText(unlocked.summary)}
           </p>
@@ -334,8 +343,8 @@ function P2pImportBody({
               : caseText[unlocked.kind]}
           </p>
           {elsewhere ? (
-            <div role="status" className="flex flex-wrap items-center gap-3 text-sm">
-              <p>P2P is open in another tab. Use it here to import.</p>
+            <div role="status" className="flex flex-wrap items-center gap-3">
+              <p className="text-sm">P2P is open in another tab. Use it here to import.</p>
               <Button onClick={() => p2p.useHere()}>Use here</Button>
             </div>
           ) : (
@@ -361,10 +370,10 @@ function P2pImportBody({
               </Button>
             </div>
           )}
-        </div>
+        </Stack>
       )}
       <FieldError message={error} />
-    </section>
+    </Surface>
   )
 }
 

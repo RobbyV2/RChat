@@ -62,6 +62,7 @@ import type {
 import { allowListTitle, emptyAllowText, type RestrictKey } from '../../lib/channel_access'
 import { matching, nextPage, page, PAGE } from '../../lib/paging'
 import { longPress } from '../context_menu'
+import { Row, Stack, Surface } from '../layout'
 import { dragScope } from '../drag'
 import {
   ColorSwatch,
@@ -189,81 +190,89 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
         () => roleAction('p2p_role_up', v, r, acct, identity),
         () => roleAction('p2p_role_down', v, r, acct, identity)
       )}
-      className="space-y-1.5 rounded-xl bg-surface-container p-2 outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
-      <div {...handle} className="flex min-h-9 items-center gap-2">
-        {edit && (
-          <span
-            title="Drag to reorder"
-            aria-hidden
-            className="flex shrink-0 cursor-grab text-on-surface-variant"
-          >
-            <GripVertical size={16} />
-          </span>
-        )}
-        {edit ? (
-          <span {...keepPress} className="flex min-w-0 flex-1 items-center gap-2">
-            <ColorSwatch
-              initial={hex(r.color) ?? NO_COLOR}
-              onCommit={c =>
-                void p2pServer.editRole(v.id, r.id, { name: r.name, color: fromHex(c) })
-              }
-            />
-            <RoleNameForm
-              initial={r.name}
-              maxLength={p2p.limits().server.roleNameMax}
-              onRename={name => void p2pServer.editRole(v.id, r.id, { name, color: r.color })}
-            />
-          </span>
-        ) : (
-          <>
-            <span aria-hidden className="h-5 w-5 shrink-0 rounded-full" style={swatch(r.color)} />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              <Masked text={r.name} own={own} />
-            </span>
-          </>
-        )}
-        {edit && (!r.held || can(v, P.ManageChannels)) && (
+      <Surface pad="sm" gap="xs" tone="base" radius="lg">
+        <div {...handle} className="flex min-h-9">
+          <Row gap="sm" place="flex-1">
+            {edit && (
+              <span
+                title="Drag to reorder"
+                aria-hidden
+                className="flex shrink-0 cursor-grab text-on-surface-variant"
+              >
+                <GripVertical size={16} />
+              </span>
+            )}
+            {edit ? (
+              <Row as="span" {...keepPress} gap="sm" place="flex-1">
+                <ColorSwatch
+                  initial={hex(r.color) ?? NO_COLOR}
+                  onCommit={c =>
+                    void p2pServer.editRole(v.id, r.id, { name: r.name, color: fromHex(c) })
+                  }
+                />
+                <RoleNameForm
+                  initial={r.name}
+                  maxLength={p2p.limits().server.roleNameMax}
+                  onRename={name => void p2pServer.editRole(v.id, r.id, { name, color: r.color })}
+                />
+              </Row>
+            ) : (
+              <>
+                <span
+                  aria-hidden
+                  className="h-5 w-5 shrink-0 rounded-full"
+                  style={swatch(r.color)}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  <Masked text={r.name} own={own} />
+                </span>
+              </>
+            )}
+            {edit && (!r.held || can(v, P.ManageChannels)) && (
+              <button
+                onClick={() => peerServer.forIdentity(identity).deleteRole(v, r, acct)}
+                aria-label={`Delete ${mask(r.name)}`}
+                title={`Delete ${mask(r.name)}`}
+                className={dangerBtn}
+              >
+                <Trash2 size={16} />
+              </button>
+            )}
+          </Row>
+        </div>
+        <Row gap="sm">
+          <p className="min-w-0 flex-1 text-xs text-on-surface-variant">
+            {r.holders} {r.holders === 1 ? 'member' : 'members'}
+          </p>
           <button
-            onClick={() => peerServer.forIdentity(identity).deleteRole(v, r, acct)}
-            aria-label={`Delete ${mask(r.name)}`}
-            title={`Delete ${mask(r.name)}`}
-            className={dangerBtn}
+            type="button"
+            {...keepPress}
+            onClick={() => setOpen(o => !o)}
+            aria-expanded={open}
+            className={textBtn}
           >
-            <Trash2 size={16} />
+            {open ? 'Hide permissions' : 'Permissions'}
           </button>
+        </Row>
+        {open && (
+          <span {...keepPress} className="block">
+            <PermGroups items={items} locked={locked} {...bitSwitches(identity)(v, r.id, r.bits)} />
+          </span>
         )}
-      </div>
-      <div className="flex items-center gap-2">
-        <p className="min-w-0 flex-1 text-xs text-on-surface-variant">
-          {r.holders} {r.holders === 1 ? 'member' : 'members'}
-        </p>
-        <button
-          type="button"
-          {...keepPress}
-          onClick={() => setOpen(o => !o)}
-          aria-expanded={open}
-          className={textBtn}
-        >
-          {open ? 'Hide permissions' : 'Permissions'}
-        </button>
-      </div>
-      {open && (
         <span {...keepPress} className="block">
-          <PermGroups items={items} locked={locked} {...bitSwitches(identity)(v, r.id, r.bits)} />
+          <RoleLooksFields
+            name={mask(r.name)}
+            icon={roleIcon(r.icon)}
+            hoist={r.hoist}
+            tint={r.tint}
+            locked={locked}
+            onChange={patch => void p2pServer.editRole(v.id, r.id, patch)}
+          />
         </span>
-      )}
-      <span {...keepPress} className="block">
-        <RoleLooksFields
-          name={mask(r.name)}
-          icon={roleIcon(r.icon)}
-          hoist={r.hoist}
-          tint={r.tint}
-          locked={locked}
-          onChange={patch => void p2pServer.editRole(v.id, r.id, patch)}
-        />
-      </span>
-      {locked && can(v, P.ManageRoles) && <Note>{locked}</Note>}
+        {locked && can(v, P.ManageRoles) && <Note>{locked}</Note>}
+      </Surface>
     </div>
   )
 }
@@ -287,24 +296,23 @@ function RolesTabBody({ v }: { v: ServerView }) {
   const shown = shownOrder(v.roles).flatMap(id => v.roles.find(r => r.id === id) ?? [])
   const anyRole = v.roles[0]
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       <RoleTabs tab={tab} onTab={setTab} />
       {owners.length > 0 && (
-        <div
-          data-p2p-owners
-          className="flex min-h-9 items-center gap-2 rounded-xl bg-surface-container p-2"
-        >
-          <span title="Owners" aria-hidden className="flex shrink-0 text-tertiary">
-            <Crown size={16} />
-          </span>
-          <span className="flex min-w-0 flex-1 flex-col">
-            <span className="text-sm font-medium">Owners</span>
-            <span className="streamer truncate text-xs text-on-surface-variant">
-              {owners.map(ik => memberName(v.id, ik)).join(', ')}
+        <Surface data-p2p-owners pad="sm" tone="base" radius="lg">
+          <Row gap="sm">
+            <span title="Owners" aria-hidden className="flex shrink-0 text-tertiary">
+              <Crown size={16} />
             </span>
-          </span>
-          <span className="shrink-0 text-xs text-on-surface-variant">Every permission</span>
-        </div>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-medium">Owners</span>
+              <span className="streamer truncate text-xs text-on-surface-variant">
+                {owners.map(ik => memberName(v.id, ik)).join(', ')}
+              </span>
+            </span>
+            <span className="shrink-0 text-xs text-on-surface-variant">Every permission</span>
+          </Row>
+        </Surface>
       )}
       {tab === 'rank' ? (
         <>
@@ -312,26 +320,25 @@ function RolesTabBody({ v }: { v: ServerView }) {
             <RoleRow key={r.id} v={v} r={r} />
           ))}
           <div ref={dragScope}>
-            <div data-drop-zone="p2p-roles" className="flex flex-col gap-2">
+            <Stack data-drop-zone="p2p-roles" gap="sm">
               {movable.map(r => (
                 <RoleRow key={r.id} v={v} r={r} />
               ))}
-            </div>
+            </Stack>
           </div>
-          <div
-            data-p2p-role="@everyone"
-            className="space-y-1.5 rounded-xl bg-surface-container p-2"
-          >
-            <div className="flex min-h-9 items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">@everyone</span>
-              <span className="shrink-0 text-xs text-on-surface-variant">Every member</span>
+          <Surface data-p2p-role="@everyone" pad="sm" gap="xs" tone="base" radius="lg">
+            <div className="flex min-h-9">
+              <Row gap="sm" place="flex-1">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">@everyone</span>
+                <span className="shrink-0 text-xs text-on-surface-variant">Every member</span>
+              </Row>
             </div>
             <PermGroups
               items={everyoneItems(rules)}
               locked={everyoneLocked}
               {...bitSwitches(identity)(v, EVERYONE, v.everyone)}
             />
-          </div>
+          </Surface>
           {edit && (
             <>
               <RoleCreateForm
@@ -374,7 +381,7 @@ function RolesTabBody({ v }: { v: ServerView }) {
           <Note>The member list shows roles in this order. Role order still decides rank.</Note>
         </>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -410,7 +417,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
   // Under a server name, the name they give themselves everywhere.
   const global = m.nick !== undefined && m.nick === m.name ? identity.profileName(m.ik, room) : null
   return (
-    <div data-p2p-member-card className="flex flex-col gap-2 py-1">
+    <Surface data-p2p-member-card pad="2xs" gap="sm" tone="plain" radius="none">
       {m.bn && (
         <div
           aria-hidden
@@ -428,7 +435,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
           }}
         />
       )}
-      <div className="flex items-center gap-2.5">
+      <Row gap="sm">
         <MemberAvatar members={v.members} ik={m.ik} size={40} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span
@@ -452,7 +459,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
             <Crown size={14} />
           </span>
         )}
-      </div>
+      </Row>
       {bio && (
         <p
           data-p2p-member-bio
@@ -495,7 +502,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
           ))}
         </ul>
       )}
-    </div>
+    </Surface>
   )
 }
 
@@ -536,26 +543,26 @@ function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
   if (subj.startsWith('r:')) {
     const r = v.roles.find(x => `r:${x.id}` === subj)
     return (
-      <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
+      <Row as="span" gap="xs" place="flex-1">
         <span
           aria-hidden
           className="h-2.5 w-2.5 shrink-0 rounded-full"
           style={swatch(r?.color ?? null)}
         />
-        <span className="truncate">
+        <span className="truncate text-sm">
           <Masked text={r?.name ?? 'Deleted role'} own={own} />
         </span>
-      </span>
+      </Row>
     )
   }
   const ik = subj.slice(2)
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
+    <Row as="span" gap="xs" place="flex-1">
       <MemberAvatar members={v.members} ik={ik} size={20} />
-      <span className="streamer truncate">
+      <span className="streamer truncate text-sm">
         <Masked text={memberName(v.id, ik)} own={ik === me} />
       </span>
-    </span>
+    </Row>
   )
 }
 
@@ -573,7 +580,7 @@ function MemberPickerBody({
   const found = matching(people, q, m => m.name)
   const { items, more } = page(found, shown)
   return (
-    <div data-p2p-member-picker className="flex flex-col gap-1">
+    <Stack data-p2p-member-picker gap="2xs">
       <input
         value={q}
         onChange={e => {
@@ -599,7 +606,9 @@ function MemberPickerBody({
           </li>
         ))}
         {found.length === 0 && (
-          <li className="px-2 py-1.5 text-sm text-on-surface-variant">No matching members.</li>
+          <Surface as="li" pad="sm" tone="plain" radius="none">
+            <span className="text-sm text-on-surface-variant">No matching members.</span>
+          </Surface>
         )}
       </ul>
       {more && (
@@ -610,7 +619,7 @@ function MemberPickerBody({
           Show more
         </button>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -716,7 +725,7 @@ function ChannelAccessBody({
   }
   const synced = cat ? v.channels.filter(c => c.cat === cat.id && c.sync).length : 0
   return (
-    <div data-p2p-channel-access className="space-y-2">
+    <Stack data-p2p-channel-access gap="sm">
       <RuleEditor
         src={src}
         label={label}
@@ -730,7 +739,7 @@ function ChannelAccessBody({
         ]}
         memberPicker={pick =>
           people.length > 0 && (
-            <div className="flex w-full flex-col gap-2">
+            <Stack gap="sm" place="w-full">
               <button
                 type="button"
                 onClick={() => setPicking(p => !p)}
@@ -748,7 +757,7 @@ function ChannelAccessBody({
                   }}
                 />
               )}
-            </div>
+            </Stack>
           )
         }
         empty={
@@ -777,7 +786,7 @@ function ChannelAccessBody({
               </div>
             )}
             <RestrictionToggles nobody={NOBODY} value={channel} onToggle={toggle} send={!voice} />
-            <p className="pt-1 text-xs font-medium text-on-surface-variant">
+            <p className="text-xs font-medium text-on-surface-variant">
               {allowListTitle(restricted)}
             </p>
           </>
@@ -795,7 +804,7 @@ function ChannelAccessBody({
           onApply={n => void p2pServer.editChannel(v.id, id, { slow: n })}
         />
       )}
-    </div>
+    </Stack>
   )
 }
 

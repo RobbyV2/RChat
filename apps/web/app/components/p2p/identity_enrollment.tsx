@@ -1,6 +1,7 @@
 'use client'
 
 import { Button } from '../controls'
+import { Surface } from '../layout'
 import { useEffect, useRef, useState } from 'react'
 import { AccountProvider, useAccount, useLiveSessions } from '../../lib/client/react'
 import { client } from '../../lib/client/client'
@@ -105,11 +106,11 @@ export function IdentityEnrollment({
     return s.me && !s.guest && s.settings.p2p
   })
   return (
-    <div className="flex flex-col items-start gap-3 p-3 text-sm">
+    <Surface pad="md" gap="md" tone="plain" align="start">
       {!trusted ? (
         <>
-          <h3 className="font-semibold">Keep your P2P identity in an app you trust</h3>
-          <p>
+          <h3 className="text-sm font-semibold">Keep your P2P identity in an app you trust</h3>
+          <p className="text-sm">
             {p2pTrustText(
               shellInfo() || typeof window === 'undefined' ? null : window.location.host
             )}
@@ -120,7 +121,7 @@ export function IdentityEnrollment({
         </>
       ) : !named ? (
         <>
-          <label>
+          <label className="text-sm">
             Attach to account{' '}
             <select
               className={fieldCls + ' streamer'}
@@ -134,7 +135,7 @@ export function IdentityEnrollment({
               ))}
             </select>
           </label>
-          <label>
+          <label className="text-sm">
             Identity name{' '}
             <input
               className={fieldCls + ' streamer'}
@@ -174,11 +175,11 @@ export function IdentityEnrollment({
         <>
           {!imported && (
             <>
-              <p>
+              <p className="text-sm">
                 This identity will be stored on this device. To move it later, export an encrypted
                 copy from Sync config.
               </p>
-              <p>
+              <p className="text-sm">
                 On iPhone and iPad, Safari may delete this data after 7 days without a visit.
                 Install the app to keep it longer.
               </p>
@@ -200,10 +201,14 @@ export function IdentityEnrollment({
           </Button>
         </>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p role="alert" className="text-sm">
+          {error}
+        </p>
+      )}
       <Button disabled={busy} onClick={cancel}>
         Cancel
       </Button>
-    </div>
+    </Surface>
   )
 }

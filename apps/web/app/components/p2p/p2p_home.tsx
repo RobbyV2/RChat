@@ -84,6 +84,8 @@ import { peerContact } from '../../lib/actions/p2p_contact'
 import { LabelText, useInstanceLabel } from '../instance_badge'
 import { useDrawerClose } from '../drawer'
 import { DmListSkeleton } from '../skeletons'
+import { Row, Stack, Surface } from '../layout'
+import { NoteBar } from './p2p_chat'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
@@ -163,12 +165,14 @@ function ElsewhereNoticeBody() {
   const { p2p } = identity
 
   return (
-    <div role="status" className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
-      <p>P2P is open in another tab.</p>
-      <button data-p2p-use-here onClick={() => p2p.useHere()} className={textBtn}>
-        Use here
-      </button>
-    </div>
+    <Surface role="status" pad="md" tone="plain" radius="none">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-sm">P2P is open in another tab.</p>
+        <button data-p2p-use-here onClick={() => p2p.useHere()} className={textBtn}>
+          Use here
+        </button>
+      </div>
+    </Surface>
   )
 }
 
@@ -198,11 +202,7 @@ function IdentityAlertBody() {
   const ask = useStore(s => s.askConfirm)
   if (alertAt === null) return null
   return (
-    <div
-      role="alert"
-      data-p2p-alert
-      className="flex flex-col items-start gap-3 rounded-2xl bg-error-container p-4 text-on-error-container"
-    >
+    <Surface role="alert" data-p2p-alert pad="lg" gap="md" tone="error" align="start">
       <p className="text-sm">{ALERT_TEXT}</p>
       <div className="flex flex-wrap gap-2">
         <button onClick={() => confirmResetFor(identity)(ask)} className={dangerBtn}>
@@ -212,16 +212,13 @@ function IdentityAlertBody() {
           Dismiss
         </button>
       </div>
-    </div>
+    </Surface>
   )
 }
 
 // A P2P export was made here: sending waits, so nothing written here misses the new device.
-function MovingBannerBody({
-  className = 'flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4',
-}: {
-  className?: string
-}) {
+// `bar`: in the composer's place.
+function MovingBannerBody({ bar = false }: { bar?: boolean }) {
   const identity = useP2pApp()!
   const { p2p } = identity
 
@@ -229,8 +226,8 @@ function MovingBannerBody({
   const moved = useP2p(s => s.status === 'moved')
   const ask = useStore(s => s.askConfirm)
   if (movingAt === null || moved) return null
-  return (
-    <div role="status" data-p2p-moving className={className}>
+  const body = (
+    <>
       <p className="text-sm text-on-surface">{MOVING_TEXT}</p>
       <button
         onClick={() =>
@@ -245,7 +242,18 @@ function MovingBannerBody({
       >
         Resume
       </button>
-    </div>
+    </>
+  )
+  if (bar)
+    return (
+      <NoteBar role="status" data-p2p-moving>
+        {body}
+      </NoteBar>
+    )
+  return (
+    <Surface role="status" data-p2p-moving pad="lg" gap="md" align="start">
+      {body}
+    </Surface>
   )
 }
 
@@ -255,29 +263,21 @@ function UnreachableNoticeBody() {
   const { p2p } = identity
 
   return (
-    <div
-      role="status"
-      data-p2p-unreachable
-      className="flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4"
-    >
+    <Surface role="status" data-p2p-unreachable pad="lg" gap="md" align="start">
       <p className="text-sm text-on-surface">{UNREACHABLE_TEXT}</p>
       <button onClick={() => void p2p.retry()} className={`${textBtn} cursor-pointer`}>
         Retry
       </button>
-    </div>
+    </Surface>
   )
 }
 
 // PeerJS found no WebRTC here: no retry helps, so there is no Retry.
 export function UnsupportedNotice() {
   return (
-    <div
-      role="status"
-      data-p2p-unsupported
-      className="rounded-2xl bg-surface-container-high p-4 text-sm break-words text-on-surface"
-    >
-      {UNSUPPORTED_TEXT}
-    </div>
+    <Surface role="status" data-p2p-unsupported pad="lg">
+      <p className="text-sm break-words text-on-surface">{UNSUPPORTED_TEXT}</p>
+    </Surface>
   )
 }
 
@@ -286,16 +286,12 @@ function AddressNoticeBody() {
   const { p2p } = identity
 
   return (
-    <div
-      role="status"
-      data-p2p-address-hidden
-      className="flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4"
-    >
+    <Surface role="status" data-p2p-address-hidden pad="lg" gap="md" align="start">
       <p className="text-sm text-on-surface">{ADDRESS_HIDDEN}</p>
       <button onClick={p2p.dismissAddress} className={`${textBtn} cursor-pointer`}>
         Dismiss
       </button>
-    </div>
+    </Surface>
   )
 }
 
@@ -307,11 +303,7 @@ function MovedBannerBody() {
   const movedAt = useP2p(s => s.movedAt)
   const ask = useStore(s => s.askConfirm)
   return (
-    <div
-      role="status"
-      data-p2p-moved
-      className="flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4"
-    >
+    <Surface role="status" data-p2p-moved pad="lg" gap="md" align="start">
       <p className="text-sm text-on-surface">{movedText(movedAt)}</p>
       <button
         onClick={() =>
@@ -326,7 +318,7 @@ function MovedBannerBody() {
       >
         Remove P2P data from this browser
       </button>
-    </div>
+    </Surface>
   )
 }
 
@@ -355,9 +347,9 @@ function EnableDialogBody() {
       className="fixed inset-0 m-auto max-h-[85dvh] w-[min(24rem,calc(100%-2rem))] max-w-full overflow-y-auto rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
       {...backdrop}
     >
-      <div className="p-3">
+      <Surface pad="md" tone="plain" radius="none">
         <IdentityEnrollment account={account} cancel={p2p.closeDialog} />
-      </div>
+      </Surface>
     </dialog>
   )
 }
@@ -367,12 +359,19 @@ function DroppedNote({ n }: { n: number }) {
   const { p2p } = identity
 
   return (
-    <p className="flex items-center gap-2 px-3 pb-2 text-xs text-on-surface-variant">
-      {n === 1 ? '1 request was' : `${n} requests were`} dropped to limit spam.
-      <button onClick={() => void p2p.clearDropped()} className="underline">
-        Dismiss
-      </button>
-    </p>
+    <Surface pad="md" inset="bar" tone="plain" radius="none">
+      <Row as="p" gap="sm">
+        <span className="text-xs text-on-surface-variant">
+          {n === 1 ? '1 request was' : `${n} requests were`} dropped to limit spam.
+        </span>
+        <button
+          onClick={() => void p2p.clearDropped()}
+          className="text-xs text-on-surface-variant underline"
+        >
+          Dismiss
+        </button>
+      </Row>
+    </Surface>
   )
 }
 
@@ -450,7 +449,7 @@ function ContactRowBody({
           <PresenceDot presence={presence} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5">
+          <Row as="span" gap="xs">
             <span
               className={`streamer ${chip ? 'max-w-[60%] shrink-0' : ''} truncate text-sm ${unread || pings ? 'font-bold text-on-surface' : 'font-medium'}`}
             >
@@ -460,7 +459,7 @@ function ContactRowBody({
             <ContactShield kind={shield} size={14} />
             <AccountChip ik={c.ik} />
             {scope && <MutedIcon scope={scope} size={12} className="text-on-surface-variant" />}
-          </span>
+          </Row>
           <span className="block truncate text-xs text-on-surface-variant">
             {shield === 'warning'
               ? 'New key: verify before you trust it'
@@ -493,11 +492,11 @@ function RequestRow({ c }: { c: Contact }) {
   const shield = shieldOf(c)
   const chip = useHasChip(c.ik)
   return (
-    <li data-request={c.ik} className="rounded-xl bg-surface-container px-3 py-2">
-      <div className="flex items-center gap-3">
+    <Surface as="li" data-request={c.ik} pad="md" gap="2xs" tone="base" radius="lg">
+      <Row gap="md">
         <KeyAvatar ik={c.ik} />
         <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1.5">
+          <Row as="p" gap="xs">
             <span
               className={`streamer truncate text-sm font-medium ${chip ? 'max-w-[60%] shrink-0' : ''}`}
             >
@@ -505,7 +504,7 @@ function RequestRow({ c }: { c: Contact }) {
             </span>
             <ContactShield kind={shield} size={14} />
             <AccountChip ik={c.ik} />
-          </p>
+          </Row>
           <p className="streamer truncate font-mono text-[11px] text-on-surface-variant">
             {fingerprint(c.ik)}
           </p>
@@ -534,18 +533,16 @@ function RequestRow({ c }: { c: Contact }) {
         >
           <Ban size={18} />
         </button>
-      </div>
+      </Row>
       {shield === 'warning' && (
-        <p className="mt-1 text-xs text-error">
-          Uses the same name or account as one of your contacts.
-        </p>
+        <p className="text-xs text-error">Uses the same name or account as one of your contacts.</p>
       )}
       {c.intros.map((t, i) => (
-        <p key={i} className="streamer mt-1 text-sm break-words whitespace-pre-wrap">
+        <p key={i} className="streamer text-sm break-words whitespace-pre-wrap">
           <Masked text={t} />
         </p>
       ))}
-    </li>
+    </Surface>
   )
 }
 
@@ -555,7 +552,7 @@ function Off() {
 
   const error = useP2p(s => s.error)
   return (
-    <div className="mx-auto flex max-w-md flex-col items-start gap-4 px-6 py-10">
+    <Surface pad="2xl" gap="lg" tone="plain" radius="none" align="start" place="mx-auto max-w-md">
       <Waypoints size={40} className="text-tertiary" />
       <h2 className="text-xl font-medium">Peer-to-peer contacts</h2>
       <p className="text-sm text-on-surface-variant">{ENABLE_COPY}</p>
@@ -567,7 +564,7 @@ function Off() {
       <button onClick={() => p2p.openDialog({ kind: 'enable' })} className={filledBtn}>
         Turn on P2P
       </button>
-    </div>
+    </Surface>
   )
 }
 
@@ -592,13 +589,11 @@ function DmList() {
         <P2pBadge />
       </header>
       {loading && !list.length ? (
-        <DmListSkeleton
-          seed={identity.localId}
-          label="Loading contacts"
-          className="min-h-0 flex-1 overflow-hidden p-2"
-        />
+        <Surface pad="sm" tone="plain" radius="none" place="min-h-0 flex-1 overflow-hidden">
+          <DmListSkeleton seed={identity.localId} label="Loading contacts" className="flex-1" />
+        </Surface>
       ) : (
-        <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">
+        <Surface as="ul" pad="sm" tone="plain" radius="none" place="min-h-0 flex-1 overflow-y-auto">
           {list.map(c => (
             <ContactRow
               key={c.ik}
@@ -607,7 +602,7 @@ function DmList() {
               active={c.ik === open}
             />
           ))}
-        </ul>
+        </Surface>
       )}
       <VoiceDock />
     </aside>
@@ -721,24 +716,22 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
         {!enabled ? (
           <Off />
         ) : elsewhere && !reader ? (
-          <div className="mx-auto flex max-w-2xl flex-col p-4">
+          <Surface pad="lg" tone="plain" radius="none" place="mx-auto max-w-2xl">
             <ElsewhereNotice />
-          </div>
+          </Surface>
         ) : (
-          <div className="mx-auto flex max-w-2xl flex-col gap-6 p-4">
+          <Surface pad="lg" gap="xl" tone="plain" radius="none" place="mx-auto max-w-2xl">
             {elsewhere && <ElsewhereNotice />}
             {!elsewhere && <IdentityAlert />}
             {status === 'moved' && !elsewhere && <MovedBanner />}
             {status === 'unreachable' && !elsewhere && <UnreachableNotice />}
             {status === 'unsupported' && !elsewhere && <UnsupportedNotice />}
             {failure !== null && (
-              <p
-                role="alert"
-                data-p2p-not-started
-                className="rounded-2xl bg-error-container p-4 text-sm break-words text-on-error-container"
-              >
-                <LabelText text={failure} />
-              </p>
+              <Surface as="p" role="alert" data-p2p-not-started pad="lg" tone="error">
+                <span className="text-sm break-words">
+                  <LabelText text={failure} />
+                </span>
+              </Surface>
             )}
             {addressHidden && status === 'online' && !elsewhere && <AddressNotice />}
             {!elsewhere && <MovingBanner />}
@@ -747,27 +740,29 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             <TransferAsks />
             <ServerInviteRows />
             {pending.length > 0 && (
-              <section aria-label="Message requests">
-                <p className="px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-                  Message requests ({pending.length})
-                </p>
-                <ul className="flex flex-col gap-2">
+              <Stack as="section" aria-label="Message requests" gap="none">
+                <Surface pad="md" inset="bar" tone="plain" radius="none">
+                  <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                    Message requests ({pending.length})
+                  </p>
+                </Surface>
+                <Stack as="ul" gap="sm">
                   {pending.map(c => (
                     <RequestRow key={c.ik} c={c} />
                   ))}
-                </ul>
-              </section>
+                </Stack>
+              </Stack>
             )}
             {list.length === 0 && pending.length === 0 && loading ? (
               <DmListSkeleton seed={identity.localId} label="Loading contacts" />
             ) : list.length === 0 && pending.length === 0 ? (
-              <div className="flex flex-col items-start gap-3 px-3 py-6">
+              <Surface pad="xl" gap="md" tone="plain" radius="none" align="start">
                 <p className="font-medium">No P2P contacts yet</p>
                 <p className="text-sm text-on-surface-variant">
                   Swap contact codes with someone: scan theirs, paste it, or show them yours.
                 </p>
                 {adds && (
-                  <div className="flex gap-2">
+                  <Row gap="sm" align="stretch">
                     <button onClick={() => p2p.openDialog({ kind: 'add' })} className={filledBtn}>
                       Add contact
                     </button>
@@ -777,38 +772,40 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
                     >
                       Show my code
                     </button>
-                  </div>
+                  </Row>
                 )}
-              </div>
+              </Surface>
             ) : (
               list.length > 0 && (
-                <section aria-label="Contacts">
-                  <p className="px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-                    Contacts ({list.length})
-                  </p>
-                  <ul className="flex flex-col">
+                <Stack as="section" aria-label="Contacts" gap="none">
+                  <Surface pad="md" inset="bar" tone="plain" radius="none">
+                    <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                      Contacts ({list.length})
+                    </p>
+                  </Surface>
+                  <Stack as="ul" gap="none">
                     {list.map(c => (
                       <ContactRow key={c.ik} c={c} presence={presence[c.ik] ?? 'offline'} />
                     ))}
-                  </ul>
-                </section>
+                  </Stack>
+                </Stack>
               )
             )}
             {blockedList.length > 0 && (
-              <section>
+              <Stack as="section" gap="sm" align="start">
                 <button onClick={() => setShowBlocked(v => !v)} className={textBtn}>
                   {showBlocked ? 'Hide blocked' : `Blocked (${blockedList.length})`}
                 </button>
                 {showBlocked && (
-                  <ul className="mt-2 flex flex-col">
+                  <Stack as="ul" gap="none" place="w-full">
                     {blockedList.map(c => (
                       <ContactRow key={c.ik} c={c} presence="offline" />
                     ))}
-                  </ul>
+                  </Stack>
                 )}
-              </section>
+              </Stack>
             )}
-          </div>
+          </Surface>
         )}
       </div>
     </main>
@@ -829,8 +826,8 @@ function ContactDialog({ ik }: { ik: string }) {
   return (
     <Dialog title="P2P contact" onClose={p2p.closeDialog} full>
       <PeerActorTag seen />
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-3">
+      <Stack gap="lg">
+        <Row gap="md">
           <span className="relative">
             <KeyAvatar ik={c.ik} size={48} />
             <PresenceDot presence={presence} />
@@ -852,7 +849,7 @@ function ContactDialog({ ik }: { ik: string }) {
                   : presenceText(presence)}
             </p>
           </div>
-        </div>
+        </Row>
         <button
           onClick={() => p2p.openDialog({ kind: 'verify', ik })}
           className="flex items-center gap-2 rounded-xl bg-surface-container px-3 py-2 text-left text-sm hover:bg-surface-container-highest"
@@ -876,7 +873,7 @@ function ContactDialog({ ik }: { ik: string }) {
           </p>
         )}
         <p className="streamer font-mono text-xs text-on-surface-variant">{fingerprint(c.ik)}</p>
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {menuItems(
             ctxFor(
               acct.store.getState(),
@@ -901,7 +898,7 @@ function ContactDialog({ ik }: { ik: string }) {
               </button>
             ))}
         </div>
-      </div>
+      </Stack>
     </Dialog>
   )
 }
@@ -913,7 +910,7 @@ function BadgeRow({ ik }: { ik: string }) {
   if (!slot || !state) return null
   const ok = slot.ok
   return (
-    <div data-badge-row className="flex flex-col gap-1 rounded-xl bg-surface-container px-3 py-2">
+    <Surface data-badge-row pad="md" gap="2xs" tone="base" radius="lg">
       <span className="flex min-w-0">
         <AccountChip ik={ik} />
       </span>
@@ -924,7 +921,7 @@ function BadgeRow({ ik }: { ik: string }) {
             ? `It expired on ${badgeDate(ok.exp * 1000)}. They may have turned their badge off.`
             : "The instance couldn't be asked about it yet. Trying again later."}
       </p>
-    </div>
+    </Surface>
   )
 }
 
@@ -941,29 +938,33 @@ function RenameDialog({ ik }: { ik: string }) {
   }
   return (
     <Dialog title="Rename contact" onClose={p2p.closeDialog} compact>
-      <input
-        autoFocus
-        value={name}
-        maxLength={p2p.limits().contacts.petnameMax}
-        onChange={e => setName(e.target.value)}
-        onKeyDown={e => {
-          if (enterKey(e)) save()
-        }}
-        placeholder={c.name || 'Name'}
-        aria-label="Name for this contact"
-        className={`${fieldCls} streamer w-full`}
-      />
-      <p className="pt-1.5 text-xs text-on-surface-variant">
-        Only you see this name. Leave empty to use theirs.
-      </p>
-      <div className="mt-6 flex justify-end gap-2">
-        <button onClick={p2p.closeDialog} className={textBtn}>
-          Cancel
-        </button>
-        <button onClick={save} className={filledBtn}>
-          Save
-        </button>
-      </div>
+      <Stack gap="xl">
+        <Stack gap="xs">
+          <input
+            autoFocus
+            value={name}
+            maxLength={p2p.limits().contacts.petnameMax}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => {
+              if (enterKey(e)) save()
+            }}
+            placeholder={c.name || 'Name'}
+            aria-label="Name for this contact"
+            className={`${fieldCls} streamer w-full`}
+          />
+          <p className="text-xs text-on-surface-variant">
+            Only you see this name. Leave empty to use theirs.
+          </p>
+        </Stack>
+        <Row gap="sm" justify="end">
+          <button onClick={p2p.closeDialog} className={textBtn}>
+            Cancel
+          </button>
+          <button onClick={save} className={filledBtn}>
+            Save
+          </button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

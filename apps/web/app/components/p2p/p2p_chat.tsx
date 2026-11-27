@@ -109,6 +109,7 @@ import { FormatToolbar, useFormatting } from '../format_toolbar'
 import { P2pCallRow } from './p2p_call'
 import { RoleIcon } from '../role_icon'
 import type { Look } from '../../lib/role_looks'
+import { Row, Stack, Surface } from '../layout'
 
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
 // channels: what differs (the header, who may do what, names, mentions) comes in as props.
@@ -185,8 +186,26 @@ export const asMessage = (
   pinned_at: m.pinned !== null ? seconds(m.pinned) : null,
 })
 
-export const noteBarCls =
-  'mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 flex-wrap items-center gap-2 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3'
+// A note in the composer's place: why nothing can be sent here, or what is in the way. It keeps
+// clear of the bottom safe area as the composer does.
+export function NoteBar({
+  children,
+  ...rest
+}: {
+  children: ReactNode
+  role?: 'status'
+  [data: `data-${string}`]: string | boolean | undefined
+}) {
+  return (
+    <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
+      <Surface {...rest} pad="lg" tone="base">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-on-surface-variant">
+          {children}
+        </div>
+      </Surface>
+    </div>
+  )
+}
 
 // The note at the top of a conversation. Once closed it stays closed for the account, in every
 // tab.
@@ -196,21 +215,27 @@ function P2pIntroBody({ id, children }: { id: string; children: ReactNode }) {
   const open = useHome(s => noticeOpen(s.owner, account, s.prefs, id))
   if (!open) return null
   return (
-    <div
-      data-p2p-intro
-      className="mx-4 mt-3 flex items-start gap-3 rounded-2xl border border-dashed border-tertiary bg-tertiary-container/40 px-4 py-3 text-sm text-on-surface"
-    >
-      <P2pBadge />
-      <p className="min-w-0 flex-1">{children}</p>
-      <button
-        title="Dismiss"
-        aria-label="Dismiss"
-        onClick={() => acct.home.hideTip(id)}
-        className="shrink-0 rounded-full p-1 hover:bg-surface-container-highest"
+    <Surface pad="lg" tone="plain" radius="none">
+      <div
+        data-p2p-intro
+        className="rounded-2xl border border-dashed border-tertiary bg-tertiary-container/40 text-sm text-on-surface"
       >
-        <X size={16} />
-      </button>
-    </div>
+        <Surface pad="lg" tone="plain" radius="none">
+          <Row gap="md" align="start">
+            <P2pBadge />
+            <p className="min-w-0 flex-1">{children}</p>
+            <button
+              title="Dismiss"
+              aria-label="Dismiss"
+              onClick={() => acct.home.hideTip(id)}
+              className="shrink-0 rounded-full p-1 hover:bg-surface-container-highest"
+            >
+              <X size={16} />
+            </button>
+          </Row>
+        </Surface>
+      </div>
+    </Surface>
   )
 }
 
@@ -313,28 +338,28 @@ export const P2pRow = memo(function P2pRow({
     })
   const status = mine ? (
     p.failed ? (
-      <span data-failed className="flex shrink-0 items-center gap-1.5 text-xs text-error">
-        <CircleAlert size={12} aria-hidden />
-        Not sent
+      <Row as="span" data-failed gap="xs" place="shrink-0">
+        <CircleAlert size={12} aria-hidden className="text-error" />
+        <span className="text-xs text-error">Not sent</span>
         {canAct && (
           <>
             {!timedOut && (
               <button
                 onClick={() => void p2pDm.retry(p.id)}
-                className="font-medium hover:underline"
+                className="text-xs font-medium text-error hover:underline"
               >
                 Retry
               </button>
             )}
             <button
               onClick={e => peerChat.forIdentity(identity).confirmDelete(p.id, e.shiftKey, acct)}
-              className="font-medium hover:underline"
+              className="text-xs font-medium text-error hover:underline"
             >
               Delete
             </button>
           </>
         )}
-      </span>
+      </Row>
     ) : p.pending ? (
       <span
         data-pending
@@ -401,7 +426,7 @@ export const P2pRow = memo(function P2pRow({
       >
         {m.reply_to && <ReplyPreview quote={m.reply_to} avatar={36} local onJump={onJump} />}
         {first ? (
-          <div className="flex gap-3">
+          <Row gap="md" align="stretch">
             <div className="shrink-0 pt-0.5">
               <KeyAvatar
                 ik={p.sender}
@@ -411,7 +436,7 @@ export const P2pRow = memo(function P2pRow({
               />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+              <div className="flex flex-wrap items-baseline gap-2">
                 <span className="streamer min-w-0 truncate text-sm font-medium" style={{ color }}>
                   {name}
                 </span>
@@ -433,7 +458,7 @@ export const P2pRow = memo(function P2pRow({
               </div>
               {body}
             </div>
-          </div>
+          </Row>
         ) : (
           <GroupedRow
             name={name}
@@ -683,12 +708,12 @@ function P2pComposerBody({
   if (disabled) return <>{disabled}</>
   if (unstarted && !held.threads)
     return (
-      <div data-no-send className={noteBarCls}>
-        <span className="flex min-w-0 items-center gap-2">
+      <NoteBar data-no-send>
+        <Row as="span" gap="sm">
           <Lock size={16} className="shrink-0" />
           <span>{NO_THREADS_TEXT}</span>
-        </span>
-      </div>
+        </Row>
+      </NoteBar>
     )
 
   const count = charCount(text)
@@ -735,167 +760,171 @@ function P2pComposerBody({
 
   return (
     <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
-      <PeerCodeButton text={text} peer />
-      {pickerOpen && (
-        <EmojiPicker
-          anchor={emojiRef.current}
-          onPick={e => {
-            const cur = getText()
-            const start = Math.min(sel.current.start, cur.length)
-            const end = Math.min(Math.max(sel.current.end, start), cur.length)
-            sel.current = { start: start + e.length, end: start + e.length }
-            setText(spliceText(cur, start, end, e))
-          }}
-          onClose={() => {
-            setPickerOpen(false)
-            if (!sheet)
-              requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }))
-          }}
-        />
-      )}
-      {(!textOnly || files > 0) && <PendingFiles room={key} />}
-      {slowLeft > 0 && (
-        <p
-          role="status"
-          data-p2p-slow-left
-          className="mb-1 flex items-center justify-end gap-1 px-3 text-xs text-on-surface-variant tabular-nums"
-        >
-          <Clock size={12} className="shrink-0" />
-          Slow mode: {clock(slowLeft)}
-        </p>
-      )}
-      {bar}
-      <div
-        className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
-      >
-        {assist.popups}
-        <FormatToolbar open={formatting.selected} onFormat={formatting.apply} />
-        {!textOnly && (
-          <>
-            <button
-              title="Attach files"
-              aria-label="Attach files"
-              onClick={() => fileRef.current?.click()}
-              className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+      <Stack gap="sm" align="start">
+        <PeerCodeButton text={text} peer />
+        {pickerOpen && (
+          <EmojiPicker
+            anchor={emojiRef.current}
+            onPick={e => {
+              const cur = getText()
+              const start = Math.min(sel.current.start, cur.length)
+              const end = Math.min(Math.max(sel.current.end, start), cur.length)
+              sel.current = { start: start + e.length, end: start + e.length }
+              setText(spliceText(cur, start, end, e))
+            }}
+            onClose={() => {
+              setPickerOpen(false)
+              if (!sheet)
+                requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }))
+            }}
+          />
+        )}
+        {(!textOnly || files > 0) && <PendingFiles room={key} />}
+        <Stack gap="2xs" place="w-full">
+          {slowLeft > 0 && (
+            <Row as="p" role="status" data-p2p-slow-left gap="2xs" justify="end">
+              <Clock size={12} className="shrink-0 text-on-surface-variant" />
+              <span className="text-xs text-on-surface-variant tabular-nums">
+                Slow mode: {clock(slowLeft)}
+              </span>
+            </Row>
+          )}
+          <Stack gap="none">
+            {bar}
+            <div
+              className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
             >
-              <Plus size={20} />
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              data-p2p-file-input
-              className="hidden"
-              onChange={e => {
-                p2pFiles.add(key, Array.from(e.target.files ?? []))
-                e.target.value = ''
-              }}
-            />
-          </>
-        )}
-        <textarea
-          ref={inputRef}
-          rows={1}
-          data-p2p-composer
-          {...assist.textarea}
-          onFocus={() => setFocused(true)}
-          onBlur={() => {
-            assist.textarea.onBlur()
-            setFocused(false)
-          }}
-          onKeyDown={e => {
-            if (assist.popupKey(e)) return
-            if (formatting.onKeyDown(e)) return
-            if (
-              e.key === 'ArrowUp' &&
-              !text &&
-              !e.shiftKey &&
-              !e.altKey &&
-              !e.metaKey &&
-              !e.ctrlKey &&
-              !composing(e) &&
-              p2pDm.editLast(key)
-            ) {
-              e.preventDefault()
-              return
-            }
-            if (e.key === 'Escape' && !e.nativeEvent.isComposing && replyTo) {
-              e.preventDefault()
-              p2pDm.cancelReply()
-              return
-            }
-            if (sendKey(e)) {
-              e.preventDefault()
-              send()
-            }
-          }}
-          onPaste={e => {
-            if (textOnly) return
-            const pasted = Array.from(e.clipboardData.items)
-              .filter(i => i.kind === 'file')
-              .map(i => i.getAsFile())
-              .filter((f): f is File => f !== null)
-            if (!pasted.length) return
-            e.preventDefault()
-            p2pFiles.add(
-              key,
-              pasted.map(f => (f.name && f.name !== 'image.png' ? f : namePasted(f)))
-            )
-          }}
-          placeholder={streamer ? 'Send a P2P message' : placeholder + suffix}
-          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
-        />
-        {(count > counterFrom(BODY_MAX) || tooLong) && (
-          <span
-            data-too-long={tooLong ? '' : undefined}
-            title={
-              count > BODY_MAX
-                ? `Messages can be up to ${BODY_MAX} characters`
-                : tooLong
-                  ? 'This message takes too much space. Use fewer special characters.'
-                  : `Messages can be up to ${BODY_MAX} characters`
-            }
-            className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
-          >
-            {count > BODY_MAX || !tooLong ? BODY_MAX - count : 'Too long'}
-          </span>
-        )}
-        <button
-          ref={emojiRef}
-          type="button"
-          title="Emoji"
-          aria-label="Emoji"
-          aria-expanded={pickerOpen}
-          onPointerEnter={() => void loadEmojiData().catch(() => {})}
-          onClick={() => {
-            const el = inputRef.current
-            if (el) sel.current = { start: el.selectionStart, end: el.selectionEnd }
-            setPickerOpen(o => !o)
-          }}
-          className={`shrink-0 rounded-full p-1.5 ${
-            pickerOpen
-              ? 'bg-surface-container-highest text-primary'
-              : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
-          }`}
-        >
-          <Smile size={20} />
-        </button>
-        <button
-          title={
-            tooLong
-              ? 'Message is too long'
-              : slowLeft > 0
-                ? `Slow mode: ${clock(slowLeft)}`
-                : 'Send'
-          }
-          aria-label="Send"
-          onClick={send}
-          disabled={tooLong || slowLeft > 0 || (noFiles && files > 0)}
-          className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
-        >
-          <SendHorizontal size={16} />
-        </button>
-      </div>
+              {assist.popups}
+              <FormatToolbar open={formatting.selected} onFormat={formatting.apply} />
+              {!textOnly && (
+                <>
+                  <button
+                    title="Attach files"
+                    aria-label="Attach files"
+                    onClick={() => fileRef.current?.click()}
+                    className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+                  >
+                    <Plus size={20} />
+                  </button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    multiple
+                    data-p2p-file-input
+                    className="hidden"
+                    onChange={e => {
+                      p2pFiles.add(key, Array.from(e.target.files ?? []))
+                      e.target.value = ''
+                    }}
+                  />
+                </>
+              )}
+              <textarea
+                ref={inputRef}
+                rows={1}
+                data-p2p-composer
+                {...assist.textarea}
+                onFocus={() => setFocused(true)}
+                onBlur={() => {
+                  assist.textarea.onBlur()
+                  setFocused(false)
+                }}
+                onKeyDown={e => {
+                  if (assist.popupKey(e)) return
+                  if (formatting.onKeyDown(e)) return
+                  if (
+                    e.key === 'ArrowUp' &&
+                    !text &&
+                    !e.shiftKey &&
+                    !e.altKey &&
+                    !e.metaKey &&
+                    !e.ctrlKey &&
+                    !composing(e) &&
+                    p2pDm.editLast(key)
+                  ) {
+                    e.preventDefault()
+                    return
+                  }
+                  if (e.key === 'Escape' && !e.nativeEvent.isComposing && replyTo) {
+                    e.preventDefault()
+                    p2pDm.cancelReply()
+                    return
+                  }
+                  if (sendKey(e)) {
+                    e.preventDefault()
+                    send()
+                  }
+                }}
+                onPaste={e => {
+                  if (textOnly) return
+                  const pasted = Array.from(e.clipboardData.items)
+                    .filter(i => i.kind === 'file')
+                    .map(i => i.getAsFile())
+                    .filter((f): f is File => f !== null)
+                  if (!pasted.length) return
+                  e.preventDefault()
+                  p2pFiles.add(
+                    key,
+                    pasted.map(f => (f.name && f.name !== 'image.png' ? f : namePasted(f)))
+                  )
+                }}
+                placeholder={streamer ? 'Send a P2P message' : placeholder + suffix}
+                className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
+              />
+              {(count > counterFrom(BODY_MAX) || tooLong) && (
+                <span
+                  data-too-long={tooLong ? '' : undefined}
+                  title={
+                    count > BODY_MAX
+                      ? `Messages can be up to ${BODY_MAX} characters`
+                      : tooLong
+                        ? 'This message takes too much space. Use fewer special characters.'
+                        : `Messages can be up to ${BODY_MAX} characters`
+                  }
+                  className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
+                >
+                  {count > BODY_MAX || !tooLong ? BODY_MAX - count : 'Too long'}
+                </span>
+              )}
+              <button
+                ref={emojiRef}
+                type="button"
+                title="Emoji"
+                aria-label="Emoji"
+                aria-expanded={pickerOpen}
+                onPointerEnter={() => void loadEmojiData().catch(() => {})}
+                onClick={() => {
+                  const el = inputRef.current
+                  if (el) sel.current = { start: el.selectionStart, end: el.selectionEnd }
+                  setPickerOpen(o => !o)
+                }}
+                className={`shrink-0 rounded-full p-1.5 ${
+                  pickerOpen
+                    ? 'bg-surface-container-highest text-primary'
+                    : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
+                }`}
+              >
+                <Smile size={20} />
+              </button>
+              <button
+                title={
+                  tooLong
+                    ? 'Message is too long'
+                    : slowLeft > 0
+                      ? `Slow mode: ${clock(slowLeft)}`
+                      : 'Send'
+                }
+                aria-label="Send"
+                onClick={send}
+                disabled={tooLong || slowLeft > 0 || (noFiles && files > 0)}
+                className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
+              >
+                <SendHorizontal size={16} />
+              </button>
+            </div>
+          </Stack>
+        </Stack>
+      </Stack>
     </div>
   )
 }
@@ -1388,22 +1417,23 @@ function IdentityChatBody(props: ChatBodyProps) {
   )
 
   const gapNote = props.gap && !chat.more && (
-    <div
-      data-p2p-gap
-      className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 text-xs text-on-surface-variant"
-    >
-      <History size={14} />
-      {props.online ? (
-        <>
-          Older messages are not on this device yet.
-          <button onClick={p2pDm.loadOlderHistory} disabled={pulling} className={textBtn}>
-            {pulling ? 'Loading…' : 'Load older'}
-          </button>
-        </>
-      ) : (
-        props.gapOffline
-      )}
-    </div>
+    <Surface data-p2p-gap pad="lg" tone="plain" radius="none">
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <History size={14} className="text-on-surface-variant" />
+        {props.online ? (
+          <>
+            <span className="text-xs text-on-surface-variant">
+              Older messages are not on this device yet.
+            </span>
+            <button onClick={p2pDm.loadOlderHistory} disabled={pulling} className={textBtn}>
+              {pulling ? 'Loading…' : 'Load older'}
+            </button>
+          </>
+        ) : (
+          <span className="text-xs text-on-surface-variant">{props.gapOffline}</span>
+        )}
+      </div>
+    </Surface>
   )
 
   return (
@@ -1452,8 +1482,12 @@ function IdentityChatBody(props: ChatBodyProps) {
           >
             {props.intro}
             {!chat.loading && messages.length === 0 && (
-              <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant opacity-70">
-                {props.empty}
+              <div className="h-full text-center text-on-surface-variant opacity-70">
+                <Surface pad="xl" tone="plain" radius="none" place="h-full">
+                  <Stack gap="2xs" align="center" justify="center" place="flex-1">
+                    {props.empty}
+                  </Stack>
+                </Surface>
               </div>
             )}
             <LightboxList
@@ -1462,11 +1496,11 @@ function IdentityChatBody(props: ChatBodyProps) {
             >
               <div ref={contentRef}>
                 {chat.more && (
-                  <div className="flex justify-center py-2">
+                  <Surface pad="sm" tone="plain" radius="none" align="center">
                     <button onClick={() => void p2pDm.loadOlderPage()} className={textBtn}>
                       Show older messages
                     </button>
-                  </div>
+                  </Surface>
                 )}
                 {gapNote}
                 {rows.map(({ p, m }, i) => (
@@ -1514,23 +1548,24 @@ function IdentityChatBody(props: ChatBodyProps) {
                   </Fragment>
                 ))}
                 {chat.newer && (
-                  <div
-                    data-p2p-newer
-                    className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 text-xs text-on-surface-variant"
-                  >
-                    <History size={14} />
-                    Newer messages aren&apos;t shown.
-                    <button
-                      onClick={() => void p2pDm.loadNewerPage()}
-                      disabled={chat.loading}
-                      className={textBtn}
-                    >
-                      Show newer
-                    </button>
-                    <button onClick={() => void p2pDm.toPresent()} className={textBtn}>
-                      Jump to present
-                    </button>
-                  </div>
+                  <Surface data-p2p-newer pad="lg" tone="plain" radius="none">
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <History size={14} className="text-on-surface-variant" />
+                      <span className="text-xs text-on-surface-variant">
+                        Newer messages aren&apos;t shown.
+                      </span>
+                      <button
+                        onClick={() => void p2pDm.loadNewerPage()}
+                        disabled={chat.loading}
+                        className={textBtn}
+                      >
+                        Show newer
+                      </button>
+                      <button onClick={() => void p2pDm.toPresent()} className={textBtn}>
+                        Jump to present
+                      </button>
+                    </div>
+                  </Surface>
                 )}
               </div>
             </LightboxList>
@@ -1539,10 +1574,10 @@ function IdentityChatBody(props: ChatBodyProps) {
         <div className="relative shrink-0">
           <TypingIndicator scope={null} bg="bg-surface" names={typingNames} />
           {!disabled && (storageFull || props.peerFull) && (
-            <div data-p2p-full className={noteBarCls} role="status">
+            <NoteBar data-p2p-full role="status">
               <CircleAlert size={16} className="shrink-0 text-error" aria-hidden />
               {storageFull ? STORAGE_FULL_TEXT : PEER_FULL_TEXT}
-            </div>
+            </NoteBar>
           )}
           <P2pComposer
             draftKey={key}

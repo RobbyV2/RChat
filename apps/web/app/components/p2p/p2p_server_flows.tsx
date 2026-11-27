@@ -39,14 +39,34 @@ import type { ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { Dialog, Masked } from '../ui'
 import { KeyAvatar } from './p2p_badge'
+import { Row, Stack, Surface } from '../layout'
 import { andMore, fewOf, nextPage, page, PAGE } from '../../lib/paging'
 
 // The flows of P2P servers the user takes part in: actions waiting for sync, removals
 // that took others along, moderation to apply again, a device that conflicts with a copy of
 // itself, sync progress, co-owner requests, and our devices.
 
-const noteCls =
-  'flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-surface-container px-4 py-2.5 text-sm text-on-surface-variant'
+// A notice of a server, on its own surface: its parts on a line that wraps.
+function Note({
+  tone = 'base',
+  children,
+  ...rest
+}: {
+  tone?: 'base' | 'error'
+  children: ReactNode
+  role: 'status' | 'alert'
+  [data: `data-${string}`]: string | boolean | undefined
+}) {
+  return (
+    <Surface {...rest} pad="lg" tone={tone}>
+      <div
+        className={`flex flex-wrap items-center gap-3 text-sm${tone === 'base' ? ' text-on-surface-variant' : ''}`}
+      >
+        {children}
+      </div>
+    </Surface>
+  )
+}
 
 // A member's name in a line, blurred in streamer mode.
 function Who({ room, ik }: { room: string; ik: string }) {
@@ -124,7 +144,7 @@ function ModNote({ v, m }: { v: ServerView; m: ServerView['mods'][number] }) {
   const { p2pServer } = identity
 
   return (
-    <div role="status" data-p2p-mod className={noteCls}>
+    <Note role="status" data-p2p-mod>
       <RefreshCw size={16} className="shrink-0 animate-spin text-tertiary" aria-hidden />
       <span className="min-w-48 flex-1">
         {SYNC_WAIT_TEXT}{' '}
@@ -138,15 +158,15 @@ function ModNote({ v, m }: { v: ServerView; m: ServerView['mods'][number] }) {
           )}
         </span>
       </span>
-      <span className="flex gap-1">
+      <Row as="span" gap="2xs" align="stretch">
         <Button size="md" onClick={() => p2pServer.cancelMod(v.id, m.id)}>
           Cancel
         </Button>
         <Button variant="filled" size="md" onClick={() => p2pServer.applyAnyway(v.id, m.id)}>
           {APPLY_ANYWAY}
         </Button>
-      </span>
-    </div>
+      </Row>
+    </Note>
   )
 }
 
@@ -155,12 +175,12 @@ function ReachedNote({ v, r }: { v: ServerView; r: ServerView['reached'][number]
   const { p2pServer } = identity
 
   return (
-    <div role="status" data-p2p-reached className={noteCls}>
+    <Note role="status" data-p2p-reached>
       <span className="min-w-48 flex-1">
         {withNames(reachedText('\u0000', r.lost.length), <Who room={v.id} ik={r.by} />)}{' '}
         <NameList room={v.id} iks={r.lost} />
       </span>
-      <span className="flex items-center gap-1">
+      <Row as="span" gap="2xs">
         <Button variant="filled" size="md" onClick={() => void p2pServer.inviteAgain(v.id, r.by)}>
           {INVITE_AGAIN}
         </Button>
@@ -171,8 +191,8 @@ function ReachedNote({ v, r }: { v: ServerView; r: ServerView['reached'][number]
           size="sm"
           onClick={() => p2pServer.dismissReached(v.id, r.by)}
         />
-      </span>
-    </div>
+      </Row>
+    </Note>
   )
 }
 
@@ -182,37 +202,39 @@ function ReapplyNote({ v }: { v: ServerView }) {
 
   const own = useP2p(s => ownsP2pServer(v, s.me))
   return (
-    <div role="status" data-p2p-reapply className={noteCls}>
-      <span className="flex min-w-48 flex-1 flex-col gap-1">
-        <span className="font-medium text-on-surface">{REAPPLY_TEXT}</span>
-        <ul className="flex flex-col">
-          <Capped
-            items={v.reapply.map(r => {
-              const { act, who, role } = reapplyLine(r.t, r.c, v.roles)
-              return (
-                <li key={r.id}>
-                  {act}
-                  {who && (
-                    <>
-                      {' '}
-                      <Who room={v.id} ik={who} />
-                    </>
-                  )}
-                  {role && (
-                    <>
-                      : <Masked text={role} own={own} />
-                    </>
-                  )}
-                </li>
-              )
-            })}
-          />
-        </ul>
+    <Note role="status" data-p2p-reapply>
+      <span className="min-w-48 flex-1">
+        <Stack as="span" gap="2xs">
+          <span className="font-medium text-on-surface">{REAPPLY_TEXT}</span>
+          <Stack as="ul" gap="none">
+            <Capped
+              items={v.reapply.map(r => {
+                const { act, who, role } = reapplyLine(r.t, r.c, v.roles)
+                return (
+                  <li key={r.id}>
+                    {act}
+                    {who && (
+                      <>
+                        {' '}
+                        <Who room={v.id} ik={who} />
+                      </>
+                    )}
+                    {role && (
+                      <>
+                        : <Masked text={role} own={own} />
+                      </>
+                    )}
+                  </li>
+                )
+              })}
+            />
+          </Stack>
+        </Stack>
       </span>
       <Button variant="filled" size="md" onClick={() => void p2pServer.reapply(v.id)}>
         Re-apply
       </Button>
-    </div>
+    </Note>
   )
 }
 
@@ -221,17 +243,13 @@ function ConflictNote() {
   const { p2pServer } = identity
 
   return (
-    <div
-      role="alert"
-      data-p2p-conflict
-      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-error-container px-4 py-2.5 text-sm text-on-error-container"
-    >
+    <Note role="alert" data-p2p-conflict tone="error">
       <CircleAlert size={16} className="shrink-0" aria-hidden />
       <span className="min-w-48 flex-1">{CONFLICT_TEXT}</span>
       <Button variant="danger" onClick={() => void p2pServer.newDevice()}>
         Set up as a new device
       </Button>
-    </div>
+    </Note>
   )
 }
 
@@ -249,7 +267,7 @@ function DisputedNote({ v }: { v: ServerView }) {
     }
   }, [v.id])
   return (
-    <div role="status" data-p2p-disputed className={noteCls}>
+    <Note role="status" data-p2p-disputed>
       <span className="min-w-48 flex-1">
         <span className="font-medium text-on-surface">{DISPUTED_TEXT}</span>
         {v.next ? '' : '. Pick the copy to follow.'}
@@ -271,7 +289,7 @@ function DisputedNote({ v }: { v: ServerView }) {
           />
         ))}
       </span>
-    </div>
+    </Note>
   )
 }
 
@@ -290,7 +308,7 @@ function CarryNote({ v }: { v: ServerView }) {
   const c = v.carry
   if (!c || c.state === 'running') return null
   return (
-    <div role="status" data-p2p-carry={c.state} className={noteCls}>
+    <Note role="status" data-p2p-carry={c.state}>
       <span className="min-w-48 flex-1">
         {c.state === 'failed'
           ? `${CARRY_FAILED_TEXT}: ${c.why ?? ''}`
@@ -301,7 +319,7 @@ function CarryNote({ v }: { v: ServerView }) {
           Try again
         </Button>
       )}
-    </div>
+    </Note>
   )
 }
 
@@ -311,18 +329,21 @@ function MigrateDiffNote({ v }: { v: ServerView }) {
   if (!d) return null
   const names = (list: string[]) => <NameList room={v.id} iks={list} />
   return (
-    <div role="status" data-p2p-migrate-diff className={noteCls}>
-      <span className="flex min-w-48 flex-1 flex-col gap-0.5">
-        <span className="font-medium text-on-surface">{MIGRATE_DIFF_TEXT}</span>
-        {d.added.length > 0 && <span>Added: {names(d.added)}</span>}
-        {d.removed.length > 0 && <span>Left out: {names(d.removed)}</span>}
+    <Note role="status" data-p2p-migrate-diff>
+      <span className="min-w-48 flex-1">
+        <Stack as="span" gap="3xs">
+          <span className="font-medium text-on-surface">{MIGRATE_DIFF_TEXT}</span>
+          {d.added.length > 0 && <span>Added: {names(d.added)}</span>}
+          {d.removed.length > 0 && <span>Left out: {names(d.removed)}</span>}
+        </Stack>
       </span>
-    </div>
+    </Note>
   )
 }
 
-// Between a server channel's header and its messages.
-function ServerNoticesBody({ v }: { v: ServerView }) {
+// Between a server channel's header and its messages, or (`flush`, with no room of their own)
+// on top of the server's settings.
+function ServerNoticesBody({ v, flush = false }: { v: ServerView; flush?: boolean }) {
   const reapply = v.reapply.length > 0 && v.me === 'join'
   const asks = useP2p(s => s.transferAsks.filter(a => a.room === v.id).length)
   if (
@@ -338,7 +359,14 @@ function ServerNoticesBody({ v }: { v: ServerView }) {
   )
     return null
   return (
-    <div data-p2p-notices className="flex shrink-0 flex-col gap-2 px-3 pt-2">
+    <Surface
+      data-p2p-notices
+      pad={flush ? 'none' : 'md'}
+      gap="sm"
+      tone="plain"
+      radius="none"
+      place="shrink-0"
+    >
       {asks > 0 && <TransferAsks room={v.id} />}
       {v.disputed && <DisputedNote v={v} />}
       {v.carry && <CarryNote v={v} />}
@@ -352,12 +380,22 @@ function ServerNoticesBody({ v }: { v: ServerView }) {
       ))}
       {reapply && <ReapplyNote v={v} />}
       {v.syncing !== null && (
-        <p role="status" data-p2p-syncing className="flex items-center gap-2 px-2 text-xs">
-          <RefreshCw size={12} className="animate-spin text-tertiary" aria-hidden />
-          <span className="text-on-surface-variant">{SYNCING_TEXT(v.syncing)}</span>
-        </p>
+        <Surface
+          as="p"
+          role="status"
+          data-p2p-syncing
+          pad="sm"
+          inset="bar"
+          tone="plain"
+          radius="none"
+        >
+          <Row as="span" gap="sm">
+            <RefreshCw size={12} className="animate-spin text-tertiary" aria-hidden />
+            <span className="text-xs text-on-surface-variant">{SYNCING_TEXT(v.syncing)}</span>
+          </Row>
+        </Surface>
       )}
-    </div>
+    </Surface>
   )
 }
 
@@ -372,49 +410,53 @@ function TransferAsksBody({ room }: { room?: string }) {
   const asks = room ? all.filter(a => a.room === room) : all
   if (!asks.length) return null
   return (
-    <ul aria-label="Transfer requests" className="flex flex-col gap-2">
+    <Stack as="ul" aria-label="Transfer requests" gap="sm">
       {asks.map(a => (
         <li
           key={a.key}
           data-p2p-transfer-ask={a.kind}
-          className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-tertiary bg-surface-container px-3 py-2"
+          className="rounded-2xl border border-dashed border-tertiary bg-surface-container"
         >
-          <KeyAvatar ik={a.from} size={32} />
-          <p className="min-w-48 flex-1 text-sm">
-            <Who room={a.room} ik={a.from} />{' '}
-            {a.kind === 'take' ? (
-              <>
-                wants to make you the owner of a new copy of{' '}
-                <span className="streamer font-medium">
-                  <Masked text={a.name} />
-                </span>
-                .
-              </>
-            ) : (
-              <>
-                wants to transfer{' '}
-                <span className="streamer font-medium">
-                  <Masked text={a.name} />
-                </span>{' '}
-                to <Who room={a.room} ik={a.to} />. {TRANSFER_CO_OWNERS_TEXT}
-              </>
-            )}
-          </p>
-          <span className="ml-auto flex gap-1">
-            <Button size="md" onClick={() => void p2pServer.answerTransfer(a.key, false)}>
-              Decline
-            </Button>
-            <Button
-              variant="filled"
-              size="md"
-              onClick={() => void p2pServer.answerTransfer(a.key, true)}
-            >
-              {a.kind === 'take' ? 'Take it' : 'Approve'}
-            </Button>
-          </span>
+          <Surface pad="md" tone="plain" radius="none">
+            <div className="flex flex-wrap items-center gap-3">
+              <KeyAvatar ik={a.from} size={32} />
+              <p className="min-w-48 flex-1 text-sm">
+                <Who room={a.room} ik={a.from} />{' '}
+                {a.kind === 'take' ? (
+                  <>
+                    wants to make you the owner of a new copy of{' '}
+                    <span className="streamer font-medium">
+                      <Masked text={a.name} />
+                    </span>
+                    .
+                  </>
+                ) : (
+                  <>
+                    wants to transfer{' '}
+                    <span className="streamer font-medium">
+                      <Masked text={a.name} />
+                    </span>{' '}
+                    to <Who room={a.room} ik={a.to} />. {TRANSFER_CO_OWNERS_TEXT}
+                  </>
+                )}
+              </p>
+              <Row as="span" gap="2xs" align="stretch" place="ml-auto">
+                <Button size="md" onClick={() => void p2pServer.answerTransfer(a.key, false)}>
+                  Decline
+                </Button>
+                <Button
+                  variant="filled"
+                  size="md"
+                  onClick={() => void p2pServer.answerTransfer(a.key, true)}
+                >
+                  {a.kind === 'take' ? 'Take it' : 'Approve'}
+                </Button>
+              </Row>
+            </div>
+          </Surface>
         </li>
       ))}
-    </ul>
+    </Stack>
   )
 }
 
@@ -429,47 +471,53 @@ function CoOwnerAsksBody() {
   const contacts = useP2p(s => s.contacts)
   if (!asks.length) return null
   return (
-    <section aria-label="Co-owner requests" className="flex flex-col gap-2">
-      <p className="px-3 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-        Co-owner requests ({asks.length})
-      </p>
-      <ul className="flex flex-col gap-2">
+    <Stack as="section" aria-label="Co-owner requests" gap="sm">
+      <Surface pad="md" inset="bar" tone="plain" radius="none">
+        <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+          Co-owner requests ({asks.length})
+        </p>
+      </Surface>
+      <Stack as="ul" gap="sm">
         {asks.map(a => {
           const c = contacts.find(x => x.ik === a.from)
           return (
             <li
               key={a.key}
               data-p2p-coowner-ask={a.name}
-              className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-tertiary bg-surface-container px-3 py-2"
+              className="rounded-2xl border border-dashed border-tertiary bg-surface-container"
             >
-              <KeyAvatar ik={a.from} size={32} />
-              <p className="min-w-48 flex-1 text-sm">
-                <span className="streamer font-medium">
-                  {c ? <Masked text={displayName(c)} /> : 'A contact'}
-                </span>{' '}
-                wants you as a co-owner of{' '}
-                <span className="streamer font-medium">
-                  <Masked text={a.name || 'a new server'} />
-                </span>
-                .
-              </p>
-              <span className="ml-auto flex gap-1">
-                <Button size="md" onClick={() => p2pServer.answerCoOwner(a.key, false)}>
-                  Decline
-                </Button>
-                <Button
-                  variant="filled"
-                  size="md"
-                  onClick={() => p2pServer.answerCoOwner(a.key, true)}
-                >
-                  Agree
-                </Button>
-              </span>
+              <Surface pad="md" tone="plain" radius="none">
+                <div className="flex flex-wrap items-center gap-3">
+                  <KeyAvatar ik={a.from} size={32} />
+                  <p className="min-w-48 flex-1 text-sm">
+                    <span className="streamer font-medium">
+                      {c ? <Masked text={displayName(c)} /> : 'A contact'}
+                    </span>{' '}
+                    wants you as a co-owner of{' '}
+                    <span className="streamer font-medium">
+                      <Masked text={a.name || 'a new server'} />
+                    </span>
+                    .
+                  </p>
+                  <Row as="span" gap="2xs" align="stretch" place="ml-auto">
+                    <Button size="md" onClick={() => p2pServer.answerCoOwner(a.key, false)}>
+                      Decline
+                    </Button>
+                    <Button
+                      variant="filled"
+                      size="md"
+                      onClick={() => p2pServer.answerCoOwner(a.key, true)}
+                    >
+                      Agree
+                    </Button>
+                  </Row>
+                </div>
+              </Surface>
             </li>
           )
         })}
-      </ul>
-    </section>
+      </Stack>
+    </Stack>
   )
 }
 
@@ -485,8 +533,8 @@ function CoOwnerPickerBody({
   const presence = useP2p(s => s.presence)
   const list = contacts.filter(c => c.state === 'mutual')
   return (
-    <fieldset className="flex flex-col gap-1">
-      <legend className="pb-1 text-xs text-on-surface-variant">{CO_OWNERS_TEXT}</legend>
+    <Stack as="fieldset" gap="2xs">
+      <legend className="text-xs text-on-surface-variant">{CO_OWNERS_TEXT}</legend>
       {list.length === 0 ? (
         <p className="text-xs text-on-surface-variant">No P2P contacts yet.</p>
       ) : (
@@ -495,27 +543,27 @@ function CoOwnerPickerBody({
             const online = presence[c.ik] === 'online'
             const full = value.length >= CO_OWNERS_MAX && !value.includes(c.ik)
             return (
-              <li key={c.ik}>
-                <label
-                  className={`flex items-center gap-3 rounded-xl px-2 py-1.5 text-sm ${online && !full ? '' : 'opacity-60'}`}
-                >
-                  <input
-                    type="checkbox"
-                    className="accent-primary"
-                    disabled={!online || full}
-                    checked={value.includes(c.ik)}
-                    onChange={e =>
-                      onChange(
-                        e.target.checked ? [...value, c.ik] : value.filter(ik => ik !== c.ik)
-                      )
-                    }
-                  />
-                  <KeyAvatar ik={c.ik} size={24} />
-                  <span className="streamer min-w-0 flex-1 truncate">
-                    <Masked text={displayName(c)} />
-                  </span>
-                  {!online && <span className="text-xs text-on-surface-variant">Offline</span>}
-                </label>
+              <li key={c.ik} className={online && !full ? undefined : 'opacity-60'}>
+                <Surface as="label" pad="sm" tone="plain" radius="lg">
+                  <Row as="span" gap="md">
+                    <input
+                      type="checkbox"
+                      className="accent-primary"
+                      disabled={!online || full}
+                      checked={value.includes(c.ik)}
+                      onChange={e =>
+                        onChange(
+                          e.target.checked ? [...value, c.ik] : value.filter(ik => ik !== c.ik)
+                        )
+                      }
+                    />
+                    <KeyAvatar ik={c.ik} size={24} />
+                    <span className="streamer min-w-0 flex-1 truncate text-sm">
+                      <Masked text={displayName(c)} />
+                    </span>
+                    {!online && <span className="text-xs text-on-surface-variant">Offline</span>}
+                  </Row>
+                </Surface>
               </li>
             )
           })}
@@ -524,7 +572,7 @@ function CoOwnerPickerBody({
       {value.length >= CO_OWNERS_MAX && (
         <p className="text-xs text-on-surface-variant">{CO_OWNERS_MAX_TEXT}</p>
       )}
-    </fieldset>
+    </Stack>
   )
 }
 
@@ -560,46 +608,52 @@ function DevicesSectionBody() {
   if (!list.length) return null
   const others = list.filter(d => d.dk !== mine)
   return (
-    <div data-p2p-devices className="flex flex-col gap-2 px-2">
+    <Surface data-p2p-devices pad="sm" inset="bar" gap="sm" tone="plain" radius="none">
       <p className="text-sm font-medium">Devices in P2P servers</p>
       <p className="text-xs text-on-surface-variant">{DEVICES_TEXT}</p>
-      <ul className="flex flex-col gap-1">
+      <Stack as="ul" gap="2xs">
         {list.map(d => (
-          <li
+          <Surface
+            as="li"
             key={d.dk}
             data-p2p-device={d.dk === mine ? 'this' : 'other'}
-            className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-container px-3 py-2"
+            pad="md"
+            tone="base"
+            radius="lg"
           >
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm">
-                {d.label}
-                {d.dk === mine && (
-                  <span className="ml-2 text-xs text-on-surface-variant">This device</span>
-                )}
-              </p>
-              <p className="font-mono text-2xs text-on-surface-variant">
-                {d.dk.slice(0, 12)} · {d.rooms.length} {d.rooms.length === 1 ? 'server' : 'servers'}
-                {d.created ? ` · added ${when(d.created)}` : ''}
-              </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <Row as="p" gap="sm" align="baseline">
+                  <span className="truncate text-sm">{d.label}</span>
+                  {d.dk === mine && (
+                    <span className="shrink-0 text-xs text-on-surface-variant">This device</span>
+                  )}
+                </Row>
+                <p className="font-mono text-2xs text-on-surface-variant">
+                  {d.dk.slice(0, 12)} · {d.rooms.length}{' '}
+                  {d.rooms.length === 1 ? 'server' : 'servers'}
+                  {d.created ? ` · added ${when(d.created)}` : ''}
+                </p>
+              </div>
+              {d.dk !== mine && (
+                <Button
+                  variant="danger"
+                  onClick={() => openOver(identity)({ kind: 'lost_device', dk: d.dk })}
+                >
+                  Lost or stolen
+                </Button>
+              )}
             </div>
-            {d.dk !== mine && (
-              <Button
-                variant="danger"
-                onClick={() => openOver(identity)({ kind: 'lost_device', dk: d.dk })}
-              >
-                Lost or stolen
-              </Button>
-            )}
-          </li>
+          </Surface>
         ))}
-      </ul>
+      </Stack>
       {others.length > 0 && (
         <Button onClick={() => openOver(identity)({ kind: 'recover' })} place="self-start">
           <ShieldCheck size={16} />
           Recover with your recovery key
         </Button>
       )}
-    </div>
+    </Surface>
   )
 }
 
@@ -644,29 +698,31 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
   }
   return (
     <Dialog title="Lost or stolen device" onClose={p2p.closeDialog} full>
-      <div className="flex flex-col gap-4">
-        <label className="flex flex-col gap-1 text-sm">
-          It was yours until
-          <input
-            type="datetime-local"
-            step={1}
-            value={localInput(t)}
-            max={localInput(at)}
-            onChange={e => {
-              const v = new Date(e.target.value).getTime()
-              if (Number.isFinite(v)) setT(Math.min(v, at))
-            }}
-            data-p2p-lost-time
-            className="rounded-xl border border-outline-variant bg-transparent px-3 py-2 text-base md:text-sm"
-          />
-        </label>
-        <div className="-mt-2 flex flex-wrap gap-1">
-          {times.map(o => (
-            <Button key={o.ms} onClick={() => setT(at - o.ms)}>
-              {o.label}
-            </Button>
-          ))}
-        </div>
+      <Stack gap="lg">
+        <Stack gap="sm">
+          <Stack as="label" gap="2xs">
+            <span className="text-sm">It was yours until</span>
+            <input
+              type="datetime-local"
+              step={1}
+              value={localInput(t)}
+              max={localInput(at)}
+              onChange={e => {
+                const v = new Date(e.target.value).getTime()
+                if (Number.isFinite(v)) setT(Math.min(v, at))
+              }}
+              data-p2p-lost-time
+              className="rounded-xl border border-outline-variant bg-transparent px-3 py-2 text-base md:text-sm"
+            />
+          </Stack>
+          <div className="flex flex-wrap gap-1">
+            {times.map(o => (
+              <Button key={o.ms} onClick={() => setT(at - o.ms)}>
+                {o.label}
+              </Button>
+            ))}
+          </div>
+        </Stack>
         <p data-p2p-lost-text className="text-sm">
           {lostText(time)}
         </p>
@@ -675,54 +731,27 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
         ) : list.length === 0 ? (
           <p className="text-sm text-on-surface-variant">It is in none of your servers any more.</p>
         ) : (
-          <ul className="flex flex-col gap-3">
+          <Stack as="ul" gap="md">
             {list.map(p => (
-              <li key={p.room} data-p2p-lost-room className="rounded-xl bg-surface-container p-3">
-                <p className="streamer text-sm font-medium">
-                  <Masked text={servers[p.room]?.name ?? 'P2P server'} />
-                </p>
-                {p.acts.length === 0 && p.content === 0 ? (
-                  <p className="text-xs text-on-surface-variant">Nothing since then.</p>
-                ) : (
-                  <ul className="mt-1 flex flex-col text-xs text-on-surface-variant">
-                    <Capped
-                      items={p.acts.map(x => {
-                        const { act, who } = actParts(x.t, x.to, x.ends)
-                        return (
-                          <li key={x.id}>
-                            {act}
-                            {who && (
-                              <>
-                                {' '}
-                                <Who room={p.room} ik={who} />
-                              </>
-                            )}
-                            <span className="opacity-70">
-                              {' '}
-                              · received {when(p.at[x.id] ?? x.ts)}
-                            </span>
-                          </li>
-                        )
-                      })}
-                    />
-                    {p.content > 0 && (
-                      <li>
-                        {p.content} {p.content === 1 ? 'message' : 'messages'}
-                      </li>
-                    )}
-                  </ul>
-                )}
-                {p.others.length > 0 && (
-                  <p data-p2p-lost-others className="mt-2 text-xs text-on-surface-variant">
-                    {lostOthersText(p.others.length)}
+              <Surface
+                as="li"
+                key={p.room}
+                data-p2p-lost-room
+                pad="md"
+                gap="sm"
+                tone="base"
+                radius="lg"
+              >
+                <Stack gap="2xs">
+                  <p className="streamer text-sm font-medium">
+                    <Masked text={servers[p.room]?.name ?? 'P2P server'} />
                   </p>
-                )}
-                {p.resign.length > 0 && (
-                  <div data-p2p-lost-own className="mt-2 text-xs text-on-surface-variant">
-                    <p>{OWN_RESIGN_TEXT}</p>
-                    <ul className="mt-1 text-on-surface">
+                  {p.acts.length === 0 && p.content === 0 ? (
+                    <p className="text-xs text-on-surface-variant">Nothing since then.</p>
+                  ) : (
+                    <ul className="flex flex-col text-xs text-on-surface-variant">
                       <Capped
-                        items={p.resign.map(x => {
+                        items={p.acts.map(x => {
                           const { act, who } = actParts(x.t, x.to, x.ends)
                           return (
                             <li key={x.id}>
@@ -733,35 +762,74 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
                                   <Who room={p.room} ik={who} />
                                 </>
                               )}
+                              <span className="opacity-70">
+                                {' '}
+                                · received {when(p.at[x.id] ?? x.ts)}
+                              </span>
                             </li>
                           )
                         })}
                       />
+                      {p.content > 0 && (
+                        <li>
+                          {p.content} {p.content === 1 ? 'message' : 'messages'}
+                        </li>
+                      )}
                     </ul>
+                  )}
+                </Stack>
+                {p.others.length > 0 && (
+                  <p data-p2p-lost-others className="text-xs text-on-surface-variant">
+                    {lostOthersText(p.others.length)}
+                  </p>
+                )}
+                {p.resign.length > 0 && (
+                  <div data-p2p-lost-own className="text-xs text-on-surface-variant">
+                    <Stack gap="2xs">
+                      <p>{OWN_RESIGN_TEXT}</p>
+                      <ul className="text-on-surface">
+                        <Capped
+                          items={p.resign.map(x => {
+                            const { act, who } = actParts(x.t, x.to, x.ends)
+                            return (
+                              <li key={x.id}>
+                                {act}
+                                {who && (
+                                  <>
+                                    {' '}
+                                    <Who room={p.room} ik={who} />
+                                  </>
+                                )}
+                              </li>
+                            )
+                          })}
+                        />
+                      </ul>
+                    </Stack>
                   </div>
                 )}
                 {!p.ap && (
-                  <p className="mt-2 text-xs text-on-surface-variant">
+                  <p className="text-xs text-on-surface-variant">
                     It made this server, so what it did here stays. Nothing it signs from now on
                     counts.
                   </p>
                 )}
                 {p.lose.length > 0 && (
-                  <p className="mt-2 text-xs">
+                  <p className="text-xs">
                     Lose access: <NameList room={p.room} iks={p.lose} />
                   </p>
                 )}
-              </li>
+              </Surface>
             ))}
-          </ul>
+          </Stack>
         )}
-        <div className="flex justify-end gap-2">
+        <Row gap="sm" justify="end">
           <Button onClick={p2p.closeDialog}>Cancel</Button>
           <Button variant="danger" onClick={() => void remove()} disabled={busy || !list?.length}>
             Remove device
           </Button>
-        </div>
-      </div>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
@@ -783,37 +851,41 @@ function RecoverDialogBody() {
   }
   return (
     <Dialog title="Recover with your recovery key" onClose={p2p.closeDialog} full>
-      <div className="flex flex-col gap-4">
+      <Stack gap="lg">
         <p className="text-sm">{RECOVERY_TEXT}</p>
-        <fieldset className="flex flex-col gap-1">
-          <legend className="pb-1 text-xs text-on-surface-variant">Devices to keep</legend>
+        <Stack as="fieldset" gap="2xs">
+          <legend className="text-xs text-on-surface-variant">Devices to keep</legend>
           {others.map(d => (
-            <label key={d.dk} className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-sm">
-              <input
-                type="checkbox"
-                className="accent-primary"
-                checked={keep.includes(d.dk)}
-                onChange={e =>
-                  setKeep(e.target.checked ? [...keep, d.dk] : keep.filter(x => x !== d.dk))
-                }
-              />
-              <span className="min-w-0 flex-1 truncate">
-                {d.label}{' '}
-                <span className="font-mono text-2xs text-on-surface-variant">
-                  {d.dk.slice(0, 12)}
+            <Surface as="label" key={d.dk} pad="sm" tone="plain" radius="lg">
+              <Row as="span" gap="md">
+                <input
+                  type="checkbox"
+                  className="accent-primary"
+                  checked={keep.includes(d.dk)}
+                  onChange={e =>
+                    setKeep(e.target.checked ? [...keep, d.dk] : keep.filter(x => x !== d.dk))
+                  }
+                />
+                <span className="min-w-0 flex-1 truncate text-sm">
+                  {d.label}{' '}
+                  <span className="font-mono text-2xs text-on-surface-variant">
+                    {d.dk.slice(0, 12)}
+                  </span>
                 </span>
-              </span>
-            </label>
+              </Row>
+            </Surface>
           ))}
-          <p className="px-2 text-xs text-on-surface-variant">This device stays.</p>
-        </fieldset>
-        <div className="flex justify-end gap-2">
+          <Surface pad="sm" inset="bar" tone="plain" radius="none">
+            <p className="text-xs text-on-surface-variant">This device stays.</p>
+          </Surface>
+        </Stack>
+        <Row gap="sm" justify="end">
           <Button onClick={p2p.closeDialog}>Cancel</Button>
           <Button variant="danger" onClick={() => void run()} disabled={busy}>
             Sign out the others
           </Button>
-        </div>
-      </div>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

@@ -1,5 +1,6 @@
 'use client'
 import { Button, Tab } from '../controls'
+import { Grid, Row, Stack, Surface } from '../layout'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -45,24 +46,23 @@ function VerifyDialogBody({ ik }: { ik: string }) {
 
   return (
     <Dialog title="Verify contact" onClose={p2p.closeDialog} full>
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-2">
+      <Stack gap="lg">
+        <Row gap="sm">
           <ContactShield kind={shield} size={20} />
           <span className="streamer min-w-0 truncate font-medium">
             <Masked text={displayName(contact)} />
           </span>
           <span className="text-sm text-on-surface-variant">{shieldText(shield)}</span>
-        </div>
+        </Row>
         {contact.warning && (
-          <p
-            role="alert"
-            className="rounded-xl bg-error-container px-3 py-2 text-sm text-on-error-container"
-          >
-            {warningText(lookalike ? mask(displayName(lookalike)) : 'a contact')} Compare the safety
-            number in person before you trust it.
-          </p>
+          <Surface role="alert" pad="md" tone="error" radius="lg">
+            <p className="text-sm">
+              {warningText(lookalike ? mask(displayName(lookalike)) : 'a contact')} Compare the
+              safety number in person before you trust it.
+            </p>
+          </Surface>
         )}
-        <div role="tablist" className="flex gap-1">
+        <Row role="tablist" gap="2xs" align="stretch">
           {(
             [
               ['number', 'Safety number'],
@@ -81,14 +81,14 @@ function VerifyDialogBody({ ik }: { ik: string }) {
               {label}
             </Tab>
           ))}
-        </div>
+        </Row>
         {hidden && mode !== 'scan' ? (
           <Button onClick={() => setShown(true)} place="w-fit">
             <Eye size={16} />
             Show code
           </Button>
         ) : mode === 'number' ? (
-          <div className="flex flex-col gap-2">
+          <Stack gap="sm">
             <p className="text-sm text-on-surface-variant">
               Compare these numbers with{' '}
               <span className="streamer">
@@ -96,20 +96,21 @@ function VerifyDialogBody({ ik }: { ik: string }) {
               </span>
               , in person or on a call. If they match, nobody is in between.
             </p>
-            <div
-              data-safety-number
-              className="streamer grid grid-cols-4 gap-x-3 gap-y-1 rounded-xl bg-surface-container px-4 py-3 font-mono text-base tracking-wider"
-            >
-              {groups.map((g, i) => (
-                <span key={i}>{g}</span>
-              ))}
+            <div data-safety-number className="streamer font-mono text-base tracking-wider">
+              <Surface pad="lg" tone="base" radius="lg">
+                <Grid cols={4} gap="2xs">
+                  {groups.map((g, i) => (
+                    <span key={i}>{g}</span>
+                  ))}
+                </Grid>
+              </Surface>
             </div>
             <p className="streamer font-mono text-2xs text-on-surface-variant">
               Their key {fingerprint(ik)}
             </p>
-          </div>
+          </Stack>
         ) : mode === 'show' ? (
-          <div className="flex flex-col gap-2">
+          <Stack gap="sm">
             <p className="text-sm text-on-surface-variant">
               Let{' '}
               <span className="streamer">
@@ -117,19 +118,15 @@ function VerifyDialogBody({ ik }: { ik: string }) {
               </span>{' '}
               scan this. When it matches, you both see each other as verified.
             </p>
-            {code && (
-              <div className="w-72 max-w-full">
-                <QrCode text={code} label="Your verification code" wide />
-              </div>
-            )}
-          </div>
+            {code && <QrCode text={code} label="Your verification code" wide />}
+          </Stack>
         ) : (
-          <div className="flex flex-col gap-2">
+          <Stack gap="sm">
             <QrScan label="Camera view for a verification code" onCode={t => void scanned(t)} />
             <p className="text-xs text-on-surface-variant">
               Paste a code only if it reached you in person or over a channel you trust.
             </p>
-            <div className="flex gap-2">
+            <Row gap="sm" align="stretch">
               <input
                 value={paste}
                 onChange={e => setPaste(e.target.value)}
@@ -140,8 +137,8 @@ function VerifyDialogBody({ ik }: { ik: string }) {
               <Button onClick={() => void scanned(paste)} disabled={!paste.trim()}>
                 Check
               </Button>
-            </div>
-          </div>
+            </Row>
+          </Stack>
         )}
         {result &&
           (result.ok ? (
@@ -151,7 +148,7 @@ function VerifyDialogBody({ ik }: { ik: string }) {
           ) : (
             <FieldError message={result.text} />
           ))}
-        <div className="mt-2 flex flex-wrap justify-end gap-2">
+        <Row gap="sm" justify="end" wrap>
           <Button onClick={p2p.closeDialog}>Close</Button>
           {!contact.verified && (
             <Button
@@ -165,8 +162,8 @@ function VerifyDialogBody({ ik }: { ik: string }) {
               Mark as verified
             </Button>
           )}
-        </div>
-      </div>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

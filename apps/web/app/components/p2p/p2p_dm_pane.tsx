@@ -26,8 +26,9 @@ import {
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { useRoomCallShare, VoiceGrid } from '../voice_grid'
 import { IncomingCallBar, P2pCallButtons } from './p2p_call'
-import { noteBarCls, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
+import { NoteBar, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
 import { Masked } from '../ui'
+import { Row } from '../layout'
 
 const NONE: string[] = []
 
@@ -88,34 +89,32 @@ export function useDmFacts() {
 
   const disabled: ReactNode =
     reader || elsewhere ? (
-      <div className={noteBarCls}>
+      <NoteBar>
         <ElsewhereNotice />
-      </div>
+      </NoteBar>
     ) : status === 'moved' ? (
-      <div className={noteBarCls}>{movedText(movedAt)}</div>
+      <NoteBar>{movedText(movedAt)}</NoteBar>
     ) : movingAt !== null ? (
-      <MovingBanner className={noteBarCls} />
+      <MovingBanner bar />
     ) : room?.full ? (
-      <div className={noteBarCls} role="status">
-        {fullNote(room, p2p.limits().dag)}
-      </div>
+      <NoteBar role="status">{fullNote(room, p2p.limits().dag)}</NoteBar>
     ) : !peer ? (
-      <div className={noteBarCls}>This contact was removed.</div>
+      <NoteBar>This contact was removed.</NoteBar>
     ) : peer.state === 'blocked' ? (
-      <div className={noteBarCls}>
+      <NoteBar>
         You blocked{' '}
         <span className="streamer font-medium">
           <Masked text={peerRaw} />
         </span>
         . Remove the block to message them again.
-      </div>
+      </NoteBar>
     ) : peer.state !== 'mutual' ? (
-      <div className={noteBarCls}>
+      <NoteBar>
         <span className="streamer font-medium">
           <Masked text={peerRaw} />
         </span>{' '}
         isn&apos;t a mutual contact right now.
-      </div>
+      </NoteBar>
     ) : null
 
   return {
@@ -215,7 +214,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
           )}
         </span>
         <span className="flex min-w-0 flex-col text-left max-[360px]:hidden">
-          <span className="flex min-w-0 items-center gap-1.5">
+          <Row as="span" gap="xs">
             <span
               id={nameId}
               title={streamer ? undefined : peerName}
@@ -227,9 +226,9 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
             <span className="flex min-w-0 max-sm:hidden">
               <AccountChip ik={peerIk} />
             </span>
-          </span>
+          </Row>
           {/* A phone's header has no room next to the name: the badge leads the status line. */}
-          <span className="flex min-w-0 items-center gap-1">
+          <Row as="span" gap="2xs">
             <span className="flex shrink-0 sm:hidden">
               <AccountChip ik={peerIk} size="icon" />
             </span>
@@ -240,13 +239,13 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
             >
               {statusLine(online, peerName)}
             </span>
-          </span>
+          </Row>
         </span>
       </button>
       <span className="max-sm:hidden">
         <P2pBadge />
       </span>
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      <Row gap="2xs" place="ml-auto shrink-0">
         <P2pCallButtons peer={peerIk} name={peerName} online={online} canCall={canAct} />
         <PinsButton
           toggle={{
@@ -260,7 +259,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
             onClick: () => (threadsOpen ? p2pDm.closeThreads() : p2pDm.openThreads()),
           }}
         />
-      </div>
+      </Row>
     </header>
   )
 

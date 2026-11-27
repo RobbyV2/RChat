@@ -29,6 +29,7 @@ import { badgeState, type BadgeSlot, type BadgeState } from '../../lib/p2p/badge
 import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
 import { longPress } from '../context_menu'
+import { Row, Stack } from '../layout'
 
 // The one mark everything P2P carries: Waypoints, "P2P", a dashed outline in the tertiary color.
 export function P2pBadge({ label = 'P2P', title }: { label?: string; title?: string }) {
@@ -215,17 +216,17 @@ function BadgeSheet({ state, slot }: { state: BadgeState; slot: BadgeSlot }) {
   const { Icon } = CHIP[state]
   const ok = slot.ok
   return (
-    <div className="flex max-w-72 flex-col gap-1 text-sm">
-      <p className="flex items-center gap-1.5 font-medium">
+    <Stack gap="2xs" place="max-w-xs">
+      <Row as="p" gap="xs">
         <Icon size={16} className="shrink-0" aria-hidden />
         {state === 'confirmed' && ok ? (
-          <span className="min-w-0 truncate">
+          <span className="min-w-0 truncate text-sm font-medium">
             Confirmed as <span className="streamer">{ok.sub}</span>
           </span>
         ) : (
-          CHIP[state].text
+          <span className="text-sm font-medium">{CHIP[state].text}</span>
         )}
-      </p>
+      </Row>
       {ok && (
         <p className="text-xs text-on-surface-variant">
           {state === 'expired' ? (
@@ -242,7 +243,7 @@ function BadgeSheet({ state, slot }: { state: BadgeState; slot: BadgeSlot }) {
           ? "The instance couldn't be asked about it. Trying again later."
           : 'The instance says this P2P identity belongs to that account.'}
       </p>
-    </div>
+    </Stack>
   )
 }
 

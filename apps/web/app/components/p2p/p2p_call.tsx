@@ -13,6 +13,7 @@ import type { P2pMessage } from '../../lib/p2p/dm'
 import type { CallLog } from '../../lib/types'
 import { CallLogLine } from '../message_pane'
 import { P2pBadge } from './p2p_badge'
+import { Row, Surface } from '../layout'
 
 const seconds = (ms: number) => Math.floor(ms / 1000)
 
@@ -63,9 +64,11 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
       { kind: 'p2p_call', peer, video },
       {
         header: (
-          <span className="px-2 text-xs font-medium text-on-surface-variant">
-            {video ? 'Start a video call' : 'Start a call'}
-          </span>
+          <Surface as="span" pad="sm" tone="plain" radius="none">
+            <span className="text-xs font-medium text-on-surface-variant">
+              {video ? 'Start a video call' : 'Start a call'}
+            </span>
+          </Surface>
         ),
       },
       account,
@@ -147,10 +150,10 @@ function P2pCallButtonsBody({
           ? `${name} is offline`
           : null
   return (
-    <div className="flex items-center gap-1">
+    <Row gap="2xs">
       <SplitCall peer={peer} video={false} why={why} />
       <SplitCall peer={peer} video why={why} />
-    </div>
+    </Row>
   )
 }
 
@@ -163,44 +166,51 @@ function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
   const accepting = useP2p(s => s.callAccepting)
   if (!c || c.dir !== 'in' || c.state !== 'ringing') return null
   return (
-    <div
+    <Surface
       role="status"
       data-p2p-incoming
-      className="flex shrink-0 flex-wrap items-center gap-3 border-b border-outline-variant bg-surface-container px-4 py-2 text-sm"
+      pad="lg"
+      inset="bar"
+      tone="base"
+      radius="none"
+      border="bottom"
+      place="shrink-0"
     >
-      <span className="flex min-w-0 flex-1 items-center gap-2">
-        {c.video ? (
-          <Video size={16} className="shrink-0 text-status-green" aria-hidden />
-        ) : (
-          <Phone size={16} className="shrink-0 text-status-green" aria-hidden />
-        )}
-        <span className="min-w-0 truncate">
-          <span className="streamer font-medium">{name}</span>{' '}
-          {c.video ? 'is video calling you' : 'is calling you'}
-        </span>
-      </span>
-      <span className="flex items-center gap-1.5">
-        <button
-          title="Accept"
-          aria-label="Accept"
-          disabled={accepting}
-          onClick={() => void p2pCall.accept()}
-          className="flex items-center gap-1 rounded-full bg-status-green px-2.5 py-1 text-xs [@media(pointer:coarse)]:px-3.5 [@media(pointer:coarse)]:py-2 font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"
-        >
-          <Phone size={12} />
-          Accept
-        </button>
-        <button
-          title="Decline"
-          aria-label="Decline"
-          onClick={() => p2pCall.decline()}
-          className="flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs [@media(pointer:coarse)]:px-3.5 [@media(pointer:coarse)]:py-2 font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
-        >
-          <PhoneOff size={12} />
-          Decline
-        </button>
-      </span>
-    </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Row as="span" gap="sm" place="flex-1">
+          {c.video ? (
+            <Video size={16} className="shrink-0 text-status-green" aria-hidden />
+          ) : (
+            <Phone size={16} className="shrink-0 text-status-green" aria-hidden />
+          )}
+          <span className="min-w-0 truncate text-sm">
+            <span className="streamer font-medium">{name}</span>{' '}
+            {c.video ? 'is video calling you' : 'is calling you'}
+          </span>
+        </Row>
+        <Row as="span" gap="xs">
+          <button
+            title="Accept"
+            aria-label="Accept"
+            disabled={accepting}
+            onClick={() => void p2pCall.accept()}
+            className="flex items-center gap-1 rounded-full bg-status-green px-2.5 py-1 text-xs [@media(pointer:coarse)]:px-3.5 [@media(pointer:coarse)]:py-2 font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"
+          >
+            <Phone size={12} />
+            Accept
+          </button>
+          <button
+            title="Decline"
+            aria-label="Decline"
+            onClick={() => p2pCall.decline()}
+            className="flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs [@media(pointer:coarse)]:px-3.5 [@media(pointer:coarse)]:py-2 font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <PhoneOff size={12} />
+            Decline
+          </button>
+        </Row>
+      </div>
+    </Surface>
   )
 }
 

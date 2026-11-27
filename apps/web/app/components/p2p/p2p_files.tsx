@@ -23,6 +23,7 @@ import { ViewableImage } from '../media_lightbox'
 import { VideoAttachment } from '../video_attachment'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
+import { Row, Stack, Surface } from '../layout'
 
 // P2P attachments in messages and in the composer. What a file is shown as comes from its
 // stored bytes only (sniff.ts): images, video and audio play inline, everything else (SVG and
@@ -349,11 +350,11 @@ export function AttachmentList({
 }) {
   if (!att.length) return null
   return (
-    <div className="flex flex-col gap-1">
+    <Stack gap="2xs">
       {att.map((a, i) => (
         <Tile key={a.h} att={a} canFetch={canFetch} own={own} message={message} index={i} />
       ))}
-    </div>
+    </Stack>
   )
 }
 
@@ -376,7 +377,7 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
       >
         <X size={12} />
       </button>
-      <div className="flex items-center justify-between gap-1">
+      <Row gap="2xs" justify="between">
         {thumb ? (
           <img src={thumb} alt="" aria-hidden className="h-10 w-14 rounded object-cover" />
         ) : (
@@ -394,25 +395,25 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
         >
           {p.spoiler ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
-      </div>
+      </Row>
       <span className="truncate text-xs">
         {p.spoiler ? 'Spoiler · ' : ''}
         {downloadName(p.file.name)}
       </span>
-      <span
-        className={`flex items-center gap-1 text-[11px] tabular-nums ${p.error ? 'text-error' : 'text-on-surface-variant'}`}
-      >
-        {p.error ? (
-          p.error
-        ) : ready ? (
-          fmtSize(p.file.size)
-        ) : (
-          <>
-            <Loader2 size={10} className="motion-safe:animate-spin" />
-            Preparing {Math.floor(p.progress * 100)}%
-          </>
+      <Row as="span" gap="2xs">
+        {!p.error && !ready && (
+          <Loader2 size={10} className="text-on-surface-variant motion-safe:animate-spin" />
         )}
-      </span>
+        <span
+          className={`text-[11px] tabular-nums ${p.error ? 'text-error' : 'text-on-surface-variant'}`}
+        >
+          {p.error
+            ? p.error
+            : ready
+              ? fmtSize(p.file.size)
+              : `Preparing ${Math.floor(p.progress * 100)}%`}
+        </span>
+      </Row>
     </div>
   )
 }
@@ -422,23 +423,38 @@ function PendingFilesBody({ room }: { room: string }) {
   const list = useP2p(s => s.attaching[room])
   if (!list?.length) return null
   return (
-    <div className="mb-2 flex gap-3 overflow-x-auto px-1 pt-2 pb-1" aria-label="Files to send">
-      {list.map(p => (
-        <div key={p.id} className="flex w-40 shrink-0 flex-col gap-1">
-          <PendingChip room={room} p={p} />
-          {describableFile(p.file.name, p.file.type) && (
-            <AltField compact value={p.alt ?? ''} onChange={v => p2pFiles.setAlt(room, p.id, v)} />
-          )}
-        </div>
-      ))}
-      <span
-        title="Sent peer-to-peer: stored on your devices and shared with the people in this conversation"
-        className="flex shrink-0 items-center gap-1 self-end rounded bg-tertiary-container px-1.5 py-0.5 text-[11px] font-medium text-on-tertiary-container"
-      >
-        <Waypoints size={10} />
-        P2P
-      </span>
-    </div>
+    <Surface
+      pad="sm"
+      tone="plain"
+      radius="none"
+      align="start"
+      place="w-full overflow-x-auto"
+      aria-label="Files to send"
+    >
+      <Row gap="md" align="stretch">
+        {list.map(p => (
+          <div key={p.id} className="w-40 shrink-0">
+            <Stack gap="2xs">
+              <PendingChip room={room} p={p} />
+              {describableFile(p.file.name, p.file.type) && (
+                <AltField
+                  compact
+                  value={p.alt ?? ''}
+                  onChange={v => p2pFiles.setAlt(room, p.id, v)}
+                />
+              )}
+            </Stack>
+          </div>
+        ))}
+        <span
+          title="Sent peer-to-peer: stored on your devices and shared with the people in this conversation"
+          className="flex shrink-0 items-center gap-1 self-end rounded bg-tertiary-container px-1.5 py-0.5 text-[11px] font-medium text-on-tertiary-container"
+        >
+          <Waypoints size={10} />
+          P2P
+        </span>
+      </Row>
+    </Surface>
   )
 }
 

@@ -32,6 +32,7 @@ const excluded = () => {
 const LAID_OUT = [
   'apps/web/app/components/admin/{accounts,admin_host,admin_page,announcements,audit,danger,dialogs,encryption,overview,servers,source,staff_view,users}.tsx',
   'apps/web/app/components/{category_dialog,instance_link_dialog,perm_dialog,role_looks_fields,server_members,server_profile_list,share_target,viewing_prompt}.tsx',
+  'apps/web/app/components/p2p/{add_contact,identity_enrollment,p2p_invite_dialog,p2p_search,p2p_server_profile,p2p_thread,peer_code_button,peer_code_dialog,qr_scan,verify_dialog}.tsx',
 ]
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']

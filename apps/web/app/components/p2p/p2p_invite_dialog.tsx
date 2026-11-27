@@ -1,5 +1,6 @@
 'use client'
 import { Button, Tab } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -67,11 +68,11 @@ export function CodeBox({ text }: { text: string }) {
       </Button>
     )
   return (
-    <div className="flex flex-col items-start gap-3">
+    <Stack gap="md" align="start">
       <div className="w-64 max-w-full">
         <QrCode text={text} label="P2P server invite code" wide />
       </div>
-      <div className="flex w-full items-start gap-1">
+      <Row gap="2xs" align="start" place="w-full">
         <textarea
           readOnly
           value={text}
@@ -82,13 +83,13 @@ export function CodeBox({ text }: { text: string }) {
           className={areaCls}
         />
         <CopyButton text={text} label="Copy invite code" />
-      </div>
+      </Row>
       <p className="text-xs text-on-surface-variant">
         Anyone with this code can join while it is valid. Share it privately, not in an instance
         channel or DM: the instance would see it. A revoked code may still work until every member
         who can let people in has synced.
       </p>
-    </div>
+    </Stack>
   )
 }
 
@@ -116,17 +117,21 @@ function CodeListBody({ room, version }: { room: string; version: number }) {
   const now = Date.now()
   const manage = !!v && (v.perms & P.ManageServer) !== 0
   return (
-    <ul className="flex flex-col gap-2">
+    <Stack as="ul" gap="sm">
       {list.map(c => {
         const live = !c.revoked && c.exp > now
         const mine = c.by === me
         return (
-          <li
+          <Surface
+            as="li"
             key={c.hash}
             data-p2p-code-row={c.label || c.hash.slice(0, 6)}
-            className="flex flex-col gap-2 rounded-xl bg-surface-container px-3 py-2"
+            pad="md"
+            gap="sm"
+            tone="base"
+            radius="lg"
           >
-            <div className="flex items-center gap-2">
+            <Row gap="sm">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{c.label || 'Invite'}</p>
                 <p className="text-xs text-on-surface-variant">
@@ -163,15 +168,15 @@ function CodeListBody({ room, version }: { room: string; version: number }) {
                   Revoke
                 </Button>
               )}
-            </div>
+            </Row>
             {live && c.paused && (
               <p className="text-xs text-on-surface-variant">{CODE_PAUSED_TEXT}</p>
             )}
             {open === c.hash && c.text && <CodeBox text={c.text} />}
-          </li>
+          </Surface>
         )
       })}
-    </ul>
+    </Stack>
   )
 }
 
@@ -209,8 +214,8 @@ function ServerInviteDialogBody({ room }: { room: string }) {
   }
   return (
     <Dialog title="Invite people" onClose={p2p.closeDialog} full>
-      <div className="flex flex-col gap-6">
-        <section className="flex flex-col gap-3">
+      <Stack gap="xl">
+        <Stack as="section" gap="md">
           <p className="text-sm text-on-surface-variant">
             To{' '}
             <span className="streamer font-medium text-on-surface">
@@ -218,9 +223,9 @@ function ServerInviteDialogBody({ room }: { room: string }) {
             </span>
             . Make a code and share it. {NEEDS_INVITER} when someone uses it.
           </p>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="flex flex-col gap-1 text-xs text-on-surface-variant">
-              Expires after
+          <Row gap="sm" align="end" wrap>
+            <Stack as="label" gap="2xs">
+              <span className="text-xs text-on-surface-variant">Expires after</span>
               <select
                 value={ttl}
                 onChange={e => setTtl(Number(e.target.value))}
@@ -233,9 +238,11 @@ function ServerInviteDialogBody({ room }: { room: string }) {
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-on-surface-variant">
-              Label (only for you and the server)
+            </Stack>
+            <Stack as="label" gap="2xs" place="flex-1">
+              <span className="text-xs text-on-surface-variant">
+                Label (only for you and the server)
+              </span>
               <input
                 value={label}
                 maxLength={fieldMax(p2p.limits().display.label)}
@@ -243,15 +250,15 @@ function ServerInviteDialogBody({ room }: { room: string }) {
                 placeholder="For the book club"
                 className={fieldCls}
               />
-            </label>
+            </Stack>
             <Button variant="filled" size="md" onClick={() => void make()} disabled={busy}>
               Create invite
             </Button>
-          </div>
+          </Row>
           <p className="text-xs text-on-surface-variant">{CODE_DEATH_TEXT}</p>
           {code && <CodeBox text={code} />}
-        </section>
-        <section className="flex flex-col gap-2">
+        </Stack>
+        <Stack as="section" gap="sm">
           <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
             Invite a contact
           </p>
@@ -260,39 +267,41 @@ function ServerInviteDialogBody({ room }: { room: string }) {
               Your P2P contacts are all here already, or you have none yet.
             </p>
           ) : (
-            <ul className="flex flex-col gap-1">
+            <Stack as="ul" gap="2xs">
               {candidates.map(c => {
                 const pending =
                   invited.has(c.ik) || v.members.some(m => m.ik === c.ik && m.m === 'invite')
                 return (
-                  <li key={c.ik} className="flex items-center gap-3 rounded-xl px-2 py-1.5">
-                    <KeyAvatar ik={c.ik} size={32} />
-                    <span className="streamer min-w-0 flex-1 truncate text-sm">
-                      <Masked text={displayName(c)} />
-                    </span>
-                    <Button
-                      disabled={pending}
-                      onClick={() =>
-                        void p2pServer.invite(room, c.ik).then(r => {
-                          if (r !== null) setInvited(s => new Set(s).add(c.ik))
-                        })
-                      }
-                    >
-                      {pending ? 'Invited' : 'Invite'}
-                    </Button>
-                  </li>
+                  <Surface as="li" key={c.ik} pad="sm" tone="plain" radius="lg">
+                    <Row gap="md">
+                      <KeyAvatar ik={c.ik} size={32} />
+                      <span className="streamer min-w-0 flex-1 truncate text-sm">
+                        <Masked text={displayName(c)} />
+                      </span>
+                      <Button
+                        disabled={pending}
+                        onClick={() =>
+                          void p2pServer.invite(room, c.ik).then(r => {
+                            if (r !== null) setInvited(s => new Set(s).add(c.ik))
+                          })
+                        }
+                      >
+                        {pending ? 'Invited' : 'Invite'}
+                      </Button>
+                    </Row>
+                  </Surface>
                 )
               })}
-            </ul>
+            </Stack>
           )}
-        </section>
-        <section className="flex flex-col gap-2">
+        </Stack>
+        <Stack as="section" gap="sm">
           <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
             Invites
           </p>
           <CodeList room={room} version={version} />
-        </section>
-      </div>
+        </Stack>
+      </Stack>
     </Dialog>
   )
 }
@@ -357,17 +366,17 @@ function ServerNewDialogBody({
   return (
     <Dialog title="P2P server" onClose={routed?.close ?? p2p.closeDialog} full>
       {!enabled ? (
-        <div className="flex flex-col items-start gap-3">
+        <Stack gap="md" align="start">
           <p className="text-sm text-on-surface-variant">
             Turn on peer-to-peer first: P2P servers live on their members&apos; devices.
           </p>
           <Button variant="filled" size="md" onClick={() => p2p.openDialog({ kind: 'enable' })}>
             Turn on P2P
           </Button>
-        </div>
+        </Stack>
       ) : (
-        <>
-          <div role="tablist" className="mb-4 flex gap-1">
+        <Stack gap="lg">
+          <Row role="tablist" gap="2xs" align="stretch">
             {(
               [
                 ['create', 'Create'],
@@ -387,17 +396,21 @@ function ServerNewDialogBody({
                   {label}
                 </Tab>
               ))}
-          </div>
+          </Row>
           <CoOwnerAsks />
           {tab === 'create' ? (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-start gap-3 rounded-xl border border-dashed border-tertiary px-3 py-2 text-sm text-on-surface-variant">
-                <Waypoints size={18} className="mt-0.5 shrink-0 text-tertiary" />
-                <p>
-                  A P2P server is stored only on its members&apos; devices: its channels, messages
-                  and who may do what. There is no copy on the instance, and the instance
-                  doesn&apos;t filter it.
-                </p>
+            <Stack gap="md">
+              <div className="rounded-xl border border-dashed border-tertiary text-sm text-on-surface-variant">
+                <Surface pad="md" tone="plain" radius="none">
+                  <Row gap="md" align="start">
+                    <Waypoints size={18} className="shrink-0 text-tertiary" />
+                    <p>
+                      A P2P server is stored only on its members&apos; devices: its channels,
+                      messages and who may do what. There is no copy on the instance, and the
+                      instance doesn&apos;t filter it.
+                    </p>
+                  </Row>
+                </Surface>
               </div>
               <p className="text-xs text-on-surface-variant">{IP_NOTE}</p>
               <input
@@ -420,7 +433,7 @@ function ServerNewDialogBody({
                 </p>
               )}
               <FieldError message={error} />
-              <div className="flex justify-end gap-2">
+              <Row gap="sm" justify="end">
                 <Button size="md" onClick={routed?.close ?? p2p.closeDialog}>
                   Cancel
                 </Button>
@@ -432,10 +445,10 @@ function ServerNewDialogBody({
                 >
                   Create
                 </Button>
-              </div>
-            </div>
+              </Row>
+            </Stack>
           ) : (
-            <div className="flex flex-col gap-3">
+            <Stack gap="md">
               {scan ? (
                 <QrScan
                   label="Camera view for an invite code"
@@ -465,18 +478,20 @@ function ServerNewDialogBody({
                 <FieldError message="This isn't a P2P server invite code." />
               )}
               {peek && (
-                <div className="flex items-center gap-3 rounded-xl bg-surface-container px-3 py-2">
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-tertiary font-semibold">
-                    <Waypoints size={18} className="text-tertiary" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="streamer truncate text-sm font-medium">
-                      <Masked text={peek.name} />
-                    </p>
-                    <p className="text-xs text-on-surface-variant">{NEEDS_INVITER}</p>
-                  </div>
-                  <P2pBadge />
-                </div>
+                <Surface pad="md" tone="base" radius="lg">
+                  <Row gap="md">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-tertiary font-semibold">
+                      <Waypoints size={18} className="text-tertiary" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="streamer truncate text-sm font-medium">
+                        <Masked text={peek.name} />
+                      </p>
+                      <p className="text-xs text-on-surface-variant">{NEEDS_INVITER}</p>
+                    </div>
+                    <P2pBadge />
+                  </Row>
+                </Surface>
               )}
               <p data-p2p-needs-inviter className="text-xs text-on-surface-variant">
                 {NEEDS_INVITER}. Your contact code and name go to whoever lets you in.{' '}
@@ -484,7 +499,7 @@ function ServerNewDialogBody({
               </p>
               <p className="text-xs text-on-surface-variant">{IP_NOTE}</p>
               <FieldError message={error} />
-              <div className="flex justify-end gap-2">
+              <Row gap="sm" justify="end">
                 <Button size="md" onClick={routed?.close ?? p2p.closeDialog}>
                   Cancel
                 </Button>
@@ -496,10 +511,10 @@ function ServerNewDialogBody({
                 >
                   {busy ? 'Joining…' : 'Join'}
                 </Button>
-              </div>
-            </div>
+              </Row>
+            </Stack>
           )}
-        </>
+        </Stack>
       )}
     </Dialog>
   )
@@ -520,27 +535,31 @@ function P2pFolderDialogBody({ id, colorFirst = false }: { id: string; colorFirs
   }
   return (
     <Dialog title="Edit folder" onClose={p2p.closeDialog} compact>
-      <input
-        autoFocus={!colorFirst}
-        value={name}
-        maxLength={50}
-        onChange={e => setName(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter') save()
-        }}
-        placeholder="Folder name"
-        aria-label="Folder name"
-        className={`${fieldCls} w-full`}
-      />
-      <FolderColorField color={color} onColor={setColor} tone="tertiary" />
-      <div className="mt-6 flex justify-end gap-2">
-        <Button size="md" onClick={p2p.closeDialog}>
-          Cancel
-        </Button>
-        <Button variant="filled" size="md" onClick={save}>
-          Save
-        </Button>
-      </div>
+      <Stack gap="xl">
+        <Stack gap="lg">
+          <input
+            autoFocus={!colorFirst}
+            value={name}
+            maxLength={50}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') save()
+            }}
+            placeholder="Folder name"
+            aria-label="Folder name"
+            className={`${fieldCls} w-full`}
+          />
+          <FolderColorField color={color} onColor={setColor} tone="tertiary" />
+        </Stack>
+        <Row gap="sm" justify="end">
+          <Button size="md" onClick={p2p.closeDialog}>
+            Cancel
+          </Button>
+          <Button variant="filled" size="md" onClick={save}>
+            Save
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

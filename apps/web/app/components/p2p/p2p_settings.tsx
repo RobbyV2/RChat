@@ -26,6 +26,7 @@ import { iceOffer } from '../../lib/ice'
 import { fmtSize } from '../../lib/bytes'
 import { SettingSwitch } from '../settings_fields'
 import { Button } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { fieldCls, Masked, sectionCls } from '../ui'
 import { ServerProfileList, ServerProfileRow } from '../server_profile_list'
 import { editsRoomProfile } from '../../lib/server_profile_editor'
@@ -51,7 +52,7 @@ function NameField() {
   useEffect(() => setValue(name), [name])
   const clean = cleanName(value)
   return (
-    <div className="flex gap-2">
+    <Row gap="sm" align="stretch">
       <input
         value={value}
         maxLength={32}
@@ -62,7 +63,7 @@ function NameField() {
       <Button onClick={() => void p2p.setName(value)} disabled={!clean || clean === name}>
         Save
       </Button>
-    </div>
+    </Row>
   )
 }
 
@@ -96,13 +97,13 @@ function P2pServerProfiles() {
   )
   if (!rooms.length) return null
   return (
-    <div className="px-2">
+    <Surface pad="sm" inset="bar" tone="plain" radius="none">
       <ServerProfileList>
         {rooms.map(room => (
           <P2pProfileRow key={room} room={room} />
         ))}
       </ServerProfileList>
-    </div>
+    </Surface>
   )
 }
 
@@ -143,32 +144,36 @@ function BadgeSetting() {
           action: () => void p2pBadge.disable(),
         })
   return (
-    <div data-p2p-badge-setting>
+    <Stack data-p2p-badge-setting gap="none">
       <SettingSwitch label="Account badge" value={on} onChange={change} disabled={busy} />
-      <p className="mt-1 px-2 text-xs text-on-surface-variant">
-        {busy ? (
-          'Asking the instance…'
-        ) : live && badge ? (
-          <>
-            Shown as <span className="streamer">{badge.sub}</span>. Renewed every day.
-          </>
-        ) : on ? (
-          'On. Waiting for the instance to confirm it.'
-        ) : tail ? (
-          `Off. Peers who have it may show it until ${badgeDate(tail)}.`
-        ) : (
-          <>
-            Lets contacts see which account on <span className="streamer">{label}</span> holds your
-            P2P identity. Off by default.
-          </>
-        )}
-      </p>
-      {error && (
-        <p role="alert" className="mt-1 px-2 text-xs text-error">
-          <LabelText text={error} />
+      <Surface pad="sm" inset="bar" tone="plain" radius="none">
+        <p className="text-xs text-on-surface-variant">
+          {busy ? (
+            'Asking the instance…'
+          ) : live && badge ? (
+            <>
+              Shown as <span className="streamer">{badge.sub}</span>. Renewed every day.
+            </>
+          ) : on ? (
+            'On. Waiting for the instance to confirm it.'
+          ) : tail ? (
+            `Off. Peers who have it may show it until ${badgeDate(tail)}.`
+          ) : (
+            <>
+              Lets contacts see which account on <span className="streamer">{label}</span> holds
+              your P2P identity. Off by default.
+            </>
+          )}
         </p>
+      </Surface>
+      {error && (
+        <Surface pad="sm" inset="bar" tone="plain" radius="none">
+          <p role="alert" className="text-xs text-error">
+            <LabelText text={error} />
+          </p>
+        </Surface>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -223,7 +228,7 @@ function DailySelect() {
   const info = useStore(s => s.instance)
   const [daily, setDaily] = useState(() => p2pFiles.readAuto().daily)
   return (
-    <div className="mt-2" data-p2p-daily>
+    <Stack data-p2p-daily gap="2xs">
       <AutoSelect
         label="Automatic downloads per contact per day"
         value={daily}
@@ -234,11 +239,11 @@ function DailySelect() {
           p2pFiles.writeAuto({ daily: n })
         }}
       />
-      <p className="mt-1">
+      <p>
         Past it, or when this device has less than 10% of its storage (at least 512 MB) free, files
         wait for you to click them.
       </p>
-    </div>
+    </Stack>
   )
 }
 
@@ -261,10 +266,12 @@ function FilesSettings() {
   }, [])
   if (textOnly)
     return (
-      <p className="px-2 text-xs text-on-surface-variant">
-        Attachments are turned off on <span className="streamer">{label}</span>, so P2P files are
-        hidden too.
-      </p>
+      <Surface pad="sm" inset="bar" tone="plain" radius="none">
+        <p className="text-xs text-on-surface-variant">
+          Attachments are turned off on <span className="streamer">{label}</span>, so P2P files are
+          hidden too.
+        </p>
+      </Surface>
     )
   const save = (patch: Partial<typeof auto>) => {
     setAuto(a => ({ ...a, ...patch }))
@@ -281,7 +288,7 @@ function FilesSettings() {
           .then(n => toast(n === 1 ? 'Cleared 1 file' : `Cleared ${n} files`)),
     })
   return (
-    <div className="flex flex-col gap-2 px-2" data-p2p-files>
+    <Surface data-p2p-files pad="sm" inset="bar" gap="sm" tone="plain" radius="none">
       <p className="text-sm font-medium">Attachments</p>
       <AutoSelect
         label="Download automatically in direct messages"
@@ -314,7 +321,7 @@ function FilesSettings() {
           </Button>
         ))}
       </div>
-    </div>
+    </Surface>
   )
 }
 
@@ -370,21 +377,23 @@ function AdvancedLimits() {
     )
   }
   return (
-    <div ref={ref} data-p2p-limits className="flex scroll-mt-4 flex-col gap-2 px-2">
-      <p className="text-sm font-medium">Advanced</p>
-      <p className="text-xs text-on-surface-variant">Storage on this device</p>
-      {LIMIT_ROWS.map(([f, label]) => select(f, label))}
-      {select('hiddenPauseMs', 'Keep syncing in the background on phones')}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-on-surface-variant">{LIMITS_LATER}</p>
-        <Button
-          data-p2p-limits-reset
-          onClick={() => save(null)}
-          disabled={Object.keys(user).length < 2}
-        >
-          Reset to defaults
-        </Button>
-      </div>
+    <div ref={ref} data-p2p-limits className="scroll-mt-4">
+      <Surface pad="sm" inset="bar" gap="sm" tone="plain" radius="none">
+        <p className="text-sm font-medium">Advanced</p>
+        <p className="text-xs text-on-surface-variant">Storage on this device</p>
+        {LIMIT_ROWS.map(([f, label]) => select(f, label))}
+        {select('hiddenPauseMs', 'Keep syncing in the background on phones')}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-on-surface-variant">{LIMITS_LATER}</p>
+          <Button
+            data-p2p-limits-reset
+            onClick={() => save(null)}
+            disabled={Object.keys(user).length < 2}
+          >
+            Reset to defaults
+          </Button>
+        </div>
+      </Surface>
     </div>
   )
 }
@@ -413,7 +422,7 @@ export function P2pOffSection() {
   return (
     <section aria-label="Peer-to-peer">
       <p className={sectionCls}>Peer-to-peer</p>
-      <div className="flex flex-col items-start gap-2 px-2">
+      <Surface pad="sm" inset="bar" gap="sm" tone="plain" radius="none" align="start">
         <p className="text-xs text-on-surface-variant">
           P2P is off on <span className="streamer">{label}</span>. Your P2P data stays on this
           device until you remove it.
@@ -440,7 +449,7 @@ export function P2pOffSection() {
             )}
           </Button>
         ))}
-      </div>
+      </Surface>
     </section>
   )
 }
@@ -484,12 +493,14 @@ function P2pSectionBody() {
   const remove = () => confirmIdentityRemoval(account, account, identity.localId)
   return (
     <section aria-label="Peer-to-peer">
-      <p className={`${sectionCls} flex items-center gap-2`}>
-        Peer-to-peer <P2pBadge />{' '}
-        {enabled && <span className="streamer">{name || record?.name || identity.localId}</span>}
-      </p>
+      <div className={sectionCls}>
+        <Row as="p" gap="sm">
+          Peer-to-peer <P2pBadge />{' '}
+          {enabled && <span className="streamer">{name || record?.name || identity.localId}</span>}
+        </Row>
+      </div>
       {!enabled ? (
-        <div className="flex flex-col items-start gap-2 px-2">
+        <Surface pad="sm" inset="bar" gap="sm" tone="plain" radius="none" align="start">
           <p className="text-xs text-on-surface-variant">
             Contacts you add by code, connected straight to you. Off by default.
           </p>
@@ -508,92 +519,108 @@ function P2pSectionBody() {
           >
             Turn on P2P
           </Button>
-        </div>
+        </Surface>
       ) : elsewhere || loading || status === 'moved' ? (
-        <div className="flex flex-col gap-4">
+        <Stack gap="lg">
           {elsewhere ? (
             <ElsewhereNotice />
           ) : loading ? (
-            <p className="px-2 text-sm text-on-surface-variant">Starting…</p>
+            <Surface pad="sm" inset="bar" tone="plain" radius="none">
+              <p className="text-sm text-on-surface-variant">Starting…</p>
+            </Surface>
           ) : (
-            <div className="flex flex-col gap-3 px-2">
+            <Surface pad="sm" inset="bar" gap="md" tone="plain" radius="none">
               <IdentityAlert />
               <MovedBanner />
-            </div>
+            </Surface>
           )}
           <AdvancedLimits />
-        </div>
+        </Stack>
       ) : (
-        <div className="flex flex-col gap-4">
+        <Stack gap="lg">
           <div className="flex flex-col gap-3 px-2 empty:hidden">
             <IdentityAlert />
             <MovingBanner />
           </div>
           {error && (
-            <p role="alert" className="px-2 text-xs text-error">
-              <LabelText text={error} />
-            </p>
+            <Surface pad="sm" inset="bar" tone="plain" radius="none">
+              <p role="alert" className="text-xs text-error">
+                <LabelText text={error} />
+              </p>
+            </Surface>
           )}
-          <div className="flex flex-col gap-2 px-2">
+          <Surface pad="sm" inset="bar" gap="sm" tone="plain" radius="none">
             <p className="text-sm font-medium">Your contact code</p>
             <MyCode />
-          </div>
-          <div className="flex flex-col gap-1 px-2">
+          </Surface>
+          <Surface pad="sm" inset="bar" gap="2xs" tone="plain" radius="none">
             <p className="text-sm font-medium">Name shown to contacts</p>
             <NameField />
             <p className="streamer font-mono text-2xs text-on-surface-variant">Key {fp}</p>
-          </div>
+          </Surface>
           <P2pServerProfiles />
           <BadgeSetting />
-          <div>
+          <Stack gap="none">
             <SettingSwitch
               label="Pause P2P"
               value={paused}
               onChange={on => void p2p.setPaused(on)}
             />
-            <p className="mt-1 px-2 text-xs text-on-surface-variant">
-              Stops every P2P connection. Nothing is delivered while paused.
-            </p>
-          </div>
-          <div>
+            <Surface pad="sm" inset="bar" tone="plain" radius="none">
+              <p className="text-xs text-on-surface-variant">
+                Stops every P2P connection. Nothing is delivered while paused.
+              </p>
+            </Surface>
+          </Stack>
+          <Stack gap="none">
             <SettingSwitch label="Use connection helpers" value={helpers} onChange={setHelpers} />
-            <p className="mt-1 px-2 text-xs text-on-surface-variant">
-              {helpers && offer.length
-                ? `In use: ${offer.join(', ')}.`
-                : 'None: direct connections only, same network.'}{' '}
-              The instance can see when you are online and who you connect to, not what you say.
-              While you are offline, anyone with your code can take your P2P address and see when
-              your contacts try to reach you, and from which IP unless helpers relay everything.
-            </p>
-          </div>
+            <Surface pad="sm" inset="bar" tone="plain" radius="none">
+              <p className="text-xs text-on-surface-variant">
+                {helpers && offer.length
+                  ? `In use: ${offer.join(', ')}.`
+                  : 'None: direct connections only, same network.'}{' '}
+                The instance can see when you are online and who you connect to, not what you say.
+                While you are offline, anyone with your code can take your P2P address and see when
+                your contacts try to reach you, and from which IP unless helpers relay everything.
+              </p>
+            </Surface>
+          </Stack>
           <FilesSettings />
-          <div className="px-2 text-xs text-on-surface-variant">
-            <p className="text-sm font-medium text-on-surface">Storage</p>
-            <p data-p2p-storage>
-              {storage
-                ? `This site uses ${fmtSize(storage.usage)} of ${fmtSize(storage.quota)} in this browser.`
-                : 'Storage use is not available in this browser.'}
-            </p>
-            <DailySelect />
-            <p className="mt-1">
-              To move to a new device, export from Sync config with Include P2P identity and
-              history. Removing this data without that loses your contacts.
-            </p>
-            <p data-p2p-lost className="mt-1">
-              Lost or stolen device? Moving can&apos;t lock it out, because every device holds your
-              identity key. Use Reset identity instead: contacts see that your key changed and have
-              to verify you again. Remove it from your P2P servers below.
-            </p>
+          <div className="text-xs text-on-surface-variant">
+            <Surface pad="sm" inset="bar" gap="sm" tone="plain" radius="none">
+              <Stack gap="none">
+                <p className="text-sm font-medium text-on-surface">Storage</p>
+                <p data-p2p-storage>
+                  {storage
+                    ? `This site uses ${fmtSize(storage.usage)} of ${fmtSize(storage.quota)} in this browser.`
+                    : 'Storage use is not available in this browser.'}
+                </p>
+              </Stack>
+              <Stack gap="2xs">
+                <DailySelect />
+                <p>
+                  To move to a new device, export from Sync config with Include P2P identity and
+                  history. Removing this data without that loses your contacts.
+                </p>
+                <p data-p2p-lost>
+                  Lost or stolen device? Moving can&apos;t lock it out, because every device holds
+                  your identity key. Use Reset identity instead: contacts see that your key changed
+                  and have to verify you again. Remove it from your P2P servers below.
+                </p>
+              </Stack>
+            </Surface>
           </div>
           <AdvancedLimits />
           <DevicesSection />
-          <div className="flex flex-wrap gap-2 px-1">
-            <Button onClick={() => confirmResetFor(identity)(ask)}>Reset identity</Button>
-            <Button variant="danger" onClick={remove}>
-              Remove P2P data from this browser
-            </Button>
-          </div>
-        </div>
+          <Surface pad="2xs" tone="plain" radius="none">
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => confirmResetFor(identity)(ask)}>Reset identity</Button>
+              <Button variant="danger" onClick={remove}>
+                Remove P2P data from this browser
+              </Button>
+            </div>
+          </Surface>
+        </Stack>
       )}
     </section>
   )

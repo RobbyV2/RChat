@@ -1,5 +1,6 @@
 'use client'
 import { Button, Tab } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -31,11 +32,9 @@ function MyCodeBody() {
       </Button>
     )
   return (
-    <div className="flex flex-col items-start gap-3">
-      <div className="w-72 max-w-full">
-        <QrCode text={card} label="Your P2P contact code" wide />
-      </div>
-      <div className="flex w-full items-start gap-1">
+    <Stack gap="md" align="start">
+      <QrCode text={card} label="Your P2P contact code" wide />
+      <Row gap="2xs" align="start" place="w-full">
         <textarea
           readOnly
           value={card}
@@ -46,12 +45,12 @@ function MyCodeBody() {
           className={areaCls}
         />
         <CopyButton text={card} label="Copy contact code" />
-      </div>
+      </Row>
       <p className="text-xs text-on-surface-variant">
         Anyone with this code can send you a contact request. Share it only with people you want to
         hear from.
       </p>
-    </div>
+    </Stack>
   )
 }
 
@@ -59,17 +58,19 @@ type ContactTab = 'scan' | 'paste' | 'mine'
 
 function Preview({ card }: { card: Card }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl bg-surface-container px-3 py-2">
-      <KeyAvatar ik={card.ik} />
-      <div className="min-w-0">
-        <p className="streamer truncate text-sm font-medium">
-          <Masked text={card.name || 'Unnamed'} />
-        </p>
-        <p className="streamer truncate font-mono text-2xs text-on-surface-variant">
-          {fingerprint(card.ik)}
-        </p>
-      </div>
-    </div>
+    <Surface pad="md" tone="base" radius="lg">
+      <Row gap="md">
+        <KeyAvatar ik={card.ik} />
+        <div className="min-w-0">
+          <p className="streamer truncate text-sm font-medium">
+            <Masked text={card.name || 'Unnamed'} />
+          </p>
+          <p className="streamer truncate font-mono text-2xs text-on-surface-variant">
+            {fingerprint(card.ik)}
+          </p>
+        </div>
+      </Row>
+    </Surface>
   )
 }
 
@@ -144,65 +145,74 @@ function AddContactDialogBody({
 
   return (
     <Dialog title="Add a P2P contact" onClose={close} full>
-      <div role="tablist" className="mb-4 flex gap-1">
-        {tabs.map(([key, label]) => (
-          <Tab key={key} selected={tab === key} onClick={() => setTab(key)}>
-            {label}
-          </Tab>
-        ))}
-      </div>
-      {tab === 'mine' ? (
-        <MyCode />
-      ) : (
-        <div className="flex flex-col gap-3">
-          {tab === 'scan' && !card && (
-            <QrScan
-              label="Camera view for a contact code"
-              onCode={text => {
-                setCode(text)
-                setTab('paste')
-              }}
-            />
-          )}
-          {(tab === 'paste' || card) && (
-            <textarea
-              autoFocus={tab === 'paste'}
-              value={code}
-              onChange={e => setCode(e.target.value)}
-              rows={4}
-              placeholder="Paste a contact code (rcp1.…)"
-              aria-label="Contact code"
-              className={`${areaCls} streamer`}
-            />
-          )}
-          <FieldError message={error} />
-          {card && (
-            <>
-              <Preview card={card} />
-              <textarea
-                value={intro}
-                maxLength={p2p.limits().contacts.introMax}
-                onChange={e => setIntro(e.target.value)}
-                rows={2}
-                placeholder="Say who you are (optional)"
-                aria-label="Introduction"
-                className={`${fieldCls} w-full resize-none`}
-              />
-              <p className="text-xs text-on-surface-variant">
-                They see your request the next time you are both online.
-              </p>
-            </>
-          )}
-          <div className="mt-2 flex justify-end gap-2">
-            <Button size="md" onClick={close}>
-              Cancel
-            </Button>
-            <Button variant="filled" size="md" onClick={() => void add()} disabled={!card || busy}>
-              Send request
-            </Button>
-          </div>
-        </div>
-      )}
+      <Stack gap="lg">
+        <Row role="tablist" gap="2xs" align="stretch">
+          {tabs.map(([key, label]) => (
+            <Tab key={key} selected={tab === key} onClick={() => setTab(key)}>
+              {label}
+            </Tab>
+          ))}
+        </Row>
+        {tab === 'mine' ? (
+          <MyCode />
+        ) : (
+          <>
+            <Stack gap="md">
+              {tab === 'scan' && !card && (
+                <QrScan
+                  label="Camera view for a contact code"
+                  onCode={text => {
+                    setCode(text)
+                    setTab('paste')
+                  }}
+                />
+              )}
+              {(tab === 'paste' || card) && (
+                <textarea
+                  autoFocus={tab === 'paste'}
+                  value={code}
+                  onChange={e => setCode(e.target.value)}
+                  rows={4}
+                  placeholder="Paste a contact code (rcp1.…)"
+                  aria-label="Contact code"
+                  className={`${areaCls} streamer`}
+                />
+              )}
+              <FieldError message={error} />
+              {card && (
+                <>
+                  <Preview card={card} />
+                  <textarea
+                    value={intro}
+                    maxLength={p2p.limits().contacts.introMax}
+                    onChange={e => setIntro(e.target.value)}
+                    rows={2}
+                    placeholder="Say who you are (optional)"
+                    aria-label="Introduction"
+                    className={`${fieldCls} w-full resize-none`}
+                  />
+                  <p className="text-xs text-on-surface-variant">
+                    They see your request the next time you are both online.
+                  </p>
+                </>
+              )}
+            </Stack>
+            <Row gap="sm" justify="end">
+              <Button size="md" onClick={close}>
+                Cancel
+              </Button>
+              <Button
+                variant="filled"
+                size="md"
+                onClick={() => void add()}
+                disabled={!card || busy}
+              >
+                Send request
+              </Button>
+            </Row>
+          </>
+        )}
+      </Stack>
     </Dialog>
   )
 }
