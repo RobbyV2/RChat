@@ -5,7 +5,8 @@ import { ApiError } from '../../lib/api'
 import { errorText, useStore } from '../../lib/store'
 import type { Announcement } from '../../lib/announcements'
 import { PageGroup, PageRow } from '../settings_page'
-import { dangerBtn, fieldCls, filledBtn } from './touch'
+import { Button } from '../controls'
+import { fieldCls } from '../ui'
 
 export function AnnouncementEditor() {
   const conn = useConn()
@@ -129,9 +130,9 @@ function Editor() {
                 </label>
               </div>
               <p className="text-xs text-on-surface-variant">Dates use your local time.</p>
-              <button disabled={busy} className={filledBtn + ' self-start'}>
+              <Button type="submit" variant="filled" size="md" disabled={busy} place="self-start">
                 {start ? 'Schedule announcement' : 'Publish now'}
-              </button>
+              </Button>
             </form>
             {(error || loadError) && (
               <p role="alert" className="text-sm text-error">
@@ -152,9 +153,9 @@ function Editor() {
                     {new Date(a.ends_at * 1000).toLocaleString()}
                   </p>
                 </div>
-                <button disabled={busy} className={dangerBtn} onClick={() => void save(a.id)}>
+                <Button variant="danger" disabled={busy} onClick={() => void save(a.id)}>
                   Remove
-                </button>
+                </Button>
               </div>
             ))}
           </div>

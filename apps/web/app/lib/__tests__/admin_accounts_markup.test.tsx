@@ -95,7 +95,9 @@ test('the create dialog asks for a username and names the default servers', () =
     { settings: { ...saved.settings, password_login: false } }
   )
   expect(off).toContain('Password sign-in is off, so a new account could not sign in.')
-  expect(/<button disabled=""[^>]*>Create account<\/button>/.test(off)).toBe(true)
+  expect(/<button type="submit"[^>]* disabled=""[^>]*>Create account<\/button>/.test(off)).toBe(
+    true
+  )
 })
 
 test('a temporary password is shown once, with when it stops working', () => {
@@ -134,7 +136,7 @@ test('the confirms say what happens to the account, and only the site admin gets
   expect(out).toContain('They keep their')
   const add = dialog({ kind: 'admin_add_to_server', username: 'dana' })
   expect(add).toContain('Add to Server')
-  expect(/<button disabled=""[^>]*>Add<\/button>/.test(add)).toBe(true)
+  expect(/<button type="submit"[^>]* disabled=""[^>]*>Add<\/button>/.test(add)).toBe(true)
   for (const kind of ['new_password_confirm', 'sign_out_confirm', 'admin_add_to_server'] as const) {
     const html = dialog({ kind, username: 'dana' })
     expect(/admin/i.test(html)).toBe(false)

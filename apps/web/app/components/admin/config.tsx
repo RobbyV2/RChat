@@ -20,8 +20,7 @@ import type { ConfigControl } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { Chips } from '../ui'
 import { useApplyConfig, useConfigStore } from './config_state'
-import { chipCls } from './source'
-import { filledBtn, textBtn } from './touch'
+import { Button, Pill } from '../controls'
 
 // Controls whose values are usernames or server names.
 const NAMES = new Set(['server_creators', 'default_servers'])
@@ -47,8 +46,8 @@ function Control({ control }: { control: ConfigControl }) {
       <div className="flex min-w-48 flex-1 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="min-w-0 text-sm break-words">{controlLabel(control)}</span>
-          {source === 'pinned' && <span className={chipCls}>Pinned</span>}
-          {source === 'differs' && <span className={chipCls}>Differs</span>}
+          {source === 'pinned' && <Pill tone="outline">Pinned</Pill>}
+          {source === 'differs' && <Pill tone="outline">Differs</Pill>}
         </div>
         <code className="font-mono text-xs break-all text-on-surface-variant">{control.env}</code>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
@@ -65,14 +64,12 @@ function Control({ control }: { control: ConfigControl }) {
       </div>
       <div className="-mx-2 flex flex-wrap gap-1 sm:mx-0 sm:flex-col sm:items-end">
         {source === 'differs' && patchFor(control.key, control.config ?? '') !== null && (
-          <button onClick={() => apply([control])} className={textBtn}>
-            Use server config
-          </button>
+          <Button onClick={() => apply([control])}>Use server config</Button>
         )}
         {row && (
-          <button onClick={() => openAdmin(where, null, control.key)} className={textBtn}>
+          <Button onClick={() => openAdmin(where, null, control.key)}>
             {where === 'servers' ? 'Show in Servers' : 'Show in Features'}
-          </button>
+          </Button>
         )}
       </div>
     </PageRow>
@@ -97,7 +94,9 @@ export function ConfigSection() {
       <div className="flex flex-wrap items-center gap-2 pb-4">
         <Chips label="Show" value={filter} options={CONFIG_FILTERS} onChange={setFilter} />
         <span className="flex-1" />
-        <button
+        <Button
+          variant="filled"
+          size="md"
           disabled={all.length === 0}
           onClick={() =>
             apply(
@@ -105,10 +104,9 @@ export function ConfigSection() {
               `Set ${all.length === 1 ? '1 setting' : `${all.length} settings`} to what the server config says: ${all.map(controlLabel).join(', ')}.`
             )
           }
-          className={filledBtn}
         >
           Use server config for all
-        </button>
+        </Button>
       </div>
       <PageGroup label="Settings">
         {shown.length === 0 && <p className="text-sm text-on-surface-variant">None.</p>}

@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { useStore } from '../../lib/store'
 import { PageRow } from '../settings_page'
-import { dangerBtn, fieldCls } from './touch'
+import { Button } from '../controls'
+import { fieldCls } from '../ui'
 
 export function DangerSection() {
   const adminDeleteMessage = useStore(s => s.adminDeleteMessage)
@@ -30,7 +31,9 @@ export function DangerSection() {
           aria-label="Message id"
           className={`${fieldCls} min-w-32`}
         />
-        <button className={`${dangerBtn} shrink-0`}>Delete message</button>
+        <Button type="submit" variant="danger" place="shrink-0">
+          Delete message
+        </Button>
       </form>
     </PageRow>
   )

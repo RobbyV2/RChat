@@ -6,7 +6,7 @@ import { adminRow } from '../../lib/admin_rows'
 import { useStore } from '../../lib/store'
 import type { RelayStatus } from '../../lib/types'
 import { useConfigStore } from './config_state'
-import { textBtn } from './touch'
+import { Button } from '../controls'
 
 const cardCls = 'flex min-w-0 flex-col gap-1 rounded-xl bg-surface-container px-4 py-3'
 const cardTitleCls = 'text-xs font-medium tracking-wide text-on-surface-variant uppercase'
@@ -36,12 +36,9 @@ function SignUp({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-w-0 items-center gap-2">
       <span className="min-w-0 flex-1 text-sm break-words">{children}</span>
-      <button
-        onClick={() => openAdmin('features', null, 'registration')}
-        className={`${textBtn} shrink-0`}
-      >
+      <Button onClick={() => openAdmin('features', null, 'registration')} place="shrink-0">
         Change
-      </button>
+      </Button>
     </div>
   )
 }
@@ -108,17 +105,17 @@ export function OverviewSection() {
                 <span className="min-w-0 flex-1 text-sm break-words">
                   {count(overview.user_count, 'account', 'accounts')}
                 </span>
-                <button onClick={() => openAdmin('users')} className={`${textBtn} shrink-0`}>
+                <Button onClick={() => openAdmin('users')} place="shrink-0">
                   Users
-                </button>
+                </Button>
               </div>
               <div className="flex min-w-0 items-center gap-2">
                 <span className="min-w-0 flex-1 text-sm break-words">
                   {count(overview.server_count, 'server', 'servers')}
                 </span>
-                <button onClick={() => openAdmin('servers')} className={`${textBtn} shrink-0`}>
+                <Button onClick={() => openAdmin('servers')} place="shrink-0">
                   Servers
-                </button>
+                </Button>
               </div>
             </>
           ) : (
@@ -134,9 +131,9 @@ export function OverviewSection() {
                   ? 'None waiting'
                   : `${overview.temporary_count.toLocaleString()} not changed yet`}
               </span>
-              <button onClick={() => openAdmin('users')} className={`${textBtn} shrink-0`}>
+              <Button onClick={() => openAdmin('users')} place="shrink-0">
                 Users
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -145,9 +142,9 @@ export function OverviewSection() {
             <p className={cardTitleCls}>Server config</p>
             <div className="flex min-w-0 items-center gap-2">
               <span className="min-w-0 flex-1 text-sm break-words">{summaryLine(config)}</span>
-              <button onClick={() => openAdmin('config')} className={`${textBtn} shrink-0`}>
+              <Button onClick={() => openAdmin('config')} place="shrink-0">
                 Config
-              </button>
+              </Button>
             </div>
           </div>
         )}

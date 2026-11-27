@@ -12,8 +12,8 @@ import {
 } from '../../lib/instance_audit'
 import { errorText, useStore } from '../../lib/store'
 import type { InstanceAuditEntry } from '../../lib/types'
-import { Chips, Sentinel } from '../ui'
-import { fieldCls, textBtn } from './touch'
+import { Chips, Sentinel, fieldCls } from '../ui'
+import { Button } from '../controls'
 
 // What the site admin and the server config changed, newest first. With a filter on, the list
 // stops loading by itself after a few pages without a match.
@@ -100,11 +100,7 @@ export function AuditSection() {
           </div>
         ))}
         {next && auto && <Sentinel key={pages?.length ?? 0} onVisible={() => fetchFrom(next)} />}
-        {next && !auto && (
-          <button onClick={() => fetchFrom(next)} className={textBtn}>
-            Load more
-          </button>
-        )}
+        {next && !auto && <Button onClick={() => fetchFrom(next)}>Load more</Button>}
       </div>
     </div>
   )

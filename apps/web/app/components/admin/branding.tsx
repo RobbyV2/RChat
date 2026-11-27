@@ -29,10 +29,9 @@ import {
 import { errorText, useStore } from '../../lib/store'
 import type { BrandAsset, BrandLink, InstanceSuggestion, SiteSettingsPatch } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
-import { Chips, FieldError, iconBtn } from '../ui'
+import { Button, IconButton, Pill } from '../controls'
+import { Chips, FieldError, fieldCls } from '../ui'
 import { useApplyConfig, useControl } from './config_state'
-import { chipCls } from './source'
-import { dangerBtn, fieldCls, filledBtn, textBtn } from './touch'
 
 type TextRow = Extract<BrandRow, { kind: 'text' }>
 
@@ -55,7 +54,6 @@ export const BRAND_IMAGE_ROWS = [
 const labelCls = 'text-sm font-medium text-on-surface'
 const lineCls = 'text-sm text-on-surface-variant'
 const rowCls = 'flex flex-col gap-1.5 rounded-xl bg-surface-container px-3 py-3'
-const smallBtn = 'flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center md:h-9 md:w-9'
 
 // Where a brand control's value comes from: pinned by the server config, the same as it, or
 // different from it with a way to take the config's value.
@@ -78,7 +76,7 @@ function Source({ rowKey }: { rowKey: string }) {
     case 'same':
       return (
         <p data-source="same" className="text-xs">
-          <span className={chipCls}>From server config</span>
+          <Pill tone="outline">From server config</Pill>
         </p>
       )
     case 'differs':
@@ -89,13 +87,9 @@ function Source({ rowKey }: { rowKey: string }) {
         >
           <span className="min-w-0">The server config has another value.</span>
           {patchFor(control.key, control.config ?? '') !== null && (
-            <button
-              type="button"
-              onClick={() => apply([control])}
-              className={`${textBtn} -my-1 shrink-0 cursor-pointer`}
-            >
+            <Button onClick={() => apply([control])} place="-my-1 shrink-0">
               Use it
-            </button>
+            </Button>
           )}
         </p>
       )
@@ -150,12 +144,15 @@ function TextControl({ row }: { row: TextRow }) {
             className={`${field} basis-40`}
           />
         )}
-        <button
+        <Button
+          type="submit"
+          variant="filled"
+          size="md"
           disabled={off || text === stored}
-          className={`${filledBtn} shrink-0 cursor-pointer disabled:cursor-default`}
+          place="shrink-0"
         >
           Save
-        </button>
+        </Button>
       </div>
       <FieldError message={error} />
       {control === null && <p className={lineCls}>Loading</p>}
@@ -165,18 +162,7 @@ function TextControl({ row }: { row: TextRow }) {
 }
 
 function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      data-icon-only
-      title={label}
-      aria-label={label}
-      onClick={onClick}
-      className={`${iconBtn} ${smallBtn}`}
-    >
-      <X size={18} />
-    </button>
-  )
+  return <IconButton icon={X} label={label} size="lg" data-icon-only onClick={onClick} />
 }
 
 // A list that is edited as a whole and saved with one button.
@@ -216,20 +202,12 @@ function ListFrame({
         {children}
       </fieldset>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <button
-          type="button"
-          disabled={off || full}
-          onClick={onAdd}
-          className={`${textBtn} cursor-pointer disabled:cursor-default disabled:opacity-50`}
-        >
+        <Button disabled={off || full} onClick={onAdd}>
           {addLabel}
-        </button>
-        <button
-          disabled={off || !dirty}
-          className={`${filledBtn} shrink-0 cursor-pointer disabled:cursor-default`}
-        >
+        </Button>
+        <Button type="submit" variant="filled" size="md" disabled={off || !dirty} place="shrink-0">
           Save
-        </button>
+        </Button>
       </div>
       <FieldError message={error} />
       {control === null && <p className={lineCls}>Loading</p>}
@@ -479,23 +457,13 @@ function ImageControl({
             if (file) upload(file)
           }}
         />
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => input.current?.click()}
-          className={`${filledBtn} cursor-pointer disabled:cursor-default`}
-        >
+        <Button variant="filled" size="md" disabled={busy} onClick={() => input.current?.click()}>
           {busy ? 'Working' : path === null ? 'Upload' : 'Replace'}
-        </button>
+        </Button>
         {path !== null && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={remove}
-            className={`${dangerBtn} cursor-pointer disabled:cursor-default`}
-          >
+          <Button variant="danger" disabled={busy} onClick={remove}>
             Remove
-          </button>
+          </Button>
         )}
       </div>
       <FieldError message={error} />

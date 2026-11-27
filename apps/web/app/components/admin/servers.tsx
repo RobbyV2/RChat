@@ -1,7 +1,7 @@
 'use client'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, ChevronUp, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import { controlOf } from '../../lib/admin_config'
 import { adminRow } from '../../lib/admin_rows'
 import {
@@ -20,12 +20,11 @@ import { ApiError } from '../../lib/api'
 import { errorText, useStore } from '../../lib/store'
 import type { ServerSummaryLite } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
-import { FieldError, Sentinel } from '../ui'
+import { Button, IconButton, ListRow } from '../controls'
+import { FieldError, Sentinel, fieldCls } from '../ui'
 import { useControl } from './config_state'
 import { ServerManage } from './server_manage'
 import { SourceNote } from './source'
-import { dangerBtn, fieldCls, filledBtn, textBtn } from './touch'
-import { rowBtnCls } from './users'
 
 // Whether a server has the key `key`.
 const serverExists = (api: ReturnType<typeof useAccount>['api'], key: string) =>
@@ -40,9 +39,6 @@ const serverExists = (api: ReturnType<typeof useAccount>['api'], key: string) =>
 const defaultControl = (account: ReturnType<typeof useAccount>) =>
   controlOf(account.adminConfig.getState().config, 'default_servers')
 
-const stepBtn =
-  'flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-on-surface-variant enabled:hover:bg-surface-container-high disabled:opacity-40 md:h-9 md:w-9'
-
 // One server: what its managers can change, and deleting it.
 export function ServerPage({ name }: { name: string }) {
   const openAdmin = useStore(s => s.openAdmin)
@@ -55,14 +51,13 @@ export function ServerPage({ name }: { name: string }) {
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 pb-2">
-        <button onClick={() => openAdmin('servers')} className={`${textBtn} -ml-3 hidden md:block`}>
+        <Button onClick={() => openAdmin('servers')} place="-ml-3 hidden md:inline-flex">
           Back to servers
-        </button>
+        </Button>
         <span className="flex-1" />
-        <button onClick={() => void openServer(name)} className={textBtn}>
-          Open
-        </button>
-        <button
+        <Button onClick={() => void openServer(name)}>Open</Button>
+        <Button
+          variant="danger"
           disabled={kept}
           onClick={() =>
             askConfirm({
@@ -72,10 +67,9 @@ export function ServerPage({ name }: { name: string }) {
               action: () => void adminDeleteServer(name).then(() => openAdmin('servers')),
             })
           }
-          className={dangerBtn}
         >
           Delete server
-        </button>
+        </Button>
       </div>
       {kept && (
         <p className="pb-2 text-xs text-on-surface-variant">
@@ -147,39 +141,30 @@ function DefaultServers() {
                   {i + 1}
                 </span>
                 <span className="streamer min-w-0 flex-1 truncate px-2 text-sm">{name}</span>
-                <button
-                  type="button"
+                <IconButton
+                  icon={ChevronUp}
+                  label="Move up"
+                  size="lg"
                   data-icon-only
-                  title="Move up"
-                  aria-label="Move up"
                   disabled={pinned || i === 0}
                   onClick={() => save(moveEntry(list, i, -1))}
-                  className={stepBtn}
-                >
-                  <ChevronUp size={18} />
-                </button>
-                <button
-                  type="button"
+                />
+                <IconButton
+                  icon={ChevronDown}
+                  label="Move down"
+                  size="lg"
                   data-icon-only
-                  title="Move down"
-                  aria-label="Move down"
                   disabled={pinned || i === list.length - 1}
                   onClick={() => save(moveEntry(list, i, 1))}
-                  className={stepBtn}
-                >
-                  <ChevronDown size={18} />
-                </button>
-                <button
-                  type="button"
+                />
+                <IconButton
+                  icon={X}
+                  label="Remove from the list"
+                  size="lg"
                   data-icon-only
-                  title="Remove from the list"
-                  aria-label="Remove from the list"
                   disabled={pinned}
                   onClick={() => save(removeEntry(list, i))}
-                  className={stepBtn}
-                >
-                  <X size={18} />
-                </button>
+                />
               </li>
             ))}
           </ol>
@@ -221,25 +206,25 @@ function DefaultServers() {
               aria-label="Add a default server"
               className={`${fieldCls} streamer disabled:opacity-50`}
             />
-            <button disabled={pinned || full} className={`${textBtn} shrink-0 disabled:opacity-50`}>
+            <Button type="submit" disabled={pinned || full} place="shrink-0">
               Add
-            </button>
+            </Button>
           </form>
           {found.length > 0 && (
             <div className="flex flex-col gap-1">
               {found.map(sv => (
-                <button
+                <ListRow
                   key={sv.name}
-                  type="button"
                   disabled={pinned || full || list.includes(sv.name)}
                   onClick={() => add(sv.name)}
-                  className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm enabled:hover:bg-surface-container-high disabled:opacity-50 md:min-h-0"
-                >
-                  <span className="streamer min-w-0 flex-1 truncate">
-                    {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-                  </span>
-                  <span className="shrink-0 text-primary">Add</span>
-                </button>
+                  streamer
+                  label={
+                    <>
+                      {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                    </>
+                  }
+                  trailing={<span className="shrink-0 text-primary">Add</span>}
+                />
               ))}
             </div>
           )}
@@ -326,9 +311,9 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
         </div>
         <FieldError message={wrong} />
         <div className="flex justify-end">
-          <button disabled={busy} className={filledBtn}>
+          <Button type="submit" variant="filled" size="md" disabled={busy}>
             Create server
-          </button>
+          </Button>
         </div>
       </form>
     </PageRow>
@@ -339,15 +324,13 @@ function Builtin() {
   const openAdmin = useStore(s => s.openAdmin)
   return (
     <PageRow id="builtin_server">
-      <button onClick={() => openAdmin('servers', BUILTIN_SERVER)} className={rowBtnCls}>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="text-sm">Manage the built-in server</span>
-          <span className="text-xs text-on-surface-variant">
-            Rename it, or delete it once it is not a default server. Its address stays the same.
-          </span>
-        </span>
-        <ChevronRight size={18} className="shrink-0 text-on-surface-variant" />
-      </button>
+      <ListRow
+        variant="card"
+        chevron
+        onClick={() => openAdmin('servers', BUILTIN_SERVER)}
+        label="Manage the built-in server"
+        description="Rename it, or delete it once it is not a default server. Its address stays the same."
+      />
     </PageRow>
   )
 }
@@ -395,12 +378,18 @@ export function ServersSection() {
           />
         </div>
         {adminServers.list.map(sv => (
-          <button key={sv.name} onClick={() => openAdmin('servers', sv.name)} className={rowBtnCls}>
-            <span className="streamer min-w-0 flex-1 truncate text-sm">
-              {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-            </span>
-            <ChevronRight size={18} className="shrink-0 text-on-surface-variant" />
-          </button>
+          <ListRow
+            key={sv.name}
+            variant="card"
+            chevron
+            onClick={() => openAdmin('servers', sv.name)}
+            streamer
+            label={
+              <>
+                {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+              </>
+            }
+          />
         ))}
         {adminServers.hasMore && <Sentinel key={adminServers.list.length} onVisible={more} />}
       </PageGroup>

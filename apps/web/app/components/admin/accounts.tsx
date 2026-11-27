@@ -26,10 +26,10 @@ import type {
   Role,
   ServerSummaryLite,
 } from '../../lib/types'
-import { Dialog, FieldError, filledDangerBtn, iconBtn, useCopied } from '../ui'
+import { Button, Chip, IconButton, ListRow } from '../controls'
+import { Dialog, FieldError, fieldCls, useCopied } from '../ui'
 import { useAccountChanges } from './account_state'
 import { useControl } from './config_state'
-import { fieldCls, filledBtn, textBtn } from './touch'
 
 const now = () => Math.floor(Date.now() / 1000)
 
@@ -65,16 +65,13 @@ export function PasswordReveal({
         >
           {issued.temp_password}
         </code>
-        <button
-          type="button"
+        <IconButton
+          icon={copied ? Check : Copy}
+          label={copied ? 'Copied' : 'Copy the password'}
+          size="lg"
           data-icon-only
-          title={copied ? 'Copied' : 'Copy the password'}
-          aria-label={copied ? 'Copied' : 'Copy the password'}
           onClick={() => void sharing().copyText(issued.temp_password).then(flash)}
-          className={`${iconBtn} flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center md:h-9 md:w-9`}
-        >
-          {copied ? <Check size={18} /> : <Copy size={18} />}
-        </button>
+        />
       </div>
       <p className="text-sm text-on-surface-variant">
         {expiryLine(issued.expires_at, now())} {changeLine(mode)}
@@ -89,20 +86,19 @@ export function PasswordReveal({
         </ul>
       )}
       <div className="flex flex-wrap justify-end gap-2 pt-2">
-        <button
-          type="button"
+        <Button
+          size="md"
           onClick={() =>
             void sharing()
               .copyText(signInDetails(address, username, issued.temp_password))
               .then(flashDetails)
           }
-          className={`${textBtn} cursor-pointer`}
         >
           {detailsCopied ? 'Copied' : 'Copy sign-in details'}
-        </button>
-        <button type="button" onClick={onDone} className={`${filledBtn} cursor-pointer`}>
+        </Button>
+        <Button variant="filled" size="md" onClick={onDone}>
           Done
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -159,19 +155,20 @@ function ServerSearch({
         <ul className="flex flex-col gap-1">
           {open.map(sv => (
             <li key={sv.name}>
-              <button
-                type="button"
+              <ListRow
+                variant="card"
                 onClick={() => {
                   setQ('')
                   setFound([])
                   onPick(sv)
                 }}
-                className="streamer flex min-h-11 w-full min-w-0 cursor-pointer items-center rounded-xl bg-surface-container px-3 py-2 text-left text-sm hover:bg-surface-container-highest md:min-h-0"
-              >
-                <span className="min-w-0 truncate">
-                  {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-                </span>
-              </button>
+                streamer
+                label={
+                  <>
+                    {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                  </>
+                }
+              />
             </li>
           ))}
         </ul>
@@ -214,19 +211,9 @@ function RoleToggles({
       {all.map(role => {
         const on = roles.includes(role.id)
         return (
-          <button
-            key={role.id}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onChange(toggledRole(roles, role.id))}
-            className={`streamer min-h-11 max-w-full cursor-pointer truncate rounded-full border px-3 py-1.5 text-sm md:min-h-0 ${
-              on
-                ? 'border-transparent bg-secondary-container text-on-secondary-container'
-                : 'border-outline text-on-surface-variant hover:bg-surface-container-highest'
-            }`}
-          >
-            {role.name}
-          </button>
+          <Chip key={role.id} on={on} onClick={() => onChange(toggledRole(roles, role.id))}>
+            <span className="streamer">{role.name}</span>
+          </Chip>
         )
       })}
     </div>
@@ -252,16 +239,13 @@ function ServerEntries({
             >
               <div className="flex min-w-0 items-center gap-2">
                 <span className="streamer min-w-0 flex-1 truncate text-sm">{entry.server}</span>
-                <button
-                  type="button"
+                <IconButton
+                  icon={X}
+                  label="Remove the server"
+                  size="lg"
                   data-icon-only
-                  title="Remove the server"
-                  aria-label="Remove the server"
                   onClick={() => onChange(withoutServer(servers, entry.server))}
-                  className={`${iconBtn} flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center md:h-9 md:w-9`}
-                >
-                  <X size={18} />
-                </button>
+                />
               </div>
               <RoleToggles
                 server={entry.server}
@@ -398,15 +382,12 @@ export function CreateAccountDialog() {
         <p className="text-sm text-on-surface-variant">{changeLine(mode)}</p>
         <FieldError message={refused} />
         <div className="flex flex-wrap justify-end gap-2">
-          <button type="button" onClick={closeDialog} className={`${textBtn} cursor-pointer`}>
+          <Button size="md" onClick={closeDialog}>
             Cancel
-          </button>
-          <button
-            disabled={busy || !passwords}
-            className={`${filledBtn} cursor-pointer disabled:cursor-default`}
-          >
+          </Button>
+          <Button type="submit" variant="filled" size="md" disabled={busy || !passwords}>
             Create account
-          </button>
+          </Button>
         </div>
       </form>
     </Dialog>
@@ -439,11 +420,12 @@ export function TempPasswordDialog({ username }: { username: string }) {
       </p>
       <FieldError message={refused} />
       <div className="mt-6 flex flex-wrap justify-end gap-2">
-        <button type="button" onClick={closeDialog} className={`${textBtn} cursor-pointer`}>
+        <Button size="md" onClick={closeDialog}>
           Cancel
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="filled-danger"
+          size="md"
           disabled={busy}
           onClick={() => {
             setBusy(true)
@@ -458,10 +440,9 @@ export function TempPasswordDialog({ username }: { username: string }) {
               .catch(inSession((e: unknown) => setRefused(errorText(e))))
               .finally(() => setBusy(false))
           }}
-          className={`${filledDangerBtn} min-h-11 cursor-pointer disabled:opacity-40 md:min-h-0`}
         >
           New password
-        </button>
+        </Button>
       </div>
     </Dialog>
   )
@@ -507,15 +488,12 @@ export function AddToServerDialog({ username }: { username: string }) {
         <ServerEntries servers={servers} onChange={next => setServers(next.slice(-1))} />
         <FieldError message={refused} />
         <div className="flex flex-wrap justify-end gap-2">
-          <button type="button" onClick={closeDialog} className={`${textBtn} cursor-pointer`}>
+          <Button size="md" onClick={closeDialog}>
             Cancel
-          </button>
-          <button
-            disabled={busy || !entry}
-            className={`${filledBtn} cursor-pointer disabled:cursor-default`}
-          >
+          </Button>
+          <Button type="submit" variant="filled" size="md" disabled={busy || !entry}>
             Add
-          </button>
+          </Button>
         </div>
       </form>
     </Dialog>

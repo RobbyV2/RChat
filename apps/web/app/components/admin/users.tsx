@@ -1,7 +1,6 @@
 'use client'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
 import { ACCOUNT_FILTERS, signInLine } from '../../lib/admin_accounts'
 import { ApiError } from '../../lib/api'
 import { errorText, useStore } from '../../lib/store'
@@ -10,12 +9,9 @@ import { openActionMenu } from '../../lib/actions/menu'
 import { longPress } from '../context_menu'
 import { UserAvatar } from '../user_avatar'
 import { PageGroup } from '../settings_page'
-import { Chips, Sentinel } from '../ui'
+import { Button, ListRow } from '../controls'
+import { Chips, Sentinel, fieldCls } from '../ui'
 import { useAccountChanges } from './account_state'
-import { dangerBtn, fieldCls, filledBtn, textBtn } from './touch'
-
-export const rowBtnCls =
-  'flex min-h-11 w-full min-w-0 items-center gap-3 rounded-xl bg-surface-container px-3 py-2 text-left hover:bg-surface-container-high'
 
 function UserServers({ username }: { username: string }) {
   const ownerSession = useAccount()
@@ -64,18 +60,14 @@ function UserServers({ username }: { username: string }) {
           <span className="streamer min-w-24 flex-1 truncate text-sm">
             {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
           </span>
-          <button onClick={() => void openServer(sv.name)} className={textBtn}>
-            Open
-          </button>
-          <button onClick={() => openAdmin('servers', sv.name)} className={textBtn}>
-            Manage
-          </button>
+          <Button onClick={() => void openServer(sv.name)}>Open</Button>
+          <Button onClick={() => openAdmin('servers', sv.name)}>Manage</Button>
         </div>
       ))}
       {next !== null && (
-        <button onClick={() => void fetchFrom(next)} disabled={loading} className={textBtn}>
+        <Button onClick={() => void fetchFrom(next)} disabled={loading}>
           {loading ? 'Loading' : 'Show more'}
-        </button>
+        </Button>
       )}
     </>
   )
@@ -144,12 +136,9 @@ export function UserPage({ username }: { username: string }) {
   const user = account?.user ?? listed
   return (
     <div>
-      <button
-        onClick={() => openAdmin('users')}
-        className={`${textBtn} mb-3 -ml-3 hidden cursor-pointer md:block`}
-      >
+      <Button onClick={() => openAdmin('users')} place="mb-3 -ml-3 hidden md:inline-flex">
         Back to users
-      </button>
+      </Button>
       {account === null && !listed && (
         <p className="text-sm text-on-surface-variant">No such account.</p>
       )}
@@ -171,28 +160,25 @@ export function UserPage({ username }: { username: string }) {
           <div className="flex flex-wrap gap-2 pb-5">
             {!mine && (
               <>
-                <button
+                <Button
                   onClick={() =>
                     openDialog({ kind: 'new_password_confirm', username: user.username })
                   }
-                  className={`${textBtn} cursor-pointer`}
                 >
                   New temporary password
-                </button>
-                <button
+                </Button>
+                <Button
                   onClick={() => openDialog({ kind: 'sign_out_confirm', username: user.username })}
-                  className={`${textBtn} cursor-pointer`}
                 >
                   Sign out everywhere
-                </button>
+                </Button>
               </>
             )}
-            <button
+            <Button
               onClick={() => openDialog({ kind: 'admin_add_to_server', username: user.username })}
-              className={`${textBtn} cursor-pointer`}
             >
               Add to server
-            </button>
+            </Button>
           </div>
           <PageGroup label="Servers they created">
             <UserServers username={user.username} />
@@ -200,28 +186,28 @@ export function UserPage({ username }: { username: string }) {
           {!mine && (
             <PageGroup label="Danger">
               <div className="flex flex-wrap gap-2">
-                <button
+                <Button
+                  variant="danger"
                   onClick={() =>
                     openDialog({ kind: 'remove_phrase_confirm', username: user.username })
                   }
-                  className={dangerBtn}
                 >
                   Remove backup phrase
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="danger"
                   onClick={() => openDialog({ kind: 'ban_confirm', username: user.username })}
-                  className={dangerBtn}
                 >
                   Ban site-wide
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="danger"
                   onClick={() =>
                     openDialog({ kind: 'delete_user_confirm', username: user.username })
                   }
-                  className={dangerBtn}
                 >
                   Delete account
-                </button>
+                </Button>
               </div>
             </PageGroup>
           )}
@@ -304,12 +290,14 @@ export function UsersSection() {
             {overview.user_count === 1 ? 'account' : 'accounts'}
           </p>
         )}
-        <button
+        <Button
+          variant="filled"
+          size="md"
           onClick={() => openDialog({ kind: 'admin_create_account' })}
-          className={`${filledBtn} shrink-0 cursor-pointer`}
+          place="shrink-0"
         >
           Create account
-        </button>
+        </Button>
       </div>
       <div className="flex">
         <input
@@ -330,8 +318,10 @@ export function UsersSection() {
           </p>
         )}
         {list.map(u => (
-          <button
+          <ListRow
             key={u.username}
+            variant="card"
+            chevron
             onClick={() => openAdmin('users', u.username)}
             {...longPress((x, y) =>
               openActionMenu(
@@ -342,19 +332,21 @@ export function UsersSection() {
                 acct
               )
             )}
-            className={`${rowBtnCls} cursor-pointer`}
-          >
-            <UserAvatar
-              username={u.username}
-              avatarKind={u.avatar_kind}
-              avatarColor={u.avatar_color}
-              size={28}
-            />
-            <span className="streamer min-w-0 flex-1 truncate text-sm">
-              {u.display_name} <span className="text-on-surface-variant">({u.username})</span>
-            </span>
-            <ChevronRight size={18} className="shrink-0 text-on-surface-variant" />
-          </button>
+            leading={
+              <UserAvatar
+                username={u.username}
+                avatarKind={u.avatar_kind}
+                avatarColor={u.avatar_color}
+                size={28}
+              />
+            }
+            streamer
+            label={
+              <>
+                {u.display_name} <span className="text-on-surface-variant">({u.username})</span>
+              </>
+            }
+          />
         ))}
         {hasMore && (
           <Sentinel key={`${filter}:${list.length}`} onVisible={all ? more : filtered.more} />

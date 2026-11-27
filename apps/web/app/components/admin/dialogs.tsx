@@ -1,7 +1,8 @@
 'use client'
 
 import { useStore } from '../../lib/store'
-import { Dialog, filledDangerBtn, textBtn } from '../ui'
+import { Button } from '../controls'
+import { Dialog } from '../ui'
 import { useAccountChanges } from './account_state'
 import { AddToServerDialog, CreateAccountDialog, TempPasswordDialog } from './accounts'
 
@@ -47,12 +48,12 @@ function UserConfirm({
     <Dialog title={title} onClose={closeDialog}>
       <p className="text-sm text-on-surface-variant">{children}</p>
       <div className="mt-6 flex justify-end gap-2">
-        <button onClick={closeDialog} className={textBtn}>
+        <Button size="md" onClick={closeDialog}>
           Cancel
-        </button>
-        <button onClick={() => void run().then(closeDialog)} className={filledDangerBtn}>
+        </Button>
+        <Button variant="filled-danger" size="md" onClick={() => void run().then(closeDialog)}>
           {confirm}
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

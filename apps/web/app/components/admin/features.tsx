@@ -23,10 +23,10 @@ import { useStore } from '../../lib/store'
 import type { SiteSettings, SiteSettingsPatch } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { SettingSwitch } from '../settings_fields'
-import { Chips, FieldError } from '../ui'
+import { Button, IconButton } from '../controls'
+import { Chips, FieldError, fieldCls } from '../ui'
 import { useConfigStore, useControl, usePinned } from './config_state'
 import { SourceNote } from './source'
-import { fieldCls, filledBtn, textBtn } from './touch'
 
 type ChoiceRow = Extract<AdminRow, { kind: 'choice' }>
 type NumberRow = Extract<AdminRow, { kind: 'number' }>
@@ -64,7 +64,7 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
           {options.map(o => (
             <label
               key={o.value}
-              className={`flex min-h-11 min-w-0 items-start gap-3 rounded-xl px-2 py-1.5 md:min-h-0 ${
+              className={`flex min-w-0 items-start gap-3 rounded-xl px-2 py-1.5 pointer-coarse:min-h-11 ${
                 pinned ? 'cursor-not-allowed opacity-60' : 'hover:bg-surface-container'
               }`}
             >
@@ -147,9 +147,14 @@ function NumberControl({ row }: { row: NumberRow }) {
           className={`${fieldCls} max-w-24 flex-none disabled:opacity-50`}
         />
         <span className="text-sm text-on-surface-variant">{row.unit}</span>
-        <button disabled={pinned || !valid || value === stored} className={filledBtn}>
+        <Button
+          type="submit"
+          variant="filled"
+          size="md"
+          disabled={pinned || !valid || value === stored}
+        >
           Save
-        </button>
+        </Button>
       </span>
       <FieldError message={error} />
     </form>
@@ -173,7 +178,7 @@ function TargetChecks({ row }: { row: AdminRow }) {
           <label
             key={key}
             title={label}
-            className={`flex min-h-11 min-w-0 items-center gap-2 py-1 text-sm leading-5 md:min-h-0 md:items-start ${
+            className={`flex min-w-0 items-center gap-2 py-1 text-sm leading-5 pointer-coarse:min-h-11 md:items-start ${
               locked ? 'cursor-not-allowed text-on-surface-variant' : 'text-on-surface'
             }`}
           >
@@ -247,17 +252,14 @@ function NamesControl({ row }: { row: AdminRow }) {
                   className="flex max-w-full min-w-0 items-center gap-1 rounded-full border border-outline-variant pr-0.5 pl-3 text-sm md:py-0.5 md:pr-1"
                 >
                   <span className="streamer min-w-0 break-all">{entry}</span>
-                  <button
-                    type="button"
+                  <IconButton
+                    icon={X}
+                    label="Remove from the list"
+                    size="sm"
                     data-icon-only
-                    title="Remove from the list"
-                    aria-label="Remove from the list"
                     disabled={pinned}
                     onClick={() => save(removeEntry(list, i))}
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-on-surface-variant enabled:hover:bg-surface-container-high disabled:opacity-50 md:h-7 md:w-7"
-                  >
-                    <X size={14} />
-                  </button>
+                  />
                 </li>
               ))}
             </ul>
@@ -284,9 +286,9 @@ function NamesControl({ row }: { row: AdminRow }) {
               aria-label="Add a person or role"
               className={`${fieldCls} streamer disabled:opacity-50`}
             />
-            <button disabled={pinned} className={`${textBtn} shrink-0 disabled:opacity-50`}>
+            <Button type="submit" disabled={pinned} place="shrink-0">
               Add
-            </button>
+            </Button>
           </form>
           <FieldError message={error} />
         </>
@@ -304,12 +306,12 @@ function LinkControl({ row }: { row: LinkRow }) {
       <span className="min-w-40 flex-1">
         <RowText row={row} />
       </span>
-      <button
+      <Button
         onClick={() => openAdmin(row.to === 'servers' ? 'servers' : 'features', null, row.key)}
-        className={`${textBtn} shrink-0`}
+        place="shrink-0"
       >
         {row.action}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -343,7 +345,7 @@ function P2pAll() {
           Peer-to-peer, P2P attachments and P2P backups in one change.
         </span>
       </span>
-      <button
+      <Button
         disabled={pinned}
         onClick={() =>
           askConfirm({
@@ -355,10 +357,10 @@ function P2pAll() {
             action: () => void updateSettings(patch),
           })
         }
-        className={`${textBtn} shrink-0 disabled:opacity-50`}
+        place="shrink-0"
       >
         {label}
-      </button>
+      </Button>
     </PageRow>
   )
 }
