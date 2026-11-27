@@ -102,6 +102,13 @@ pub(super) const ONLINE_INDEXES: &[OnlineIndex] = &[
         extensions: &[],
     },
     OnlineIndex {
+        name: "idx_members_server_joined",
+        table: "members",
+        body: "ON members(server, joined_at)",
+        replaces: &[],
+        extensions: &[],
+    },
+    OnlineIndex {
         name: "idx_dms_b_latest",
         table: "dms",
         body: "ON dms(user_b, last_message_id, id)",

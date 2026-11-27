@@ -125,6 +125,7 @@ export function serverView(
   const meRank = mine?.rank
   const banner = membershipOf(s, env.me) === 'join' && can(s, env.me, P.Ban)
   const timer = membershipOf(s, env.me) === 'join' && can(s, env.me, P.TimeoutMembers)
+  const inviter = membershipOf(s, env.me) === 'join' && can(s, env.me, P.Invite)
   const order = rolesOf(s)
   const at = new Map(order.map((r, i) => [r.id, i]))
   const members: MemberView[] = membersOf(s)
@@ -161,6 +162,10 @@ export function serverView(
         : {}),
       roles: m.m === 'join' ? sortRoles(m.roles, at) : [],
       top: m.m === 'join' ? topRoleOf(s, m.ik) : null,
+      ...(m.m === 'join' && m.joinTs !== undefined ? { joinedAt: m.joinTs } : {}),
+      ...(m.m === 'join' && inviter && m.codeId !== undefined
+        ? { via: { id: m.codeId, label: clip(m.codeLabel ?? '', env.lim.display.label) } }
+        : {}),
     }))
   const joined = members.filter(m => m.m === 'join')
   const n = nameOf(s, env.lim.display)

@@ -1525,15 +1525,17 @@ mod tests {
                 l.lookup_typeahead_per_minute,
                 l.lookup_search_per_minute,
                 l.lookup_profile_per_minute,
+                l.lookup_member_search_per_minute,
                 l.lookup_misses_per_hour
             ),
-            (120, 300, 30, 120, 200)
+            (120, 300, 30, 120, 30, 200)
         );
         for (name, bad, range) in [
             ("LOOKUP_LIST_PER_MINUTE", "9", "10 to 10000"),
             ("LOOKUP_TYPEAHEAD_PER_MINUTE", "10001", "10 to 10000"),
             ("LOOKUP_SEARCH_PER_MINUTE", "0", "1 to 1000"),
             ("LOOKUP_PROFILE_PER_MINUTE", "many", "10 to 10000"),
+            ("LOOKUP_MEMBER_SEARCH_PER_MINUTE", "1001", "1 to 1000"),
             ("LOOKUP_MISSES_PER_HOUR", "100001", "0 to 100000"),
         ] {
             let stopped = AppConfig::from_map(&[(name, bad)])

@@ -820,7 +820,7 @@ async fn role_ids(db: &Db, server: &str, username: &str) -> Result<Vec<i64>, Api
     Ok(ids)
 }
 
-async fn role_ids_of(
+pub(crate) async fn role_ids_of(
     db: &Db,
     server: &str,
     names: &[String],

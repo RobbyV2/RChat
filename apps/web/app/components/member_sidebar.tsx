@@ -74,7 +74,7 @@ export const MemberName = ({ user, color }: { user: UserRef; color?: string }) =
   />
 )
 
-function MemberTimeout({ server, username }: { server: string; username: string }) {
+export function MemberTimeout({ server, username }: { server: string; username: string }) {
   const t = useMemberTimeout(server, username)
   return t ? <TimeoutBadge t={t} compact /> : null
 }

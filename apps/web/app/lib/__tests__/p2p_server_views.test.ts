@@ -15,7 +15,8 @@ import {
 
 // The member list a server's view gives (server/views.ts): an owner, a moderator and three
 // members, seen by the owner and by the moderator. The expectation is a pinned view()
-// with identity keys and role ids replaced by names.
+// with identity keys and role ids replaced by names, join times by whether there is one and
+// the codes members joined with by their label ("code" without one).
 
 afterEach(stopAll)
 
@@ -40,11 +41,13 @@ const world = async () => {
 
 const rows = (who: Member, all: Member[], room: string, roles: Record<string, string>) => {
   const name = (ik: string) => all.find(m => m.node.ik === ik)?.name ?? ik
-  return who.servers.view(room)!.members.map(m => ({
+  return who.servers.view(room)!.members.map(({ joinedAt, via, ...m }) => ({
     ...m,
     ik: name(m.ik),
     roles: m.roles.map(r => roles[r] ?? r),
     top: m.top === null ? null : (roles[m.top] ?? m.top),
+    joined: joinedAt !== undefined,
+    ...(via ? { via: via.label || 'code' } : {}),
   }))
 }
 
@@ -54,11 +57,12 @@ describe('server views', () => {
     const [a, b] = members
     const roles = { [mod]: 'Moderator' }
     const base = { m: 'join' as const, online: true, contact: false, waits: false, myInvite: false }
-    const plain = { ...base, unban: false, roles: [], top: null }
+    const plain = { ...base, unban: false, roles: [], top: null, joined: true }
+    const coded = { ...plain, via: 'code' }
     expect(rows(a, members, room, roles)).toEqual([
       { ...plain, ik: 'Alice', name: 'Alice', owner: true, below: false },
       {
-        ...plain,
+        ...coded,
         ik: 'Bob',
         name: 'Bob',
         owner: false,
@@ -67,14 +71,14 @@ describe('server views', () => {
         roles: ['Moderator'],
         top: 'Moderator',
       },
-      { ...plain, ik: 'Carol', name: 'Carol', owner: false, below: true, resetProfile: true },
-      { ...plain, ik: 'Dave', name: 'Dave', owner: false, below: true, resetProfile: true },
-      { ...plain, ik: 'Erin', name: 'Erin', owner: false, below: true, resetProfile: true },
+      { ...coded, ik: 'Carol', name: 'Carol', owner: false, below: true, resetProfile: true },
+      { ...coded, ik: 'Dave', name: 'Dave', owner: false, below: true, resetProfile: true },
+      { ...coded, ik: 'Erin', name: 'Erin', owner: false, below: true, resetProfile: true },
     ])
     expect(rows(b, members, room, roles)).toEqual([
       { ...plain, ik: 'Alice', name: 'Alice', owner: true, below: false },
       {
-        ...plain,
+        ...coded,
         ik: 'Bob',
         name: 'Bob',
         owner: false,
@@ -82,9 +86,9 @@ describe('server views', () => {
         roles: ['Moderator'],
         top: 'Moderator',
       },
-      { ...plain, ik: 'Carol', name: 'Carol', owner: false, below: true, resetProfile: true },
-      { ...plain, ik: 'Dave', name: 'Dave', owner: false, below: true, resetProfile: true },
-      { ...plain, ik: 'Erin', name: 'Erin', owner: false, below: true, resetProfile: true },
+      { ...coded, ik: 'Carol', name: 'Carol', owner: false, below: true, resetProfile: true },
+      { ...coded, ik: 'Dave', name: 'Dave', owner: false, below: true, resetProfile: true },
+      { ...coded, ik: 'Erin', name: 'Erin', owner: false, below: true, resetProfile: true },
     ])
   }, 120_000)
 })

@@ -23,14 +23,17 @@ pub enum LookupClass {
     Search,
     /// One account's card.
     Profile,
+    /// Member searches with filters, for a server's moderators.
+    MemberSearch,
 }
 
 impl LookupClass {
-    pub const ALL: [LookupClass; 4] = [
+    pub const ALL: [LookupClass; 5] = [
         LookupClass::List,
         LookupClass::Typeahead,
         LookupClass::Search,
         LookupClass::Profile,
+        LookupClass::MemberSearch,
     ];
 
     /// The env name of its limit.
@@ -40,6 +43,7 @@ impl LookupClass {
             LookupClass::Typeahead => "LOOKUP_TYPEAHEAD_PER_MINUTE",
             LookupClass::Search => "LOOKUP_SEARCH_PER_MINUTE",
             LookupClass::Profile => "LOOKUP_PROFILE_PER_MINUTE",
+            LookupClass::MemberSearch => "LOOKUP_MEMBER_SEARCH_PER_MINUTE",
         }
     }
 
@@ -50,16 +54,17 @@ impl LookupClass {
             LookupClass::Typeahead => limits.lookup_typeahead_per_minute,
             LookupClass::Search => limits.lookup_search_per_minute,
             LookupClass::Profile => limits.lookup_profile_per_minute,
+            LookupClass::MemberSearch => limits.lookup_member_search_per_minute,
         }
     }
 
     /// Lookups a caller holds at once when it gains `per_minute`: the share its default has
-    /// (30 of 120, 20 of 300, 10 of 30, 30 of 120), at least 5.
+    /// (30 of 120, 20 of 300, 10 of 30, 30 of 120, 10 of 30), at least 5.
     pub fn burst(self, per_minute: u32) -> u32 {
         let (default, held) = match self {
             LookupClass::List | LookupClass::Profile => (120, 30),
             LookupClass::Typeahead => (300, 20),
-            LookupClass::Search => (30, 10),
+            LookupClass::Search | LookupClass::MemberSearch => (30, 10),
         };
         (per_minute.saturating_mul(held) / default).max(5)
     }
@@ -80,6 +85,7 @@ pub fn class_of(method: &Method, path: &str) -> Option<LookupClass> {
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
     let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
     match parts.as_slice() {
+        ["servers", _, "members", "search"] => Some(LookupClass::MemberSearch),
         ["servers", _, "members"] => {
             Some(MemberListQuery::parse(query).map_or(LookupClass::List, |query| query.class()))
         }
@@ -306,6 +312,7 @@ mod tests {
             lookup_typeahead_per_minute: 10,
             lookup_search_per_minute: 1,
             lookup_profile_per_minute: 10,
+            lookup_member_search_per_minute: 1,
             lookup_misses_per_hour: 0,
             ..Limits::default()
         }
@@ -352,6 +359,10 @@ mod tests {
             ("/users/bob/profile", Some(LookupClass::Profile)),
             ("/users/bob/friendship", None),
             ("/servers/club", None),
+            (
+                "/servers/club/members/search?q=al&sort=joined_desc",
+                Some(LookupClass::MemberSearch),
+            ),
             ("/servers/club/members/bob", None),
             ("/me", None),
             ("/", None),
@@ -367,7 +378,8 @@ mod tests {
                 "LOOKUP_LIST_PER_MINUTE",
                 "LOOKUP_TYPEAHEAD_PER_MINUTE",
                 "LOOKUP_SEARCH_PER_MINUTE",
-                "LOOKUP_PROFILE_PER_MINUTE"
+                "LOOKUP_PROFILE_PER_MINUTE",
+                "LOOKUP_MEMBER_SEARCH_PER_MINUTE"
             ]
         );
         for env in envs {
@@ -382,7 +394,7 @@ mod tests {
             .into_iter()
             .map(|c| c.burst(c.per_minute(&d)))
             .collect();
-        assert_eq!(held, [30, 20, 10, 30], "the defaults");
+        assert_eq!(held, [30, 20, 10, 30, 10], "the defaults");
         let s = smallest();
         for class in LookupClass::ALL {
             assert_eq!(
@@ -417,6 +429,7 @@ mod tests {
             lookup_typeahead_per_minute: 600,
             lookup_search_per_minute: 600,
             lookup_profile_per_minute: 600,
+            lookup_member_search_per_minute: 600,
             lookup_misses_per_hour: 0,
             ..Limits::default()
         }));

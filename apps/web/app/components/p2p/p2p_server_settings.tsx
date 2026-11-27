@@ -6,7 +6,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
 
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { type ServerTab } from '../../lib/p2p/app'
@@ -28,15 +28,22 @@ import { page, PAGE } from '../../lib/paging'
 import { MemberAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
-import { openChoiceMenu } from '../../lib/actions/menu'
-import { peerServer } from '../../lib/actions/p2p_server'
 import { SettingSwitch } from '../settings_fields'
 import { ServerProfilesMode } from './p2p_server_profile'
-import { ChannelAccess, MemberCard, roleMenuItems, RolesTab } from './p2p_server_roles'
+import { ChannelAccess, MemberCard, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
 import { banStateText, timedBan } from '../../lib/p2p/ban_expiry'
 import { PeerTimeoutBadge, useNow } from '../timeout_dialog'
 import { hex, nameColor } from '../../lib/p2p/roles'
+import { openActionMenu } from '../../lib/actions/menu'
+import {
+  NO_FILTERS,
+  allowedFilters,
+  filterMembers,
+  p2pMemberRow,
+  type MemberFilters,
+} from '../../lib/member_filters'
+import { MemberFilterBar, MemberTable, MemberTableRow } from '../member_table'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
@@ -428,104 +435,115 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
   )
 }
 
-function Members({ v }: { v: ServerView }) {
+const byLocale = (a: string, b: string) => a.localeCompare(b)
+
+function PeerMemberRow({ v, m, dated }: { v: ServerView; m: MemberView; dated: boolean }) {
   const identity = useP2pApp()!
-  const { p2pServer, banRequest, timeoutRequest } = identity
-
   const acct = useAccount()
-  const who = (name: string) => (acct.store.getState().streamer ? 'this member' : name)
-
   const me = useP2p(s => s.me)
-  const ask = useStore(s => s.askConfirm)
-  const openDialog = useStore(s => s.openDialog)
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const mask = useMask(own)
+  const timeout = v.timeouts === true && can(v, P.TimeoutMembers)
+  const roles = m.roles
+    .map(id => v.roles.find(r => r.id === id)?.name)
+    .filter((n): n is string => !!n)
+    .map(mask)
+  const facts = [roles.join(', '), m.via ? `Joined with: ${mask(m.via.label) || 'Invite'}` : '']
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <MemberTableRow
+      rowKey={m.name}
+      avatar={<MemberAvatar members={v.members} ik={m.ik} size={28} />}
+      name={
+        <span
+          data-p2p-member-line={m.name}
+          className="streamer min-w-0 flex-1 truncate text-sm"
+          style={{ color: hex(nameColor(m, v.roles)) }}
+        >
+          <Masked text={m.name} own={m.ik === me} />
+        </span>
+      }
+      badges={
+        <>
+          {m.owner && (
+            <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">
+              <Crown size={14} />
+            </span>
+          )}
+          {m.m === 'invite' && (
+            <span className="shrink-0 text-xs text-on-surface-variant">
+              {m.waits ? VOUCH_INVITER_TEXT : 'Invited'}
+            </span>
+          )}
+          {(m.ik === me || timeout) && <PeerTimeoutBadge m={m} compact />}
+        </>
+      }
+      facts={facts || null}
+      joinedAt={m.joinedAt === undefined ? null : Math.floor(m.joinedAt / 1000)}
+      created={false}
+      joined={dated}
+      menu={(x, y) =>
+        openActionMenu(
+          x,
+          y,
+          { kind: 'p2p_member', v, m },
+          { header: <MemberCard room={v.id} ik={m.ik} /> },
+          acct,
+          identity
+        )
+      }
+    />
+  )
+}
+
+function Members({ v }: { v: ServerView }) {
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const mask = useMask(own)
   const kick = can(v, P.Kick)
   const ban = can(v, P.Ban)
   const timeout = v.timeouts === true && can(v, P.TimeoutMembers)
-  const list = v.members
-    .filter(m => m.m === 'join' || m.m === 'invite')
-    .sort((a, b) => a.name.localeCompare(b.name))
-  const [shown, setShown] = useState(PAGE)
-  const more = useCallback(() => setShown(n => n + PAGE), [])
-  const paged = page(list, shown)
+  const search = kick || can(v, P.TimeoutMembers) || can(v, P.ManageRoles)
+  const invites = can(v, P.Invite)
+  const [filters, setFilters] = useState<MemberFilters>(NO_FILTERS)
+  const shown = allowedFilters(filters, { created: false, via: invites })
+  const all = useMemo(() => v.members.filter(m => m.m === 'join' || m.m === 'invite'), [v.members])
+  const list = filterMembers(search ? shown : NO_FILTERS, all, p2pMemberRow, byLocale)
+  const [shownRows, setShownRows] = useState(PAGE)
+  const more = useCallback(() => setShownRows(n => n + PAGE), [])
+  const paged = page(list, shownRows)
+  const choices = useMemo(() => {
+    const via = new Map<string, string>()
+    for (const m of all) if (m.via) via.set(m.via.id, mask(m.via.label) || 'Invite')
+    return {
+      roles: v.roles.map(r => ({ id: r.id, name: mask(r.name) })),
+      via: invites ? [...via].map(([id, label]) => ({ id, label })) : null,
+      created: false,
+    }
+  }, [all, v.roles, invites, mask])
   return (
     <div className="flex flex-col gap-3">
-      <ul data-p2p-members-tab className="flex flex-col">
-        {paged.items.map(m => (
-          <MemberLine key={m.ik} v={v} m={m}>
-            {m.m === 'join' && roleMenuItems(v, m, acct, identity).length > 0 && (
-              <button
-                onClick={e =>
-                  openChoiceMenu(
-                    e.clientX,
-                    e.clientY,
-                    'p2p_member_roles',
-                    { kind: 'p2p_member', v, m },
-                    { header: <MemberCard room={v.id} ik={m.ik} /> },
-                    acct,
-                    identity
-                  )
-                }
-                className={textBtn}
-              >
-                Roles
-              </button>
-            )}
-            {m.m === 'invite' && (
-              <span className="text-xs text-on-surface-variant">
-                {m.waits ? VOUCH_INVITER_TEXT : 'Invited'}
-              </span>
-            )}
-            {m.ik !== me && m.m === 'invite' && (kick || m.myInvite) && (
-              <button
-                onClick={() => ask(peerServer.forIdentity(identity).withdrawRequest(v, m))}
-                className={textBtn}
-              >
-                Withdraw
-              </button>
-            )}
-            {m.ik !== me && !m.owner && kick && m.m === 'join' && m.below && (
-              <button
-                onClick={() =>
-                  ask({
-                    title: 'Kick Member',
-                    body: `Kick ${who(m.name)}? They can come back with a new invite.`,
-                    confirm: 'Kick',
-                    action: () => void p2pServer.kick(v.id, m.ik),
-                  })
-                }
-                className={textBtn}
-              >
-                Kick
-              </button>
-            )}
-            {(m.ik === me || timeout) && <PeerTimeoutBadge m={m} />}
-            {m.ik !== me && !m.owner && timeout && m.m === 'join' && m.below && (
-              <button
-                onClick={() =>
-                  openDialog({
-                    kind: 'timeout_request',
-                    request: timeoutRequest(v, m, who(m.name)),
-                  })
-                }
-                className={textBtn}
-              >
-                Time out
-              </button>
-            )}
-            {m.ik !== me && !m.owner && ban && m.below && (
-              <button
-                onClick={() =>
-                  openDialog({ kind: 'ban_request', request: banRequest(v, m.ik, who(m.name)) })
-                }
-                className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
-              >
-                Ban
-              </button>
-            )}
-          </MemberLine>
-        ))}
-      </ul>
-      {paged.more && <Sentinel key={shown} onVisible={more} />}
+      {search && (
+        <MemberFilterBar
+          value={shown}
+          onChange={f => {
+            setFilters(f)
+            setShownRows(PAGE)
+          }}
+          choices={choices}
+        />
+      )}
+      <div data-p2p-members-tab>
+        <MemberTable created={false} joined={search} label="Members">
+          {paged.items.map(m => (
+            <PeerMemberRow key={m.ik} v={v} m={m} dated={search} />
+          ))}
+        </MemberTable>
+        {list.length === 0 && (
+          <p className="px-2 text-sm text-on-surface-variant">No matching members.</p>
+        )}
+      </div>
+      {paged.more && <Sentinel key={shownRows} onVisible={more} />}
       {(kick || ban || timeout) && (
         <div className="flex flex-col gap-1">
           <Note>{EQUAL_ROLES_TEXT}</Note>

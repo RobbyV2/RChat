@@ -57,6 +57,9 @@ export interface MemberSum {
   // reach invitees).
   via?: string
   code?: string
+  // The code that invite named (its id) and the label the code was made with.
+  codeId?: string
+  codeLabel?: string
   // The highest rank among the effective bans of a banned member (unban needs at least it).
   banRank?: Rank
   // A ban that ends by itself: when the last of the standing bans ends (ms) and who made that
@@ -487,7 +490,12 @@ function letIn(src: SummarySource, sum: MemberSum, ik: string, j: number) {
   if (!inv) return
   const ix = src.ix
   sum.via = poster(ix.ev[inv.add])
-  if (inv.code !== undefined) sum.code = ix.ev[inv.code].a
+  const id = ix.ev[inv.add].c.code
+  if (typeof id === 'string') sum.codeId = id
+  if (inv.code === undefined) return
+  sum.code = ix.ev[inv.code].a
+  const label = ix.ev[inv.code].c.label
+  if (typeof label === 'string') sum.codeLabel = label
 }
 
 // The invite join `j` of `ik` used (the latest admitted `add` of `ik` in its past), and the

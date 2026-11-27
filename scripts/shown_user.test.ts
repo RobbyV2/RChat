@@ -45,6 +45,7 @@ const IN_A_SERVER = [
   'reactions.tsx',
   'replies.tsx',
   'search_panel.tsx',
+  'server_members.tsx',
   'server_profile_dialog.tsx',
   'server_settings.tsx',
   'shown_user.tsx',

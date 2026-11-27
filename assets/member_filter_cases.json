@@ -1,0 +1,204 @@
+{
+  "roles": ["mods", "art"],
+  "via": ["friends", "press"],
+  "members": [
+    {
+      "username": "alice",
+      "display_name": "Alice Liddell",
+      "created_at": 1700000100,
+      "joined_at": 1700001000,
+      "roles": ["mods"],
+      "via": "friends"
+    },
+    {
+      "username": "bob",
+      "display_name": "Builder Bob",
+      "created_at": 1700000200,
+      "joined_at": 1700002000,
+      "roles": [],
+      "via": null
+    },
+    {
+      "username": "carol",
+      "display_name": "Carol",
+      "created_at": 1700000300,
+      "joined_at": 1700002000,
+      "roles": ["art"],
+      "via": "press"
+    },
+    {
+      "username": "dave",
+      "display_name": "Dave",
+      "created_at": 1700000050,
+      "joined_at": 1700003000,
+      "roles": ["mods", "art"],
+      "via": "friends"
+    },
+    {
+      "username": "erin",
+      "display_name": "Élodie",
+      "created_at": 1700000400,
+      "joined_at": 1700004000,
+      "roles": [],
+      "via": null
+    },
+    {
+      "username": "frank",
+      "display_name": "frank the tank",
+      "created_at": 1700000500,
+      "joined_at": 1700001500,
+      "roles": ["art"],
+      "via": null
+    },
+    {
+      "username": "gina",
+      "display_name": "ÉCLAIR",
+      "created_at": 1700000600,
+      "joined_at": 1700002500,
+      "roles": [],
+      "via": "press"
+    },
+    {
+      "username": "henry",
+      "display_name": "Kirk",
+      "created_at": 1700000700,
+      "joined_at": 1700005000,
+      "roles": [],
+      "via": null
+    },
+    {
+      "username": "ivy",
+      "display_name": "50% Off",
+      "created_at": 1700000800,
+      "joined_at": 1700006000,
+      "roles": [],
+      "via": null
+    },
+    {
+      "username": "jack",
+      "display_name": "under_score",
+      "created_at": 1700000900,
+      "joined_at": 1700007000,
+      "roles": [],
+      "via": null
+    }
+  ],
+  "cases": [
+    {
+      "name": "without filters everyone is listed by username",
+      "query": {},
+      "expect": ["alice", "bob", "carol", "dave", "erin", "frank", "gina", "henry", "ivy", "jack"]
+    },
+    {
+      "name": "q matches part of a username or a display name",
+      "query": { "q": "li" },
+      "expect": ["alice"]
+    },
+    {
+      "name": "q matches a display name alone",
+      "query": { "q": "build" },
+      "expect": ["bob"]
+    },
+    {
+      "name": "q ignores case and surrounding spaces",
+      "query": { "q": "  BOB " },
+      "expect": ["bob"]
+    },
+    {
+      "name": "q folds the case of letters beyond ASCII",
+      "query": { "q": "éc" },
+      "expect": ["gina"]
+    },
+    {
+      "name": "q finds a letter with an accent only where it is written",
+      "query": { "q": "élo" },
+      "expect": ["erin"]
+    },
+    {
+      "name": "q matches k and i in any case",
+      "query": { "q": "KIR" },
+      "expect": ["henry"]
+    },
+    {
+      "name": "q takes a percent sign literally",
+      "query": { "q": "50%" },
+      "expect": ["ivy"]
+    },
+    {
+      "name": "q takes an underscore literally",
+      "query": { "q": "r_s" },
+      "expect": ["jack"]
+    },
+    {
+      "name": "q that nobody matches finds nobody",
+      "query": { "q": "zz" },
+      "expect": []
+    },
+    {
+      "name": "one role keeps the members who have it",
+      "query": { "roles": ["mods"] },
+      "expect": ["alice", "dave"]
+    },
+    {
+      "name": "several roles keep members with any of them",
+      "query": { "roles": ["mods", "art"] },
+      "expect": ["alice", "carol", "dave", "frank"]
+    },
+    {
+      "name": "joined_after includes its own second",
+      "query": { "joined_after": 1700004000 },
+      "expect": ["erin", "henry", "ivy", "jack"]
+    },
+    {
+      "name": "joined_before leaves out its own second",
+      "query": { "joined_before": 1700002000 },
+      "expect": ["alice", "frank"]
+    },
+    {
+      "name": "a joined range keeps what lies in it",
+      "query": { "joined_after": 1700001500, "joined_before": 1700002500 },
+      "expect": ["bob", "carol", "frank"]
+    },
+    {
+      "name": "a created range keeps accounts made in it",
+      "query": { "created_after": 1700000100, "created_before": 1700000400 },
+      "expect": ["alice", "bob", "carol"]
+    },
+    {
+      "name": "via keeps the members who joined with that password",
+      "query": { "via": "friends" },
+      "expect": ["alice", "dave"]
+    },
+    {
+      "name": "joined_desc lists the newest members first, ties by username from the end",
+      "query": { "sort": "joined_desc", "joined_before": 1700003000 },
+      "expect": ["gina", "carol", "bob", "frank", "alice"]
+    },
+    {
+      "name": "joined_asc lists the oldest members first, ties by username",
+      "query": { "sort": "joined_asc", "joined_before": 1700003000 },
+      "expect": ["alice", "frank", "bob", "carol", "gina"]
+    },
+    {
+      "name": "created_desc lists the newest accounts first",
+      "query": { "sort": "created_desc", "created_before": 1700000400 },
+      "expect": ["carol", "bob", "alice", "dave"]
+    },
+    {
+      "name": "created_asc lists the oldest accounts first",
+      "query": { "sort": "created_asc", "created_before": 1700000400 },
+      "expect": ["dave", "alice", "bob", "carol"]
+    },
+    {
+      "name": "every filter applies at once",
+      "query": {
+        "q": "a",
+        "roles": ["art", "mods"],
+        "joined_after": 1700001000,
+        "via": "friends",
+        "sort": "joined_desc"
+      },
+      "expect": ["dave", "alice"]
+    }
+  ]
+}

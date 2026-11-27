@@ -745,6 +745,75 @@ async fn the_dm_author_index_is_built_online_on_a_big_table() {
     drop(pg);
 }
 
+const NEWEST_MEMBERS: &str =
+    "SELECT username FROM members WHERE server = 'club' ORDER BY joined_at DESC LIMIT 5";
+
+async fn member_join_index_upgrade(url: String) {
+    let db = open_started(Some(&url)).await.expect("open");
+    for stmt in [
+        "DROP INDEX idx_members_server_joined",
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 7)",
+        "INSERT INTO members(server, username, joined_at, joined_via) VALUES('club', 'alice', 7, NULL)",
+        "INSERT INTO members(server, username, joined_at, joined_via) VALUES('club', 'bob', 9, 3)",
+    ] {
+        run(&db, stmt).await;
+    }
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open_started(Some(&url)).await.expect("upgrade");
+        assert!(has_index(&db, "idx_members_server_joined").await);
+        let plan = plan(&db, NEWEST_MEMBERS).await;
+        assert!(plan.contains("idx_members_server_joined"), "{plan}");
+        assert_eq!(
+            texts(&db, NEWEST_MEMBERS).await,
+            ["bob", "alice"],
+            "the members are kept"
+        );
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn the_member_join_index_is_added_to_existing_databases() {
+    on_each_database("member_join_index", member_join_index_upgrade).await;
+}
+
+#[tokio::test]
+async fn the_member_join_index_is_built_online_on_a_big_table() {
+    let Some(pg) = pg_temp("online_member_join").await else {
+        return;
+    };
+    let db = open_started(Some(&pg.url)).await.expect("open");
+    for stmt in [
+        "DROP INDEX idx_members_server_joined".to_string(),
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 7)".to_string(),
+        format!("INSERT INTO members(server, username, joined_at) SELECT 'club', 'u' || g, g FROM generate_series(1, {ONLINE_ROWS}) g"),
+        "ANALYZE members".to_string(),
+    ] {
+        run(&db, &stmt).await;
+    }
+    close(&db).await;
+    let db = open_started(Some(&pg.url)).await.expect("start");
+    assert_eq!(
+        state(&db, "idx_members_server_joined").await,
+        None,
+        "the start leaves the index of a big table to the online build"
+    );
+    assert_eq!(
+        build_online(&db, &Limits::default()).await.expect("build"),
+        built(&["idx_members_server_joined"], &[])
+    );
+    assert_eq!(state(&db, "idx_members_server_joined").await, Some(true));
+    let plan = plan(&db, NEWEST_MEMBERS).await;
+    assert!(plan.contains("idx_members_server_joined"), "{plan}");
+    assert_eq!(
+        texts(&db, NEWEST_MEMBERS).await,
+        ["u100000", "u99999", "u99998", "u99997", "u99996"]
+    );
+    close(&db).await;
+    drop(pg);
+}
+
 /// One index of a table: its columns in order (`None` for an expression), whether it is unique
 /// and its `WHERE`.
 struct Listed {

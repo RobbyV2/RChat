@@ -42,6 +42,7 @@ import type {
   InviteLinkInfo,
   Me,
   Member,
+  MemberHit,
   Message,
   MessageLocation,
   Poll,
@@ -634,6 +635,11 @@ export const endpoints = (c: ApiClient) => ({
         `/servers/${seg(name)}/members?limit=50${filter.q ? `&q=${seg(filter.q)}` : ''}${filter.admins ? '&admins=1' : ''}`,
         cursor
       )
+    ),
+  searchMembers: (name: string, query: string, cursor: string | null, signal?: AbortSignal) =>
+    c.page<MemberHit>(
+      withCursor(`/servers/${seg(name)}/members/search${query ? `?${query}` : ''}`, cursor),
+      signal
     ),
   suggestMembers: (name: string, q: string) =>
     c.req<Member[]>('GET', `/servers/${seg(name)}/members?suggest=1&q=${seg(q)}`),

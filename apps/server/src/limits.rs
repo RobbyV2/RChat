@@ -22,7 +22,7 @@ pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 pub const SESSION_IDLE_MIN: i64 = 300;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 122] = [
+const RANGES: [(&str, i64, i64); 123] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -93,6 +93,7 @@ const RANGES: [(&str, i64, i64); 122] = [
     ("LOOKUP_TYPEAHEAD_PER_MINUTE", 10, 10_000),
     ("LOOKUP_SEARCH_PER_MINUTE", 1, 1_000),
     ("LOOKUP_PROFILE_PER_MINUTE", 10, 10_000),
+    ("LOOKUP_MEMBER_SEARCH_PER_MINUTE", 1, 1_000),
     ("LOOKUP_MISSES_PER_HOUR", 0, 100_000),
     ("MESSAGE_SEARCH_PER_MINUTE", 1, 1_000),
     ("MESSAGE_SEARCH_AT_ONCE", 1, 100),
@@ -323,6 +324,7 @@ pub struct Limits {
     pub lookup_typeahead_per_minute: u32,
     pub lookup_search_per_minute: u32,
     pub lookup_profile_per_minute: u32,
+    pub lookup_member_search_per_minute: u32,
     pub lookup_misses_per_hour: u32,
     pub message_search_per_minute: u32,
     pub message_search_at_once: u32,
@@ -456,6 +458,7 @@ impl Default for Limits {
             lookup_typeahead_per_minute: 300,
             lookup_search_per_minute: 30,
             lookup_profile_per_minute: 120,
+            lookup_member_search_per_minute: 30,
             lookup_misses_per_hour: 200,
             message_search_per_minute: 30,
             message_search_at_once: 1,
@@ -754,6 +757,10 @@ impl Limits {
                 .num("LOOKUP_SEARCH_PER_MINUTE", d.lookup_search_per_minute)?,
             lookup_profile_per_minute: e
                 .num("LOOKUP_PROFILE_PER_MINUTE", d.lookup_profile_per_minute)?,
+            lookup_member_search_per_minute: e.num(
+                "LOOKUP_MEMBER_SEARCH_PER_MINUTE",
+                d.lookup_member_search_per_minute,
+            )?,
             lookup_misses_per_hour: e.num("LOOKUP_MISSES_PER_HOUR", d.lookup_misses_per_hour)?,
             message_search_per_minute: e
                 .num("MESSAGE_SEARCH_PER_MINUTE", d.message_search_per_minute)?,
@@ -897,6 +904,7 @@ impl Limits {
             lookup_typeahead_per_minute,
             lookup_search_per_minute,
             lookup_profile_per_minute,
+            lookup_member_search_per_minute,
             lookup_misses_per_hour,
             message_search_per_minute,
             message_search_at_once,
@@ -1065,6 +1073,10 @@ impl Limits {
             ),
             ("LOOKUP_SEARCH_PER_MINUTE", set(lookup_search_per_minute)),
             ("LOOKUP_PROFILE_PER_MINUTE", set(lookup_profile_per_minute)),
+            (
+                "LOOKUP_MEMBER_SEARCH_PER_MINUTE",
+                set(lookup_member_search_per_minute),
+            ),
             ("LOOKUP_MISSES_PER_HOUR", set(lookup_misses_per_hour)),
             ("MESSAGE_SEARCH_PER_MINUTE", set(message_search_per_minute)),
             ("MESSAGE_SEARCH_AT_ONCE", set(message_search_at_once)),

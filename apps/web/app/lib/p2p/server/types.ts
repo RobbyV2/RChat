@@ -215,6 +215,9 @@ export interface MemberView {
   // Their roles, the highest first, and the highest (the member list groups by it).
   roles: string[]
   top: string | null
+  // Joined: when (ms), and the code they joined with, for those who may make invites.
+  joinedAt?: number
+  via?: { id: string; label: string }
 }
 
 // A role, and whether we outrank it: we may change, give and take it.

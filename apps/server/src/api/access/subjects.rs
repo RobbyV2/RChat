@@ -258,7 +258,7 @@ pub fn lists_members(access: &ServerAccess) -> bool {
     shows_members(access) || access.site_admin()
 }
 
-fn own_choice(stored: Option<&str>) -> Option<ProfilePolicy> {
+pub(crate) fn own_choice(stored: Option<&str>) -> Option<ProfilePolicy> {
     match stored {
         Some("shared") => Some(ProfilePolicy::Shared),
         Some("friends") => Some(ProfilePolicy::Friends),

@@ -175,6 +175,13 @@ export interface Member extends UserRef {
   profile?: MemberLook
 }
 
+// A member a member search found, with when they joined and when their account was made.
+export interface MemberHit extends Member {
+  joined_at: number
+  // null for an account that shows its profile only to its friends
+  created_at: number | null
+}
+
 export interface JoinedVia {
   id: number
   label: string | null

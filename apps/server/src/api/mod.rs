@@ -29,6 +29,7 @@ pub mod instance_audit;
 pub mod join_modes;
 pub mod lookup;
 pub mod media;
+pub mod member_search;
 pub mod messages;
 pub mod names;
 pub mod network_caps;
@@ -582,13 +583,15 @@ pub struct Member {
     /// Ids of the server roles assigned to the member.
     pub role_ids: Vec<i64>,
     /// The extra password the member joined with. Only in `GET /api/v1/servers/{name}/members`
-    /// for callers with the Manage invites permission, and only for members who joined with an
-    /// extra password that is still listed; absent otherwise. It disappears once the password
+    /// and `GET /api/v1/servers/{name}/members/search` for callers with the Manage invites
+    /// permission, and only for members who joined with an extra password that is still
+    /// listed; absent otherwise. It disappears once the password
     /// row is purged, 30 days after the password was revoked, expired or used up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joined_via: Option<JoinedVia>,
-    /// The member's running timeout. Only in `GET /api/v1/servers/{name}/members` for callers with
-    /// the Timeout members permission; absent otherwise and when none is running.
+    /// The member's running timeout. Only in `GET /api/v1/servers/{name}/members` and `GET
+    /// /api/v1/servers/{name}/members/search` for callers with the Timeout members permission;
+    /// absent otherwise and when none is running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<timeouts::MemberTimeout>,
     /// The name and avatar the member set for this server; absent when they use the account's,
@@ -2335,6 +2338,10 @@ fn api_routes(
             get(servers::get_server).delete(servers::delete_server),
         )
         .route("/servers/{name}/members", get(servers::list_members))
+        .route(
+            "/servers/{name}/members/search",
+            get(member_search::search_members),
+        )
         .route("/servers/{name}/interacted", get(servers::list_interacted))
         .route("/servers/{name}/mentions", get(servers::mentions))
         .route("/servers/{name}/leave", post(servers::leave_server))

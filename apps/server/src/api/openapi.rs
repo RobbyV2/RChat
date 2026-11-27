@@ -169,6 +169,7 @@ impl Modify for Bearer {
         super::servers::search_servers,
         super::servers::guest_access,
         super::servers::list_members,
+        super::member_search::search_members,
         super::servers::mentions,
         super::servers::list_interacted,
         super::servers::join_server,

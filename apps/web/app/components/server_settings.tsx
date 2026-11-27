@@ -58,6 +58,7 @@ import {
   SlowmodeField,
 } from './settings_fields'
 import { GuestParticipation, ServerAccessSection, passwordName } from './server_access'
+import { HostedMembers, MEMBER_SEARCH_PERMS } from './server_members'
 import { WidgetSettings } from './widget_settings'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
@@ -1349,10 +1350,11 @@ function Settings({ server }: { server: string }) {
   const canInvites = hasPerm(perms, Perm.ManageInvites)
   const canAssign = hasPerm(perms, Perm.AssignRoles)
   const canAdmin = hasPerm(perms, Perm.ManageAdmins)
+  const canSearch = (perms & MEMBER_SEARCH_PERMS) !== 0
   const siteAdmin = me?.is_site_admin ?? false
   const limit = siteAdmin ? undefined : perms
   const promote = canPromote(perms, siteAdmin)
-  const found = useMemberSearch(server, q)
+  const found = useMemberSearch(server, q, false, !canSearch)
   const adminList = useMemberSearch(server, q, true, canAdmin)
   const reloadFound = found.reload
   const reloadAdmins = adminList.reload
@@ -1571,7 +1573,11 @@ function Settings({ server }: { server: string }) {
       {canAdmin && (
         <>
           <p className={sectionCls}>Admins</p>
-          <MemberSearchField value={q} onChange={setQ} />
+          <MemberSearchField
+            value={q}
+            onChange={setQ}
+            placeholder={canSearch ? 'Search admins' : undefined}
+          />
           {admins.map(m =>
             memberRow(
               m,
@@ -1617,40 +1623,46 @@ function Settings({ server }: { server: string }) {
           {adminList.hasMore && <Sentinel key={`a${admins.length}`} onVisible={adminList.more} />}
         </>
       )}
-      {(canAdmin || canAssign) && (
+      {canSearch ? (
         <>
           <p className={sectionCls}>Members</p>
-          {!canAdmin && <MemberSearchField value={q} onChange={setQ} />}
-          {others.length ? (
-            others.map(m =>
-              memberRow(
-                m,
-                canAdmin && promote && (
-                  <button
-                    onClick={() => void grantAdmin(server, m.username).then(inSession(reloadBoth))}
-                    className={textBtn}
-                  >
-                    Make Admin
-                  </button>
+          <HostedMembers server={server} roles={detail.roles} perms={perms} />
+        </>
+      ) : (
+        canAdmin && (
+          <>
+            <p className={sectionCls}>Members</p>
+            {others.length ? (
+              others.map(m =>
+                memberRow(
+                  m,
+                  promote && (
+                    <button
+                      onClick={() =>
+                        void grantAdmin(server, m.username).then(inSession(reloadBoth))
+                      }
+                      className={textBtn}
+                    >
+                      Make Admin
+                    </button>
+                  )
                 )
               )
-            )
-          ) : (
-            <p className="px-2 text-sm text-on-surface-variant">
-              {found.active
-                ? found.loading
-                  ? 'Searching…'
-                  : 'No matching members.'
-                : canAdmin
-                  ? 'Everyone here is an admin.'
-                  : 'No members.'}
-            </p>
-          )}
-        </>
+            ) : (
+              <p className="px-2 text-sm text-on-surface-variant">
+                {found.active
+                  ? found.loading
+                    ? 'Searching…'
+                    : 'No matching members.'
+                  : 'Everyone here is an admin.'}
+              </p>
+            )}
+            {found.active
+              ? found.hasMore && <Sentinel key={`q${found.list.length}`} onVisible={found.more} />
+              : (cache?.hasMore ?? false) && <Sentinel key={loaded.length} onVisible={more} />}
+          </>
+        )
       )}
-      {found.active
-        ? found.hasMore && <Sentinel key={`q${found.list.length}`} onVisible={found.more} />
-        : (cache?.hasMore ?? false) && <Sentinel key={loaded.length} onVisible={more} />}
     </Dialog>
   )
 }
