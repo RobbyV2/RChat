@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { Download, FileDown, Printer } from 'lucide-react'
 import { Button } from '../controls'
+import { Row, Stack } from '../layout'
 import { buttonLook } from '../../lib/controls'
 import {
   KEY_DOT,
@@ -212,8 +213,8 @@ export function PhraseExport({
   }
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex flex-wrap gap-1">
+    <Stack gap="2xs">
+      <Row gap="2xs" wrap>
         <Button icon={Download} onClick={() => void savePng()}>
           Save PNG
         </Button>
@@ -247,12 +248,12 @@ export function PhraseExport({
             </Button>
           )}
         </span>
-      </div>
+      </Row>
       {note && (
         <p role="alert" className="text-xs text-error">
           {note}
         </p>
       )}
-    </div>
+    </Stack>
   )
 }

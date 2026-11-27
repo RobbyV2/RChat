@@ -5,6 +5,7 @@ import { Check } from 'lucide-react'
 import { validColor } from '../lib/profile'
 import { onColor } from '../lib/server_colors'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 
 interface ColorPreset {
   color: string
@@ -37,9 +38,9 @@ export function ColorField({
   }
   const current = value?.toLowerCase() ?? null
   return (
-    <div role="group" aria-label={label} className="flex flex-col gap-2">
+    <Stack role="group" aria-label={label} gap="sm">
       {presets.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
+        <Row gap="sm" wrap>
           {presets.map(p => {
             const on = current === p.color
             return (
@@ -59,9 +60,9 @@ export function ColorField({
               </button>
             )
           })}
-        </div>
+        </Row>
       )}
-      <div className="relative flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-on-surface-variant">
+      <Row gap="md" wrap place="relative">
         <input
           type="color"
           value={shown}
@@ -90,11 +91,11 @@ export function ColorField({
           className="w-24 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm"
         />
         {value === null ? (
-          <span className="text-xs">{defaultNote}</span>
+          <span className="text-xs text-on-surface-variant">{defaultNote}</span>
         ) : (
           <Button onClick={() => onChange(null)}>{resetLabel}</Button>
         )}
-      </div>
-    </div>
+      </Row>
+    </Stack>
   )
 }

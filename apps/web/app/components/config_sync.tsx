@@ -50,6 +50,7 @@ import {
   type SectionKey,
 } from '../lib/config_transfer'
 import { Button, Cover, IconButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { FieldError, LinkPage, fieldCls, sectionCls, useCopied } from './ui'
 import { fmtSize } from '../lib/bytes'
 import { type FilesPart } from '../lib/p2p/app'
@@ -223,8 +224,8 @@ function ImportPreview({
   }
   if (!changes.length) return <p className="text-sm text-on-surface-variant">Nothing to import.</p>
   return (
-    <div className="flex flex-col gap-3">
-      <ul className="flex flex-col gap-1" aria-label="What will change">
+    <Stack gap="md">
+      <Stack as="ul" gap="2xs" aria-label="What will change">
         {changes.map(c => {
           const ok = usable(c.key)
           const note = !ok
@@ -257,11 +258,11 @@ function ImportPreview({
             </li>
           )
         })}
-      </ul>
-      <p className="px-3 text-xs text-on-surface-variant">
+      </Stack>
+      <p className="text-xs text-on-surface-variant">
         Servers and DMs this account isn&apos;t in are skipped.
       </p>
-      <div className="flex flex-wrap items-center gap-2">
+      <Row gap="sm" wrap>
         <Button
           variant="filled"
           size="md"
@@ -270,8 +271,8 @@ function ImportPreview({
         >
           {later ? 'Apply and log in' : 'Apply'}
         </Button>
-      </div>
-    </div>
+      </Row>
+    </Stack>
   )
 }
 
@@ -284,28 +285,24 @@ function IncludeList({
 }) {
   const available = useAvailable()
   return (
-    <fieldset className="flex flex-col gap-1">
+    <Stack as="fieldset" gap="2xs">
       <legend className="pb-1 text-sm text-on-surface-variant">Include</legend>
       {SECTIONS.map(s => {
         const ok = available(s.key)
         return (
-          <label
-            key={s.key}
-            title={ok ? undefined : 'Needs an account'}
-            className={`flex items-center gap-2 text-sm ${ok ? '' : 'opacity-60'}`}
-          >
+          <Row as="label" key={s.key} gap="sm" title={ok ? undefined : 'Needs an account'}>
             <input
               type="checkbox"
               checked={ok && include.has(s.key)}
               disabled={!ok}
               onChange={() => onToggle(s.key)}
-              className="accent-primary"
+              className={`accent-primary ${ok ? '' : 'opacity-60'}`}
             />
-            {s.label}
-          </label>
+            <span className={`text-sm ${ok ? '' : 'opacity-60'}`}>{s.label}</span>
+          </Row>
         )
       })}
-    </fieldset>
+    </Stack>
   )
 }
 
@@ -491,9 +488,9 @@ function ExportBlock({
     }
   }
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       {p2p !== false && !text && (
-        <div className="flex flex-wrap gap-2">
+        <Row gap="sm" wrap>
           <Button
             variant="filled"
             size="md"
@@ -516,7 +513,7 @@ function ExportBlock({
               <SlowNote />
             </div>
           )}
-        </div>
+        </Row>
       )}
       {attachments && text ? (
         <p className="text-xs text-on-surface-variant">
@@ -530,7 +527,7 @@ function ExportBlock({
         </p>
       ) : (
         (p2p === false || text) && (
-          <div className="flex items-start gap-1">
+          <Row gap="2xs" align="start">
             <StreamerCover what="config string" always>
               <textarea
                 readOnly
@@ -542,7 +539,7 @@ function ExportBlock({
               />
             </StreamerCover>
             <CopyButton text={text} label="Copy config string" />
-          </div>
+          </Row>
         )
       )}
       <FieldError message={error} />
@@ -558,7 +555,7 @@ function ExportBlock({
           </Button>
         </div>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -621,27 +618,29 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
   const empty = presentSections(linkDoc(doc)).length === 0
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="block min-w-40 flex-1">
-          <span className="block pb-1 text-xs text-on-surface-variant">Expires after</span>
-          <select
-            aria-label="Expires after"
-            value={expiry}
-            onChange={e => setExpiry(Number(e.target.value))}
-            className={`${fieldCls} w-full bg-surface-container-high`}
-          >
-            {EXPIRY_CHOICES.map(c => (
-              <option key={c.seconds} value={c.seconds}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+    <Stack gap="md">
+      <Row gap="sm" align="end" wrap>
+        <label className="min-w-40 flex-1">
+          <Stack as="span" gap="2xs">
+            <span className="text-xs text-on-surface-variant">Expires after</span>
+            <select
+              aria-label="Expires after"
+              value={expiry}
+              onChange={e => setExpiry(Number(e.target.value))}
+              className={`${fieldCls} w-full bg-surface-container-high`}
+            >
+              {EXPIRY_CHOICES.map(c => (
+                <option key={c.seconds} value={c.seconds}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </Stack>
         </label>
         <Button variant="filled" size="md" disabled={busy || empty} onClick={() => void create()}>
           Create link
         </Button>
-      </div>
+      </Row>
       <p className="text-xs text-on-surface-variant">
         Anyone with the link can see the included settings, like the servers you are in and who you
         message, until it expires. <span className="streamer">{label}</span> stores them as readable
@@ -650,14 +649,14 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
       {empty && <p className="text-xs text-on-surface-variant">Include at least one section.</p>}
       <FieldError message={error} />
       {shownUrl && (
-        <div className="flex flex-col items-center gap-3 rounded-2xl bg-surface-container-high p-4">
+        <Surface pad="lg" gap="md" align="center">
           <StreamerCover key={shownUrl} what="QR code and link">
             <QrCode text={shownUrl} label="QR code of the config link" />
             <p className="text-center text-xs text-on-surface-variant">
               Scan to open on your phone
             </p>
           </StreamerCover>
-          <div className="flex w-full items-center gap-1">
+          <Row gap="2xs" place="w-full">
             {streamer ? (
               <span className="min-w-0 flex-1 truncate text-sm text-on-surface-variant">
                 Config link
@@ -680,47 +679,46 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
                 onClick={() => void sharing().share({ title: 'Config', url: shownUrl })}
               />
             )}
-          </div>
-        </div>
+          </Row>
+        </Surface>
       )}
       {links !== null && links.length > 0 && (
-        <div className="flex flex-col gap-1">
+        <Stack gap="2xs">
           <p className="text-sm text-on-surface-variant">Active links</p>
-          <ul className="flex flex-col gap-1">
+          <Stack as="ul" gap="2xs">
             {links.map((l, i) => (
-              <li
-                key={l.id}
-                className="flex items-center gap-2 rounded-xl bg-surface-container-low px-3 py-1.5"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-xs text-on-surface">
-                    {streamer ? `Link ${i + 1}` : l.id}
+              <Surface as="li" key={l.id} pad="md" tone="low" radius="lg">
+                <Row gap="sm">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-mono text-xs text-on-surface">
+                      {streamer ? `Link ${i + 1}` : l.id}
+                    </span>
+                    <span className="block text-xs text-on-surface-variant">
+                      Active {untilText(l.expires_at * 1000, now)}
+                    </span>
                   </span>
-                  <span className="block text-xs text-on-surface-variant">
-                    Active {untilText(l.expires_at * 1000, now)}
-                  </span>
-                </span>
-                <IconButton
-                  icon={QrIcon}
-                  label={shown === l.id ? 'Hide QR code' : 'Show QR code'}
-                  size="sm"
-                  pressed={shown === l.id}
-                  onClick={() => setShown(shown === l.id ? null : l.id)}
-                />
-                <CopyButton text={configUrl(l.id, shareOrigin)} label="Copy link" />
-                <IconButton
-                  icon={Trash2}
-                  label="Revoke link"
-                  size="sm"
-                  tone="danger"
-                  onClick={() => void revoke(l.id)}
-                />
-              </li>
+                  <IconButton
+                    icon={QrIcon}
+                    label={shown === l.id ? 'Hide QR code' : 'Show QR code'}
+                    size="sm"
+                    pressed={shown === l.id}
+                    onClick={() => setShown(shown === l.id ? null : l.id)}
+                  />
+                  <CopyButton text={configUrl(l.id, shareOrigin)} label="Copy link" />
+                  <IconButton
+                    icon={Trash2}
+                    label="Revoke link"
+                    size="sm"
+                    tone="danger"
+                    onClick={() => void revoke(l.id)}
+                  />
+                </Row>
+              </Surface>
             ))}
-          </ul>
-        </div>
+          </Stack>
+        </Stack>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -791,7 +789,7 @@ function ImportBlock() {
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       <textarea
         rows={3}
         value={text}
@@ -805,7 +803,7 @@ function ImportBlock() {
         }}
         className={areaCls}
       />
-      <div className="flex flex-wrap gap-2">
+      <Row gap="sm" wrap>
         <Button
           variant="filled"
           size="md"
@@ -817,7 +815,7 @@ function ImportBlock() {
         <Button size="md" onClick={() => void openFile()}>
           Import file
         </Button>
-      </div>
+      </Row>
       <FieldError message={error} />
       {done && (
         <p role="status" className="text-sm text-on-surface-variant">
@@ -841,7 +839,7 @@ function ImportBlock() {
           />
         </P2pProvider>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -873,7 +871,7 @@ function ImportSections({
         ) : importMode === 'existing' && trusted ? (
           <P2pImport section={doc.p2p} files={files} />
         ) : importMode === 'existing' ? (
-          <div className="flex flex-col gap-2">
+          <Stack gap="sm">
             <strong>Keep your P2P identity in an app you trust</strong>
             <p>
               {p2pTrustText(
@@ -892,16 +890,16 @@ function ImportSections({
             <Button size="md" onClick={() => setImportMode('choose')}>
               Cancel
             </Button>
-          </div>
+          </Stack>
         ) : (
-          <div className="flex flex-wrap gap-2">
+          <Row gap="sm" wrap>
             {identity?.p2p.hasData(account.store.getState().me?.username ?? '') && (
               <Button onClick={() => setImportMode('existing')}>
                 Import into the selected identity
               </Button>
             )}
             <Button onClick={() => setImportMode('new')}>Attach as a new P2P identity</Button>
-          </div>
+          </Row>
         ))}
       {(!doc.p2p || !p2pOn || presentSections(doc).length > 0) && (
         <ImportPreview identity={identity} doc={doc} onDone={onDone} />
@@ -925,7 +923,7 @@ function IdentityExport({ doc }: { doc: ConfigDoc }) {
         ? null
         : pass.pass
   return (
-    <section className="flex flex-col gap-3">
+    <Stack as="section" gap="md">
       <p className={sectionCls}>Export</p>
       {hasP2p && (
         <P2pExportOption
@@ -939,7 +937,7 @@ function IdentityExport({ doc }: { doc: ConfigDoc }) {
         />
       )}
       <ExportBlock doc={doc} p2p={p2pPass} files={withP2p && pass.files} />
-    </section>
+    </Stack>
   )
 }
 
@@ -962,14 +960,14 @@ export function ConfigSyncSection() {
       return next
     })
   return (
-    <div className="flex flex-col gap-8">
-      <section>
-        <p className="mb-4 text-sm text-on-surface-variant">
+    <Stack gap="2xl">
+      <Stack as="section" gap="lg">
+        <p className="text-sm text-on-surface-variant">
           Move your settings and layout to another device or account. Passwords, sessions, drafts
           and files are never included.
         </p>
         <IncludeList include={include} onToggle={toggle} />
-      </section>
+      </Stack>
       <section>
         <p className={sectionCls}>Share link</p>
         {me ? (
@@ -985,7 +983,7 @@ export function ConfigSyncSection() {
         <p className={sectionCls}>Import</p>
         <ImportBlock />
       </section>
-    </div>
+    </Stack>
   )
 }
 
@@ -1040,53 +1038,65 @@ function LinkCard({ id }: { id: string }) {
         '/login/?next=' + encodeURIComponent(accountPath(configPath(id), routeOwnerFor(account)))
       )
   }
+  const title = <h1 className="text-xl font-medium text-on-surface">Shared config</h1>
 
   return (
-    <div className="w-full max-w-md rounded-3xl bg-surface-container p-6 shadow-elevation-2">
-      <h1 className="text-xl font-medium text-on-surface">Shared config</h1>
-      {state.kind === 'loading' && <p className="pt-3 text-sm text-on-surface-variant">Loading…</p>}
-      {state.kind === 'missing' && (
-        <p className="pt-3 text-sm text-on-surface-variant">
-          This link has expired or was revoked.
-        </p>
-      )}
-      {state.kind === 'error' && <FieldError message={state.message} />}
-      {state.kind === 'ready' && (
-        <>
-          <p className="pt-1 pb-4 text-sm text-on-surface-variant">
-            Pick what to apply on this device. Link active{' '}
-            {untilText(state.expiresAt * 1000, Date.now())}.
-          </p>
-          {done ? (
-            <p role="status" className="text-sm text-on-surface">
-              {done}
-            </p>
-          ) : (
-            <P2pProvider identity={identity}>
-              <ImportPreview
-                identity={identity}
-                doc={state.doc}
-                loggedOut={!authed}
-                onDone={(applied, err) => {
-                  if (!current()) return
-                  setError(err)
-                  if (!applied) return
-                  if (authed) {
-                    showToast('Config applied')
-                    closeConfigLink()
-                  } else if (hasStashedConfig(handoff)) logIn()
-                  else setDone('Applied on this device')
-                }}
-              />
-            </P2pProvider>
-          )}
-          <FieldError message={error} />
-        </>
-      )}
-      <div className="flex flex-wrap gap-2 pt-5">
-        {!authed && <Button onClick={logIn}>Log in</Button>}
-        {authed && <Button onClick={closeConfigLink}>Close</Button>}
-      </div>
+    <div className="w-full max-w-md rounded-3xl bg-surface-container shadow-elevation-2">
+      <Surface pad="xl" gap="lg" tone="plain">
+        {state.kind !== 'ready' && (
+          <Stack gap="md">
+            {title}
+            {state.kind === 'loading' && (
+              <p className="text-sm text-on-surface-variant">Loading…</p>
+            )}
+            {state.kind === 'missing' && (
+              <p className="text-sm text-on-surface-variant">
+                This link has expired or was revoked.
+              </p>
+            )}
+            {state.kind === 'error' && <FieldError message={state.message} />}
+          </Stack>
+        )}
+        {state.kind === 'ready' && (
+          <>
+            <Stack gap="2xs">
+              {title}
+              <p className="text-sm text-on-surface-variant">
+                Pick what to apply on this device. Link active{' '}
+                {untilText(state.expiresAt * 1000, Date.now())}.
+              </p>
+            </Stack>
+            {done ? (
+              <p role="status" className="text-sm text-on-surface">
+                {done}
+              </p>
+            ) : (
+              <P2pProvider identity={identity}>
+                <ImportPreview
+                  identity={identity}
+                  doc={state.doc}
+                  loggedOut={!authed}
+                  onDone={(applied, err) => {
+                    if (!current()) return
+                    setError(err)
+                    if (!applied) return
+                    if (authed) {
+                      showToast('Config applied')
+                      closeConfigLink()
+                    } else if (hasStashedConfig(handoff)) logIn()
+                    else setDone('Applied on this device')
+                  }}
+                />
+              </P2pProvider>
+            )}
+            <FieldError message={error} />
+          </>
+        )}
+        <Row gap="sm" wrap>
+          {!authed && <Button onClick={logIn}>Log in</Button>}
+          {authed && <Button onClick={closeConfigLink}>Close</Button>}
+        </Row>
+      </Surface>
     </div>
   )
 }

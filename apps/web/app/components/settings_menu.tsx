@@ -60,7 +60,9 @@ import { canEditDisplayName } from '../lib/display_name'
 import { ColorField } from './color_field'
 import { InstanceDetails, useInstanceLabel } from './instance_badge'
 import { UserAvatar } from './user_avatar'
-import { SettingSwitch } from './settings_fields'
+import { SettingNotes, SettingSwitch } from './settings_fields'
+import { Button } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { MOTION_CHOICES, animHeldBack } from '../lib/motion/setting'
 import { useReducedMotion } from '../lib/motion/use_motion'
 import { NotificationsSection } from './notify_settings'
@@ -119,22 +121,26 @@ export function BannerPicker({
   const shown =
     banner ?? fallback ?? defaultBanner({ username, avatar_kind: kind, avatar_color: avatarColor })
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       <span className="text-sm text-on-surface-variant">Banner</span>
       <div className="overflow-hidden rounded-2xl bg-surface-container-high" aria-hidden>
         <div style={{ background: shown }} className="h-14" />
-        <div className="-mt-8 flex min-w-0 items-end gap-3 px-3 pb-3">
-          <span className="shrink-0 rounded-full bg-surface-container-high p-1">
-            {avatar ?? (
-              <UserAvatar
-                username={username}
-                avatarKind={kind}
-                avatarColor={avatarColor}
-                size={56}
-              />
-            )}
-          </span>
-          <span className="streamer truncate pb-1 font-medium text-on-surface">{displayName}</span>
+        <div className="-mt-11">
+          <Surface pad="md" tone="plain">
+            <Row gap="md" align="end">
+              <span className="shrink-0 rounded-full bg-surface-container-high p-1">
+                {avatar ?? (
+                  <UserAvatar
+                    username={username}
+                    avatarKind={kind}
+                    avatarColor={avatarColor}
+                    size={56}
+                  />
+                )}
+              </span>
+              <span className="streamer truncate font-medium text-on-surface">{displayName}</span>
+            </Row>
+          </Surface>
         </div>
       </div>
       <ColorField
@@ -145,7 +151,7 @@ export function BannerPicker({
         defaultNote={defaultNote}
         resetLabel={resetLabel}
       />
-    </div>
+    </Stack>
   )
 }
 
@@ -170,13 +176,11 @@ function ServerProfiles() {
   const on = useStore(s => s.settings.server_profiles !== false)
   if (!on || (!servers.length && !more)) return null
   return (
-    <div className="mt-6">
-      <ServerProfileList more={more ? () => void loadMore() : null}>
-        {servers.map(s => (
-          <HostedProfileRow key={s.name} server={s} />
-        ))}
-      </ServerProfileList>
-    </div>
+    <ServerProfileList more={more ? () => void loadMore() : null}>
+      {servers.map(s => (
+        <HostedProfileRow key={s.name} server={s} />
+      ))}
+    </ServerProfileList>
   )
 }
 
@@ -230,7 +234,7 @@ function AboutMe({ focus }: { focus: boolean }) {
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       <label htmlFor={id} className="text-sm text-on-surface-variant">
         About me
       </label>
@@ -251,22 +255,22 @@ function AboutMe({ focus }: { focus: boolean }) {
           over || error !== null ? 'border-error' : 'border-outline focus:border-primary'
         }`}
       />
-      <div className="relative flex items-start justify-between gap-3">
+      <Row gap="md" align="start" justify="between" place="relative">
         <div className="min-w-0">
           <FieldError id={`${id}-error`} message={error} />
-          {done && !error && <p className="pt-1.5 text-xs text-on-surface-variant">Saved</p>}
+          {done && !error && <p className="text-xs text-on-surface-variant">Saved</p>}
         </div>
         <span aria-live="polite" className="sr-only">
           {bioAnnouncement(count, done && !error)}
         </span>
         <span
           id={`${id}-count`}
-          className={`shrink-0 pt-1.5 text-xs tabular-nums ${over ? 'text-error' : 'text-on-surface-variant'}`}
+          className={`shrink-0 text-xs tabular-nums ${over ? 'text-error' : 'text-on-surface-variant'}`}
         >
           {count}/{BIO_MAX}
         </span>
-      </div>
-      <div className="flex justify-end gap-2">
+      </Row>
+      <Row gap="sm" justify="end">
         <button
           type="button"
           onClick={cancel}
@@ -283,8 +287,8 @@ function AboutMe({ focus }: { focus: boolean }) {
         >
           Save
         </button>
-      </div>
-    </div>
+      </Row>
+    </Stack>
   )
 }
 
@@ -293,11 +297,8 @@ function AccountCard() {
   const me = useStore(s => s.me)
   const { label, host } = useInstanceLabel()
   return (
-    <div
-      data-account-card
-      className="flex min-w-0 flex-col gap-3 rounded-2xl bg-surface-container-high p-4"
-    >
-      <div className="flex min-w-0 items-center gap-3">
+    <Surface data-account-card pad="lg" gap="md">
+      <Row gap="md">
         {me ? (
           <UserAvatar
             username={me.username}
@@ -316,8 +317,9 @@ function AccountCard() {
             {me ? `@${me.username}` : 'Browsing without an account'}
           </p>
         </div>
-      </div>
-      <div className="flex min-w-0 items-center gap-3 border-t border-outline-variant pt-3">
+      </Row>
+      <div aria-hidden className="border-t border-outline-variant" />
+      <Row gap="md">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary-container text-on-primary-container">
           <Globe size={16} />
         </span>
@@ -327,8 +329,8 @@ function AccountCard() {
             <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
           )}
         </div>
-      </div>
-    </div>
+      </Row>
+    </Surface>
   )
 }
 
@@ -355,8 +357,8 @@ function NavAccount({
   const me = useStore(s => s.me)
   const { label, host } = useInstanceLabel()
   return (
-    <div data-nav-account className="flex min-w-0 flex-col gap-2 px-1">
-      <div className="flex min-w-0 items-center gap-3">
+    <Surface data-nav-account pad="2xs" gap="sm" tone="plain">
+      <Row gap="md">
         {me ? (
           <UserAvatar
             username={me.username}
@@ -386,9 +388,9 @@ function NavAccount({
             </button>
           )}
         </div>
-      </div>
+      </Row>
       <SettingsAccountPicker section={section} />
-    </div>
+    </Surface>
   )
 }
 
@@ -411,36 +413,38 @@ function ProfileFields() {
   return (
     <PageRow id="user_profile">
       <p className={sectionCls}>Your profile</p>
-      <div className="flex flex-col gap-5">
-        {editName && <DisplayNameField focus={focusName} />}
-        <AvatarPicker
-          username={me.username}
-          kind={kind}
-          color={color}
-          onKind={setKind}
-          onColor={setColor}
-          background={background}
-          onBackground={setBackground}
-        />
-        <BannerPicker
-          username={me.username}
-          displayName={me.display_name}
-          kind={kind}
-          avatarColor={kind === 'color' ? color : background}
-          banner={banner}
-          onBanner={setBanner}
-        />
-      </div>
-      <button
-        onClick={() => void patchMe(kind, avatarColorFor(kind, color, background), banner)}
-        className={`mt-4 ${filledBtn}`}
-      >
-        Save profile
-      </button>
-      <div className="mt-6">
+      <Stack gap="xl">
+        <Stack gap="lg">
+          {editName && <DisplayNameField focus={focusName} />}
+          <AvatarPicker
+            username={me.username}
+            kind={kind}
+            color={color}
+            onKind={setKind}
+            onColor={setColor}
+            background={background}
+            onBackground={setBackground}
+          />
+          <BannerPicker
+            username={me.username}
+            displayName={me.display_name}
+            kind={kind}
+            avatarColor={kind === 'color' ? color : background}
+            banner={banner}
+            onBanner={setBanner}
+          />
+          <Button
+            variant="filled"
+            size="md"
+            onClick={() => void patchMe(kind, avatarColorFor(kind, color, background), banner)}
+            place="self-start"
+          >
+            Save profile
+          </Button>
+        </Stack>
         <AboutMe focus={focusBio} />
-      </div>
-      <ServerProfiles />
+        <ServerProfiles />
+      </Stack>
     </PageRow>
   )
 }
@@ -467,7 +471,7 @@ function SecretField({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       <span className="text-sm text-on-surface-variant">{label}</span>
       <PassSwitch value={kind} onChange={onKind} label={`${label} type`} />
       {kind === 'text' ? (
@@ -475,16 +479,16 @@ function SecretField({
       ) : words.length ? (
         <WordGrid words={words} selected={selected} onChange={onSelected} />
       ) : wordsError ? (
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-error">Couldn't load your words: {wordsError}</span>
-          <button type="button" onClick={onRetry} className="font-medium text-primary">
+        <Row gap="md">
+          <span className="text-sm text-error">Couldn't load your words: {wordsError}</span>
+          <button type="button" onClick={onRetry} className="text-sm font-medium text-primary">
             Retry
           </button>
-        </div>
+        </Row>
       ) : (
         <p className="text-sm text-on-surface-variant">Loading your 20 words…</p>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -601,9 +605,9 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
   }
 
   return (
-    <div>
-      <p className="mb-3 text-sm font-medium text-on-surface">{title}</p>
-      <form onSubmit={submit} className="flex flex-col gap-5">
+    <Stack gap="md">
+      <p className="text-sm font-medium text-on-surface">{title}</p>
+      <Stack as="form" onSubmit={submit} gap="lg">
         <input
           type="text"
           value={username}
@@ -664,21 +668,23 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
             className={fieldCls}
           />
         </SecretField>
-        <div>
-          <p className="text-xs text-on-surface-variant">
-            Other devices and browsers are signed out when you change your password.
-          </p>
-          <FieldError message={error} />
-          {done && (
-            <p role="status" className="pt-1.5 text-xs text-primary">
-              Password changed
+        <Stack gap="md">
+          <Stack gap="xs">
+            <p className="text-xs text-on-surface-variant">
+              Other devices and browsers are signed out when you change your password.
             </p>
-          )}
-          <button type="submit" disabled={busy} className={`mt-3 ${filledBtn}`}>
+            <FieldError message={error} />
+            {done && (
+              <p role="status" className="text-xs text-primary">
+                Password changed
+              </p>
+            )}
+          </Stack>
+          <Button type="submit" variant="filled" size="md" disabled={busy} place="self-start">
             {title}
-          </button>
-        </div>
-      </form>
+          </Button>
+        </Stack>
+      </Stack>
       {confirming && first && (
         <Dialog
           title="Set a password"
@@ -696,7 +702,7 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
           />
         </Dialog>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -740,7 +746,7 @@ function SignInSection() {
   return (
     <section>
       <p className={sectionCls}>Sign-in</p>
-      <div className="flex flex-col items-start gap-6">
+      <Stack gap="xl" align="start">
         {signedIn && <AccountMethods key={accountKey} />}
         <Link
           href="/login"
@@ -754,7 +760,7 @@ function SignInSection() {
         >
           {signedIn ? 'Log out' : 'Exit guest mode'}
         </Link>
-      </div>
+      </Stack>
     </section>
   )
 }
@@ -772,9 +778,11 @@ function StatusSection() {
           value={appearOffline}
           onChange={v => void setAppearOffline(v)}
         />
-        <p className="mt-2 px-2 text-xs text-on-surface-variant">
-          You will never appear online to others. You can still chat normally.
-        </p>
+        <SettingNotes>
+          <p className="text-xs text-on-surface-variant">
+            You will never appear online to others. You can still chat normally.
+          </p>
+        </SettingNotes>
       </section>
     </PageRow>
   )
@@ -788,18 +796,22 @@ function ChatSection() {
   return (
     <section>
       <p className={sectionCls}>Chat</p>
-      <PageRow id="user_typing">
-        <SettingSwitch label="Typing indicators" value={on} onChange={setOn} />
-        <p className="mt-2 px-2 text-xs text-on-surface-variant">
-          Show when others are typing and let them see when you type. Off hides both.
-        </p>
-      </PageRow>
-      <PageRow id="user_profanity">
-        <ProfanitySwitch />
-      </PageRow>
-      <PageRow id="user_spoilers">
-        <SpoilersChoice />
-      </PageRow>
+      <Stack gap="sm">
+        <PageRow id="user_typing">
+          <SettingSwitch label="Typing indicators" value={on} onChange={setOn} />
+          <SettingNotes>
+            <p className="text-xs text-on-surface-variant">
+              Show when others are typing and let them see when you type. Off hides both.
+            </p>
+          </SettingNotes>
+        </PageRow>
+        <PageRow id="user_profanity">
+          <ProfanitySwitch />
+        </PageRow>
+        <PageRow id="user_spoilers">
+          <SpoilersChoice />
+        </PageRow>
+      </Stack>
     </section>
   )
 }
@@ -814,22 +826,24 @@ function AnimationsSetting() {
   return (
     <PageRow id="user_animations">
       <SettingSwitch label="Animations" value={anim.on} onChange={on => setAnim({ ...anim, on })} />
-      <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        Things fade and move when they open, arrive or change.
-      </p>
-      <div className="mt-4 px-2">
-        <Choice
-          label="Motion"
-          value={anim.motion}
-          options={MOTION_CHOICES}
-          onChange={motion => setAnim({ ...anim, motion })}
-        />
-        {held && (
-          <p role="status" className="mt-2 text-xs text-on-surface">
-            {held}
-          </p>
-        )}
-      </div>
+      <SettingNotes gap="lg">
+        <p className="text-xs text-on-surface-variant">
+          Things fade and move when they open, arrive or change.
+        </p>
+        <Stack gap="sm">
+          <Choice
+            label="Motion"
+            value={anim.motion}
+            options={MOTION_CHOICES}
+            onChange={motion => setAnim({ ...anim, motion })}
+          />
+          {held && (
+            <p role="status" className="text-xs text-on-surface">
+              {held}
+            </p>
+          )}
+        </Stack>
+      </SettingNotes>
     </PageRow>
   )
 }
@@ -843,13 +857,13 @@ function SpoilersChoice() {
   const show = useStore(s => s.showSpoilers)
   const setShow = useStore(s => s.setShowSpoilers)
   return (
-    <div className="mt-4 px-2">
+    <SettingNotes>
       <Choice label="Show spoilers" value={show} options={SPOILER_CHOICES} onChange={setShow} />
-      <p className="mt-2 text-xs text-on-surface-variant">
+      <p className="text-xs text-on-surface-variant">
         Always shows spoiler text and attachments without a click, except in streamer mode. Previews
         and notifications keep them hidden.
       </p>
-    </div>
+    </SettingNotes>
   )
 }
 
@@ -861,29 +875,33 @@ export function ProfanitySwitch() {
   const { label } = useInstanceLabel()
   const shown = filterSwitch(capabilities().wasm, on, failed)
   return (
-    <div className="mt-4">
+    <div>
       <SettingSwitch
         label="Filter profanity"
         value={shown.on}
         onChange={setOn}
         disabled={!shown.usable}
       />
-      {shown.note && (
-        <p role="status" className="mt-2 px-2 text-xs text-on-surface">
-          {shown.note}
-        </p>
-      )}
-      <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        Masks profanity in messages and names you see, including P2P chats. Click or tap a masked
-        word to show it. Your own messages, names and servers are never masked for you. P2P content
-        is never filtered by the instance.
-      </p>
-      {site && (
-        <p className="mt-1 px-2 text-xs text-on-surface-variant">
-          <span className="streamer">{label}</span> also blocks profanity in server content before
-          it is posted.
-        </p>
-      )}
+      <SettingNotes>
+        {shown.note && (
+          <p role="status" className="text-xs text-on-surface">
+            {shown.note}
+          </p>
+        )}
+        <Stack gap="2xs">
+          <p className="text-xs text-on-surface-variant">
+            Masks profanity in messages and names you see, including P2P chats. Click or tap a
+            masked word to show it. Your own messages, names and servers are never masked for you.
+            P2P content is never filtered by the instance.
+          </p>
+          {site && (
+            <p className="text-xs text-on-surface-variant">
+              <span className="streamer">{label}</span> also blocks profanity in server content
+              before it is posted.
+            </p>
+          )}
+        </Stack>
+      </SettingNotes>
     </div>
   )
 }
@@ -903,48 +921,52 @@ function ConnectionSection() {
   return (
     <PageRow id="user_connection">
       <p className={sectionCls}>Voice and P2P</p>
-      <p className="mb-2 px-2 text-xs text-on-surface-variant">
-        Calls, voice and P2P files connect you straight to the other person, so they can see your IP
-        address. Relay only sends everything through the relay instead.
-      </p>
-      <SettingSwitch label="Use connection helpers" value={on} onChange={setOn} />
-      <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        {offer.length
-          ? `Offered here: ${offer.join(', ')}.`
-          : 'None: direct connections only, same network.'}
-      </p>
-      {offer.length > 0 && (
-        <p className="mt-1 px-2 text-xs text-on-surface-variant">
-          Helpers let calls and P2P files connect across networks. They see your IP address, not
-          what you send.
+      <SettingNotes>
+        <p className="text-xs text-on-surface-variant">
+          Calls, voice and P2P files connect you straight to the other person, so they can see your
+          IP address. Relay only sends everything through the relay instead.
         </p>
-      )}
-      <div className="mt-2">
-        <SettingSwitch
-          label="Use relay only for P2P (hides your IP)"
-          value={relay && relayUsable}
-          onChange={setRelay}
-          disabled={!relayUsable}
-        />
-      </div>
-      <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        {relayUsable ? (
-          info?.turn === true ? (
-            'Others see the relay, not you. Calls may have more delay.'
-          ) : (
-            <>
-              Others see your relay, not you. Voice channels and calls through the server need a
-              relay from {named}, so they will not connect.
-            </>
-          )
-        ) : info?.turn !== true && !own ? (
-          <>Not available: {named} has no relay. You can add your own TURN relay below.</>
-        ) : !signedIn ? (
-          'Sign in to use the relay.'
-        ) : (
-          'Turn on connection helpers to use the relay.'
+      </SettingNotes>
+      <SettingSwitch label="Use connection helpers" value={on} onChange={setOn} />
+      <SettingNotes gap="2xs">
+        <p className="text-xs text-on-surface-variant">
+          {offer.length
+            ? `Offered here: ${offer.join(', ')}.`
+            : 'None: direct connections only, same network.'}
+        </p>
+        {offer.length > 0 && (
+          <p className="text-xs text-on-surface-variant">
+            Helpers let calls and P2P files connect across networks. They see your IP address, not
+            what you send.
+          </p>
         )}
-      </p>
+      </SettingNotes>
+      <SettingSwitch
+        label="Use relay only for P2P (hides your IP)"
+        value={relay && relayUsable}
+        onChange={setRelay}
+        disabled={!relayUsable}
+      />
+      <SettingNotes>
+        <p className="text-xs text-on-surface-variant">
+          {relayUsable ? (
+            info?.turn === true ? (
+              'Others see the relay, not you. Calls may have more delay.'
+            ) : (
+              <>
+                Others see your relay, not you. Voice channels and calls through the server need a
+                relay from {named}, so they will not connect.
+              </>
+            )
+          ) : info?.turn !== true && !own ? (
+            <>Not available: {named} has no relay. You can add your own TURN relay below.</>
+          ) : !signedIn ? (
+            'Sign in to use the relay.'
+          ) : (
+            'Turn on connection helpers to use the relay.'
+          )}
+        </p>
+      </SettingNotes>
     </PageRow>
   )
 }
@@ -953,16 +975,18 @@ function ProfileSection() {
   const account = useAccount()
   const { label } = useInstanceLabel()
   return (
-    <div className="flex flex-col gap-8">
-      <PageRow id="user_account" className="flex flex-col gap-8">
-        <AccountCard />
-        <button
-          className="self-start text-sm text-primary"
-          onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
-        >
-          Switch account
-        </button>
-        <ManageAccounts />
+    <Stack gap="2xl">
+      <PageRow id="user_account">
+        <Stack gap="2xl">
+          <AccountCard />
+          <button
+            className="self-start text-sm text-primary"
+            onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
+          >
+            Switch account
+          </button>
+          <ManageAccounts />
+        </Stack>
       </PageRow>
       <ProfileFields />
       <PageRow id="user_sign_in">
@@ -974,7 +998,7 @@ function ProfileSection() {
         </p>
         <InstanceDetails />
       </PageRow>
-    </div>
+    </Stack>
   )
 }
 
@@ -986,7 +1010,7 @@ function GeneralSection() {
   const streamer = useStore(s => s.streamer)
   const setStreamer = useStore(s => s.setStreamer)
   return (
-    <div className="flex flex-col gap-8">
+    <Stack gap="2xl">
       <StatusSection />
       <ChatSection />
       <ConnectionSection />
@@ -1012,16 +1036,18 @@ function GeneralSection() {
       <PageRow id="user_streamer">
         <p className={sectionCls}>Streamer mode</p>
         <SettingSwitch label="Streamer mode" value={streamer} onChange={setStreamer} />
-        <p className="mt-2 px-2 text-xs text-on-surface-variant">
-          Blurs server names, usernames, and DM names until hovered.
-        </p>
+        <SettingNotes>
+          <p className="text-xs text-on-surface-variant">
+            Blurs server names, usernames, and DM names until hovered.
+          </p>
+        </SettingNotes>
       </PageRow>
       {desktop && (
         <PageRow id="user_desktop" className="empty:hidden">
           <DesktopSection />
         </PageRow>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -1035,7 +1061,9 @@ function Info({ id, title, children }: { id: string; title: string; children: Re
     <PageRow id={id}>
       <section>
         <p className={sectionCls}>{title}</p>
-        <div className="flex flex-col gap-2 text-sm text-on-surface-variant">{children}</div>
+        <div className="text-sm text-on-surface-variant">
+          <Stack gap="sm">{children}</Stack>
+        </div>
       </section>
     </PageRow>
   )
@@ -1101,7 +1129,7 @@ function ShortcutList() {
 function InformationSection() {
   const uploadMib = useStore(s => Math.round(limitsOf(s.instance).upload_bytes / 1048576))
   return (
-    <div className="flex flex-col gap-8">
+    <Stack gap="2xl">
       <Info id="user_info_about" title="About RChat">
         <p>
           Anonymous chat with a Discord-style layout. Everything runs on the server you connect to;
@@ -1182,7 +1210,7 @@ function InformationSection() {
       <Info id="user_info_moderation" title="Moderation">
         <ModerationText />
       </Info>
-    </div>
+    </Stack>
   )
 }
 
@@ -1211,18 +1239,18 @@ function SectionBody({ section }: { section: SettingsSection }) {
       )
     case 'privacy':
       return (
-        <section>
+        <Stack as="section" gap="lg">
           <PageRow id="user_privacy">
             <PrivacyChoices />
           </PageRow>
-          <PageRow id="user_links" className="pt-5">
+          <PageRow id="user_links">
             <LinkSafetySection />
           </PageRow>
-          <PageRow id="user_blocked" className="pt-5">
+          <PageRow id="user_blocked">
             <p className={sectionCls}>Blocked users</p>
             <BlockedUsersSection />
           </PageRow>
-        </section>
+        </Stack>
       )
     case 'p2p':
       return (

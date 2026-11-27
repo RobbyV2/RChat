@@ -15,6 +15,7 @@ import {
   focusesSearch,
   keptSections,
   navKey,
+  navRuns,
   openSection,
   pageEscape,
   rowAnchor,
@@ -25,6 +26,7 @@ import { searchRows, type SearchHit, type SearchRow } from '../lib/settings_sear
 import type { EscapeLayer } from '../lib/escape_layers'
 import { useMotionPlays } from '../lib/motion/use_motion'
 import { IconButton, ListRow } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Dialog } from './ui'
 
 export interface PageSection {
@@ -97,10 +99,12 @@ export function PageRow({
 export function PageGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
     <section aria-label={label} className="pb-5">
-      <h2 className="pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-        {label}
-      </h2>
-      <div className="space-y-1">{children}</div>
+      <Stack gap="sm">
+        <h2 className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+          {label}
+        </h2>
+        <Stack gap="2xs">{children}</Stack>
+      </Stack>
     </section>
   )
 }
@@ -110,18 +114,14 @@ function SearchField({
   setQuery,
   onEnter,
   fieldRef,
-  className = '',
 }: {
   query: string
   setQuery: (q: string) => void
   onEnter: () => void
   fieldRef: React.Ref<HTMLInputElement>
-  className?: string
 }) {
   return (
-    <div
-      className={`flex items-center gap-2 rounded-xl border border-outline px-3 focus-within:border-primary ${className}`}
-    >
+    <div className="flex items-center gap-2 rounded-xl border border-outline px-3 focus-within:border-primary">
       <Search size={16} className="shrink-0 text-on-surface-variant" />
       <input
         ref={fieldRef}
@@ -142,7 +142,6 @@ function SearchField({
           size="sm"
           data-icon-only
           onClick={() => setQuery('')}
-          place="-mr-1.5 pointer-coarse:-mr-2.5"
         />
       )}
     </div>
@@ -151,14 +150,16 @@ function SearchField({
 
 function Results({ hits, onPick }: { hits: SearchHit[]; onPick: (hit: SearchHit) => void }) {
   return (
-    <div role="region" aria-label="Search results" className="flex flex-col gap-1 pb-4">
-      <p role="status" className="px-3 text-xs text-on-surface-variant">
-        {hits.length === 0
-          ? 'No results'
-          : hits.length === 1
-            ? '1 result'
-            : `${hits.length} results`}
-      </p>
+    <Stack role="region" aria-label="Search results" gap="2xs">
+      <Surface pad="md" inset="bar" tone="plain">
+        <p role="status" className="text-xs text-on-surface-variant">
+          {hits.length === 0
+            ? 'No results'
+            : hits.length === 1
+              ? '1 result'
+              : `${hits.length} results`}
+        </p>
+      </Surface>
       {hits.map(hit => (
         <ListRow
           key={`${hit.row.section}/${hit.row.id}`}
@@ -168,7 +169,7 @@ function Results({ hits, onPick }: { hits: SearchHit[]; onPick: (hit: SearchHit)
           description={hit.trail.slice(0, -1).join(' › ')}
         />
       ))}
-    </div>
+    </Stack>
   )
 }
 
@@ -395,36 +396,44 @@ export function SettingsPage({
         <div
           className={`${active === null ? 'flex' : 'hidden'} min-h-0 flex-1 flex-col md:flex md:w-64 md:flex-none md:border-r md:border-outline-variant md:bg-surface-container-low`}
         >
-          <div className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-2 md:hidden">
-            {closeButton}
-            <span className="min-w-0 flex-1 truncate px-1 font-medium">{title}</span>
-            {actor}
-            {searchButton}
-          </div>
-          {header === undefined && (
-            <p className="hidden px-7 pt-6 pb-3 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block">
-              {title}
-            </p>
-          )}
-          {search && (
-            <>
-              <SearchField
-                query={query}
-                setQuery={setQuery}
-                onEnter={enter}
-                fieldRef={wideField}
-                className={`mx-4 mb-3 hidden md:flex ${header === undefined ? '' : 'mt-4'}`}
-              />
-              {searching && (
+          <Surface
+            pad="sm"
+            inset="bar"
+            tone="plain"
+            radius="none"
+            border="bottom"
+            place="shrink-0 md:hidden"
+          >
+            <Row gap="2xs">
+              {closeButton}
+              <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+              {actor}
+              {searchButton}
+            </Row>
+          </Surface>
+          {(header === undefined || search) && (
+            <Surface pad="lg" gap="2xs" tone="plain" place="hidden shrink-0 md:flex">
+              {header === undefined && (
+                <Surface pad="md" inset="bar" tone="plain">
+                  <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                    {title}
+                  </p>
+                </Surface>
+              )}
+              {search && (
                 <SearchField
                   query={query}
                   setQuery={setQuery}
                   onEnter={enter}
-                  fieldRef={listField}
-                  className="mx-3 mt-3 md:hidden"
+                  fieldRef={wideField}
                 />
               )}
-            </>
+            </Surface>
+          )}
+          {search && searching && (
+            <Surface pad="md" tone="plain" place="shrink-0 md:hidden">
+              <SearchField query={query} setQuery={setQuery} onEnter={enter} fieldRef={listField} />
+            </Surface>
           )}
           {header !== undefined && (
             <div
@@ -435,11 +444,12 @@ export function SettingsPage({
           )}
           <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-4 md:pt-0">
             {results && <div className="md:hidden">{results}</div>}
-            <div className={results ? 'hidden md:block' : ''}>
-              {summary && <div className="pb-3 md:hidden">{summary}</div>}
-              <nav
+            <Stack gap="md" place={results ? 'hidden md:flex' : undefined}>
+              {summary && <div className="md:hidden">{summary}</div>}
+              <Stack
+                as="nav"
+                gap="lg"
                 aria-label={title}
-                className="flex flex-col gap-1"
                 onKeyDown={e => {
                   const buttons = [...e.currentTarget.querySelectorAll('button')].filter(shows)
                   const to = navKey(
@@ -452,93 +462,113 @@ export function SettingsPage({
                   buttons[to]?.focus()
                 }}
               >
-                {sections.map(({ id, label, icon: Icon, group, rows, outline }, i) => {
-                  const parts = outline && shown === id ? (rows ?? []) : []
-                  const open = parts.length > 1 && folded !== id
-                  const entry = (
-                    <ListRow
-                      data-settings-section={id}
-                      tone="muted"
-                      icon={Icon}
-                      label={label}
-                      chevron="narrow"
-                      current={currentEntry(id, { shown, active, wide }) && 'page'}
-                      onClick={() => onSection(id)}
-                      place="flex-1"
-                    />
-                  )
-                  const fold = open ? `Hide the parts of ${label}` : `Show the parts of ${label}`
-                  return (
-                    <Fragment key={id}>
-                      {group !== undefined && group !== sections[i - 1]?.group && (
-                        <p className="px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase first:pt-1">
-                          {group}
+                {navRuns(sections).map(run => (
+                  <Stack key={run.entries[0].id} gap="2xs">
+                    {run.heading !== undefined && (
+                      <Surface pad="md" inset="bar" tone="plain">
+                        <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                          {run.heading}
                         </p>
-                      )}
-                      {parts.length > 1 ? (
-                        <div className="flex min-w-0 items-center gap-1">
-                          {entry}
-                          <IconButton
-                            icon={open ? ChevronUp : ChevronDown}
-                            label={fold}
-                            data-icon-only
-                            aria-expanded={open}
-                            onClick={() => setFolded(open ? id : null)}
-                            place="hidden md:inline-flex"
-                          />
-                        </div>
-                      ) : (
-                        entry
-                      )}
-                      {open && (
-                        <div className="ml-5 hidden min-w-0 flex-col gap-0.5 border-l border-outline-variant py-1 pl-2 md:flex">
-                          {parts.map(part => (
-                            <ListRow
-                              key={part.id}
-                              data-settings-part={part.id}
-                              tone="muted"
-                              label={part.label}
-                              onClick={() => jump(id, part.id)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </Fragment>
-                  )
-                })}
-              </nav>
-            </div>
+                      </Surface>
+                    )}
+                    {run.entries.map(({ id, label, icon: Icon, rows, outline }) => {
+                      const parts = outline && shown === id ? (rows ?? []) : []
+                      const open = parts.length > 1 && folded !== id
+                      const entry = (
+                        <ListRow
+                          data-settings-section={id}
+                          tone="muted"
+                          icon={Icon}
+                          label={label}
+                          chevron="narrow"
+                          current={currentEntry(id, { shown, active, wide }) && 'page'}
+                          onClick={() => onSection(id)}
+                          place="flex-1"
+                        />
+                      )
+                      const fold = open
+                        ? `Hide the parts of ${label}`
+                        : `Show the parts of ${label}`
+                      return (
+                        <Fragment key={id}>
+                          {parts.length > 1 ? (
+                            <Row gap="2xs">
+                              {entry}
+                              <IconButton
+                                icon={open ? ChevronUp : ChevronDown}
+                                label={fold}
+                                data-icon-only
+                                aria-expanded={open}
+                                onClick={() => setFolded(open ? id : null)}
+                                place="hidden md:inline-flex"
+                              />
+                            </Row>
+                          ) : (
+                            entry
+                          )}
+                          {open && (
+                            <div className="ml-5 hidden border-l border-outline-variant md:block">
+                              <Surface pad="2xs" gap="3xs" tone="plain">
+                                {parts.map(part => (
+                                  <ListRow
+                                    key={part.id}
+                                    data-settings-part={part.id}
+                                    tone="muted"
+                                    label={part.label}
+                                    onClick={() => jump(id, part.id)}
+                                  />
+                                ))}
+                              </Surface>
+                            </div>
+                          )}
+                        </Fragment>
+                      )
+                    })}
+                  </Stack>
+                ))}
+              </Stack>
+            </Stack>
           </div>
         </div>
         <div
           className={`${active === null ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col md:flex`}
         >
-          <div className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-2 md:hidden">
-            {(onBack || !single) && (
-              <IconButton
-                ref={back}
-                icon={ArrowLeft}
-                label="Back"
-                size="lg"
-                data-icon-only
-                onClick={onBack ?? (() => onSection(null))}
-              />
-            )}
-            <span className={`min-w-0 flex-1 truncate px-1 font-medium ${named}`}>
-              {heading ?? section?.label}
-            </span>
-            {actor}
-            {searchButton}
-            {closeButton}
-          </div>
+          <Surface
+            pad="sm"
+            inset="bar"
+            tone="plain"
+            radius="none"
+            border="bottom"
+            place="shrink-0 md:hidden"
+          >
+            <Row gap="2xs">
+              {(onBack || !single) && (
+                <IconButton
+                  ref={back}
+                  icon={ArrowLeft}
+                  label="Back"
+                  size="lg"
+                  data-icon-only
+                  onClick={onBack ?? (() => onSection(null))}
+                />
+              )}
+              <span className={`min-w-0 flex-1 truncate font-medium ${named}`}>
+                {heading ?? section?.label}
+              </span>
+              {actor}
+              {searchButton}
+              {closeButton}
+            </Row>
+          </Surface>
           {search && searching && (
-            <SearchField
-              query={query}
-              setQuery={setQuery}
-              onEnter={enter}
-              fieldRef={sectionField}
-              className="mx-3 mt-3 md:hidden"
-            />
+            <Surface pad="md" tone="plain" place="shrink-0 md:hidden">
+              <SearchField
+                query={query}
+                setQuery={setQuery}
+                onEnter={enter}
+                fieldRef={sectionField}
+              />
+            </Surface>
           )}
           <div className="hidden h-16 shrink-0 items-center gap-3 border-b border-outline-variant pr-3 pl-6 md:flex lg:pl-10">
             <h1 className={`min-w-0 flex-1 truncate text-xl font-medium ${named}`}>
@@ -548,17 +578,19 @@ export function SettingsPage({
             {closeButton}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-6 md:pt-6 md:pb-10 lg:px-10">
-            <div className="mx-auto max-w-3xl">
+            <Stack gap="lg" place="mx-auto max-w-3xl">
               {results}
-              {lead}
-              {sections
-                .filter(s => kept.includes(s.id))
-                .map(s => (
-                  <div key={s.id} data-section-body={s.id} hidden={s.id !== shown}>
-                    {s.render()}
-                  </div>
-                ))}
-            </div>
+              <div>
+                {lead}
+                {sections
+                  .filter(s => kept.includes(s.id))
+                  .map(s => (
+                    <div key={s.id} data-section-body={s.id} hidden={s.id !== shown}>
+                      {s.render()}
+                    </div>
+                  ))}
+              </div>
+            </Stack>
           </div>
         </div>
       </div>

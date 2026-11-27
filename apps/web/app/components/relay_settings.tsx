@@ -18,8 +18,9 @@ import {
   type RelayChoice,
   type RelayPrefs,
 } from '../lib/relays'
-import { SettingSwitch } from './settings_fields'
+import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button, IconButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { CloseButton, FieldError, TopDialog, fieldCls, sectionCls } from './ui'
 
 const relayLabel = (url: string) => displayHost(hostOf(url) ?? url)
@@ -40,7 +41,7 @@ export function RelayPicker({
   const manual = manualRelays(prefs)
   if (manual.length === 0) return null
   return (
-    <div className="flex items-center gap-2">
+    <Row gap="sm">
       <label htmlFor={id} className="shrink-0 text-sm text-on-surface-variant">
         {label}
       </label>
@@ -57,7 +58,7 @@ export function RelayPicker({
           </option>
         ))}
       </select>
-    </div>
+    </Row>
   )
 }
 
@@ -93,7 +94,7 @@ function AddRelay({ prefs }: { prefs: RelayPrefs }) {
     setError(null)
   }
   return (
-    <form onSubmit={submit} className="mt-2 flex flex-col gap-2 px-2">
+    <Stack as="form" onSubmit={submit} gap="sm">
       <input
         value={url}
         onChange={e => {
@@ -108,7 +109,7 @@ function AddRelay({ prefs }: { prefs: RelayPrefs }) {
         disabled={full}
         className={fieldCls}
       />
-      <div className="flex flex-wrap gap-2">
+      <Row gap="sm" align="stretch" wrap>
         <input
           value={username}
           onChange={e => setUsername(e.target.value)}
@@ -128,17 +129,17 @@ function AddRelay({ prefs }: { prefs: RelayPrefs }) {
           disabled={full}
           className={fieldCls}
         />
-      </div>
+      </Row>
       <FieldError id={errorId} message={error} />
-      <div className="flex items-center justify-between gap-2">
+      <Row gap="sm" justify="between">
         <span className="text-xs text-on-surface-variant">
           {full ? `Up to ${RELAYS_MAX} relays.` : 'Logins stay on this device.'}
         </span>
         <Button type="submit" variant="filled" size="md" disabled={full || !url.trim()}>
           Add relay
         </Button>
-      </div>
-    </form>
+      </Row>
+    </Stack>
   )
 }
 
@@ -154,86 +155,90 @@ export function RelaySection() {
   return (
     <section>
       <p className={sectionCls}>Your relays</p>
-      <p className="mb-2 px-2 text-xs text-on-surface-variant">
-        Add your own STUN or TURN servers. P2P files and P2P calls use them along with the ones
-        offered here. Each side uses its own relays, so people with different relays still connect,
-        relay to relay.
-      </p>
-      {prefs.relays.length > 0 && (
-        <ul className="flex flex-col gap-1 px-2">
-          {prefs.relays.map(r => (
-            <li
-              key={r.url}
-              className="flex items-center gap-2 rounded-xl bg-surface-container px-3 py-1.5"
-            >
-              <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-3xs leading-none font-bold text-on-surface-variant">
-                {isTurn(r.url) ? 'TURN' : 'STUN'}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-xs" title={r.url}>
-                {r.url}
-              </span>
-              {r.username !== undefined && (
-                <span className="shrink-0 text-xs text-on-surface-variant">Login saved</span>
-              )}
-              <IconButton
-                icon={X}
-                label={`Remove relay ${relayLabel(r.url)}`}
-                tooltip="Remove relay"
-                size="sm"
-                onClick={() => remove(r.url)}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-      <AddRelay prefs={prefs} />
-      <div className="mt-3 px-2">
-        <RelayPicker
-          label="Default for P2P"
-          value={prefs.choice}
-          prefs={prefs}
-          onChange={choice => saveRelays({ ...prefs, choice })}
-        />
-      </div>
-      {manualRelays(prefs).length > 0 && (
-        <p className="mt-1 px-2 text-xs text-on-surface-variant">
-          Auto uses every relay and skips the ones that fail. A single relay never falls back, so
-          you get an error if it fails.
+      <SettingNotes gap="md">
+        <p className="text-xs text-on-surface-variant">
+          Add your own STUN or TURN servers. P2P files and P2P calls use them along with the ones
+          offered here. Each side uses its own relays, so people with different relays still
+          connect, relay to relay.
         </p>
-      )}
-      <div className="mt-3">
-        <SettingSwitch
-          label="Ask before using unknown relays"
-          value={prefs.ask}
-          onChange={ask => saveRelays({ ...prefs, ask })}
-        />
-      </div>
-      <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        Someone you connect to may use a relay you don&apos;t know, which can see your IP address.
-        Relay only is the only real protection, since a peer can always skip relays.
-      </p>
-      <p className="mt-3 px-2 text-xs font-medium text-on-surface-variant">Always allowed</p>
-      {prefs.allowed.length ? (
-        <ul className="mt-1 flex flex-col gap-1 px-2">
-          {prefs.allowed.map(host => (
-            <li
-              key={host}
-              className="flex items-center gap-2 rounded-xl bg-surface-container px-3 py-1.5"
-            >
-              <span className="min-w-0 flex-1 truncate font-mono text-xs">{displayHost(host)}</span>
-              <IconButton
-                icon={X}
-                label={`Remove ${displayHost(host)} from allowed`}
-                tooltip="Remove from allowed"
-                size="sm"
-                onClick={() => forget(host)}
-              />
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-1 px-2 text-xs text-on-surface-variant">None yet.</p>
-      )}
+        {prefs.relays.length > 0 && (
+          <Stack as="ul" gap="2xs">
+            {prefs.relays.map(r => (
+              <Surface as="li" key={r.url} pad="md" tone="base" radius="lg">
+                <Row gap="sm">
+                  <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-3xs leading-none font-bold text-on-surface-variant">
+                    {isTurn(r.url) ? 'TURN' : 'STUN'}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs" title={r.url}>
+                    {r.url}
+                  </span>
+                  {r.username !== undefined && (
+                    <span className="shrink-0 text-xs text-on-surface-variant">Login saved</span>
+                  )}
+                  <IconButton
+                    icon={X}
+                    label={`Remove relay ${relayLabel(r.url)}`}
+                    tooltip="Remove relay"
+                    size="sm"
+                    onClick={() => remove(r.url)}
+                  />
+                </Row>
+              </Surface>
+            ))}
+          </Stack>
+        )}
+        <AddRelay prefs={prefs} />
+        <Stack gap="2xs">
+          <RelayPicker
+            label="Default for P2P"
+            value={prefs.choice}
+            prefs={prefs}
+            onChange={choice => saveRelays({ ...prefs, choice })}
+          />
+          {manualRelays(prefs).length > 0 && (
+            <p className="text-xs text-on-surface-variant">
+              Auto uses every relay and skips the ones that fail. A single relay never falls back,
+              so you get an error if it fails.
+            </p>
+          )}
+        </Stack>
+      </SettingNotes>
+      <SettingSwitch
+        label="Ask before using unknown relays"
+        value={prefs.ask}
+        onChange={ask => saveRelays({ ...prefs, ask })}
+      />
+      <SettingNotes gap="md">
+        <p className="text-xs text-on-surface-variant">
+          Someone you connect to may use a relay you don&apos;t know, which can see your IP address.
+          Relay only is the only real protection, since a peer can always skip relays.
+        </p>
+        <Stack gap="2xs">
+          <p className="text-xs font-medium text-on-surface-variant">Always allowed</p>
+          {prefs.allowed.length ? (
+            <Stack as="ul" gap="2xs">
+              {prefs.allowed.map(host => (
+                <Surface as="li" key={host} pad="md" tone="base" radius="lg">
+                  <Row gap="sm">
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                      {displayHost(host)}
+                    </span>
+                    <IconButton
+                      icon={X}
+                      label={`Remove ${displayHost(host)} from allowed`}
+                      tooltip="Remove from allowed"
+                      size="sm"
+                      onClick={() => forget(host)}
+                    />
+                  </Row>
+                </Surface>
+              ))}
+            </Stack>
+          ) : (
+            <p className="text-xs text-on-surface-variant">None yet.</p>
+          )}
+        </Stack>
+      </SettingNotes>
     </section>
   )
 }
@@ -252,25 +257,29 @@ function RelayConsent({ host }: { host: string }) {
   const title = useId()
   return (
     <TopDialog labelledBy={title} backdrop initialFocus={denyButton} onCancel={deny}>
-      <div className="mb-4 flex items-center justify-between">
-        <h2 id={title} className="text-lg font-medium">
-          Unknown relay
-        </h2>
-        <CloseButton onClick={deny} compact />
-      </div>
-      {owner !== client.shown() && <AccountLabel />}
-      <p className="text-sm break-words text-on-surface-variant">{promptText(host)}</p>
-      <div className="mt-5 flex flex-wrap justify-end gap-2">
-        <Button ref={denyButton} size="md" onClick={deny}>
-          Deny
-        </Button>
-        <Button size="md" onClick={() => answer('once')}>
-          Allow once
-        </Button>
-        <Button variant="filled" size="md" onClick={() => answer('always')}>
-          Always allow
-        </Button>
-      </div>
+      <Stack gap="lg">
+        <Row gap="sm" justify="between">
+          <h2 id={title} className="text-lg font-medium">
+            Unknown relay
+          </h2>
+          <CloseButton onClick={deny} compact />
+        </Row>
+        <Stack gap="none">
+          {owner !== client.shown() && <AccountLabel />}
+          <p className="text-sm break-words text-on-surface-variant">{promptText(host)}</p>
+        </Stack>
+        <Row gap="sm" justify="end" wrap>
+          <Button ref={denyButton} size="md" onClick={deny}>
+            Deny
+          </Button>
+          <Button size="md" onClick={() => answer('once')}>
+            Allow once
+          </Button>
+          <Button variant="filled" size="md" onClick={() => answer('always')}>
+            Always allow
+          </Button>
+        </Row>
+      </Stack>
     </TopDialog>
   )
 }

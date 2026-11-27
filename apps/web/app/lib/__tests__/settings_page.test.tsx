@@ -8,6 +8,7 @@ import {
   focusesSearch,
   keptSections,
   navKey,
+  navRuns,
   openSection,
   pageEscape,
   rowAnchor,
@@ -98,6 +99,22 @@ test('the shown section is the asked one, or the first when it is missing or unk
 
 test('a row anchor is a stable element id', () => {
   expect(rowAnchor('server_joining')).toBe('row-server_joining')
+})
+
+test('the nav runs open at each new group and keep ungrouped entries in the run before', () => {
+  const runs = navRuns([
+    { id: 'a' },
+    { id: 'b', group: 'You' },
+    { id: 'c', group: 'You' },
+    { id: 'd' },
+    { id: 'e', group: 'App' },
+  ])
+  expect(runs.map(r => [r.heading, r.entries.map(e => e.id)])).toEqual([
+    [undefined, ['a']],
+    ['You', ['b', 'c', 'd']],
+    ['App', ['e']],
+  ])
+  expect(navRuns([])).toEqual([])
 })
 
 const sections: PageSection[] = [
@@ -273,7 +290,7 @@ test('the section header and close button sit above the content, which scrolls a
   const after = html.slice(html.indexOf('<h1'))
   expect(after).toContain('title="Close grouped" aria-label="Close grouped"')
   expect(
-    /overflow-y-auto[^"]*"><div class="mx-auto max-w-3xl"><div data-section-body="one"><p>One body/.test(
+    /overflow-y-auto[^"]*"><div class="[^"]*mx-auto max-w-3xl"><div><div data-section-body="one"><p>One body/.test(
       after
     )
   ).toBe(true)

@@ -329,11 +329,7 @@ test('the voice dock, poll voters, invite previews and staff tools name the acco
     render(<ActorHit m={member('bob', { display_name: 'alice' })} server="s" onPick={() => {}} />)
   ).toContain(shown)
   const note = render(<CreatorNote creator={impostor} />)
-  expect(
-    note.startsWith(
-      '<p class="flex min-w-0 text-xs text-on-surface-variant"><span class="shrink-0 pr-1">by</span>'
-    )
-  ).toBe(true)
+  expect(/^<p[^>]*><span class="[^"]*">by<\/span>/.test(note)).toBe(true)
   expect(note).toContain(shown)
   Object.assign(initial, {
     activeDialog: {

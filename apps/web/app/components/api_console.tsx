@@ -28,6 +28,7 @@ import { useStore } from '../lib/store'
 import { CodeBlock } from './code_block'
 import { SettingSwitch } from './settings_fields'
 import { Button, Cover, IconButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
 import { TO_SCREEN } from '../lib/secret'
@@ -96,23 +97,23 @@ function FieldInput({
   const border = error ? 'border-error' : 'border-outline'
   const isNull = value === null
   const label = (
-    <div className="flex flex-wrap items-baseline gap-x-2">
+    <Row gap="sm" align="baseline" wrap>
       <label htmlFor={id} className="font-mono text-xs text-on-surface">
         {field.name}
         {field.required && <span className="text-error">*</span>}
       </label>
       <span className="text-2xs text-on-surface-variant">{typeLabel(field)}</span>
       {field.nullable && (
-        <label className="ml-auto flex items-center gap-1 text-2xs text-on-surface-variant">
+        <Row as="label" gap="2xs" place="ml-auto">
           <input
             type="checkbox"
             checked={isNull}
             onChange={e => onChange(e.target.checked ? null : emptyValue(field))}
           />
-          null
-        </label>
+          <span className="text-2xs text-on-surface-variant">null</span>
+        </Row>
       )}
-    </div>
+    </Row>
   )
   const help = firstLine(field.description)
   const footer = (
@@ -129,10 +130,8 @@ function FieldInput({
   if (!isNull) {
     if (field.kind === 'object') {
       const rec = typeof value === 'object' && value && !Array.isArray(value) ? value : {}
-      input = (
-        <div
-          className={`flex flex-col gap-3 ${top ? '' : 'border-l-2 border-outline-variant pl-3'}`}
-        >
+      const fields = (
+        <Stack gap="md">
           {(field.fields ?? []).map(x => (
             <FieldInput
               key={x.name}
@@ -144,40 +143,43 @@ function FieldInput({
             />
           ))}
           {!field.fields?.length && <p className="text-xs text-on-surface-variant">No fields.</p>}
-        </div>
+        </Stack>
       )
+      input = top ? fields : <Nested>{fields}</Nested>
     } else if (field.kind === 'array') {
       const list = Array.isArray(value) ? value : []
       const item = field.items ?? { ...field, kind: 'json' as const }
       input = (
-        <div className="flex flex-col gap-2 border-l-2 border-outline-variant pl-3">
-          {list.map((v, i) => (
-            <div key={i} className="flex items-start gap-1">
-              <div className="min-w-0 flex-1">
-                <FieldInput
-                  field={{ ...item, name: `${i + 1}`, required: true, description: null }}
-                  value={v}
-                  path={`${path}.${i}`}
-                  errors={errors}
-                  onChange={next => onChange(list.map((x, j) => (j === i ? next : x)))}
+        <Nested>
+          <Stack gap="sm">
+            {list.map((v, i) => (
+              <Row key={i} gap="2xs" align="start">
+                <div className="min-w-0 flex-1">
+                  <FieldInput
+                    field={{ ...item, name: `${i + 1}`, required: true, description: null }}
+                    value={v}
+                    path={`${path}.${i}`}
+                    errors={errors}
+                    onChange={next => onChange(list.map((x, j) => (j === i ? next : x)))}
+                  />
+                </div>
+                <IconButton
+                  icon={X}
+                  label="Remove item"
+                  size="sm"
+                  onClick={() => onChange(list.filter((_, j) => j !== i))}
                 />
-              </div>
-              <IconButton
-                icon={X}
-                label="Remove item"
-                size="sm"
-                onClick={() => onChange(list.filter((_, j) => j !== i))}
-              />
-            </div>
-          ))}
-          <Button
-            icon={Plus}
-            onClick={() => onChange([...list, emptyValue(item)])}
-            place="self-start"
-          >
-            Add item
-          </Button>
-        </div>
+              </Row>
+            ))}
+            <Button
+              icon={Plus}
+              onClick={() => onChange([...list, emptyValue(item)])}
+              place="self-start"
+            >
+              Add item
+            </Button>
+          </Stack>
+        </Nested>
       )
     } else if (field.kind === 'boolean' || field.kind === 'enum') {
       const options = field.kind === 'boolean' ? ['true', 'false'] : (field.options ?? [])
@@ -229,7 +231,7 @@ function FieldInput({
     }
   }
   return (
-    <div className="flex flex-col gap-1">
+    <Stack gap="2xs">
       {!top && label}
       {input}
       {!top && footer}
@@ -238,18 +240,23 @@ function FieldInput({
           {error}
         </p>
       )}
-    </div>
+    </Stack>
   )
+}
+
+// A nested object or list: set in under a line along its left side.
+function Nested({ children }: { children: ReactNode }) {
+  return <div className="border-l-2 border-outline-variant pl-3">{children}</div>
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-3">
+    <Stack as="section" gap="md">
       <h3 className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
         {title}
       </h3>
       {children}
-    </section>
+    </Stack>
   )
 }
 
@@ -259,8 +266,8 @@ function ResponseView({ res }: { res: ApiResponse }) {
   const [shown, setShown] = useState<ApiResponse | null>(null)
   const covered = streamer && shown !== res
   return (
-    <section aria-label="Response" className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+    <Stack as="section" aria-label="Response" gap="sm">
+      <Row gap="sm" wrap>
         <span
           data-api-status={res.status}
           className={`rounded-md px-2 py-0.5 font-mono text-xs font-semibold ${
@@ -273,7 +280,7 @@ function ResponseView({ res }: { res: ApiResponse }) {
         </span>
         <span className="text-xs text-on-surface-variant">{res.ms} ms</span>
         <span className="text-xs text-on-surface-variant">{res.size} bytes</span>
-      </div>
+      </Row>
       {covered ? (
         <Cover data-streamer-cover onClick={() => setShown(res)}>
           Hidden in streamer mode. Show response
@@ -281,24 +288,26 @@ function ResponseView({ res }: { res: ApiResponse }) {
       ) : (
         <ResponseBody res={res} />
       )}
-    </section>
+    </Stack>
   )
 }
 
 function ResponseBody({ res }: { res: ApiResponse }) {
   return (
     <>
-      <details className="rounded-lg bg-surface-container px-3 py-2 text-xs">
-        <summary className="text-on-surface-variant">Headers ({res.headers.length})</summary>
-        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono">
-          {res.headers.map(([k, v]) => (
-            <div key={k} className="contents">
-              <dt className="text-on-surface-variant">{k}</dt>
-              <dd className="break-all text-on-surface">{v}</dd>
-            </div>
-          ))}
-        </dl>
-      </details>
+      <Surface pad="md" tone="base" radius="md">
+        <details className="text-xs">
+          <summary className="text-on-surface-variant">Headers ({res.headers.length})</summary>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono">
+            {res.headers.map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-on-surface-variant">{k}</dt>
+                <dd className="break-all text-on-surface">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      </Surface>
       {res.text ? (
         <CodeBlock code={res.text} tag={res.json ? 'json' : 'plaintext'} />
       ) : (
@@ -329,8 +338,8 @@ function CurlButton({ op, values }: { op: Operation; values: Values }) {
       .then(ok => (ok ? flash() : store.getState().setError('Could not copy to the clipboard')))
   }
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
+    <Stack gap="sm">
+      <Row gap="sm" wrap>
         <Button icon={copied ? Check : Copy} onClick={copy} disabled={!built.ok}>
           {copied ? 'Copied' : 'Copy as curl'}
         </Button>
@@ -343,14 +352,16 @@ function CurlButton({ op, values }: { op: Operation; values: Values }) {
             />
           </div>
         )}
-      </div>
+      </Row>
       {withToken && (
-        <p role="alert" className="flex items-start gap-1.5 text-xs text-error">
-          <TriangleAlert size={14} className="mt-px shrink-0" />
-          Anyone with this command can act as you. Don&apos;t share it.
-        </p>
+        <Row as="p" role="alert" gap="xs" align="start">
+          <TriangleAlert size={14} className="shrink-0 text-error" />
+          <span className="text-xs text-error">
+            Anyone with this command can act as you. Don&apos;t share it.
+          </span>
+        </Row>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -432,22 +443,24 @@ export function ApiConsole({
   const danger = op.method === 'DELETE'
 
   return (
-    <div data-api-console className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-outline-variant px-3 py-2">
-        <IconButton icon={ArrowLeft} label="Back to the list" size="lg" onClick={onBack} />
-        <MethodBadge method={op.method} />
-        <span className="min-w-0 truncate font-mono text-sm">{op.path}</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <div className="flex flex-col gap-5">
-          <div>
+    <Stack gap="none" data-api-console place="min-h-0 flex-1">
+      <Surface pad="md" inset="bar" tone="plain" radius="none" border="bottom" place="shrink-0">
+        <Row gap="sm">
+          <IconButton icon={ArrowLeft} label="Back to the list" size="lg" onClick={onBack} />
+          <MethodBadge method={op.method} />
+          <span className="min-w-0 truncate font-mono text-sm">{op.path}</span>
+        </Row>
+      </Surface>
+      <Surface pad="lg" tone="plain" radius="none" place="min-h-0 flex-1 overflow-y-auto">
+        <Stack gap="lg">
+          <Stack gap="2xs">
             <h2 className="font-medium text-on-surface">{op.summary}</h2>
             {op.description && (
-              <p className="mt-1 text-xs whitespace-pre-line text-on-surface-variant">
+              <p className="text-xs whitespace-pre-line text-on-surface-variant">
                 {op.description.replace(/([^\n])\n(?!\n)/g, '$1 ')}
               </p>
             )}
-          </div>
+          </Stack>
           {groups.map(([title, list]) =>
             list.length ? (
               <Section key={title} title={title}>
@@ -496,38 +509,40 @@ export function ApiConsole({
               role="alertdialog"
               aria-label="Confirm request"
               data-api-confirm-box
-              className={`flex flex-col gap-3 rounded-xl border p-3 ${
+              className={`rounded-xl border ${
                 danger
                   ? 'border-error/50 bg-error-container/30'
                   : 'border-outline-variant bg-surface-container'
               }`}
             >
-              <p className="flex min-w-0 items-center gap-2">
-                <MethodBadge method={op.method} />
-                <span className="min-w-0 font-mono text-sm break-all">{op.path}</span>
-              </p>
-              <p className="text-sm text-on-surface">
-                {danger
-                  ? 'This deletes something on the server and may not be undone.'
-                  : 'This changes something on the server.'}{' '}
-                Send it?
-              </p>
-              <div className="flex justify-end gap-2">
-                <Button size="md" onClick={() => setPending(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  variant={danger ? 'filled-danger' : 'filled'}
-                  size="md"
-                  data-api-confirm
-                  onClick={() => void send(pending)}
-                >
-                  Send {op.method}
-                </Button>
-              </div>
+              <Surface pad="md" gap="md" tone="plain">
+                <Row as="p" gap="sm">
+                  <MethodBadge method={op.method} />
+                  <span className="min-w-0 font-mono text-sm break-all">{op.path}</span>
+                </Row>
+                <p className="text-sm text-on-surface">
+                  {danger
+                    ? 'This deletes something on the server and may not be undone.'
+                    : 'This changes something on the server.'}{' '}
+                  Send it?
+                </p>
+                <Row gap="sm" justify="end">
+                  <Button size="md" onClick={() => setPending(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant={danger ? 'filled-danger' : 'filled'}
+                    size="md"
+                    data-api-confirm
+                    onClick={() => void send(pending)}
+                  >
+                    Send {op.method}
+                  </Button>
+                </Row>
+              </Surface>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <Row gap="sm" justify="between" wrap>
               <Button variant="danger" onClick={() => setValues(emptyValues(op))}>
                 Clear
               </Button>
@@ -541,7 +556,7 @@ export function ApiConsole({
               >
                 {busy ? 'Sending' : 'Send'}
               </Button>
-            </div>
+            </Row>
           )}
           <CurlButton op={op} values={values} />
           {failure && (
@@ -550,9 +565,9 @@ export function ApiConsole({
             </p>
           )}
           {res && <ResponseView res={res} />}
-        </div>
-      </div>
-    </div>
+        </Stack>
+      </Surface>
+    </Stack>
   )
 }
 
@@ -569,12 +584,12 @@ export function ApiConsoleFor({
   const { label } = useInstanceLabel()
   if (!op)
     return (
-      <div className="flex flex-col items-start gap-2 p-4 text-sm text-on-surface-variant">
-        <p>
+      <Surface pad="lg" gap="sm" tone="plain" radius="none" align="start">
+        <p className="text-sm text-on-surface-variant">
           That operation is not in the API of <span className="streamer">{label}</span>.
         </p>
         <Button onClick={onBack}>Back</Button>
-      </div>
+      </Surface>
     )
   return <ApiConsole key={opId} op={op} initial={initial} onBack={onBack} />
 }

@@ -9,6 +9,7 @@ import { deepLinkTarget, confirmGate, openDeepLink, type LinkEnv } from '../lib/
 import { inShell, mobileOs } from '../lib/platform'
 import { listen, shell } from '../lib/platform/desktop'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog } from './ui'
 
 interface Ask {
@@ -141,17 +142,19 @@ export default function DesktopBridge() {
   if (!ask) return null
   return (
     <Dialog title="Open instance link?" onClose={() => ask.answer(false)} layer="confirm" compact>
-      <p className="text-sm text-on-surface-variant">
-        Open <span className="font-medium break-all text-on-surface">{ask.host}</span>?
-      </p>
-      <div className="mt-6 flex justify-end gap-2">
-        <Button size="md" autoFocus onClick={() => ask.answer(false)}>
-          Cancel
-        </Button>
-        <Button variant="filled" size="md" onClick={() => ask.answer(true)}>
-          Open
-        </Button>
-      </div>
+      <Stack gap="xl">
+        <p className="text-sm text-on-surface-variant">
+          Open <span className="font-medium break-all text-on-surface">{ask.host}</span>?
+        </p>
+        <Row gap="sm" justify="end">
+          <Button size="md" autoFocus onClick={() => ask.answer(false)}>
+            Cancel
+          </Button>
+          <Button variant="filled" size="md" onClick={() => ask.answer(true)}>
+            Open
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

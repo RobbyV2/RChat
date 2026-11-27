@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import { checkAnswers, pickCheck } from '../../lib/backup_phrase'
 import { Button } from '../controls'
+import { Grid, Row, Stack } from '../layout'
 import { FieldError } from '../ui'
 import { RevealToggle, SECRET, useReveal } from './reveal'
 
@@ -30,14 +31,14 @@ export function WordCheck({
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3">
+    <Stack as="form" onSubmit={submit} gap="md">
       <p className="text-sm text-on-surface-variant">
         Type these words from your phrase to make sure you saved it.
       </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <Grid cols={{ base: 1, sm: 3 }} gap="sm">
         {picks.map((p, i) => (
-          <label key={p} className="flex min-w-0 flex-col gap-1 text-xs text-on-surface-variant">
-            {`Word ${p + 1}`}
+          <Stack as="label" key={p} gap="2xs">
+            <span className="text-xs text-on-surface-variant">{`Word ${p + 1}`}</span>
             <span className="flex rounded-xl border border-outline px-3 focus-within:border-primary">
               <input
                 aria-label={`Word ${p + 1}`}
@@ -53,21 +54,21 @@ export function WordCheck({
                 className={`${reveal.hidden ? SECRET : ''} min-w-0 flex-1 bg-transparent py-2 font-mono text-base text-on-surface outline-none md:text-sm`}
               />
             </span>
-          </label>
+          </Stack>
         ))}
-      </div>
+      </Grid>
       <FieldError message={wrong ? "Those words don't match. Check what you saved." : null} />
-      <div className="flex items-center justify-end gap-2">
-        <span className="mr-auto">
+      <Row gap="sm" justify="end">
+        <Row as="span" gap="none" place="mr-auto">
           <RevealToggle reveal={reveal} />
-        </span>
+        </Row>
         <Button size="md" onClick={onSkip}>
           Skip
         </Button>
         <Button type="submit" variant="filled" size="md" disabled={answers.some(a => !a.trim())}>
           Check
         </Button>
-      </div>
-    </form>
+      </Row>
+    </Stack>
   )
 }

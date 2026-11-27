@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { SLOWMODE_MAX } from '../lib/rules'
 import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '../lib/slowmode'
 import { restrictionItems, type RestrictKey } from '../lib/channel_access'
 import { hasBit, maskXor } from '../lib/perms'
+import type { Space } from '../lib/layout'
 import { Button } from './controls'
+import { Row, Surface } from './layout'
 import { fieldCls } from './ui'
 
 // Settings controls shared across the app: an on or off row, permission checks, a role's color,
@@ -59,6 +61,16 @@ export function SettingSwitch({
   )
 }
 
+// What sits under a setting (its notes, a choice), set in like the setting's label: in a box with
+// a switch's own inset.
+export function SettingNotes({ gap = 'sm', children }: { gap?: Space; children: ReactNode }) {
+  return (
+    <Surface pad="sm" inset="bar" tone="plain" gap={gap}>
+      {children}
+    </Surface>
+  )
+}
+
 export const GRANT_NOTE = 'You can only give permissions you have.'
 
 export interface PermItem {
@@ -82,27 +94,23 @@ export function PermChecks({
   locked?: string | null
 }) {
   return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1">
+    <Row gap="md" wrap>
       {items.map(({ label, bit, hint }) => {
         const off = !!locked || (allowed !== undefined && !allowed(maskXor(value, bit)))
         return (
-          <label
-            key={bit}
-            title={off ? (locked ?? GRANT_NOTE) : hint}
-            className={`flex items-center gap-1.5 text-sm ${off ? 'opacity-60' : ''}`}
-          >
+          <Row as="label" key={bit} gap="xs" title={off ? (locked ?? GRANT_NOTE) : hint}>
             <input
               type="checkbox"
               checked={hasBit(value, bit)}
               disabled={off}
               onChange={() => onChange(maskXor(value, bit))}
-              className="accent-primary"
+              className={`accent-primary ${off ? 'opacity-60' : ''}`}
             />
-            {label}
-          </label>
+            <span className={`text-sm ${off ? 'opacity-60' : ''}`}>{label}</span>
+          </Row>
         )
       })}
-    </div>
+    </Row>
   )
 }
 
@@ -149,14 +157,17 @@ export function RoleNameForm({
   const [name, setName] = useState(initial)
   useEffect(() => setName(initial), [initial])
   return (
-    <form
+    <Row
+      as="form"
+      gap="sm"
+      align="stretch"
       onSubmit={e => {
         e.preventDefault()
         const trimmed = name.trim()
         if (!locked && trimmed && trimmed !== initial) onRename(trimmed)
       }}
       title={locked ?? undefined}
-      className="flex min-w-0 flex-1 gap-2"
+      place="min-w-0 flex-1"
     >
       <input
         value={name}
@@ -170,7 +181,7 @@ export function RoleNameForm({
       <Button type="submit" disabled={!!locked}>
         Rename
       </Button>
-    </form>
+    </Row>
   )
 }
 
@@ -185,14 +196,15 @@ export function RoleCreateForm({
   const [name, setName] = useState('')
   const [color, setColor] = useState('#7c4dff')
   return (
-    <form
+    <Row
+      as="form"
+      gap="sm"
       onSubmit={e => {
         e.preventDefault()
         const trimmed = name.trim()
         if (!trimmed) return
         void Promise.resolve(onCreate(trimmed, color)).then(() => setName(''))
       }}
-      className="flex items-center gap-2"
     >
       <input
         type="color"
@@ -211,7 +223,7 @@ export function RoleCreateForm({
         className={fieldCls}
       />
       <Button type="submit">Add</Button>
-    </form>
+    </Row>
   )
 }
 
@@ -235,9 +247,9 @@ export function SlowmodeField({
     if (n !== current) onApply(n)
   }
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <label className="flex items-center gap-1.5 text-xs text-on-surface-variant">
-        Slow mode
+    <Row gap="xs" wrap>
+      <Row as="label" gap="xs">
+        <span className="text-xs text-on-surface-variant">Slow mode</span>
         <select
           value={custom ? CUSTOM : String(current)}
           onChange={e => {
@@ -258,16 +270,17 @@ export function SlowmodeField({
           ))}
           <option value={CUSTOM}>Custom</option>
         </select>
-      </label>
+      </Row>
       {custom && (
-        <form
+        <Row
+          as="form"
+          gap="xs"
           onSubmit={e => {
             e.preventDefault()
             const n = customSeconds(text)
             if (n === null) setError(`Enter 1 to ${SLOWMODE_MAX} seconds`)
             else apply(n)
           }}
-          className="flex items-center gap-1.5"
         >
           <input
             value={text}
@@ -279,10 +292,10 @@ export function SlowmodeField({
             className="w-20 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
           />
           <Button type="submit">Set</Button>
-        </form>
+        </Row>
       )}
       {error && <p className="basis-full text-xs text-error">{error}</p>}
-    </div>
+    </Row>
   )
 }
 
@@ -303,18 +316,18 @@ export function RestrictionToggles({
       {restrictionItems(nobody)
         .filter(r => r.key === 'restrict_view' || send)
         .map(r => (
-          <label key={r.key} className="flex items-start gap-2 text-sm">
+          <Row as="label" key={r.key} gap="sm" align="baseline">
             <input
               type="checkbox"
               checked={!!value[r.key]}
               onChange={() => onToggle(r.key)}
-              className="mt-0.5 accent-primary"
+              className="accent-primary"
             />
-            <span className="min-w-0">
+            <span className="min-w-0 text-sm">
               <span className="block">{r.label}</span>
               <span className="block text-xs text-on-surface-variant">{r.detail}</span>
             </span>
-          </label>
+          </Row>
         ))}
     </>
   )

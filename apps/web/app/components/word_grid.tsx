@@ -2,6 +2,7 @@
 
 import { KeyRound, LayoutGrid, X } from 'lucide-react'
 import type { PassKind } from '../lib/password'
+import { Grid, Row, Stack } from './layout'
 
 interface Props {
   words: string[]
@@ -15,8 +16,8 @@ export function WordGrid({ words, selected, onChange }: Props) {
     else if (selected.length < 7) onChange([...selected, word])
   }
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+    <Stack gap="md">
+      <Grid cols={{ base: 3, sm: 4 }} gap="sm">
         {words.map(word => {
           const idx = selected.indexOf(word)
           return (
@@ -39,8 +40,8 @@ export function WordGrid({ words, selected, onChange }: Props) {
             </button>
           )
         })}
-      </div>
-      <div className="flex min-h-8 flex-wrap items-center gap-2">
+      </Grid>
+      <Row gap="sm" wrap>
         {selected.map((word, i) => (
           <button
             key={word}
@@ -54,9 +55,11 @@ export function WordGrid({ words, selected, onChange }: Props) {
             <X size={12} />
           </button>
         ))}
-        <span className="text-xs text-on-surface-variant">{selected.length}/7 words in order</span>
-      </div>
-    </div>
+        <span className="flex min-h-8 items-center text-xs text-on-surface-variant">
+          {selected.length}/7 words in order
+        </span>
+      </Row>
+    </Stack>
   )
 }
 
@@ -85,9 +88,9 @@ export function PassSwitch({
     </button>
   )
   return (
-    <div role="group" aria-label={label} className="flex">
+    <Row role="group" aria-label={label} gap="none" align="stretch">
       {tab('text', 'Password', <KeyRound size={16} />)}
       {tab('words', 'Word grid', <LayoutGrid size={16} />)}
-    </div>
+    </Row>
   )
 }

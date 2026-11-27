@@ -2,7 +2,7 @@
 
 import { useAccount } from '../lib/client/react'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Check,
   ChevronDown,
@@ -42,18 +42,19 @@ import { AvatarPicker } from './avatar_picker'
 import { UserAvatar } from './user_avatar'
 import { NameWithUsername } from './display_name'
 import { Button, IconButton, Tab } from './controls'
+import { Grid, Row, Stack, Surface } from './layout'
 import { Dialog, FieldError, fieldCls, Masked, sectionCls, useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
 
 // Who made a webhook, on its own line under its details.
 export function CreatorNote({ creator }: { creator: UserRef }) {
   return (
-    <p className="flex min-w-0 text-xs text-on-surface-variant">
-      <span className="shrink-0 pr-1">by</span>
-      <span className="streamer flex min-w-0">
+    <Row as="p" gap="2xs">
+      <span className="shrink-0 text-xs text-on-surface-variant">by</span>
+      <span className="streamer flex min-w-0 text-xs text-on-surface-variant">
         <NameWithUsername user={creator} />
       </span>
-    </p>
+    </Row>
   )
 }
 
@@ -74,15 +75,21 @@ function Webhooks({ server }: { server: string }) {
   const back = () => openDialog({ kind: 'server_settings', server, section: 'integrations' })
   return (
     <Dialog full title="Webhooks" onClose={back}>
-      <div role="tablist" className="mb-4 flex gap-1 rounded-full bg-surface-container p-1">
-        <Tab selected={tab === 'incoming'} onClick={() => setTab('incoming')} place="flex-1">
-          Incoming
-        </Tab>
-        <Tab selected={tab === 'outgoing'} onClick={() => setTab('outgoing')} place="flex-1">
-          Outgoing
-        </Tab>
-      </div>
-      {tab === 'incoming' ? <Incoming server={server} /> : <Outgoing server={server} />}
+      <Stack gap="lg">
+        <div className="rounded-full bg-surface-container">
+          <Surface pad="2xs" tone="plain">
+            <Row role="tablist" gap="2xs">
+              <Tab selected={tab === 'incoming'} onClick={() => setTab('incoming')} place="flex-1">
+                Incoming
+              </Tab>
+              <Tab selected={tab === 'outgoing'} onClick={() => setTab('outgoing')} place="flex-1">
+                Outgoing
+              </Tab>
+            </Row>
+          </Surface>
+        </div>
+        {tab === 'incoming' ? <Incoming server={server} /> : <Outgoing server={server} />}
+      </Stack>
     </Dialog>
   )
 }
@@ -100,22 +107,26 @@ function SecretBox({
 }) {
   const [copied, flash] = useCopied()
   return (
-    <div className="mb-4 rounded-2xl border border-primary bg-primary-container/30 p-3">
-      <p className="text-sm font-medium text-on-surface">{label}</p>
-      <div className="mt-2 flex items-center gap-2">
-        <code className="streamer min-w-0 flex-1 rounded-lg bg-surface-container-highest px-2 py-1.5 font-mono text-xs break-all text-on-surface select-all">
-          {value}
-        </code>
-        <IconButton
-          icon={copied ? Check : Copy}
-          label={copied ? 'Copied' : 'Copy'}
-          onClick={() => void sharing().copyText(value).then(flash)}
-        />
-      </div>
-      <p className="mt-2 text-xs text-on-surface-variant">{note}</p>
-      <div className="mt-2 flex justify-end">
-        <Button onClick={onDone}>Done</Button>
-      </div>
+    <div className="rounded-2xl border border-primary bg-primary-container/30">
+      <Surface pad="md" gap="sm" tone="plain">
+        <p className="text-sm font-medium text-on-surface">{label}</p>
+        <Row gap="sm">
+          <Surface pad="sm" tone="highest" radius="md" place="min-w-0 flex-1">
+            <code className="streamer font-mono text-xs break-all text-on-surface select-all">
+              {value}
+            </code>
+          </Surface>
+          <IconButton
+            icon={copied ? Check : Copy}
+            label={copied ? 'Copied' : 'Copy'}
+            onClick={() => void sharing().copyText(value).then(flash)}
+          />
+        </Row>
+        <p className="text-xs text-on-surface-variant">{note}</p>
+        <Button onClick={onDone} place="self-end">
+          Done
+        </Button>
+      </Surface>
     </div>
   )
 }
@@ -133,8 +144,8 @@ function ChannelSelect({
   onChange: (id: number) => void
 }) {
   return (
-    <label className="flex flex-col gap-1 text-sm text-on-surface-variant">
-      Channel
+    <Stack as="label" gap="2xs">
+      <span className="text-sm text-on-surface-variant">Channel</span>
       <select
         value={value ?? ''}
         onChange={e => onChange(Number(e.target.value))}
@@ -146,7 +157,7 @@ function ChannelSelect({
           </option>
         ))}
       </select>
-    </label>
+    </Stack>
   )
 }
 
@@ -183,9 +194,9 @@ function HookEditor({
     setError(await submit(form))
   }
   return (
-    <div className="flex flex-col gap-3 rounded-2xl bg-surface-container p-3">
-      <label className="flex flex-col gap-1 text-sm text-on-surface-variant">
-        Name
+    <Surface pad="md" gap="md" tone="base">
+      <Stack as="label" gap="2xs">
+        <span className="text-sm text-on-surface-variant">Name</span>
         <input
           value={form.name}
           maxLength={80}
@@ -193,7 +204,7 @@ function HookEditor({
           placeholder="Deploy bot"
           className={`${fieldCls} text-on-surface`}
         />
-      </label>
+      </Stack>
       <ChannelSelect
         channels={channels}
         value={form.channel}
@@ -207,7 +218,7 @@ function HookEditor({
         onColor={color => setForm({ ...form, color })}
       />
       <FieldError message={error} />
-      <div className="flex justify-end gap-2">
+      <Row gap="sm" justify="end">
         {onCancel && (
           <Button size="md" onClick={onCancel}>
             Cancel
@@ -221,8 +232,8 @@ function HookEditor({
         >
           {submitLabel}
         </Button>
-      </div>
-    </div>
+      </Row>
+    </Surface>
   )
 }
 
@@ -333,113 +344,122 @@ function Incoming({ server }: { server: string }) {
 
   const first = channels[0]?.id ?? null
   return (
-    <div>
-      <p className="mb-3 text-sm text-on-surface-variant">
-        A webhook posts into one channel from a script or service through a secret URL. No account
-        needed. Its messages show a WEBHOOK badge.
-      </p>
-      {secret && (
-        <SecretBox
-          label={`URL of ${secret.name}`}
-          value={secret.url}
-          note={
-            'Copy it now: it is shown only once. Anyone with this URL can post as the webhook. POST JSON like {"content": "Hello"}.'
-          }
-          onDone={() => setSecret(null)}
-        />
-      )}
-      <FieldError message={error} />
-      {creating ? (
-        <HookEditor
-          initial={{ name: '', channel: first, kind: 'identicon', color: DEFAULT_COLOR }}
-          channels={channels}
-          busy={busy}
-          submit={create}
-          submitLabel="Create webhook"
-          onCancel={() => setCreating(false)}
-        />
-      ) : (
-        <Button
-          variant="filled"
-          size="md"
-          icon={Plus}
-          onClick={() => setCreating(true)}
-          disabled={channels.length === 0}
-        >
-          New webhook
-        </Button>
-      )}
-      <p className={sectionCls + ' mt-4'}>Webhooks</p>
-      {list === null ? (
-        <p className="px-2 text-sm text-on-surface-variant">Loading…</p>
-      ) : list.length === 0 ? (
-        <p className="px-2 text-sm text-on-surface-variant">No webhooks yet.</p>
-      ) : (
-        <ul className="flex flex-col gap-1">
-          {list.map(h => (
-            <li key={h.id} className="rounded-xl px-2 py-2 hover:bg-surface-container">
-              <div className="flex items-center gap-3">
-                <UserAvatar
-                  username={`@webhook:${h.id}`}
-                  avatarKind={h.avatar_kind}
-                  avatarColor={h.avatar_color}
-                  size={32}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="streamer truncate text-sm font-medium text-on-surface">
-                    <Masked text={h.name} by={h.creator?.username} />
-                  </p>
-                  <p className="truncate text-xs text-on-surface-variant">
-                    #{channelName(h.channel_id)}
-                    {' · '}
-                    <span title={h.last_used_at ? fullTimeOf(h.last_used_at) : undefined}>
-                      {h.last_used_at ? `used ${ago(h.last_used_at)}` : 'never used'}
-                    </span>
-                  </p>
-                  {h.creator && <CreatorNote creator={h.creator} />}
-                </div>
-                <IconButton
-                  icon={Pencil}
-                  label={`Edit ${h.name}`}
-                  tooltip="Edit"
-                  onClick={() => setEditing(editing === h.id ? null : h.id)}
-                />
-                <IconButton
-                  icon={KeyRound}
-                  label={`New URL for ${h.name}`}
-                  tooltip="New URL"
-                  onClick={() => resetUrl(h)}
-                />
-                <IconButton
-                  icon={Trash2}
-                  label={`Delete ${h.name}`}
-                  tooltip="Delete"
-                  tone="danger"
-                  onClick={() => remove(h)}
-                />
-              </div>
-              {editing === h.id && (
-                <div className="mt-2">
-                  <HookEditor
-                    initial={{
-                      name: h.name,
-                      channel: h.channel_id,
-                      kind: h.avatar_kind,
-                      color: h.avatar_color ?? DEFAULT_COLOR,
-                    }}
-                    channels={channels}
-                    busy={busy}
-                    submit={update(h)}
-                    submitLabel="Save"
-                    onCancel={() => setEditing(null)}
-                  />
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <Stack gap="2xl">
+      <Stack gap="md">
+        <p className="text-sm text-on-surface-variant">
+          A webhook posts into one channel from a script or service through a secret URL. No account
+          needed. Its messages show a WEBHOOK badge.
+        </p>
+        {secret && (
+          <SecretBox
+            label={`URL of ${secret.name}`}
+            value={secret.url}
+            note={
+              'Copy it now: it is shown only once. Anyone with this URL can post as the webhook. POST JSON like {"content": "Hello"}.'
+            }
+            onDone={() => setSecret(null)}
+          />
+        )}
+        <FieldError message={error} />
+        {creating ? (
+          <HookEditor
+            initial={{ name: '', channel: first, kind: 'identicon', color: DEFAULT_COLOR }}
+            channels={channels}
+            busy={busy}
+            submit={create}
+            submitLabel="Create webhook"
+            onCancel={() => setCreating(false)}
+          />
+        ) : (
+          <Button
+            variant="filled"
+            size="md"
+            icon={Plus}
+            onClick={() => setCreating(true)}
+            disabled={channels.length === 0}
+            place="self-start"
+          >
+            New webhook
+          </Button>
+        )}
+      </Stack>
+      <section>
+        <p className={sectionCls}>Webhooks</p>
+        {list === null ? (
+          <Surface pad="sm" inset="bar" tone="plain">
+            <p className="text-sm text-on-surface-variant">Loading…</p>
+          </Surface>
+        ) : list.length === 0 ? (
+          <Surface pad="sm" inset="bar" tone="plain">
+            <p className="text-sm text-on-surface-variant">No webhooks yet.</p>
+          </Surface>
+        ) : (
+          <Stack as="ul" gap="2xs">
+            {list.map(h => (
+              <li key={h.id} className="rounded-xl hover:bg-surface-container">
+                <Surface pad="sm" gap="sm" tone="plain">
+                  <Row gap="md">
+                    <UserAvatar
+                      username={`@webhook:${h.id}`}
+                      avatarKind={h.avatar_kind}
+                      avatarColor={h.avatar_color}
+                      size={32}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="streamer truncate text-sm font-medium text-on-surface">
+                        <Masked text={h.name} by={h.creator?.username} />
+                      </p>
+                      <p className="truncate text-xs text-on-surface-variant">
+                        #{channelName(h.channel_id)}
+                        {' · '}
+                        <span title={h.last_used_at ? fullTimeOf(h.last_used_at) : undefined}>
+                          {h.last_used_at ? `used ${ago(h.last_used_at)}` : 'never used'}
+                        </span>
+                      </p>
+                      {h.creator && <CreatorNote creator={h.creator} />}
+                    </div>
+                    <IconButton
+                      icon={Pencil}
+                      label={`Edit ${h.name}`}
+                      tooltip="Edit"
+                      onClick={() => setEditing(editing === h.id ? null : h.id)}
+                    />
+                    <IconButton
+                      icon={KeyRound}
+                      label={`New URL for ${h.name}`}
+                      tooltip="New URL"
+                      onClick={() => resetUrl(h)}
+                    />
+                    <IconButton
+                      icon={Trash2}
+                      label={`Delete ${h.name}`}
+                      tooltip="Delete"
+                      tone="danger"
+                      onClick={() => remove(h)}
+                    />
+                  </Row>
+                  {editing === h.id && (
+                    <HookEditor
+                      initial={{
+                        name: h.name,
+                        channel: h.channel_id,
+                        kind: h.avatar_kind,
+                        color: h.avatar_color ?? DEFAULT_COLOR,
+                      }}
+                      channels={channels}
+                      busy={busy}
+                      submit={update(h)}
+                      submitLabel="Save"
+                      onCancel={() => setEditing(null)}
+                    />
+                  )}
+                </Surface>
+              </li>
+            ))}
+          </Stack>
+        )}
+      </section>
+    </Stack>
   )
 }
 
@@ -485,9 +505,9 @@ function OutEditor({
     setError(await submit(form))
   }
   return (
-    <div className="flex flex-col gap-3 rounded-2xl bg-surface-container p-3">
-      <label className="flex flex-col gap-1 text-sm text-on-surface-variant">
-        Name
+    <Surface pad="md" gap="md" tone="base">
+      <Stack as="label" gap="2xs">
+        <span className="text-sm text-on-surface-variant">Name</span>
         <input
           value={form.name}
           maxLength={80}
@@ -495,9 +515,9 @@ function OutEditor({
           placeholder="Moderation log"
           className={`${fieldCls} text-on-surface`}
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-on-surface-variant">
-        URL
+      </Stack>
+      <Stack as="label" gap="2xs">
+        <span className="text-sm text-on-surface-variant">URL</span>
         <input
           value={form.url}
           type="url"
@@ -507,14 +527,14 @@ function OutEditor({
           className={`${fieldCls} text-on-surface`}
         />
         {urlHidden && (
-          <span className="text-xs">
+          <span className="text-xs text-on-surface-variant">
             Only the owner sees the whole URL. Leave this empty to keep it.
           </span>
         )}
-      </label>
-      <fieldset className="flex flex-col gap-1">
+      </Stack>
+      <Stack as="fieldset" gap="2xs">
         <legend className="mb-1 text-sm text-on-surface-variant">Events</legend>
-        <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+        <Grid cols={{ base: 1, sm: 2 }} gap="2xs">
           {OUTGOING_EVENTS.map(e => (
             <label key={e.key} className="flex min-h-9 items-center gap-2 text-sm text-on-surface">
               <input
@@ -526,22 +546,22 @@ function OutEditor({
               {e.label}
             </label>
           ))}
-        </div>
-      </fieldset>
+        </Grid>
+      </Stack>
       <p className="text-xs text-on-surface-variant">
         Events include only channels its owner can see. Each request is signed with a secret you get
         once.
       </p>
       <FieldError message={error} />
-      <div className="flex justify-end gap-2">
+      <Row gap="sm" justify="end">
         <Button size="md" onClick={onCancel}>
           Cancel
         </Button>
         <Button variant="filled" size="md" disabled={busy} onClick={() => void save()}>
           {submitLabel}
         </Button>
-      </div>
-    </div>
+      </Row>
+    </Surface>
   )
 }
 
@@ -570,19 +590,15 @@ function TakeoverForm({
     setError(await submit(url.trim()))
   }
   return (
-    <div
-      role="group"
-      aria-label={`Take over ${hook.name}`}
-      className="mt-2 flex flex-col gap-3 rounded-2xl bg-surface-container p-3"
-    >
+    <Surface role="group" aria-label={`Take over ${hook.name}`} pad="md" gap="md" tone="base">
       <p className="text-sm text-on-surface">
         {kind === 'on'
           ? `Turn on ${hook.name}? `
           : `Make a new secret for ${hook.name}? Requests are signed with it from now on. `}
         {OWNER_NOTE} It will then send only what you can see.
       </p>
-      <label className="flex flex-col gap-1 text-sm text-on-surface-variant">
-        Destination URL
+      <Stack as="label" gap="2xs">
+        <span className="text-sm text-on-surface-variant">Destination URL</span>
         <input
           value={url}
           type="url"
@@ -592,20 +608,20 @@ function TakeoverForm({
           placeholder={`https://${host}/…`}
           className={`${fieldCls} text-on-surface`}
         />
-        <span className="text-xs">
+        <span className="text-xs text-on-surface-variant">
           It sends to {host}. Only the owner sees the whole URL, so enter it in full.
         </span>
-      </label>
+      </Stack>
       <FieldError message={error} />
-      <div className="flex justify-end gap-2">
+      <Row gap="sm" justify="end">
         <Button size="md" onClick={onCancel}>
           Cancel
         </Button>
         <Button variant="filled" size="md" disabled={busy} onClick={() => void go()}>
           {kind === 'on' ? 'Turn on' : 'Make new secret'}
         </Button>
-      </div>
-    </div>
+      </Row>
+    </Surface>
   )
 }
 
@@ -613,6 +629,14 @@ const statusCls: Record<Delivery['status'], string> = {
   delivered: 'bg-status-green',
   pending: 'bg-tertiary',
   failed: 'bg-error',
+}
+
+function DeliveryNote({ children }: { children: ReactNode }) {
+  return (
+    <Surface pad="sm" inset="bar" tone="plain">
+      <p className="text-xs text-on-surface-variant">{children}</p>
+    </Surface>
+  )
 }
 
 function DeliveryLog({ server, hook }: { server: string; hook: number }) {
@@ -631,30 +655,32 @@ function DeliveryLog({ server, hook }: { server: string; hook: number }) {
     return () => window.clearInterval(id)
   }, [load])
   if (error) return <FieldError message={error} />
-  if (list === null) return <p className="px-2 py-1 text-xs text-on-surface-variant">Loading…</p>
-  if (list.length === 0)
-    return <p className="px-2 py-1 text-xs text-on-surface-variant">No deliveries yet.</p>
+  if (list === null) return <DeliveryNote>Loading…</DeliveryNote>
+  if (list.length === 0) return <DeliveryNote>No deliveries yet.</DeliveryNote>
   return (
-    <ul className="mt-1 flex flex-col gap-0.5 rounded-xl bg-surface-container p-2">
+    <Surface as="ul" pad="sm" gap="3xs" tone="base" radius="lg">
       {list.map(d => (
-        <li key={d.id} className="flex flex-wrap items-center gap-x-2 text-xs">
+        <Row as="li" key={d.id} gap="sm" wrap>
           <span
             title={d.status}
             aria-label={d.status}
             className={`h-2 w-2 shrink-0 rounded-full ${statusCls[d.status]}`}
           />
-          <span className="min-w-0 flex-1 truncate text-on-surface sm:w-28 sm:flex-none">
+          <span className="min-w-0 flex-1 truncate text-xs text-on-surface sm:w-28 sm:flex-none">
             {eventLabel(d.event)}
           </span>
-          <span className="order-last basis-full truncate pl-4 text-on-surface-variant sm:order-none sm:min-w-0 sm:flex-1 sm:basis-auto sm:pl-0">
+          <span className="order-last basis-full truncate text-xs text-on-surface-variant sm:order-none sm:min-w-0 sm:flex-1 sm:basis-auto">
             {deliveryText(d)}
           </span>
-          <span title={fullTimeOf(d.created_at)} className="shrink-0 text-on-surface-variant">
+          <span
+            title={fullTimeOf(d.created_at)}
+            className="shrink-0 text-xs text-on-surface-variant"
+          >
             {ago(d.created_at)}
           </span>
-        </li>
+        </Row>
       ))}
-    </ul>
+    </Surface>
   )
 }
 
@@ -791,7 +817,9 @@ function Outgoing({ server }: { server: string }) {
     return error ? (
       <FieldError message={error} />
     ) : (
-      <p className="px-2 text-sm text-on-surface-variant">Loading…</p>
+      <Surface pad="sm" inset="bar" tone="plain">
+        <p className="text-sm text-on-surface-variant">Loading…</p>
+      </Surface>
     )
   const hostOf = (url: string) => {
     try {
@@ -801,153 +829,166 @@ function Outgoing({ server }: { server: string }) {
     }
   }
   return (
-    <div>
-      <p className="mb-3 text-sm text-on-surface-variant">
-        Outgoing webhooks send events from this server to a URL you choose, as signed JSON.
-      </p>
-      {!data.available && (
-        <p className="mb-3 rounded-xl bg-surface-container p-3 text-sm text-on-surface-variant">
-          Outgoing webhooks are turned off on <span className="streamer">{label}</span>. Nothing is
-          sent until an instance admin turns them on.
+    <Stack gap="2xl">
+      <Stack gap="md">
+        <p className="text-sm text-on-surface-variant">
+          Outgoing webhooks send events from this server to a URL you choose, as signed JSON.
         </p>
-      )}
-      {secret && (
-        <SecretBox
-          label={`Signing secret of ${secret.name}`}
-          value={secret.value}
-          note="Copy it now: it is shown only once. Check X-Webhook-Signature: sha256= plus the HMAC-SHA256 of the X-Webhook-Timestamp, a dot and the raw body. Reject timestamps more than 5 minutes off. X-Webhook-Delivery stays the same across retries."
-          onDone={() => setSecret(null)}
-        />
-      )}
-      <FieldError message={error} />
-      {data.available &&
-        (creating ? (
-          <OutEditor
-            initial={{ name: '', url: '', events: ['message.created'] }}
-            busy={busy}
-            submit={create}
-            submitLabel="Create"
-            onCancel={() => setCreating(false)}
+        {!data.available && (
+          <Surface pad="md" tone="base" radius="lg">
+            <p className="text-sm text-on-surface-variant">
+              Outgoing webhooks are turned off on <span className="streamer">{label}</span>. Nothing
+              is sent until an instance admin turns them on.
+            </p>
+          </Surface>
+        )}
+        {secret && (
+          <SecretBox
+            label={`Signing secret of ${secret.name}`}
+            value={secret.value}
+            note="Copy it now: it is shown only once. Check X-Webhook-Signature: sha256= plus the HMAC-SHA256 of the X-Webhook-Timestamp, a dot and the raw body. Reject timestamps more than 5 minutes off. X-Webhook-Delivery stays the same across retries."
+            onDone={() => setSecret(null)}
           />
-        ) : (
-          <Button
-            variant="filled"
-            size="md"
-            icon={Plus}
-            onClick={() => setCreating(true)}
-            disabled={data.webhooks.length >= OUTGOING_MAX}
-            title={data.webhooks.length >= OUTGOING_MAX ? 'At most 10 per server' : undefined}
-          >
-            New outgoing webhook
-          </Button>
-        ))}
-      <p className={sectionCls + ' mt-4'}>Outgoing webhooks</p>
-      {data.webhooks.length === 0 ? (
-        <p className="px-2 text-sm text-on-surface-variant">None yet.</p>
-      ) : (
-        <ul className="flex flex-col gap-1">
-          {data.webhooks.map(h => (
-            <li key={h.id} className="rounded-xl px-2 py-2 hover:bg-surface-container">
-              <div className="flex items-center gap-2">
-                <span
-                  title={h.enabled ? 'On' : 'Off'}
-                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${h.enabled ? 'bg-status-green' : 'bg-outline'}`}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-on-surface">
-                    <Masked text={h.name} by={h.creator?.username} />
-                  </p>
-                  <p
-                    className="truncate text-xs text-on-surface-variant"
-                    title={h.url_hidden ? `${h.url} (path hidden)` : h.url}
-                  >
-                    {hostOf(h.url)} · {h.events.map(eventLabel).join(', ')}
-                  </p>
-                  {h.creator && <CreatorNote creator={h.creator} />}
-                </div>
-                <IconButton
-                  icon={Power}
-                  label={h.enabled ? `Turn off ${h.name}` : `Turn on ${h.name}`}
-                  tooltip={h.enabled ? 'Turn off' : 'Turn on'}
-                  pressed={h.enabled}
-                  disabled={busy || (!h.enabled && !data.available)}
-                  onClick={() => toggle(h)}
-                />
-                <IconButton
-                  icon={Send}
-                  label={`Send a test event to ${h.name}`}
-                  tooltip="Send test event"
-                  disabled={busy || !h.enabled || !data.available}
-                  onClick={() => test(h)}
-                />
-                <IconButton
-                  icon={Pencil}
-                  label={`Edit ${h.name}`}
-                  tooltip="Edit"
-                  onClick={() => setEditing(editing === h.id ? null : h.id)}
-                />
-                <IconButton
-                  icon={KeyRound}
-                  label={`New secret for ${h.name}`}
-                  tooltip="New secret"
-                  onClick={() => newSecret(h)}
-                />
-                <IconButton
-                  icon={Trash2}
-                  label={`Delete ${h.name}`}
-                  tooltip="Delete"
-                  tone="danger"
-                  onClick={() => remove(h)}
-                />
-              </div>
-              {h.disabled_at !== null && !h.enabled && (
-                <p className="mt-1.5 rounded-lg bg-error-container px-2.5 py-1.5 text-xs text-on-error-container">
-                  {h.disabled_reason === 'owner'
-                    ? `Turned off ${ago(h.disabled_at)}: its owner is no longer in this server. Turning it back on makes you the owner.`
-                    : `Turned off ${ago(h.disabled_at)} after 10 failed deliveries in a row. Check the URL, then turn it back on.`}
-                </p>
-              )}
-              {taking?.id === h.id && (
-                <TakeoverForm
-                  hook={h}
-                  host={hostOf(h.url)}
-                  kind={taking.kind}
-                  busy={busy}
-                  submit={url => takeOver(h, taking.kind, url)}
-                  onCancel={() => setTaking(null)}
-                />
-              )}
-              {editing === h.id && (
-                <div className="mt-2">
-                  <OutEditor
-                    initial={{ name: h.name, url: h.url_hidden ? '' : h.url, events: h.events }}
-                    urlHidden={h.url_hidden}
-                    busy={busy}
-                    submit={update(h)}
-                    submitLabel="Save"
-                    onCancel={() => setEditing(null)}
-                  />
-                </div>
-              )}
-              <Button
-                icon={log === h.id ? ChevronUp : ChevronDown}
-                onClick={() => setLog(log === h.id ? null : h.id)}
-                aria-expanded={log === h.id}
-                place="mt-1"
-              >
-                Recent deliveries
-              </Button>
-              {log === h.id && <DeliveryLog server={server} hook={h.id} />}
-            </li>
+        )}
+        <FieldError message={error} />
+        {data.available &&
+          (creating ? (
+            <OutEditor
+              initial={{ name: '', url: '', events: ['message.created'] }}
+              busy={busy}
+              submit={create}
+              submitLabel="Create"
+              onCancel={() => setCreating(false)}
+            />
+          ) : (
+            <Button
+              variant="filled"
+              size="md"
+              icon={Plus}
+              onClick={() => setCreating(true)}
+              disabled={data.webhooks.length >= OUTGOING_MAX}
+              title={data.webhooks.length >= OUTGOING_MAX ? 'At most 10 per server' : undefined}
+              place="self-start"
+            >
+              New outgoing webhook
+            </Button>
           ))}
-        </ul>
-      )}
-      {data.webhooks.length > 0 && (
-        <p className="mt-3 px-2 text-xs text-on-surface-variant">
-          Failed deliveries are retried 5 times over about 40 minutes. The log keeps status codes
-          and timings for 7 days.
-        </p>
-      )}
-    </div>
+      </Stack>
+      <section>
+        <p className={sectionCls}>Outgoing webhooks</p>
+        {data.webhooks.length === 0 ? (
+          <Surface pad="sm" inset="bar" tone="plain">
+            <p className="text-sm text-on-surface-variant">None yet.</p>
+          </Surface>
+        ) : (
+          <Stack as="ul" gap="2xs">
+            {data.webhooks.map(h => (
+              <li key={h.id} className="rounded-xl hover:bg-surface-container">
+                <Surface pad="sm" gap="sm" tone="plain">
+                  <Row gap="sm">
+                    <span
+                      title={h.enabled ? 'On' : 'Off'}
+                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${h.enabled ? 'bg-status-green' : 'bg-outline'}`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-on-surface">
+                        <Masked text={h.name} by={h.creator?.username} />
+                      </p>
+                      <p
+                        className="truncate text-xs text-on-surface-variant"
+                        title={h.url_hidden ? `${h.url} (path hidden)` : h.url}
+                      >
+                        {hostOf(h.url)} · {h.events.map(eventLabel).join(', ')}
+                      </p>
+                      {h.creator && <CreatorNote creator={h.creator} />}
+                    </div>
+                    <IconButton
+                      icon={Power}
+                      label={h.enabled ? `Turn off ${h.name}` : `Turn on ${h.name}`}
+                      tooltip={h.enabled ? 'Turn off' : 'Turn on'}
+                      pressed={h.enabled}
+                      disabled={busy || (!h.enabled && !data.available)}
+                      onClick={() => toggle(h)}
+                    />
+                    <IconButton
+                      icon={Send}
+                      label={`Send a test event to ${h.name}`}
+                      tooltip="Send test event"
+                      disabled={busy || !h.enabled || !data.available}
+                      onClick={() => test(h)}
+                    />
+                    <IconButton
+                      icon={Pencil}
+                      label={`Edit ${h.name}`}
+                      tooltip="Edit"
+                      onClick={() => setEditing(editing === h.id ? null : h.id)}
+                    />
+                    <IconButton
+                      icon={KeyRound}
+                      label={`New secret for ${h.name}`}
+                      tooltip="New secret"
+                      onClick={() => newSecret(h)}
+                    />
+                    <IconButton
+                      icon={Trash2}
+                      label={`Delete ${h.name}`}
+                      tooltip="Delete"
+                      tone="danger"
+                      onClick={() => remove(h)}
+                    />
+                  </Row>
+                  {h.disabled_at !== null && !h.enabled && (
+                    <Surface pad="sm" tone="error" radius="md">
+                      <p className="text-xs text-on-error-container">
+                        {h.disabled_reason === 'owner'
+                          ? `Turned off ${ago(h.disabled_at)}: its owner is no longer in this server. Turning it back on makes you the owner.`
+                          : `Turned off ${ago(h.disabled_at)} after 10 failed deliveries in a row. Check the URL, then turn it back on.`}
+                      </p>
+                    </Surface>
+                  )}
+                  {taking?.id === h.id && (
+                    <TakeoverForm
+                      hook={h}
+                      host={hostOf(h.url)}
+                      kind={taking.kind}
+                      busy={busy}
+                      submit={url => takeOver(h, taking.kind, url)}
+                      onCancel={() => setTaking(null)}
+                    />
+                  )}
+                  {editing === h.id && (
+                    <OutEditor
+                      initial={{ name: h.name, url: h.url_hidden ? '' : h.url, events: h.events }}
+                      urlHidden={h.url_hidden}
+                      busy={busy}
+                      submit={update(h)}
+                      submitLabel="Save"
+                      onCancel={() => setEditing(null)}
+                    />
+                  )}
+                  <Button
+                    icon={log === h.id ? ChevronUp : ChevronDown}
+                    onClick={() => setLog(log === h.id ? null : h.id)}
+                    aria-expanded={log === h.id}
+                    place="self-start"
+                  >
+                    Recent deliveries
+                  </Button>
+                  {log === h.id && <DeliveryLog server={server} hook={h.id} />}
+                </Surface>
+              </li>
+            ))}
+          </Stack>
+        )}
+        {data.webhooks.length > 0 && (
+          <Surface pad="sm" inset="bar" tone="plain">
+            <p className="text-xs text-on-surface-variant">
+              Failed deliveries are retried 5 times over about 40 minutes. The log keeps status
+              codes and timings for 7 days.
+            </p>
+          </Surface>
+        )}
+      </section>
+    </Stack>
   )
 }

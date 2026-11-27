@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react'
 import { desktopInfo, inShell } from '../lib/platform'
 import { shell, shellError, type FoundUpdate, type ShellSettings } from '../lib/platform/desktop'
-import { SettingSwitch } from './settings_fields'
+import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button } from './controls'
+import { Row } from './layout'
 import { sectionCls } from './ui'
 
 type Check =
@@ -13,7 +14,7 @@ type Check =
   | { kind: 'found'; update: FoundUpdate }
   | { kind: 'done'; text: string }
 
-const note = 'mt-2 px-2 text-xs text-on-surface-variant'
+const note = 'text-xs text-on-surface-variant'
 
 function Updates({
   settings,
@@ -55,24 +56,26 @@ function Updates({
         value={settings.channel === 'weekly'}
         onChange={v => save({ ...settings, channel: v ? 'weekly' : 'stable' })}
       />
-      <p className={note}>
-        Updates come from GitHub Releases. Weekly builds have the newest changes and may be less
-        stable.
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-3 px-2">
-        {check.kind === 'found' ? (
-          <Button variant="filled" size="md" onClick={() => void install()}>
-            Install {check.update.version} and restart
-          </Button>
-        ) : (
-          <Button disabled={check.kind === 'busy'} onClick={() => void run()}>
-            Check for updates
-          </Button>
-        )}
-        <span role="status" className="text-xs text-on-surface-variant">
-          {check.kind === 'busy' || check.kind === 'done' ? check.text : null}
-        </span>
-      </div>
+      <SettingNotes gap="md">
+        <p className={note}>
+          Updates come from GitHub Releases. Weekly builds have the newest changes and may be less
+          stable.
+        </p>
+        <Row gap="md" wrap>
+          {check.kind === 'found' ? (
+            <Button variant="filled" size="md" onClick={() => void install()}>
+              Install {check.update.version} and restart
+            </Button>
+          ) : (
+            <Button disabled={check.kind === 'busy'} onClick={() => void run()}>
+              Check for updates
+            </Button>
+          )}
+          <span role="status" className="text-xs text-on-surface-variant">
+            {check.kind === 'busy' || check.kind === 'done' ? check.text : null}
+          </span>
+        </Row>
+      </SettingNotes>
     </section>
   )
 }
@@ -109,17 +112,19 @@ export function DesktopSection() {
           value={settings.minimize_to_tray}
           onChange={v => save({ ...settings, minimize_to_tray: v })}
         />
-        <p className={note}>Closing the window keeps the app running in the tray.</p>
-        <div className="mt-2">
-          <SettingSwitch label="Start on login" value={autostart} onChange={toggleStart} />
-        </div>
-        <p className={note}>Starts in the tray when you sign in to your computer.</p>
-        {error && (
-          <p role="alert" className="mt-2 px-2 text-xs text-error">
-            {error}
-          </p>
-        )}
-        <p className={note}>Version {desktopInfo()?.version}</p>
+        <SettingNotes>
+          <p className={note}>Closing the window keeps the app running in the tray.</p>
+        </SettingNotes>
+        <SettingSwitch label="Start on login" value={autostart} onChange={toggleStart} />
+        <SettingNotes>
+          <p className={note}>Starts in the tray when you sign in to your computer.</p>
+          {error && (
+            <p role="alert" className="text-xs text-error">
+              {error}
+            </p>
+          )}
+          <p className={note}>Version {desktopInfo()?.version}</p>
+        </SettingNotes>
       </section>
       <Updates settings={settings} save={save} />
     </>

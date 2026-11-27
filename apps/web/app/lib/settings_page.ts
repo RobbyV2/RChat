@@ -69,3 +69,14 @@ export const openSection = (sections: { id: string }[], active: string | null) =
 // keeps unsaved edits.
 export const keptSections = (visited: readonly string[], shown: string | null) =>
   shown === null || visited.includes(shown) ? visited : [...visited, shown]
+
+// The nav's entries in runs: a run starts at each entry whose group differs from the one before,
+// under that group's heading. Entries without a group stay in the run before them.
+export const navRuns = <T extends { group?: string }>(entries: readonly T[]) =>
+  entries.reduce<{ heading?: string; entries: T[] }[]>((runs, entry, i) => {
+    const opens = entry.group !== undefined && entry.group !== entries[i - 1]?.group
+    if (opens || runs.length === 0)
+      runs.push({ heading: opens ? entry.group : undefined, entries: [entry] })
+    else runs[runs.length - 1].entries.push(entry)
+    return runs
+  }, [])

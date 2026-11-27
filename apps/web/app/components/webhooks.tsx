@@ -1,6 +1,7 @@
 'use client'
 
 import { ListRow } from './controls'
+import { Grid, Row, Stack, Surface } from './layout'
 import type { ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { embedColor, fieldRows, safeLink, webhookIdOf } from '../lib/webhooks'
@@ -42,39 +43,42 @@ function RichCard({
   return (
     <div
       style={color ? { borderLeftColor: color } : undefined}
-      className="mt-1 w-full max-w-md min-w-0 rounded-lg border-l-4 border-outline bg-surface-container px-3 py-2"
+      className="w-full max-w-md min-w-0 rounded-lg border-l-4 border-outline bg-surface-container"
     >
-      {embed.title &&
-        (link ? (
-          Link(
-            link,
-            'block text-sm font-semibold break-words text-primary hover:underline',
-            line(embed.title)
-          )
-        ) : (
-          <p className="text-sm font-semibold break-words text-on-surface">{line(embed.title)}</p>
+      <Surface pad="md" tone="plain" gap="sm">
+        {(embed.title || embed.description) && (
+          <Stack gap="3xs">
+            {embed.title &&
+              (link ? (
+                Link(
+                  link,
+                  'block text-sm font-semibold break-words text-primary hover:underline',
+                  line(embed.title)
+                )
+              ) : (
+                <p className="text-sm font-semibold break-words text-on-surface">
+                  {line(embed.title)}
+                </p>
+              ))}
+            {embed.description && (
+              <div className="text-sm break-words text-on-surface">{text(embed.description)}</div>
+            )}
+          </Stack>
+        )}
+        {rows.map((row, i) => (
+          <Grid key={i} cols={row.length > 1 ? { base: 1, sm: 3 } : 1} gap="sm">
+            {row.map((f, j) => (
+              <div key={j} className="min-w-0">
+                <p className="text-xs font-semibold break-words text-on-surface">{line(f.name)}</p>
+                <div className="text-sm break-words text-on-surface-variant">{text(f.value)}</div>
+              </div>
+            ))}
+          </Grid>
         ))}
-      {embed.description && (
-        <div className="mt-0.5 text-sm break-words text-on-surface">{text(embed.description)}</div>
-      )}
-      {rows.map((row, i) => (
-        <div
-          key={i}
-          className={`mt-2 grid gap-x-4 gap-y-1 ${row.length > 1 ? 'sm:grid-cols-3' : 'grid-cols-1'}`}
-        >
-          {row.map((f, j) => (
-            <div key={j} className="min-w-0">
-              <p className="text-xs font-semibold break-words text-on-surface">{line(f.name)}</p>
-              <div className="text-sm break-words text-on-surface-variant">{text(f.value)}</div>
-            </div>
-          ))}
-        </div>
-      ))}
-      {embed.footer?.text && (
-        <p className="mt-2 text-xs break-words text-on-surface-variant">
-          {line(embed.footer.text)}
-        </p>
-      )}
+        {embed.footer?.text && (
+          <p className="text-xs break-words text-on-surface-variant">{line(embed.footer.text)}</p>
+        )}
+      </Surface>
     </div>
   )
 }
@@ -92,11 +96,11 @@ export function RichEmbeds({
 }) {
   if (!embeds.length) return null
   return (
-    <div className="flex flex-col">
+    <Stack gap="2xs">
       {embeds.map((e, i) => (
         <RichCard key={i} embed={e} text={text} line={line} link={link} />
       ))}
-    </div>
+    </Stack>
   )
 }
 
@@ -119,36 +123,42 @@ export function WebhookProfile({
         className={`shrink-0 bg-surface-container-highest ${sheet ? 'h-20' : 'h-14'}`}
       />
       <div className={sheet ? 'px-5' : 'px-4'}>
-        <div className="-mt-10 flex items-end justify-between gap-2">
-          <span className="block shrink-0 rounded-full bg-surface-container-high p-1.5">
-            <UserAvatar
-              username={user.username}
-              avatarKind={user.avatar_kind}
-              avatarColor={user.avatar_color}
-              size={64}
+        <Stack gap="sm">
+          <div className="-mt-10">
+            <Row gap="sm" align="end" justify="between">
+              <span className="block shrink-0 rounded-full bg-surface-container-high p-1.5">
+                <UserAvatar
+                  username={user.username}
+                  avatarKind={user.avatar_kind}
+                  avatarColor={user.avatar_color}
+                  size={64}
+                />
+              </span>
+              <span>
+                <WebhookBadge />
+              </span>
+            </Row>
+          </div>
+          <p
+            id={titleId}
+            className="streamer line-clamp-2 text-lg leading-6 font-semibold break-words text-on-surface"
+          >
+            <Masked text={user.display_name} by={user.username} />
+          </p>
+          <Surface pad="md" tone="low" radius="lg">
+            <p className="text-sm text-on-surface-variant">
+              Posted by an app or service through a webhook. It is not a member and cannot get
+              messages.
+            </p>
+          </Surface>
+          {id !== null && (
+            <ListRow
+              icon={copied ? Check : Copy}
+              label={copied ? 'Copied' : 'Copy Webhook ID'}
+              onClick={() => void sharing().copyText(String(id)).then(flash)}
             />
-          </span>
-          <span className="mb-1">
-            <WebhookBadge />
-          </span>
-        </div>
-        <p
-          id={titleId}
-          className="streamer mt-2 line-clamp-2 text-lg leading-6 font-semibold break-words text-on-surface"
-        >
-          <Masked text={user.display_name} by={user.username} />
-        </p>
-        <p className="mt-2 rounded-xl bg-surface-container-low p-3 text-sm text-on-surface-variant">
-          Posted by an app or service through a webhook. It is not a member and cannot get messages.
-        </p>
-        {id !== null && (
-          <ListRow
-            icon={copied ? Check : Copy}
-            label={copied ? 'Copied' : 'Copy Webhook ID'}
-            onClick={() => void sharing().copyText(String(id)).then(flash)}
-            place="mt-2"
-          />
-        )}
+          )}
+        </Stack>
       </div>
     </>
   )

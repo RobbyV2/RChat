@@ -3,8 +3,9 @@
 import { X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { forgetSite } from '../lib/link_safety'
-import { SettingSwitch } from './settings_fields'
+import { SettingNotes, SettingSwitch } from './settings_fields'
 import { IconButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { sectionCls } from './ui'
 
 // Settings > Privacy: the external link warning, tracking parameters, and trusted domains.
@@ -14,7 +15,7 @@ export function LinkSafetySection() {
   return (
     <>
       <p className={sectionCls}>Links</p>
-      <div className="flex flex-col gap-1">
+      <Stack gap="2xs">
         <SettingSwitch
           label="Warn before opening external links"
           hint="Links in other people's messages ask before they open another site."
@@ -27,30 +28,33 @@ export function LinkSafetySection() {
           value={prefs.strip}
           onChange={strip => setLinkPrefs({ ...prefs, strip })}
         />
-      </div>
+      </Stack>
       <p className={sectionCls}>Trusted link domains</p>
       {prefs.trusted.length === 0 ? (
-        <p className="px-2 text-sm text-on-surface-variant">
-          No trusted domains. Check &quot;Always trust&quot; in a link warning to add one.
-        </p>
+        <SettingNotes>
+          <p className="text-sm text-on-surface-variant">
+            No trusted domains. Check &quot;Always trust&quot; in a link warning to add one.
+          </p>
+        </SettingNotes>
       ) : (
-        <ul data-trusted-domains className="flex flex-col">
+        <Stack as="ul" gap="none" data-trusted-domains>
           {prefs.trusted.map(host => (
-            <li
-              key={host}
-              className="flex items-center gap-2 rounded-xl px-2 py-1 hover:bg-surface-container"
-            >
-              <span className="min-w-0 flex-1 truncate font-mono text-sm text-on-surface">
-                {host}
-              </span>
-              <IconButton
-                icon={X}
-                label={`Remove ${host}`}
-                onClick={() => setLinkPrefs(forgetSite(prefs, host))}
-              />
+            <li key={host} className="rounded-xl hover:bg-surface-container">
+              <Surface pad="sm" inset="bar" tone="plain">
+                <Row gap="sm">
+                  <span className="min-w-0 flex-1 truncate font-mono text-sm text-on-surface">
+                    {host}
+                  </span>
+                  <IconButton
+                    icon={X}
+                    label={`Remove ${host}`}
+                    onClick={() => setLinkPrefs(forgetSite(prefs, host))}
+                  />
+                </Row>
+              </Surface>
             </li>
           ))}
-        </ul>
+        </Stack>
       )}
     </>
   )

@@ -11,6 +11,8 @@ import { useStore } from '../lib/store'
 import { useAccount } from '../lib/client/react'
 import { Choice } from './friends'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
+import { SettingNotes } from './settings_fields'
 import { sectionCls } from './ui'
 
 const MODES: { value: IndexMode; label: string }[] = [
@@ -45,57 +47,63 @@ export function PaletteSettingsSection() {
   }
 
   return (
-    <div className="flex flex-col gap-8">
+    <Stack gap="2xl">
       <section>
-        <p className="px-2 text-sm text-on-surface-variant">
-          Press {paletteShortcut(isMac())} anywhere, or use the palette button at the top on small
-          screens. Start with # for channels, @ for people, &gt; for commands, / for the API and ?
-          for help.
-        </p>
+        <SettingNotes>
+          <p className="text-sm text-on-surface-variant">
+            Press {paletteShortcut(isMac())} anywhere, or use the palette button at the top on small
+            screens. Start with # for channels, @ for people, &gt; for commands, / for the API and ?
+            for help.
+          </p>
+        </SettingNotes>
       </section>
       <section>
         <p className={sectionCls}>Search index</p>
-        <div className="px-2">
-          <Choice label="Index" value={shown} options={options} onChange={pick} />
-          <p className="mt-2 text-xs text-on-surface-variant">{MODE_NOTE[shown]}</p>
-          <p className="mt-2 text-xs text-on-surface-variant">
-            Only what you can see is indexed. Leaving a server, losing access to a channel, deleted
-            messages and blocked people are removed from it.
-          </p>
-          {guest && (
-            <p className="mt-2 text-xs text-on-surface-variant">Guests can index in memory only.</p>
-          )}
-          <dl
-            data-index-size
-            className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm text-on-surface-variant"
-          >
-            <dt>Size</dt>
-            <dd className="text-on-surface">{fmtSize(status.bytes)}</dd>
-            <dt>Messages</dt>
-            <dd className="text-on-surface">{status.messages}</dd>
-            <dt>Members</dt>
-            <dd className="text-on-surface">{status.docs - status.messages}</dd>
-            {status.state === 'backfilling' && (
-              <>
-                <dt>Filling</dt>
-                <dd className="text-on-surface">
-                  {status.done} of {status.total} conversations
-                </dd>
-              </>
-            )}
-            {status.state === 'loading' && (
-              <>
-                <dt>Status</dt>
-                <dd className="text-on-surface">Loading</dd>
-              </>
-            )}
-          </dl>
-          {status.error && (
-            <p role="alert" className="mt-2 text-xs text-error">
-              {status.error}
+        <SettingNotes gap="md">
+          <Stack gap="sm">
+            <Choice label="Index" value={shown} options={options} onChange={pick} />
+            <p className="text-xs text-on-surface-variant">{MODE_NOTE[shown]}</p>
+            <p className="text-xs text-on-surface-variant">
+              Only what you can see is indexed. Leaving a server, losing access to a channel,
+              deleted messages and blocked people are removed from it.
             </p>
-          )}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {guest && (
+              <p className="text-xs text-on-surface-variant">Guests can index in memory only.</p>
+            )}
+          </Stack>
+          <Stack gap="sm">
+            <dl
+              data-index-size
+              className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm text-on-surface-variant"
+            >
+              <dt>Size</dt>
+              <dd className="text-on-surface">{fmtSize(status.bytes)}</dd>
+              <dt>Messages</dt>
+              <dd className="text-on-surface">{status.messages}</dd>
+              <dt>Members</dt>
+              <dd className="text-on-surface">{status.docs - status.messages}</dd>
+              {status.state === 'backfilling' && (
+                <>
+                  <dt>Filling</dt>
+                  <dd className="text-on-surface">
+                    {status.done} of {status.total} conversations
+                  </dd>
+                </>
+              )}
+              {status.state === 'loading' && (
+                <>
+                  <dt>Status</dt>
+                  <dd className="text-on-surface">Loading</dd>
+                </>
+              )}
+            </dl>
+            {status.error && (
+              <p role="alert" className="text-xs text-error">
+                {status.error}
+              </p>
+            )}
+          </Stack>
+          <Row gap="sm" wrap>
             <Button
               variant="danger"
               onClick={() =>
@@ -105,26 +113,26 @@ export function PaletteSettingsSection() {
               Clear index
             </Button>
             {cleared && <span className="text-xs text-on-surface-variant">Cleared</span>}
-          </div>
-        </div>
+          </Row>
+        </SettingNotes>
       </section>
       <section>
         <p className={sectionCls}>History</p>
-        <div className="flex flex-col gap-2 px-2 text-sm text-on-surface-variant">
-          <p>
+        <SettingNotes>
+          <p className="text-sm text-on-surface-variant">
             The palette ranks what you use often first. API console requests are kept here without
             tokens or secret fields.
           </p>
-          <div className="flex flex-wrap gap-2">
+          <Row gap="sm" wrap>
             <Button disabled={!used} onClick={palettePrefs.clearUsage}>
               Forget recent commands
             </Button>
             <Button disabled={!requests} onClick={apiDoc.clearApiHistory}>
               Clear request history
             </Button>
-          </div>
-        </div>
+          </Row>
+        </SettingNotes>
       </section>
-    </div>
+    </Stack>
   )
 }

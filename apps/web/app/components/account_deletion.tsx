@@ -12,6 +12,7 @@ import { useAccount, useStore } from '../lib/client/react'
 import type { LinkedProvider } from '../lib/types'
 import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog } from './ui'
 
 // Settings > Account: asks the instance to delete the account after its wait.
@@ -21,12 +22,12 @@ export function DeleteAccount({ links }: { links: LinkedProvider[] }) {
   const [open, setOpen] = useState(false)
   if (pending !== null)
     return (
-      <div data-account-deletion="pending" className="flex flex-col items-start gap-2">
+      <Stack data-account-deletion="pending" gap="sm" align="start">
         <p role="status" className="text-sm text-on-surface-variant">
           {deletionNotice(pending, Math.floor(Date.now() / 1000))}
         </p>
         <Button onClick={() => void keep()}>Keep account</Button>
-      </div>
+      </Stack>
     )
   return (
     <>
@@ -45,32 +46,32 @@ function DeleteDialog({ links, close }: { links: LinkedProvider[]; close(): void
   const [removeP2p, setRemoveP2p] = useState(false)
   return (
     <Dialog title="Delete account?" compact layer="confirm" onClose={close}>
-      <p className="text-sm text-on-surface-variant">{DELETION_TEXT}</p>
-      {held && (
-        <div className="my-4 flex flex-col gap-1">
-          <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-on-surface md:min-h-0">
-            <input
-              type="checkbox"
-              data-account-deletion="p2p"
-              checked={removeP2p}
-              onChange={e => setRemoveP2p(e.target.checked)}
-            />
-            {DELETION_P2P_LABEL}
-          </label>
-          <p className="text-xs text-on-surface-variant">
-            {removeP2p
-              ? 'They leave every P2P server and are deleted from this browser with their device keys.'
-              : DELETION_P2P_KEPT}
-          </p>
-        </div>
-      )}
-      <div className={held ? '' : 'mt-4'}>
+      <Stack gap="lg">
+        <p className="text-sm text-on-surface-variant">{DELETION_TEXT}</p>
+        {held && (
+          <Stack gap="2xs">
+            <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-on-surface md:min-h-0">
+              <input
+                type="checkbox"
+                data-account-deletion="p2p"
+                checked={removeP2p}
+                onChange={e => setRemoveP2p(e.target.checked)}
+              />
+              {DELETION_P2P_LABEL}
+            </label>
+            <p className="text-xs text-on-surface-variant">
+              {removeP2p
+                ? 'They leave every P2P server and are deleted from this browser with their device keys.'
+                : DELETION_P2P_KEPT}
+            </p>
+          </Stack>
+        )}
         <ReAuthPrompt
           purpose="delete_account"
           links={links}
           onBody={reauth => remove(reauth, removeP2p)}
         />
-      </div>
+      </Stack>
     </Dialog>
   )
 }
@@ -85,16 +86,18 @@ export function DeletionBanner({ className }: { className: string }) {
     <div
       role="status"
       data-account-deletion="banner"
-      className={`${className} flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-error-container text-on-error-container`}
+      className={`${className} bg-error-container text-on-error-container`}
     >
-      <span className="min-w-0">{deletionNotice(pending, Math.floor(Date.now() / 1000))}</span>
-      <button
-        type="button"
-        onClick={() => void keep()}
-        className="rounded-full px-3 font-medium underline outline-offset-2 focus-visible:outline-2 focus-visible:outline-current pointer-coarse:min-h-11"
-      >
-        Keep account
-      </button>
+      <Row gap="md" justify="center" wrap>
+        <span className="min-w-0">{deletionNotice(pending, Math.floor(Date.now() / 1000))}</span>
+        <button
+          type="button"
+          onClick={() => void keep()}
+          className="rounded-full px-3 font-medium underline outline-offset-2 focus-visible:outline-2 focus-visible:outline-current pointer-coarse:min-h-11"
+        >
+          Keep account
+        </button>
+      </Row>
     </div>
   )
 }

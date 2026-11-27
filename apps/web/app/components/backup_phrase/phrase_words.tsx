@@ -1,6 +1,7 @@
 'use client'
 
 import { Button } from '../controls'
+import { Grid, Stack, Surface } from '../layout'
 import { useReveal } from './reveal'
 
 // The words in order. In streamer mode they stay covered until Show, and again each time streamer
@@ -15,22 +16,19 @@ export function PhraseWords({ words }: { words: string[] }) {
       </div>
     )
   return (
-    <div className="flex flex-col gap-1">
-      <ol aria-label="Backup phrase" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+    <Stack gap="2xs">
+      <Grid as="ol" aria-label="Backup phrase" cols={{ base: 2, sm: 3 }} gap="sm">
         {words.map((w, i) => (
-          <li
-            key={i}
-            className="rounded-xl bg-surface-container-high px-3 py-2 font-mono text-sm text-on-surface tabular-nums"
-          >
-            {`${i + 1}. ${w}`}
-          </li>
+          <Surface as="li" key={i} pad="md" radius="lg">
+            <span className="font-mono text-sm text-on-surface tabular-nums">{`${i + 1}. ${w}`}</span>
+          </Surface>
         ))}
-      </ol>
+      </Grid>
       {reveal.streamer && (
         <Button onClick={reveal.hide} place="self-start">
           Hide
         </Button>
       )}
-    </div>
+    </Stack>
   )
 }

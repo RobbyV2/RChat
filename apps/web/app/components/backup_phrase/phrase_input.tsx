@@ -14,6 +14,7 @@ import {
 } from '../../lib/backup_phrase'
 import { QrScan } from '../p2p/qr_scan'
 import { Button } from '../controls'
+import { Grid, Row, Stack } from '../layout'
 import { FieldError } from '../ui'
 import { RevealToggle, SECRET, useReveal } from './reveal'
 
@@ -29,7 +30,7 @@ export function PhraseHints({
   onPick: (word: string) => void
 }) {
   return (
-    <div role="group" aria-label="Suggestions" className="flex flex-wrap gap-1">
+    <Row role="group" aria-label="Suggestions" gap="2xs" wrap>
       {hints.map(w => (
         <button
           key={w}
@@ -41,7 +42,7 @@ export function PhraseHints({
           {w}
         </button>
       ))}
-    </div>
+    </Row>
   )
 }
 
@@ -138,9 +139,9 @@ export function PhraseInput({
   const secret = reveal.hidden ? SECRET : ''
 
   return (
-    <fieldset className="flex min-w-0 flex-col gap-2">
+    <Stack as="fieldset" gap="sm">
       <legend className="pb-2 text-sm font-medium text-on-surface">{label}</legend>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <Grid cols={{ base: 2, sm: 3 }} gap="sm">
         {slots.map((s, i) => {
           const bad = !!s && focus !== i && expand(s) === null
           return (
@@ -175,19 +176,19 @@ export function PhraseInput({
             </label>
           )
         })}
-      </div>
+      </Grid>
       {focus !== null && showHints && (
         <PhraseHints hints={hints} secret={reveal.hidden} onPick={w => choose(focus, w)} />
       )}
       <FieldError message={phraseProblem(slots, overflow, focus)} />
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <Row gap="sm" align="start" justify="between" wrap>
         <QrScan onCode={onScan} label="Backup phrase QR code" />
-        <div className="flex gap-1">
+        <Row gap="2xs" align="stretch">
           <RevealToggle reveal={reveal} />
           {slots.some(Boolean) && <Button onClick={() => update(EMPTY)}>Clear</Button>}
-        </div>
-      </div>
+        </Row>
+      </Row>
       {scanNote && <p className="text-xs text-error">{scanNote}</p>}
-    </fieldset>
+    </Stack>
   )
 }

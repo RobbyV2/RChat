@@ -25,6 +25,7 @@ import {
   type UploadExpiryState,
 } from '../lib/upload_expiry'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { Chips, FieldError, fieldCls, sectionCls } from './ui'
 import { useInstanceLabel } from './instance_badge'
 
@@ -125,18 +126,20 @@ export function ServerUploadExpiry({ server }: { server: string }) {
     <>
       <p className={sectionCls}>File expiry</p>
       {saved && form ? (
-        <div data-upload-expiry className="flex flex-col gap-2">
+        <Stack data-upload-expiry gap="sm">
           <p className="text-xs text-on-surface-variant">
             How long files uploaded here stay. Direct messages always use the default.
           </p>
           <Chips label="File expiry" value={form.mode} options={modes} onChange={pick} />
           {form.mode === 'custom' && (
-            <form
+            <Row
+              as="form"
+              gap="sm"
+              wrap
               onSubmit={e => {
                 e.preventDefault()
                 save(form)
               }}
-              className="flex flex-wrap items-center gap-2"
             >
               <label htmlFor={amountId} className="sr-only">
                 Time
@@ -160,7 +163,7 @@ export function ServerUploadExpiry({ server }: { server: string }) {
               <Button type="submit" variant="filled" size="md" disabled={saving}>
                 Save
               </Button>
-            </form>
+            </Row>
           )}
           <p data-upload-expiry-now className="text-xs text-on-surface-variant">
             New files: {newFilesText(kept, owner, now, base)}.
@@ -188,10 +191,10 @@ export function ServerUploadExpiry({ server }: { server: string }) {
             </span>
           )}
           <FieldError message={error} />
-        </div>
+        </Stack>
       ) : failed ? (
-        <p className="flex items-center gap-2 text-sm text-on-surface-variant">
-          Couldn&apos;t load this setting.
+        <Row as="p" gap="sm">
+          <span className="text-sm text-on-surface-variant">Couldn&apos;t load this setting.</span>
           <Button
             onClick={() => {
               setFailed(false)
@@ -200,7 +203,7 @@ export function ServerUploadExpiry({ server }: { server: string }) {
           >
             Retry
           </Button>
-        </p>
+        </Row>
       ) : (
         <p className="text-sm text-on-surface-variant">Loading…</p>
       )}

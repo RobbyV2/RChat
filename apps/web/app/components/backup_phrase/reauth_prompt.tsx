@@ -14,6 +14,7 @@ import { beginPopup, errorText as popupText, type SsoErrorCode } from '../../lib
 import { errorText } from '../../lib/store'
 import type { LinkedProvider, ReAuthBody } from '../../lib/types'
 import { PhraseInput } from './phrase_input'
+import { Stack } from '../layout'
 import { FieldError, fieldCls, filledBtn, textBtn } from '../ui'
 import { useConfirmation } from '../sso/use_confirmation'
 
@@ -92,7 +93,7 @@ export function ReAuthPrompt({
   if (!me) return null
   const wordPassword = me.password_kind === 'words'
   return (
-    <fieldset disabled={busy} className="flex min-w-0 flex-col gap-3">
+    <Stack as="fieldset" disabled={busy} gap="md">
       <legend className="mb-3">Confirm your identity</legend>
       {ways.includes('password') && !me.password_temporary && me.has_password !== false && (
         <>
@@ -193,6 +194,6 @@ export function ReAuthPrompt({
           </button>
         ))}
       <FieldError message={error} />
-    </fieldset>
+    </Stack>
   )
 }

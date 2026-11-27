@@ -5,6 +5,7 @@ import { useStore } from '../lib/store'
 import type { ReactNode } from 'react'
 import type { AvatarKind } from '../lib/types'
 import { ColorField } from './color_field'
+import { Row, Stack } from './layout'
 import { UserAvatar } from './user_avatar'
 
 interface Props {
@@ -59,15 +60,15 @@ export function AvatarPicker({
     </button>
   )
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       <span className="text-sm text-on-surface-variant">Avatar</span>
-      <div className="flex gap-3">
+      <Row gap="md" align="stretch">
         {option('identicon', 'Identicon')}
         {option('color', 'Color')}
-      </div>
+      </Row>
       {kind === 'color' && (
-        <label className="flex items-center gap-3 text-sm text-on-surface-variant">
-          Background color
+        <Row as="label" gap="md">
+          <span className="text-sm text-on-surface-variant">Background color</span>
           <input
             type="color"
             value={color}
@@ -75,10 +76,10 @@ export function AvatarPicker({
             onChange={e => onColor(e.target.value)}
             className="h-8 w-12 cursor-pointer rounded bg-transparent"
           />
-        </label>
+        </Row>
       )}
       {kind === 'identicon' && onBackground && (
-        <div className="flex flex-col gap-1.5">
+        <Stack gap="xs">
           <span className="text-sm text-on-surface-variant">Identicon background</span>
           <ColorField
             label="Identicon background"
@@ -89,8 +90,8 @@ export function AvatarPicker({
             defaultNote="Default"
             resetLabel="Use default"
           />
-        </div>
+        </Stack>
       )}
-    </div>
+    </Stack>
   )
 }

@@ -8,8 +8,9 @@ import { ruleSummary, type NotifyScope, type Rule } from '../lib/notify'
 
 import { p2pOverride } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
-import { SettingSwitch } from './settings_fields'
+import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Masked, sectionCls } from './ui'
 
 interface Override {
@@ -22,8 +23,6 @@ interface Override {
   own?: boolean
   rule: Rule
 }
-
-const groupCls = 'px-2 pt-3 pb-1 text-xs font-medium text-on-surface-variant'
 
 const subscribePermission = (cb: () => void) => notifications().onPermissionChange(cb)
 const readPermission = () => notifications().permission()
@@ -71,16 +70,18 @@ function DesktopSwitch() {
         value={on && permission === 'granted'}
         onChange={toggle}
       />
-      {help ? (
-        <p role="alert" className="mt-2 px-2 text-xs text-error">
-          {help}
-        </p>
-      ) : (
-        <p className="mt-2 px-2 text-xs text-on-surface-variant">
-          Shows a system notification for anything that would pop up here, while this tab is in the
-          background. Streamer mode leaves out names and message text.
-        </p>
-      )}
+      <SettingNotes>
+        {help ? (
+          <p role="alert" className="text-xs text-error">
+            {help}
+          </p>
+        ) : (
+          <p className="text-xs text-on-surface-variant">
+            Shows a system notification for anything that would pop up here, while this tab is in
+            the background. Streamer mode leaves out names and message text.
+          </p>
+        )}
+      </SettingNotes>
     </>
   )
 }
@@ -88,27 +89,33 @@ function DesktopSwitch() {
 function OverrideRow({ o, now }: { o: Override; now: number }) {
   const reset = useStore(s => s.resetNotify)
   return (
-    <li className="flex items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-surface-container">
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm text-on-surface">
-          {o.prefix}
-          <span className="streamer">
-            <Masked text={o.name} own={o.own} />
-          </span>
-          {o.hint && (
-            <span className="text-on-surface-variant">
-              {' · '}
+    <li className="rounded-xl hover:bg-surface-container">
+      <Surface pad="sm" inset="bar" tone="plain">
+        <Row gap="md">
+          <Stack as="span" gap="none" place="min-w-0 flex-1">
+            <span className="truncate text-sm text-on-surface">
+              {o.prefix}
               <span className="streamer">
-                <Masked text={o.hint} />
+                <Masked text={o.name} own={o.own} />
               </span>
+              {o.hint && (
+                <span className="text-on-surface-variant">
+                  {' · '}
+                  <span className="streamer">
+                    <Masked text={o.hint} />
+                  </span>
+                </span>
+              )}
             </span>
-          )}
-        </span>
-        <span className="truncate text-xs text-on-surface-variant">{ruleSummary(o.rule, now)}</span>
-      </span>
-      <Button onClick={() => reset(o.scope)} place="shrink-0">
-        Reset
-      </Button>
+            <span className="truncate text-xs text-on-surface-variant">
+              {ruleSummary(o.rule, now)}
+            </span>
+          </Stack>
+          <Button onClick={() => reset(o.scope)} place="shrink-0">
+            Reset
+          </Button>
+        </Row>
+      </Surface>
     </li>
   )
 }
@@ -116,14 +123,16 @@ function OverrideRow({ o, now }: { o: Override; now: number }) {
 function Group({ title, list, now }: { title: string; list: Override[]; now: number }) {
   if (!list.length) return null
   return (
-    <>
-      <p className={groupCls}>{title}</p>
-      <ul className="flex flex-col">
+    <Stack gap="none">
+      <SettingNotes>
+        <p className="text-xs font-medium text-on-surface-variant">{title}</p>
+      </SettingNotes>
+      <Stack as="ul" gap="none">
         {list.map(o => (
           <OverrideRow key={o.key} o={o} now={now} />
         ))}
-      </ul>
-    </>
+      </Stack>
+    </Stack>
   )
 }
 
@@ -195,35 +204,32 @@ export function NotificationsSection() {
   const any = serverList.length + channelList.length + dmList.length + p2pList.length > 0
   const now = Date.now()
   return (
-    <div className="flex flex-col gap-8">
+    <Stack gap="2xl">
       <section>
         <p className={sectionCls}>Desktop</p>
         <DesktopSwitch />
       </section>
       <section>
-        <div className="flex items-center justify-between gap-2">
+        <Row gap="sm" justify="between">
           <p className={sectionCls}>Custom settings</p>
-          {any && (
-            <Button onClick={resetAll} place="-mt-2">
-              Reset all
-            </Button>
-          )}
-        </div>
-        <p className="px-2 text-xs text-on-surface-variant">
-          Servers notify you for @mentions, replies and reactions. DMs notify you for every message.
-          Right-click or long-press a server, channel or DM to mute it or change this.
-        </p>
-        {any ? (
-          <>
+          {any && <Button onClick={resetAll}>Reset all</Button>}
+        </Row>
+        <SettingNotes gap="lg">
+          <p className="text-xs text-on-surface-variant">
+            Servers notify you for @mentions, replies and reactions. DMs notify you for every
+            message. Right-click or long-press a server, channel or DM to mute it or change this.
+          </p>
+          {!any && <p className="text-sm text-on-surface-variant">No custom settings yet.</p>}
+        </SettingNotes>
+        {any && (
+          <Stack gap="2xs">
             <Group title="Servers" list={serverList} now={now} />
             <Group title="Channels" list={channelList} now={now} />
             <Group title="DMs" list={dmList} now={now} />
             <Group title="P2P" list={p2pList} now={now} />
-          </>
-        ) : (
-          <p className="mt-4 px-2 text-sm text-on-surface-variant">No custom settings yet.</p>
+          </Stack>
         )}
       </section>
-    </div>
+    </Stack>
   )
 }

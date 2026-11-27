@@ -14,6 +14,7 @@ import {
   type WidgetMode,
 } from '../lib/widgets'
 import { Button } from './controls'
+import { Row, Stack } from './layout'
 import { fieldCls } from './ui'
 
 const labels: Record<WidgetMode, string> = {
@@ -28,13 +29,13 @@ type WidgetSettingsProps = { server: string; channels: Channel[] }
 export function WidgetSettings({ server, channels }: WidgetSettingsProps) {
   const enabled = useStore(s => s.settings.widgets && s.instance?.widgets)
   return (
-    <section aria-label="Widgets" className="min-w-0 space-y-2">
+    <Stack as="section" aria-label="Widgets" gap="sm">
       {enabled ? (
         <WidgetPicker key={server} server={server} channels={channels} />
       ) : (
         <p className="text-sm text-on-surface-variant">Widgets are turned off for this site.</p>
       )}
-    </section>
+    </Stack>
   )
 }
 
@@ -86,7 +87,11 @@ function WidgetPicker({ server, channels }: WidgetSettingsProps) {
         </select>
       </label>
       {(next || error) && (
-        <Button disabled={request !== null} onClick={() => setRequest({ cursor: next })}>
+        <Button
+          disabled={request !== null}
+          onClick={() => setRequest({ cursor: next })}
+          place="self-start"
+        >
           {error ? 'Retry loading widgets' : 'Load more widgets'}
         </Button>
       )}
@@ -133,7 +138,7 @@ function WidgetForm({
   const url = widget ? widgetUrl(home.origin, widget) : ''
   const code = embedCode(url, savedVoice)
   return (
-    <div className="min-w-0 space-y-3">
+    <Stack gap="md">
       <label className="block text-sm">
         Widget channel
         <select
@@ -180,8 +185,8 @@ function WidgetForm({
           onChange={e => setOrigins(e.target.value)}
         />
       </label>
-      <div className="flex flex-wrap gap-4 text-sm">
-        <label className="cursor-pointer">
+      <Row gap="lg" wrap>
+        <label className="cursor-pointer text-sm">
           <input
             className="cursor-pointer"
             type="checkbox"
@@ -191,7 +196,7 @@ function WidgetForm({
           Enabled
         </label>
         {!voice && ['public_chat', 'members'].includes(mode) && (
-          <label className="cursor-pointer">
+          <label className="cursor-pointer text-sm">
             <input
               type="checkbox"
               className="cursor-pointer"
@@ -201,11 +206,12 @@ function WidgetForm({
             Show chat composer
           </label>
         )}
-      </div>
+      </Row>
       <Button
         variant="filled"
         size="md"
         disabled={!channel || busy}
+        place="self-start"
         onClick={async () => {
           setBusy(true)
           setMessage('')
@@ -243,7 +249,7 @@ function WidgetForm({
               value={code}
             />
           </label>
-          <div className="flex flex-wrap gap-2">
+          <Row gap="sm" wrap>
             <Button
               onClick={async () =>
                 setMessage(
@@ -256,7 +262,7 @@ function WidgetForm({
             <Button onClick={() => setPreview(v => !v)}>
               {preview ? 'Close preview' : 'Preview widget'}
             </Button>
-          </div>
+          </Row>
           {preview && (
             <iframe
               className="h-72 w-full rounded-lg border border-outline"
@@ -273,6 +279,6 @@ function WidgetForm({
           {message}
         </p>
       )}
-    </div>
+    </Stack>
   )
 }
