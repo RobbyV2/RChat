@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../lib/store'
 import { NAME_MAX } from '../lib/rules'
 import { enterKey } from '../lib/keys'
-import { Dialog, fieldCls, filledBtn, textBtn } from './ui'
+import { Button } from './controls'
+import { Dialog, fieldCls } from './ui'
 
 function CategoryForm({ server, id, initial }: { server: string; id?: number; initial: string }) {
   const closeDialog = useStore(s => s.closeDialog)
@@ -35,12 +36,12 @@ function CategoryForm({ server, id, initial }: { server: string; id?: number; in
         Text and voice channels can both go in a category.
       </p>
       <div className="mt-6 flex justify-end gap-2">
-        <button onClick={closeDialog} className={textBtn}>
+        <Button size="md" onClick={closeDialog}>
           Cancel
-        </button>
-        <button onClick={save} disabled={!trimmed} className={filledBtn}>
+        </Button>
+        <Button variant="filled" size="md" onClick={save} disabled={!trimmed}>
           {id === undefined ? 'Create' : 'Save'}
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

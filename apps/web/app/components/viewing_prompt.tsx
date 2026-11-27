@@ -3,7 +3,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
-import { filledBtn, textBtn, Masked } from './ui'
+import { Button } from './controls'
+import { Masked } from './ui'
 
 export function ViewingPrompt() {
   const sessions = useLiveSessions()
@@ -79,19 +80,12 @@ function Warning({
         Remember on this device
       </label>
       <div className="mt-4 flex justify-end gap-2">
-        <button
-          ref={back}
-          className={textBtn + ' min-h-11 cursor-pointer'}
-          onClick={() => prompt.answer(false, false)}
-        >
+        <Button ref={back} size="md" onClick={() => prompt.answer(false, false)}>
           Cancel
-        </button>
-        <button
-          className={filledBtn + ' min-h-11 cursor-pointer'}
-          onClick={() => prompt.answer(true, remember)}
-        >
+        </Button>
+        <Button variant="filled" size="md" onClick={() => prompt.answer(true, remember)}>
           Open
-        </button>
+        </Button>
       </div>
     </dialog>
   )

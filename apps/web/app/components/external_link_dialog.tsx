@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { ArrowRight, TriangleAlert } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { RISK_TEXT, linkRisks, shownHost, trustable, webLink } from '../lib/link_safety'
-import { Dialog, filledBtn, textBtn } from './ui'
+import { Button } from './controls'
+import { Dialog } from './ui'
 
 // The warning before a link from a message opens another site.
 export default function ExternalLinkDialog() {
@@ -81,13 +82,13 @@ function ExternalLinkBody({ href, label }: { href: string; label: string | null 
         </label>
       )}
       <div className="mt-5 flex flex-wrap justify-end gap-2">
-        <button autoFocus type="button" onClick={closeDialog} className={textBtn}>
+        <Button size="md" autoFocus onClick={closeDialog}>
           Cancel
-        </button>
-        <button type="button" onClick={visit} className={`${filledBtn} flex items-center gap-1.5`}>
+        </Button>
+        <Button variant="filled" size="md" onClick={visit}>
           Visit site
           <ArrowRight size={16} aria-hidden />
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

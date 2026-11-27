@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { textBtn } from './ui'
+import { Button } from './controls'
 
 // The "Server profiles" list of a settings page, the same for hosted servers and P2P servers:
 // your servers, each opening the profile you show only there.
@@ -20,9 +20,9 @@ export function ServerProfileList({
       </p>
       <ul className="flex flex-col">{children}</ul>
       {more && (
-        <button onClick={more} className={`${textBtn} self-start`}>
+        <Button onClick={more} place="self-start">
           Show more
-        </button>
+        </Button>
       )}
     </div>
   )
@@ -32,9 +32,9 @@ export function ServerProfileRow({ name, onEdit }: { name: ReactNode; onEdit: ()
   return (
     <li className="flex min-h-10 items-center gap-3">
       <span className="streamer min-w-0 flex-1 truncate text-sm text-on-surface">{name}</span>
-      <button onClick={onEdit} className={`${textBtn} shrink-0`}>
+      <Button onClick={onEdit} place="shrink-0">
         Edit
-      </button>
+      </Button>
     </li>
   )
 }

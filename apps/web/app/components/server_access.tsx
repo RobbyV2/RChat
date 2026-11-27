@@ -55,7 +55,8 @@ import type {
 import { WITH_OPTION, keepGuestsChoices } from './server_settings'
 import { SettingSwitch } from './settings_fields'
 import { GUEST_VOICE_OFF, GUEST_VOICE_ON } from '../lib/guest_voice'
-import { Chips, Dialog, FieldError, dangerBtn, fieldCls, filledBtn, textBtn, useCopied } from './ui'
+import { Button, IconButton } from './controls'
+import { Chips, Dialog, FieldError, fieldCls, useCopied } from './ui'
 
 const UNTITLED = 'Untitled password'
 
@@ -106,17 +107,17 @@ function CopyButton({
   const off = disabled || text === null
   return (
     <span title={off ? why : copied ? 'Copied' : label}>
-      <button
-        type="button"
-        aria-label={label}
+      <IconButton
+        icon={copied ? Check : Copy}
+        label={label}
+        tooltip={copied ? 'Copied' : label}
+        size="sm"
         disabled={off}
         onClick={() => {
           if (text) void navigator.clipboard.writeText(text).then(flashCopied)
         }}
-        className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest disabled:pointer-events-none disabled:opacity-40"
-      >
-        {copied ? <Check size={16} /> : <Copy size={16} />}
-      </button>
+        place="disabled:pointer-events-none"
+      />
     </span>
   )
 }
@@ -155,9 +156,9 @@ function PasswordRow({
           />
         )}
         {(live || status === 'used_up') && (
-          <button type="button" onClick={onRevoke} className={dangerBtn}>
+          <Button variant="danger" onClick={onRevoke}>
             Revoke
-          </button>
+          </Button>
         )}
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 pt-0.5 text-xs text-on-surface-variant">
@@ -295,9 +296,9 @@ function PermanentPassword({
           placeholder={has ? 'New password (blank removes it)' : 'Set a permanent password'}
           className={fieldCls}
         />
-        <button disabled={!password.trim() && !has} className={filledBtn}>
+        <Button type="submit" variant="filled" size="md" disabled={!password.trim() && !has}>
           {password.trim() ? (has ? 'Change' : 'Set') : has ? 'Remove' : 'Set'}
-        </button>
+        </Button>
       </form>
       <FieldError message={error} />
       {done && (
@@ -408,9 +409,9 @@ function NewPasswordDialog({
             />
           </div>
           <div className="mt-6 flex justify-end">
-            <button autoFocus onClick={onClose} className={filledBtn}>
+            <Button variant="filled" size="md" autoFocus onClick={onClose}>
               Done
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
@@ -527,12 +528,12 @@ function NewPasswordDialog({
           </p>
           <FieldError message={error} />
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} className={textBtn}>
+            <Button size="md" onClick={onClose}>
               Cancel
-            </button>
-            <button disabled={busy} className={filledBtn}>
+            </Button>
+            <Button type="submit" variant="filled" size="md" disabled={busy}>
               {busy ? 'Creating…' : 'Create'}
-            </button>
+            </Button>
           </div>
         </form>
       )}
@@ -821,15 +822,13 @@ export function ServerAccessSection({
                         {live}/{ACTIVE_MAX} active
                       </span>
                     </p>
-                    <button
-                      type="button"
+                    <Button
+                      icon={Plus}
                       onClick={() => setCreating(true)}
                       disabled={live >= ACTIVE_MAX}
-                      className={`${textBtn} flex items-center gap-1 disabled:opacity-40`}
                     >
-                      <Plus size={16} />
                       New password
-                    </button>
+                    </Button>
                   </div>
                   {data.passwords.length ? (
                     data.passwords.map(p => (

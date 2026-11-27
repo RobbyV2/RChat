@@ -13,10 +13,10 @@ import {
 } from '../lib/apps/preview'
 import { savedPreviews } from '../lib/apps/preview_files'
 import type { Node } from '../lib/apps/ui/types'
-import { CloseButton, fieldCls, filledBtn, textBtn, Masked } from './ui'
+import { Button } from './controls'
+import { buttonLook } from '../lib/controls'
+import { CloseButton, fieldCls, Masked } from './ui'
 
-const button = filledBtn + ' min-h-11 cursor-pointer'
-const secondary = textBtn + ' min-h-11 cursor-pointer'
 function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
   const { usePreview, previewStep } = previewFor(useAccount())
   const values = usePreview(s => s.values)
@@ -49,9 +49,9 @@ function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
       )
     case 'button':
       return (
-        <button type="button" className={button} onClick={() => previewStep(app, node.on)}>
+        <Button variant="filled" size="md" onClick={() => previewStep(app, node.on)}>
           <Masked text={node.label} />
-        </button>
+        </Button>
       )
     case 'input': {
       const props = {
@@ -88,9 +88,9 @@ function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
               />
             </label>
           ))}
-          <button className={button} type="submit">
+          <Button type="submit" variant="filled" size="md">
             <Masked text={node.submit} />
-          </button>
+          </Button>
         </form>
       )
     default:
@@ -138,9 +138,9 @@ function AppDialog({ node, app }: { node: Extract<Node, { c: 'dialog' }>; app: L
       {node.children.map((n, i) => (
         <Parts key={i} node={n} app={app} />
       ))}
-      <button className={secondary} onClick={close}>
+      <Button size="md" onClick={close}>
         Close dialog
-      </button>
+      </Button>
     </div>
   )
 }
@@ -282,35 +282,39 @@ function Launcher({ where }: { where: string }) {
             .filter(f => f.revision !== app?.source.revision)
             .map(f => (
               <li key={f.revision} className="flex min-w-0 items-center gap-2">
-                <button
-                  className={secondary + ' min-w-0 truncate'}
+                <Button
+                  size="md"
                   onClick={() =>
                     void launchPreview(where, savedSource(account, where, f, owner.conn))
                   }
+                  place="min-w-0"
                 >
-                  Open {f.name}
-                </button>
-                <button
-                  className={secondary}
+                  <span className="truncate">Open {f.name}</span>
+                </Button>
+                <Button
+                  size="md"
                   aria-label={'Forget approval for ' + f.name}
                   onClick={() => forgetSavedPreview(account, where, f)}
                 >
                   Forget
-                </button>
+                </Button>
               </li>
             ))}
         </ul>
       )}
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         {!shown && (
-          <button
-            className={button}
+          <Button
+            variant="filled"
+            size="md"
             onClick={() => void launchPreview(where, app?.source ?? exampleSource)}
           >
             {app ? 'Open preview' : 'Open Field notes example'}
-          </button>
+          </Button>
         )}
-        <label className={'relative inline-flex items-center overflow-hidden ' + secondary}>
+        <label
+          className={`relative inline-flex items-center overflow-hidden ${buttonLook('text', 'md')}`}
+        >
           Choose app definition
           <input
             aria-label="Choose app definition"
@@ -325,9 +329,9 @@ function Launcher({ where }: { where: string }) {
           />
         </label>
         {app && (
-          <button className={secondary} onClick={forgetPreview}>
+          <Button size="md" onClick={forgetPreview}>
             Forget app approval
-          </button>
+          </Button>
         )}
       </div>
     </dialog>

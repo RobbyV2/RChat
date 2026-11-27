@@ -22,7 +22,8 @@ import {
   type SharedContent,
   type ShareOwner,
 } from '../lib/client/share_target'
-import { Dialog, fieldCls, filledBtn, textBtn } from './ui'
+import { Button } from './controls'
+import { Dialog, fieldCls } from './ui'
 
 function Destinations({
   owner,
@@ -131,48 +132,39 @@ function Destinations({
         joined
           .filter(s => !state.servers[s.name])
           .map((s, i) => (
-            <button
-              type="button"
-              key={s.name}
-              disabled={!!loading || busy}
-              className={textBtn}
-              onClick={() => void load(s.name)}
-            >
+            <Button key={s.name} disabled={!!loading || busy} onClick={() => void load(s.name)}>
               Load channels in {state.streamer || streamer ? 'Server ' + (i + 1) : s.display_name}
-            </button>
+            </Button>
           ))}
       {!owner.identity && state.serversMore && (
-        <button
-          type="button"
-          className={textBtn}
+        <Button
           onClick={() =>
             allowsAccountOrigin(owner.account.conn.origin) && void state.loadMoreServers()
           }
         >
           More servers
-        </button>
+        </Button>
       )}
       {!owner.identity && state.dmsMore && (
-        <button
-          type="button"
-          className={textBtn}
+        <Button
           onClick={() => allowsAccountOrigin(owner.account.conn.origin) && void state.loadMoreDms()}
         >
           More direct messages
-        </button>
+        </Button>
       )}
       {error && <p role="alert">{error}</p>}
       <div className="flex justify-end gap-2">
-        <button className={textBtn} onClick={close}>
+        <Button size="md" onClick={close}>
           Cancel
-        </button>
-        <button
-          className={filledBtn}
+        </Button>
+        <Button
+          variant="filled"
+          size="md"
           disabled={!dest || !!dest.reason || busy}
           onClick={() => void submit()}
         >
           Open draft
-        </button>
+        </Button>
       </div>
     </>
   )
@@ -307,22 +299,16 @@ function Picker({
                 {loading && <p role="status">Loading destinations…</p>}
                 {error && <p role="alert">{error}</p>}
                 {selected && !loading && (
-                  <button className={textBtn} onClick={() => void select(key)}>
-                    Load destinations
-                  </button>
+                  <Button onClick={() => void select(key)}>Load destinations</Button>
                 )}
-                <button className={textBtn} onClick={close}>
-                  Cancel
-                </button>
+                <Button onClick={close}>Cancel</Button>
               </>
             )}
           </>
         ) : (
           <>
             <p>Sign in to choose a destination.</p>
-            <button className={textBtn} onClick={close}>
-              Close
-            </button>
+            <Button onClick={close}>Close</Button>
           </>
         )}
       </div>

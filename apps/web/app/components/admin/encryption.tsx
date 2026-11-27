@@ -16,6 +16,7 @@ import {
 } from '../../lib/admin_encryption'
 import { useAccount } from '../../lib/client/react'
 import { errorText, useStore } from '../../lib/store'
+import { Pill } from '../controls'
 import { PageRow } from '../settings_page'
 
 const cardCls = 'flex min-w-0 flex-col gap-1 rounded-xl bg-surface-container px-4 py-3'
@@ -87,11 +88,7 @@ export function EncryptionStatus({
               <li key={p.id} className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm">
                 <span className="min-w-0 font-mono break-all">{p.id}</span>
                 <span className="font-mono text-on-surface-variant">{p.print}</span>
-                {p.current && (
-                  <span className="rounded-full border border-outline-variant px-2 py-0.5 text-xs text-on-surface-variant">
-                    In use
-                  </span>
-                )}
+                {p.current && <Pill tone="outline">In use</Pill>}
               </li>
             ))}
           </ul>

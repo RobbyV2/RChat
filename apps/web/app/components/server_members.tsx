@@ -24,7 +24,8 @@ import { MemberName, MemberTimeout } from './member_sidebar'
 import { passwordName } from './server_access'
 import { useShownMembers } from './shown_user'
 import { MemberFilterBar, MemberTable, MemberTableRow } from './member_table'
-import { Sentinel, textBtn } from './ui'
+import { Button } from './controls'
+import { Sentinel } from './ui'
 
 // Server settings' members of a hosted server: the search route with filters, for members who
 // may kick, time out or handle roles.
@@ -180,11 +181,7 @@ export function HostedMembers({
           className="flex flex-wrap items-center gap-2 px-2 text-sm text-on-surface-variant"
         >
           {pagesNote(found)}
-          {found.failed !== undefined && (
-            <button type="button" onClick={found.again} className={textBtn}>
-              Try again
-            </button>
-          )}
+          {found.failed !== undefined && <Button onClick={found.again}>Try again</Button>}
         </p>
       )}
       {found.next !== null && !found.loading && found.failed === undefined && (

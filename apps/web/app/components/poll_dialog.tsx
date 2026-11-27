@@ -1,5 +1,6 @@
 'use client'
 
+import { iconButtonLook } from '../lib/controls'
 import { useRef, useState, type ReactNode } from 'react'
 import { Plus, Smile, Trash2 } from 'lucide-react'
 import {
@@ -21,7 +22,8 @@ import { useAccount } from '../lib/client/react'
 import { useStore } from '../lib/store'
 import type { PollKind, ShowResults } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
-import { Chips, Dialog, FieldError, fieldCls, filledBtn, textBtn } from './ui'
+import { Button, IconButton } from './controls'
+import { Chips, Dialog, FieldError, fieldCls } from './ui'
 
 const KINDS: PollKind[] = ['single', 'multiple', 'ranked', 'rating', 'yes_no']
 const SHOWS: ShowResults[] = ['always', 'after_vote', 'after_close']
@@ -140,7 +142,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                         : `Add an emoji to option ${i + 1}`
                     }
                     onClick={() => (o.emoji ? setOption(i, { emoji: null }) : setPicker(i))}
-                    className="shrink-0 rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest"
+                    className={`inline-flex ${iconButtonLook('plain', 'md')}`}
                   >
                     {o.emoji ? (
                       <span className="text-base leading-none">{o.emoji}</span>
@@ -166,28 +168,23 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                     aria-label={`Option ${i + 1}`}
                     className={`${fieldCls} py-1.5`}
                   />
-                  <button
-                    type="button"
-                    title="Remove option"
-                    aria-label={`Remove option ${i + 1}`}
+                  <IconButton
+                    icon={Trash2}
+                    label={`Remove option ${i + 1}`}
                     disabled={d.options.length <= 2}
                     onClick={() => patch({ options: d.options.filter((_, j) => j !== i) })}
-                    className="shrink-0 rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest disabled:opacity-30"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  />
                 </li>
               ))}
             </ul>
             {d.options.length < POLL_OPTIONS_MAX && (
-              <button
-                type="button"
+              <Button
+                icon={Plus}
                 onClick={() => patch({ options: [...d.options, { text: '', emoji: null }] })}
-                className={`${textBtn} flex items-center gap-1 self-start`}
+                place="self-start"
               >
-                <Plus size={16} />
                 Add option
-              </button>
+              </Button>
             )}
             {d.kind === 'multiple' && (
               <div className="flex flex-wrap items-center gap-2 text-sm text-on-surface">
@@ -320,18 +317,18 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
         </Section>
         <FieldError message={error} />
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className={textBtn}>
+          <Button size="md" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="filled"
+            size="md"
             data-poll-create
             disabled={busy}
             onClick={() => void submit()}
-            className={filledBtn}
           >
             Post poll
-          </button>
+          </Button>
         </div>
       </div>
       {picker !== null && (

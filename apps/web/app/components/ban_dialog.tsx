@@ -17,7 +17,8 @@ import { useStore } from '../lib/store'
 import type { BanRequest } from '../lib/store_types'
 import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { Dialog, fieldCls, filledDangerBtn, textBtn } from './ui'
+import { Button, Chip } from './controls'
+import { Dialog, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
 
@@ -69,13 +70,6 @@ function HostedBan({
   return <BanDialog request={hostedBanRequest(server, user, banMember)} onClose={onClose} />
 }
 
-const chip = (on: boolean) =>
-  `rounded-full border px-3 py-1.5 text-sm ${
-    on
-      ? 'border-primary bg-primary-container text-on-primary-container'
-      : 'border-outline text-on-surface hover:bg-surface-container-highest'
-  }`
-
 const heading = 'mt-4 text-xs font-medium tracking-wide text-on-surface-variant uppercase'
 
 function Chips<T>({
@@ -94,15 +88,9 @@ function Chips<T>({
       <p className={heading}>{label}</p>
       <div role="radiogroup" aria-label={label} className="mt-2 flex flex-wrap gap-2">
         {options.map(o => (
-          <button
-            key={o.label}
-            role="radio"
-            aria-checked={value === o.value}
-            onClick={() => onPick(o.value)}
-            className={chip(value === o.value)}
-          >
+          <Chip key={o.label} radio on={value === o.value} onClick={() => onPick(o.value)}>
             {o.label}
-          </button>
+          </Chip>
         ))}
       </div>
     </>
@@ -175,16 +163,12 @@ export function BanDialog({ request, onClose }: { request: BanRequest; onClose: 
         />
       </label>
       <div className="mt-5 flex justify-end gap-2">
-        <button onClick={onClose} className={textBtn}>
+        <Button size="md" onClick={onClose}>
           Cancel
-        </button>
-        <button
-          disabled={busy}
-          onClick={() => void submit()}
-          className={`${filledDangerBtn} disabled:opacity-40`}
-        >
+        </Button>
+        <Button variant="filled-danger" size="md" disabled={busy} onClick={() => void submit()}>
           Ban
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

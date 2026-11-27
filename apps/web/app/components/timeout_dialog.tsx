@@ -20,7 +20,8 @@ import {
 } from '../lib/timeouts'
 import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { Dialog, dangerBtn, fieldCls, filledDangerBtn, textBtn } from './ui'
+import { Button, Chip } from './controls'
+import { Dialog, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
 
@@ -157,13 +158,6 @@ export default function TimeoutDialogHost() {
   ) : null
 }
 
-const chip = (on: boolean) =>
-  `rounded-full border px-3 py-1.5 text-sm ${
-    on
-      ? 'border-primary bg-primary-container text-on-primary-container'
-      : 'border-outline text-on-surface hover:bg-surface-container-highest'
-  }`
-
 // The timeout dialog of hosted servers and P2P rooms: how long and why, and the timeout that
 // runs with its reason. The request sets and removes it on its side.
 export function TimeoutDialog({
@@ -225,15 +219,15 @@ export function TimeoutDialog({
               <span className="block text-xs break-words">Reason: {current.reason}</span>
             )}
           </span>
-          <button
+          <Button
+            variant="danger"
             onClick={() => {
               remove()
               onClose()
             }}
-            className={dangerBtn}
           >
             Remove timeout
-          </button>
+          </Button>
         </div>
       )}
       <p className="mt-4 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
@@ -241,24 +235,18 @@ export function TimeoutDialog({
       </p>
       <div role="radiogroup" aria-label="Duration" className="mt-2 flex flex-wrap gap-2">
         {TIMEOUT_PRESETS.map(p => (
-          <button
+          <Chip
             key={p.seconds}
-            role="radio"
-            aria-checked={preset === p.seconds}
+            radio
+            on={preset === p.seconds}
             onClick={() => setPreset(p.seconds)}
-            className={chip(preset === p.seconds)}
           >
             {p.label}
-          </button>
+          </Chip>
         ))}
-        <button
-          role="radio"
-          aria-checked={preset === null}
-          onClick={() => setPreset(null)}
-          className={chip(preset === null)}
-        >
+        <Chip radio on={preset === null} onClick={() => setPreset(null)}>
           Custom
-        </button>
+        </Chip>
       </div>
       {preset === null && (
         <div className="mt-3 flex items-center gap-2">
@@ -305,16 +293,17 @@ export function TimeoutDialog({
         />
       </label>
       <div className="mt-5 flex justify-end gap-2">
-        <button onClick={onClose} className={textBtn}>
+        <Button size="md" onClick={onClose}>
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="filled-danger"
+          size="md"
           disabled={seconds === null || busy}
           onClick={() => void submit()}
-          className={`${filledDangerBtn} disabled:opacity-40`}
         >
           {current ? 'Update timeout' : 'Time out'}
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

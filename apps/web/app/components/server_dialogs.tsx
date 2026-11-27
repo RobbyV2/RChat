@@ -19,6 +19,7 @@ import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
+import { Button, ListRow, Tab } from './controls'
 import { Dialog, FieldError, Masked } from './ui'
 import { ServerGlyph } from './server_rail'
 import { AboutLine } from './server_about'
@@ -175,23 +176,20 @@ function AddServerDialog({
     <Dialog compact title={guest ? 'Join a server' : 'Add a server'} onClose={closeDialog}>
       {picker}
       {!guest && (
-        <div className="mb-4 flex rounded-full bg-surface-container p-1">
+        <div role="tablist" className="mb-4 flex rounded-full bg-surface-container p-1">
           {(['create', 'join'] as const).map(t => (
-            <button
+            <Tab
               key={t}
+              selected={tab === t}
               onClick={() => {
                 setTab(t)
                 setStep('name')
                 setError(null)
               }}
-              className={`flex-1 rounded-full py-1.5 text-sm capitalize ${
-                tab === t
-                  ? 'bg-secondary-container text-on-secondary-container'
-                  : 'text-on-surface-variant'
-              }`}
+              place="flex-1"
             >
-              {t}
-            </button>
+              {t === 'create' ? 'Create' : 'Join'}
+            </Tab>
           ))}
         </div>
       )}
@@ -219,22 +217,20 @@ function AddServerDialog({
             .filter(s => s.name !== id)
             .slice(0, 5)
             .map(s => (
-              <button
+              <ListRow
                 key={s.name}
+                tone="muted"
                 onClick={() => rename(s.name)}
                 data-server-match={s.name}
-                className="flex items-center gap-2 rounded-lg px-2 py-1 text-left text-sm text-on-surface-variant hover:bg-surface-container"
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container-highest text-sm font-semibold text-on-surface">
-                  <ServerGlyph name={s.name} displayName={s.display_name} look={s} />
-                </span>
-                <span className="min-w-0">
-                  <span className="streamer block truncate">
-                    <Masked text={s.display_name} />
+                leading={
+                  <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container-highest text-sm font-semibold text-on-surface">
+                    <ServerGlyph name={s.name} displayName={s.display_name} look={s} />
                   </span>
-                  <AboutLine text={aboutText(s.description)} oneLine />
-                </span>
-              </button>
+                }
+                streamer
+                label={<Masked text={s.display_name} />}
+                description={<AboutLine text={aboutText(s.description)} oneLine />}
+              />
             ))}
         </div>
       )}
@@ -256,26 +252,21 @@ function AddServerDialog({
       <FieldError message={error} />
       <div className="mt-5 flex justify-end gap-2">
         {joining && step === 'password' && (
-          <button
-            onClick={() => rename(name)}
-            className="mr-auto rounded-full px-4 py-2 text-sm text-primary hover:bg-surface-container"
-          >
+          <Button size="md" onClick={() => rename(name)} place="mr-auto">
             Back
-          </button>
+          </Button>
         )}
-        <button
-          onClick={closeDialog}
-          className="rounded-full px-4 py-2 text-sm text-primary hover:bg-surface-container"
-        >
+        <Button size="md" onClick={closeDialog}>
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="filled"
+          size="md"
           onClick={() => void submit()}
           disabled={busy || selecting || !name.trim() || (step === 'password' && !password.trim())}
-          className="rounded-full bg-primary px-4 py-2 text-sm text-on-primary hover:opacity-90 disabled:opacity-40"
         >
           {creating ? 'Create' : 'Join'}
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

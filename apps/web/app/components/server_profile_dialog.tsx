@@ -36,16 +36,8 @@ import { NameWithUsername } from './display_name'
 import { BannerPicker } from './settings_menu'
 import { useLook } from './shown_user'
 import { useNow } from './timeout_dialog'
-import {
-  Dialog,
-  FieldError,
-  Masked,
-  dangerBtn,
-  fieldCls,
-  filledBtn,
-  filledDangerBtn,
-  textBtn,
-} from './ui'
+import { Button, Chip } from './controls'
+import { Dialog, FieldError, Masked, fieldCls } from './ui'
 import { UserAvatar } from './user_avatar'
 
 const labelCls = 'text-sm text-on-surface-variant'
@@ -233,9 +225,7 @@ export function ProfileEditor({
                   className={`${boxCls} streamer min-w-0 flex-1 border-outline focus:border-primary`}
                 />
                 {draft.name !== '' && (
-                  <button type="button" onClick={() => change({ name: '' })} className={textBtn}>
-                    Use {origin} name
-                  </button>
+                  <Button onClick={() => change({ name: '' })}>Use {origin} name</Button>
                 )}
               </div>
               <p className="text-xs text-on-surface-variant">
@@ -255,8 +245,7 @@ export function ProfileEditor({
                 <span className={labelCls}>Avatar</span>
                 {source.avatar(account, 32)}
                 <span className="text-xs text-on-surface-variant">As on your {origin}</span>
-                <button
-                  type="button"
+                <Button
                   onClick={() =>
                     change({
                       avatar: {
@@ -265,10 +254,9 @@ export function ProfileEditor({
                       },
                     })
                   }
-                  className={textBtn}
                 >
                   Change for this server
-                </button>
+                </Button>
               </div>
             ) : (
               <>
@@ -289,13 +277,9 @@ export function ProfileEditor({
                   }
                   disabled={locked || busy}
                 />
-                <button
-                  type="button"
-                  onClick={() => change({ avatar: null })}
-                  className={`${textBtn} self-start`}
-                >
+                <Button onClick={() => change({ avatar: null })} place="self-start">
                   Use {origin} avatar
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -329,9 +313,7 @@ export function ProfileEditor({
             />
             <div className="flex items-center justify-between gap-3">
               {draft.bio !== '' ? (
-                <button type="button" onClick={() => change({ bio: '' })} className={textBtn}>
-                  Use {origin} description
-                </button>
+                <Button onClick={() => change({ bio: '' })}>Use {origin} description</Button>
               ) : (
                 <span />
               )}
@@ -349,26 +331,27 @@ export function ProfileEditor({
         </fieldset>
         <FieldError message={error ?? (changed ? invalid : null)} />
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
+          <Button
+            variant="danger"
+            size="md"
             disabled={locked || busy || emptyDraft(saved)}
             onClick={() => void finish(source.clear)}
-            className={dangerBtn}
           >
             Reset all
-          </button>
+          </Button>
           <span className="flex gap-2">
-            <button type="button" onClick={onClose} className={textBtn}>
+            <Button size="md" onClick={onClose}>
               {locked ? 'Close' : 'Cancel'}
-            </button>
+            </Button>
             {!locked && (
-              <button
+              <Button
                 type="submit"
+                variant="filled"
+                size="md"
                 disabled={busy || !changed || invalid !== null}
-                className={filledBtn}
               >
                 Save
-              </button>
+              </Button>
             )}
           </span>
         </div>
@@ -454,13 +437,6 @@ export interface ProfileResetSource {
   unlock: () => Promise<unknown>
 }
 
-const chip = (on: boolean) =>
-  `rounded-full border px-3 py-1.5 text-sm ${
-    on
-      ? 'border-primary bg-primary-container text-on-primary-container'
-      : 'border-outline text-on-surface hover:bg-surface-container-highest'
-  }`
-
 // A moderator clears parts of someone's server profile and may lock it for a while.
 export function ProfileReset({
   source,
@@ -517,15 +493,15 @@ export function ProfileReset({
             <span className="min-w-0 flex-1">
               {lock.until === null ? 'Locked until unlocked' : `Locked until ${when(lock.until)}`}
             </span>
-            <button
+            <Button
+              variant="danger"
               onClick={() => {
                 void source.unlock()
                 onClose()
               }}
-              className={dangerBtn}
             >
               Unlock
-            </button>
+            </Button>
           </div>
         )}
         <fieldset className="flex flex-col gap-1">
@@ -558,15 +534,9 @@ export function ProfileReset({
           </p>
           <div role="radiogroup" aria-label="Lock" className="mt-2 flex flex-wrap gap-2">
             {LOCK_CHOICES.map(c => (
-              <button
-                key={String(c.secs)}
-                role="radio"
-                aria-checked={secs === c.secs}
-                onClick={() => setSecs(c.secs)}
-                className={chip(secs === c.secs)}
-              >
+              <Chip key={String(c.secs)} radio on={secs === c.secs} onClick={() => setSecs(c.secs)}>
                 {c.label}
-              </button>
+              </Chip>
             ))}
           </div>
           <p className="pt-1.5 text-xs text-on-surface-variant">
@@ -590,16 +560,17 @@ export function ProfileReset({
         )}
         <FieldError message={error} />
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className={textBtn}>
+          <Button size="md" onClick={onClose}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="filled-danger"
+            size="md"
             disabled={!ready || busy}
             onClick={() => void submit()}
-            className={`${filledDangerBtn} disabled:opacity-40`}
           >
             {fields.length ? 'Reset' : 'Lock'}
-          </button>
+          </Button>
         </div>
       </div>
     </Dialog>
@@ -694,16 +665,9 @@ export function ProfilesModeField({
     <div data-profiles-mode className="flex flex-col gap-2">
       <div role="radiogroup" aria-label="Server profiles" className="flex flex-wrap gap-2">
         {PROFILE_FIELDS.modes.map(m => (
-          <button
-            key={m}
-            role="radio"
-            aria-checked={mode === m}
-            disabled={disabled || busy}
-            onClick={() => pick(m)}
-            className={`${chip(mode === m)} disabled:opacity-50`}
-          >
+          <Chip key={m} radio on={mode === m} disabled={disabled || busy} onClick={() => pick(m)}>
             {MODE_LABELS[m]}
-          </button>
+          </Chip>
         ))}
       </div>
       <p className="text-xs text-on-surface-variant">

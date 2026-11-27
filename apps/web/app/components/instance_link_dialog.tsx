@@ -5,7 +5,8 @@ import { AccountProvider, useStore } from '../lib/client/react'
 import { client } from '../lib/client/client'
 import type { InstanceLinkDialog } from '../lib/client/instance_links'
 import { AddInstanceFlow } from './add_instance'
-import { Dialog, fieldCls, filledBtn, textBtn } from './ui'
+import { Button } from './controls'
+import { Dialog, fieldCls } from './ui'
 
 function Choose({ dialog, close }: { dialog: InstanceLinkDialog; close: () => void }) {
   const streamer = useStore(s => s.streamer)
@@ -31,12 +32,12 @@ function Choose({ dialog, close }: { dialog: InstanceLinkDialog; close: () => vo
           : `Always use this account for links to ${host}`}
       </label>
       <div className="mt-5 flex justify-end gap-2">
-        <button className={textBtn} onClick={close}>
+        <Button size="md" onClick={close}>
           Cancel
-        </button>
-        <button className={filledBtn} onClick={() => dialog.accept(user, remember)}>
+        </Button>
+        <Button variant="filled" size="md" onClick={() => dialog.accept(user, remember)}>
           Open
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

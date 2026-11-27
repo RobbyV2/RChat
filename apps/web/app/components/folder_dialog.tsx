@@ -7,7 +7,8 @@ import { FOLDER_BASE, FOLDER_PRESETS, folderStyle } from '../lib/folder_colors'
 import { FOLDER_NAME_MAX, type Folder } from '../lib/nav_layout'
 import { enterKey } from '../lib/keys'
 import { ColorField } from './color_field'
-import { Dialog, fieldCls, filledBtn, textBtn } from './ui'
+import { Button } from './controls'
+import { Dialog, fieldCls } from './ui'
 
 // The color choice of a folder with a preview of it open and closed. `tone` marks a P2P folder.
 export function FolderColorField({
@@ -109,12 +110,12 @@ function EditFolder({ folder, colorFirst }: { folder: Folder; colorFirst: boolea
       </p>
       <FolderColorField color={color} onColor={setColor} />
       <div className="mt-6 flex justify-end gap-2">
-        <button onClick={closeDialog} className={textBtn}>
+        <Button size="md" onClick={closeDialog}>
           Cancel
-        </button>
-        <button onClick={save} className={filledBtn}>
+        </Button>
+        <Button variant="filled" size="md" onClick={save}>
           Save
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

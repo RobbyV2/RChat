@@ -18,7 +18,8 @@ import {
   type MemberSort,
 } from '../lib/member_filters'
 import { longPress } from './context_menu'
-import { fieldCls, textBtn } from './ui'
+import { Button, Chip, IconButton } from './controls'
+import { fieldCls } from './ui'
 
 // The member search of server settings, the same on hosted servers and P2P rooms: a search
 // field, filters shown as removable chips, and rows that open the member's action menu by
@@ -31,13 +32,6 @@ export interface FilterChoices {
   // Account dates (hosted servers).
   created: boolean
 }
-
-const chipCls = (on: boolean) =>
-  `rounded-full border px-3 py-1 text-sm ${
-    on
-      ? 'border-transparent bg-secondary-container text-on-secondary-container'
-      : 'border-outline text-on-surface-variant hover:bg-surface-container-highest'
-  }`
 
 const label = 'text-xs font-medium text-on-surface-variant'
 
@@ -116,15 +110,9 @@ export function MemberFilterBar({
           aria-label="Search members"
           className={`${fieldCls} min-w-40`}
         />
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen(o => !o)}
-          className={`${textBtn} flex items-center gap-1.5`}
-        >
-          <SlidersHorizontal size={16} aria-hidden />
+        <Button icon={SlidersHorizontal} aria-expanded={open} onClick={() => setOpen(o => !o)}>
           Filters
-        </button>
+        </Button>
         <select
           value={value.sort}
           onChange={e => onChange({ ...value, sort: e.target.value as MemberSort })}
@@ -147,15 +135,13 @@ export function MemberFilterBar({
               className="flex max-w-full items-center gap-1 rounded-full bg-secondary-container py-0.5 pr-0.5 pl-3 text-sm text-on-secondary-container"
             >
               <span className="truncate">{c.label}</span>
-              <button
-                type="button"
-                title={`Remove ${c.label}`}
-                aria-label={`Remove ${c.label}`}
+              <IconButton
+                icon={X}
+                label={`Remove ${c.label}`}
+                tone="inherit"
+                size="sm"
                 onClick={() => onChange(dropChip(value, c))}
-                className="rounded-full p-1 hover:bg-surface-container-highest"
-              >
-                <X size={14} aria-hidden />
-              </button>
+              />
             </li>
           ))}
         </ul>
@@ -167,15 +153,13 @@ export function MemberFilterBar({
               <p className={label}>Roles</p>
               <div className="flex flex-wrap gap-1.5">
                 {choices.roles.map(r => (
-                  <button
+                  <Chip
                     key={r.id}
-                    type="button"
-                    aria-pressed={value.roles.includes(r.id)}
+                    on={value.roles.includes(r.id)}
                     onClick={() => onChange(toggleRole(value, r.id))}
-                    className={chipCls(value.roles.includes(r.id))}
                   >
                     {r.name}
-                  </button>
+                  </Chip>
                 ))}
               </div>
             </div>
@@ -216,13 +200,9 @@ export function MemberFilterBar({
             </label>
           )}
           {filtering({ ...value, q: '' }) && (
-            <button
-              type="button"
-              onClick={() => onChange({ ...value, ...clearedFilters })}
-              className={`${textBtn} self-start`}
-            >
+            <Button onClick={() => onChange({ ...value, ...clearedFilters })} place="self-start">
               Clear filters
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -327,18 +307,14 @@ export function MemberTableRow({
         </div>
       )}
       <div role="cell" className="flex justify-end">
-        <button
-          type="button"
-          title="Member actions"
-          aria-label="Member actions"
+        <IconButton
+          icon={MoreVertical}
+          label="Member actions"
           onClick={e => {
             const r = e.currentTarget.getBoundingClientRect()
             menu(r.left, r.bottom)
           }}
-          className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-        >
-          <MoreVertical size={16} aria-hidden />
-        </button>
+        />
       </div>
     </div>
   )

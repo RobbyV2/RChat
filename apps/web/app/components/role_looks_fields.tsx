@@ -1,6 +1,7 @@
 'use client'
 import { useRef, useState } from 'react'
 import { SmilePlus, X } from 'lucide-react'
+import { IconButton } from './controls'
 import { EmojiPicker } from './emoji_picker'
 
 export interface RoleLooksPatch {
@@ -60,15 +61,12 @@ export function RoleLooksFields({
           {icon ?? <SmilePlus size={16} />}
         </button>
         {icon && !locked && (
-          <button
-            type="button"
-            title={`Remove the icon of ${name}`}
-            aria-label={`Remove the icon of ${name}`}
+          <IconButton
+            icon={X}
+            label={`Remove the icon of ${name}`}
+            shape="square"
             onClick={() => onChange({ icon: null })}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:h-11 pointer-coarse:w-11"
-          >
-            <X size={14} />
-          </button>
+          />
         )}
       </span>
       {check(

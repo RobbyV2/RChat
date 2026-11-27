@@ -16,7 +16,8 @@ import {
   type ServerIconKind,
 } from '../lib/server_about'
 import { iconLook } from '../lib/server_icon'
-import { Chips, FieldError, Masked, fieldCls, filledBtn, sectionCls, textBtn } from './ui'
+import { Button } from './controls'
+import { Chips, FieldError, Masked, fieldCls, sectionCls } from './ui'
 
 // One server icon for the rail, invite cards and search: the first letter of its name or a
 // pattern from its key, on the server's color when it has one.
@@ -204,27 +205,26 @@ export function AboutEditor({
         )}
         {editable ? (
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
+            <Button
+              variant="filled"
+              size="md"
               disabled={!change || tooLong !== null || saving}
               onClick={save}
-              className={filledBtn}
             >
               {saving ? 'Saving…' : 'Save about'}
-            </button>
+            </Button>
             {change && !saving && (
-              <button
-                type="button"
+              <Button
+                size="md"
                 onClick={() =>
                   edit(() => {
                     setText(about.text ?? '')
                     setIcon(about.icon)
                   })
                 }
-                className={textBtn}
               >
                 Discard
-              </button>
+              </Button>
             )}
             {done && !change && (
               <span role="status" className="text-xs text-on-surface">

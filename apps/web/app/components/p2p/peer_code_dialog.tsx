@@ -8,7 +8,8 @@ import { P2pProvider } from '../../lib/client/p2p_react'
 import type { PeerLinkRequest } from '../../lib/client/peer_links'
 import { AddContactDialog } from './add_contact'
 import { ServerNewDialog } from './p2p_invite_dialog'
-import { Dialog, textBtn, Masked } from '../ui'
+import { Button } from '../controls'
+import { Dialog, Masked } from '../ui'
 
 export function PeerCodeDialog({ request }: { request: PeerLinkRequest }) {
   const owner = useAccount()
@@ -69,9 +70,8 @@ export function PeerCodeDialog({ request }: { request: PeerLinkRequest }) {
           choices.map(
             (app, i) =>
               available[i] === '1' && (
-                <button
+                <Button
                   key={request.owner(app).renderKey + ':' + app.localId}
-                  className={textBtn}
                   onClick={() => {
                     if (current() && request.valid(app)) choose(app)
                   }}
@@ -82,13 +82,11 @@ export function PeerCodeDialog({ request }: { request: PeerLinkRequest }) {
                       text={` · ${request.owner(app).store.getState().me?.username}@${new URL(request.owner(app).conn.origin).host}`}
                     />
                   )}
-                </button>
+                </Button>
               )
           )
         )}
-        <button className={textBtn} onClick={close}>
-          Cancel
-        </button>
+        <Button onClick={close}>Cancel</Button>
       </div>
     </Dialog>
   )
