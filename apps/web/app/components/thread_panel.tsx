@@ -9,7 +9,8 @@ import { ReactionBar } from './reactions'
 import { useChannelPerms } from '../lib/client/use_channel_perms'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { openActionMenu } from '../lib/actions/menu'
-import { myRank, roleColor, threadKey, useStore } from '../lib/store'
+import { myRank, roleColor, roleLook, threadKey, useStore } from '../lib/store'
+import type { Look } from '../lib/role_looks'
 import { outranksKnown } from '../lib/hierarchy'
 import { useShallow } from 'zustand/react/shallow'
 import type { Message } from '../lib/types'
@@ -56,6 +57,9 @@ import { MessageEditor, editAction } from './message_editor'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
+
+// The name color and role icon of an author, as `AuthorRow` props.
+const authorOf = (look: Look) => ({ color: look.color, icon: look.icon })
 
 const EMPTY: Message[] = []
 const NO_SENDS: Outgoing[] = []
@@ -353,7 +357,7 @@ export default function ThreadPanel() {
             author={m.author}
             server={server}
             size={30}
-            color={roleColor(roles, memberFor(m.author.username)?.role_ids ?? [])}
+            {...authorOf(roleLook(roles, memberFor(m.author.username)?.role_ids ?? []))}
             meta={timeMeta(m.created_at)}
           >
             {body}

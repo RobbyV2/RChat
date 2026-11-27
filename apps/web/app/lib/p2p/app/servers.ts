@@ -17,6 +17,7 @@ import { keyId } from '../keys'
 import { displayName } from '../contacts'
 import type { WireV2 } from '../event_v2'
 import { slowChanged } from '../roles'
+import type { RoleMetaPatch } from '../server/roles'
 import {
   parseCode,
   Servers,
@@ -855,8 +856,13 @@ export function createServersPart(
       for (const m of moves)
         if ((await withServers(s => s.moveRole(room, m.role, m.pos))) === null) return
     },
-    editRole: (room: string, role: string, meta: { name: string; color: number | null }) =>
-      withServers(s => s.editRole(room, role, meta)),
+    editRole: (room: string, role: string, patch: RoleMetaPatch) =>
+      withServers(s => s.editRole(room, role, patch)),
+    // Display positions, one `role_meta` each (null follows the role's position).
+    async showRoles(room: string, moves: { role: string; dpos: number | null }[]) {
+      for (const m of moves)
+        if ((await withServers(s => s.editRole(room, m.role, { dpos: m.dpos }))) === null) return
+    },
     setRoleBit: (room: string, role: string, bit: number, on: boolean) =>
       withServers(s => s.setRoleBit(room, role, bit, on)),
     deleteRole: (room: string, role: string) => withServers(s => s.deleteRole(room, role)),

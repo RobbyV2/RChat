@@ -57,6 +57,12 @@ const PLAIN: Record<string, string> = {
   p2p_role_down: 'moves a role one step; a move that takes rights away asks first',
   role_up: 'moves a role one step; Move Down puts it back',
   role_down: 'moves a role one step; Move Up puts it back',
+  role_show_up: 'changes where a role shows; Show Lower puts it back',
+  role_show_down: 'changes where a role shows; Show Higher puts it back',
+  role_show_ranked: 'changes where roles show; moving them again puts them back',
+  p2p_role_show_up: 'changes where a role shows; Show Lower puts it back',
+  p2p_role_show_down: 'changes where a role shows; Show Higher puts it back',
+  p2p_role_show_ranked: 'changes where roles show; moving them again puts them back',
 }
 
 test('every action that changes standing or cannot be undone is marked as danger', () => {

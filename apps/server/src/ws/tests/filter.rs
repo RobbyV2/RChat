@@ -726,6 +726,27 @@ fn every_event() -> Vec<WsEvent> {
                 rules: None,
             },
             WsEvent::RolesChanged { server: s(server) },
+            WsEvent::RoleUpdated {
+                server: s(server),
+                role: crate::api::Role {
+                    id: 1,
+                    name: s("mods"),
+                    color: s("#112233"),
+                    perms: 0,
+                    mentionable: false,
+                    position: 1,
+                    display_position: None,
+                    hoist: true,
+                    icon: None,
+                    color_names: true,
+                },
+            },
+            WsEvent::RolesReordered {
+                server: s(server),
+                order: vec![2, 1],
+                display: vec![None, Some(3)],
+                version: 4,
+            },
             WsEvent::ChannelPermsChanged {
                 server: s(server),
                 channel_id: 1,
@@ -959,6 +980,20 @@ async fn shared_channel_cache_follows_permission_events() {
     let roles = WsEvent::RolesChanged { server: s("other") };
     track(&roles, &mut bob);
     assert_eq!(bob.viewable.len(), 1);
+    track(
+        &WsEvent::RolesReordered {
+            server: s("rchat"),
+            order: Vec::new(),
+            display: Vec::new(),
+            version: 1,
+        },
+        &mut bob,
+    );
+    assert_eq!(
+        bob.viewable.len(),
+        1,
+        "a new role order changes no channel access"
+    );
     track(&WsEvent::RolesChanged { server: s("rchat") }, &mut bob);
     assert!(bob.viewable.is_empty());
     exec(db, "DELETE FROM channel_perms").await;

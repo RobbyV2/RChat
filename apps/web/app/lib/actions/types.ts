@@ -69,6 +69,10 @@ export type Target =
       server: string
       role: Role
       order: number[]
+      // Every role id in display order, the one shown highest first; `follows` while it is the
+      // role order.
+      display: number[]
+      follows: boolean
       movable: number[]
       version: number
       after?(): void

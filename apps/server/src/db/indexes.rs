@@ -171,6 +171,13 @@ pub(super) const ONLINE_INDEXES: &[OnlineIndex] = &[
         replaces: &[],
         extensions: &[],
     },
+    OnlineIndex {
+        name: "idx_user_roles_role_user",
+        table: "user_roles",
+        body: "ON user_roles(role_id, username)",
+        replaces: &["idx_user_roles_role"],
+        extensions: &[],
+    },
 ];
 
 /// Rows from which a Postgres table gets its online indexes after the start.

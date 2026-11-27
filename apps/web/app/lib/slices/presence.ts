@@ -28,6 +28,7 @@ import {
   type TypingOut,
 } from '../typing'
 import { mapWhere } from '../window'
+import { mapGroups } from '../member_groups'
 import { pageVisible, type GetState, type Handlers, type SetState } from './ctx'
 
 export type PresenceChange = {
@@ -61,6 +62,7 @@ export const applyPresence = (
   }
   let servers = s.servers
   let members = s.members
+  let hoisted = s.hoisted
   let memberInfo = s.memberInfo
   for (const [server, users] of byServer) {
     const detail = servers[server]
@@ -70,15 +72,15 @@ export const applyPresence = (
       if (online_count !== detail.online_count)
         servers = { ...servers, [server]: { ...detail, online_count } }
     }
+    const hit = (m: Member) => users.has(m.username) && users.get(m.username) !== m.online
+    const seen = (list: Member[]) =>
+      mapWhere(list, hit, m => ({ ...m, online: users.get(m.username) ?? m.online }))
     const cache = members[server]
     if (cache) {
-      const hit = (m: Member) => users.has(m.username) && users.get(m.username) !== m.online
-      const list = mapWhere(cache.list, hit, m => ({
-        ...m,
-        online: users.get(m.username) ?? m.online,
-      }))
+      const list = seen(cache.list)
       if (list !== cache.list) members = { ...members, [server]: { ...cache, list } }
     }
+    hoisted = mapGroups(hoisted, server, seen)
     const loaded = memberInfo[server]
     if (loaded) {
       let next: Record<string, Member | null> | null = null
@@ -91,7 +93,7 @@ export const applyPresence = (
       if (next) memberInfo = { ...memberInfo, [server]: next }
     }
   }
-  return { servers, members, memberInfo }
+  return { servers, members, hoisted, memberInfo }
 }
 
 export const presenceSlice = (set: SetState, get: GetState, { acct }: { acct: AccountSession }) => {
@@ -143,6 +145,10 @@ export const presenceSlice = (set: SetState, get: GetState, { acct }: { acct: Ac
         const list = mapWhere(cache.list, m => fix(m) !== m, fix)
         if (list !== cache.list) out.members = { ...s.members, [ev.server]: { ...cache, list } }
       }
+      const hoisted = mapGroups(s.hoisted, ev.server, list =>
+        mapWhere(list, m => fix(m) !== m, fix)
+      )
+      if (hoisted !== s.hoisted) out.hoisted = hoisted
       const known = s.memberInfo[ev.server]
       if (known) {
         let next: Record<string, Member | null> | null = null

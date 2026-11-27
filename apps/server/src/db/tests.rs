@@ -8354,6 +8354,80 @@ async fn roles_of_an_old_database_are_ranked_once() {
 }
 
 #[tokio::test]
+async fn role_looks_are_added_to_an_old_database() {
+    on_each_database("role_looks_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let index = |name: &str| match is_sqlite(&db) {
+            true => format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{name}'"),
+            false => format!("SELECT COUNT(*) FROM pg_indexes WHERE indexname = '{name}'"),
+        };
+        assert_eq!(count(&db, &index("idx_user_roles_role_user")).await, 1);
+        assert_eq!(count(&db, &index("idx_user_roles_role")).await, 0);
+        for sql in [
+            "INSERT INTO servers(name, display_name, created_at, roles_version, roles_order_confirmed) VALUES('club', 'Club', 1, 3, 1)".to_string(),
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'mod', 0, 0, 1), ('club', 'fan', 0, 0, 1)".to_string(),
+            "INSERT INTO roles(server, name, color, perms, mentionable, position) VALUES('club', 'mods', '#112233', 6, 1, 2), ('club', 'fans', '#445566', 0, 0, 1)".to_string(),
+            "INSERT INTO user_roles(server, username, role_id) SELECT 'club', 'mod', id FROM roles WHERE name = 'mods'".to_string(),
+            "INSERT INTO user_roles(server, username, role_id) SELECT 'club', 'fan', id FROM roles WHERE name = 'fans'".to_string(),
+            "DROP INDEX idx_user_roles_role_user".to_string(),
+            "CREATE INDEX idx_user_roles_role ON user_roles(role_id)".to_string(),
+            "ALTER TABLE roles DROP COLUMN display_position".to_string(),
+            "ALTER TABLE roles DROP COLUMN hoist".to_string(),
+            "ALTER TABLE roles DROP COLUMN icon".to_string(),
+            "ALTER TABLE roles DROP COLUMN color_names".to_string(),
+            format!(
+                "UPDATE settings SET value = '{}' WHERE key = 'schema_version'",
+                super::migrate::ROLE_LOOKS_VERSION - 1
+            ),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&db)
+                .await
+                .expect(&sql);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM roles WHERE server = 'club' AND display_position IS NULL AND icon IS NULL AND color_names = 1").await,
+                2,
+                "{round}: old roles follow the role order, have no icon and color names"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM roles WHERE server = 'club' AND hoist = 1").await,
+                round,
+                "{round}: old roles show in no group, and a group set after the upgrade stays"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE (r.name = 'mods' AND ur.username = 'mod' AND r.perms = 6 AND r.mentionable = 1 AND r.position = 2 AND r.color = '#112233') OR (r.name = 'fans' AND ur.username = 'fan' AND r.position = 1)").await,
+                2,
+                "{round}: roles keep their fields and holders"
+            );
+            assert_eq!(
+                count(&db, "SELECT roles_version FROM servers WHERE name = 'club'").await,
+                3,
+                "{round}"
+            );
+            assert_eq!(count(&db, &index("idx_user_roles_role_user")).await, 1, "{round}");
+            assert_eq!(
+                count(&db, &index("idx_user_roles_role")).await,
+                0,
+                "{round}: the index it covers is gone"
+            );
+            if round == 0 {
+                sqlx::query("UPDATE roles SET hoist = 1 WHERE name = 'mods'")
+                    .execute(&db)
+                    .await
+                    .expect("hoist");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn channel_labels_preserve_topics_and_channel_ids() {
     on_each_database("channel_labels", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");

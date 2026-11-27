@@ -438,10 +438,25 @@ export interface SharedConfig {
   expires_at: number
 }
 
+export interface RolePatch {
+  name?: string
+  color?: string
+  perms?: number
+  mentionable?: boolean
+  // null removes it
+  icon?: string | null
+  hoist?: boolean
+  color_names?: boolean
+}
+
 export interface MemberFilter {
   q?: string
   admins?: boolean
 }
+
+// One group of the member list: the members of a role shown separately, or `rest` for those in
+// no group.
+export type MemberGroup = number | 'rest'
 
 export interface P2pAttachment {
   filename: string
@@ -646,6 +661,13 @@ export const endpoints = (c: ApiClient) => ({
       withCursor(`/servers/${seg(name)}/members/search${query ? `?${query}` : ''}`, cursor),
       signal
     ),
+  listGroup: (name: string, group: MemberGroup, cursor: string | null, limit = 50) =>
+    c.page<Member>(
+      withCursor(
+        `/servers/${seg(name)}/members?limit=${limit}${group === 'rest' ? '&unhoisted=1' : `&role=${group}&top_hoisted=1`}`,
+        cursor
+      )
+    ),
   suggestMembers: (name: string, q: string) =>
     c.req<Member[]>('GET', `/servers/${seg(name)}/members?suggest=1&q=${seg(q)}`),
   membersByName: (name: string, usernames: string[]) =>
@@ -803,11 +825,8 @@ export const endpoints = (c: ApiClient) => ({
     }),
   createRole: (server: string, body: { name: string; color: string; perms: number }) =>
     c.req<Role>('POST', `/servers/${seg(server)}/roles`, body),
-  updateRole: (
-    server: string,
-    id: number,
-    patch: { name?: string; color?: string; perms?: number; mentionable?: boolean }
-  ) => c.req<Role>('PATCH', `/servers/${seg(server)}/roles/${id}`, { ...patch, mask: ALL_PERMS }),
+  updateRole: (server: string, id: number, patch: RolePatch) =>
+    c.req<Role>('PATCH', `/servers/${seg(server)}/roles/${id}`, { ...patch, mask: ALL_PERMS }),
   deleteRole: (server: string, id: number) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/roles/${id}`),
   assignRole: (server: string, id: number, username: string) =>
@@ -829,6 +848,19 @@ export const endpoints = (c: ApiClient) => ({
       order,
       version,
     }),
+  // `order` lists every role id, the one shown highest first.
+  setRoleDisplay: (server: string, order: number[], version: number) =>
+    c.req<{ order: number[]; version: number }>(
+      'PUT',
+      `/servers/${seg(server)}/roles/display_order`,
+      { order, version }
+    ),
+  followRoleOrder: (server: string, version: number) =>
+    c.req<{ order: number[]; version: number }>(
+      'DELETE',
+      `/servers/${seg(server)}/roles/display_order`,
+      { version }
+    ),
   confirmRoleOrder: (server: string, version: number) =>
     c.req<{ confirmed: boolean }>('POST', `/servers/${seg(server)}/roles/order/confirm`, {
       version,

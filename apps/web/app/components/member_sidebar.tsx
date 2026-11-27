@@ -9,7 +9,10 @@ import { onlineSection } from '../lib/presence'
 import { MEMBERS_HIDDEN_LINE, seesMembers } from '../lib/profile_choice'
 import { openActionMenu } from '../lib/actions/menu'
 import { byShownName } from '../lib/server_profile'
-import { roleColor, useStore } from '../lib/store'
+import { roleLook, useStore } from '../lib/store'
+import { FIRST_GROUPS, FIRST_ROWS, groupParts, serverGroups } from '../lib/member_groups'
+import { RoleIcon } from './role_icon'
+import type { Look } from '../lib/role_looks'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Badge, profileTrigger } from './profile_card'
@@ -66,13 +69,25 @@ function useWindowed(items: Item[]) {
   return { ref, range }
 }
 
-// A row's name, sized to the room the badges leave; its title has the whole name.
-export const MemberName = ({ user, color }: { user: UserRef; color?: string }) => (
-  <FitName
-    user={user}
-    style={color === undefined ? undefined : { color }}
-    className="streamer min-w-0 flex-1 truncate text-sm"
-  />
+// A row's name, sized to the room the badges leave, and its role icon; its title has the whole
+// name.
+export const MemberName = ({
+  user,
+  color,
+  icon,
+}: {
+  user: UserRef
+  color?: string
+  icon?: Look['icon']
+}) => (
+  <span className="flex min-w-0 flex-1 items-center gap-1">
+    <FitName
+      user={user}
+      style={color === undefined ? undefined : { color }}
+      className="streamer min-w-0 truncate text-sm"
+    />
+    <RoleIcon emoji={icon?.emoji} role={icon?.role} />
+  </span>
 )
 
 export function MemberTimeout({ server, username }: { server: string; username: string }) {
@@ -101,16 +116,32 @@ export default function MemberSidebar() {
     const member = s.me?.servers.some(x => x.name === v.server) ?? false
     return seesMembers(s.servers[v.server]?.members_visible, member, s.me?.is_site_admin ?? false)
   })
+  const hoisted = useStore(s => (s.view?.kind === 'channel' ? s.hoisted[s.view.server] : undefined))
   const loadMembers = useStore(s => s.loadMembers)
+  const loadGroup = useStore(s => s.loadGroup)
+  const clearGroups = useStore(s => s.clearGroups)
   const loadInteracted = useStore(s => s.loadInteracted)
   const loadMissingOnline = useStore(s => s.loadMissingOnline)
   const server = listed ? detail?.name : undefined
+  const groups = useMemo(() => serverGroups(detail?.roles), [detail?.roles])
+  const groupIds = groups.map(g => g.id).join(',')
+  const grouped = !!server && groups.length > 0
+  const groupsLoaded = !!hoisted
   useEffect(() => {
     if (server) {
       void loadMembers(server, true)
       void loadInteracted(server, true)
     }
   }, [server, loadMembers, loadInteracted])
+  useEffect(() => {
+    if (server) clearGroups(server)
+  }, [server, groupIds, clearGroups])
+  useEffect(() => {
+    if (!server || !groupIds || groupsLoaded) return
+    for (const id of groupIds.split(',').slice(0, FIRST_GROUPS))
+      void loadGroup(server, Number(id), true, FIRST_ROWS)
+    void loadGroup(server, 'rest', true)
+  }, [server, groupIds, groupsLoaded, loadGroup])
   const more = useCallback(() => {
     if (server) void loadMembers(server)
   }, [server, loadMembers])
@@ -123,6 +154,35 @@ export default function MemberSidebar() {
   const shownOf = useShownMembers(server)
   const items = useMemo(() => {
     if (!detail) return []
+    const out: Item[] = []
+    const interacted = () => {
+      const users = inter?.list ?? []
+      if (!users.length) return
+      out.push({
+        kind: 'head',
+        key: 'hint',
+        label: `Interacted (${users.length}${inter?.hasMore ? '+' : ''})`,
+      })
+      for (const u of users) out.push({ kind: 'user', key: `u${u.username}`, u })
+      if (inter?.hasMore)
+        out.push({ kind: 'more', key: `imore${users.length}`, onVisible: moreInteracted })
+    }
+    if (grouped) {
+      for (const part of groupParts(groups, hoisted, m => shownOf(m).display_name))
+        out.push(
+          part.kind === 'more'
+            ? {
+                kind: 'more',
+                key: part.key,
+                onVisible: () => void loadGroup(detail.name, part.group),
+              }
+            : part.kind === 'member'
+              ? { ...part, shown: shownOf(part.m) }
+              : part
+        )
+      interacted()
+      return out
+    }
     // Each section in the order of the names the server shows.
     const byName = (list: Member[]) =>
       list.map(m => ({ m, shown: shownOf(m) })).sort((a, b) => byShownName(a.shown, b.shown))
@@ -133,7 +193,6 @@ export default function MemberSidebar() {
       totals,
       more: omore,
     } = onlineSection(detail.online_count, detail.member_count, cache, info)
-    const out: Item[] = []
     const section = (id: string, label: string, count: number, list: Member[]) => {
       if (count <= 0 && !list.length) return
       out.push({ kind: 'head', key: `h${id}`, label: `${label} (${count})` })
@@ -144,19 +203,22 @@ export default function MemberSidebar() {
     if (omore) out.push({ kind: 'more', key: omore, onVisible: moreOnline })
     section('off', 'Offline', totals.offline, away)
     if (cache?.hasMore) out.push({ kind: 'more', key: `more${loaded.length}`, onVisible: more })
-    const users = inter?.list ?? []
-    if (users.length) {
-      out.push({
-        kind: 'head',
-        key: 'hint',
-        label: `Interacted (${users.length}${inter?.hasMore ? '+' : ''})`,
-      })
-      for (const u of users) out.push({ kind: 'user', key: `u${u.username}`, u })
-      if (inter?.hasMore)
-        out.push({ kind: 'more', key: `imore${users.length}`, onVisible: moreInteracted })
-    }
+    interacted()
     return out
-  }, [detail, cache, info, inter, more, moreOnline, moreInteracted, shownOf])
+  }, [
+    detail,
+    cache,
+    info,
+    inter,
+    more,
+    moreOnline,
+    moreInteracted,
+    shownOf,
+    grouped,
+    groups,
+    hoisted,
+    loadGroup,
+  ])
   const { ref, range } = useWindowed(items)
   if (!detail)
     return viewServer ? (
@@ -181,6 +243,7 @@ export default function MemberSidebar() {
     )
 
   const row = (m: Member, shown: Member) => {
+    const look = roleLook(detail.roles, m.role_ids)
     return (
       <div
         key={m.username}
@@ -206,7 +269,7 @@ export default function MemberSidebar() {
           avatarColor={shown.avatar_color}
           size={28}
         />
-        <MemberName user={shown} color={roleColor(detail.roles, m.role_ids)} />
+        <MemberName user={shown} color={look.color} icon={look.icon} />
         <MemberTimeout server={detail.name} username={m.username} />
         {m.is_creator && <Badge tone="tertiary">Creator</Badge>}
         {m.is_admin && <Badge tone="primary">Admin</Badge>}

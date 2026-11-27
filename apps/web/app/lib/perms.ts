@@ -85,6 +85,8 @@ export interface PermsModule {
     afterSubjects: string,
     afterMasks: Float64Array
   ): string
+  perms_display_order(places: Float64Array): Float64Array
+  perms_hoist_groups(places: Float64Array, hoist: Uint8Array): Float64Array
 }
 
 type RankArgs = [number, number, number, Tie, number]
@@ -399,3 +401,13 @@ export const widens = (before: [string, number][], after: [string, number][]) =>
   )
   return out === '' ? [] : out.split('\n')
 }
+
+// Roles listed highest rank first, by their display place: the display order and the roles
+// shown as groups, as indexes into the list.
+export const displayOrderOf = (places: number[]) =>
+  Array.from(rules().perms_display_order(Float64Array.from(places)))
+
+export const hoistGroupsOf = (places: number[], hoist: boolean[]) =>
+  Array.from(
+    rules().perms_hoist_groups(Float64Array.from(places), Uint8Array.from(hoist.map(Number)))
+  )

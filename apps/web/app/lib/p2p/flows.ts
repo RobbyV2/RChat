@@ -1,5 +1,5 @@
 import { EVERYONE, timeoutEnd, timeoutEnds } from './acl/rules'
-import type { Summary } from './acl/summary'
+import { ROLE_LOOKS, type Summary } from './acl/summary'
 import type { Local } from './limits'
 
 // The user-facing flows of P2P servers: their copy, and the pure
@@ -208,7 +208,7 @@ export const actParts = (t: string, to?: string, ends = false): { act: string; w
     role_move: 'Move a role',
     role_bits: 'Change what a role may do',
     role_del: 'Delete a role',
-    role_meta: 'Rename or recolor a role',
+    role_meta: 'Change how a role shows',
     profile_mode: 'Change what server profiles may hold',
     channel: 'Change a channel',
     chperm: 'Change who may use a channel',
@@ -294,7 +294,8 @@ export const effectHolds = (
       return (
         !!r &&
         (c.name === undefined || r.name === c.name) &&
-        (c.color === undefined || r.color === c.color)
+        (c.color === undefined || r.color === c.color) &&
+        ROLE_LOOKS.every(k => c[k] === undefined || same(r[k], c[k]))
       )
     }
     case 'settings':

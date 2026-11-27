@@ -8,7 +8,8 @@ use super::{CallKind, CallPhase};
 use crate::api::access::ViewRules;
 use crate::api::pings::{Ping, ThreadPings};
 use crate::api::{
-    Channel, ChannelLayout, Embed, Member, Message, PublicSettings, ServerSummaryLite, UserRef,
+    Channel, ChannelLayout, Embed, Member, Message, PublicSettings, Role, ServerSummaryLite,
+    UserRef,
 };
 
 thread_local! {
@@ -293,6 +294,20 @@ pub enum WsEvent {
     },
     RolesChanged {
         server: String,
+    },
+    /// A role's name, color, icon, mention setting or how it shows changed; its permissions did
+    /// not.
+    RoleUpdated {
+        server: String,
+        role: Role,
+    },
+    /// The rank order or the display order of a server's roles changed. `order` lists every
+    /// role, the highest first, and `display` the display position of each in the same order.
+    RolesReordered {
+        server: String,
+        order: Vec<i64>,
+        display: Vec<Option<i64>>,
+        version: i64,
     },
     /// The server's upload expiry changed; clients load the server again.
     UploadExpiryChanged {

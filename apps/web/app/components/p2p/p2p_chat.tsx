@@ -103,6 +103,8 @@ import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
 import { FormatToolbar, useFormatting } from '../format_toolbar'
 import { P2pCallRow } from './p2p_call'
+import { RoleIcon } from '../role_icon'
+import type { Look } from '../../lib/role_looks'
 
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
 // channels: what differs (the header, who may do what, names, mentions) comes in as props.
@@ -232,7 +234,18 @@ interface RowProps {
   // Puts the row on the forward clipboard.
   onCopy: (p: P2pMessage, m: Message) => void
   onJump: (num: number) => void
+  // The sender's name color, and the emoji and role name of their role icon.
+  color?: string
+  icon?: string
+  iconRole?: string
 }
+
+// A sender's look as row props.
+export const rowLook = (look: Look | undefined) => ({
+  color: look?.color,
+  icon: look?.icon?.emoji,
+  iconRole: look?.icon?.role,
+})
 
 export const P2pRow = memo(function P2pRow({
   p,
@@ -253,6 +266,9 @@ export const P2pRow = memo(function P2pRow({
   onMenu,
   onCopy,
   onJump,
+  color,
+  icon,
+  iconRole,
 }: RowProps) {
   const identity = useP2pApp()!
   const { p2pDm, p2pThread } = identity
@@ -391,7 +407,10 @@ export const P2pRow = memo(function P2pRow({
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-                <span className="streamer min-w-0 truncate text-sm font-medium">{name}</span>
+                <span className="streamer min-w-0 truncate text-sm font-medium" style={{ color }}>
+                  {name}
+                </span>
+                <RoleIcon emoji={icon} role={iconRole} />
                 <MessageTime
                   ts={m.created_at}
                   className="shrink-0 text-xs text-on-surface-variant"
@@ -1134,6 +1153,8 @@ export interface ChatBodyProps {
   pinsEmpty: string
   pinsPlace: 'conversation' | 'channel'
   dataAttr: Record<string, string>
+  // How senders' names look, in a server.
+  lookOf?: (ik: string) => Look
 }
 
 // The open conversation's first unread message when it isn't loaded, looked up in storage once
@@ -1457,6 +1478,7 @@ function IdentityChatBody(props: ChatBodyProps) {
                       onMenu={rowMenu}
                       onCopy={copyRow}
                       onJump={rowJump}
+                      {...rowLook(props.lookOf?.(p.sender))}
                     />
                   )}
                 </Fragment>

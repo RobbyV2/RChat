@@ -72,7 +72,8 @@ import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
 import { PeerTimeoutBadge, TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
-import { hex, memberGroups, nameColor } from '../../lib/p2p/roles'
+import { hex, lookOfMember, memberGroups, memberLooks } from '../../lib/p2p/roles'
+import { RoleIcon } from '../role_icon'
 import { slowTitle } from '../../lib/slowmode'
 import { serversLoading } from '../../lib/p2p/conversations'
 import {
@@ -656,6 +657,8 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
 
   const contact = useP2p(s => s.contacts.find(c => c.ik === m.ik))
   const me = useP2p(s => s.me)
+  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
+  const look = lookOfMember(m, v.roles)
   return (
     <li>
       <button
@@ -674,8 +677,11 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
           )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="streamer truncate text-sm" style={{ color: hex(nameColor(m, v.roles)) }}>
-            <Masked text={m.name} own={m.ik === me} />
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="streamer truncate text-sm" style={{ color: look.color }}>
+              <Masked text={m.name} own={m.ik === me} />
+            </span>
+            <RoleIcon emoji={look.icon?.emoji} role={look.icon && mask(look.icon.role)} />
           </span>
           {m.ik !== me && (
             <span className="flex min-w-0 empty:hidden">
@@ -889,6 +895,11 @@ function P2pChannelPaneBody({
   // typing or presence redraws none of them.
   const looks = useMemo(() => roomLooksKey(members), [members])
   const userOf = useCallback((ik: string) => memberUser(room, ik), [room, looks])
+  const roles = v?.roles
+  const lookOf = useMemo(
+    () => (members && roles ? memberLooks({ members, roles }, mask) : undefined),
+    [members, roles, mask]
+  )
   const people = useMemo<Mentionable[]>(
     () =>
       (members ?? [])
@@ -1091,6 +1102,7 @@ function P2pChannelPaneBody({
         timedOut={timedOut !== null}
         nameOf={nameOf}
         userOf={userOf}
+        lookOf={lookOf}
         people={people}
         title={`#${mask(channel.name)}`}
         placeholder={`Message #${mask(channel.name)}`}

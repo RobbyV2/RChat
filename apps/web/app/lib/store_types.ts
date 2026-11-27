@@ -295,6 +295,8 @@ export interface RChatState {
   channelLabelEpochs: Record<string, number>
   servers: Record<string, ServerDetail>
   members: Record<string, Paged<Member>>
+  // The member list's groups (roles shown separately, and everyone else) of open servers.
+  hoisted: import('./member_groups').GroupPages
   memberInfo: Record<string, Record<string, Member | null>>
   memberInfoTrim: Record<string, number>
   adminChanges: Record<string, number>
@@ -767,13 +769,11 @@ export interface RChatState {
     server: string,
     body: { name: string; color: string; perms: number }
   ) => Promise<void>
-  updateRole: (
-    server: string,
-    id: number,
-    patch: { name?: string; color?: string; perms?: number; mentionable?: boolean }
-  ) => Promise<void>
+  updateRole: (server: string, id: number, patch: import('./api').RolePatch) => Promise<void>
   deleteRole: (server: string, id: number) => Promise<void>
   setRoleOrder: (server: string, order: number[], version: number) => Promise<void>
+  // `order`: every role id, the one shown highest first; null shows roles in role order.
+  setRoleDisplay: (server: string, order: number[] | null, version: number) => Promise<void>
   assignRole: (server: string, id: number, username: string) => Promise<void>
   unassignRole: (server: string, id: number, username: string) => Promise<void>
   setChannelPerm: (id: number, perm: ChannelPermInput) => Promise<void>
@@ -783,6 +783,15 @@ export interface RChatState {
   adminSignOut: (username: string) => Promise<void>
   adminDeleteMessage: (id: number) => Promise<void>
   loadMembers: (server: string, reset?: boolean) => Promise<void>
+  // A page of one group of the member list; `limit` rows (50 by default).
+  loadGroup: (
+    server: string,
+    group: import('./api').MemberGroup,
+    reset?: boolean,
+    limit?: number
+  ) => Promise<void>
+  // Forgets the loaded groups of the member list, so they load again.
+  clearGroups: (server: string) => void
   loadInteracted: (server: string, reset?: boolean) => Promise<void>
   ensureMembers: (server: string, usernames: string[]) => Promise<void>
   loadMissingOnline: (server: string) => Promise<void>

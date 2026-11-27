@@ -212,6 +212,11 @@ export function serverView(
               ? r.color!
               : null,
           pos: r.pos,
+          // A role whose looks don't say shows its members separately and colors their names.
+          icon: r.icon || null,
+          hoist: r.hoist ?? true,
+          tint: r.tint ?? true,
+          dpos: r.dpos ?? null,
           bits: r.bits,
           holders: joined.filter(m => m.roles.includes(r.id)).length,
           below: me === 'join' && !!meRank && above(tiered(meRank), tiered(roleRank(s, r.id))),

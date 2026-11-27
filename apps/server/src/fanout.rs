@@ -252,6 +252,13 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             rules: _,
         }
         | WsEvent::RolesChanged { server }
+        | WsEvent::RoleUpdated { server, role: _ }
+        | WsEvent::RolesReordered {
+            server,
+            order: _,
+            display: _,
+            version: _,
+        }
         | WsEvent::UploadExpiryChanged { server }
         | WsEvent::ChannelPermsChanged {
             server,

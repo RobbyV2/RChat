@@ -904,16 +904,17 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   // Reloads the unread counts, drops servers we were removed from, and reloads the open server's
-  // member list and looked-up members.
+  // member list, its groups and looked-up members.
   const catchUpLists = () => {
     if (get().me) void loadUnreads()
     void pruneServers()
       .catch(() => {})
       .then(
         inSession(() => {
-          const { view, members } = get()
+          const { view, members, hoisted } = get()
           if (view?.kind !== 'channel') return
           if (members[view.server]) void get().loadMembers(view.server, true)
+          if (hoisted[view.server]) get().clearGroups(view.server)
           refreshMemberInfo(view.server)
         })
       )
@@ -2153,6 +2154,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         channelLabelEpochs: {},
         servers: {},
         members: {},
+        hoisted: {},
         memberInfo: {},
         memberInfoTrim: {},
         adminChanges: {},

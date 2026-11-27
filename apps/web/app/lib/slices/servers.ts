@@ -36,12 +36,15 @@ import { shownParts, showsMore, withLook } from '../server_profile'
 import { myPerms, previewServer } from '../selectors'
 import { keepMyPerms, withChannel } from '../channel_perms'
 import type { Paged, RChatState } from '../store_types'
+import { groupKey, mapGroups } from '../member_groups'
+import { type RolePlaces, placeRoles, withRole, withRoleEvents } from '../role_looks'
 import { localUntil, type TimeoutWire } from '../timeouts'
 import { cleanTopic } from '../topic'
 import {
   type Member,
   type Message,
   Perm,
+  type Role,
   type ServerBan,
   type ServerDetail,
   type ServerProfile,
@@ -234,10 +237,13 @@ export const dropMemberRow = (
   server: string,
   username: string
 ): Partial<RChatState> => {
+  const gone = (list: Member[]) => dropWhere(list, m => m.username === username)
+  const hoisted = mapGroups(s.hoisted, server, gone)
   const cache = s.members[server]
-  if (!cache) return {}
+  const out: Partial<RChatState> = hoisted === s.hoisted ? {} : { hoisted }
+  if (!cache) return out
   const list = cache.list.filter(m => m.username !== username)
-  return { members: { ...s.members, [server]: { ...cache, list } } }
+  return { ...out, members: { ...s.members, [server]: { ...cache, list } } }
 }
 
 export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) => {
@@ -417,21 +423,28 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     return new Banned(BANNED)
   }
 
-  // Live channel updates can arrive while a server detail request is in flight.
-  const readingChannels = new Set<{
+  // Live channel and role updates can arrive while a server detail request is in flight.
+  const reading = new Set<{
     server: string
     updates: Map<number, ServerDetail['channels'][number]>
+    roles: Map<number, Role>
+    places: RolePlaces | null
   }>()
   const responseEpoch = new WeakMap<ServerDetail, number>()
   const fetchServer = async (name: string) => {
     const epoch = get().channelLabelEpoch
-    const read = { server: name, updates: new Map<number, ServerDetail['channels'][number]>() }
-    readingChannels.add(read)
+    const read = {
+      server: name,
+      updates: new Map<number, ServerDetail['channels'][number]>(),
+      roles: new Map<number, Role>(),
+      places: null as RolePlaces | null,
+    }
+    reading.add(read)
     try {
       const detail = await live(api.getServer(name))
       bannedHere.delete(name)
       if (get().guest) rememberGuestName(detail.name, detail.display_name)
-      const merged = read.updates.size
+      const channels = read.updates.size
         ? {
             ...detail,
             channels: detail.channels.map(c => {
@@ -440,6 +453,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
             }),
           }
         : detail
+      const merged = withRoleEvents(channels, read.roles, read.places)
       responseEpoch.set(merged, epoch)
       return merged
     } catch (e) {
@@ -447,7 +461,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         dropGrant(name)
       throw banCheck(e, name)
     } finally {
-      readingChannels.delete(read)
+      reading.delete(read)
     }
   }
 
@@ -485,6 +499,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     set(s => ({
       servers: keyed(s.servers, name, null),
       members: keyed(s.members, name, null),
+      hoisted: keyed<Record<string, Paged<Member>>>(s.hoisted, name, null),
       interacted: keyed(s.interacted, name, null),
       me: s.me ? { ...s.me, servers: s.me.servers.filter(x => x.name !== name) } : s.me,
       ...withoutVoiceRooms(
@@ -563,12 +578,17 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   const keepMyProfile = (server: string, mine: ServerProfile) =>
     patchServer(server, d => ({ ...d, my_profile: mine, profiles_mode: mine.mode }))
 
+  // The loaded member list of `server` and its groups, through `fn`.
   const patchMembers = (server: string, fn: (list: Member[]) => Member[]) => {
     set(s => {
+      const hoisted = mapGroups(s.hoisted, server, fn)
+      const out: Partial<RChatState> = hoisted === s.hoisted ? {} : { hoisted }
       const cache = s.members[server]
-      if (!cache) return {}
+      if (!cache) return out
       const list = fn(cache.list)
-      return list === cache.list ? {} : { members: { ...s.members, [server]: { ...cache, list } } }
+      return list === cache.list
+        ? out
+        : { ...out, members: { ...s.members, [server]: { ...cache, list } } }
     })
   }
 
@@ -606,6 +626,17 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     })
   }
 
+  // Forgets the loaded groups of `server`'s member list; pages still loading are dropped.
+  const forgetGroups = (server: string) => {
+    for (const key of Object.keys(get().hoisted[server] ?? {}))
+      epochs[`g:${server}:${key}`] = (epochs[`g:${server}:${key}`] ?? 0) + 1
+    set(s =>
+      s.hoisted[server]
+        ? { hoisted: keyed<Record<string, Paged<Member>>>(s.hoisted, server, null) }
+        : {}
+    )
+  }
+
   const leaveServerView = (next: string | null) => {
     const cur = get().view
     const prev = cur?.kind === 'channel' ? cur.server : null
@@ -614,6 +645,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     const { activeDialog } = get()
     if (activeDialog?.kind === 'server_settings' && activeDialog.server === prev) return
     for (const id of [`m:${prev}`, `i:${prev}`]) epochs[id] = (epochs[id] ?? 0) + 1
+    forgetGroups(prev)
     set(s => ({
       members: keyed(s.members, prev, null),
       interacted: keyed(s.interacted, prev, null),
@@ -729,7 +761,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   const onChannelChange = (
     ev: Extract<WsEvent, { type: 'channel_renamed' | 'channel_updated' }>
   ) => {
-    for (const read of readingChannels)
+    for (const read of reading)
       if (read.server === ev.server) read.updates.set(ev.channel.id, ev.channel)
     patchServer(ev.server, d => ({
       ...d,
@@ -810,7 +842,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     listSince.clear()
     pastOnline.clear()
     layoutSends.clear()
-    readingChannels.clear()
+    reading.clear()
     discoveries.clear()
   }
 
@@ -862,6 +894,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'updateRole'
     | 'deleteRole'
     | 'setRoleOrder'
+    | 'setRoleDisplay'
     | 'assignRole'
     | 'unassignRole'
     | 'setChannelPerm'
@@ -871,6 +904,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'adminSignOut'
     | 'adminDeleteMessage'
     | 'loadMembers'
+    | 'loadGroup'
+    | 'clearGroups'
     | 'loadInteracted'
     | 'ensureMembers'
     | 'loadMissingOnline'
@@ -1132,6 +1167,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     deleteRole: (server, id) => act(async () => void (await api.deleteRole(server, id))),
     setRoleOrder: (server, order, version) =>
       act(async () => void (await api.setRoleOrder(server, order, version))),
+    setRoleDisplay: (server, order, version) =>
+      act(async () => {
+        if (order === null) await api.followRoleOrder(server, version)
+        else await api.setRoleDisplay(server, order, version)
+      }),
     assignRole: (server, id, username) =>
       act(async () => void (await api.assignRole(server, id, username))),
     unassignRole: (server, id, username) =>
@@ -1178,6 +1218,34 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         )
       ),
 
+    loadGroup: (server, group, reset = false, limit = PAGE) =>
+      act(() => {
+        const key = groupKey(group)
+        return loadPage(
+          `g:${server}:${key}`,
+          () => get().hoisted[server]?.[key] ?? emptyPage<Member>(),
+          page =>
+            set(s => ({
+              hoisted: { ...s.hoisted, [server]: { ...(s.hoisted[server] ?? {}), [key]: page } },
+            })),
+          async cursor => {
+            const since = presenceHub.seq()
+            const page = await live(
+              api.listGroup(server, group, cursor, cursor === null ? limit : PAGE)
+            ).catch(e => {
+              throw banCheck(e, server)
+            })
+            noteMemberTimeouts(server, page.items)
+            return { ...page, items: presenceHub.fresh(server, page.items, since) }
+          },
+          m => m.username,
+          '',
+          reset
+        )
+      }),
+
+    clearGroups: server => forgetGroups(server),
+
     loadInteracted: (server, reset = false) =>
       act(() =>
         loadPage(
@@ -1223,6 +1291,14 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     notePresence: (server, username, online) =>
       set(s => {
         const out: Partial<RChatState> = {}
+        const hoisted = mapGroups(s.hoisted, server, list =>
+          mapWhere(
+            list,
+            m => m.username === username && m.online !== online,
+            m => ({ ...m, online })
+          )
+        )
+        if (hoisted !== s.hoisted) out.hoisted = hoisted
         const cache = s.members[server]
         if (cache) {
           const list = mapWhere(
@@ -1382,10 +1458,30 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       acct.inviteUpdates.staleInvites(ev.server)
       const self = get().me?.username === ev.member.username
       if (!self) patchServer(ev.server, d => ({ ...d, member_count: d.member_count + 1 }))
-      patchMembers(ev.server, list => [
+      const joined = (list: Member[]) => [
         ...list.filter(m => m.username !== ev.member.username),
         ev.member,
-      ])
+      ]
+      set(s => {
+        const cache = s.members[ev.server]
+        const rest = s.hoisted[ev.server]?.rest
+        return {
+          ...(cache
+            ? { members: { ...s.members, [ev.server]: { ...cache, list: joined(cache.list) } } }
+            : {}),
+          ...(rest
+            ? {
+                hoisted: {
+                  ...s.hoisted,
+                  [ev.server]: {
+                    ...s.hoisted[ev.server],
+                    rest: { ...rest, list: joined(rest.list) },
+                  },
+                },
+              }
+            : {}),
+        }
+      })
       if (get().memberInfo[ev.server]) writeMemberInfo(ev.server, [[ev.member.username, ev.member]])
       if (self) void addServer(ev.server).catch(() => {})
     },
@@ -1462,7 +1558,25 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       if (!get().servers[ev.server]) return
       refetchServer(ev.server)
       void get().loadMembers(ev.server, true)
+      if (get().hoisted[ev.server]) get().clearGroups(ev.server)
       refreshMemberInfo(ev.server)
+    },
+    role_updated: ev => {
+      for (const read of reading) if (read.server === ev.server) read.roles.set(ev.role.id, ev.role)
+      patchServer(ev.server, d => ({ ...d, roles: withRole(d.roles, ev.role) }))
+    },
+    roles_reordered: ev => {
+      for (const read of reading)
+        if (read.server === ev.server && ev.version > (read.places?.version ?? -1)) read.places = ev
+      const known = get().servers[ev.server]
+      if (!known || (known.roles_version ?? -1) >= ev.version) return
+      const placed = placeRoles(known.roles, ev.order, ev.display)
+      if (!placed) return refetchServer(ev.server)
+      patchServer(ev.server, d => ({ ...d, roles: placed, roles_version: ev.version }))
+      if (
+        [Perm.ManageRoles, Perm.AssignRoles].some(perm => hasPerm(myPerms(get(), ev.server), perm))
+      )
+        refetchServer(ev.server)
     },
     channel_perms_changed: ev => {
       dropLinkCards()
@@ -1531,6 +1645,13 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
             m => ({ ...m, ...u })
           )
         ),
+        hoisted: mapGroups(s.hoisted, null, list =>
+          mapWhere(
+            list,
+            m => m.username === u.username,
+            m => ({ ...m, ...u })
+          )
+        ),
         messages: mapLists(s.messages, reauthor),
         adminUsers: {
           ...s.adminUsers,
@@ -1590,6 +1711,9 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       set(s => ({
         messages: mapLists(s.messages, unban),
         members: mapPages(s.members, list => dropWhere(list, m => m.username === ev.username)),
+        hoisted: mapGroups(s.hoisted, null, list =>
+          dropWhere(list, m => m.username === ev.username)
+        ),
         interacted: mapPages(s.interacted, list =>
           dropWhere(list, u => u.username === ev.username)
         ),

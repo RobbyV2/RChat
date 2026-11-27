@@ -474,7 +474,7 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
       <MemberAvatar members={v.members} ik={m.ik} size={32} />
       <span
         className="streamer min-w-0 flex-1 truncate text-sm"
-        style={{ color: hex(nameColor(m, v.roles)) }}
+        style={{ color: nameColor(m, v.roles) }}
       >
         <Masked text={m.name} own={m.ik === me} />
       </span>
@@ -512,7 +512,7 @@ function PeerMemberRow({ v, m, dated }: { v: ServerView; m: MemberView; dated: b
         <span
           data-p2p-member-line={m.name}
           className="streamer min-w-0 flex-1 truncate text-sm"
-          style={{ color: hex(nameColor(m, v.roles)) }}
+          style={{ color: nameColor(m, v.roles) }}
         >
           <Masked text={m.name} own={m.ik === me} />
         </span>

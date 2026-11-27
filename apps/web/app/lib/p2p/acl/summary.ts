@@ -82,6 +82,27 @@ export interface RoleSum {
   bits: number
   name?: string
   color?: number
+  // How it shows (display only): its icon (an emoji, '' for none), whether its members show
+  // as a group of their own, whether it colors their names, and its display position (null
+  // follows its position).
+  icon?: string
+  hoist?: boolean
+  tint?: boolean
+  dpos?: number | null
+  // The fields of its latest `role_meta` this version doesn't know, kept by the next write.
+  extra?: Record<string, unknown>
+}
+
+// The fields of a role's look, each read where it has the right type.
+export const ROLE_LOOKS = ['icon', 'hoist', 'tint', 'dpos'] as const
+const ROLE_META = new Set<string>(['role', 'name', 'color', ...ROLE_LOOKS])
+const ICON_MAX = 64
+
+const lookOk: Record<(typeof ROLE_LOOKS)[number], (x: unknown) => boolean> = {
+  icon: x => typeof x === 'string' && x.length <= ICON_MAX,
+  hoist: x => typeof x === 'boolean',
+  tint: x => typeof x === 'boolean',
+  dpos: x => x === null || Number.isSafeInteger(x),
 }
 
 // A channel overwrite (`chperm`) that allows or denies something.
@@ -227,7 +248,7 @@ export const applySummary = (s: Summary, d: SumDelta | null | undefined): Summar
   return next
 }
 
-// The roles: position, bits, and the name and color of their latest `role_meta`, else
+// The roles: position, bits, and the name, color and looks of their latest `role_meta`, else
 // of their creation.
 export const rolesOf = (F: EvalResult['facts'], ix: Ix) => {
   const roles = dict<RoleSum>()
@@ -239,6 +260,12 @@ export const rolesOf = (F: EvalResult['facts'], ix: Ix) => {
     const color = typeof m?.color === 'number' ? m.color : c?.color
     if (typeof name === 'string') r.name = name
     if (typeof color === 'number') r.color = color
+    for (const k of ROLE_LOOKS) {
+      const v = m && lookOk[k](m[k]) ? m[k] : c && lookOk[k](c[k]) ? c[k] : undefined
+      if (v !== undefined) (r as unknown as Record<string, unknown>)[k] = v
+    }
+    const extra = m ? Object.entries(m).filter(([k]) => !ROLE_META.has(k)) : []
+    if (extra.length) r.extra = Object.fromEntries(extra)
     roles[R] = r
   }
   return roles

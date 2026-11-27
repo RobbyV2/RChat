@@ -197,7 +197,7 @@ describe('P2P server flows: devices and roles', () => {
     expect(flows.actParts('code')).toEqual({ act: 'Make an invite code' })
     expect(flows.actParts('kick')).toEqual({ act: 'Kick' })
     expect(flows.actParts('mark')).toEqual({ act: 'Sync' })
-    expect(flows.actParts('role_meta')).toEqual({ act: 'Rename or recolor a role' })
+    expect(flows.actParts('role_meta')).toEqual({ act: 'Change how a role shows' })
     expect(flows.actParts('profile_reset', 'bob')).toEqual({
       act: 'Reset the server profile of',
       who: 'bob',
@@ -222,7 +222,7 @@ describe('P2P server flows: what a lost device removal signs again', () => {
         dan: { m: 'join', via: 'me', roles: ['r1'] },
         eve: { m: 'leave', rem: 'k9', by: 'zed' },
       }),
-      roles: { r1: { pos: 2, bits: 4, name: 'Mods', color: 7 } },
+      roles: { r1: { pos: 2, bits: 4, name: 'Mods', color: 7, hoist: false, dpos: null } },
       overwrites: { c1: { 'u:dan': { allow: 256, deny: 0 } } },
       everyone: 1,
       channels: { c1: { id: 'c1', name: 'general' } as unknown as AclContent },
@@ -264,6 +264,9 @@ describe('P2P server flows: what a lost device removal signs again', () => {
     expect(holds('profile_reset', { to: 'dan', fields: ['name'] }, reset)).toBe(true)
     expect(holds('profile_reset', { to: 'dan', fields: ['name'] }, reset, 'e0')).toBe(false)
     expect(holds('profile_reset', { to: 'dan', fields: ['name'] }, s)).toBe(false)
+    expect(holds('role_meta', { role: 'r1', name: 'Mods', hoist: false, dpos: null }, s)).toBe(true)
+    expect(holds('role_meta', { role: 'r1', name: 'Mods', hoist: true }, s)).toBe(false)
+    expect(holds('role_meta', { role: 'r1', icon: '' }, s)).toBe(false)
     // What the summary can't show is never signed again.
     expect(holds('mark', {}, s)).toBe(false)
   })

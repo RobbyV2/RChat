@@ -6,6 +6,7 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { DmRow } from '../../components/channel_sidebar'
 import { MemberName } from '../../components/member_sidebar'
+import type { Look } from '../role_looks'
 import { DisplayNameField, NameWithUsername, nameRevealKey } from '../../components/display_name'
 import { MaskedWords } from '../../components/ui'
 import { MarkdownMessage } from '../../components/markdown_message'
@@ -91,15 +92,20 @@ const FITTED = (display: string, username: string) =>
   `<span class="flex h-[1lh] min-w-0 flex-wrap items-baseline overflow-hidden text-ellipsis"><span dir="auto" class="max-w-max min-w-0 flex-[1_1_4rem] truncate">${display}</span><span class="streamer shrink-0 pl-1 text-on-surface-variant">(${username})</span></span>`
 
 test('a member list name fits its row, with the whole name in its title', async () => {
-  const row = (u: ReturnType<typeof user>, color?: string) =>
-    renderToStaticMarkup(<MemberName user={u} color={color} />)
-  const cls = 'class="streamer min-w-0 flex-1 truncate text-sm"'
+  const row = (u: ReturnType<typeof user>, color?: string, icon?: Look['icon']) =>
+    renderToStaticMarkup(<MemberName user={u} color={color} icon={icon} />)
+  const cls = 'class="streamer min-w-0 truncate text-sm"'
+  const box = (inner: string) =>
+    `<span class="flex min-w-0 flex-1 items-center gap-1">${inner}</span>`
   expect(row(user('bob', { display_name: 'Robert' }))).toBe(
-    `<span title="Robert (bob)" ${cls}>${FITTED('Robert', 'bob')}</span>`
+    box(`<span title="Robert (bob)" ${cls}>${FITTED('Robert', 'bob')}</span>`)
   )
   expect(row(user('alice', { display_name: 'Alice' }), '#ff0000')).toBe(
-    `<span title="Alice" style="color:#ff0000" ${cls}>Alice</span>`
+    box(`<span title="Alice" style="color:#ff0000" ${cls}>Alice</span>`)
   )
+  expect(
+    row(user('alice', { display_name: 'Alice' }), undefined, { emoji: 'x', role: 'Mods' })
+  ).toContain('<span role="img" title="Mods" aria-label="Mods" data-role-icon="true"')
   Object.assign(initial, { streamer: true })
   expect(row(user('bob', { display_name: 'Robert' })).includes('title=')).toBe(false)
   Object.assign(initial, {

@@ -107,6 +107,8 @@ import { ProfilesModeField } from './server_profile_dialog'
 import { NameWithUsername } from './display_name'
 import { useShownMembers } from './shown_user'
 import { ServerUploadExpiry } from './upload_expiry'
+import { RoleLooksFields } from './role_looks_fields'
+import { hostedShown } from '../lib/role_looks'
 import { TopicEditor } from './channel_topic'
 import {
   BANNER_PRESETS,
@@ -346,10 +348,14 @@ function RoleRow({
     const rank = myRank(acct.store.getState(), server)
     const movable = movableRoles(roles, limit, limits, rank, confirmed)
     const order = roles.map(r => r.id)
+    const display = hostedShown(roles).map(r => r.id)
+    const follows = roles.every(
+      r => r.display_position === null || r.display_position === undefined
+    )
     openActionMenu(
       x,
       y,
-      { kind: 'role', server, role, order, movable, version, after },
+      { kind: 'role', server, role, order, display, follows, movable, version, after },
       undefined,
       acct
     )
@@ -424,6 +430,22 @@ function RoleRow({
         />
         Allow anyone to mention this role
       </label>
+      <span {...keepPress} className="block">
+        <RoleLooksFields
+          name={role.name}
+          icon={role.icon ?? null}
+          hoist={role.hoist === true}
+          tint={role.color_names !== false}
+          locked={locked}
+          onChange={({ icon, hoist, tint }) =>
+            void updateRole(server, role.id, {
+              ...(icon !== undefined ? { icon } : {}),
+              ...(hoist !== undefined ? { hoist } : {}),
+              ...(tint !== undefined ? { color_names: tint } : {}),
+            }).then(inSession(after))
+          }
+        />
+      </span>
       {(locked ?? noDelete) && (
         <p className="pt-1.5 text-xs text-on-surface-variant">{locked ?? noDelete}</p>
       )}

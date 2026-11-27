@@ -1,7 +1,7 @@
 import { isRecord } from '../../bytes'
 import { genesisBundle } from '../acl/binding'
 import { knownRules, RULES_VERSION } from '../acl/rules'
-import { emptySummary } from '../acl/summary'
+import { emptySummary, type RoleSum } from '../acl/summary'
 import type { Carried } from '../acl_room'
 import { b64u, canonical, randomBytes } from '../canonical'
 import { blankRoom } from '../dag'
@@ -23,6 +23,14 @@ import type { ServerCtx } from './context'
 import { SYNC_TEXT, OLD_GONE_TEXT, ServerError, type Migrated } from './types'
 import { type Rt } from './rt'
 import { clip } from '../rate'
+
+// The `role_create` a new copy makes from a role of the old one: its position, bits, name, color
+// and looks (the fields of its last change this version doesn't know stay behind).
+const carriedRole = (role: RoleSum) => {
+  const out: Record<string, unknown> = { ...role }
+  delete out.extra
+  return out
+}
 
 export function transferAsks(cx: ServerCtx) {
   return [...cx.xferAsks].map(([key, a]) => ({
@@ -339,7 +347,7 @@ export async function carryOver(cx: ServerCtx, to: string) {
         `r:${id}`,
         async () => {
           if (carry.roles[id] && cur().roles[carry.roles[id]]) return
-          const made = await cx.emit(to, 'role_create', () => ({ ...role }))
+          const made = await cx.emit(to, 'role_create', () => carriedRole(role))
           await save({ roles: { ...carry.roles, [id]: made } })
         },
       ])

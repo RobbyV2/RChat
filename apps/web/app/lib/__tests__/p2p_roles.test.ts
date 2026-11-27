@@ -14,6 +14,10 @@ import {
   overFlags,
   placeRole,
   slowChanged,
+  displayMoves,
+  lookOfMember,
+  memberLooks,
+  shownOrder,
   type Move,
 } from '../p2p/roles'
 import { serverPings, serverUnread } from '../p2p/alerts'
@@ -22,7 +26,13 @@ import { newRolePos, type MemberView, type RoleView } from '../p2p/server'
 import { LOCAL } from '../p2p/limits'
 import type { Rank } from '../p2p/acl/rules'
 
-const role = (id: string, pos: number, holders = 0, color: number | null = null): RoleView => ({
+const role = (
+  id: string,
+  pos: number,
+  holders = 0,
+  color: number | null = null,
+  over: Partial<RoleView> = {}
+): RoleView => ({
   id,
   name: id.toUpperCase(),
   color,
@@ -31,6 +41,11 @@ const role = (id: string, pos: number, holders = 0, color: number | null = null)
   holders,
   below: true,
   held: false,
+  icon: null,
+  hoist: true,
+  tint: true,
+  dpos: null,
+  ...over,
 })
 const member = (ik: string, over: Partial<MemberView> = {}): MemberView => ({
   ik,
@@ -161,8 +176,8 @@ describe('role positions', () => {
   })
 })
 
-describe('the member list (grouped by top role)', () => {
-  test('online members by top role, highest first; then online, offline and invited', () => {
+describe('the member list (grouped by the roles shown separately)', () => {
+  test('members by their first role shown separately, online first; then online, offline and invited', () => {
     const roles = [role('mod', 20, 2, 0xff0000), role('vip', 10, 1, null)]
     const ms = [
       member('zed', { top: 'mod', roles: ['mod'] }),
@@ -176,16 +191,44 @@ describe('the member list (grouped by top role)', () => {
     ]
     const g = memberGroups(ms, roles, 'me')
     expect(g.map(x => [x.label, x.list.map(m => m.ik)])).toEqual([
-      ['MOD', ['amy', 'zed']],
+      ['MOD', ['amy', 'zed', 'dan']],
       ['VIP', ['bob']],
       ['Online', ['cat', 'me', 'old']],
-      ['Offline', ['dan']],
       ['Invited', ['eve']],
     ])
     expect(g[0].color).toBe(0xff0000)
-    expect(nameColor(ms[0], roles)).toBe(0xff0000)
-    expect(nameColor(ms[2], roles)).toBeNull()
-    expect(nameColor(ms[3], roles)).toBeNull()
+    expect(nameColor(ms[0], roles)).toBe('#ff0000')
+    expect(nameColor(ms[2], roles)).toBeUndefined()
+    expect(nameColor(ms[3], roles)).toBeUndefined()
+    const shown = [
+      role('mod', 20, 2, 0xff0000, { hoist: false, dpos: 5 }),
+      role('vip', 10, 1, 0x00ff00),
+    ]
+    expect(memberGroups(ms, shown, 'me').map(x => [x.label, x.list.map(m => m.ik)])).toEqual([
+      ['VIP', ['amy', 'bob']],
+      ['Online', ['cat', 'me', 'old', 'zed']],
+      ['Offline', ['dan']],
+      ['Invited', ['eve']],
+    ])
+    expect(nameColor(ms[1], shown)).toBe('#00ff00')
+  })
+
+  test('names take the color and icon of the first roles in display order that give them', () => {
+    const shield = String.fromCodePoint(0x1f6e1, 0xfe0f)
+    const roles = [
+      role('top', 30, 1, 0x111111, { tint: false, icon: shield }),
+      role('mid', 20, 1, null, { icon: 'not an emoji' }),
+      role('low', 10, 1, 0x333333, { dpos: 40 }),
+    ]
+    const all = { roles: ['top', 'mid', 'low'] }
+    expect(lookOfMember(all, roles)).toEqual({
+      color: '#333333',
+      icon: { emoji: shield, role: 'TOP' },
+    })
+    expect(lookOfMember({ roles: ['mid'] }, roles)).toEqual({})
+    const looks = memberLooks({ members: [member('amy', all)], roles }, text => text.toLowerCase())
+    expect(looks('amy').icon).toEqual({ emoji: shield, role: 'top' })
+    expect(looks('nobody')).toEqual({})
   })
 
   test('colors read and written as #rrggbb', () => {
@@ -194,6 +237,58 @@ describe('the member list (grouped by top role)', () => {
     expect(hex(null)).toBeUndefined()
     expect(fromHex('#7C4DFF')).toBe(0x7c4dff)
     expect(fromHex('red')).toBeNull()
+  })
+})
+
+describe('the order roles show in', () => {
+  const apply = (roles: RoleView[], moves: { role: string; dpos: number | null }[]) =>
+    shownOrder(
+      roles.map(r => {
+        const m = moves.find(x => x.role === r.id)
+        return m ? { ...r, dpos: m.dpos } : r
+      })
+    )
+  const perms = <T>(xs: T[]): T[][] =>
+    xs.length <= 1
+      ? [xs]
+      : xs.flatMap((x, i) => perms([...xs.slice(0, i), ...xs.slice(i + 1)]).map(p => [x, ...p]))
+
+  test('without display positions roles show in role order', () => {
+    expect(shownOrder([role('a', 30), role('b', 20), role('c', 10)])).toEqual(['a', 'b', 'c'])
+    expect(shownOrder([role('a', 30), role('b', 20, 0, null, { dpos: 40 })])).toEqual(['b', 'a'])
+  })
+
+  test('every order of the roles we may move lands as asked, the others keep their places', () => {
+    const base = [
+      role('a', 4000),
+      role('b', 3000, 0, null, { dpos: 500 }),
+      role('c', 2000),
+      role('d', 1000, 0, null, { dpos: 3500 }),
+    ]
+    for (let mask = 0; mask < 16; mask++) {
+      const roles = base.map((r, i) => ({ ...r, below: (mask & (1 << i)) !== 0 }))
+      const now = shownOrder(roles)
+      const slots = now.flatMap((id, i) => (roles.find(r => r.id === id)!.below ? [i] : []))
+      for (const p of perms(slots.map(i => now[i]))) {
+        const asked = [...now]
+        slots.forEach((at, k) => (asked[at] = p[k]))
+        const moves = displayMoves(roles, asked, r => r.below, 1000)
+        expect(moves).not.toBeNull()
+        expect(apply(roles, moves!)).toEqual(asked)
+        expect(moves!.every(m => roles.find(r => r.id === m.role)!.below)).toBe(true)
+        if (asked.join() === now.join()) expect(moves).toEqual([])
+      }
+    }
+  })
+
+  test('a move between two roles with no room between them is refused', () => {
+    const roles = [
+      role('a', 11, 0, null, { below: false }),
+      role('b', 10, 0, null, { below: false }),
+      role('c', 5),
+    ]
+    expect(displayMoves(roles, ['a', 'c', 'b'], r => r.below, 1000)).toBeNull()
+    expect(displayMoves(roles, ['a', 'b', 'c'], r => r.below, 1000)).toEqual([])
   })
 })
 

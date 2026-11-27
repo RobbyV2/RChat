@@ -103,6 +103,10 @@ const role = (id: string, name: string, over: Partial<RoleView> = {}): RoleView 
   holders: 0,
   below: true,
   held: false,
+  icon: null,
+  hoist: true,
+  tint: true,
+  dpos: null,
   ...over,
 })
 
@@ -256,6 +260,7 @@ const recorder = () => {
     'assignRole',
     'revokeRole',
     'moveRoles',
+    'showRoles',
     'deleteRole',
     'unlockProfile',
   ])
@@ -779,12 +784,19 @@ describe("a P2P role's menu", () => {
     const v = server({ perms: P.ManageRoles })
     const [top, mods, helpers, fans] = ROLES
     expect(labels(onRole(v, top))).toEqual([])
-    expect(labels(onRole(v, mods))).toEqual(['Move Down', 'Delete Role'])
-    expect(labels(onRole(v, helpers))).toEqual(['Move Up', 'Move Down'])
-    expect(labels(onRole(v, fans))).toEqual(['Move Up', 'Delete Role'])
+    expect(labels(onRole(v, mods))).toEqual(['Move Down', 'Show Lower', 'Delete Role'])
+    expect(labels(onRole(v, helpers))).toEqual([
+      'Move Up',
+      'Move Down',
+      'Show Higher',
+      'Show Lower',
+    ])
+    expect(labels(onRole(v, fans))).toEqual(['Move Up', 'Show Higher', 'Delete Role'])
     expect(labels(onRole(server({ perms: P.ManageRoles | P.ManageChannels }), helpers))).toEqual([
       'Move Up',
       'Move Down',
+      'Show Higher',
+      'Show Lower',
       'Delete Role',
     ])
     expect(labels(onRole(server(), mods))).toEqual([])
@@ -807,6 +819,41 @@ describe("a P2P role's menu", () => {
         ],
       ],
     ])
+    expect(await run(row(onRole(v, fans), 'Show Higher'))).toEqual([
+      [
+        'server.showRoles',
+        SRV,
+        [
+          { role: 'r1', dpos: -1024 },
+          { role: 'r3', dpos: -2048 },
+          { role: 'r2', dpos: -3072 },
+        ],
+      ],
+    ])
+    const placed = server({
+      perms: P.ManageRoles,
+      roles: ROLES.map(r => (r.id === 'r2' ? { ...r, dpos: 5 } : r)),
+    })
+    expect(labels(onRole(placed, fans))).toContain('Show in Role Order')
+    expect(await run(row(onRole(placed, fans), 'Show in Role Order'))).toEqual([
+      ['server.showRoles', SRV, [{ role: 'r2', dpos: null }]],
+    ])
+    const above = server({
+      perms: P.ManageRoles,
+      roles: ROLES.map(r => (r.id === 'r0' ? { ...r, dpos: 5 } : r)),
+    })
+    expect(labels(onRole(above, fans))).not.toContain('Show in Role Order')
+    const both = (top: number) =>
+      server({
+        perms: P.ManageRoles,
+        roles: ROLES.map(r =>
+          r.id === 'r0' ? { ...r, dpos: top } : r.id === 'r2' ? { ...r, dpos: 99_999 } : r
+        ),
+      })
+    expect(await run(row(onRole(both(100_000), fans), 'Show in Role Order'))).toEqual([
+      ['server.showRoles', SRV, [{ role: 'r2', dpos: null }]],
+    ])
+    expect(labels(onRole(both(-100_000), fans))).not.toContain('Show in Role Order')
     expect(await run(row(onRole(v, mods), 'Delete Role'))).toEqual([
       ['confirm', 'Delete Role', 'Delete Mods? Members who have it lose it.', 'Delete'],
       ['server.deleteRole', SRV, 'r1'],

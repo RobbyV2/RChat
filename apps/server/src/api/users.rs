@@ -201,25 +201,16 @@ impl IntoResponse for Names {
 }
 
 async fn member_roles(db: &Db, server: &str, username: &str) -> Result<Vec<Role>, ApiError> {
-    let rows = sqlx::query(
-        "SELECT r.id, r.name, r.color, r.perms, r.mentionable, r.position FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2 ORDER BY r.position DESC, r.id",
-    )
-    .bind(server)
-    .bind(username)
-    .fetch_all(db)
-    .await?;
-    let mut roles = Vec::with_capacity(rows.len());
-    for r in &rows {
-        roles.push(Role {
-            id: r.try_get(0)?,
-            name: r.try_get(1)?,
-            color: r.try_get(2)?,
-            perms: r.try_get(3)?,
-            mentionable: r.try_get::<i64, _>(4)? != 0,
-            position: r.try_get(5)?,
-        });
-    }
-    Ok(roles)
+    let sql = format!(
+        "SELECT {} FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2 ORDER BY r.position DESC, r.id",
+        crate::api::servers::ROLE_COLUMNS
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(server)
+        .bind(username)
+        .fetch_all(db)
+        .await?;
+    rows.iter().map(crate::api::servers::role_of).collect()
 }
 
 /// The membership of `username` in the server `access` opens, as its viewer may see it.
@@ -1667,7 +1658,7 @@ mod tests {
                     "is_creator": false,
                     "perms": 0,
                     "role_ids": [role],
-                    "roles": [{"id": role, "name": "mods", "color": "#ff0000", "perms": 4, "mentionable": false, "position": 0}],
+                    "roles": [{"id": role, "name": "mods", "color": "#ff0000", "perms": 4, "mentionable": false, "position": 0, "display_position": null, "hoist": false, "icon": null, "color_names": true}],
                     "joined_at": 200,
                     "online": false,
                 },

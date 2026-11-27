@@ -59,12 +59,12 @@ export const outranks = (a: Rank, b: Rank): boolean => {
 // The role order (highest first) with `id` moved one step up (`step` -1) or down (1): it trades
 // places with the next role of `movable` that way, and every other role keeps its place, as the
 // server requires. null when it can't move that way.
-export const stepRole = (
-  order: readonly number[],
-  movable: readonly number[],
-  id: number,
+export const stepRole = <Id>(
+  order: readonly Id[],
+  movable: readonly Id[],
+  id: Id,
   step: -1 | 1
-): number[] | null => {
+): Id[] | null => {
   const slots = order.flatMap((r, i) => (movable.includes(r) ? [i] : []))
   const at = slots.findIndex(i => order[i] === id)
   const to = slots[at + step]

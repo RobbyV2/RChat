@@ -498,3 +498,33 @@ pub fn perms_widens(
     )
     .join("\n")
 }
+
+fn looks(places: &[f64], hoist: &[u8]) -> Vec<rchat_perms::looks::Look> {
+    places
+        .iter()
+        .enumerate()
+        .map(|(i, place)| rchat_perms::looks::Look {
+            place: *place as i64,
+            hoist: hoist.get(i).is_some_and(|h| *h != 0),
+        })
+        .collect()
+}
+
+/// Roles come highest rank first, one place each; the answer is indexes into them.
+#[wasm_bindgen]
+pub fn perms_display_order(places: &[f64]) -> Vec<f64> {
+    rchat_perms::looks::display_order(&looks(places, &[]))
+        .into_iter()
+        .map(|i| i as f64)
+        .collect()
+}
+
+/// Roles come highest rank first, with a place and a hoist flag (1 or 0) each; the answer is
+/// indexes into them.
+#[wasm_bindgen]
+pub fn perms_hoist_groups(places: &[f64], hoist: &[u8]) -> Vec<f64> {
+    rchat_perms::looks::groups(&looks(places, hoist))
+        .into_iter()
+        .map(|i| i as f64)
+        .collect()
+}

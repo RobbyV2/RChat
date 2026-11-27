@@ -227,6 +227,12 @@ export interface RoleView {
   name: string
   color: number | null
   pos: number
+  // How it shows: its emoji icon, whether its members show as a group of their own, whether it
+  // colors their names, and its display position (null follows `pos`).
+  icon: string | null
+  hoist: boolean
+  tint: boolean
+  dpos: number | null
   bits: number
   holders: number
   below: boolean

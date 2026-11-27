@@ -7,10 +7,11 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 import { useAccount } from '../../lib/client/react'
 import { ChannelCanContext, useChannelPerms } from '../../lib/client/use_channel_perms'
 import { CAN_ALL, type ChannelCan } from '../../lib/channel_perms'
+import type { Look } from '../../lib/role_looks'
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { roomLooksKey } from '../../lib/server_profile'
-import { useStore } from '../../lib/store'
+import { useMask, useStore } from '../../lib/store'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
 import type { ServerView } from '../../lib/p2p/server'
@@ -28,10 +29,13 @@ import {
   P2pRow,
   P2pSlowRow,
   pingsMe,
+  rowLook,
   useP2pFlash,
   useP2pList,
   type Mentionable,
 } from './p2p_chat'
+import { memberLooks } from '../../lib/p2p/roles'
+import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { sendBlockFor } from './p2p_server_view'
 import { usePeerTimeoutEnds } from '../timeout_dialog'
 import { useDmFacts } from './p2p_dm_pane'
@@ -64,6 +68,8 @@ interface ThreadFacts {
   timedOut?: boolean
   // What we hold in a server thread's channel; a conversation holds nothing back.
   can?: ChannelCan
+  // How a server member's name shows (role color and icon); a conversation shows names plainly.
+  lookOf?: (ik: string) => Look
 }
 
 function P2pThreadPanelBody() {
@@ -90,6 +96,9 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
   const members = v.members
   const looks = useMemo(() => roomLooksKey(members), [members])
   const userOf = useCallback((ik: string) => memberUser(room, ik), [room, looks])
+  const roles = v.roles
+  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
+  const lookOf = useMemo(() => memberLooks({ members, roles }, mask), [members, roles, mask])
   const people = useMemo<Mentionable[]>(
     () =>
       members.filter(m => m.m === 'join').map(m => ({ ik: m.ik, name: m.name, handle: m.name })),
@@ -125,6 +134,7 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
         canAct,
         timedOut: timedOut !== null,
         can: held,
+        lookOf,
       }}
     />
   )
@@ -274,6 +284,7 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
         onMenu={rowMenu}
         onCopy={copyRow}
         onJump={root ? jumpMain : jumpHere}
+        {...rowLook(f.lookOf?.(p.sender))}
       />
     )
   }

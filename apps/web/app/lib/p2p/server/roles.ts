@@ -7,6 +7,7 @@ import { chanFactsOf, channelsOf, managesRoleOf, memberOf, membershipOf, rankOf 
 import { unindexRoom } from '../search'
 import type { ServerCtx } from './context'
 import { ServerError, NO_ROOM_TEXT, newRolePos } from './types'
+import { ROLE_LOOKS, type RoleSum } from '../acl/summary'
 import { clip } from '../rate'
 
 // A new role goes to the bottom of the list.
@@ -30,25 +31,56 @@ export async function createRole(
     bits: role.bits,
     ...(name ? { name } : {}),
     ...(role.color !== null ? { color: role.color } : {}),
+    hoist: false,
   }))
 }
 
-// A role's name and color (`role_meta`).
-export async function editRole(
-  cx: ServerCtx,
-  room: string,
+// A change to how a role shows: its name, color, icon ('' or null for none), whether its
+// members show separately, whether it colors their names, and its display position (null
+// follows its position).
+export interface RoleMetaPatch {
+  name?: string
+  color?: number | null
+  icon?: string | null
+  hoist?: boolean
+  tint?: boolean
+  dpos?: number | null
+}
+
+// The next `role_meta` of `r`: every field it has now, the fields this version doesn't know
+// included, with `patch` applied.
+export const roleMetaContent = (
   role: string,
-  meta: { name: string; color: number | null }
-) {
-  // Admitted by the generic rule: one we may not make would show nothing.
-  const s = cx.sumOf(room)
-  if (!s.roles[role] || !managesRoleOf(s, cx.me, role)) throw new ServerError(CANT_TEXT)
-  const name = clip(meta.name.trim(), cx.local.server.roleNameMax)
-  return cx.emit(room, 'role_meta', () => ({
+  r: RoleSum,
+  patch: RoleMetaPatch,
+  nameMax: number
+): Record<string, unknown> => {
+  const name = clip((patch.name ?? r.name ?? '').trim(), nameMax)
+  const color = patch.color === undefined ? r.color : patch.color
+  const looks: Record<string, unknown> = {}
+  for (const k of ROLE_LOOKS) if (r[k] !== undefined) looks[k] = r[k]
+  if (patch.icon !== undefined) looks.icon = patch.icon ?? ''
+  if (patch.hoist !== undefined) looks.hoist = patch.hoist
+  if (patch.tint !== undefined) looks.tint = patch.tint
+  if (patch.dpos !== undefined) looks.dpos = patch.dpos
+  return {
+    ...(r.extra ?? {}),
     role,
     ...(name ? { name } : {}),
-    ...(meta.color !== null ? { color: meta.color } : {}),
-  }))
+    ...(typeof color === 'number' ? { color } : {}),
+    ...looks,
+  }
+}
+
+// How a role shows (`role_meta`).
+export async function editRole(cx: ServerCtx, room: string, role: string, patch: RoleMetaPatch) {
+  // Admitted by the generic rule: one we may not make would show nothing.
+  const s = cx.sumOf(room)
+  const r = s.roles[role]
+  if (!r || !managesRoleOf(s, cx.me, role)) throw new ServerError(CANT_TEXT)
+  return cx.emit(room, 'role_meta', () =>
+    roleMetaContent(role, r, patch, cx.local.server.roleNameMax)
+  )
 }
 
 export function moveRole(cx: ServerCtx, room: string, role: string, pos: number) {

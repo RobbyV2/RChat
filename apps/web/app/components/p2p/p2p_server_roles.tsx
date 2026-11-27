@@ -48,6 +48,8 @@ import {
 import { dangerBtn, fieldCls, Masked, textBtn } from '../ui'
 import { PeerTimeoutBadge } from '../timeout_dialog'
 import { MemberAvatar } from './p2p_badge'
+import { RoleLooksFields } from '../role_looks_fields'
+import { roleIcon } from '../../lib/role_looks'
 
 // Roles and channel permissions of a P2P server: the role editor (drag order,
 // names, colors, permission toggles), a member's roles (menu and card), and a channel's
@@ -181,6 +183,16 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
         {r.holders} {r.holders === 1 ? 'member' : 'members'}
       </p>
       <PermChecks items={permItems(v)} locked={locked} {...bitChecks(identity)(v, r.id, r.bits)} />
+      <span {...keepPress} className="block">
+        <RoleLooksFields
+          name={mask(r.name)}
+          icon={roleIcon(r.icon)}
+          hoist={r.hoist}
+          tint={r.tint}
+          locked={locked}
+          onChange={patch => void p2pServer.editRole(v.id, r.id, patch)}
+        />
+      </span>
       {locked && can(v, P.ManageRoles) && <Note>{locked}</Note>}
     </div>
   )
@@ -291,7 +303,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
         <span className="flex min-w-0 flex-1 flex-col">
           <span
             className="streamer truncate text-sm font-semibold"
-            style={{ color: hex(nameColor(m, v.roles)) }}
+            style={{ color: nameColor(m, v.roles) }}
           >
             <Masked text={m.name} own={self} />
           </span>

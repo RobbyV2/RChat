@@ -36,7 +36,15 @@ import {
 import { ContentView, type ContentEv } from '../p2p/acl/visibility'
 import { evalSummary } from './p2p_acl_world'
 import { ServerWorld } from './p2p_server_world'
-import { applySummary, diffSummary, emptySummary, fromStored, toStored } from '../p2p/acl/summary'
+import {
+  applySummary,
+  diffSummary,
+  emptySummary,
+  fromStored,
+  rolesOf,
+  toStored,
+} from '../p2p/acl/summary'
+import { roleMetaContent } from '../p2p/server/roles'
 
 // Roles and moderation in P2P servers on the production ACL modules: the rank rules,
 // races between moderation and role changes, channel registers, slow mode and the
@@ -551,6 +559,100 @@ describe('role_meta: a role keeps its name and color in a register', () => {
       // A live write over v keeps the code dead; a cut one (Y kicked) doesn't.
       expect(add.v.s).toBe(variant === 'demoted' ? 'R' : 'A')
     })
+
+  test('looks: the latest role_meta, else the role as made, each field read defensively', () => {
+    const w = world()
+    const MOD = role(w, 5, KICK | ROLES)
+    const made = w.ok('O1', 'role_create', {
+      pos: 2,
+      bits: 0,
+      hoist: false,
+      icon: 'x',
+      tint: 'no',
+      dpos: 3.5,
+    }).id
+    join(w, 'A1')
+    give(w, 'A', MOD)
+    const looks = () => {
+      const r = rolesOf(F(w), w.ref.acl.ix)[made]
+      return { icon: r.icon, hoist: r.hoist, tint: r.tint, dpos: r.dpos, extra: r.extra }
+    }
+    expect(looks()).toEqual({
+      icon: 'x',
+      hoist: false,
+      tint: undefined,
+      dpos: undefined,
+      extra: undefined,
+    })
+    const shield = String.fromCodePoint(0x1f6e1, 0xfe0f)
+    w.ok('A1', 'role_meta', {
+      role: made,
+      name: 'Crew',
+      icon: shield,
+      hoist: true,
+      tint: false,
+      dpos: 9,
+      glow: 'soft',
+    })
+    expect(looks()).toEqual({
+      icon: shield,
+      hoist: true,
+      tint: false,
+      dpos: 9,
+      extra: { glow: 'soft' },
+    })
+    expect(w.act('A1', 'role_meta', { role: made, icon: 7, hoist: 'yes', dpos: null }).v.s).toBe(
+      'A'
+    )
+    expect(looks()).toEqual({
+      icon: 'x',
+      hoist: false,
+      tint: undefined,
+      dpos: null,
+      extra: undefined,
+    })
+    // A moderator demoted concurrently: their new icon doesn't count.
+    const P1 = w.heads()
+    w.ok('O1', 'revoke', { to: 'A', role: MOD })
+    w.ok('A1', 'role_meta', { role: made, icon: shield, hoist: true }, { ap: P1 })
+    expect(looks().icon).toBe('x')
+  })
+
+  test('a write keeps every field the role has, the ones this version does not know too', () => {
+    const r = {
+      pos: 1,
+      bits: 0,
+      name: 'Crew',
+      color: 5,
+      icon: 'x',
+      hoist: false,
+      dpos: 9,
+      extra: { glow: 'soft' },
+    }
+    expect(roleMetaContent('r', r, { tint: true }, 100)).toEqual({
+      glow: 'soft',
+      role: 'r',
+      name: 'Crew',
+      color: 5,
+      icon: 'x',
+      hoist: false,
+      dpos: 9,
+      tint: true,
+    })
+    expect(roleMetaContent('r', r, { icon: null, dpos: null, name: ' Team ' }, 100)).toEqual({
+      glow: 'soft',
+      role: 'r',
+      name: 'Team',
+      color: 5,
+      icon: '',
+      hoist: false,
+      dpos: null,
+    })
+    expect(roleMetaContent('r', { pos: 1, bits: 0 }, { hoist: true }, 100)).toEqual({
+      role: 'r',
+      hoist: true,
+    })
+  })
 
   test('a client that does not know role_meta admits it with no effect and no strike', () => {
     const w = new AclWorld({ model: false })

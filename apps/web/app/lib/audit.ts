@@ -61,6 +61,9 @@ const FIELD_LABELS: Record<string, string> = {
   color: 'Color',
   perms: 'Permissions',
   mentionable: 'Anyone can mention',
+  icon: 'Icon',
+  hoist: 'Show members separately',
+  color_names: 'Color member names',
   banner_color: 'Banner color',
   description: 'Description',
   icon_kind: 'Icon',
@@ -435,6 +438,15 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(' changed the role order')]
     case 'role.order_confirm':
       return [...actor, t(' confirmed the role order')]
+    case 'role.display_order':
+      return [
+        ...actor,
+        t(
+          entry.details.follow === true
+            ? ' showed the roles in role order'
+            : ' changed the order roles show in'
+        ),
+      ]
     case 'role.order_init':
       return [t('Roles were put in order by their permissions')]
     case 'channel.create':

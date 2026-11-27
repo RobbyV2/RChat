@@ -349,6 +349,30 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 seq,
             })
         }
+        WsEvent::RoleUpdated { server, role } => {
+            let role = crate::api::servers::role_in(db, &server, role.id)
+                .await
+                .ok()
+                .flatten()?;
+            Some(WsEvent::RoleUpdated { server, role })
+        }
+        WsEvent::RolesReordered {
+            server,
+            order: _,
+            display: _,
+            version: _,
+        } => {
+            let (order, display, version) = crate::api::servers::role_places(db, &server)
+                .await
+                .ok()
+                .flatten()?;
+            Some(WsEvent::RolesReordered {
+                server,
+                order,
+                display,
+                version,
+            })
+        }
         WsEvent::AdminChanged {
             server,
             username,

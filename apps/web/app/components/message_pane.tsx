@@ -55,6 +55,7 @@ import {
   confirmDeleteMessage,
   myRank,
   roleColor,
+  roleLook,
   userRefFor,
   useStore,
   viewKey,
@@ -110,6 +111,8 @@ import { PollCard } from './poll_card'
 import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { isNotice, isSystem } from '../lib/system_messages'
+import type { Look } from '../lib/role_looks'
+import { RoleIcon } from './role_icon'
 import { MessageTime, ShortTime } from './timestamp'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
@@ -287,12 +290,20 @@ export const avatarTriggerCls =
   'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
 export const nameTriggerCls =
   'cursor-pointer rounded-sm outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
+// The name color and role icon of a row's author, as row props.
+const authorLook = (look: Look) => ({
+  color: look.color,
+  icon: look.icon?.emoji,
+  iconRole: look.icon?.role,
+})
+
 // Avatar on the left; name and `meta` (the time) above `children` on the right.
 export function AuthorRow({
   author,
   server,
   size,
   color,
+  icon,
   meta,
   children,
 }: {
@@ -300,6 +311,7 @@ export function AuthorRow({
   server: string | null
   size: number
   color?: string
+  icon?: Look['icon']
   meta: ReactNode
   children: ReactNode
 }) {
@@ -329,6 +341,7 @@ export function AuthorRow({
             style={{ color }}
             className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
           />
+          <RoleIcon emoji={icon?.emoji} role={icon?.role} />
           {isWebhookAuthor(author.username) && <WebhookBadge />}
           {meta}
         </div>
@@ -511,6 +524,9 @@ interface RowProps {
   editing: boolean
   server: string | null
   color: string | undefined
+  // The emoji of the author's role icon and the role's name.
+  icon: string | undefined
+  iconRole: string | undefined
   quoteColor: string | undefined
   onMenu: (m: Message, x: number, y: number) => void
   onReply: (m: Message) => void
@@ -536,6 +552,8 @@ const MessageRow = memo(function MessageRow({
   editing,
   server,
   color,
+  icon,
+  iconRole,
   quoteColor,
   onMenu,
   onReply,
@@ -617,6 +635,7 @@ const MessageRow = memo(function MessageRow({
             server={server}
             size={36}
             color={color}
+            icon={icon && iconRole !== undefined ? { emoji: icon, role: iconRole } : undefined}
             meta={timeMeta(m.created_at)}
           >
             {body}
@@ -1302,9 +1321,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                         canForward={forwardable(m)}
                         editing={editingId === m.id}
                         server={memberServer}
-                        color={roleColor(
-                          detail?.roles,
-                          memberFor(m.author.username)?.role_ids ?? []
+                        {...authorLook(
+                          roleLook(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])
                         )}
                         quoteColor={
                           m.reply_to?.author

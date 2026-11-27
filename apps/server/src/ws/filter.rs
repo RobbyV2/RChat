@@ -781,6 +781,13 @@ pub(super) fn wants(
         WsEvent::RolesChanged { server } | WsEvent::UploadExpiryChanged { server } => {
             in_server(server)
         }
+        WsEvent::RoleUpdated { server, role: _ }
+        | WsEvent::RolesReordered {
+            server,
+            order: _,
+            display: _,
+            version: _,
+        } => in_server(server),
         WsEvent::ChannelPermsChanged {
             server,
             channel_id: _,

@@ -157,6 +157,14 @@ export interface Role {
   mentionable?: boolean
   // Place in the server's role order: higher ranks higher.
   position?: number
+  // Place in the order roles show in; null follows `position`.
+  display_position?: number | null
+  // Its members show in a group of their own in the member list.
+  hoist?: boolean
+  // One emoji shown after its members' names.
+  icon?: string | null
+  // It colors its members' names (on unless false).
+  color_names?: boolean
 }
 
 export interface ChannelPerm {
@@ -1188,6 +1196,14 @@ export type WsEvent =
   | { type: 'member_kicked'; server: string; username: string; banned: boolean }
   | { type: 'admin_changed'; server: string; username: string; is_admin: boolean; perms: number }
   | { type: 'roles_changed'; server: string }
+  | { type: 'role_updated'; server: string; role: Role }
+  | {
+      type: 'roles_reordered'
+      server: string
+      order: number[]
+      display: (number | null)[]
+      version: number
+    }
   | { type: 'upload_expiry_changed'; server: string }
   | { type: 'channel_perms_changed'; server: string; channel_id: number }
   | { type: 'layout_changed'; server: string; layout: ChannelLayout }

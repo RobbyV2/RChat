@@ -785,6 +785,13 @@ impl Access {
                 online: _,
                 online_count: _,
             } => (server, None),
+            WsEvent::RoleUpdated { server: _, role: _ }
+            | WsEvent::RolesReordered {
+                server: _,
+                order: _,
+                display: _,
+                version: _,
+            } => return false,
             WsEvent::UserUpdated { user, scope } => {
                 let mut held = scope
                     .servers

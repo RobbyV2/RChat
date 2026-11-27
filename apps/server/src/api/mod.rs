@@ -517,7 +517,7 @@ pub struct ChannelLayout {
 }
 
 /// A server role.
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Role {
     /// Role id, unique across the instance.
     pub id: i64,
@@ -544,6 +544,19 @@ pub struct Role {
     /// Place in the server's role order: a higher position ranks higher, and between two roles
     /// at one position the one with the lower id. A member ranks by the highest role they hold.
     pub position: i64,
+    /// Place in the order roles show in (the display order): a role shows at its display
+    /// position, or at its `position` when this is `null`, and roles at one place show in role
+    /// order. A member's name takes the color of the first role they hold in display order that
+    /// has `color_names`, and the icon of the first one with an icon.
+    pub display_position: Option<i64>,
+    /// Members whose first role in display order with `hoist` is this one show in a group of
+    /// their own in the member list. Only the first 10 such roles in display order form groups.
+    pub hoist: bool,
+    /// One emoji shown after the names of its members (for example U+1F6E1 U+FE0F, shield), or
+    /// `null`.
+    pub icon: Option<String>,
+    /// The role colors the names of its members.
+    pub color_names: bool,
 }
 
 /// Roles the caller can't edit, delete or assign because of who holds them or of the channel
@@ -2519,6 +2532,10 @@ fn api_routes(
         .route(
             "/servers/{name}/roles/order/confirm",
             post(servers::confirm_role_order),
+        )
+        .route(
+            "/servers/{name}/roles/display_order",
+            put(servers::set_role_display).delete(servers::follow_role_order),
         )
         .route(
             "/servers/{name}/roles/{id}",

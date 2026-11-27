@@ -303,3 +303,57 @@ async fn reposted_presence_mode_reads_the_database() {
     assert!(current(&state, mode("ghost", true)).await.is_none());
     crate::api::test_util::done(state, path).await;
 }
+
+#[tokio::test]
+async fn reposted_role_events_read_the_roles_as_they_are() {
+    let (state, path) = crate::api::test_util::temp_state("ws_repost_roles").await;
+    let db = &state.db;
+    let id: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms, position, hoist, display_position) VALUES('rchat', 'now', '#112233', 0, 1, 1, 5) RETURNING id")
+        .fetch_one(db)
+        .await
+        .unwrap()
+        .try_get(0)
+        .unwrap();
+    let stale = crate::api::Role {
+        id,
+        name: s("then"),
+        color: s("#000000"),
+        perms: 0,
+        mentionable: false,
+        position: 1,
+        display_position: None,
+        hoist: false,
+        icon: None,
+        color_names: true,
+    };
+    let updated = |server: &str| WsEvent::RoleUpdated {
+        server: s(server),
+        role: stale.clone(),
+    };
+    assert!(matches!(
+        current(&state, updated("rchat")).await,
+        Some(WsEvent::RoleUpdated { role, .. }) if role.name == "now" && role.hoist
+    ));
+    assert!(
+        current(&state, updated("other")).await.is_none(),
+        "a role is only reposted to its own server"
+    );
+    let reordered = |server: &str| WsEvent::RolesReordered {
+        server: s(server),
+        order: Vec::new(),
+        display: Vec::new(),
+        version: 0,
+    };
+    assert!(matches!(
+        current(&state, reordered("rchat")).await,
+        Some(WsEvent::RolesReordered { order, display, .. }) if order == [id] && display == [Some(5)]
+    ));
+    assert!(current(&state, reordered("gone")).await.is_none());
+    sqlx::query("DELETE FROM roles WHERE id = $1")
+        .bind(id)
+        .execute(db)
+        .await
+        .unwrap();
+    assert!(current(&state, updated("rchat")).await.is_none());
+    crate::api::test_util::done(state, path).await;
+}

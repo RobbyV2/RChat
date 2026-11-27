@@ -216,6 +216,8 @@ impl Modify for Bearer {
         super::servers::create_role,
         super::servers::reorder_roles,
         super::servers::confirm_role_order,
+        super::servers::set_role_display,
+        super::servers::follow_role_order,
         super::servers::update_role,
         super::servers::delete_role,
         super::servers::assign_role,

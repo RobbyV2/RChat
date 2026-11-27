@@ -127,6 +127,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("roles", "position {INT} NOT NULL DEFAULT 0"),
     ("servers", "roles_version {INT} NOT NULL DEFAULT 0"),
     ("servers", "roles_order_confirmed {INT} NOT NULL DEFAULT 0"),
+    ("roles", "display_position {INT}"),
+    ("roles", "hoist {INT} NOT NULL DEFAULT 0"),
+    ("roles", "icon TEXT"),
+    ("roles", "color_names {INT} NOT NULL DEFAULT 1"),
     ("tokens", "sso_sid TEXT"),
     ("servers", "upload_expiry {INT}"),
     ("media", "ttl {INT}"),
@@ -282,7 +286,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// `idx_messages_dm_threads`), for the thread lists.
 /// 54: the Pin messages and Bypass slow mode permission bits.
 /// 55: the rank order of a server's roles.
-pub const SCHEMA_VERSION: i64 = 55;
+/// 56: how roles show (display order, groups in the member list, icon, name color) and the
+/// `user_roles(role_id, username)` index in place of `idx_user_roles_role`.
+pub const SCHEMA_VERSION: i64 = 56;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -290,6 +296,9 @@ pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
 pub(super) const SPLIT_BITS_VERSION: i64 = 54;
 /// The schema version whose init ranks the roles of every server.
 pub(super) const ROLE_ORDER_VERSION: i64 = 55;
+/// The schema version that adds how roles show.
+#[cfg(test)]
+pub(super) const ROLE_LOOKS_VERSION: i64 = 56;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 20] {

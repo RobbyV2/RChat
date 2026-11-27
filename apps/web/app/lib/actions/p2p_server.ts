@@ -20,7 +20,16 @@ import { muteEnd, mutedText, parentScope, untilText, type NotifyScope } from '..
 import { serverPings, serverUnread } from '../p2p/alerts'
 
 import { ROLE_DOWN_TEXT, TRANSFER_CO_OWNERS_TEXT, transferText, WITHDRAW_TEXT } from '../p2p/flows'
-import { mayTakeRole, movesWarn, placeRole, type Move } from '../p2p/roles'
+import {
+  displayMoves,
+  mayTakeRole,
+  movesWarn,
+  placeRole,
+  shownOrder,
+  type DisplayMove,
+  type Move,
+} from '../p2p/roles'
+import { stepRole } from '../hierarchy'
 import { ownsP2pServer, type MemberView, type RoleView, type ServerView } from '../p2p/server/types'
 import { P } from '../p2p/state'
 import { editsRoomProfile } from '../server_profile_editor'
@@ -195,6 +204,37 @@ export const peerServer = identityActions(identity => {
   }
 
   // The role's place among those we may move, and how many outrank us.
+  // Where a role shows: one step among the roles we may change, in display order.
+  const shownStep = (ctx: ActionCtx, step: -1 | 1) => {
+    const t = roleOf(ctx)
+    if (!t || !can(t.v, P.ManageRoles) || !t.r.below) return null
+    const movable = t.v.roles.filter(r => r.below)
+    const order = stepRole(
+      shownOrder(t.v.roles),
+      movable.map(r => r.id),
+      t.r.id,
+      step
+    )
+    const gap = identity().p2p.limits().server.roleStep
+    const moves = order && displayMoves(t.v.roles, order, r => r.below, gap)
+    return moves?.length ? { v: t.v, moves } : null
+  }
+
+  // Showing roles in role order again: we clear the display positions of the roles we may change,
+  // and only when that shows every role in role order.
+  const followMoves = (ctx: ActionCtx) => {
+    const t = roleOf(ctx)
+    if (!t || !can(t.v, P.ManageRoles)) return null
+    const ours = t.v.roles.filter(r => r.dpos !== null && r.below)
+    const after = t.v.roles.map(r => (r.below ? { ...r, dpos: null } : r))
+    if (!ours.length || shownOrder(after).some((id, i) => id !== t.v.roles[i].id)) return null
+    return { v: t.v, moves: ours.map(r => ({ role: r.id, dpos: null })) }
+  }
+
+  const show = (moves: { v: ServerView; moves: DisplayMove[] } | null) => {
+    if (moves) void identity().p2pServer.showRoles(moves.v.id, moves.moves)
+  }
+
   const rolePlace = (ctx: ActionCtx) => {
     const t = roleOf(ctx)
     if (!t || !can(t.v, P.ManageRoles) || !t.r.below) return null
@@ -755,6 +795,32 @@ export const peerServer = identityActions(identity => {
             ctx.acct
           )
       },
+    },
+    {
+      id: 'p2p_role_show_up',
+      title: 'Show Higher',
+      subtitle: () => 'In the member list',
+      ...onRole,
+      order: 120,
+      available: ctx => shownStep(ctx, -1) !== null,
+      run: ctx => show(shownStep(ctx, -1)),
+    },
+    {
+      id: 'p2p_role_show_down',
+      title: 'Show Lower',
+      subtitle: () => 'In the member list',
+      ...onRole,
+      order: 130,
+      available: ctx => shownStep(ctx, 1) !== null,
+      run: ctx => show(shownStep(ctx, 1)),
+    },
+    {
+      id: 'p2p_role_show_ranked',
+      title: 'Show in Role Order',
+      ...onRole,
+      order: 140,
+      available: ctx => followMoves(ctx) !== null,
+      run: ctx => show(followMoves(ctx)),
     },
     {
       // Its channel rows hold its holders back: deleting it needs Manage channels.

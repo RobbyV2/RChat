@@ -35,6 +35,7 @@ import { badgePings as p2pBadgePings, dmUnread as p2pDmUnread, listedPeers } fro
 import type { P2pState } from './p2p/app/store'
 import { ALL_PERMS, Perm } from './types'
 import type { Member, Message, Role, ServerSummary, UserRef } from './types'
+import { hostedShown, lookOf, type Look } from './role_looks'
 
 const nameIndex = new WeakMap<readonly UserRef[], Map<string, UserRef>>()
 
@@ -122,8 +123,13 @@ export const channelMask = (s: RChatState, server: string, channelId: number | n
     s.me?.servers.some(x => x.name === server) ?? false
   )
 
+// What a member holding `roleIds` looks like: the name color and icon of their first roles in
+// display order that give them.
+export const roleLook = (roles: Role[] | undefined, roleIds: number[]): Look =>
+  lookOf(hostedShown(roles), roleIds)
+
 export const roleColor = (roles: Role[] | undefined, roleIds: number[]): string | undefined =>
-  roles?.find(r => roleIds.includes(r.id))?.color
+  roleLook(roles, roleIds).color
 
 const isUnread = (s: RChatState, scope: string): boolean => {
   const r = s.reads[scope]

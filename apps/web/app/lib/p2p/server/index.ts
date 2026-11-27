@@ -1362,8 +1362,8 @@ export class Servers {
     return roles.createRole(ctx(this), room, role)
   }
 
-  editRole(room: string, role: string, meta: { name: string; color: number | null }) {
-    return roles.editRole(ctx(this), room, role, meta)
+  editRole(room: string, role: string, patch: roles.RoleMetaPatch) {
+    return roles.editRole(ctx(this), room, role, patch)
   }
 
   moveRole(room: string, role: string, pos: number) {

@@ -4,6 +4,7 @@ import { actParts, roleMoveWarns } from './flows'
 import { type MemberView, type RoleView, type ServerView } from './server'
 import { LOCAL, type Local } from './limits'
 import { reorder } from '../perms'
+import { groupOf, hoistGroups, lookOf, onlineFirst, p2pShown, type Look } from '../role_looks'
 
 // Roles and channel permissions of P2P servers as the settings and the member list show them:
 // the permission toggles, where a dragged role lands, the member list grouped by
@@ -170,21 +171,29 @@ export interface MemberGroup {
   list: MemberView[]
 }
 
-// The member list: online members by their top role (highest first), then the rest online,
-// offline and invited; each by name.
+// The member list: the members of each role shown separately (display order, online first),
+// then the rest online and offline, then the invited; each by name.
 export function memberGroups(members: MemberView[], roles: RoleView[], me: string | null) {
   const byName = (a: MemberView, b: MemberView) => a.name.localeCompare(b.name)
   const on = (m: MemberView) => m.online || m.ik === me
   const joined = members.filter(m => m.m === 'join')
+  const shown = hoistGroups(p2pShown(roles))
   const groups: MemberGroup[] = []
-  for (const r of roles) {
-    const list = joined.filter(m => on(m) && m.top === r.id).sort(byName)
-    if (list.length) groups.push({ key: `r:${r.id}`, label: r.name, color: r.color, list })
+  for (const g of shown) {
+    const list = joined.filter(m => groupOf(shown, m.roles) === g.id)
+    const color = roles.find(r => r.id === g.id)?.color ?? null
+    if (list.length)
+      groups.push({
+        key: `r:${g.id}`,
+        label: g.name,
+        color,
+        list: onlineFirst(list, on, m => m.name),
+      })
   }
-  const rest = joined.filter(m => on(m) && (m.top === null || !roles.some(r => r.id === m.top)))
+  const rest = joined.filter(m => groupOf(shown, m.roles) === null)
   const tail: [string, string, MemberView[]][] = [
-    ['online', 'Online', rest],
-    ['offline', 'Offline', joined.filter(m => !on(m))],
+    ['online', 'Online', rest.filter(on)],
+    ['offline', 'Offline', rest.filter(m => !on(m))],
     ['invited', 'Invited', members.filter(m => m.m === 'invite')],
   ]
   for (const [key, label, list] of tail)
@@ -192,9 +201,77 @@ export function memberGroups(members: MemberView[], roles: RoleView[], me: strin
   return groups
 }
 
-// A member's name color: their top role's.
-export const nameColor = (m: MemberView, roles: RoleView[]) =>
-  m.top === null ? null : (roles.find(r => r.id === m.top)?.color ?? null)
+// What a member's name looks like: the color and icon of their first roles in display order
+// that give them.
+export const lookOfMember = (m: Pick<MemberView, 'roles'>, roles: RoleView[]): Look =>
+  lookOf(p2pShown(roles), m.roles)
+
+export const nameColor = (m: Pick<MemberView, 'roles'>, roles: RoleView[]) =>
+  lookOfMember(m, roles).color
+
+// What each member's name looks like in a server, by identity key; role names through `mask`.
+export const memberLooks = (
+  v: Pick<ServerView, 'members' | 'roles'>,
+  mask: (text: string) => string
+) => {
+  const held = new Map(v.members.map(m => [m.ik, m.roles]))
+  return (ik: string): Look => {
+    const look = lookOf(p2pShown(v.roles), held.get(ik) ?? [])
+    return look.icon ? { ...look, icon: { ...look.icon, role: mask(look.icon.role) } } : look
+  }
+}
+
+export interface DisplayMove {
+  role: string
+  dpos: number | null
+}
+
+// The roles in display order, the one shown highest first.
+export const shownOrder = (roles: RoleView[]) => p2pShown(roles).map(r => r.id)
+
+// The display positions that show `roles` (highest rank first) in `order` (ids, the one shown
+// highest first), for the roles `movable` allows; the others keep theirs. Each run of movable
+// roles between two others keeps its positions when they already fit, else is spaced out evenly
+// between them (`gap` apart above the highest). null when there is no room.
+export function displayMoves(
+  roles: RoleView[],
+  order: readonly string[],
+  movable: (r: RoleView) => boolean,
+  gap: number
+): DisplayMove[] | null {
+  const byId = new Map(roles.map(r => [r.id, r]))
+  const place = (r: RoleView) => r.dpos ?? r.pos
+  const moves: DisplayMove[] = []
+  let run: RoleView[] = []
+  let hi = Infinity
+  const fits = (lo: number) =>
+    run.every((r, i) => place(r) < (i ? place(run[i - 1]) : hi) && place(r) > lo)
+  const flush = (lo: number) => {
+    if (run.length && !fits(lo)) {
+      const n = run.length
+      const base = lo === -Infinity ? Math.min(0, hi === Infinity ? 0 : hi - gap * (n + 1)) : lo
+      const step = hi === Infinity ? gap : Math.floor((hi - base) / (n + 1))
+      if (step < 1) return false
+      run.forEach((r, i) => {
+        const at = hi === Infinity ? base + step * (n - i) : hi - step * (i + 1)
+        if (at !== place(r) || r.dpos === null) moves.push({ role: r.id, dpos: at })
+      })
+    }
+    run = []
+    return true
+  }
+  for (const id of order) {
+    const r = byId.get(id)
+    if (!r) return null
+    if (movable(r)) {
+      run.push(r)
+      continue
+    }
+    if (!flush(place(r))) return null
+    hi = place(r)
+  }
+  return flush(-Infinity) ? moves : null
+}
 
 // Whether the open channel's slow mode, or our exemption from it, changed (the countdown follows).
 export const slowChanged = (

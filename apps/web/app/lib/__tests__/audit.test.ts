@@ -250,6 +250,21 @@ describe('audit sentences', () => {
     expect(
       sentenceText(entry({ action: 'role.assign', details: { role: { id: 2, name: 'Mods' } } }))
     ).toBe('Alice gave Bob the role "Mods"')
+    const shown = entry({
+      action: 'role.display_order',
+      target: null,
+      details: { roles: [{ id: 2, name: 'Mods' }], more_roles: 0, follow: false },
+    })
+    expect(sentenceText(shown)).toBe('Alice changed the order roles show in')
+    expect(sentenceText({ ...shown, details: { ...shown.details, follow: true } })).toBe(
+      'Alice showed the roles in role order'
+    )
+    expect(factsOf(shown)).toEqual([['Roles moved', 'Mods']])
+    expect(['icon', 'hoist', 'color_names'].map(fieldLabel)).toEqual([
+      'Icon',
+      'Show members separately',
+      'Color member names',
+    ])
     expect(
       sentenceText(
         entry({

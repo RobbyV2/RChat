@@ -56,9 +56,9 @@ use crate::ws::{Hub, WsEvent, voice_rules_changed};
 use rchat_perms::delta::{self, Refusal};
 use rchat_perms::eval::{self, Mode, Ow, Who};
 use rchat_perms::hier::{self, Actor, Rank, Tier};
-use rchat_perms::order;
 use rchat_perms::rules::HOSTED;
 use rchat_perms::{Mask, masks};
+use rchat_perms::{looks, order};
 
 /// Request body for creating a channel.
 #[derive(Deserialize, ToSchema)]
@@ -371,6 +371,16 @@ pub struct RolePatch {
     /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`). Turning it
     /// on needs the Mention everyone permission.
     mentionable: Option<bool>,
+    /// One emoji shown after the names of the role's members, stored as its fully-qualified
+    /// sequence (see `Role.icon`). `null` or a blank text removes it. Omit to keep it.
+    #[serde(default, deserialize_with = "crate::api::auth::present")]
+    #[schema(value_type = Option<String>)]
+    icon: Option<Option<String>>,
+    /// Whether the role's members show in a group of their own in the member list (see
+    /// `Role.hoist`).
+    hoist: Option<bool>,
+    /// Whether the role colors the names of its members (see `Role.color_names`).
+    color_names: Option<bool>,
 }
 
 /// Request body for getting guest access to a password-protected server.
@@ -569,14 +579,14 @@ impl MyServersQuery {
 #[into_params(parameter_in = Query)]
 pub struct MemberListQuery {
     /// Legacy offset paging for the default (online-first) listing: number of members to skip,
-    /// clamped to 0-1000000. Ignored when `cursor`, `usernames`, `q` or `admins` is given. Must
-    /// be an integer.
+    /// clamped to 0-1000000. Ignored when `cursor`, `usernames`, `q`, `admins`, `top_hoisted`
+    /// or `unhoisted` is given. Must be an integer.
     offset: Option<i64>,
     /// Page size, default 50, clamped to 1-50. Ignored with `usernames`. Must be an integer.
     limit: Option<i64>,
     /// Opaque cursor from the previous page's `X-Next-Cursor` header. Blank means the first
-    /// page. A cursor only works with the same kind of listing (default, or `q`/`admins`)
-    /// that produced it. Ignored with `usernames`.
+    /// page. A cursor only works with the same kind of listing (default, `q`/`admins`, or one
+    /// group) that produced it. Ignored with `usernames`.
     cursor: Option<String>,
     /// Only return these users (case-insensitive usernames), repeated once per user, e.g.
     /// `usernames=a&usernames=b`. Duplicates and blanks are dropped and only the first 100
@@ -592,6 +602,16 @@ pub struct MemberListQuery {
     /// `GET /api/v1/servers/{name}/mentions` suggests, as member rows, unpaged. Ignored without
     /// `q` and when `usernames` is given.
     suggest: Option<bool>,
+    /// A role id, with `top_hoisted`. Must be an integer.
+    role: Option<i64>,
+    /// `1` or `true` with `role`: the members the member list shows in that role's group, those
+    /// whose first role in display order that forms a group is this one (see `Role.hoist`),
+    /// alphabetically, paged by `cursor`. Empty when the role forms no group. Ignored when
+    /// `usernames`, `q` or `admins` is given.
+    top_hoisted: Option<bool>,
+    /// `1` or `true`: the members in no group of the member list, alphabetically, paged by
+    /// `cursor`. Ignored when `usernames`, `q` or `admins` is given.
+    unhoisted: Option<bool>,
 }
 
 impl MemberListQuery {
@@ -613,6 +633,9 @@ impl MemberListQuery {
         let mut q = None;
         let mut admins = None;
         let mut suggest = None;
+        let mut role = None;
+        let mut top_hoisted = None;
+        let mut unhoisted = None;
         for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
             match key.as_ref() {
                 "q" if !value.trim().is_empty() => {
@@ -621,6 +644,9 @@ impl MemberListQuery {
                 }
                 "admins" => admins = Some(matches!(value.as_ref(), "1" | "true")),
                 "suggest" => suggest = Some(matches!(value.as_ref(), "1" | "true")),
+                "role" => role = Some(value.parse().map_err(|_| bad("Invalid role"))?),
+                "top_hoisted" => top_hoisted = Some(matches!(value.as_ref(), "1" | "true")),
+                "unhoisted" => unhoisted = Some(matches!(value.as_ref(), "1" | "true")),
                 _ => {}
             }
         }
@@ -632,6 +658,9 @@ impl MemberListQuery {
             q,
             admins,
             suggest,
+            role,
+            top_hoisted,
+            unhoisted,
         })
     }
 }
@@ -782,6 +811,107 @@ async fn filtered_members(
     rows.truncate(limit as usize);
     let next = match (more, rows.last()) {
         (true, Some((name, _, _))) => Some(encode_cursor(&["s", name])),
+        _ => None,
+    };
+    Ok((rows, next))
+}
+
+/// The roles of `server` whose members show as groups in the member list, in display order.
+pub(crate) async fn hoist_groups(db: &Db, server: &str) -> Result<Vec<i64>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT id, position, display_position, hoist FROM roles WHERE server = $1 ORDER BY position DESC, id",
+    )
+    .bind(server)
+    .fetch_all(db)
+    .await?;
+    let mut ids = Vec::with_capacity(rows.len());
+    let mut shown = Vec::with_capacity(rows.len());
+    for r in &rows {
+        ids.push(r.try_get::<i64, _>(0)?);
+        shown.push(looks::Look {
+            place: r
+                .try_get::<Option<i64>, _>(2)?
+                .unwrap_or(r.try_get::<i64, _>(1)?),
+            hoist: r.try_get::<i64, _>(3)? != 0,
+        });
+    }
+    Ok(looks::groups(&shown).into_iter().map(|i| ids[i]).collect())
+}
+
+/// A page of the members the member list shows in the group of role `group` (`None`: in no
+/// group), alphabetical by username: those who hold it and no group role above it in display
+/// order.
+async fn grouped_members(
+    db: &Db,
+    server: &str,
+    group: Option<i64>,
+    limit: Option<i64>,
+    cursor: Option<&str>,
+) -> Result<(Vec<MemberRow>, Option<String>), ApiError> {
+    let limit = limit.unwrap_or(50).clamp(1, 50);
+    let tag = group.map_or_else(|| "rest".to_string(), |id| id.to_string());
+    let after = match cursor {
+        Some(raw) => {
+            let parts = decode_cursor(raw, 3)?;
+            match parts[0] == "g" && parts[1] == tag {
+                true => Some(parts[2].clone()),
+                false => return Err(bad("Invalid cursor")),
+            }
+        }
+        None => None,
+    };
+    let groups = hoist_groups(db, server).await?;
+    let above = match group {
+        Some(id) => match groups.iter().position(|g| *g == id) {
+            Some(at) => &groups[..at],
+            None => return Ok((Vec::new(), None)),
+        },
+        None => &groups[..],
+    };
+    let (mut sql, mut next, by) = match group {
+        Some(_) => (
+            String::from(
+                "SELECT m.username, m.is_admin, m.perms FROM user_roles ur JOIN members m ON m.server = ur.server AND m.username = ur.username WHERE ur.role_id = $1 AND ur.server = $2",
+            ),
+            3,
+            "ur.username",
+        ),
+        None => (
+            String::from(
+                "SELECT m.username, m.is_admin, m.perms FROM members m WHERE m.server = $1",
+            ),
+            2,
+            "m.username",
+        ),
+    };
+    if after.is_some() {
+        sql.push_str(&format!(" AND {by} > ${next}"));
+        next += 1;
+    }
+    if !above.is_empty() {
+        sql.push_str(&format!(
+            " AND NOT EXISTS(SELECT 1 FROM user_roles h WHERE h.server = m.server AND h.username = m.username AND h.role_id IN ({}))",
+            placeholders(next, above.len())
+        ));
+        next += above.len();
+    }
+    sql.push_str(&format!(" ORDER BY {by} LIMIT ${next}"));
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    if let Some(id) = group {
+        query = query.bind(id);
+    }
+    query = query.bind(server);
+    if let Some(after) = &after {
+        query = query.bind(after);
+    }
+    for id in above {
+        query = query.bind(*id);
+    }
+    let mut rows = member_rows(&query.bind(limit + 1).fetch_all(db).await?)?;
+    let more = rows.len() as i64 > limit;
+    rows.truncate(limit as usize);
+    let next = match (more, rows.last()) {
+        (true, Some((name, _, _))) => Some(encode_cursor(&["g", &tag, name])),
         _ => None,
     };
     Ok((rows, next))
@@ -1044,25 +1174,34 @@ pub(crate) async fn build_member(
     })
 }
 
+/// The `roles` columns `role_of` reads, in its order, of a row aliased `r`.
+pub(crate) const ROLE_COLUMNS: &str = "r.id, r.name, r.color, r.perms, r.mentionable, r.position, r.display_position, r.hoist, r.icon, r.color_names";
+
+/// A role from a row that starts with `ROLE_COLUMNS`.
+pub(crate) fn role_of(r: &sqlx::any::AnyRow) -> Result<Role, ApiError> {
+    Ok(Role {
+        id: r.try_get(0)?,
+        name: r.try_get(1)?,
+        color: r.try_get(2)?,
+        perms: r.try_get(3)?,
+        mentionable: r.try_get::<i64, _>(4)? != 0,
+        position: r.try_get(5)?,
+        display_position: r.try_get(6)?,
+        hoist: r.try_get::<i64, _>(7)? != 0,
+        icon: r.try_get(8)?,
+        color_names: r.try_get::<i64, _>(9)? != 0,
+    })
+}
+
 pub(crate) async fn server_roles(db: &Db, server: &str) -> Result<Vec<Role>, ApiError> {
-    let rows = sqlx::query(
-        "SELECT id, name, color, perms, mentionable, position FROM roles WHERE server = $1 ORDER BY position DESC, id",
-    )
-    .bind(server)
-    .fetch_all(db)
-    .await?;
-    let mut roles = Vec::with_capacity(rows.len());
-    for r in &rows {
-        roles.push(Role {
-            id: r.try_get(0)?,
-            name: r.try_get(1)?,
-            color: r.try_get(2)?,
-            perms: r.try_get(3)?,
-            mentionable: r.try_get::<i64, _>(4)? != 0,
-            position: r.try_get(5)?,
-        });
-    }
-    Ok(roles)
+    let sql = format!(
+        "SELECT {ROLE_COLUMNS} FROM roles r WHERE r.server = $1 ORDER BY r.position DESC, r.id"
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(server)
+        .fetch_all(db)
+        .await?;
+    rows.iter().map(role_of).collect()
 }
 
 /// The version of the role order of `server` and whether the order is confirmed.
@@ -1429,7 +1568,9 @@ async fn members_page(
 /// Returns members as pages of `limit` (default and max 50): online members first, then offline
 /// ones, each alphabetical by username. Page with `cursor` from the `X-Next-Cursor` response header
 /// (or the legacy `offset`). With `q` (username prefix) and/or `admins=1` it returns matching
-/// members alphabetically, paged by `cursor` only. With `q` and `suggest=1` it returns the
+/// members alphabetically, paged by `cursor` only. With `role` and `top_hoisted=1`, or with
+/// `unhoisted=1`, it returns the members of one group of the member list (see `Role.hoist`)
+/// alphabetically, paged by `cursor` only. With `q` and `suggest=1` it returns the
 /// members `GET /api/v1/servers/{name}/mentions` suggests (mention autocomplete). With
 /// `usernames` it returns just those users that are members, alphabetical and unpaged.
 ///
@@ -1449,7 +1590,7 @@ async fn members_page(
     params(("name" = String, Path, description = "Server name, case-insensitive"), MemberListQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
     responses(
         (status = 200, description = "A page of members, or just the requested `usernames`", body = Vec<Member>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
-        (status = 400, description = "Invalid cursor (including a cursor from a different kind of listing), or a non-integer `offset` or `limit`", body = ApiErrorBody),
+        (status = 400, description = "Invalid cursor (including a cursor from a different kind of listing), a non-integer `offset` or `limit`, a non-integer `role` (`Invalid role`), or `top_hoisted` without `role` (`top_hoisted needs a role`)", body = ApiErrorBody),
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
@@ -1474,6 +1615,9 @@ pub(crate) async fn list_members(
         q,
         admins,
         suggest,
+        role,
+        top_hoisted,
+        unhoisted,
     } = query;
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
@@ -1522,6 +1666,13 @@ pub(crate) async fn list_members(
             )
             .await?
         }
+        None if unhoisted == Some(true) => {
+            grouped_members(db, &key, None, limit, cursor.as_deref()).await?
+        }
+        None if top_hoisted == Some(true) => match role {
+            Some(role) => grouped_members(db, &key, Some(role), limit, cursor.as_deref()).await?,
+            None => return Err(bad("top_hoisted needs a role")),
+        },
         None => members_page(db, &key, &state.hub, offset, limit, cursor.as_deref()).await?,
     };
     let names: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
@@ -5532,12 +5683,23 @@ fn check_color(color: &str) -> Result<(), ApiError> {
     }
 }
 
+/// The icon to store for `icon`: one emoji, stored as its fully-qualified sequence, or none for
+/// `None` and a blank text.
+fn check_icon(icon: Option<&str>) -> Result<Option<&'static str>, ApiError> {
+    match icon.map(str::trim).filter(|text| !text.is_empty()) {
+        None => Ok(None),
+        Some(text) => crate::api::reactions::canonical_emoji(text)
+            .map(Some)
+            .ok_or_else(|| bad("Not an emoji")),
+    }
+}
+
 /// Create a role
 ///
 /// Adds a role to the server. A server can have at most 250 roles by default (`SERVER_ROLES_MAX`).
 /// The role's permissions must be a subset of yours (equal is fine). The new role goes to the
-/// bottom of the role order (`position` 1; the others move up). Requires the Manage roles server
-/// permission. Emits
+/// bottom of the role order (`position` 1; the others move up), and to the bottom of the display
+/// order when roles have display positions. Requires the Manage roles server permission. Emits
 /// `roles_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     post,
@@ -5594,9 +5756,16 @@ pub(crate) async fn create_role(
         .bind(&key)
         .execute(&mut *tx)
         .await?;
+    let shown = sqlx::query("UPDATE roles SET display_position = display_position + 1 WHERE server = $1 AND display_position IS NOT NULL")
+        .bind(&key)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+        > 0;
+    let display_position = shown.then_some(1i64);
     bump_roles_version(&mut tx, &key).await?;
     let id: i64 = sqlx::query(
-        "INSERT INTO roles(server, name, color, perms, mentionable, position) SELECT $1, $2, $3, $4, $5, 1 WHERE (SELECT COUNT(*) FROM roles WHERE server = $1) < $6 RETURNING id",
+        "INSERT INTO roles(server, name, color, perms, mentionable, position, display_position) SELECT $1, $2, $3, $4, $5, 1, $7 WHERE (SELECT COUNT(*) FROM roles WHERE server = $1) < $6 RETURNING id",
     )
     .bind(&key)
     .bind(&role_name)
@@ -5604,6 +5773,7 @@ pub(crate) async fn create_role(
     .bind(perms)
     .bind(i64::from(req.mentionable))
     .bind(most)
+    .bind(display_position)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| {
@@ -5636,20 +5806,25 @@ pub(crate) async fn create_role(
         perms,
         mentionable: req.mentionable,
         position: 1,
+        display_position,
+        hoist: false,
+        icon: None,
+        color_names: true,
     }))
 }
 
 /// Update a role
 ///
-/// Changes the name, color or permissions of a role. Omitted fields stay the same. All fields are
-/// checked before anything is saved, so a rejected request changes nothing. Every edit, also a
-/// rename or recolor, needs the role to rank below your highest role (see
+/// Changes the name, color, permissions or looks of a role. Omitted fields stay the same. All
+/// fields are checked before anything is saved, so a rejected request changes nothing. Every
+/// edit, also a rename or recolor, needs the role to rank below your highest role (see
 /// `role_limits.held_above` in the server detail). Permissions you add must be ones you hold.
 /// While the role order is unconfirmed (`ServerDetail.roles_order_confirmed`), the role's
 /// current and new permissions must also be a subset of yours, and every other member with the
-/// role must be someone you could kick. Requires the Manage roles permission. Emits `roles_changed`
-/// to the server and removes users from voice channels they can no longer view. General
-/// rate-limit bucket.
+/// role must be someone you could kick. Requires the Manage roles permission. A change of
+/// permissions emits `roles_changed` to the server and removes users from voice channels they can
+/// no longer view; any other change emits `role_updated` with the role. General rate-limit
+/// bucket.
 #[utoipa::path(
     patch,
     path = "/api/v1/servers/{name}/roles/{id}",
@@ -5658,7 +5833,7 @@ pub(crate) async fn create_role(
     request_body = RolePatch,
     responses(
         (status = 200, description = "The updated role", body = Role),
-        (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter) or color; nothing is saved. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter), color or icon (`Not an emoji`); nothing is saved. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Nothing is saved. Missing the Manage roles permission; the role does not rank below your highest role (`You can't change a role that is not below your highest role`); the new permissions include some you don't have (`You can't grant permissions you don't have`); or, while the role order is unconfirmed, the role has permissions you don't have (`You can't change a role that has permissions you don't have`) or another holder of the role is someone you could not kick (`You can't change a role held by a member you can't moderate`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it", body = ApiErrorBody),
@@ -5684,6 +5859,9 @@ pub(crate) async fn update_role(
         color,
         perms,
         mentionable,
+        icon,
+        hoist,
+        color_names,
     } = req;
     let role_name = match &name {
         Some(role_name) => {
@@ -5702,6 +5880,7 @@ pub(crate) async fn update_role(
     if let Some(color) = &color {
         check_color(color)?;
     }
+    let icon = icon.map(|icon| check_icon(icon.as_deref())).transpose()?;
     let perms = perms.map(|p| update_role_bits(current, p, mask.unwrap_or(PRE_DELEGATION_PERMS)));
     let asked = match access.order_guard(&state.db).await? {
         true => perms,
@@ -5736,6 +5915,15 @@ pub(crate) async fn update_role(
     lock_server(&mut tx, &key).await?;
     let (was_name, was_color, was_mentionable) =
         lock_role_version(&mut tx, &key, id, current, Some(was_on)).await?;
+    let looks = sqlx::query("SELECT icon, hoist, color_names FROM roles WHERE id = $1")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let (was_icon, was_hoist, was_tinted): (Option<String>, bool, bool) = (
+        looks.try_get(0)?,
+        looks.try_get::<i64, _>(1)? != 0,
+        looks.try_get::<i64, _>(2)? != 0,
+    );
     let also = match on {
         true => Perm::MentionEveryone as i64,
         false => 0,
@@ -5772,6 +5960,24 @@ pub(crate) async fn update_role(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(icon) = icon {
+        sqlx::query("UPDATE roles SET icon = $1 WHERE id = $2")
+            .bind(icon)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    for (column, on) in [("hoist", hoist), ("color_names", color_names)] {
+        if let Some(on) = on {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE roles SET {column} = $1 WHERE id = $2"
+            )))
+            .bind(i64::from(on))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
     let changes = Details::new()
         .change(
             "name",
@@ -5788,7 +5994,14 @@ pub(crate) async fn update_role(
             "mentionable",
             was_mentionable,
             mentionable.unwrap_or(was_mentionable),
-        );
+        )
+        .change(
+            "icon",
+            was_icon.as_deref(),
+            icon.unwrap_or(was_icon.as_deref()),
+        )
+        .change("hoist", was_hoist, hoist.unwrap_or(was_hoist))
+        .change("color_names", was_tinted, color_names.unwrap_or(was_tinted));
     if changes.has_changes() {
         audit::record(
             &mut tx,
@@ -5803,24 +6016,76 @@ pub(crate) async fn update_role(
         .await?;
     }
     tx.commit().await?;
-    let row =
-        sqlx::query("SELECT name, color, perms, mentionable, position FROM roles WHERE id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await?;
-    let role = Role {
-        id,
-        name: row.try_get(0)?,
-        color: row.try_get(1)?,
-        perms: row.try_get(2)?,
-        mentionable: row.try_get::<i64, _>(3)? != 0,
-        position: row.try_get(4)?,
-    };
-    state.hub.broadcast(WsEvent::RolesChanged {
-        server: key.clone(),
-    });
-    voice_rules_changed(&state, &key, None).await;
+    let role = role_by_id(&state.db, id).await?;
+    match perms.is_some_and(|bits| bits != was_perms) {
+        true => {
+            state.hub.broadcast(WsEvent::RolesChanged {
+                server: key.clone(),
+            });
+            voice_rules_changed(&state, &key, None).await;
+        }
+        false => state.hub.broadcast(WsEvent::RoleUpdated {
+            server: key,
+            role: role.clone(),
+        }),
+    }
     Ok(Json(role))
+}
+
+/// The role `id` of `server`, while it is one.
+pub(crate) async fn role_in(db: &Db, server: &str, id: i64) -> Result<Option<Role>, ApiError> {
+    let sql = format!("SELECT {ROLE_COLUMNS} FROM roles r WHERE r.id = $1 AND r.server = $2");
+    match sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .bind(server)
+        .fetch_optional(db)
+        .await?
+    {
+        Some(row) => Ok(Some(role_of(&row)?)),
+        None => Ok(None),
+    }
+}
+
+/// Where the roles of `server` are: every role id, the highest first, the display position of
+/// each, and the version of the role order. `None` when there is no such server.
+pub(crate) async fn role_places(
+    db: &Db,
+    server: &str,
+) -> Result<Option<(Vec<i64>, Vec<Option<i64>>, i64)>, ApiError> {
+    let Some(version) = sqlx::query("SELECT roles_version FROM servers WHERE name = $1")
+        .bind(server)
+        .fetch_optional(db)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let rows = sqlx::query(
+        "SELECT id, display_position FROM roles WHERE server = $1 ORDER BY position DESC, id",
+    )
+    .bind(server)
+    .fetch_all(db)
+    .await?;
+    let mut order = Vec::with_capacity(rows.len());
+    let mut display = Vec::with_capacity(rows.len());
+    for r in &rows {
+        order.push(r.try_get(0)?);
+        display.push(r.try_get(1)?);
+    }
+    Ok(Some((order, display, version.try_get(0)?)))
+}
+
+/// The role `id`.
+pub(crate) async fn role_by_id<'e, E>(ex: E, id: i64) -> Result<Role, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    let sql = format!("SELECT {ROLE_COLUMNS} FROM roles r WHERE r.id = $1");
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_optional(ex)
+        .await?
+        .ok_or_else(|| not_found("Role not found"))?;
+    role_of(&row)
 }
 
 /// Delete a role
@@ -6867,6 +7132,51 @@ fn movable(
         .collect()
 }
 
+/// Refuses changing the order `current` of `roles` (id, position, permissions) into `asked`
+/// unless only roles the caller may move change places: those below their rank, and while the
+/// order is unconfirmed only those they could edit. `authority` is the caller's Manage roles
+/// permissions and those of their plain membership. Answers whether only instance powers allow
+/// it.
+async fn require_moves(
+    conn: &mut AnyConnection,
+    access: &ServerAccess,
+    roles: &[(i64, i64, i64)],
+    current: &[i64],
+    asked: &[i64],
+    confirmed: bool,
+    authority: (i64, i64),
+) -> Result<bool, ApiError> {
+    let (mine, own) = authority;
+    let guard = !confirmed;
+    let member = access.as_member();
+    let held = match guard {
+        true => held_above(&mut *conn, member.as_ref().unwrap_or(access), own, None).await?,
+        false => HashSet::new(),
+    };
+    let plain = match access.viewer() {
+        Some(viewer) => ranks::rank_in(&mut *conn, access.name(), &viewer.username).await?,
+        None => Rank::of(Tier::Outside),
+    };
+    let rank = match access.site_admin() {
+        true => Rank::of(Tier::Staff),
+        false => plain,
+    };
+    let place = |can: HashSet<i64>| order::reorder(current, asked, &|id| can.contains(&id));
+    if place(movable(roles, rank, mine, guard, &held)) != asked {
+        let none = HashSet::new();
+        let reason = match (
+            place(movable(roles, rank, mine, false, &none)) == asked,
+            place(movable(roles, rank, mine, guard, &none)) == asked,
+        ) {
+            (false, _) => MOVE_NOT_BELOW,
+            (true, false) => MOVE_NOT_WITHIN,
+            (true, true) => MOVE_HELD_ABOVE,
+        };
+        return Err(forbidden(reason));
+    }
+    Ok(access.site_admin() && place(movable(roles, plain, own, guard, &held)) != asked)
+}
+
 /// Reorder roles
 ///
 /// Sets the rank order of the server's roles. `order` lists every role once, the highest first.
@@ -6874,8 +7184,8 @@ fn movable(
 /// is unconfirmed, also only those you could edit; see `role_limits.held_above` in the server
 /// detail). The roles you can't move must stay where they are. `version` is the
 /// `roles_version` the order was made from; a role created, deleted or moved since then makes
-/// it stale. Requires the Manage roles server permission. Emits `roles_changed` to the server.
-/// General rate-limit bucket.
+/// it stale. Requires the Manage roles server permission. Emits `roles_reordered` to the
+/// server. General rate-limit bucket.
 #[utoipa::path(
     put,
     path = "/api/v1/servers/{name}/roles/order",
@@ -6915,17 +7225,19 @@ pub(crate) async fn reorder_roles(
     }
     let (mine, own) = access.role_authority_in(&mut tx, Perm::ManageRoles).await?;
     let rows = sqlx::query(
-        "SELECT id, position, perms, name FROM roles WHERE server = $1 ORDER BY position DESC, id",
+        "SELECT id, position, perms, name, display_position FROM roles WHERE server = $1 ORDER BY position DESC, id",
     )
     .bind(&key)
     .fetch_all(&mut *tx)
     .await?;
     let mut roles = Vec::with_capacity(rows.len());
     let mut names = HashMap::new();
+    let mut shown = HashMap::new();
     for r in &rows {
         let id: i64 = r.try_get(0)?;
         roles.push((id, r.try_get(1)?, r.try_get(2)?));
         names.insert(id, r.try_get::<String, _>(3)?);
+        shown.insert(id, r.try_get::<Option<i64>, _>(4)?);
     }
     let current: Vec<i64> = roles.iter().map(|(id, _, _)| *id).collect();
     let listed: HashSet<i64> = asked.iter().copied().collect();
@@ -6935,42 +7247,24 @@ pub(crate) async fn reorder_roles(
     {
         return Err(bad("List every role once"));
     }
-    let guard = !confirmed;
-    let member = access.as_member();
-    let held = match guard {
-        true => held_above(&mut *tx, member.as_ref().unwrap_or(&access), own, None).await?,
-        false => HashSet::new(),
-    };
-    let plain = match access.viewer() {
-        Some(viewer) => ranks::rank_in(&mut tx, &key, &viewer.username).await?,
-        None => Rank::of(Tier::Outside),
-    };
-    let rank = match access.site_admin() {
-        true => Rank::of(Tier::Staff),
-        false => plain,
-    };
-    let place = |can: HashSet<i64>| order::reorder(&current, &asked, &|id| can.contains(&id));
-    let next = place(movable(&roles, rank, mine, guard, &held));
-    if next != asked {
-        let none = HashSet::new();
-        let reason = match (
-            place(movable(&roles, rank, mine, false, &none)) == asked,
-            place(movable(&roles, rank, mine, guard, &none)) == asked,
-        ) {
-            (false, _) => MOVE_NOT_BELOW,
-            (true, false) => MOVE_NOT_WITHIN,
-            (true, true) => MOVE_HELD_ABOVE,
-        };
-        return Err(forbidden(reason));
-    }
+    let bypassed = require_moves(
+        &mut tx,
+        &access,
+        &roles,
+        &current,
+        &asked,
+        confirmed,
+        (mine, own),
+    )
+    .await?;
+    let next = asked;
     if next == current {
         return Ok(Json(RoleOrder {
             order: next,
             version,
         }));
     }
-    let actor = actor
-        .staff_if(access.site_admin() && place(movable(&roles, plain, own, guard, &held)) != asked);
+    let actor = actor.staff_if(bypassed);
     let top = next.len() as i64;
     for (i, id) in next.iter().enumerate() {
         sqlx::query("UPDATE roles SET position = $1 WHERE id = $2 AND position <> $1")
@@ -6997,7 +7291,15 @@ pub(crate) async fn reorder_roles(
     )
     .await?;
     tx.commit().await?;
-    state.hub.broadcast(WsEvent::RolesChanged { server: key });
+    state.hub.broadcast(WsEvent::RolesReordered {
+        server: key,
+        display: next
+            .iter()
+            .map(|id| shown.get(id).copied().flatten())
+            .collect(),
+        order: next.clone(),
+        version: version + 1,
+    });
     Ok(Json(RoleOrder {
         order: next,
         version: version + 1,
@@ -7061,6 +7363,285 @@ pub(crate) async fn confirm_role_order(
         state.hub.broadcast(WsEvent::RolesChanged { server: key });
     }
     Ok(Json(RoleOrderConfirmed { confirmed: true }))
+}
+
+/// Request body for setting the display order of roles.
+#[derive(Deserialize, ToSchema)]
+pub struct RoleDisplayReq {
+    /// Every role id of the server once, the one shown highest first.
+    order: Vec<i64>,
+    /// The `roles_version` the order was made from (see `ServerDetail.roles_version`).
+    version: i64,
+}
+
+/// Request body for showing roles in their role order again.
+#[derive(Deserialize, ToSchema)]
+pub struct RoleDisplayFollowReq {
+    /// The `roles_version` of the order you looked at (see `ServerDetail.roles_version`).
+    version: i64,
+}
+
+/// The roles of a server as a display reorder reads them, inside the server lock.
+struct RolePlaces {
+    /// Id, position and permissions of every role, the highest first.
+    roles: Vec<(i64, i64, i64)>,
+    /// Every role id in display order.
+    display: Vec<i64>,
+    /// The display position of every role.
+    shown: HashMap<i64, Option<i64>>,
+    names: HashMap<i64, String>,
+}
+
+async fn role_places_in(conn: &mut AnyConnection, server: &str) -> Result<RolePlaces, ApiError> {
+    let rows = sqlx::query(
+        "SELECT id, position, perms, name, display_position FROM roles WHERE server = $1 ORDER BY position DESC, id",
+    )
+    .bind(server)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut places = RolePlaces {
+        roles: Vec::with_capacity(rows.len()),
+        display: Vec::new(),
+        shown: HashMap::new(),
+        names: HashMap::new(),
+    };
+    let mut looks = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let id: i64 = r.try_get(0)?;
+        let position: i64 = r.try_get(1)?;
+        let shown: Option<i64> = r.try_get(4)?;
+        places.roles.push((id, position, r.try_get(2)?));
+        places.names.insert(id, r.try_get(3)?);
+        places.shown.insert(id, shown);
+        looks.push(looks::Look {
+            place: shown.unwrap_or(position),
+            hoist: false,
+        });
+    }
+    places.display = looks::display_order(&looks)
+        .into_iter()
+        .map(|i| places.roles[i].0)
+        .collect();
+    Ok(places)
+}
+
+/// Saves the display positions `shown` (one per role, the highest first: `None` follows the
+/// role order), audits the change from `before` to `after` and returns the event that announces
+/// it.
+#[allow(clippy::too_many_arguments)]
+async fn save_display(
+    tx: &mut AnyConnection,
+    key: &str,
+    actor: &audit::Actor,
+    places: &RolePlaces,
+    shown: Vec<Option<i64>>,
+    after: &[i64],
+    follow: bool,
+    version: i64,
+) -> Result<WsEvent, ApiError> {
+    for ((id, _, _), at) in places.roles.iter().zip(&shown) {
+        if places.shown.get(id).copied().flatten() != *at {
+            sqlx::query("UPDATE roles SET display_position = $1 WHERE id = $2")
+                .bind(*at)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    bump_roles_version(&mut *tx, key).await?;
+    let moved = order::moved(&places.display, after);
+    let named: Vec<serde_json::Value> = moved
+        .iter()
+        .take(REORDER_NAMED)
+        .map(|id| serde_json::json!({ "id": id, "name": places.names.get(id) }))
+        .collect();
+    audit::record(
+        &mut *tx,
+        Entry::new(key, actor, audit::Action::RoleDisplayOrder).details(
+            Details::new()
+                .set("roles", named)
+                .set(
+                    "more_roles",
+                    moved.len().saturating_sub(REORDER_NAMED) as i64,
+                )
+                .set("follow", follow),
+        ),
+    )
+    .await?;
+    Ok(WsEvent::RolesReordered {
+        server: key.to_string(),
+        order: places.roles.iter().map(|(id, _, _)| *id).collect(),
+        display: shown,
+        version: version + 1,
+    })
+}
+
+/// Set the display order of roles
+///
+/// Sets the order the server's roles show in (see `Role.display_position`): it orders the groups
+/// of the member list and decides which role colors a member's name and gives it its icon.
+/// `order` lists every role once, the one shown highest first. You can move only the roles you
+/// could move in the role order (see `PUT /api/v1/servers/{name}/roles/order`); the others must
+/// stay where they are. A new order gives every role a display position, so the display order
+/// stops following the role order; the order the roles already show in changes nothing.
+/// `version` is the `roles_version` the order was made from; a role created, deleted or moved
+/// since then makes it stale. Requires the Manage roles server permission. Emits
+/// `roles_reordered` to the server. General rate-limit bucket.
+#[utoipa::path(
+    put,
+    path = "/api/v1/servers/{name}/roles/display_order",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = RoleDisplayReq,
+    responses(
+        (status = 200, description = "The display order as saved and the new `roles_version`", body = RoleOrder),
+        (status = 400, description = "`order` does not list every role of the server exactly once (`List every role once`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage roles permission, or the order moves a role you can't move: one that does not rank below your highest role (`You can't move a role that is not below your highest role`), or while the role order is unconfirmed one with permissions you don't have (`You can't move a role that has permissions you don't have`) or one held by a member you can't moderate (`You can't move a role held by a member you can't moderate`)", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 409, description = "`version` is not the current one (`The role order changed. Refresh and try again.`)", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn set_role_display(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Json(req): Json<RoleDisplayReq>,
+) -> Result<Json<RoleOrder>, ApiError> {
+    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let key = access.name().to_string();
+    let RoleDisplayReq {
+        order: asked,
+        version,
+    } = req;
+    let actor = access.audit_actor(&state.db, Perm::ManageRoles).await?;
+    let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
+    let (stored, confirmed) = role_order_state(&mut *tx, &key).await?;
+    if stored != version {
+        return Err(order_stale());
+    }
+    let authority = access.role_authority_in(&mut tx, Perm::ManageRoles).await?;
+    let places = role_places_in(&mut tx, &key).await?;
+    let listed: HashSet<i64> = asked.iter().copied().collect();
+    if asked.len() != places.roles.len()
+        || listed.len() != places.roles.len()
+        || places.roles.iter().any(|(id, _, _)| !listed.contains(id))
+    {
+        return Err(bad("List every role once"));
+    }
+    if asked == places.display {
+        return Ok(Json(RoleOrder {
+            order: asked,
+            version,
+        }));
+    }
+    let bypassed = require_moves(
+        &mut tx,
+        &access,
+        &places.roles,
+        &places.display,
+        &asked,
+        confirmed,
+        authority,
+    )
+    .await?;
+    let top = asked.len() as i64;
+    let at: HashMap<i64, i64> = asked
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (*id, top - i as i64))
+        .collect();
+    let shown: Vec<Option<i64>> = places
+        .roles
+        .iter()
+        .map(|(id, _, _)| at.get(id).copied())
+        .collect();
+    let actor = actor.staff_if(bypassed);
+    let event = save_display(
+        &mut tx, &key, &actor, &places, shown, &asked, false, version,
+    )
+    .await?;
+    tx.commit().await?;
+    state.hub.broadcast(event);
+    Ok(Json(RoleOrder {
+        order: asked,
+        version: version + 1,
+    }))
+}
+
+/// Show roles in their role order
+///
+/// Clears the display positions of every role, so the server's roles show in their role order
+/// again (see `Role.display_position`). Only allowed when every role whose place changes is one
+/// you could move in the role order (see `PUT /api/v1/servers/{name}/roles/order`). `version` is
+/// the `roles_version` of the order you looked at. Requires the Manage roles server permission.
+/// Emits `roles_reordered` to the server. General rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/servers/{name}/roles/display_order",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = RoleDisplayFollowReq,
+    responses(
+        (status = 200, description = "The display order, now the role order, and the `roles_version`", body = RoleOrder),
+        (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage roles permission, or a role you can't move would change places: one that does not rank below your highest role (`You can't move a role that is not below your highest role`), or while the role order is unconfirmed one with permissions you don't have (`You can't move a role that has permissions you don't have`) or one held by a member you can't moderate (`You can't move a role held by a member you can't moderate`)", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 409, description = "`version` is not the current one (`The role order changed. Refresh and try again.`)", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn follow_role_order(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Json(req): Json<RoleDisplayFollowReq>,
+) -> Result<Json<RoleOrder>, ApiError> {
+    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let key = access.name().to_string();
+    let RoleDisplayFollowReq { version } = req;
+    let actor = access.audit_actor(&state.db, Perm::ManageRoles).await?;
+    let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
+    let (stored, confirmed) = role_order_state(&mut *tx, &key).await?;
+    if stored != version {
+        return Err(order_stale());
+    }
+    let authority = access.role_authority_in(&mut tx, Perm::ManageRoles).await?;
+    let places = role_places_in(&mut tx, &key).await?;
+    let rank: Vec<i64> = places.roles.iter().map(|(id, _, _)| *id).collect();
+    if places.shown.values().all(Option::is_none) {
+        return Ok(Json(RoleOrder {
+            order: rank,
+            version,
+        }));
+    }
+    let bypassed = require_moves(
+        &mut tx,
+        &access,
+        &places.roles,
+        &places.display,
+        &rank,
+        confirmed,
+        authority,
+    )
+    .await?;
+    let actor = actor.staff_if(bypassed);
+    let shown = vec![None; rank.len()];
+    let event = save_display(&mut tx, &key, &actor, &places, shown, &rank, true, version).await?;
+    tx.commit().await?;
+    state.hub.broadcast(event);
+    Ok(Json(RoleOrder {
+        order: rank,
+        version: version + 1,
+    }))
 }
 
 /// Request body for changing what everyone in a server may do.
@@ -7184,6 +7765,9 @@ pub(crate) async fn set_everyone_perms(
         everyone_perms: after,
     }))
 }
+
+#[cfg(test)]
+mod looks_tests;
 
 #[cfg(test)]
 mod tests {
@@ -8064,6 +8648,9 @@ mod tests {
                 color: None,
                 perms: None,
                 mentionable: None,
+                icon: None,
+                hoist: None,
+                color_names: None,
             }),
         )
         .await;
@@ -12198,6 +12785,9 @@ mod tests {
                         color: None,
                         perms,
                         mentionable: None,
+                        icon: None,
+                        hoist: None,
+                        color_names: None,
                     }),
                 )
                 .await
@@ -12472,6 +13062,9 @@ mod tests {
                     color: None,
                     perms,
                     mentionable: None,
+                    icon: None,
+                    hoist: None,
+                    color_names: None,
                 }),
             )
             .await,
@@ -12798,6 +13391,9 @@ mod tests {
                         color: Some(color),
                         perms,
                         mentionable: None,
+                        icon: None,
+                        hoist: None,
+                        color_names: None,
                     }),
                 )
                 .await
