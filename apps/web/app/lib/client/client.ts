@@ -9,7 +9,7 @@ import { CallGuard } from './calls'
 import { createInstanceRegistry } from './instance_registry'
 import { ownInstance, writeLocal } from '../instances'
 import type { Theme } from '../types'
-import { keepTheme } from '../theme/device'
+import { STREAMER_KEY, keepTheme } from '../theme/device'
 import type { AccountId, AccountSession } from './session'
 
 const closed = {
@@ -68,7 +68,7 @@ function createClient() {
     },
     setStreamer(streamer: boolean) {
       device.streamer = streamer
-      writeLocal('rchat_streamer', streamer ? '1' : '0')
+      writeLocal(STREAMER_KEY, streamer ? '1' : '0')
       if (typeof document !== 'undefined') document.body.classList.toggle('streamer-mode', streamer)
       for (const account of live) account.store.setState({ streamer })
     },

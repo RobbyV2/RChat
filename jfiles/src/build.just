@@ -42,12 +42,14 @@ build-frontend: deps
 build-static api_url: deps build-wasm
   cd {{ROOT}} && STATIC_EXPORT=true NEXT_PUBLIC_API_URL={{api_url}} bun run build
   cd {{WEB}} && cp out/index.html out/404.html
+  cd {{ROOT}} && {{DOTENVX}} bun scripts/bundle_docs.ts
   @echo "Static site in {{WEB}}/out (API: {{api_url}}); serve it on any static host."
 
 # Build the client-only app for a static host
 build-client: deps build-wasm
   cd {{ROOT}} && STATIC_EXPORT=true NEXT_PUBLIC_CLIENT_ONLY=true bun run build
   cd {{WEB}} && cp out/index.html out/404.html
+  cd {{ROOT}} && {{DOTENVX}} bun scripts/bundle_docs.ts
 
 # Build everything for production (full mode); DOCS_BUILD=off skips the docs
 build-all: build-wasm build-api build-frontend

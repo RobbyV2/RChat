@@ -17,7 +17,7 @@ import { codeTtls, NEEDS_INVITER } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
 import { P } from '../../lib/p2p/state'
 import { fieldMax } from '../../lib/p2p/event_v2'
-import { CopyButton, QrCode } from '../config_sync'
+import { CopyButton, QrCode } from '../share_code'
 import { Dialog, FieldError, fieldCls } from '../ui'
 import { FolderColorField } from '../folder_dialog'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
@@ -74,7 +74,7 @@ export function CodeBox({ text }: { text: string }) {
   return (
     <Stack gap="md" align="start">
       <div className="w-64 max-w-full">
-        <QrCode text={text} label="P2P server invite code" wide />
+        <QrCode text={text} label="P2P server invite code" size="lg" />
       </div>
       <Row gap="2xs" align="start" place="w-full">
         <textarea

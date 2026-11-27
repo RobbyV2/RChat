@@ -14,7 +14,7 @@ const variants = (source: string, name: string) => {
   )
 }
 
-const page = read('docs/src/content/docs/api/realtime.md')
+const page = read('docs/src/content/docs/api/realtime.mdx')
 
 // The names in column `column` of the table rows of the page's section `heading`.
 const listed = (heading: string, column: number) => {

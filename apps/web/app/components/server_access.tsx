@@ -60,8 +60,9 @@ import { SettingSwitch } from './settings_fields'
 import { GUEST_VOICE_OFF, GUEST_VOICE_ON } from '../lib/guest_voice'
 import { Button, IconButton } from './controls'
 import { Grid, Row, Stack, Surface, Inset } from './layout'
-import { Chips, Dialog, FieldError, fieldCls, useCopied } from './ui'
+import { Chips, Dialog, FieldError, fieldCls } from './ui'
 import { time } from '../lib/platform/time'
+import { useCopied } from '../lib/use_copied'
 
 const UNTITLED = 'Untitled password'
 

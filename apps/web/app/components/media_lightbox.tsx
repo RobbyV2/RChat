@@ -77,8 +77,9 @@ import { useMask } from '../lib/store'
 import { AltBadge } from './alt_text'
 import { longPress } from './context_menu'
 import { useFileMenu } from './file_card'
-import { Masked, useCopied, useEscape } from './ui'
+import { Masked, useEscape } from './ui'
 import { Row, Surface, Inset } from './layout'
+import { useCopied } from '../lib/use_copied'
 
 // An image as the viewer shows it. `src` is the address its message shows it from, held while it
 // is on screen; `w` and `h` the size its sender gave, until the image tells its own; `placeholder`

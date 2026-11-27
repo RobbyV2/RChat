@@ -66,6 +66,7 @@ deploy/k8s/secrets.env
 /docs/.astro/
 /docs/src/content/docs/reference/
 /docs/src/styles/theme.css
+/docs/src/styles/app-tailwind.css
 
 # database
 rchat.db*

@@ -830,6 +830,7 @@ export interface SiteSettings {
   server_profiles: boolean
   docs: boolean
   scheduled_messages: boolean
+  interactive_docs: boolean
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number

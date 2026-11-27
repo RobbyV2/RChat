@@ -142,13 +142,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['apps/web/app/**/*.tsx'],
+    files: ['apps/web/app/**/*.tsx', 'docs/src/**/*.tsx'],
     ignores: [...SPACING_SOURCES, ...HAND_SPACED, ...TEST_FILES],
     plugins: { rchat: { rules: { spacing } } },
     rules: { 'rchat/spacing': 'error' },
   },
   {
-    files: ['apps/web/app/**/*.{ts,tsx}'],
+    files: ['apps/web/app/**/*.{ts,tsx}', 'docs/src/**/*.{ts,tsx}'],
     ignores: [...NETWORK_FILES, ...CLOCK_FILES, ...TEST_FILES],
     rules: {
       'no-restricted-globals': ['error', ...networkGlobals, ...clockGlobals],
@@ -173,12 +173,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ['apps/web/app/**/*.{ts,tsx}'],
+    files: ['apps/web/app/**/*.{ts,tsx}', 'docs/src/**/*.{ts,tsx}'],
     ignores: [...REQUEST_SINKS, ...STORE_SINKS, ...SCREEN_SINKS, ...TEST_FILES],
     rules: sinkRule([]),
   },
   {
-    files: ['apps/web/app/**/*.{ts,tsx}'],
+    files: ['apps/web/app/**/*.{ts,tsx}', 'docs/src/**/*.{ts,tsx}'],
     ignores: ['apps/web/app/lib/log.ts', ...TEST_FILES],
     rules: { 'no-console': 'error' },
   },

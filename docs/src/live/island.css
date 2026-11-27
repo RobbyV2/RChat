@@ -1,0 +1,40 @@
+@layer base, starlight, theme, live, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities) source(none);
+@import '../styles/app-tailwind.css';
+
+@source './';
+@source '../../../apps/web/app/components/controls.tsx';
+@source '../../../apps/web/app/components/layout';
+@source '../../../apps/web/app/components/share_code.tsx';
+@source '../../../apps/web/app/lib/controls.ts';
+@source '../../../apps/web/app/lib/layout';
+
+/* Starlight's pages have no Tailwind reset: the island's elements start from the same blank state
+   as in the app, above Starlight's own styles and below the utilities. */
+@layer live {
+  .live-root,
+  .live-root *,
+  .live-root ::before,
+  .live-root ::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+
+  .live-root :where(button, input, select, textarea) {
+    font: inherit;
+    color: inherit;
+    background-color: transparent;
+  }
+
+  .live-root :where(button) {
+    cursor: pointer;
+  }
+}
+
+.live-dynamic .live-static-note,
+.live-connect .live-connect-note {
+  display: none;
+}

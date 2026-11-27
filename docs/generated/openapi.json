@@ -8657,6 +8657,598 @@
         ]
       }
     },
+    "/api/v1/me/scheduled": {
+      "get": {
+        "tags": [
+          "Scheduled messages"
+        ],
+        "summary": "List your scheduled messages",
+        "description": "Your messages waiting to be sent, being sent and failed, soonest first, 50 at a time, with\nhow many wait and how many failed. `place` names each place you can still open, through the\nsame access checks as reading it; it is `null` for the rest. Sent messages are not listed.\nRequires a bearer token. General rate-limit bucket.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "Only the messages of one place: `c<channel_id>`, `t<root_id>` or `d<dm_id>`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Only `waiting` ones (with those being sent) or only `failed` ones.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "`next` of the page before.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 50 (default 50).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            },
+            "example": 50
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of your scheduled messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`Invalid scope`, `Invalid status` or `Invalid cursor`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Scheduled messages"
+        ],
+        "summary": "Schedule a message",
+        "description": "Stores a text message this site sends for you at `at`, in a channel, a thread or a DM. The\nplace is checked as for sending (membership, the channel's Send messages permission and, for\nthe first reply of a thread, Start threads; timeouts; a DM's participants and blocks), but\nslow mode only applies when it is sent. In channels and threads the profanity filter checks\nthe text when it is on. At its time everything is checked again as you: a message that may\nnot be sent then fails with a reason, and one held by slow mode or the message rate waits up\nto an hour past its time. Requires a bearer token. Emits `scheduled_updated` to your own\nconnections. General rate-limit bucket.",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The scheduled message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledMessage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "With reason `invalid`: `Give one of channel_id, dm_id and thread_root_id` (field `place`), `Pick a time at least 1 minute ahead` or `Pick a time within a year` (field `at`), `Message is empty` (field `content`). Text over `limits.message_chars` characters, a `reply_to` you cannot reply to (`Cannot reply to that message`), text blocked by the profanity filter, a voice channel. `You can have at most 100 scheduled messages waiting` with the configured number (`SCHEDULED_PER_ACCOUNT`, reason `limit`, control `scheduled_per_account`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Scheduled messages are turned off on this site` (reason `off_site`, control `scheduled_messages`). Not a member of the channel's server, no permission to send in the channel or to start a thread there, timed out, or a block between the DM participants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: no such channel, thread root or DM, or one you cannot open; identical responses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body is not valid for this schema (plain-text framework error)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/me/scheduled/{id}": {
+      "delete": {
+        "tags": [
+          "Scheduled messages"
+        ],
+        "summary": "Delete a scheduled message",
+        "description": "Deletes one of your messages that waits or failed, so it is never sent. Works while the\n`scheduled_messages` switch is off. Requires a bearer token. Emits `scheduled_removed` to\nyour own connections. General rate-limit bucket.",
+        "operationId": "delete_scheduled",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scheduled message id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted; body `{\"ok\": true}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Non-numeric id (plain-text framework error); or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: no scheduled message of yours with that id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`It is being sent` or `It was already sent` (reason `conflict`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Scheduled messages"
+        ],
+        "summary": "Edit a scheduled message",
+        "description": "Changes the text or the time of one of your messages that waits or failed, or makes it a\nplain message instead of a reply. A new time makes a failed message wait again, and then it\ncounts against `SCHEDULED_PER_ACCOUNT`. In channels and threads the profanity filter checks\nnew text when it is on. Works while the `scheduled_messages` switch is off. Requires a bearer\ntoken. Emits `scheduled_updated` to your own connections. General rate-limit bucket.",
+        "operationId": "update_scheduled",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scheduled message id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The scheduled message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledMessage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "With reason `invalid`: a time out of range (field `at`) or `Message is empty` (field `content`). Text over `limits.message_chars` characters or blocked by the profanity filter. `You can have at most 100 scheduled messages waiting` (reason `limit`, control `scheduled_per_account`) for a failed message given a new time. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: no scheduled message of yours with that id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`It is being sent` or `It was already sent` (reason `conflict`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body is not valid for this schema (plain-text framework error)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/me/scheduled/{id}/send": {
+      "post": {
+        "tags": [
+          "Scheduled messages"
+        ],
+        "summary": "Send a scheduled message now",
+        "description": "Sends one of your messages that waits or failed right away (Retry for a failed one), through\nthe same checks as sending it yourself, slow mode included. Refused, it stays as it was (a\nfailed one takes the new reason) and the refusal is the answer. Works while the\n`scheduled_messages` switch is off. Requires a bearer token. Emits the `message` events of\nsending and `scheduled_removed` to your own connections. General rate-limit bucket.",
+        "operationId": "send_now",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scheduled message id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The posted message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A refusal of the send path, such as `Cannot reply to that message` or the profanity filter. A non-numeric id gives a plain-text 400; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A refusal of the send path: not a member, no permission to send, timed out, banned or blocked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: no scheduled message of yours with that id, or a place you cannot open; identical responses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`It is being sent` or `It was already sent` (reason `conflict`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Slow mode (`Slow mode: wait Ns`), `Sending too fast, try again in a moment` (reason `rate`), or too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/me/servers": {
       "get": {
         "tags": [
@@ -21345,7 +21937,7 @@
           "Servers"
         ],
         "summary": "Get join and leave message settings",
-        "description": "Returns where join and leave messages go and whether each kind is on. Requires the Delete\nserver permission. `channel_id` can be a channel you cannot see (set by another admin);\nclients show it as \"Hidden channel\". General rate-limit bucket.",
+        "description": "Returns where join and leave messages go and whether each kind is on. Requires the Manage\nserver settings permission. `channel_id` can be a channel you cannot see (set by another\nadmin); clients show it as \"Hidden channel\". General rate-limit bucket.",
         "operationId": "get_system_messages",
         "parameters": [
           {
@@ -29722,6 +30314,7 @@
           "resync_jitter_ms",
           "catch_up_delay_ms",
           "servers_per_account",
+          "scheduled_per_account",
           "session_max_age_secs",
           "session_idle_secs"
         ],
@@ -29818,6 +30411,12 @@
             "description": "Most milliseconds a client waits at random before it reloads what it shows after the\nserver asked all clients to: by default 10000 (`RESYNC_JITTER_MS`).",
             "example": 10000,
             "minimum": 0
+          },
+          "scheduled_per_account": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most scheduled messages one account can have waiting: by default 100\n(`SCHEDULED_PER_ACCOUNT`); 0 for no cap.",
+            "example": 100
           },
           "servers_per_account": {
             "type": "integer",
@@ -33701,6 +34300,279 @@
           }
         }
       },
+      "ScheduleReq": {
+        "type": "object",
+        "description": "A message to schedule. Give exactly one of `channel_id`, `dm_id` and `thread_root_id`.",
+        "required": [
+          "content",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When to send it (unix seconds): at least 60 seconds and at most 365 days from now."
+          },
+          "channel_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A channel to send it in."
+          },
+          "content": {
+            "type": "string",
+            "description": "Its text: not blank, at most `limits.message_chars` characters.",
+            "example": "Standup in 5 minutes"
+          },
+          "dm_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A DM conversation to send it in."
+          },
+          "mention_reply": {
+            "type": "boolean",
+            "description": "With `reply_to`: ping the quoted message's author. Defaults to `true`.",
+            "default": true
+          },
+          "reply_to": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A message of the same place to reply to, as `SendReq.reply_to`."
+          },
+          "thread_root_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The root message of a thread to reply in."
+          }
+        }
+      },
+      "ScheduledMessage": {
+        "type": "object",
+        "description": "A message this site sends for you later.",
+        "required": [
+          "id",
+          "scope",
+          "mention_reply",
+          "content",
+          "at",
+          "next_at",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it is sent (unix seconds), as you picked it."
+          },
+          "channel_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The channel; for a thread reply in a channel, the root's channel. `null` in a DM."
+          },
+          "content": {
+            "type": "string",
+            "description": "Its text."
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was scheduled."
+          },
+          "dm_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The DM conversation; for a thread reply in a DM, the root's. `null` in a channel."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, or `Waiting for slow mode` while slow mode holds it."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its id."
+          },
+          "mention_reply": {
+            "type": "boolean",
+            "description": "With `reply_to`: whether the reply pings the quoted message's author."
+          },
+          "next_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the server looks at it next (unix seconds): `at`, or later while slow mode holds it\nor after a server failure."
+          },
+          "place": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledPlace",
+                "description": "Names of its place you can open now; `null` when you can't open it, and in events."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reply_to": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The message it replies to."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Where it goes: `c<channel_id>`, `t<root_id>` for a thread reply or `d<dm_id>`.",
+            "example": "c12"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduledStatus",
+            "description": "Where it is."
+          },
+          "thread_root_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "For a thread reply, the thread's root message."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it last changed."
+          }
+        }
+      },
+      "ScheduledPage": {
+        "type": "object",
+        "description": "A page of your scheduled messages, soonest first.",
+        "required": [
+          "items",
+          "waiting",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many failed, with `scope` only there."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduledMessage"
+            },
+            "description": "The messages of this page."
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`after` for the next page; `null` on the last one."
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many wait to be sent (also the ones being sent), with `scope` only there."
+          }
+        }
+      },
+      "ScheduledPatch": {
+        "type": "object",
+        "description": "Changes to a scheduled message. Fields left out stay.",
+        "properties": {
+          "at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A new time (unix seconds), as for scheduling. A failed message waits again."
+          },
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New text: not blank, at most `limits.message_chars` characters."
+          },
+          "remove_reply": {
+            "type": "boolean",
+            "description": "`true` makes it a plain message instead of a reply."
+          }
+        }
+      },
+      "ScheduledPlace": {
+        "type": "object",
+        "description": "Names of the place of a scheduled message that you can open now.",
+        "properties": {
+          "channel_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The channel's name (for a thread, its root's channel); `null` for a DM."
+          },
+          "dm_user": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UserRef",
+                "description": "The other person of a DM; `null` in a server."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lowercase name of the server; `null` for a DM."
+          },
+          "server_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The server's name as shown; `null` for a DM."
+          }
+        }
+      },
+      "ScheduledStatus": {
+        "type": "string",
+        "description": "Where a scheduled message is: `waiting` for its time (also while slow mode holds it, with\n`error` saying so), `sending` right now, or `failed` with `error` saying why.",
+        "enum": [
+          "waiting",
+          "sending",
+          "failed"
+        ]
+      },
       "SearchResult": {
         "type": "object",
         "description": "One search hit with where it was posted.",
@@ -34785,7 +35657,7 @@
       },
       "Settings": {
         "type": "object",
-        "description": "Instance-wide feature switches. Changes reach clients through the `settings_changed`\nWebSocket event. A switched-off feature's endpoints answer 404, except that uploads, P2P\nattachments and outgoing webhooks answer 403, guests get 401 while guest access is off, and\n`client_other_instances` gates no endpoint. What `server_creation`, `server_joining` (under\n`nobody`), `server_search`, `dm_creation` and `friend_requests` refuse carries `reason` with\nkind `off_site` and the setting's key as `control`; an account that `server_creation: some`\nleaves out gets `off_account`.",
+        "description": "Instance-wide feature switches. Changes reach clients through the `settings_changed`\nWebSocket event. A switched-off feature's endpoints answer 404, except that uploads, P2P\nattachments, outgoing webhooks and new scheduled messages answer 403, guests get 401 while\nguest access is off, and `client_other_instances` gates no endpoint. What `server_creation`, `server_joining` (under\n`nobody`), `server_search`, `dm_creation` and `friend_requests` refuse carries `reason` with\nkind `off_site` and the setting's key as `control`; an account that `server_creation: some`\nleaves out gets `off_account`.",
         "required": [
           "profanity_filter",
           "asset_previews",
@@ -34861,6 +35733,10 @@
             "type": "boolean",
             "description": "Reports to the instance."
           },
+          "interactive_docs": {
+            "type": "boolean",
+            "description": "Whether the docs this instance serves, and the docs the apps carry, may run requests as\nthe accounts the app holds on this instance. Only the docs read it; it gates no endpoint."
+          },
           "onboarding": {
             "type": "boolean",
             "description": "The tour for new accounts."
@@ -34916,6 +35792,10 @@
           "registration": {
             "$ref": "#/components/schemas/Registration",
             "description": "Who may create an account with a password: `open`, `sso` (only through single\nsign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and\n`password_login` is on."
+          },
+          "scheduled_messages": {
+            "type": "boolean",
+            "description": "Scheduled messages: people may have this site send a message for them at a time they\npick (`POST /api/v1/me/scheduled`). Off: no new ones (403 with reason `off_site`); those\nalready scheduled still send, and can be edited, sent now or deleted."
           },
           "server_creation": {
             "$ref": "#/components/schemas/ServerCreation",
@@ -36312,6 +37192,10 @@
     {
       "name": "Threads",
       "description": "Replies attached to a root message."
+    },
+    {
+      "name": "Scheduled messages",
+      "description": "Messages this site sends for you at a time you pick, in channels, threads and DMs. They reach only your own connections (`scheduled_updated`, `scheduled_removed`) and are checked again as you when they are sent."
     },
     {
       "name": "Polls",

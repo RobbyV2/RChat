@@ -188,6 +188,10 @@ const BUTTON_SIZE: Record<ButtonSize, string> = {
   md: 'px-4 py-2',
 }
 
+// A text field, a select or a text area: outlined, 44 px high on a coarse pointer.
+export const fieldLook =
+  'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm pointer-coarse:min-h-11'
+
 // A labelled button: pill shape, medium label, 32 px (`sm`) or 36 px (`md`) high.
 export const buttonLook = (variant: ButtonVariant, size: ButtonSize) =>
   `rounded-full ${BUTTON_SIZE[size]} text-sm font-medium ${BUTTON_TONE[variant]} ${FOCUS} disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:min-w-11`

@@ -14,7 +14,7 @@ import { useStore } from '../../lib/store'
 
 import { looksLikeCard, type Card } from '../../lib/p2p/card'
 import { fingerprint } from '../../lib/p2p/keys'
-import { CopyButton, QrCode } from '../config_sync'
+import { CopyButton, QrCode } from '../share_code'
 import { Dialog, FieldError, fieldCls } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { QrScan } from './qr_scan'
@@ -36,7 +36,7 @@ function MyCodeBody() {
     )
   return (
     <Stack gap="md" align="start">
-      <QrCode text={card} label="Your P2P contact code" wide />
+      <QrCode text={card} label="Your P2P contact code" size="lg" />
       <Row gap="2xs" align="start" place="w-full">
         <textarea
           readOnly

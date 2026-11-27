@@ -1,0 +1,36 @@
+---
+// A request: shown as curl, and runnable as an account of the app on this origin.
+import { Code } from '@astrojs/starlight/components'
+
+interface Props {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  path: string
+  body?: string
+  // What a write does, for the question before it runs.
+  effect?: string
+  // Placeholders filled from a picker: `server`, `channel`, `dm` or `me`.
+  picks?: Record<string, 'server' | 'channel' | 'dm' | 'me'>
+}
+
+const { method, path, body, effect, picks } = Astro.props
+const lines = [
+  `curl -X ${method} 'https://chat.example.com/api/v1${path}'`,
+  `  -H 'Authorization: Bearer <token>'`,
+  ...(body
+    ? [`  -H 'Content-Type: application/json'`, `  -d '${body.replace(/'/g, `'\\''`)}'`]
+    : []),
+]
+const props = JSON.stringify({ method, path, body, effect, picks })
+---
+
+<Code code={lines.join(' \\\n')} lang="sh" />
+<p class="live-static-note">
+  Opened from an instance or an app where you are signed in, this page runs the request as your
+  account.
+</p>
+<div data-live="try" data-props={props} class="not-content live-root"></div>
+
+<script>
+  import { mount } from '../live/island'
+  mount()
+</script>

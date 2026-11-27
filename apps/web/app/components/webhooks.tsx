@@ -10,7 +10,7 @@ import { Check, Copy } from 'lucide-react'
 import { embedColor, fieldRows, safeLink, webhookIdOf } from '../lib/webhooks'
 import type { RichEmbed, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { useCopied } from './ui'
+import { useCopied } from '../lib/use_copied'
 import { sharing } from '../lib/platform'
 
 // Always shown next to a webhook's name, whatever name it posted with.

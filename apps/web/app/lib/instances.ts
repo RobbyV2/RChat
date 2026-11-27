@@ -5,7 +5,7 @@ import { getBasePath } from './basePath'
 import { hostOf, normalizeHost, privateHost } from './qualified'
 
 export { privateHost }
-import { WsClient, wsUrlFrom } from './ws'
+import { WsClient, wsUrlFrom, type WsEndpoints } from './ws'
 import { shellInfo } from './platform/desktop'
 import type { InstanceInfo } from './types'
 import { Secret, TO_REQUEST } from './secret'
@@ -370,6 +370,11 @@ export class InstanceConnection {
 
   health() {
     return versionedUrl(this.ends.probe(), this.api.prefix)
+  }
+
+  // Where a realtime connection to this instance goes, for another client than `ws`.
+  get socketEndpoints(): WsEndpoints {
+    return this.pinned
   }
 
   get origin() {

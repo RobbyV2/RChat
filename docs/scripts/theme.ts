@@ -1,8 +1,9 @@
 // Writes src/styles/theme.css: the app's design tokens from apps/web/app/globals.css, over the
 // Tailwind defaults it builds on, as plain custom properties. Dark is on :root and light under
-// [data-theme='light'], the attribute both the app and Starlight switch.
+// [data-theme='light'], the attribute both the app and Starlight switch. Also writes
+// src/styles/app-tailwind.css, the parts of globals.css the island's Tailwind build reads.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 
 export type Tokens = Map<string, string>
 
@@ -62,6 +63,32 @@ export function appTheme(globals: string, defaults: string): AppTheme {
   return { dark, light }
 }
 
+// The top-level rules of `css` (prelude and block) and statements whose prelude `kept` matches,
+// as written.
+export function rules(css: string, kept: RegExp): string[] {
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const out: string[] = []
+  let start = 0
+  let depth = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === '{') depth++
+    else if (c === '}') depth--
+    if ((c === '}' && depth === 0) || (c === ';' && depth === 0)) {
+      const rule = text.slice(start, i + 1).trim()
+      if (kept.test(rule)) out.push(rule)
+      start = i + 1
+    }
+  }
+  return out
+}
+
+// What the island's Tailwind build takes from globals.css: the theme, the custom variants and the
+// streamer mode rules.
+const FOR_TAILWIND = /^(?:@theme\b|@custom-variant\b|\.streamer-mode\b)/
+
+export const renderTailwind = (globals: string) => `${rules(globals, FOR_TAILWIND).join('\n\n')}\n`
+
 const block = (selectors: string[], tokens: Tokens) =>
   `${selectors.join(',\n')} {\n${[...tokens].map(([name, value]) => `  ${name}: ${value};`).join('\n')}\n}\n`
 
@@ -73,12 +100,13 @@ export const renderTheme = ({ dark, light }: AppTheme) =>
 
 const root = join(import.meta.dir, '..', '..')
 
-export function writeTheme(out = join(import.meta.dir, '..', 'src/styles/theme.css')) {
+export function writeTheme(styles = join(import.meta.dir, '..', 'src/styles')) {
   const web = join(root, 'apps/web')
   const globals = readFileSync(join(web, 'app/globals.css'), 'utf8')
   const defaults = readFileSync(Bun.resolveSync('tailwindcss/theme.css', web), 'utf8')
-  mkdirSync(dirname(out), { recursive: true })
-  writeFileSync(out, renderTheme(appTheme(globals, defaults)))
+  mkdirSync(styles, { recursive: true })
+  writeFileSync(join(styles, 'theme.css'), renderTheme(appTheme(globals, defaults)))
+  writeFileSync(join(styles, 'app-tailwind.css'), renderTailwind(globals))
 }
 
 if (import.meta.main) writeTheme()

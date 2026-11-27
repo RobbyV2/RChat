@@ -5,7 +5,18 @@ sidebar:
   order: 3
 ---
 
+import RunAs from '../../../components/RunAs.astro'
+import Events from '../../../components/Events.astro'
+
 `GET /api/v1/ws` upgrades to a WebSocket on the instance's own address. Every frame in both directions is a JSON object tagged by `type` in snake_case, and a frame holds at most 64 KiB. Client frames are defined in `apps/server/src/ws/protocol.rs` and server events in `apps/server/src/ws/event.rs`. Field lists of the payload types (`Message`, `Member`, `Channel` and others) are in the [REST API reference](/docs/reference/api/).
+
+## Watch your events
+
+<RunAs />
+
+<Events />
+
+The view opens one realtime connection as the account, which counts toward its `WS_CONNECTIONS_PER_USER`. While streamer mode is on, each event stays collapsed until opened.
 
 ## Opening a connection
 

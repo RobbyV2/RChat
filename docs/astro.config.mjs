@@ -8,6 +8,7 @@ export default defineConfig({
   image: { service: passthroughImageService() },
   build: { inlineStylesheets: 'never' },
   devToolbar: { enabled: false },
+  vite: { oxc: { jsx: { runtime: 'automatic', importSource: 'react' } } },
   markdown: { processor: satteri({ features: { smartPunctuation: false } }) },
   integrations: [
     starlight({

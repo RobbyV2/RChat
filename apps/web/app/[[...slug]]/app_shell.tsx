@@ -23,8 +23,9 @@ import { historyKey } from '../lib/openapi'
 import { notifications } from '../lib/platform'
 import { useGuestPostingCheck } from '../components/use_guest_posting_check'
 import { pollAccountCounts, startAccountCounts } from '../lib/client/account_counts'
-import { restoreTheme, startApp } from '../lib/start'
-import { THEME_KEY } from '../lib/theme/device'
+import { restoreStreamer, restoreTheme, startApp } from '../lib/start'
+import { takeAppRequest } from '../lib/app_requests'
+import { STREAMER_KEY, THEME_KEY } from '../lib/theme/device'
 import { shareLoginHref } from '../lib/client/share_target'
 import { ContextMenu } from '../components/context_menu'
 import { MediaLightbox } from '../components/media_lightbox'
@@ -131,6 +132,7 @@ export default function AppShell() {
         return
       }
       if (awaitingInstance(account.conn)) {
+        takeAppRequest()
         setRoute('login')
         router.replace(shareLoginHref('/login/', window.location.search))
         return
@@ -164,6 +166,8 @@ export default function AppShell() {
     if (route !== 'chat' || pendingNotice || !client.canWritePage(shown)) return
     start(shown)
     markEntry(shown)
+    if (takeAppRequest() === 'add_instance')
+      shown.store.getState().openDialog({ kind: 'add_instance' })
     return shown.store.subscribe((state, before) => {
       if ((state.me !== before.me && state.me) || (state.guest && !before.guest)) markEntry(shown)
     })
@@ -268,6 +272,7 @@ export function SessionServices() {
       const key = account.conn.scoped(historyKey(ownerOf(account.store.getState())))
       if (event.key === key || event.key === null) reloadHistory()
       if (event.key === THEME_KEY) restoreTheme(account)
+      if (event.key === STREAMER_KEY) restoreStreamer(account)
       if (event.key?.startsWith('rchat_layout:')) account.store.getState().reloadLayout()
       if (event.key?.startsWith('rchat_emoji:')) account.store.getState().reloadEmoji()
       if (event.key?.startsWith('rchat_forward:')) account.store.getState().reloadForward()

@@ -1,0 +1,14 @@
+---
+// The realtime events an account of the app on this origin receives, live.
+---
+
+<p class="live-static-note">
+  Opened from an instance or an app where you are signed in, this page shows the events your
+  account receives as they arrive.
+</p>
+<div data-live="events" class="not-content live-root"></div>
+
+<script>
+  import { mount } from '../live/island'
+  mount()
+</script>

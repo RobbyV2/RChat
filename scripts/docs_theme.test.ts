@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { appTheme, declarations, renderTheme } from '../docs/scripts/theme'
+import { appTheme, declarations, renderTailwind, renderTheme, rules } from '../docs/scripts/theme'
 
 const read = (path: string) => readFileSync(join(import.meta.dir, '..', path), 'utf8')
 const defaults = readFileSync(
@@ -69,5 +69,43 @@ describe('the app theme', () => {
     expect(used.length).toBeGreaterThan(0)
     for (const name of used) expect(theme.dark.has(name)).toBe(true)
     expect(custom).not.toMatch(/#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|oklch)\(/i)
+  })
+})
+
+describe('the island build', () => {
+  test('rules keeps the matching top-level rules and statements as written', () => {
+    const css = `@import 'x';
+@theme {
+  --a: 1;
+  @keyframes k {
+    from {
+      opacity: 0;
+    }
+  }
+}
+@custom-variant pressed (&[aria-pressed='true']);
+.other {
+  color: red;
+}`
+    expect(rules(css, /^(?:@theme|@custom-variant)/)).toEqual([
+      `@theme {
+  --a: 1;
+  @keyframes k {
+    from {
+      opacity: 0;
+    }
+  }
+}`,
+      "@custom-variant pressed (&[aria-pressed='true']);",
+    ])
+  })
+
+  test('takes the theme, the custom variants and streamer mode from globals.css', () => {
+    const css = renderTailwind(read('apps/web/app/globals.css'))
+    expect(css).toStartWith('@theme {')
+    expect(css).toContain('@custom-variant hover-idle')
+    expect(css).toContain('.streamer-mode .streamer {')
+    expect(css).not.toContain("@import 'tailwindcss'")
+    expect(css).not.toContain('html,\nbody')
   })
 })

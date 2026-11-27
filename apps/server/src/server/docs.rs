@@ -28,7 +28,7 @@ pub const SCRIPT_HASHES: &str = "script-hashes.txt";
 /// What the pages of the site may load: their own files, and inline scripts only when the build
 /// listed their hashes. Search runs WebAssembly. Every answer carries the whole policy, so a page
 /// revalidated with a 304 (which has no content type) keeps its scripts.
-const POLICY: &str = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'";
+const POLICY: &str = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' http: https: ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'";
 
 /// The policy of the pages that say the site is unavailable: no scripts, their own styles.
 const CLOSED_POLICY: &str = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";

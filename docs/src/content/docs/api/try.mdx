@@ -1,0 +1,35 @@
+---
+title: Try the API
+description: Run API requests as one of your accounts, from the docs your instance or app serves.
+sidebar:
+  order: 5
+---
+
+import RunAs from '../../../components/RunAs.astro'
+import Try from '../../../components/Try.astro'
+
+These docs run requests as an account when they are open from an instance or an app where you are signed in. The bar lists every account the app on this origin holds, with its instance. Reads run on click, and each write asks first and names its effect. The requests are ordinary API calls under the account's own limits.
+
+<RunAs />
+
+## Your account
+
+<Try method="GET" path="/me" />
+
+## Your servers
+
+<Try method="GET" path="/me/servers" />
+
+## Messages in a channel
+
+<Try method="GET" path="/channels/{id}/messages" picks={{ id: 'channel' }} />
+
+## Send a message to a conversation
+
+<Try
+  method="POST"
+  path="/dms/{id}/messages"
+  body={'{"content": "Hello from the docs"}'}
+  effect="Sends a message to {id}"
+  picks={{ id: 'dm' }}
+/>

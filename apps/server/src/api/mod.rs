@@ -1513,6 +1513,10 @@ pub struct Settings {
     /// already scheduled still send, and can be edited, sent now or deleted.
     #[serde(default = "yes")]
     pub scheduled_messages: bool,
+    /// Whether the docs this instance serves, and the docs the apps carry, may run requests as
+    /// the accounts the app holds on this instance. Only the docs read it; it gates no endpoint.
+    #[serde(default = "yes")]
+    pub interactive_docs: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1711,6 +1715,7 @@ impl Settings {
         server_profiles: false,
         docs: false,
         scheduled_messages: false,
+        interactive_docs: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
@@ -1793,6 +1798,7 @@ impl Settings {
             server_profiles: feature(Feature::ServerProfiles),
             docs: feature(Feature::Docs),
             scheduled_messages: feature(Feature::ScheduledMessages),
+            interactive_docs: feature(Feature::InteractiveDocs),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -1882,6 +1888,7 @@ impl Settings {
             server_profiles,
             docs,
             scheduled_messages,
+            interactive_docs,
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
@@ -1920,6 +1927,7 @@ impl Settings {
             Feature::ServerProfiles => server_profiles,
             Feature::Docs => docs,
             Feature::ScheduledMessages => scheduled_messages,
+            Feature::InteractiveDocs => interactive_docs,
         }
     }
 

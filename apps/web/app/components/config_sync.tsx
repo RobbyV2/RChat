@@ -20,8 +20,7 @@ import {
 } from 'react'
 import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
-import { Check, Copy, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
-import { encode } from 'uqr'
+import { QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
 import { client } from '../lib/client/client'
 import { useAccount } from '../lib/client/react'
 import { errorText, useStore } from '../lib/store'
@@ -56,7 +55,8 @@ import {
 } from '../lib/config_transfer'
 import { Button, Cover, IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { FieldError, LinkPage, fieldCls, sectionCls, useCopied } from './ui'
+import { FieldError, LinkPage, fieldCls, sectionCls } from './ui'
+import { CopyButton, QrCode } from './share_code'
 import { fmtSize } from '../lib/bytes'
 import { type FilesPart } from '../lib/p2p/app'
 import {
@@ -99,58 +99,6 @@ function StreamerCover({
     >
       {streamer ? `Hidden in streamer mode. Show ${what}` : `Show ${what}`}
     </Cover>
-  )
-}
-
-// Dark modules on white with a 4-module quiet zone in both themes, so all scanners can read it.
-export function QrCode({
-  text,
-  label,
-  wide = false,
-}: {
-  text: string
-  label: string
-  wide?: boolean
-}) {
-  const qr = useMemo(() => encode(text, { ecc: 'M', border: 4 }), [text])
-  const path = useMemo(() => {
-    let d = ''
-    qr.data.forEach((row, y) =>
-      row.forEach((dark, x) => {
-        if (dark) d += `M${x} ${y}h1v1h-1z`
-      })
-    )
-    return d
-  }, [qr])
-  return (
-    <svg
-      role="img"
-      aria-label={label}
-      data-qr={text}
-      viewBox={`0 0 ${qr.size} ${qr.size}`}
-      shapeRendering="crispEdges"
-      className={`block h-auto w-full rounded-lg ${wide ? 'max-w-72' : 'max-w-56'}`}
-    >
-      <rect width={qr.size} height={qr.size} fill="#ffffff" />
-      <path d={path} fill="#000000" />
-    </svg>
-  )
-}
-
-export function CopyButton({ text, label }: { text: string; label: string }) {
-  const [copied, flashCopied] = useCopied()
-  return (
-    <IconButton
-      icon={copied ? Check : Copy}
-      label={label}
-      tooltip={copied ? 'Copied' : label}
-      size="sm"
-      onClick={() =>
-        void sharing()
-          .copyText(text)
-          .then(ok => ok && flashCopied())
-      }
-    />
   )
 }
 

@@ -1,8 +1,10 @@
 import { readLocal, writeLocal } from '../instances'
 import type { Theme } from '../types'
 
-// Where the app keeps this device's theme. The docs site reads and writes the same key.
+// Where the app keeps this device's theme and streamer mode. The docs site reads and writes the
+// same keys.
 export const THEME_KEY = 'rchat_theme'
+export const STREAMER_KEY = 'rchat_streamer'
 
 // The theme a kept value names: light, or dark for any other value; null when nothing is kept.
 export const parseTheme = (raw: string | null): Theme | null =>

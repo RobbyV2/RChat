@@ -2,11 +2,11 @@ import { storedCredential } from './client/credentials'
 import { accountStorage } from './client/keys'
 import { awaitingInstance, readLocal } from './instances'
 import { client } from './client/client'
-import { keptTheme } from './theme/device'
+import { STREAMER_KEY, keptTheme } from './theme/device'
 
 // The streamer mode kept in this browser, or null when nothing is readable.
 const keptStreamer = () => {
-  const kept = readLocal('rchat_streamer')
+  const kept = readLocal(STREAMER_KEY)
   return kept === null ? null : kept === '1'
 }
 
