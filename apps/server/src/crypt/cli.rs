@@ -76,8 +76,9 @@ pub enum KeysCommand {
         #[arg(long)]
         dm: Option<i64>,
     },
-    /// Move every data key under the first key of ENCRYPTION_KEYS now. Run it once every copy
-    /// lists that key first; copies that announce themselves (Redis) do it by themselves.
+    /// Move every data key under the key in use now: the key service, else the first key of
+    /// ENCRYPTION_KEYS. Run it once every copy has that key; copies that announce themselves
+    /// (Redis) do it by themselves.
     Rewrap,
     /// Rotate data keys: the next generation becomes active and what the old one sealed is sealed
     /// again; the old one is destroyed a day after. Every purpose, or one.
@@ -250,6 +251,7 @@ fn written(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 pub fn printed(status: &RingStatus) -> String {
     let RingStatus {
         source,
+        kms,
         fingerprints,
         kept,
         key_file,
@@ -259,6 +261,10 @@ pub fn printed(status: &RingStatus) -> String {
         data_keys,
     } = status;
     let mut out = vec![match (source.as_str(), key_file) {
+        ("kms", _) => format!(
+            "Keys: the key service {}",
+            kms.as_deref().unwrap_or_default()
+        ),
         ("operator", Some(path)) => format!("Keys: ENCRYPTION_KEYS_FILE {path}"),
         ("operator", None) => "Keys: ENCRYPTION_KEYS".to_owned(),
         ("file", Some(path)) => format!("Keys: the instance key file {path}"),
@@ -266,16 +272,18 @@ pub fn printed(status: &RingStatus) -> String {
         (_, _) => "Keys: none".to_owned(),
     }];
     for print in fingerprints {
-        out.push(format!("  {print}"));
+        out.push(format!("  {}", print.trim_end_matches(':')));
     }
     for print in kept {
         let id = print.split_once(':').map_or(print.as_str(), |(id, _)| id);
         let used = data_keys
             .iter()
             .any(|k| k.kek == id && k.state != "destroyed");
-        let note = match used {
-            true => "kept from the key file until its data keys are wrapped again",
-            false => "kept from the key file, which no data key needs now: it can be deleted",
+        let note = match (source.as_str(), used) {
+            ("kms", true) => "kept until its data keys move under the key service",
+            ("kms", false) => "no data key needs it now",
+            (_, true) => "kept from the key file until its data keys are wrapped again",
+            (_, false) => "kept from the key file, which no data key needs now: it can be deleted",
         };
         out.push(format!("  {print} ({note})"));
     }
@@ -297,10 +305,13 @@ pub fn printed(status: &RingStatus) -> String {
         ));
     }
     for key in data_keys {
-        let held = match (key.held, key.mismatch) {
-            (true, _) => String::new(),
-            (false, true) => format!(" (the key {} here is a different key)", key.kek),
-            (false, false) => " (its key is missing)".to_owned(),
+        let held = match (key.state == "destroyed", key.held, key.mismatch) {
+            (true, _, _) | (false, true, _) => String::new(),
+            (false, false, true) if key.kek.starts_with(crate::crypt::kms::PREFIX) => {
+                " (the key service does not open it)".to_owned()
+            }
+            (false, false, true) => format!(" (the key {} here is a different key)", key.kek),
+            (false, false, false) => " (its key is missing)".to_owned(),
         };
         out.push(format!(
             "  data key {} {} generation {} under {}: {}{held}",
@@ -333,8 +344,14 @@ pub async fn run(config: &AppConfig, command: KeysCommand) -> anyhow::Result<Str
             out,
             passphrase_file,
         } => {
-            let Some(keys) = ring()?.export() else {
-                anyhow::bail!("this site has no encryption key yet");
+            let ring = ring()?;
+            let Some(keys) = ring.export() else {
+                match ring.kms_only() {
+                    true => anyhow::bail!(
+                        "the key service holds this site's root key, so there is nothing to export: back it up there"
+                    ),
+                    false => anyhow::bail!("this site has no encryption key yet"),
+                }
             };
             let text = sealed_export(&keys, &passphrase(passphrase_file.as_deref(), true)?)?;
             written(&out, text.as_bytes())?;

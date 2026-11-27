@@ -8,6 +8,7 @@ use std::sync::RwLock;
 use sqlx::{AnyConnection, Row};
 use zeroize::Zeroizing;
 
+use super::kms::{KMS_KEY, Kms, KmsConfig, PREFIX as KMS_PREFIX, Unreachable};
 use super::{Kek, Key, Purpose, Subkeys, decode_key, parse_keys, random_key};
 use crate::db::Db;
 use crate::hub::CopyNote;
@@ -30,8 +31,19 @@ pub const SEALS: bool = true;
 
 const ACTIVE: &str = "SELECT id, gen, kek, wrapped FROM data_keys WHERE purpose = $1 AND state = 'active' ORDER BY gen DESC LIMIT 1";
 
+const QUIET: std::time::Duration = std::time::Duration::from_secs(60);
+
+static UNREACHABLE: crate::ws::LogGate = crate::ws::LogGate::new(QUIET, |n| {
+    tracing::warn!(
+        "{n} more data keys were read as missing in the last {}s: the key service can't be used",
+        QUIET.as_secs()
+    )
+});
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
+    /// A key service the operator named (`ENCRYPTION_KMS_URL`, `ENCRYPTION_KMS_KEY`).
+    Kms,
     /// `ENCRYPTION_KEYS`, or a file the operator wrote and named in `ENCRYPTION_KEYS_FILE`.
     Operator,
     /// The key file the instance made beside its database.
@@ -41,6 +53,7 @@ pub enum Source {
 impl Source {
     pub fn name(self) -> &'static str {
         match self {
+            Source::Kms => "kms",
             Source::Operator => "operator",
             Source::File => "file",
         }
@@ -60,12 +73,15 @@ pub struct KeyConfig {
     pub required: bool,
     /// `SEARCH_SEALED=scan`: encrypted messages get no search grams.
     pub search_scan: bool,
+    /// The key service that wraps data keys, before any other root key.
+    pub kms: Option<KmsConfig>,
 }
 
 impl std::fmt::Debug for KeyConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KeyConfig")
             .field("keys_file", &self.keys_file)
+            .field("kms", &self.kms)
             .field("allow_lost", &self.allow_lost)
             .finish_non_exhaustive()
     }
@@ -73,9 +89,9 @@ impl std::fmt::Debug for KeyConfig {
 
 impl KeyConfig {
     /// Reads `ENCRYPTION_KEYS`, `ENCRYPTION_KEYS_FILE`, `ACCOUNT_SECRETS_KEY`,
-    /// `ENCRYPTION_ALLOW_LOST`, `ENCRYPTION_REQUIRED` and `SEARCH_SEALED`. An unreadable file or a
-    /// malformed value is an error naming the variable. `ENCRYPTION_KEYS_FILE` may name a file
-    /// that does not exist yet.
+    /// `ENCRYPTION_ALLOW_LOST`, `ENCRYPTION_REQUIRED`, `SEARCH_SEALED` and the `ENCRYPTION_KMS_*`
+    /// settings. An unreadable file or a malformed value is an error naming the variable.
+    /// `ENCRYPTION_KEYS_FILE` may name a file that does not exist yet.
     pub fn load(get: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<KeyConfig> {
         let set = |name: &str| {
             get(name)
@@ -116,6 +132,7 @@ impl KeyConfig {
             Some("scan") => true,
             Some(_) => anyhow::bail!("SEARCH_SEALED is keyed or scan"),
         };
+        let kms = KmsConfig::load(&set)?;
         Ok(KeyConfig {
             keys_from_file: keys_from_file && keys.is_some(),
             keys: keys.map(Zeroizing::new),
@@ -124,6 +141,7 @@ impl KeyConfig {
             allow_lost,
             required,
             search_scan,
+            kms,
         })
     }
 }
@@ -213,6 +231,40 @@ pub fn create_key_file(path: &Path, keys: &[Kek]) -> std::io::Result<()> {
     write_new_file(path, text.as_bytes())
 }
 
+/// The key new data keys are wrapped under.
+enum Root<'a> {
+    Local(Kek),
+    Kms(&'a Kms),
+}
+
+impl Root<'_> {
+    fn id(&self) -> &str {
+        match self {
+            Root::Local(kek) => &kek.id,
+            Root::Kms(kms) => kms.id(),
+        }
+    }
+
+    async fn wrap(&self, purpose: Purpose, generation: i64, dek: &Key) -> anyhow::Result<String> {
+        match self {
+            Root::Local(kek) => Ok(kek.wrap(purpose, generation, dek)),
+            Root::Kms(kms) => kms.wrap(purpose, generation, dek).await,
+        }
+    }
+
+    async fn opens(
+        &self,
+        purpose: Purpose,
+        generation: i64,
+        wrapped: &str,
+    ) -> anyhow::Result<bool> {
+        match self {
+            Root::Local(kek) => Ok(kek.unwrap(purpose, generation, wrapped).is_ok()),
+            Root::Kms(kms) => Ok(kms.unwrap(purpose, generation, wrapped).await?.is_ok()),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Dek {
     purpose: Purpose,
@@ -246,8 +298,10 @@ pub struct DataKeyStatus {
 /// What the admin page and `server keys status` show. It never holds key material.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct RingStatus {
-    /// `operator`, `file`, or `none`.
+    /// `kms`, `operator`, `file`, or `none`.
     pub source: String,
+    /// The key service's address and key, when one is set.
+    pub kms: Option<String>,
     /// `id:fingerprint` of every root key, the wrapping key first.
     pub fingerprints: Vec<String>,
     /// `id:fingerprint` of the instance key file's keys kept to open older data keys while
@@ -329,6 +383,8 @@ pub const COPY_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub struct Ring {
     loaded: RwLock<Loaded>,
+    /// The key service, which wraps new data keys before any other root key.
+    kms: Option<Kms>,
     alias: Vec<Kek>,
     key_file: Option<PathBuf>,
     /// Whether the keys were read from the file `ENCRYPTION_KEYS_FILE` names, which the instance
@@ -387,33 +443,41 @@ async fn put_setting(conn: &mut AnyConnection, key: &str, value: &str) -> sqlx::
         .map(|_| ())
 }
 
-/// Refuses `kek` for a new data key while a data key in use names its id but does not unwrap
+/// Refuses `root` for a new data key while a data key in use names its id but does not unwrap
 /// with it. An id names one key only, so the key that wrapped that data key can come back.
-async fn id_is_free(conn: &mut AnyConnection, kek: &Kek) -> anyhow::Result<()> {
+async fn id_is_free(conn: &mut AnyConnection, root: &Root<'_>) -> anyhow::Result<()> {
     let rows = sqlx::query(
         "SELECT id, purpose, gen, wrapped FROM data_keys WHERE kek = $1 AND state <> 'destroyed' ORDER BY id",
     )
-    .bind(&kek.id)
+    .bind(root.id())
     .fetch_all(&mut *conn)
     .await?;
     for row in rows {
         let (id, purpose, generation): (i64, String, i64) =
             (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
         let wrapped: String = row.try_get(3)?;
-        if Purpose::parse(&purpose).is_some_and(|p| kek.unwrap(p, generation, &wrapped).is_ok()) {
+        let opens = match Purpose::parse(&purpose) {
+            Some(p) => root.opens(p, generation, &wrapped).await?,
+            None => false,
+        };
+        if opens {
             continue;
         }
-        let restore = match kek.id.as_str() {
-            DATABASE_KEK => format!(
+        let restore = match root {
+            Root::Kms(_) => format!(
+                "which the key service does not open. Restore that key in the key service, or name another key in {KMS_KEY}"
+            ),
+            Root::Local(kek) if kek.id == DATABASE_KEK => format!(
                 "which the settings key {DB_KEK_SETTING} does not hold. Restore {DB_KEK_SETTING}, or set ENCRYPTION_KEYS or ACCOUNT_SECRETS_KEY"
             ),
-            id => format!(
-                "but the key {id} here is a different key. Restore that key, or give the new key another id"
+            Root::Local(kek) => format!(
+                "but the key {} here is a different key. Restore that key, or give the new key another id",
+                kek.id
             ),
         };
         anyhow::bail!(
             "the data key {id} ({purpose}) needs the key {}, {restore}. A new data key is never wrapped under an id that names another key",
-            kek.id
+            root.id()
         );
     }
     Ok(())
@@ -428,6 +492,7 @@ impl Ring {
     fn with(loaded: Loaded, alias: Vec<Kek>, key_file: Option<PathBuf>, allow_lost: bool) -> Ring {
         Ring {
             loaded: RwLock::new(loaded),
+            kms: None,
             alias,
             key_file,
             named_file: false,
@@ -444,8 +509,8 @@ impl Ring {
         }
     }
 
-    /// The ring of this start, by precedence: operator keys, then the instance key file when it
-    /// exists. Touches no database, so it runs before the schema does.
+    /// The ring of this start, by precedence: the key service, operator keys, then the instance
+    /// key file when it exists. Touches no database, so it runs before the schema does.
     pub fn load(config: &KeyConfig, database_url: Option<&str>) -> anyhow::Result<Ring> {
         let KeyConfig {
             keys,
@@ -455,6 +520,7 @@ impl Ring {
             allow_lost,
             required,
             search_scan,
+            kms,
         } = config;
         let alias = match account_secrets_key {
             Some(text) => parse_keys(text)
@@ -496,13 +562,14 @@ impl Ring {
             named_file: *keys_from_file,
             required: *required,
             search_scan: *search_scan,
+            kms: kms.clone().map(Kms::new).transpose()?,
             ..Ring::with(loaded, alias, key_file, *allow_lost)
         })
     }
 
     /// Whether a root key is loaded.
     pub fn ready(&self) -> bool {
-        !read(&self.loaded).keks.is_empty()
+        self.kms.is_some() || !read(&self.loaded).keks.is_empty()
     }
 
     pub fn key_file(&self) -> Option<&Path> {
@@ -511,10 +578,10 @@ impl Ring {
 
     /// The ids of the root keys this process holds, for the copy announcement.
     pub fn kek_ids(&self) -> Vec<String> {
-        read(&self.loaded)
-            .keks
+        self.kms
             .iter()
-            .map(|k| k.id.clone())
+            .map(|kms| kms.id().to_owned())
+            .chain(read(&self.loaded).keks.iter().map(|k| k.id.clone()))
             .collect()
     }
 
@@ -522,18 +589,31 @@ impl Ring {
     /// keeps, and `ACCOUNT_SECRETS_KEY`'s.
     pub fn held_ids(&self) -> Vec<String> {
         let loaded = read(&self.loaded);
-        loaded
-            .keks
+        self.kms
             .iter()
-            .chain(&loaded.kept)
-            .chain(&self.alias)
-            .map(|k| k.id.clone())
+            .map(|kms| kms.id().to_owned())
+            .chain(
+                loaded
+                    .keks
+                    .iter()
+                    .chain(&loaded.kept)
+                    .chain(&self.alias)
+                    .map(|k| k.id.clone()),
+            )
             .collect()
     }
 
     /// The id of the key new data keys are wrapped under.
     pub fn first_kek(&self) -> Option<String> {
-        read(&self.loaded).keks.first().map(|k| k.id.clone())
+        match &self.kms {
+            Some(kms) => Some(kms.id().to_owned()),
+            None => read(&self.loaded).keks.first().map(|k| k.id.clone()),
+        }
+    }
+
+    /// Whether the key service holds the root key and no key here could be written out.
+    pub fn kms_only(&self) -> bool {
+        self.kms.is_some() && read(&self.loaded).keks.is_empty()
     }
 
     /// The loaded root keys in their file form, for `server keys export`.
@@ -606,6 +686,9 @@ impl Ring {
     /// it holds the key the instance wrote into the file it made; `made` is that key's
     /// fingerprint.
     fn source(&self, made: Option<&str>) -> Option<Source> {
+        if self.kms.is_some() {
+            return Some(Source::Kms);
+        }
         let loaded = read(&self.loaded);
         let made_here = self.named_file
             && made.is_some_and(|print| loaded.keks.iter().any(|k| k.fingerprint() == print));
@@ -640,6 +723,7 @@ impl Ring {
                 "ENCRYPTION_KEYS".to_owned()
             }
             (Some(Source::File) | None, Some(path)) => format!("the key file {}", path.display()),
+            (Some(Source::Kms), _) => KMS_KEY.to_owned(),
         }
     }
 
@@ -686,25 +770,32 @@ impl Ring {
         Ok(Some(Kek::new(DATABASE_KEK, key)))
     }
 
-    async fn wrapping_kek(
+    async fn wrapping_key(
         &self,
         conn: &mut AnyConnection,
         purpose: Purpose,
-    ) -> anyhow::Result<Option<Kek>> {
-        if let Some(first) = read(&self.loaded).keks.first() {
-            return Ok(Some(first.clone()));
+    ) -> anyhow::Result<Option<Root<'_>>> {
+        if let Some(kms) = &self.kms {
+            return Ok(Some(Root::Kms(kms)));
         }
-        match purpose {
+        let first = read(&self.loaded).keks.first().cloned();
+        if let Some(first) = first {
+            return Ok(Some(Root::Local(first)));
+        }
+        let kek = match purpose {
             Purpose::Secrets => match self.alias.first() {
-                Some(alias) => Ok(Some(alias.clone())),
-                None => self.database_kek(conn, true).await,
+                Some(alias) => Some(alias.clone()),
+                None => self.database_kek(conn, true).await?,
             },
-            Purpose::Content | Purpose::Media | Purpose::Search | Purpose::Bus => Ok(None),
-        }
+            Purpose::Content | Purpose::Media | Purpose::Search | Purpose::Bus => None,
+        };
+        Ok(kek.map(Root::Local))
     }
 
     /// The data key of a row, or why it does not unwrap here: `None` when this process holds no
-    /// key under the id that wrapped it, else the fingerprint of the key it holds under that id.
+    /// key under the id that wrapped it, else the fingerprint of the key it holds under that id
+    /// (empty for the key service, which does not open it). A key service that can't be reached
+    /// is an error.
     async fn unwrap_row(
         &self,
         conn: &mut AnyConnection,
@@ -713,6 +804,15 @@ impl Ring {
         kek: &str,
         wrapped: &str,
     ) -> anyhow::Result<Result<Key, Option<String>>> {
+        if kek.starts_with(KMS_PREFIX) {
+            return Ok(match &self.kms {
+                Some(kms) if kms.id() == kek => kms
+                    .unwrap(purpose, generation, wrapped)
+                    .await?
+                    .map_err(|_| Some(String::new())),
+                Some(_) | None => Err(None),
+            });
+        }
         let found = match kek {
             DATABASE_KEK => self.database_kek(conn, false).await?,
             id => self.kek(id, purpose),
@@ -755,14 +855,14 @@ impl Ring {
             .fetch_optional(&mut *conn)
             .await?;
         if row.is_none() {
-            let Some(kek) = self.wrapping_kek(conn, purpose).await? else {
+            let Some(root) = self.wrapping_key(conn, purpose).await? else {
                 return Ok(None);
             };
-            id_is_free(conn, &kek).await?;
-            let wrapped = kek.wrap(purpose, 1, &random_key());
+            id_is_free(conn, &root).await?;
+            let wrapped = root.wrap(purpose, 1, &random_key()).await?;
             sqlx::query("INSERT INTO data_keys(purpose, gen, kek, wrapped, created_at) VALUES($1, 1, $2, $3, $4) ON CONFLICT(purpose, gen) DO NOTHING")
                 .bind(purpose.name())
-                .bind(&kek.id)
+                .bind(root.id())
                 .bind(wrapped)
                 .bind(crate::db::now())
                 .execute(&mut *conn)
@@ -871,10 +971,20 @@ impl Ring {
         let Some(purpose) = Purpose::parse(&purpose) else {
             return Ok(None);
         };
-        let Ok(key) = self
+        let unwrapped = match self
             .unwrap_row(conn, purpose, generation, &kek, &wrapped)
-            .await?
-        else {
+            .await
+        {
+            Ok(unwrapped) => unwrapped,
+            Err(e) if e.is::<Unreachable>() => {
+                if UNREACHABLE.admit(tokio::time::Instant::now()) {
+                    tracing::warn!("the data key {id} is read as missing for now: {e}");
+                }
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        };
+        let Ok(key) = unwrapped else {
             return Ok(None);
         };
         write(&self.deks).insert(
@@ -947,10 +1057,10 @@ impl Ring {
         conn: &mut AnyConnection,
         purpose: Purpose,
     ) -> anyhow::Result<Option<(u32, Key)>> {
-        let Some(kek) = self.wrapping_kek(conn, purpose).await? else {
+        let Some(root) = self.wrapping_key(conn, purpose).await? else {
             return Ok(None);
         };
-        id_is_free(conn, &kek).await?;
+        id_is_free(conn, &root).await?;
         let last: i64 =
             sqlx::query("SELECT COALESCE(MAX(gen), 0) FROM data_keys WHERE purpose = $1")
                 .bind(purpose.name())
@@ -958,6 +1068,7 @@ impl Ring {
                 .await?
                 .try_get(0)?;
         let generation = last + 1;
+        let wrapped = root.wrap(purpose, generation, &random_key()).await?;
         sqlx::query(
             "UPDATE data_keys SET state = 'retiring' WHERE purpose = $1 AND state = 'active'",
         )
@@ -967,8 +1078,8 @@ impl Ring {
         sqlx::query("INSERT INTO data_keys(purpose, gen, kek, wrapped, created_at) VALUES($1, $2, $3, $4, $5)")
             .bind(purpose.name())
             .bind(generation)
-            .bind(&kek.id)
-            .bind(kek.wrap(purpose, generation, &random_key()))
+            .bind(root.id())
+            .bind(wrapped)
             .bind(crate::db::now())
             .execute(&mut *conn)
             .await?;
@@ -1005,6 +1116,9 @@ impl Ring {
     /// `check` on one connection. The data keys that unwrap stay held, so reading a record
     /// under one of them asks the database nothing.
     pub async fn check_on(&self, conn: &mut AnyConnection) -> anyhow::Result<Vec<i64>> {
+        if let Some(kms) = &self.kms {
+            kms.probe().await?;
+        }
         let retiring: Vec<String> =
             sqlx::query_scalar("SELECT DISTINCT purpose FROM data_keys WHERE state = 'retiring'")
                 .fetch_all(&mut *conn)
@@ -1046,11 +1160,15 @@ impl Ring {
             let whence = match kek.as_str() {
                 DATABASE_KEK => format!("the settings key {DB_KEK_SETTING}"),
                 id if id.starts_with(ALIAS_PREFIX) => "ACCOUNT_SECRETS_KEY".to_owned(),
+                id if id.starts_with(KMS_PREFIX) => KMS_KEY.to_owned(),
                 _ => self.keks_from(),
             };
             let why = match found {
                 None => format!(
                     "the data key {id} ({purpose}) needs the key {kek}, which {whence} does not hold"
+                ),
+                Some(_) if kek.starts_with(KMS_PREFIX) => format!(
+                    "the data key {id} ({purpose}) needs the key {kek}, which the key service does not open"
                 ),
                 Some(print) => format!(
                     "the data key {id} ({purpose}) needs the key {kek}, but the key {kek} in {whence} (fingerprint {print}) is a different key"
@@ -1072,8 +1190,11 @@ impl Ring {
     /// key, compare-and-swap on its stored form, once `everyone` (every live copy) holds that
     /// key. Then the database key is blanked when no data key uses it. Answers how many moved.
     pub async fn rewrap(&self, db: &Db, everyone: bool) -> anyhow::Result<u64> {
-        let Some(first) = read(&self.loaded).keks.first().cloned() else {
-            return Ok(0);
+        let local = read(&self.loaded).keks.first().cloned();
+        let first = match (&self.kms, local) {
+            (Some(kms), _) => Root::Kms(kms),
+            (None, Some(kek)) => Root::Local(kek),
+            (None, None) => return Ok(0),
         };
         if !everyone {
             return Ok(0);
@@ -1083,7 +1204,7 @@ impl Ring {
         let rows = sqlx::query(
             "SELECT id, purpose, gen, kek, wrapped FROM data_keys WHERE kek <> $1 AND state <> 'destroyed' ORDER BY id",
         )
-        .bind(&first.id)
+        .bind(first.id())
         .fetch_all(&mut *conn)
         .await?;
         let mut moved = 0;
@@ -1100,9 +1221,10 @@ impl Ring {
             else {
                 continue;
             };
+            let rewrapped = first.wrap(purpose, generation, &key).await?;
             moved += sqlx::query("UPDATE data_keys SET kek = $1, wrapped = $2 WHERE id = $3 AND kek = $4 AND wrapped = $5")
-                .bind(&first.id)
-                .bind(first.wrap(purpose, generation, &key))
+                .bind(first.id())
+                .bind(rewrapped)
                 .bind(id)
                 .bind(&kek)
                 .bind(&wrapped)
@@ -1120,7 +1242,7 @@ impl Ring {
             put_setting(conn, DB_KEK_SETTING, SEALED_MARK).await?;
         }
         if moved > 0 {
-            tracing::info!("wrapped {moved} data keys under the key {}", first.id);
+            tracing::info!("wrapped {moved} data keys under the key {}", first.id());
         }
         Ok(moved)
     }
@@ -1236,6 +1358,11 @@ impl Ring {
     /// Destroys the retired data key `id`: its wrapped form is blanked, so no copy of the
     /// database opens what it sealed.
     pub async fn destroy(&self, db: &Db, id: u32) -> sqlx::Result<bool> {
+        let row: Option<(String, i64, String)> =
+            sqlx::query_as("SELECT purpose, gen, wrapped FROM data_keys WHERE id = $1")
+                .bind(i64::from(id))
+                .fetch_optional(db)
+                .await?;
         let done = sqlx::query("UPDATE data_keys SET state = 'destroyed', destroyed_at = $1, wrapped = '' WHERE id = $2 AND state = 'retired'")
             .bind(crate::db::now())
             .bind(i64::from(id))
@@ -1244,6 +1371,11 @@ impl Ring {
             .rows_affected();
         write(&self.deks).remove(&id);
         self.subkeys.forget(Some(id));
+        if let (Some(kms), Some((purpose, generation, wrapped))) = (&self.kms, row)
+            && let Some(purpose) = Purpose::parse(&purpose)
+        {
+            kms.forget(purpose, generation, &wrapped);
+        }
         Ok(done == 1)
     }
 
@@ -1271,8 +1403,16 @@ impl Ring {
                 None => "none",
             };
             let print = |k: &Kek| format!("{}:{}", k.id, k.fingerprint());
-            let prints = loaded.keks.iter().map(print).collect();
-            let kept = loaded.kept.iter().map(print).collect();
+            let (prints, kept) = match &self.kms {
+                Some(kms) => (
+                    vec![format!("{}:", kms.id())],
+                    loaded.keks.iter().chain(&loaded.kept).map(print).collect(),
+                ),
+                None => (
+                    loaded.keks.iter().map(print).collect(),
+                    loaded.kept.iter().map(print).collect(),
+                ),
+            };
             (source.to_owned(), prints, kept)
         };
         let rows =
@@ -1282,19 +1422,29 @@ impl Ring {
         let mut data_keys = Vec::with_capacity(rows.len());
         let mut database_key = false;
         for row in rows {
+            let id: i64 = row.try_get(0)?;
             let (purpose, generation): (String, i64) = (row.try_get(1)?, row.try_get(2)?);
             let (kek, wrapped, state): (String, String, String) =
                 (row.try_get(3)?, row.try_get(4)?, row.try_get(5)?);
-            let held = match Purpose::parse(&purpose) {
-                Some(purpose) => {
-                    self.unwrap_row(conn, purpose, generation, &kek, &wrapped)
-                        .await?
-                }
-                None => Err(None),
+            let cached = u32::try_from(id)
+                .ok()
+                .and_then(|id| self.held(id))
+                .is_some();
+            let held = match (Purpose::parse(&purpose), state == "destroyed", cached) {
+                (_, _, true) => Ok(()),
+                (None, _, false) | (Some(_), true, false) => Err(None),
+                (Some(purpose), false, false) => match self
+                    .unwrap_row(conn, purpose, generation, &kek, &wrapped)
+                    .await
+                {
+                    Ok(unwrapped) => unwrapped.map(|_| ()),
+                    Err(e) if e.is::<Unreachable>() => Err(None),
+                    Err(e) => return Err(e),
+                },
             };
             database_key |= kek == DATABASE_KEK && state != "destroyed";
             data_keys.push(DataKeyStatus {
-                id: row.try_get(0)?,
+                id,
                 purpose,
                 generation,
                 kek,
@@ -1309,8 +1459,11 @@ impl Ring {
         let secrets_reset = setting(conn, RESET_SETTING)
             .await?
             .and_then(|v| serde_json::from_str(&v).ok());
-        let named = self.named_file || source == Source::File.name();
+        let named = self.named_file
+            || source == Source::File.name()
+            || read(&self.loaded).source == Some(Source::File);
         Ok(RingStatus {
+            kms: self.kms.as_ref().map(Kms::shown),
             key_file: named
                 .then(|| self.key_file.as_ref().map(|p| p.display().to_string()))
                 .flatten(),

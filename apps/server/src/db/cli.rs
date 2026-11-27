@@ -81,11 +81,14 @@ async fn backed_up(
     };
     let recipients = super::backup::recipients(&named)?;
     let keys = match with_keys {
-        true => Some(
-            Ring::load(&config.encryption, config.database_url.as_deref())?
-                .export()
-                .ok_or_else(|| anyhow::anyhow!("--with-keys: no root key is set here"))?,
-        ),
+        true => {
+            let ring = Ring::load(&config.encryption, config.database_url.as_deref())?;
+            let why = match ring.kms_only() {
+                true => "--with-keys: the key service holds the root key, so no key can go inside",
+                false => "--with-keys: no root key is set here",
+            };
+            Some(ring.export().ok_or_else(|| anyhow::anyhow!(why))?)
+        }
         false => None,
     };
     let made = super::backup::backup(

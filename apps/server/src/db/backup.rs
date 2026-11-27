@@ -420,6 +420,15 @@ pub fn open(
                             && !keys_inside.iter().any(|k| k == id)
                     })
                     .collect();
+                let service = missing
+                    .iter()
+                    .any(|id| id.starts_with(crate::crypt::kms::PREFIX));
+                if service {
+                    anyhow::bail!(
+                        "the backup needs the key {}: set ENCRYPTION_KMS_URL, ENCRYPTION_KMS_KEY and ENCRYPTION_KMS_TOKEN_FILE for the key service that holds it",
+                        missing.join(", ")
+                    );
+                }
                 if !missing.is_empty() {
                     anyhow::bail!(
                         "the backup needs the key {}: set it in ENCRYPTION_KEYS or ENCRYPTION_KEYS_FILE, or restore a backup made with --with-keys",

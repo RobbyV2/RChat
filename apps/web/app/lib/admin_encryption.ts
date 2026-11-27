@@ -23,8 +23,10 @@ export interface SecretsReset {
 }
 
 export interface AdminEncryption {
-  // Where the root keys come from: `operator`, `file` or `none`.
+  // Where the root keys come from: `kms`, `operator`, `file` or `none`.
   source: string
+  // The key service's address and key, when one is set.
+  kms: string | null
   // `id:fingerprint` of every root key, the one in use first.
   fingerprints: string[]
   // `id:fingerprint` of the key file's keys kept to open older data keys while ENCRYPTION_KEYS
@@ -69,6 +71,8 @@ export const SAFER_NOTE =
 
 export function keySourceLine(view: AdminEncryption): string {
   switch (view.source) {
+    case 'kms':
+      return 'Key service set in the server configuration'
     case 'operator':
       return 'Keys set in the server configuration'
     case 'file':
@@ -85,6 +89,7 @@ const makesKey = (view: AdminEncryption) => view.readiness !== 'keys'
 
 export function keySourceNote(view: AdminEncryption): string | null {
   switch (view.source) {
+    case 'kms':
     case 'operator':
       return null
     case 'file':
@@ -183,6 +188,7 @@ export function parseAdminEncryption(value: unknown): AdminEncryption | null {
   const keys = Array.isArray(v.data_keys) ? v.data_keys : []
   return {
     source: v.source,
+    kms: typeof v.kms === 'string' ? v.kms : null,
     fingerprints: Array.isArray(v.fingerprints)
       ? v.fingerprints.filter((f): f is string => typeof f === 'string')
       : [],
@@ -249,9 +255,16 @@ export function rotationLine(r: RotationView): string {
 // The key file's keys kept beside ENCRYPTION_KEYS, and whether a data key still needs them.
 export function keptLines(view: AdminEncryption): string[] {
   const used = new Set(view.data_keys.filter(k => k.state !== 'destroyed').map(k => k.kek))
+  const service = view.source === 'kms'
   return view.kept.flatMap(entry => {
     const id = entry.slice(0, Math.max(0, entry.lastIndexOf(':')))
     if (!id) return []
+    if (service)
+      return [
+        used.has(id)
+          ? `The key ${id} still opens data keys until they move under the key service.`
+          : `The key ${id} is no longer needed. No data key uses it.`,
+      ]
     return [
       used.has(id)
         ? `The key file's key ${id} still opens data keys until they move under the key in use.`

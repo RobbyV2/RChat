@@ -110,6 +110,11 @@ export function EncryptionStatus({
             {keySourceLine(view)}
           </span>
         </Row>
+        {view.kms !== null && (
+          <p data-kms className="min-w-0 font-mono text-xs break-all text-on-surface-variant">
+            {view.kms}
+          </p>
+        )}
         {view.key_file !== null && (
           <p className="min-w-0 font-mono text-xs break-all text-on-surface-variant">
             {view.key_file}

@@ -28,6 +28,7 @@ import {
 
 const view = (part: Partial<AdminEncryption> = {}): AdminEncryption => ({
   source: 'none',
+  kms: null,
   fingerprints: [],
   key_file: null,
   database_key: false,
@@ -65,6 +66,51 @@ test('the key source is named for each source', () => {
   expect(readinessLine(view({ readiness: 'updating' }))).toBe(
     'Not available while this site updates.'
   )
+})
+
+test('a key service is named with its address and shown as the key in use', () => {
+  const kms = view({
+    source: 'kms',
+    kms: 'https://vault.internal:8200/v1/transit (key rchat)',
+    fingerprints: ['kms:rchat:', 'k1:0a1b2c3d'],
+    readiness: 'ready',
+  })
+  expect(keySourceLine(kms)).toBe('Key service set in the server configuration')
+  expect(keySourceNote(kms)).toBeNull()
+  expect(fingerprints(kms)).toEqual([
+    { id: 'kms:rchat', print: '', current: true },
+    { id: 'k1', print: '0a1b2c3d', current: false },
+  ])
+  const parsed = parseAdminEncryption({ source: 'kms', kms: 'https://vault/v1/transit (key a)' })
+  expect(parsed?.kms).toBe('https://vault/v1/transit (key a)')
+  expect(parseAdminEncryption({ source: 'kms', kms: 7 })?.kms).toBeNull()
+  const moving = (kek: string) =>
+    keptLines(
+      view({
+        source: 'kms',
+        kept: ['k1:0a1b2c3d'],
+        data_keys: [
+          {
+            id: 1,
+            purpose: 'content',
+            generation: 1,
+            kek,
+            state: 'active',
+            held: true,
+            mismatch: false,
+          },
+        ],
+      })
+    )
+  expect(moving('k1')).toEqual([
+    'The key k1 still opens data keys until they move under the key service.',
+  ])
+  expect(moving('kms:rchat')).toEqual(['The key k1 is no longer needed. No data key uses it.'])
+  const html = renderToStaticMarkup(<EncryptionStatus view={kms} />)
+  expect(html).toContain('data-key-source="kms"')
+  expect(html).toContain('https://vault.internal:8200/v1/transit (key rchat)')
+  expect(html).toContain('kms:rchat')
+  expect(html).not.toContain(BACKUP_WARNING.replace("'", '&#x27;'))
 })
 
 test('promises a key on first use only where the site can make one', () => {
