@@ -44,6 +44,7 @@ import {
   type MemberFilters,
 } from '../../lib/member_filters'
 import { MemberFilterBar, MemberTable, MemberTableRow } from '../member_table'
+import { AboutEditor } from '../server_about'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
@@ -100,6 +101,16 @@ function Overview({ v }: { v: ServerView }) {
       ) : (
         <Note>Only members with Manage server can rename the server.</Note>
       )}
+      <AboutEditor
+        seed={v.id}
+        name={v.name}
+        color={hex(v.color) ?? null}
+        about={v.about}
+        editable={edit}
+        own={ownsP2pServer(v, me)}
+        locked="Only members with Manage server can change this."
+        onSave={change => p2pServer.setAbout(v.id, change)}
+      />
       <div className="flex flex-col gap-1">
         <p className="text-sm">Server profiles</p>
         <ServerProfilesMode v={v} />

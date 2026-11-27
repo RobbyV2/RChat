@@ -797,6 +797,8 @@ fn indexes_follow_every_op() {
                     join_mode: Default::default(),
                     listed: true,
                     profiles_mode: Default::default(),
+                    description: None,
+                    icon_kind: Default::default(),
                 },
             },
         },
@@ -1543,6 +1545,8 @@ fn renamed(old_name: &str, name: &str) -> Op {
                 join_mode: Default::default(),
                 listed: true,
                 profiles_mode: Default::default(),
+                description: None,
+                icon_kind: Default::default(),
             },
         },
     }

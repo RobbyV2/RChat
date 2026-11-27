@@ -8,6 +8,7 @@ import type { BadgeKeeper, Badges, BadgeSlot } from '../badge'
 import type { Contact } from '../contacts'
 import type { AutoPause, Dms, MissedCall, P2pMessage } from '../dm'
 import type { PingLog } from '../ping_log'
+import type { ServerAbout } from '../../server_about'
 import type { BlobView, Usage } from '../blobs'
 import type { Hashed } from '../hashing'
 import { LOCAL, type Local } from '../limits'
@@ -180,7 +181,14 @@ export interface P2pState {
   // P2P servers on this device, invites from contacts not answered yet, and the open server
   // (it replaces the instance sidebar and pane, like the P2P home).
   servers: Record<string, ServerView>
-  serverInvites: { room: string; name: string; from: string; at: number }[]
+  serverInvites: {
+    room: string
+    name: string
+    from: string
+    at: number
+    about: ServerAbout
+    color: number | null
+  }[]
   // Contacts asking to list us as co-owner of a server they are creating, and owners asking us
   // to take a server over or to approve its transfer.
   coOwnerAsks: { key: string; from: string; name: string }[]

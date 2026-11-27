@@ -8679,3 +8679,47 @@ async fn waiting_purges_stay_immediate_when_own_deletions_are_added() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn servers_keep_their_look_when_descriptions_and_icon_kinds_are_added() {
+    on_each_database("server_about_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let before = (SCHEMA_VERSION - 1).to_string();
+        for sql in [
+            "INSERT INTO servers(name, display_name, creator, created_at, banner_color) VALUES('club', 'Club', NULL, 7, '#112233')",
+            "ALTER TABLE servers DROP COLUMN description",
+            "ALTER TABLE servers DROP COLUMN icon_kind",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind(&before)
+            .execute(&db)
+            .await
+            .expect("version");
+        assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION - 1);
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'club' AND display_name = 'Club' AND created_at = 7 AND banner_color = '#112233' AND description IS NULL AND icon_kind IS NULL").await,
+                1,
+                "{round}: the old server keeps its look and has no description"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'den' AND description = 'Hi' AND icon_kind = 'identicon'").await,
+                i64::from(round == 1),
+                "{round}: an about written after the upgrade survives a restart"
+            );
+            if round == 0 {
+                sqlx::query("INSERT INTO servers(name, display_name, created_at, description, icon_kind) VALUES('den', 'Den', 8, 'Hi', 'identicon')")
+                    .execute(&db)
+                    .await
+                    .expect("about");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}

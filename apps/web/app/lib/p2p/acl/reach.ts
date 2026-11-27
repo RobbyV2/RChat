@@ -130,6 +130,7 @@ export class Ix {
   profileResetBy = new Map<string, Set<string>>()
   profileBy = new Map<string, number[]>()
   settingsEv: number[] = []
+  aboutEv: number[] = []
   upgradeEv: number[] = []
   channelEv = new Map<string, number[]>()
   chpermEv = new Map<string, number[]>()
@@ -245,6 +246,9 @@ export class Ix {
           pushM(this.profileResetEv, c.to, i)
           addS(this.profileResetBy, e.a, c.to)
         }
+        break
+      case 'about':
+        this.aboutEv.push(i)
         break
       case 'assign':
         pushM(this.assignEv, `${c.to}|${c.role}`, i)

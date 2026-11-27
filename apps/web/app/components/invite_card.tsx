@@ -50,6 +50,8 @@ import { serverInitial } from '../lib/rules'
 import { joinNeeds } from '../lib/joining'
 import type { Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
+import { AboutLine } from './server_about'
+import { aboutText } from '../lib/server_about'
 import { Dialog, fieldCls, FieldError, filledBtn, LinkPage, Masked, textBtn, useOwn } from './ui'
 import { SpoilerLine } from './replies'
 import { PreviewFilename, RevealChannelPreview } from './preview_reveal'
@@ -327,10 +329,12 @@ function ServerTile({
   name,
   displayName,
   big,
+  look,
 }: {
   name: string
   displayName: string
   big: boolean
+  look: { icon_kind?: string | null; banner_color?: string | null }
 }) {
   return (
     <Tile
@@ -341,7 +345,7 @@ function ServerTile({
           : 'bg-primary-container text-on-primary-container'
       }
     >
-      <ServerGlyph name={name} displayName={displayName} />
+      <ServerGlyph name={name} displayName={displayName} look={look} />
     </Tile>
   )
 }
@@ -926,7 +930,7 @@ export function InviteCard({
     const { name, display_name, has_password } = data.server
     const needs = status === 'readable' ? joinNeeds(has_password, { server_joining: joining }) : ''
     return {
-      icon: <ServerTile name={name} displayName={display_name} big={big} />,
+      icon: <ServerTile name={name} displayName={display_name} big={big} look={data.server} />,
       title: (
         <>
           <span className={`streamer min-w-0 ${fit}`}>
@@ -941,6 +945,10 @@ export function InviteCard({
       ),
       sub: (
         <>
+          <AboutLine
+            text={aboutText(data.server.description)}
+            className={big ? 'mb-1 text-center' : 'mb-0.5'}
+          />
           <Counts invite={data} center={big} />
           <TicketNote invite={data} now={now} center={big} />
         </>
@@ -1270,7 +1278,7 @@ export function RemoteInviteCard({
     return {
       icon: (
         <span title={streamer ? 'Server icon' : `${display_name} on ${host}`}>
-          <ServerTile name={name} displayName={display_name} big={false} />
+          <ServerTile name={name} displayName={display_name} big={false} look={data.server} />
         </span>
       ),
       title: (
@@ -1288,6 +1296,7 @@ export function RemoteInviteCard({
       sub: (
         <div className="flex flex-col items-start gap-1">
           {where}
+          <AboutLine text={aboutText(data.server.description)} />
           <Counts invite={data} center={false} />
         </div>
       ),

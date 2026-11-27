@@ -123,8 +123,13 @@ export const nameOf = (
 ): { name: string; color: number | null } | null => {
   const n = text(s.settings?.name, lim.name)
   if (!n) return null
+  return { name: n, color: roomColor(s) }
+}
+
+// The room's colour (`settings.color`), when it holds a valid one.
+export const roomColor = (s: Summary): number | null => {
   const c = int(s.settings?.color)
-  return { name: n, color: c !== null && c >= 0 && c <= 0xffffff ? c : null }
+  return c !== null && c >= 0 && c <= 0xffffff ? c : null
 }
 
 export const historyOf = (s: Summary): HistoryVis => {

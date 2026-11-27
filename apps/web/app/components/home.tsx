@@ -79,7 +79,8 @@ import { displayName } from '../lib/p2p/contacts'
 import { ownsP2pServer } from '../lib/p2p/server/types'
 import { placesOf } from '../lib/p2p/palette_source'
 import { mutedOf, levelOf } from '../lib/notify'
-import { serverInitial } from '../lib/rules'
+import { ServerIcon } from './server_about'
+import { hex } from '../lib/p2p/roles'
 import { KeyAvatar, P2pBadge, PresenceDot } from './p2p/p2p_badge'
 import { ElsewhereNotice } from './p2p/p2p_home'
 import { LabelText, useInstanceLabel } from './instance_badge'
@@ -891,7 +892,7 @@ function ServerUnreadRow({
       id={name}
       glyph={
         <PlaceGlyph>
-          <span className="text-on-surface">
+          <span className="flex h-full w-full rounded-[inherit] text-on-surface">
             <ServerGlyph name={name} displayName={display} />
           </span>
         </PlaceGlyph>
@@ -960,7 +961,15 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
       id={`p2p:${v.id}`}
       glyph={
         <PlaceGlyph p2p>
-          <span className="streamer text-on-surface">{serverInitial(shown)}</span>
+          <span className="flex h-full w-full rounded-[inherit] text-on-surface">
+            <ServerIcon
+              seed={v.id}
+              name={v.name}
+              kind={v.about.icon}
+              color={hex(v.color)}
+              own={own}
+            />
+          </span>
         </PlaceGlyph>
       }
       name={<Masked text={v.name} own={own} />}

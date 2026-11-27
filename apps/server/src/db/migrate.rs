@@ -144,6 +144,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("server_bans", "expires_at {INT}"),
     ("server_bans", "reason TEXT"),
     ("pending_purges", "self_requested {INT} NOT NULL DEFAULT 0"),
+    ("servers", "description TEXT"),
+    ("servers", "icon_kind TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -264,7 +266,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 48: the Reset server profiles permission, given to roles and admin permission sets with Kick.
 /// 49: timed bans with a reason (`server_bans.expires_at`, `server_bans.reason`).
 /// 50: account deletions their owners asked for (`pending_purges.self_requested`).
-pub const SCHEMA_VERSION: i64 = 50;
+/// 51: server descriptions and icon looks (`servers.description`, `servers.icon_kind`).
+pub const SCHEMA_VERSION: i64 = 51;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

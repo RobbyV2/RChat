@@ -2,6 +2,7 @@ import type { UploadExpiry } from './upload_expiry'
 import type { TimeoutWire } from './timeouts'
 import type { ProfileChoices, ProfileLevel } from './profile_choice'
 import type { FwdPlace } from './p2p/content'
+import type { ServerIconKind } from './server_about'
 
 export type AvatarKind = 'identicon' | 'color'
 
@@ -41,6 +42,8 @@ export interface ServerSummary {
   is_admin: boolean
   banner_color?: string | null
   name_color?: string | null
+  // How its icon is drawn. Absent on older servers: the letter.
+  icon_kind?: ServerIconKind
   // your timeout's end in unix seconds; on this device's clock once loaded (see api.ts)
   timed_out_until?: number
   timed_out_remaining?: number
@@ -68,6 +71,9 @@ export interface ServerSummaryLite {
   listed?: boolean
   // What members may set in their server profile. Absent on older servers: nothing.
   profiles_mode?: ProfilesMode
+  // What it is about, and how its icon is drawn. Absent on older servers: none, the letter.
+  description?: string | null
+  icon_kind?: ServerIconKind
 }
 
 export type JoinMode = 'name' | 'invite' | 'password' | 'closed'
@@ -298,6 +304,8 @@ export interface ServerDetail {
   join_mode?: JoinMode
   // Whether search lists it. Absent on older servers: listed.
   listed?: boolean
+  description?: string | null
+  icon_kind?: ServerIconKind
   channels: Channel[]
   categories?: Category[]
   layout_version?: number
@@ -593,6 +601,9 @@ export interface ServerMatch {
   name: string
   display_name: string
   has_password: boolean
+  description?: string | null
+  icon_kind?: ServerIconKind
+  banner_color?: string | null
 }
 
 export interface ProfileMember {

@@ -61,6 +61,8 @@ import { GuestParticipation, ServerAccessSection, passwordName } from './server_
 import { HostedMembers, MEMBER_SEARCH_PERMS } from './server_members'
 import { WidgetSettings } from './widget_settings'
 import { ColorField } from './color_field'
+import { AboutEditor } from './server_about'
+import { hostedAbout, hostedAboutPatch } from '../lib/server_about'
 import { ServerHeader } from './server_header'
 import { ServerSystemMessages } from './system_messages'
 import { ProfilesModeField } from './server_profile_dialog'
@@ -87,6 +89,7 @@ import {
   filledDangerBtn,
   sectionCls,
   textBtn,
+  useOwnServer,
 } from './ui'
 import { LabelText } from './instance_badge'
 import { endsText } from '../lib/durations'
@@ -979,6 +982,26 @@ export function ServerAppearance({
   )
 }
 
+// The About section for a hosted server.
+function HostedAbout({ server }: { server: string }) {
+  const { api } = useAccount()
+  const detail = useStore(s => s.servers[server])
+  const own = useOwnServer(server)
+  if (!detail) return null
+  return (
+    <AboutEditor
+      seed={server}
+      name={detail.display_name}
+      color={detail.banner_color}
+      about={hostedAbout(detail)}
+      editable
+      own={own}
+      locked=""
+      onSave={change => api.updateServer(server, hostedAboutPatch(change))}
+    />
+  )
+}
+
 function StandingInvite({ server, manage }: { server: string; manage: boolean }) {
   const { api, shareOrigin } = useAccount()
   const [link, setLink] = useState<string | null>()
@@ -1463,6 +1486,7 @@ function Settings({ server }: { server: string }) {
             <button className={filledBtn}>Rename</button>
           </form>
           <FieldError message={renameError} />
+          <HostedAbout server={server} />
           <ServerAppearance server={server} />
           <ServerSystemMessages server={server} />
           <ServerUploadExpiry server={server} />

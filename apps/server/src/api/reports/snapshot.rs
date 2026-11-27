@@ -91,6 +91,9 @@ pub struct SnapServer {
     /// Its "Anyone can read this server" option: `null` followed the instance.
     #[serde(default)]
     pub public_read: Option<bool>,
+    /// Its description, when it had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// What a report keeps of its target, taken when it was sent.
@@ -220,5 +223,6 @@ pub(crate) async fn server(db: &Db, lite: &ServerSummaryLite) -> Result<SnapServ
         member_count,
         has_password: lite.has_password,
         public_read: lite.public_read,
+        description: lite.description.clone(),
     })
 }

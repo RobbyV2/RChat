@@ -26,11 +26,12 @@ import { canChangeRole, memberPerms, rolePerms } from './rules'
 import { shownParts } from './server_profile'
 import type { ConfigSource } from './config_transfer'
 import { running, type Timeout } from './timeouts'
+import { iconKind } from './server_about'
 import type { RChatState } from './store_types'
 import { badgePings as p2pBadgePings, dmUnread as p2pDmUnread, listedPeers } from './p2p/alerts'
 import type { P2pState } from './p2p/app/store'
 import { ALL_PERMS, Perm } from './types'
-import type { Member, Message, Role, UserRef } from './types'
+import type { Member, Message, Role, ServerSummary, UserRef } from './types'
 
 const nameIndex = new WeakMap<readonly UserRef[], Map<string, UserRef>>()
 
@@ -113,6 +114,26 @@ export interface RailServer {
   display_name: string
   creator: string | null
 }
+
+// How a hosted server's icon is drawn and on what color: its detail when loaded, else the
+// server list's row.
+const listRows = new WeakMap<readonly ServerSummary[], Map<string, ServerSummary>>()
+const listRow = (s: Pick<RChatState, 'me'>, name: string) => {
+  const list = s.me?.servers
+  if (!list) return undefined
+  let rows = listRows.get(list)
+  if (!rows) {
+    rows = new Map(list.map(x => [x.name, x]))
+    listRows.set(list, rows)
+  }
+  return rows.get(name)
+}
+
+export const serverIconKind = (s: Pick<RChatState, 'me' | 'servers'>, name: string) =>
+  iconKind(s.servers[name]?.icon_kind ?? listRow(s, name)?.icon_kind)
+
+export const serverIconColor = (s: Pick<RChatState, 'me' | 'servers'>, name: string) =>
+  (s.servers[name] ? s.servers[name].banner_color : listRow(s, name)?.banner_color) ?? null
 
 type RailSource = Pick<RChatState, 'me' | 'guest' | 'guestServers' | 'guestNames' | 'servers'>
 

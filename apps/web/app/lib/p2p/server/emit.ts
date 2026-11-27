@@ -20,13 +20,16 @@ import { keyId } from '../keys'
 import { AGREED } from '../limits'
 import type { Session } from '../session'
 import {
+  can,
   channelOf,
   channelsOf,
   knownChannel,
   knownSettings,
+  P,
   type HistoryVis,
   type SystemContent,
 } from '../state'
+import { p2pAboutContent, type AboutChange } from '../../server_about'
 import { isQuotaError } from '../sync'
 import { MOVED_TEXT, MOVING_TEXT, STORAGE_FULL_TEXT } from '../dm'
 import type { ServerCtx } from './context'
@@ -351,6 +354,15 @@ export function settings(cx: ServerCtx, room: string, patch: Record<string, unkn
     ...knownSettings(cx.sumOf(room).settings ?? {}),
     ...patch,
   }))
+}
+
+// The server's description and icon (`about`): the admitted content with only our fields
+// changed, so fields a newer app wrote stay.
+export async function setAbout(cx: ServerCtx, room: string, change: AboutChange) {
+  if (!can(cx.sumOf(room), cx.me, P.ManageServer)) throw new ServerError(CANT_TEXT)
+  return cx.emit(room, 'about', () =>
+    p2pAboutContent(cx.sumOf(room).about as Record<string, unknown> | null, change)
+  )
 }
 
 export function setName(cx: ServerCtx, room: string, name: string, color?: number | null) {

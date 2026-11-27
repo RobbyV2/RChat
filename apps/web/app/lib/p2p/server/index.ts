@@ -42,6 +42,7 @@ import { rebuildStep } from '../search'
 import { Voice } from '../voice'
 import { dmRoomId, type P2pMessage } from '../dm'
 import type { ServerCtx } from './context'
+import type { AboutChange } from '../../server_about'
 import {
   BAD_CODE,
   LEGACY_TEXT,
@@ -1323,6 +1324,11 @@ export class Servers {
 
   setName(room: string, name: string, color?: number | null) {
     return emitter.setName(ctx(this), room, name, color)
+  }
+
+  // What the server is about and how its icon looks.
+  setAbout(room: string, change: AboutChange) {
+    return emitter.setAbout(ctx(this), room, change)
   }
 
   setHistory(room: string, vis: HistoryVis) {

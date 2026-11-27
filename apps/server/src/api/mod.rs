@@ -52,6 +52,7 @@ pub mod reports;
 pub mod scim;
 pub mod sealed;
 pub mod search_limits;
+pub mod server_about;
 pub mod servers;
 pub mod staff_audit;
 pub mod system_messages;
@@ -355,6 +356,8 @@ pub struct ServerSummary {
     pub banner_color: Option<String>,
     /// Color of the server name in that header as `#rrggbb`; `null` uses the theme color.
     pub name_color: Option<String>,
+    /// How the server's icon is drawn (see `ServerSummaryLite`).
+    pub icon_kind: server_about::IconKind,
     /// When your timeout in this server ends (unix seconds), while you are timed out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timed_out_until: Option<i64>,
@@ -420,6 +423,13 @@ pub struct ServerSummaryLite {
     /// What members may set in their server profile: `all`, `no_names` or `off`.
     #[serde(default)]
     pub profiles_mode: profiles::ProfilesMode,
+    /// What the server is about: plain text, at most 300 characters; `null` without one.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// How its icon is drawn: `letter` (the first letter of its name, the default) or
+    /// `identicon` (a pattern made from its key), on its `banner_color` when it has one.
+    #[serde(default)]
+    pub icon_kind: server_about::IconKind,
 }
 
 /// A channel in a server.
@@ -648,6 +658,11 @@ pub struct ServerDetail {
     /// Whether server search lists it (see `ServerSummaryLite`). Set with
     /// `PATCH /api/v1/servers/{name}`.
     pub listed: bool,
+    /// What the server is about (see `ServerSummaryLite`). Set with
+    /// `PATCH /api/v1/servers/{name}`.
+    pub description: Option<String>,
+    /// How its icon is drawn (see `ServerSummaryLite`). Set with `PATCH /api/v1/servers/{name}`.
+    pub icon_kind: server_about::IconKind,
     /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
     /// with permission rules that do not grant the caller `can_view` are left out.
     pub channels: Vec<Channel>,

@@ -146,6 +146,10 @@ export const applyServerChange = (
       join_mode: server.join_mode ?? detail.join_mode,
       listed: server.listed ?? detail.listed,
       profiles_mode: server.profiles_mode ?? detail.profiles_mode,
+      description: Object.hasOwn(server, 'description')
+        ? (server.description ?? null)
+        : detail.description,
+      icon_kind: server.icon_kind ?? detail.icon_kind,
     }
   }
   const members = renameKey(s.members, old_name, server.name)
@@ -206,6 +210,7 @@ export const applyServerChange = (
                   banner_color: server.banner_color ?? null,
                   name_color: server.name_color ?? null,
                   profiles_mode: server.profiles_mode ?? x.profiles_mode,
+                  icon_kind: server.icon_kind ?? x.icon_kind,
                 }
               : x
           ),

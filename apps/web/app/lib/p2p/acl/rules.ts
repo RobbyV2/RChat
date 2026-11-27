@@ -599,6 +599,13 @@ export const profileResetOk = (e: AclEv, St: FactsQ, bit: number) =>
   (St.owners.has(e.a) ||
     (St.mem.has(e.a) && (permsQ(St, e.a) & bit) !== 0 && gt(rank(St, e.a), rank(St, e.c.to))))
 
+// about (the server's description and icon) is a register on the role_meta pattern: admitted,
+// cut and live by the generic rule, with its Authority read only at display. A write counts when
+// its author, in St(w), is an owner or holds Manage server. Its fields are read one by one at
+// display, a malformed one as unset.
+export const aboutOk = (e: AclEv, St: FactsQ) =>
+  St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & SERVER) !== 0)
+
 export function classify(e: AclEv, F: FactsQ): { cls: Cls; self: boolean } {
   switch (e.t) {
     case 'kick':

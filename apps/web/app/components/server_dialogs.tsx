@@ -20,6 +20,9 @@ import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { Dialog, FieldError, Masked } from './ui'
+import { ServerGlyph } from './server_rail'
+import { AboutLine } from './server_about'
+import { aboutText } from '../lib/server_about'
 
 function AddServerDialog({
   join,
@@ -219,10 +222,17 @@ function AddServerDialog({
               <button
                 key={s.name}
                 onClick={() => rename(s.name)}
-                className="streamer flex items-center gap-1.5 rounded-lg px-2 py-1 text-left text-sm text-on-surface-variant hover:bg-surface-container"
+                data-server-match={s.name}
+                className="flex items-center gap-2 rounded-lg px-2 py-1 text-left text-sm text-on-surface-variant hover:bg-surface-container"
               >
-                <span className="truncate">
-                  <Masked text={s.display_name} />
+                <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container-highest text-sm font-semibold text-on-surface">
+                  <ServerGlyph name={s.name} displayName={s.display_name} look={s} />
+                </span>
+                <span className="min-w-0">
+                  <span className="streamer block truncate">
+                    <Masked text={s.display_name} />
+                  </span>
+                  <AboutLine text={aboutText(s.description)} oneLine />
                 </span>
               </button>
             ))}

@@ -132,6 +132,7 @@
     "search",
     "send",
     "serverRooms",
+    "setAbout",
     "setHistory",
     "setName",
     "setOverwrite",

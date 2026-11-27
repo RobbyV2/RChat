@@ -43,7 +43,7 @@ import { registerAppActions } from '../../lib/actions'
 import { menuItems, openActionMenu } from '../../lib/actions/menu'
 import { peerServer } from '../../lib/actions/p2p_server'
 import type { DropTarget } from '../../lib/drag'
-import { serverInitial } from '../../lib/rules'
+import { AboutLine, ServerIcon } from '../server_about'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge, pingLabel } from '../ping_badge'
 import { ChannelEnd } from '../typing_indicator'
@@ -169,7 +169,8 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   const voice = useP2pVoice([v.id])
   const muted = mutedOf(prefs, serverScope(v.id), Date.now())
   const parent = folder === null ? null : zoneOfFolder(folder)
-  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const mask = useMask(own)
   return (
     <button
       data-p2p-tile
@@ -195,9 +196,16 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       }`}
     >
       <span
-        className={`streamer flex h-full w-full items-center justify-center ${muted && !active ? 'opacity-50' : ''}`}
+        className={`flex h-full w-full items-center justify-center rounded-[inherit] ${muted && !active ? 'opacity-50' : ''}`}
       >
-        {serverInitial(mask(v.name))}
+        <ServerIcon
+          seed={v.id}
+          name={v.name}
+          kind={v.about.icon}
+          color={hex(v.color)}
+          own={own}
+          framed={active}
+        />
       </span>
       <span
         aria-hidden
@@ -278,9 +286,9 @@ function P2pFolderEntryBody({
           {list.slice(0, 4).map(v => (
             <span
               key={v.id}
-              className="folder-mini streamer flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-[9px] leading-none font-semibold"
+              className="folder-mini flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-[9px] leading-none font-semibold"
             >
-              {serverInitial(mask(v.name))}
+              <ServerIcon seed={v.id} name={v.name} kind={v.about.icon} color={hex(v.color)} />
             </span>
           ))}
         </span>
@@ -1106,7 +1114,6 @@ function ServerInviteRowsBody() {
 
   const invites = useP2p(s => s.serverInvites)
   const contacts = useP2p(s => s.contacts)
-  const mask = useMask()
   if (!invites.length) return null
   return (
     <section aria-label="P2P server invites">
@@ -1123,12 +1130,13 @@ function ServerInviteRowsBody() {
               className="flex items-center gap-3 rounded-2xl border border-dashed border-tertiary bg-surface-container px-3 py-2"
             >
               <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-tertiary font-semibold">
-                <span className="streamer">{serverInitial(mask(i.name))}</span>
+                <ServerIcon seed={i.room} name={i.name} kind={i.about.icon} color={hex(i.color)} />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="streamer truncate text-sm font-medium">
                   <Masked text={i.name} />
                 </p>
+                <AboutLine text={i.about.text} oneLine />
                 <p className="truncate text-xs text-on-surface-variant">
                   From{' '}
                   <span className="streamer">

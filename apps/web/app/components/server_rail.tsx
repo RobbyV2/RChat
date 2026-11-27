@@ -52,7 +52,9 @@ import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
 import { folderStyle } from '../lib/folder_colors'
 import type { DropTarget } from '../lib/drag'
 import type { ServerDetail } from '../lib/types'
-import { serverInitial } from '../lib/rules'
+import { iconKind } from '../lib/server_about'
+import { serverIconColor, serverIconKind } from '../lib/selectors'
+import { ServerIcon } from './server_about'
 import { longPress } from './context_menu'
 import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
@@ -87,8 +89,22 @@ const dropServer = (s: RChatState, name: string, { zone, index, onto }: DropTarg
   else s.moveServer(name, index)
 }
 
-export function ServerGlyph({ name, displayName }: { name: string; displayName: string }) {
-  const mask = useMask(useOwnServer(name))
+// A hosted server's icon. `look` is the server as an invite or search shows it; without it
+// the icon follows this account's server list.
+export function ServerGlyph({
+  name,
+  displayName,
+  look,
+  framed = false,
+}: {
+  name: string
+  displayName: string
+  look?: { icon_kind?: string | null; banner_color?: string | null }
+  framed?: boolean
+}) {
+  const own = useOwnServer(name)
+  const kind = useStore(s => (look ? iconKind(look.icon_kind) : serverIconKind(s, name)))
+  const color = useStore(s => (look ? (look.banner_color ?? null) : serverIconColor(s, name)))
   return name === 'rchat' ? (
     <img
       src="/rchat_r.png"
@@ -97,7 +113,14 @@ export function ServerGlyph({ name, displayName }: { name: string; displayName: 
       className="h-full w-full object-contain p-1"
     />
   ) : (
-    <span className="streamer">{serverInitial(mask(displayName))}</span>
+    <ServerIcon
+      seed={name}
+      name={displayName}
+      kind={kind}
+      color={color}
+      own={own}
+      framed={framed}
+    />
   )
 }
 
@@ -157,9 +180,9 @@ function ServerTile({
       className={`${tile} relative text-lg font-semibold ${active ? 'bg-primary text-on-primary' : idle}`}
     >
       <span
-        className={`flex h-full w-full items-center justify-center ${muted && !active ? 'opacity-50' : ''}`}
+        className={`flex h-full w-full items-center justify-center rounded-[inherit] ${muted && !active ? 'opacity-50' : ''}`}
       >
-        <ServerGlyph name={name} displayName={display_name} />
+        <ServerGlyph name={name} displayName={display_name} framed={active} />
       </span>
       <MutedIcon
         scope={{ kind: 'server', name }}
@@ -207,7 +230,7 @@ function PreviewTile() {
       )}
       className={`${tile} relative border-2 border-dashed border-primary bg-surface-container-high text-lg font-semibold text-on-surface`}
     >
-      <span className="flex h-full w-full items-center justify-center opacity-60">
+      <span className="flex h-full w-full items-center justify-center rounded-[inherit] opacity-60">
         <ServerGlyph name={name} displayName={display} />
       </span>
       <span
@@ -223,7 +246,6 @@ function PreviewTile() {
 function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
   const p2pOpen = useP2p(s => s.home || s.server !== null)
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
-  const mask = useMask(useOwnServer(name))
   return (
     <span
       className={`flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-[9px] leading-none font-semibold ${
@@ -233,7 +255,7 @@ function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
       {name === 'rchat' ? (
         <img src="/rchat_r.png" alt="" draggable={false} className="h-full w-full object-contain" />
       ) : (
-        <span className="streamer">{serverInitial(mask(display_name))}</span>
+        <ServerGlyph name={name} displayName={display_name} framed={active} />
       )}
     </span>
   )

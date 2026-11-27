@@ -10,6 +10,7 @@ import { FOLDER_PRESETS } from '../folder_colors'
 import { emptyLayout, type Folder } from '../nav_layout'
 
 import type { ServerView } from '../p2p/server/types'
+import { NO_ABOUT } from '../server_about'
 import { resetSessionCaches, useStore } from '../store'
 import { me } from './fixtures'
 
@@ -47,7 +48,15 @@ const F = (over: Partial<Folder> = {}): Folder => ({
 })
 const servers = ['a', 'b'].map(name => ({ name, display_name: name, creator: null }))
 const rooms = ['A'.repeat(43), 'B'.repeat(43)].map(
-  (id, i) => ({ id, name: `room${i}`, channels: [], chans: {} }) as unknown as ServerView
+  (id, i) =>
+    ({
+      id,
+      name: `room${i}`,
+      color: null,
+      channels: [],
+      chans: {},
+      about: NO_ABOUT,
+    }) as unknown as ServerView
 )
 const DARK_RED =
   '--folder-icon:#ffb1b1;--folder-on-icon:#670000;--folder-group:#443136;--folder-tile:#4d383c;--folder-hover:#65484c;--folder-drop:#614549'

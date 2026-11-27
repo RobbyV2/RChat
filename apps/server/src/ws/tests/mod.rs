@@ -133,6 +133,8 @@ fn lite(name: &str) -> ServerSummaryLite {
         join_mode: Default::default(),
         listed: true,
         profiles_mode: Default::default(),
+        description: None,
+        icon_kind: Default::default(),
     }
 }
 

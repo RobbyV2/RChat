@@ -213,6 +213,7 @@ export const actParts = (t: string, to?: string, ends = false): { act: string; w
     channel: 'Change a channel',
     chperm: 'Change who may use a channel',
     settings: 'Change the server settings',
+    about: 'Change the server description and icon',
     profile: 'Change their profile',
     device_add: 'Add a device',
     device_revoke: 'Remove a device',
@@ -302,6 +303,8 @@ export const effectHolds = (
       return (s.profiles ?? 'all') === c.mode
     case 'profile_reset':
       return !!to && to.reset?.last === id
+    case 'about':
+      return same(s.about, c)
     case 'profile':
       return same(s.members[me]?.profile, c)
     default:

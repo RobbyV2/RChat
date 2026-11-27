@@ -25,6 +25,7 @@ import {
   profileResetOk,
   rank,
   resetBit,
+  aboutOk,
   ROLES,
   SERVER,
   timeoutEnd,
@@ -119,6 +120,8 @@ export interface Facts extends FactsQ {
   profileMode: AclContent | undefined
   // The resets that count for a member's room profile (`profile_reset`, a display register).
   profileReset: RMap<string, ResetFact>
+  // The server's description and icon (`about`, a display register).
+  about: AclContent | undefined
   addsTo: RMap<string, readonly Pend[]>
   consumed: RSet<string>
   codeOk: RSet<string>
@@ -822,6 +825,16 @@ export abstract class View {
     const r = this.register(ws)
     return r && ix.ev[r.win].c
   }
+  // About: the register over the live `about` writes whose Authority holds in their own
+  // admission state and after the denies concurrent with them, as for RoleMeta.
+  aboutOf(): AclContent | undefined {
+    const ix = this.ix
+    const ws = ix.aboutEv.filter(
+      x => aboutOk(ix.ev[x], ix.rec[x].local.facts) && !this.metaDenied(x, SERVER)
+    )
+    const r = this.register(ws)
+    return r && ix.ev[r.win].c
+  }
   // ProfileReset(T): the live `profile_reset` writes naming T whose Authority holds in their
   // own admission state and after the denies concurrent with them, as for RoleMeta, and that
   // came after the join T's membership started with (a reset ends with the membership). Each
@@ -1087,6 +1100,7 @@ export function fullFacts(V: View): Facts {
     roleMeta,
     profileMode: V.profileModeOf(),
     profileReset,
+    about: V.aboutOf(),
     addsTo,
     consumed,
     codeOk,
@@ -1158,6 +1172,7 @@ const EMPTY_FACTS: Facts = {
   roleMeta: new Map(),
   profileMode: undefined,
   profileReset: new Map(),
+  about: undefined,
   addsTo: new Map(),
   consumed: new Set(),
   codeOk: new Set(),

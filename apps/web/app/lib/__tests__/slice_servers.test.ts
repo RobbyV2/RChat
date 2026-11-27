@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { applyServerChange, dropMemberRow } from '../slices/servers'
+import { serverIconColor, serverIconKind } from '../selectors'
 import { resetSessionCaches, useStore, type RChatState } from '../store'
 import type { Channel, ServerSummaryLite } from '../types'
 import { me, member, paged, role, serverDetail, user } from './fixtures'
@@ -29,6 +30,38 @@ describe('servers reducers', () => {
     expect([out.servers!.s.join_mode, out.servers!.s.listed]).toEqual(['invite', false])
     const older = applyServerChange(s, { type: 'server_updated', server: lite() })
     expect([older.servers!.s.join_mode, older.servers!.s.listed]).toEqual(['name', true])
+  })
+
+  test('server_updated carries the description and the icon to the detail and the rail', () => {
+    const detail = serverDetail('s', { description: 'Old', icon_kind: 'identicon' })
+    const s = state({
+      servers: { s: detail },
+      me: me('bob', {
+        servers: [{ name: 's', display_name: 'Old', creator: null, is_admin: true }],
+      }),
+      view: null,
+      voice: null,
+    })
+    const out = applyServerChange(s, {
+      type: 'server_updated',
+      server: lite({ description: 'New', icon_kind: 'letter' }),
+    })
+    expect([out.servers!.s.description, out.servers!.s.icon_kind]).toEqual(['New', 'letter'])
+    expect(out.me!.servers[0].icon_kind).toBe('letter')
+    const cleared = applyServerChange(s, {
+      type: 'server_updated',
+      server: lite({ description: null }),
+    })
+    expect([cleared.servers!.s.description, cleared.servers!.s.icon_kind]).toEqual([
+      null,
+      'identicon',
+    ])
+    const s2 = { ...s, servers: {} }
+    expect(serverIconKind(out as RChatState, 's')).toBe('letter')
+    expect(serverIconKind(s2, 's')).toBe('letter')
+    expect(
+      serverIconColor({ ...s2, servers: { s: { ...detail, banner_color: '#abcdef' } } }, 's')
+    ).toBe('#abcdef')
   })
 
   test('server_updated patches only the named fields', () => {

@@ -1030,6 +1030,8 @@ mod tests {
                 join_mode: Default::default(),
                 listed: true,
                 profiles_mode: Default::default(),
+                description: None,
+                icon_kind: Default::default(),
             },
         });
         router.deliver(WsEvent::PresenceChanged {
@@ -1076,6 +1078,8 @@ mod tests {
                 join_mode: Default::default(),
                 listed: true,
                 profiles_mode: Default::default(),
+                description: None,
+                icon_kind: Default::default(),
             },
         });
         router.deliver(WsEvent::ChannelUpdated {

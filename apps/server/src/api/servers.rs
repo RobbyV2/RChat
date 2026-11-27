@@ -35,6 +35,7 @@ use crate::api::pings::forget_server_pings;
 use crate::api::policy::{ServerCreation, ServerJoining};
 use crate::api::rare::{self, Rare};
 use crate::api::sealed;
+use crate::api::server_about::{self, IconKind};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::timeouts::{running_timeouts, timeout_event};
 use crate::api::users::Names;
@@ -238,6 +239,17 @@ pub struct ServerPatch {
     /// unchanged.
     #[serde(default)]
     profiles_mode: Option<crate::api::profiles::ProfilesMode>,
+    /// What the server is about, shown on invite cards and in server search: plain text, at
+    /// most 300 characters (code points) after cleanup (trimmed, control characters other than
+    /// newlines dropped, runs of 3 or more newlines cut to 2). Checked by the profanity filter
+    /// (`server_names` target). Empty or `null` clears it. Omit to keep it.
+    #[serde(default, deserialize_with = "crate::api::auth::present")]
+    #[schema(value_type = Option<String>, example = "Rust help and chat")]
+    description: Option<Option<String>>,
+    /// How the server's icon is drawn: `letter` or `identicon` (see `ServerSummaryLite`). Omit
+    /// to keep it.
+    #[serde(default)]
+    icon_kind: Option<IconKind>,
 }
 
 /// The server after an update, plus how many members a password change removed.
@@ -396,6 +408,12 @@ pub struct ServerMatch {
     pub display_name: String,
     /// `true` when joining the server needs a password.
     pub has_password: bool,
+    /// What the server is about (see `ServerSummaryLite`).
+    pub description: Option<String>,
+    /// How its icon is drawn (see `ServerSummaryLite`).
+    pub icon_kind: IconKind,
+    /// The color its icon is drawn on, as `#rrggbb`; `null` uses the theme color.
+    pub banner_color: Option<String>,
 }
 
 /// A user banned from a server.
@@ -843,7 +861,7 @@ pub(crate) async fn role_ids_of(
     Ok(map)
 }
 
-const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color, t.until, s.profiles_mode FROM members m JOIN servers s ON s.name = m.server LEFT JOIN member_timeouts t ON t.server = m.server AND t.username = m.username WHERE m.username = $1";
+const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color, t.until, s.profiles_mode, s.icon_kind FROM members m JOIN servers s ON s.name = m.server LEFT JOIN member_timeouts t ON t.server = m.server AND t.username = m.username WHERE m.username = $1";
 
 fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiError> {
     let t = now();
@@ -857,6 +875,7 @@ fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiErr
             is_admin: r.try_get::<i64, _>(3)? != 0,
             banner_color: r.try_get(5)?,
             name_color: r.try_get(6)?,
+            icon_kind: IconKind::stored(r.try_get::<Option<String>, _>(9)?.as_deref()),
             timed_out_until,
             timed_out_remaining: timed_out_until.map(|u| u - t),
             profiles_mode: crate::api::profiles::ProfilesMode::parse(&r.try_get::<String, _>(8)?),
@@ -1101,6 +1120,8 @@ async fn server_detail(
         join_mode,
         listed,
         profiles_mode,
+        description,
+        icon_kind,
     } = access.lite().clone();
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only FROM channels WHERE server = $1 ORDER BY position, id",
@@ -1172,6 +1193,8 @@ async fn server_detail(
         members_visible,
         join_mode,
         listed,
+        description,
+        icon_kind,
         channels,
         categories,
         layout_version,
@@ -2140,6 +2163,8 @@ async fn found_server(
             join_mode: mode,
             listed,
             profiles_mode: Default::default(),
+            description: None,
+            icon_kind: IconKind::Letter,
         },
     });
     Ok((key, link.map(|link| link.info())))
@@ -2316,7 +2341,7 @@ pub(crate) async fn search_servers(
     }
     let fuzzy = is_fuzzy(&q);
     let sql = format!(
-        "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND ((name IN ({}) AND listed <> 0 AND COALESCE(password_hash, '') <> '!none') OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
+        "SELECT name, display_name, password_hash, description, icon_kind, banner_color FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND ((name IN ({}) AND listed <> 0 AND COALESCE(password_hash, '') <> '!none') OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
         crate::api::access::Reading::now(db).await.servers_sql()
     );
     let rows = state
@@ -2339,6 +2364,9 @@ pub(crate) async fn search_servers(
             name,
             display_name,
             has_password: r.try_get::<Option<String>, _>(2)?.is_some(),
+            description: r.try_get(3)?,
+            icon_kind: IconKind::stored(r.try_get::<Option<String>, _>(4)?.as_deref()),
+            banner_color: r.try_get(5)?,
         });
         if out.len() >= 10 {
             break;
@@ -3188,7 +3216,7 @@ pub(crate) async fn leave_server(
 /// links carry it); revoked passwords stay listed until they are purged.
 ///
 /// Emits `server_renamed` (with `old_name`) to the server when the name or display name changed,
-/// otherwise `server_updated` with the new state (password flag and colors), and
+/// otherwise `server_updated` with the new state (password flag, colors, description and icon), and
 /// `members_purged` to the server and the removed members. Voice users who can no longer open
 /// the server leave their call, and with `guest_voice: false` every guest in its voice gets
 /// `voice_ended` (`Guests can't use voice in this server`). Strict and general rate-limit buckets.
@@ -3204,7 +3232,7 @@ pub(crate) async fn leave_server(
     request_body = ServerPatch,
     responses(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
-        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. With reason `invalid` and its `field`: `Use join or protected, not both`, `Pick one way to join` (a `password` with `join` other than `password`), `A password needs 8 characters` (`join: password` on a server without a permanent password), `Listed is only for servers people join by name`, or `That name is taken. Pick another to let people join by name.` (the server would take its lowercase name as its key, and another server has it). `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. `An account can be in at most 1000 servers` with the configured number (`SERVERS_PER_ACCOUNT`, reason `limit`): creating a server counts as joining it. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a description over 300 characters (`Description must be at most 300 characters`) or blocked by the profanity filter, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. With reason `invalid` and its `field`: `Use join or protected, not both`, `Pick one way to join` (a `password` with `join` other than `password`), `A password needs 8 characters` (`join: password` on a server without a permanent password), `Listed is only for servers people join by name`, or `That name is taken. Pick another to let people join by name.` (the server would take its lowercase name as its key, and another server has it). `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. `An account can be in at most 1000 servers` with the configured number (`SERVERS_PER_ACCOUNT`, reason `limit`): creating a server counts as joining it. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage server settings permission, missing Kick for `members: remove`, a password or `join` change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
@@ -3237,6 +3265,8 @@ pub(crate) async fn update_server(
         join,
         listed: list,
         profiles_mode,
+        description,
+        icon_kind,
     } = req;
     let guest_voice = guest_voice_opt_in.or(guest_voice.filter(|v| !v));
     let builtin = is_builtin(&state.db, &key).await;
@@ -3287,6 +3317,10 @@ pub(crate) async fn update_server(
     let listed = crate::api::policy::Policy::cached(&state.db).await;
     let banner_color = server_color(banner_color, "banner")?;
     let name_color = server_color(name_color, "name")?;
+    let description = match description {
+        Some(text) => Some(server_about::clean_description(&state.db, text.as_deref()).await?),
+        None => None,
+    };
     let purge = password.is_some() && members == PasswordMembers::Remove;
     if purge {
         access.require_perm(&state.db, Perm::Kick).await?;
@@ -3459,6 +3493,20 @@ pub(crate) async fn update_server(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(text) = &description {
+        sqlx::query("UPDATE servers SET description = $1 WHERE name = $2")
+            .bind(text)
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(kind) = icon_kind {
+        sqlx::query("UPDATE servers SET icon_kind = $1 WHERE name = $2")
+            .bind(kind.as_str())
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
     let (removed, kept, bypassed) = match purge {
         true => purge_members(&mut tx, &new_key, &user, mine, own).await?,
         false => (
@@ -3523,6 +3571,16 @@ pub(crate) async fn update_server(
             "profiles_mode",
             lite.profiles_mode.as_str(),
             profiles_mode.unwrap_or(lite.profiles_mode).as_str(),
+        )
+        .change(
+            "description",
+            lite.description.clone(),
+            description.clone().unwrap_or(lite.description.clone()),
+        )
+        .change(
+            "icon_kind",
+            lite.icon_kind.as_str(),
+            icon_kind.unwrap_or(lite.icon_kind).as_str(),
         );
     if changed.has_changes() {
         let changed = match passwords_revoked && password_hash.is_none() {
@@ -6973,6 +7031,8 @@ mod tests {
                 join: None,
                 listed: None,
                 profiles_mode: None,
+                description: None,
+                icon_kind: None,
             }),
         )
         .await
@@ -8108,6 +8168,8 @@ mod tests {
                 join: None,
                 listed: None,
                 profiles_mode: None,
+                description: None,
+                icon_kind: None,
             }),
         )
         .await
@@ -8558,6 +8620,8 @@ mod tests {
                 join: None,
                 listed: None,
                 profiles_mode: None,
+                description: None,
+                icon_kind: None,
             }),
         )
         .await
@@ -12838,6 +12902,8 @@ mod tests {
                 join: None,
                 listed: None,
                 profiles_mode: None,
+                description: None,
+                icon_kind: None,
             }),
         )
         .await

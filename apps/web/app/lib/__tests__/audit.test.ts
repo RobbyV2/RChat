@@ -578,3 +578,11 @@ describe('the member privacy option', () => {
     expect(fieldLabel('lock_until')).toBe('Locked until')
   })
 })
+
+test('a server description and icon read as the editor names them', () => {
+  expect(fieldLabel('description')).toBe('Description')
+  expect(fieldLabel('icon_kind')).toBe('Icon')
+  expect(valueText('description', null)).toBe('No description')
+  expect(valueText('icon_kind', 'identicon')).toBe('Pattern')
+  expect(valueText('icon_kind', 'letter')).toBe('Letter')
+})

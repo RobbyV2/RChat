@@ -73,6 +73,7 @@ import type {
   UserRef,
 } from './types'
 import type { UploadExpiry, UploadExpiryState } from './upload_expiry'
+import type { ServerIconKind } from './server_about'
 import type { LayoutOrder } from './categories'
 import type { Page } from './lists'
 import type { UnreadCount } from './unread_banner'
@@ -668,6 +669,8 @@ export const endpoints = (c: ApiClient) => ({
       guest_chat_opt_in?: boolean
       members_visible?: boolean
       profiles_mode?: ProfilesMode
+      description?: string | null
+      icon_kind?: ServerIconKind
     }
   ) => c.req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch),
   deleteServer: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}`),

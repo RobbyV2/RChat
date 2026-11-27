@@ -333,6 +333,9 @@ class SnapFacts implements Facts {
       )
     )
   }
+  get about() {
+    return this.V.aboutOf()
+  }
   get roleMeta() {
     return this.one('roleMeta', () =>
       lazyMap(

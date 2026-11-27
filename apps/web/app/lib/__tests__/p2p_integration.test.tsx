@@ -111,6 +111,7 @@ import { markAllReadItem, registerAppActions } from '../actions'
 
 import { me, memoryStorage, user } from './fixtures'
 import { readText } from './masked_text'
+import { NO_ABOUT } from '../server_about'
 
 beforeAll(registerAppActions)
 afterAll(() => peerOwner.store.dispose())
@@ -162,6 +163,7 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   id: SRV,
   name: 'Book club',
   color: null,
+  about: NO_ABOUT,
   me: 'join',
   joining: false,
   owner: ALICE,

@@ -1,3 +1,4 @@
+import { ICON_KINDS } from './server_about'
 import { guestLabel } from './guest_voice'
 import { MODE_LABELS, isProfilesMode } from './profile_fields'
 import { FOREVER, RESET_FIELDS, RESET_LABELS, isResetField } from './profile_reset'
@@ -60,6 +61,8 @@ const FIELD_LABELS: Record<string, string> = {
   perms: 'Permissions',
   mentionable: 'Anyone can mention',
   banner_color: 'Banner color',
+  description: 'Description',
+  icon_kind: 'Icon',
   name_color: 'Name color',
   join_messages: 'Join messages',
   leave_messages: 'Leave messages',
@@ -114,6 +117,7 @@ const PASSWORD_MODES: Record<string, string> = {
 export function valueText(field: string, v: unknown): string {
   if (v === null || v === undefined) {
     if (field === 'topic') return 'No topic'
+    if (field === 'description') return 'No description'
     if (field === 'system_channel') return 'Default channel'
     if (field === 'expires_at') return 'Never'
     if (field === 'max_uses') return 'Unlimited'
@@ -121,6 +125,8 @@ export function valueText(field: string, v: unknown): string {
     if (field === 'lock_until') return 'Not locked'
     return 'None'
   }
+  if (field === 'icon_kind' && typeof v === 'string')
+    return ICON_KINDS.find(k => k.kind === v)?.label ?? v
   if (field === 'authors' && Array.isArray(v))
     return v
       .map(a => {

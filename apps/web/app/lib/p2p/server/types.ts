@@ -5,6 +5,7 @@ import type { OverSum } from '../acl/summary'
 import type { RoomExtras } from '../../profile_fields'
 import type { LockState } from '../../profile_reset'
 import type { ProfilesMode } from '../../types'
+import type { ServerAbout } from '../../server_about'
 import type { Disowned, Reapply } from '../acl_room'
 import { b64u, bytesOf, canonical, fromB64u, randomBytes, utf8 } from '../canonical'
 import { storedSize } from '../dag'
@@ -278,6 +279,8 @@ export interface ServerView {
   id: string
   name: string
   color: number | null
+  // What the server is about and how its icon looks.
+  about: ServerAbout
   me: Membership | null
   joining: boolean
   owner: string | null
@@ -449,6 +452,7 @@ export const RESIGN_ACL = [
   'role_meta',
   'profile_mode',
   'profile_reset',
+  'about',
   'code',
   'code_revoke',
 ]

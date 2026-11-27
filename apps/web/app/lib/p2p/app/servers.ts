@@ -27,7 +27,8 @@ import {
   type ServerView,
 } from '../server'
 import { unsentText } from '../flows'
-import { membershipOf, P, type HistoryVis } from '../state'
+import { membershipOf, P, roomColor, type HistoryVis } from '../state'
+import { p2pAbout, type AboutChange } from '../../server_about'
 import type { IdentityScope, P2pParts } from './scope'
 
 // Messages stored here that match (search panel). `from` is matched against member names.
@@ -58,6 +59,17 @@ export const threadsSig = (c: Counts, seq: number) =>
 export const channelReadSkips = (c: Counts, seq: number, checked: string | undefined) =>
   !c.unread && c.pings <= threadPings(c) && (!threadPings(c) || checked === threadsSig(c, seq))
 
+// Invites to servers, with the about this device holds for them (none before it syncs).
+const inviteRows = (sv: Servers) =>
+  sv.invites().map(r => ({
+    room: r.id,
+    name: r.name ?? 'P2P server',
+    from: r.invite?.from ?? '',
+    at: r.invite?.at ?? 0,
+    about: p2pAbout(sv.sumOf(r.id).about),
+    color: roomColor(sv.sumOf(r.id)),
+  }))
+
 export function createServersPart(
   parts: Pick<P2pParts, 'viewing' | 'store' | 'dms' | 'inbox' | 'calls'>,
   scope: IdentityScope
@@ -79,6 +91,7 @@ export function createServersPart(
       id: r.id,
       name: r.name ?? 'P2P server',
       color: null,
+      about: p2pAbout(sum?.about ?? null),
       awaitingAcl: !r.legacy && sum?.rules == null,
       me,
       joining: false,
@@ -131,12 +144,7 @@ export function createServersPart(
       servers: out,
       coOwnerAsks: sv.coOwnerAsks(),
       transferAsks: sv.transferAsks(),
-      serverInvites: sv.invites().map(r => ({
-        room: r.id,
-        name: r.name ?? 'P2P server',
-        from: r.invite?.from ?? '',
-        at: r.invite?.at ?? 0,
-      })),
+      serverInvites: inviteRows(sv),
     })
   }
 
@@ -168,12 +176,7 @@ export function createServersPart(
       serverTyping: typing,
       coOwnerAsks: sv.coOwnerAsks(),
       transferAsks: sv.transferAsks(),
-      serverInvites: sv.invites().map(r => ({
-        room: r.id,
-        name: r.name ?? 'P2P server',
-        from: r.invite?.from ?? '',
-        at: r.invite?.at ?? 0,
-      })),
+      serverInvites: inviteRows(sv),
       storageFull: (state.dms?.storageFull ?? false) || sv.storageFull,
     })
     const now = useP2p.getState()
@@ -784,6 +787,7 @@ export function createServersPart(
     revokeCode: (room: string, hash: string) => withServers(s => s.revokeCodeSynced(room, hash)),
     codes: (room: string) => withServers(s => s.codes(room)),
     rename: (room: string, name: string) => withServers(s => s.setName(room, name)),
+    setAbout: (room: string, change: AboutChange) => withServers(s => s.setAbout(room, change)),
     setHistory: (room: string, vis: HistoryVis) => withServers(s => s.setHistory(room, vis)),
     setSystem: (room: string, sys: { ch: string | null; join: boolean; leave: boolean }) =>
       withServers(s => s.setSystem(room, sys)),
