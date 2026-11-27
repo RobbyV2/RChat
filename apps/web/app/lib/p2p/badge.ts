@@ -340,7 +340,7 @@ export interface BadgeNode {
 }
 
 export const uncheckable = (label: string) =>
-  `Peers can't check badges from ${label}. It needs HTTPS on the default port and a public address.`
+  `Peers can't check badges from ${label}. It needs HTTPS and a public address.`
 
 // Whether peers can check bindings this instance signs: the same rule as their check.
 export const peersCanCheck = (iss: string, allowLocal = false) => {

@@ -6,8 +6,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::SigningKey;
 use prost::Message;
 use rchat_fed::call::{
-    Call, CallError, CheckContext, HELLO_METHOD, KeySet, MemorySeen, SCHEME, Signer, answer_of,
-    bare_origin, check_call, sign_call, valid_host,
+    Call, CallError, CheckContext, HELLO_METHOD, KeySet, MemorySeen, Origin, Ports, SCHEME, Signer,
+    answer_of, bare_origin, check_call, sign_call, valid_host,
 };
 use rchat_fed::connect::Code;
 use rchat_fed::guard::{Fetch, KeyFetchGuard};
@@ -64,6 +64,8 @@ pub struct Ctx {
     pub aud: String,
     pub now: i64,
     pub network: String,
+    pub ports: Ports,
+    pub asked: Vec<String>,
     pub cached: Option<KeySet>,
     pub served: BTreeMap<String, KeySet>,
     pub may: Option<Fetch>,
@@ -80,6 +82,8 @@ impl Ctx {
             aud: B.to_string(),
             now: NOW,
             network: "198.51.100.0/24".to_string(),
+            ports: Ports::Any,
+            asked: Vec::new(),
             cached: Some(keys(&[7])),
             served: BTreeMap::from([("https://a.example".to_string(), keys(&[7]))]),
             may: None,
@@ -105,21 +109,24 @@ impl CheckContext for Ctx {
     fn network(&self) -> &str {
         &self.network
     }
-    fn cached_keys(&self, iss: &str) -> Option<KeySet> {
-        (iss == "https://a.example")
+    fn ports(&self) -> &Ports {
+        &self.ports
+    }
+    fn cached_keys(&self, iss: &Origin) -> Option<KeySet> {
+        (iss.as_str() == "https://a.example")
             .then(|| self.cached.clone())
             .flatten()
     }
-    async fn fetch_keys(&mut self, iss: &str) -> Option<KeySet> {
-        self.fetched.push(iss.to_string());
-        self.served.get(iss).cloned()
+    async fn fetch_keys(&mut self, iss: &Origin) -> Option<KeySet> {
+        self.fetched.push(iss.as_str().to_string());
+        self.served.get(iss.as_str()).cloned()
     }
-    fn may_fetch(&mut self, network: &str, iss: &str, hello: bool, stamped: bool) -> Fetch {
+    fn may_fetch(&mut self, network: &str, iss: &Origin, hello: bool, stamped: bool) -> Fetch {
         match self.may {
             Some(fixed) => fixed,
             None => self
                 .guard
-                .may_fetch(network, iss, hello, stamped, false, NOW),
+                .may_fetch(network, iss.as_str(), hello, stamped, false, NOW),
         }
     }
     fn stamp_ok(&self, head: &CallHead) -> bool {
@@ -128,14 +135,15 @@ impl CheckContext for Ctx {
     fn stamp_once(&mut self, _jti: &str, _now: i64) -> bool {
         true
     }
-    fn call_kids(&self, _iss: &str) -> Option<BTreeSet<String>> {
+    fn call_kids(&self, _iss: &Origin) -> Option<BTreeSet<String>> {
         self.call_kids.clone()
     }
     fn hello_call_kids(&self) -> Option<BTreeSet<String>> {
         self.hello_call_kids.clone()
     }
-    fn seen(&mut self, iss: &str, jti: &str, exp: i64) -> bool {
-        self.seen.lock().unwrap().add(iss, jti, exp)
+    fn seen(&mut self, iss: &Origin, jti: &str, exp: i64) -> bool {
+        self.asked.push(iss.as_str().to_string());
+        self.seen.lock().unwrap().add(iss.as_str(), jti, exp)
     }
 }
 
@@ -509,7 +517,14 @@ async fn a_head_over_its_limit_is_refused_before_it_is_decoded() {
 async fn iss_must_be_a_bare_https_origin() {
     for origin in [
         "http://a.example",
-        "https://a.example:8443",
+        "http://a.example:8443",
+        "https://a.example:443",
+        "https://a.example:0",
+        "https://a.example:08443",
+        "https://a.example:65536",
+        "https://a.example:",
+        "https://a.example:8443/",
+        "https://127.0.0.1:8443",
         "https://a.example/x",
         "https://A.example",
         "https://",
@@ -574,6 +589,126 @@ fn a_host_is_a_canonical_dns_name_and_never_an_address() {
     assert!(valid_host(&format!("{}.example", "a".repeat(63))));
     assert!(!bare_origin("http://a.example"));
     assert!(!bare_origin("https://a.example/"));
+    for origin in [
+        "https://a.example:8443",
+        "https://a.example:1",
+        "https://a.example:80",
+        "https://a.example:65535",
+    ] {
+        assert!(bare_origin(origin), "{origin}");
+    }
+    for origin in [
+        "https://a.example:443",
+        "https://a.example:0",
+        "https://a.example:08443",
+        "https://a.example:+8443",
+        "https://a.example:65536",
+        "https://a.example:",
+        "https://a.example:8443:8443",
+        "https://A.example:8443",
+        "https://127.0.0.1:8443",
+        "https://[::1]:8443",
+    ] {
+        assert!(!bare_origin(origin), "{origin}");
+    }
+}
+
+#[tokio::test]
+async fn another_port_of_a_host_is_another_caller_with_its_own_keys() {
+    let side = Signer {
+        key: key(9),
+        kid: kid(9),
+        origin: "https://a.example:8443".to_string(),
+        ..a()
+    };
+    let mut c = Ctx::new();
+    assert_eq!(
+        check(&signed(&side, METHOD, NOW), METHOD, &BODY, &mut c).await,
+        Err(CallError::Kid)
+    );
+    let posing = Signer {
+        origin: "https://a.example:8443".to_string(),
+        ..a()
+    };
+    let mut c = Ctx::new();
+    assert_eq!(
+        check(&signed(&posing, METHOD, NOW), METHOD, &BODY, &mut c).await,
+        Err(CallError::Kid)
+    );
+    let mut c = Ctx::new();
+    c.served
+        .insert("https://a.example:8443".to_string(), keys(&[9]));
+    c.hello_call_kids = Some(BTreeSet::from([kid(9)]));
+    let head = check(
+        &signed(&side, HELLO_METHOD, NOW),
+        HELLO_METHOD,
+        &BODY,
+        &mut c,
+    )
+    .await
+    .expect("its own hello");
+    assert_eq!(head.iss, "https://a.example:8443");
+    assert_eq!(c.fetched, ["https://a.example:8443"]);
+    assert_eq!(c.asked, ["https://a.example:8443"]);
+}
+
+#[tokio::test]
+async fn the_callee_ports_refuse_a_caller_before_any_key_is_fetched() {
+    let only = |ports: &[u16]| Ports::Only(ports.iter().copied().collect());
+    assert_eq!(
+        Origin::accept("https://a.example", &only(&[443])).map(|o| o.as_str().to_string()),
+        Ok("https://a.example".to_string())
+    );
+    assert!(Origin::accept("https://a.example:8443", &only(&[443, 8443])).is_ok());
+    assert!(Origin::accept("https://a.example:8443", &Ports::Any).is_ok());
+    assert_eq!(
+        Origin::accept("https://a.example:8443", &only(&[443])),
+        Err(CallError::Port)
+    );
+    assert_eq!(
+        Origin::accept("https://a.example", &only(&[8443])),
+        Err(CallError::Port)
+    );
+    assert_eq!(
+        Origin::accept("https://a.example:443", &only(&[443])),
+        Err(CallError::Iss)
+    );
+    let side = Signer {
+        key: key(9),
+        kid: kid(9),
+        origin: "https://a.example:8443".to_string(),
+        ..a()
+    };
+    let mut c = Ctx::new();
+    c.ports = only(&[443]);
+    c.cached = None;
+    c.served
+        .insert("https://a.example:8443".to_string(), keys(&[9]));
+    c.hello_call_kids = Some(BTreeSet::from([kid(9)]));
+    assert_eq!(
+        check(
+            &signed(&side, HELLO_METHOD, NOW),
+            HELLO_METHOD,
+            &BODY,
+            &mut c
+        )
+        .await,
+        Err(CallError::Port)
+    );
+    assert!(c.fetched.is_empty());
+    assert!(c.asked.is_empty());
+    assert_eq!(answer_of(CallError::Port), (Code::PermissionDenied, 403));
+    c.ports = only(&[443, 8443]);
+    assert!(
+        check(
+            &signed(&side, HELLO_METHOD, NOW),
+            HELLO_METHOD,
+            &BODY,
+            &mut c
+        )
+        .await
+        .is_ok()
+    );
 }
 
 #[tokio::test]

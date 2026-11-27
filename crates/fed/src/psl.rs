@@ -96,11 +96,20 @@ fn suffix_start(host: &str, list: List) -> usize {
     starts[candidates.clone().find(|i| matched(*i)).unwrap_or(last)]
 }
 
+fn without_port(host: &str) -> &str {
+    match host.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => host,
+    }
+}
+
 pub fn public_suffix(host: &str, list: List) -> &str {
+    let host = without_port(host);
     &host[suffix_start(host, list)..]
 }
 
 pub fn registrable(host: &str, list: List) -> &str {
+    let host = without_port(host);
     let suffix = suffix_start(host, list);
     let before = starts(host)
         .into_iter()

@@ -87,27 +87,62 @@ pub fn sign_call(signer: &Signer, call: &Call) -> Signed {
     }
 }
 
+/// The ports callers may use: any, or only these.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Ports {
+    #[default]
+    Any,
+    Only(BTreeSet<u16>),
+}
+
+/// A caller's origin that `bare_origin` and the callee's ports accepted. Only `Origin::accept`
+/// makes one, and every key, kid and replay lookup of a call takes one.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Origin(String);
+
+impl Origin {
+    pub fn accept(raw: &str, ports: &Ports) -> Result<Origin, CallError> {
+        let Some(authority) = raw.strip_prefix("https://").filter(|_| bare_origin(raw)) else {
+            return Err(CallError::Iss);
+        };
+        let port = match authority.rsplit_once(':') {
+            Some((_, port)) => port.parse::<u16>().map_err(|_| CallError::Iss)?,
+            None => 443,
+        };
+        match ports {
+            Ports::Only(allowed) if !allowed.contains(&port) => Err(CallError::Port),
+            Ports::Any | Ports::Only(_) => Ok(Origin(raw.to_string())),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 pub trait CheckContext {
     fn aud(&self) -> &str;
     fn now(&self) -> i64;
     fn serves(&self, path: &str) -> bool;
     fn network(&self) -> &str;
-    fn cached_keys(&self, iss: &str) -> Option<KeySet>;
+    fn ports(&self) -> &Ports;
+    fn cached_keys(&self, iss: &Origin) -> Option<KeySet>;
     /// Must refuse private, loopback and other special-use addresses at connect time, follow no
     /// redirect, and cap the time and size of the answer.
-    fn fetch_keys(&mut self, iss: &str) -> impl Future<Output = Option<KeySet>> + Send;
-    fn may_fetch(&mut self, network: &str, iss: &str, hello: bool, stamped: bool) -> Fetch;
+    fn fetch_keys(&mut self, iss: &Origin) -> impl Future<Output = Option<KeySet>> + Send;
+    fn may_fetch(&mut self, network: &str, iss: &Origin, hello: bool, stamped: bool) -> Fetch;
     fn stamp_ok(&self, head: &CallHead) -> bool;
     fn stamp_once(&mut self, jti: &str, now: i64) -> bool;
-    fn call_kids(&self, iss: &str) -> Option<BTreeSet<String>>;
+    fn call_kids(&self, iss: &Origin) -> Option<BTreeSet<String>>;
     fn hello_call_kids(&self) -> Option<BTreeSet<String>>;
-    fn seen(&mut self, iss: &str, jti: &str, exp: i64) -> bool;
+    fn seen(&mut self, iss: &Origin, jti: &str, exp: i64) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallError {
     Header,
     Iss,
+    Port,
     Aud,
     Unimplemented,
     Method,
@@ -127,6 +162,7 @@ pub enum CallError {
 pub fn answer_of(error: CallError) -> (Code, u16) {
     let code = match error {
         CallError::Header | CallError::Iss | CallError::Aud => Code::NotFound,
+        CallError::Port => Code::PermissionDenied,
         CallError::Unimplemented => Code::Unimplemented,
         CallError::Busy | CallError::Keys | CallError::StampNeeded => Code::Unavailable,
         CallError::HelloNeeded => Code::FailedPrecondition,
@@ -155,8 +191,21 @@ pub fn valid_host(host: &str) -> bool {
     host.len() <= 253 && host.split('.').all(label) && !host.rsplit('.').next().is_some_and(numeric)
 }
 
+fn canonical_port(port: &str) -> bool {
+    !port.starts_with('0')
+        && port.bytes().all(|b| b.is_ascii_digit())
+        && port.parse::<u16>().is_ok_and(|port| port != 443)
+}
+
+/// `https://host`, or `https://host:port` off the default port: another port is another instance.
 pub fn bare_origin(origin: &str) -> bool {
-    origin.strip_prefix("https://").is_some_and(valid_host)
+    let Some(authority) = origin.strip_prefix("https://") else {
+        return false;
+    };
+    match authority.rsplit_once(':') {
+        Some((host, port)) => valid_host(host) && canonical_port(port),
+        None => valid_host(authority),
+    }
 }
 
 fn in_window(iat: i64, exp: i64, now: i64) -> bool {
@@ -184,9 +233,7 @@ pub async fn check_call<C: CheckContext>(
 ) -> Result<CallHead, CallError> {
     let (head_bytes, sig) = parts(authorization).ok_or(CallError::Header)?;
     let head = CallHead::decode(head_bytes.as_slice()).map_err(|_| CallError::Header)?;
-    if !bare_origin(&head.iss) {
-        return Err(CallError::Iss);
-    }
+    let iss = Origin::accept(&head.iss, c.ports())?;
     if head.aud != c.aud() {
         return Err(CallError::Aud);
     }
@@ -207,7 +254,7 @@ pub async fn check_call<C: CheckContext>(
     }
     let hello = path == HELLO_METHOD;
     let jti = URL_SAFE_NO_PAD.encode(&head.jti);
-    let mut keys = c.cached_keys(&head.iss);
+    let mut keys = c.cached_keys(&iss);
     if keys.is_none() && !hello {
         return Err(CallError::Kid);
     }
@@ -215,8 +262,8 @@ pub async fn check_call<C: CheckContext>(
         let now = c.now();
         let stamped = !head.stamp.is_empty() && c.stamp_ok(&head) && c.stamp_once(&jti, now);
         let network = c.network().to_string();
-        let fetched = match c.may_fetch(&network, &head.iss, hello, stamped) {
-            Fetch::Ok => c.fetch_keys(&head.iss).await.ok_or(CallError::Keys),
+        let fetched = match c.may_fetch(&network, &iss, hello, stamped) {
+            Fetch::Ok => c.fetch_keys(&iss).await.ok_or(CallError::Keys),
             Fetch::Busy => Err(CallError::Busy),
             Fetch::StampNeeded => Err(CallError::StampNeeded),
         };
@@ -233,12 +280,12 @@ pub async fn check_call<C: CheckContext>(
     if !verified(key, &[CALL_TAG, &head_bytes].concat(), &sig) {
         return Err(CallError::Forged);
     }
-    if !c.seen(&head.iss, &jti, head.exp) {
+    if !c.seen(&iss, &jti, head.exp) {
         return Err(CallError::Replay);
     }
     let call_kids = match hello {
         true => c.hello_call_kids(),
-        false => c.call_kids(&head.iss),
+        false => c.call_kids(&iss),
     };
     match call_kids {
         None => Err(CallError::HelloNeeded),

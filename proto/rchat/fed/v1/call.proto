@@ -9,7 +9,7 @@ package rchat.fed.v1;
 // The callee finds the key by the RFC 7638 thumbprint it computes itself, never by a JWKS label,
 // and accepts only keys the caller's Hello lists in `call_kids`.
 message CallHead {
-  // The caller's origin, `https://host` (port 443, no path).
+  // The caller's origin, `https://host` or `https://host:port` off port 443, no path.
   string iss = 1;
   // The callee's origin, as its PUBLIC_URL says.
   string aud = 2;

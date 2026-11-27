@@ -10,6 +10,7 @@ use crate::outcomes::{self, Answer};
 use crate::pb::{Refusal, RefusalReason};
 
 pub const REFUSAL_TYPE: &str = "rchat.fed.v1.Refusal";
+pub const PORT_REFUSED: &str = "This instance does not accept calls from this port.";
 pub const ERROR_BODY_MAX: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +175,13 @@ impl ConnectError {
             },
             CallError::HelloNeeded => ConnectError {
                 refusal: Some(reason(RefusalReason::HelloNeeded, 0)),
+                ..ConnectError::new(code)
+            },
+            CallError::Port => ConnectError {
+                refusal: Some(Refusal {
+                    notice: PORT_REFUSED.to_string(),
+                    ..reason(RefusalReason::Refused, 0)
+                }),
                 ..ConnectError::new(code)
             },
             CallError::Unimplemented

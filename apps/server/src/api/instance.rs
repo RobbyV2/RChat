@@ -477,7 +477,7 @@ mod tests {
     use super::*;
     use crate::api::test_util::{done, temp_state};
     use crate::config::{AppConfig, Roles};
-    use crate::identity::{Verifier, VerifyError, verify_with};
+    use crate::identity::{IssuerPorts, IssuerRules, Verifier, VerifyError, verify_with};
     use crate::instance::{Instance, InstanceConfig};
 
     async fn serve(state: AppState) -> (SocketAddr, tokio::task::JoinHandle<()>) {
@@ -865,12 +865,15 @@ mod tests {
         assert!(expires_at - now() <= ASSERTION_TTL_SECS);
 
         assert!(
-            Verifier::new(Duration::from_secs(60))
+            Verifier::new(Duration::from_secs(60), IssuerRules::default())
                 .verify(&jwt, "https://b.example", Some("n-1"))
                 .await
                 .is_err()
         );
-        let verifier = Verifier::new(Duration::from_secs(60)).allow_local();
+        let verifier = Verifier::new(
+            Duration::from_secs(60),
+            IssuerRules::default().allow_local(),
+        );
         let claims = verifier
             .verify(&jwt, "https://b.example", Some("n-1"))
             .await
@@ -888,7 +891,8 @@ mod tests {
             Err(VerifyError::Nonce)
         );
         let keys = verifier.keys(&base).await.unwrap();
-        assert!(verify_with(&jwt, &keys, &base, "https://b.example", None).is_ok());
+        let issuer = verifier.accept(&base).unwrap();
+        assert!(verify_with(&jwt, &keys, &issuer, "https://b.example", None).is_ok());
 
         let rotated = crate::identity::Keyring::parse(&crate::identity::new_seed()).unwrap();
         let foreign = rotated
@@ -926,6 +930,128 @@ mod tests {
             .unwrap();
         assert_eq!(legacy.status(), StatusCode::FORBIDDEN);
         server.abort();
+        done(state, path).await;
+    }
+
+    async fn assertion_for(client: &reqwest::Client, base: &str, aud: &str) -> String {
+        let token = register(client, base, "Alice").await;
+        let res = client
+            .post(format!("{base}/api/identity/assertion"))
+            .bearer_auth(&token)
+            .header("content-type", "application/json")
+            .body(format!(r#"{{"aud":"{aud}"}}"#))
+            .send()
+            .await
+            .expect("assertion");
+        assert_eq!(res.status(), StatusCode::OK);
+        json(res).await["token"]
+            .as_str()
+            .expect("token")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn two_instances_on_one_host_are_two_identities() {
+        const AUD: &str = "https://c.example";
+        let (a, a_path) = temp_state("instance_port_a").await;
+        let (b, b_path) = temp_state("instance_port_b").await;
+        let (a_addr, a_server) = serve(a.clone()).await;
+        let (b_addr, b_server) = serve(b.clone()).await;
+        assert_eq!(a_addr.ip(), b_addr.ip());
+        assert_ne!(a_addr.port(), b_addr.port());
+        let (a_base, b_base) = (format!("http://{a_addr}"), format!("http://{b_addr}"));
+        let client = reqwest::Client::new();
+        let a_jwt = assertion_for(&client, &a_base, AUD).await;
+        let b_jwt = assertion_for(&client, &b_base, AUD).await;
+        let local = || IssuerRules::default().allow_local();
+        let verifier = Verifier::new(Duration::from_secs(60), local());
+        let from_a = verifier.verify(&a_jwt, AUD, None).await.expect("a");
+        let from_b = verifier.verify(&b_jwt, AUD, None).await.expect("b");
+        assert_eq!(
+            (from_a.iss.as_str(), from_a.sub.as_str()),
+            (a_base.as_str(), format!("alice@{a_addr}").as_str())
+        );
+        assert_eq!(
+            (from_b.iss.as_str(), from_b.sub.as_str()),
+            (b_base.as_str(), format!("alice@{b_addr}").as_str())
+        );
+        assert_ne!(
+            verifier.keys(&a_base).await.unwrap(),
+            verifier.keys(&b_base).await.unwrap()
+        );
+        let signed_by_a = |iss: &str, sub: String| {
+            a.instance
+                .keys
+                .sign(&Claims {
+                    iss: iss.to_string(),
+                    sub,
+                    aud: AUD.to_string(),
+                    iat: now(),
+                    exp: now() + 60,
+                    jti: random_id(),
+                    nonce: None,
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            verifier
+                .verify(&signed_by_a(&b_base, format!("alice@{b_addr}")), AUD, None)
+                .await,
+            Err(VerifyError::UnknownKey)
+        );
+        assert_eq!(
+            verifier
+                .verify(&signed_by_a(&a_base, format!("alice@{b_addr}")), AUD, None)
+                .await,
+            Err(VerifyError::Subject)
+        );
+        let only_a = Verifier::new(
+            Duration::from_secs(60),
+            IssuerRules::new(IssuerPorts::parse(&a_addr.port().to_string()).unwrap()).allow_local(),
+        );
+        assert!(only_a.verify(&a_jwt, AUD, None).await.is_ok());
+        assert_eq!(
+            only_a.verify(&b_jwt, AUD, None).await,
+            Err(VerifyError::Port)
+        );
+        a_server.abort();
+        b_server.abort();
+        done(a, a_path).await;
+        done(b, b_path).await;
+    }
+
+    #[tokio::test]
+    async fn other_instance_ports_narrow_the_instance_verifier() {
+        let (state, path) = temp_state("instance_ports").await;
+        let any = Instance::load(&state.db, &InstanceConfig::default())
+            .await
+            .unwrap();
+        assert!(any.verifier.accept("https://chat.example:8443").is_ok());
+        let narrowed = Instance::load(
+            &state.db,
+            &InstanceConfig {
+                other_instance_ports: Some("443".to_string()),
+                ..InstanceConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            narrowed.verifier.accept("https://chat.example:8443").err(),
+            Some(VerifyError::Port)
+        );
+        assert!(narrowed.verifier.accept("https://chat.example").is_ok());
+        let bad = Instance::load(
+            &state.db,
+            &InstanceConfig {
+                other_instance_ports: Some("443,0".to_string()),
+                ..InstanceConfig::default()
+            },
+        )
+        .await
+        .err()
+        .expect("refused");
+        assert!(bad.to_string().contains("OTHER_INSTANCE_PORTS"), "{bad}");
         done(state, path).await;
     }
 
@@ -1728,6 +1854,15 @@ mod tests {
                     "{what} of {origin}: {address}"
                 );
             }
+            let issuer = IssuerRules::default()
+                .allow_local()
+                .accept(&info.public_url)
+                .expect("its own issuer");
+            assert_eq!(
+                (issuer.host(), issuer.keys_url().as_str()),
+                (info.host.as_str(), info.jwks_uri.as_str()),
+                "{origin}"
+            );
             assert!(info.ice.stun.is_empty(), "{:?}", info.ice.stun);
             assert!(!info.ice.turn && !info.ice.relay);
         }

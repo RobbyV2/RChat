@@ -2,7 +2,8 @@ use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use prost::Message;
 use rchat_fed::call::CallError;
-use rchat_fed::connect::{Code, ConnectError, REFUSAL_TYPE, read_answer};
+use rchat_fed::connect::{Code, ConnectError, PORT_REFUSED, REFUSAL_TYPE, read_answer};
+use rchat_fed::limits;
 use rchat_fed::outcomes::{self, Answer};
 use rchat_fed::pb::{FeatureLevel, Refusal, RefusalReason};
 use serde_json::{Value, json};
@@ -85,6 +86,17 @@ fn a_stamp_or_a_hello_is_asked_for_with_a_refusal() {
         hello.refusal.unwrap().reason,
         RefusalReason::HelloNeeded as i32
     );
+}
+
+#[test]
+fn a_caller_on_a_port_the_callee_refuses_hears_why() {
+    let e = ConnectError::for_call(CallError::Port, 0);
+    assert_eq!(e.http(), 403);
+    let refusal = e.refusal.clone().unwrap();
+    assert_eq!(refusal.reason, RefusalReason::Refused as i32);
+    assert_eq!(refusal.notice, PORT_REFUSED);
+    assert!(PORT_REFUSED.is_ascii() && PORT_REFUSED.len() <= limits::NOTICE_MAX);
+    assert_eq!(ConnectError::refused(refusal), Some(e));
 }
 
 #[test]

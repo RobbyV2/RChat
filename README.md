@@ -69,7 +69,7 @@ Set the instance name, upload images and schedule announcements under Site admin
 
 Accounts from the command line, also while the server runs: `server user create <name>` makes an account with a temporary password (the first account is the site admin, also with sign-up closed), and `server user reset-password <name>` gives one a new temporary password. From source it is `cargo run --bin server -- user create <name>`, in Docker `docker exec <container> /app/server user create <name>`.
 
-A proxy in front needs one domain on port 443. It sends every path to `SERVER_PORT` and passes the WebSocket upgrade for `/api/ws` and `/peerjs`.
+A proxy in front answers on one HTTPS address, the one in `PUBLIC_URL`. It sends every path to `SERVER_PORT` and passes the WebSocket upgrade for `/api/ws` and `/peerjs`.
 
 For indexed channel search on Postgres, install `btree_gist` and `intarray` or allow the server to create them.
 
@@ -113,7 +113,7 @@ Settings live in `.env.local` or in the environment (`docker run -e NAME=value`)
 | `S3_ENDPOINT`          | none        | Stores uploads in an S3 bucket, with `S3_BUCKET`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`.                                              |
 | `TRUSTED_PROXIES`      | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                                                        |
 
-Other instances accept this instance's identity assertions only when its public address uses port 443.
+Other instances know this instance by its HTTPS `PUBLIC_URL`, port included. On another port it is another instance.
 
 ## Desktop and mobile apps
 

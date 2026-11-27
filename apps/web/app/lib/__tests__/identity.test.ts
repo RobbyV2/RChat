@@ -15,6 +15,7 @@ import {
   BINDING_AUD,
   BINDING_MAX_TTL,
   forgetIssuerKeys,
+  Issuer,
   jwksUrl,
   verifyAssertion,
   verifyBinding,
@@ -144,9 +145,32 @@ describe('verifyAssertion against a local JWKS', () => {
     expect(jwksUrl('https://chat.example.com:443').href).toBe(
       'https://chat.example.com/.well-known/jwks.json'
     )
-    for (const bad of [
+    expect(jwksUrl('https://chat.example.com:8443').href).toBe(
+      'https://chat.example.com:8443/.well-known/jwks.json'
+    )
+    expect(jwksUrl('https://Chat.Example.com:80/').href).toBe(
+      'https://chat.example.com:80/.well-known/jwks.json'
+    )
+    const side = Issuer.accept('https://Chat.Example.com:8443/')
+    expect([side.iss, side.origin, side.host, side.keys]).toEqual([
+      'https://Chat.Example.com:8443/',
       'https://chat.example.com:8443',
-      'https://chat.example.com:80',
+      'chat.example.com:8443',
+      'https://chat.example.com:8443/.well-known/jwks.json',
+    ])
+    expect(Issuer.accept('https://chat.example.com:443').origin).toBe(ISS)
+    expect(Issuer.accept('https://chat.example.com:443').host).toBe('chat.example.com')
+    // @ts-expect-error: only Issuer.accept makes an Issuer, never an object of the same shape
+    const forged: Issuer = { iss: ISS, origin: ISS, host: 'chat.example.com', keys: 'https://x' }
+    expect(forged instanceof Issuer).toBe(false)
+    expect(jwksUrl('https://chat.example.com:8443', true).href).toBe(
+      'https://chat.example.com:8443/.well-known/jwks.json'
+    )
+    for (const bad of [
+      'https://chat.example.com:0',
+      'http://chat.example.com:8443',
+      'https://localhost:8443',
+      'https://chat.example.com:8443/sub',
       'http://127.0.0.1:3821',
       'https://127.0.0.1:3821',
       'https://localhost',
@@ -169,6 +193,9 @@ describe('verifyAssertion against a local JWKS', () => {
         failed = e instanceof AssertionError ? e.code : 'other'
       }
       expect(failed).toBe('issuer')
+    }
+    for (const bad of ['http://localhost:0', 'http://chat.example.com:8443']) {
+      expect(() => jwksUrl(bad, true)).toThrow('Identity assertion rejected: issuer')
     }
   })
 })
@@ -219,6 +246,53 @@ describe('verifyAssertion against the issuer JWKS', () => {
     )
     expect(fetched).toEqual(['http://127.0.0.1:3821/.well-known/jwks.json'])
   })
+
+  test('another port of the host is another issuer, with its own keys and names', async () => {
+    const SIDE = 'https://chat.example.com:8443'
+    const main = await newKey()
+    const side = await newKey()
+    const byUrl: Record<string, JSONWebKeySet> = {
+      [`${ISS}/.well-known/jwks.json`]: { keys: [main.jwk] },
+      [`${SIDE}/.well-known/jwks.json`]: { keys: [side.jwk] },
+    }
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input instanceof Request ? input.url : input)
+      fetched.push(url)
+      return new Response(JSON.stringify(byUrl[url] ?? { keys: [] }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as typeof fetch
+    const own = await sign(side, { iss: SIDE, sub: 'alice@chat.example.com:8443' })
+    expect((await verifyAssertion(own, { aud: AUD })).sub).toBe('alice@chat.example.com:8443')
+    expect(await code(verifyAssertion(await sign(side), { aud: AUD }))).toBe('unknown_key')
+    expect(await code(verifyAssertion(await sign(side, { iss: SIDE }), { aud: AUD }))).toBe(
+      'subject'
+    )
+    const spelled = await sign(side, {
+      iss: 'https://CHAT.example.com:8443/',
+      sub: 'alice@chat.example.com:8443',
+      jti: 'j2',
+    })
+    expect((await verifyAssertion(spelled, { aud: AUD })).iss).toBe(SIDE)
+    for (const sub of ['alice@chat.example.com:08443', 'alice@chat.example.com.:8443']) {
+      expect(await code(verifyAssertion(await sign(side, { iss: SIDE, sub }), { aud: AUD }))).toBe(
+        'subject'
+      )
+    }
+    expect(
+      await code(
+        verifyAssertion(await sign(side, { iss: SIDE, sub: 'alice@CHAT.example.com:8443' }), {
+          aud: AUD,
+        })
+      )
+    ).toBe('ok')
+    const posing = await sign(main, { iss: SIDE, sub: 'alice@chat.example.com:8443' })
+    expect(await code(verifyAssertion(posing, { aud: AUD }))).toBe('unknown_key')
+    expect((await verifyAssertion(await sign(main), { aud: AUD })).sub).toBe(
+      'alice@chat.example.com'
+    )
+    expect([...new Set(fetched)].sort()).toEqual(Object.keys(byUrl).sort())
+  })
 })
 
 const IK = 'AbjK1pmVnQ8bYf5NvO1z1Re2mUQu8jF5qX3VhH2s0nM'
@@ -251,6 +325,22 @@ describe('verifyBinding', () => {
     expect(
       (await verifyBinding(await bind(key), { ik: IK, keys, host: 'chat.example.com' })).iss
     ).toBe(ISS)
+  })
+
+  test("a binding from another port is that port's instance, not the default one", async () => {
+    const key = await newKey()
+    const keys: JSONWebKeySet = { keys: [key.jwk] }
+    const token = await bind(key, {
+      iss: 'https://chat.example.com:8443',
+      sub: 'alice@chat.example.com:8443',
+    })
+    const claims = await verifyBinding(token, { ik: IK, keys, host: 'chat.example.com:8443' })
+    expect(claims.sub).toBe('alice@chat.example.com:8443')
+    expect(await code(verifyBinding(token, { ik: IK, keys, host: 'chat.example.com' }))).toBe(
+      'issuer'
+    )
+    const foreign = await bind(key, { iss: 'https://chat.example.com:8443' })
+    expect(await code(verifyBinding(foreign, { ik: IK, keys }))).toBe('subject')
   })
 
   test('rejects another identity key, audience, issuer key, expiry, issuer and subject', async () => {

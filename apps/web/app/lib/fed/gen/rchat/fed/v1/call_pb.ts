@@ -24,7 +24,7 @@ export const file_rchat_fed_v1_call: GenFile = /*@__PURE__*/
  */
 export type CallHead = Message<"rchat.fed.v1.CallHead"> & {
   /**
-   * The caller's origin, `https://host` (port 443, no path).
+   * The caller's origin, `https://host` or `https://host:port` off port 443, no path.
    *
    * @generated from field: string iss = 1;
    */

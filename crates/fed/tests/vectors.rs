@@ -4,7 +4,9 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::SigningKey;
 use prost::Message;
-use rchat_fed::call::{Call, CheckContext, KeySet, MemorySeen, Signer, check_call, sign_call};
+use rchat_fed::call::{
+    Call, CheckContext, KeySet, MemorySeen, Origin, Ports, Signer, check_call, sign_call,
+};
 use rchat_fed::guard::Fetch;
 use rchat_fed::ids::letter_id;
 use rchat_fed::keys::{endorse, endorsement_ok, hello_proof, hello_proof_ok, thumbprint};
@@ -152,13 +154,16 @@ impl CheckContext for Callee {
     fn network(&self) -> &str {
         "n"
     }
-    fn cached_keys(&self, _iss: &str) -> Option<KeySet> {
+    fn ports(&self) -> &Ports {
+        &Ports::Any
+    }
+    fn cached_keys(&self, _iss: &Origin) -> Option<KeySet> {
         Some(self.keys.clone())
     }
-    async fn fetch_keys(&mut self, _iss: &str) -> Option<KeySet> {
+    async fn fetch_keys(&mut self, _iss: &Origin) -> Option<KeySet> {
         Some(self.keys.clone())
     }
-    fn may_fetch(&mut self, _network: &str, _iss: &str, _hello: bool, _stamped: bool) -> Fetch {
+    fn may_fetch(&mut self, _network: &str, _iss: &Origin, _hello: bool, _stamped: bool) -> Fetch {
         Fetch::Ok
     }
     fn stamp_ok(&self, _head: &CallHead) -> bool {
@@ -167,14 +172,14 @@ impl CheckContext for Callee {
     fn stamp_once(&mut self, _jti: &str, _now: i64) -> bool {
         false
     }
-    fn call_kids(&self, _iss: &str) -> Option<BTreeSet<String>> {
+    fn call_kids(&self, _iss: &Origin) -> Option<BTreeSet<String>> {
         Some(self.keys.keys().cloned().collect())
     }
     fn hello_call_kids(&self) -> Option<BTreeSet<String>> {
         None
     }
-    fn seen(&mut self, iss: &str, jti: &str, exp: i64) -> bool {
-        self.seen.add(iss, jti, exp)
+    fn seen(&mut self, iss: &Origin, jti: &str, exp: i64) -> bool {
+        self.seen.add(iss.as_str(), jti, exp)
     }
 }
 

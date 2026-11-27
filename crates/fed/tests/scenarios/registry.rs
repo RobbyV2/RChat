@@ -193,6 +193,12 @@ fn cold_hosts_pool_by_icann_domain_established_ones_by_the_full_list() {
         "fluffy-cat.trycloudflare.com"
     );
     assert_eq!(registrable("x1.spam.example", List::Full), "spam.example");
+    assert_eq!(
+        registrable("x1.spam.example:8443", List::Full),
+        "spam.example"
+    );
+    assert_eq!(psl::public_suffix("a.b.co.uk:8443", List::Icann), "co.uk");
+    assert_eq!(budget_domain("m1.alice.ts.net:8443", true), "ts.net");
     assert_eq!(registrable("a.b.co.uk", List::Full), "b.co.uk");
     for suffix in [
         "duckdns.org",

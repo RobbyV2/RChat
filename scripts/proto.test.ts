@@ -70,7 +70,7 @@ const sha256 = (path: string) => createHash('sha256').update(readFileSync(path))
 
 // The first version of the schema, byte for byte.
 const FIRST_VERSION: Record<string, string> = {
-  'call.proto': '2f1cc76adecf174b0b2291aa7087f80849dccb8888e71020bc29bbdfe38cf689',
+  'call.proto': 'f6bd0580369a24d6ed23bda6cc4e7a6acaaef0a13aed00e8843d679e8d9ec37b',
   'directory.proto': '32f639023643bd2260ce25586a44a2be710e7f363f7adf0e51609db4cffc065d',
   'instance.proto': '89cb376f8199ee65493e1f3814e9e340589e7d12388777a2e0a83cec318aac5f',
   'invites.proto': '92e0e0db080cab120b050ea4e90ef35aa465b293d7215125c21ea1c332dd36ad',

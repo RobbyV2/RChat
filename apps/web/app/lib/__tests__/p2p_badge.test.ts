@@ -744,7 +744,8 @@ describe('BadgeKeeper', () => {
 
   test('an instance peers could not check never gets asked for a binding', async () => {
     expect(peersCanCheck('https://chat.example.com')).toBe(true)
-    expect(peersCanCheck('https://chat.example.com:8443')).toBe(false)
+    expect(peersCanCheck('https://chat.example.com:8443')).toBe(true)
+    expect(peersCanCheck('https://chat.example.com:0')).toBe(false)
     expect(peersCanCheck('http://chat.example.com')).toBe(false)
     expect(peersCanCheck('https://192.168.1.4')).toBe(false)
     expect(peersCanCheck('http://127.0.0.1:3000', true)).toBe(true)
@@ -767,9 +768,7 @@ describe('BadgeKeeper', () => {
         () => 'ok',
         (e: Error) => e.message
       )
-    ).toBe(
-      "Peers can't check badges from Alpha. It needs HTTPS on the default port and a public address."
-    )
+    ).toBe("Peers can't check badges from Alpha. It needs HTTPS and a public address.")
     expect(asked).toEqual([])
     expect(node.badge).toBeNull()
     iss = 'https://chat.example.com'

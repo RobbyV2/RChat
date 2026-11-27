@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -24,7 +24,7 @@ const BINDING2_TAG: &[u8] = b"rchat-p2p-bind2\0";
 pub const JWKS_PATH: &str = "/.well-known/jwks.json";
 pub const ALG: &str = "EdDSA";
 const TYP: &str = "JWT";
-const JWKS_TTL: Duration = Duration::from_secs(600);
+pub const JWKS_TTL: Duration = Duration::from_secs(600);
 const REFETCH_EVERY: Duration = Duration::from_secs(30);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const JWKS_MAX_BYTES: usize = 64 * 1024;
@@ -335,6 +335,7 @@ pub enum VerifyError {
     Subject,
     Lifetime,
     Replay,
+    Port,
     Fetch(String),
 }
 
@@ -352,6 +353,7 @@ impl std::fmt::Display for VerifyError {
             VerifyError::Subject => write!(f, "subject is not on the issuer's host"),
             VerifyError::Lifetime => write!(f, "assertion lifetime too long"),
             VerifyError::Replay => write!(f, "assertion already used"),
+            VerifyError::Port => write!(f, "issuer port is not accepted here"),
             VerifyError::Fetch(e) => write!(f, "could not fetch issuer keys: {e}"),
         }
     }
@@ -372,28 +374,137 @@ fn local_name(domain: &str) -> bool {
     domain == "localhost" || domain.ends_with(".localhost") || domain.ends_with(".local")
 }
 
-pub fn jwks_url(iss: &str, allow_local: bool) -> Result<Url, VerifyError> {
-    let url = Url::parse(iss).map_err(|_| VerifyError::Issuer)?;
-    let public = match url.host() {
-        Some(Host::Domain(d)) => !local_name(d),
-        Some(Host::Ipv4(ip)) => crate::api::embeds::ip_ok(IpAddr::V4(ip)),
-        Some(Host::Ipv6(ip)) => crate::api::embeds::ip_ok(IpAddr::V6(ip)),
-        None => return Err(VerifyError::Issuer),
-    };
-    let scheme = match url.scheme() {
-        "https" => true,
-        "http" => allow_local && !public,
-        _ => false,
-    };
-    let port = !public || url.port_or_known_default() == Some(443);
-    let bare = matches!(url.path(), "" | "/")
-        && url.query().is_none()
-        && url.fragment().is_none()
-        && url.username().is_empty()
-        && url.password().is_none();
-    match scheme && port && bare && (public || allow_local) {
-        true => url.join(JWKS_PATH).map_err(|_| VerifyError::Issuer),
-        false => Err(VerifyError::Issuer),
+/// The ports other instances may sign identities from (`OTHER_INSTANCE_PORTS`): any, or only
+/// the listed ones.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum IssuerPorts {
+    #[default]
+    Any,
+    Only(BTreeSet<u16>),
+}
+
+impl IssuerPorts {
+    /// Comma-separated ports from 1 to 65535; empty means any port.
+    pub fn parse(spec: &str) -> anyhow::Result<IssuerPorts> {
+        let ports = spec
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|raw| {
+                match raw.bytes().all(|b| b.is_ascii_digit()) {
+                    true => raw.parse::<u16>().ok().filter(|port| *port != 0),
+                    false => None,
+                }
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "OTHER_INSTANCE_PORTS entry {raw:?} is not a port from 1 to 65535"
+                    )
+                })
+            })
+            .collect::<anyhow::Result<BTreeSet<u16>>>()?;
+        Ok(match ports.is_empty() {
+            true => IssuerPorts::Any,
+            false => IssuerPorts::Only(ports),
+        })
+    }
+
+    fn allows(&self, port: u16) -> bool {
+        match self {
+            IssuerPorts::Any => true,
+            IssuerPorts::Only(ports) => ports.contains(&port),
+        }
+    }
+}
+
+/// Which issuers identities are accepted from: https on a public host, on the allowed ports, and
+/// with local testing also http and https on local names and addresses.
+#[derive(Clone, Debug, Default)]
+pub struct IssuerRules {
+    ports: IssuerPorts,
+    allow_local: bool,
+}
+
+/// An issuer the rules accepted. Only `IssuerRules::accept` makes one, and fetching and trusting
+/// an issuer's keys take one, so no issuer reaches them unchecked. Its origin (scheme, host and
+/// port) is the instance: another port of the same host is another issuer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Issuer {
+    iss: String,
+    origin: String,
+    host: String,
+    keys: Url,
+}
+
+impl Issuer {
+    /// The issuer as it was named.
+    pub fn iss(&self) -> &str {
+        &self.iss
+    }
+
+    /// Its origin in one spelling (`https://chat.example:8443`, no default port), the `iss` of
+    /// the claims it verifies.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// The host its qualified names carry: `host`, or `host:port` off the scheme's default port.
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Its key set, `/.well-known/jwks.json` on its origin.
+    pub fn keys_url(&self) -> &Url {
+        &self.keys
+    }
+}
+
+impl IssuerRules {
+    pub fn new(ports: IssuerPorts) -> IssuerRules {
+        IssuerRules {
+            ports,
+            allow_local: false,
+        }
+    }
+
+    pub fn allow_local(self) -> IssuerRules {
+        IssuerRules {
+            allow_local: true,
+            ..self
+        }
+    }
+
+    pub fn accept(&self, iss: &str) -> Result<Issuer, VerifyError> {
+        let IssuerRules { ports, allow_local } = self;
+        let url = Url::parse(iss).map_err(|_| VerifyError::Issuer)?;
+        let public = match url.host() {
+            Some(Host::Domain(d)) => !local_name(d),
+            Some(Host::Ipv4(ip)) => crate::api::embeds::ip_ok(IpAddr::V4(ip)),
+            Some(Host::Ipv6(ip)) => crate::api::embeds::ip_ok(IpAddr::V6(ip)),
+            None => return Err(VerifyError::Issuer),
+        };
+        let scheme = match url.scheme() {
+            "https" => true,
+            "http" => *allow_local && !public,
+            _ => false,
+        };
+        let bare = matches!(url.path(), "" | "/")
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.username().is_empty()
+            && url.password().is_none();
+        let port = url.port_or_known_default().filter(|port| *port != 0);
+        let (Some(port), true) = (port, scheme && bare && (public || *allow_local)) else {
+            return Err(VerifyError::Issuer);
+        };
+        if !ports.allows(port) {
+            return Err(VerifyError::Port);
+        }
+        Ok(Issuer {
+            iss: iss.to_string(),
+            origin: url.origin().ascii_serialization(),
+            host: host_of(&url).ok_or(VerifyError::Issuer)?,
+            keys: url.join(JWKS_PATH).map_err(|_| VerifyError::Issuer)?,
+        })
     }
 }
 
@@ -456,7 +567,7 @@ fn parse_header(raw: &str) -> Result<String, VerifyError> {
 pub fn verify_with(
     token: &str,
     keys: &JwkSet,
-    iss: &str,
+    issuer: &Issuer,
     aud: &str,
     nonce: Option<&str>,
 ) -> Result<Claims, VerifyError> {
@@ -481,7 +592,7 @@ pub fn verify_with(
     if claims.jti.is_empty() || claims.jti.len() > JTI_MAX {
         return Err(VerifyError::Malformed);
     }
-    if claims.iss != iss {
+    if claims.iss != issuer.iss {
         return Err(VerifyError::Issuer);
     }
     if claims.aud != aud {
@@ -500,14 +611,12 @@ pub fn verify_with(
     if nonce.is_some() && claims.nonce.as_deref() != nonce {
         return Err(VerifyError::Nonce);
     }
-    let issuer_host = Url::parse(iss)
-        .ok()
-        .as_ref()
-        .and_then(host_of)
-        .ok_or(VerifyError::Issuer)?;
     match split_qualified(&claims.sub) {
-        Some((name, host)) if !name.contains('@') && host.eq_ignore_ascii_case(&issuer_host) => {
-            Ok(claims)
+        Some((name, host)) if !name.contains('@') && host.eq_ignore_ascii_case(&issuer.host) => {
+            Ok(Claims {
+                iss: issuer.origin.clone(),
+                ..claims
+            })
         }
         _ => Err(VerifyError::Subject),
     }
@@ -531,14 +640,14 @@ impl Cached {
 
 pub struct Verifier {
     ttl: Duration,
-    allow_local: bool,
+    rules: IssuerRules,
     cache: Mutex<HashMap<String, Cached>>,
     seen: Mutex<HashMap<String, HashMap<String, i64>>>,
 }
 
 impl Default for Verifier {
     fn default() -> Verifier {
-        Verifier::new(JWKS_TTL)
+        Verifier::new(JWKS_TTL, IssuerRules::default())
     }
 }
 
@@ -561,36 +670,35 @@ async fn resolve(url: &Url, allow_local: bool) -> Result<Vec<SocketAddr>, String
 }
 
 impl Verifier {
-    pub fn new(ttl: Duration) -> Verifier {
+    pub fn new(ttl: Duration, rules: IssuerRules) -> Verifier {
         Verifier {
             ttl,
-            allow_local: false,
+            rules,
             cache: Mutex::new(HashMap::new()),
             seen: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn allow_local(self) -> Verifier {
-        Verifier {
-            allow_local: true,
-            ..self
-        }
+    /// `iss` as an issuer this verifier accepts.
+    pub fn accept(&self, iss: &str) -> Result<Issuer, VerifyError> {
+        self.rules.accept(iss)
     }
 
-    fn cached(&self, url: &str, max_age: Duration) -> Option<Result<JwkSet, VerifyError>> {
+    fn cached(&self, issuer: &Issuer, max_age: Duration) -> Option<Result<JwkSet, VerifyError>> {
         let mut cache = self.cache.lock().ok()?;
         let entry = cache
-            .get_mut(url)
+            .get_mut(issuer.keys.as_str())
             .filter(|c| c.fresh(max_age.min(self.ttl)))?;
         entry.used = Instant::now();
         Some(entry.keys.clone().map_err(VerifyError::Fetch))
     }
 
-    fn remember(&self, url: &Url, keys: &Result<JwkSet, String>) {
+    fn remember(&self, issuer: &Issuer, keys: &Result<JwkSet, String>) {
         let Ok(mut cache) = self.cache.lock() else {
             return;
         };
-        if cache.len() >= CACHE_MAX && !cache.contains_key(url.as_str()) {
+        let url = issuer.keys.as_str();
+        if cache.len() >= CACHE_MAX && !cache.contains_key(url) {
             cache.retain(|_, c| c.fresh(self.ttl));
             while cache.len() >= CACHE_MAX {
                 let Some(oldest) = cache
@@ -614,8 +722,9 @@ impl Verifier {
         );
     }
 
-    async fn download(&self, url: &Url) -> Result<JwkSet, String> {
-        let addrs = resolve(url, self.allow_local).await?;
+    async fn download(&self, issuer: &Issuer) -> Result<JwkSet, String> {
+        let url = &issuer.keys;
+        let addrs = resolve(url, self.rules.allow_local).await?;
         let mut builder = reqwest::Client::builder()
             .timeout(FETCH_TIMEOUT)
             .connect_timeout(FETCH_TIMEOUT)
@@ -650,18 +759,21 @@ impl Verifier {
         serde_json::from_slice(&body).map_err(|e| e.to_string())
     }
 
-    async fn fetch(&self, url: &Url) -> Result<JwkSet, VerifyError> {
-        let keys = self.download(url).await;
-        self.remember(url, &keys);
+    async fn fetch(&self, issuer: &Issuer) -> Result<JwkSet, VerifyError> {
+        let keys = self.download(issuer).await;
+        self.remember(issuer, &keys);
         keys.map_err(VerifyError::Fetch)
     }
 
-    pub async fn keys(&self, iss: &str) -> Result<JwkSet, VerifyError> {
-        let url = jwks_url(iss, self.allow_local)?;
-        match self.cached(url.as_str(), self.ttl) {
+    async fn keys_of(&self, issuer: &Issuer) -> Result<JwkSet, VerifyError> {
+        match self.cached(issuer, self.ttl) {
             Some(keys) => keys,
-            None => self.fetch(&url).await,
+            None => self.fetch(issuer).await,
         }
+    }
+
+    pub async fn keys(&self, iss: &str) -> Result<JwkSet, VerifyError> {
+        self.keys_of(&self.accept(iss)?).await
     }
 
     fn first_use(&self, claims: &Claims, now: i64) -> Result<(), VerifyError> {
@@ -712,16 +824,15 @@ impl Verifier {
         aud: &str,
         nonce: Option<&str>,
     ) -> Result<Claims, VerifyError> {
-        let iss = unverified_issuer(token)?;
-        let keys = self.keys(&iss).await?;
-        match verify_with(token, &keys, &iss, aud, nonce) {
+        let issuer = self.accept(&unverified_issuer(token)?)?;
+        let keys = self.keys_of(&issuer).await?;
+        match verify_with(token, &keys, &issuer, aud, nonce) {
             Err(VerifyError::UnknownKey) => {
-                let url = jwks_url(&iss, self.allow_local)?;
-                if self.cached(url.as_str(), REFETCH_EVERY).is_some() {
+                if self.cached(&issuer, REFETCH_EVERY).is_some() {
                     return Err(VerifyError::UnknownKey);
                 }
-                let keys = self.fetch(&url).await?;
-                verify_with(token, &keys, &iss, aud, nonce)
+                let keys = self.fetch(&issuer).await?;
+                verify_with(token, &keys, &issuer, aud, nonce)
             }
             other => other,
         }
@@ -764,6 +875,10 @@ mod tests {
     const ISS: &str = "https://chat.example";
     const AUD: &str = "https://b.example";
     const SUB: &str = "alice@chat.example";
+
+    fn issuer(iss: &str) -> Issuer {
+        IssuerRules::default().accept(iss).unwrap()
+    }
 
     fn b64(value: &serde_json::Value) -> String {
         URL_SAFE_NO_PAD.encode(serde_json::to_vec(value).unwrap())
@@ -948,103 +1063,103 @@ mod tests {
         let ring = Keyring::parse(&new_seed()).unwrap();
         let jwks = ring.jwks();
         let token = ring.sign(&claims(ISS, SUB, AUD, 300, Some("n1"))).unwrap();
-        let ok = verify_with(&token, &jwks, ISS, AUD, Some("n1")).unwrap();
+        let ok = verify_with(&token, &jwks, &issuer(ISS), AUD, Some("n1")).unwrap();
         assert_eq!(ok.sub, SUB);
         assert_eq!(
-            verify_with(&token, &jwks, ISS, AUD, None)
+            verify_with(&token, &jwks, &issuer(ISS), AUD, None)
                 .unwrap()
                 .nonce
                 .as_deref(),
             Some("n1")
         );
         assert_eq!(
-            verify_with(&token, &jwks, ISS, "https://c.example", Some("n1")),
+            verify_with(&token, &jwks, &issuer(ISS), "https://c.example", Some("n1")),
             Err(VerifyError::Audience)
         );
         assert_eq!(
-            verify_with(&token, &jwks, ISS, AUD, Some("n2")),
+            verify_with(&token, &jwks, &issuer(ISS), AUD, Some("n2")),
             Err(VerifyError::Nonce)
         );
         let bare = ring.sign(&claims(ISS, SUB, AUD, 300, None)).unwrap();
         assert_eq!(
-            verify_with(&bare, &jwks, ISS, AUD, Some("n1")),
+            verify_with(&bare, &jwks, &issuer(ISS), AUD, Some("n1")),
             Err(VerifyError::Nonce)
         );
         assert_eq!(
-            verify_with(&token, &jwks, "https://other.example", AUD, None),
+            verify_with(&token, &jwks, &issuer("https://other.example"), AUD, None),
             Err(VerifyError::Issuer)
         );
         let other = Keyring::parse(&new_seed()).unwrap();
         assert_eq!(
-            verify_with(&token, &other.jwks(), ISS, AUD, None),
+            verify_with(&token, &other.jwks(), &issuer(ISS), AUD, None),
             Err(VerifyError::UnknownKey)
         );
         let mut forged = other.jwks();
         forged.keys[0].kid = Some(ring.active().kid.clone());
         assert_eq!(
-            verify_with(&token, &forged, ISS, AUD, None),
+            verify_with(&token, &forged, &issuer(ISS), AUD, None),
             Err(VerifyError::Signature)
         );
         let mut twice = jwks.clone();
         twice.keys.push(forged.keys[0].clone());
         assert_eq!(
-            verify_with(&token, &twice, ISS, AUD, None),
+            verify_with(&token, &twice, &issuer(ISS), AUD, None),
             Err(VerifyError::UnknownKey)
         );
         let mut rsa = jwks.clone();
         rsa.keys[0].kty = "RSA".to_string();
         assert_eq!(
-            verify_with(&token, &rsa, ISS, AUD, None),
+            verify_with(&token, &rsa, &issuer(ISS), AUD, None),
             Err(VerifyError::UnknownKey)
         );
         let mut old = claims(ISS, SUB, AUD, 300, None);
         old.iat -= 1000;
         old.exp -= 1000;
         assert_eq!(
-            verify_with(&ring.sign(&old).unwrap(), &jwks, ISS, AUD, None),
+            verify_with(&ring.sign(&old).unwrap(), &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Expired)
         );
         let mut skewed = claims(ISS, SUB, AUD, 300, None);
         skewed.iat -= 310;
         skewed.exp -= 310;
-        assert!(verify_with(&ring.sign(&skewed).unwrap(), &jwks, ISS, AUD, None).is_ok());
+        assert!(verify_with(&ring.sign(&skewed).unwrap(), &jwks, &issuer(ISS), AUD, None).is_ok());
         let mut future = claims(ISS, SUB, AUD, 60, None);
         future.iat += 600;
         future.exp += 600;
         assert_eq!(
-            verify_with(&ring.sign(&future).unwrap(), &jwks, ISS, AUD, None),
+            verify_with(&ring.sign(&future).unwrap(), &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Lifetime)
         );
         let long = ring.sign(&claims(ISS, SUB, AUD, 3600, None)).unwrap();
         assert_eq!(
-            verify_with(&long, &jwks, ISS, AUD, None),
+            verify_with(&long, &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Lifetime)
         );
         let mut no_jti = claims(ISS, SUB, AUD, 60, None);
         no_jti.jti.clear();
         assert_eq!(
-            verify_with(&ring.sign(&no_jti).unwrap(), &jwks, ISS, AUD, None),
+            verify_with(&ring.sign(&no_jti).unwrap(), &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Malformed)
         );
         let doubled = ring
             .sign(&claims(ISS, "a@b@chat.example", AUD, 60, None))
             .unwrap();
         assert_eq!(
-            verify_with(&doubled, &jwks, ISS, AUD, None),
+            verify_with(&doubled, &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Subject)
         );
         let foreign = ring
             .sign(&claims(ISS, "alice@evil.example", AUD, 60, None))
             .unwrap();
         assert_eq!(
-            verify_with(&foreign, &jwks, ISS, AUD, None),
+            verify_with(&foreign, &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Subject)
         );
         let mut parts: Vec<String> = token.split('.').map(str::to_string).collect();
         parts[1] =
             b64(&serde_json::to_value(claims(ISS, "root@chat.example", AUD, 60, None)).unwrap());
         assert_eq!(
-            verify_with(&parts.join("."), &jwks, ISS, AUD, None),
+            verify_with(&parts.join("."), &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Signature)
         );
     }
@@ -1060,14 +1175,14 @@ mod tests {
             serde_json::json!({"alg": "EdDSA", "kid": kid, "typ": "JWT"}),
             &body,
         );
-        assert!(verify_with(&good, &jwks, ISS, AUD, None).is_ok());
+        assert!(verify_with(&good, &jwks, &issuer(ISS), AUD, None).is_ok());
         let payload = good.split('.').nth(1).unwrap().to_string();
         let none = format!(
             "{}.{payload}.",
             b64(&serde_json::json!({"alg": "none", "kid": kid, "typ": "JWT"}))
         );
         assert_eq!(
-            verify_with(&none, &jwks, ISS, AUD, None),
+            verify_with(&none, &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Malformed)
         );
         let none_signed = with_header(
@@ -1076,7 +1191,7 @@ mod tests {
             &body,
         );
         assert_eq!(
-            verify_with(&none_signed, &jwks, ISS, AUD, None),
+            verify_with(&none_signed, &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Algorithm)
         );
         for alg in [
@@ -1091,7 +1206,7 @@ mod tests {
                 &body,
             );
             assert_eq!(
-                verify_with(&token, &jwks, ISS, AUD, None),
+                verify_with(&token, &jwks, &issuer(ISS), AUD, None),
                 Err(VerifyError::Algorithm),
                 "{alg}"
             );
@@ -1102,7 +1217,7 @@ mod tests {
             URL_SAFE_NO_PAD.encode([0u8; 32])
         );
         assert_eq!(
-            verify_with(&hs, &jwks, ISS, AUD, None),
+            verify_with(&hs, &jwks, &issuer(ISS), AUD, None),
             Err(VerifyError::Algorithm)
         );
         for header in [
@@ -1112,7 +1227,7 @@ mod tests {
         ] {
             let token = with_header(&ring, header.clone(), &body);
             assert_eq!(
-                verify_with(&token, &jwks, ISS, AUD, None),
+                verify_with(&token, &jwks, &issuer(ISS), AUD, None),
                 Err(VerifyError::UnknownKey),
                 "{header}"
             );
@@ -1126,7 +1241,7 @@ mod tests {
         ] {
             let token = with_header(&ring, header.clone(), &body);
             assert_eq!(
-                verify_with(&token, &jwks, ISS, AUD, None),
+                verify_with(&token, &jwks, &issuer(ISS), AUD, None),
                 Err(VerifyError::Malformed),
                 "{header}"
             );
@@ -1141,61 +1256,279 @@ mod tests {
             format!("{}.{}.{}", parts[0], parts[1], &parts[2][..10]),
         ] {
             assert_eq!(
-                verify_with(&bad, &jwks, ISS, AUD, None),
+                verify_with(&bad, &jwks, &issuer(ISS), AUD, None),
                 Err(VerifyError::Malformed),
                 "{bad}"
             );
         }
     }
 
+    type Accepted = Result<(String, String), VerifyError>;
+
+    fn accepted(rules: &IssuerRules, iss: &str) -> Accepted {
+        rules
+            .accept(iss)
+            .map(|i| (i.host().to_string(), i.keys_url().to_string()))
+    }
+
+    fn at(host: &str, keys: &str) -> Accepted {
+        Ok((host.to_string(), keys.to_string()))
+    }
+
     #[test]
-    fn jwks_urls_need_https_and_a_public_host() {
+    fn issuers_need_https_a_public_host_and_an_allowed_port() {
+        let any = IssuerRules::default();
         assert_eq!(
-            jwks_url("https://chat.example", false).unwrap().as_str(),
-            "https://chat.example/.well-known/jwks.json"
+            accepted(&any, "https://chat.example"),
+            at("chat.example", "https://chat.example/.well-known/jwks.json")
         );
-        assert!(jwks_url("https://chat.example:443/", false).is_ok());
-        assert!(jwks_url("https://93.184.216.34", false).is_ok());
+        assert_eq!(
+            accepted(&any, "https://chat.example:443/"),
+            at("chat.example", "https://chat.example/.well-known/jwks.json")
+        );
+        assert_eq!(
+            accepted(&any, "https://chat.example:8443"),
+            at(
+                "chat.example:8443",
+                "https://chat.example:8443/.well-known/jwks.json"
+            )
+        );
+        assert_eq!(
+            accepted(&any, "https://Chat.Example:80/"),
+            at(
+                "chat.example:80",
+                "https://chat.example:80/.well-known/jwks.json"
+            )
+        );
+        assert_eq!(
+            accepted(&any, "https://93.184.216.34:8443"),
+            at(
+                "93.184.216.34:8443",
+                "https://93.184.216.34:8443/.well-known/jwks.json"
+            )
+        );
+        assert_eq!(
+            accepted(&any, "https://[2606:4700::1111]:8443"),
+            at(
+                "[2606:4700::1111]:8443",
+                "https://[2606:4700::1111]:8443/.well-known/jwks.json"
+            )
+        );
         for bad in [
-            "https://chat.example:8443/",
-            "https://chat.example:80",
-            "https://93.184.216.34:22",
             "http://chat.example",
+            "http://chat.example:8443",
+            "https://chat.example:0",
             "http://127.0.0.1:3000",
             "https://127.0.0.1:3000",
             "https://localhost",
+            "https://localhost:8443",
             "https://app.localhost",
-            "https://printer.local",
+            "https://printer.local:8443",
             "https://10.0.0.5:8443",
             "https://172.16.0.1",
-            "https://192.168.1.10",
+            "https://192.168.1.10:8443",
             "https://169.254.169.254",
             "https://100.64.0.1",
             "https://0.0.0.0",
-            "https://[::1]",
+            "https://[::1]:8443",
             "https://[fd00::1]",
             "https://[fe80::1]",
             "https://[::ffff:10.0.0.1]",
             "https://chat.example/sub",
-            "https://u:p@chat.example",
+            "https://chat.example:8443/sub",
+            "https://chat.example:8443/?x",
+            "https://u:p@chat.example:8443",
             "ftp://chat.example",
             "not a url",
         ] {
-            assert_eq!(jwks_url(bad, false), Err(VerifyError::Issuer), "{bad}");
+            assert_eq!(accepted(&any, bad), Err(VerifyError::Issuer), "{bad}");
         }
-        assert!(jwks_url("http://127.0.0.1:3000", true).is_ok());
-        assert!(jwks_url("http://localhost:3000/", true).is_ok());
+        let local = IssuerRules::default().allow_local();
         assert_eq!(
-            jwks_url("https://chat.example:8443", true),
-            Err(VerifyError::Issuer)
+            accepted(&local, "http://127.0.0.1:3000"),
+            at(
+                "127.0.0.1:3000",
+                "http://127.0.0.1:3000/.well-known/jwks.json"
+            )
+        );
+        assert!(accepted(&local, "http://localhost:3000/").is_ok());
+        assert!(accepted(&local, "https://chat.example:8443").is_ok());
+        for bad in ["http://chat.example", "http://localhost:0"] {
+            assert_eq!(accepted(&local, bad), Err(VerifyError::Issuer), "{bad}");
+        }
+        let only = IssuerRules::new(IssuerPorts::parse("443").unwrap());
+        assert!(accepted(&only, "https://chat.example").is_ok());
+        assert!(accepted(&only, "https://chat.example:443").is_ok());
+        for refused in ["https://chat.example:8443", "https://93.184.216.34:22"] {
+            assert_eq!(
+                accepted(&only, refused),
+                Err(VerifyError::Port),
+                "{refused}"
+            );
+        }
+        for bad in ["http://chat.example:8443", "https://10.0.0.5:8443"] {
+            assert_eq!(accepted(&only, bad), Err(VerifyError::Issuer), "{bad}");
+        }
+        let two = IssuerRules::new(IssuerPorts::parse(" 443, 8443 ").unwrap()).allow_local();
+        assert!(accepted(&two, "https://chat.example:8443").is_ok());
+        assert_eq!(
+            accepted(&two, "https://chat.example:9443"),
+            Err(VerifyError::Port)
         );
         assert_eq!(
-            jwks_url("http://chat.example", true),
-            Err(VerifyError::Issuer)
+            accepted(&two, "http://127.0.0.1:3000"),
+            Err(VerifyError::Port)
         );
         assert_eq!(split_qualified("a@b@host:3000"), Some(("a@b", "host:3000")));
         assert_eq!(split_qualified("@host"), None);
         assert_eq!(split_qualified("alice"), None);
+    }
+
+    #[test]
+    fn issuer_ports_are_a_list_or_any() {
+        assert_eq!(IssuerPorts::parse("").unwrap(), IssuerPorts::Any);
+        assert_eq!(IssuerPorts::parse(" , ").unwrap(), IssuerPorts::Any);
+        assert_eq!(
+            IssuerPorts::parse("443").unwrap(),
+            IssuerPorts::Only(BTreeSet::from([443]))
+        );
+        assert_eq!(
+            IssuerPorts::parse("8443, 443,443").unwrap(),
+            IssuerPorts::Only(BTreeSet::from([443, 8443]))
+        );
+        assert_eq!(
+            IssuerPorts::parse("65535").unwrap(),
+            IssuerPorts::Only(BTreeSet::from([65535]))
+        );
+        for bad in [
+            "0", "65536", "-1", "+443", "443x", "4 43", "https", "443;8443",
+        ] {
+            let err = IssuerPorts::parse(bad).err().unwrap().to_string();
+            assert!(err.contains("OTHER_INSTANCE_PORTS"), "{bad}: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn another_port_of_the_host_is_another_issuer() {
+        const SIDE: &str = "https://chat.example:8443";
+        let main = Keyring::parse(&new_seed()).unwrap();
+        let side = Keyring::parse(&new_seed()).unwrap();
+        let verifier = Verifier::default();
+        let (home, other) = (issuer(ISS), issuer(SIDE));
+        assert_ne!(home.keys_url(), other.keys_url());
+        verifier.remember(&home, &Ok(main.jwks()));
+        verifier.remember(&other, &Ok(side.jwks()));
+        let sub = |c: Result<Claims, VerifyError>| c.map(|c| c.sub);
+        let own = side
+            .sign(&claims(SIDE, "alice@chat.example:8443", AUD, 60, None))
+            .unwrap();
+        assert_eq!(
+            sub(verifier.verify(&own, AUD, None).await),
+            Ok("alice@chat.example:8443".to_string())
+        );
+        let posing = side.sign(&claims(ISS, SUB, AUD, 60, None)).unwrap();
+        assert_eq!(
+            verifier.verify(&posing, AUD, None).await,
+            Err(VerifyError::UnknownKey)
+        );
+        let naming = side.sign(&claims(SIDE, SUB, AUD, 60, None)).unwrap();
+        assert_eq!(
+            verifier.verify(&naming, AUD, None).await,
+            Err(VerifyError::Subject)
+        );
+        let down = main
+            .sign(&claims(SIDE, "alice@chat.example:8443", AUD, 60, None))
+            .unwrap();
+        assert_eq!(
+            verifier.verify(&down, AUD, None).await,
+            Err(VerifyError::UnknownKey)
+        );
+        let real = main.sign(&claims(ISS, SUB, AUD, 60, None)).unwrap();
+        assert_eq!(
+            sub(verifier.verify(&real, AUD, None).await),
+            Ok(SUB.to_string())
+        );
+        let closed = issuer("https://chat.example:9443");
+        verifier.remember(&closed, &Err("connection refused".to_string()));
+        assert!(matches!(
+            verifier.cached(&closed, JWKS_TTL),
+            Some(Err(VerifyError::Fetch(_)))
+        ));
+        assert_eq!(verifier.cached(&home, JWKS_TTL), Some(Ok(main.jwks())));
+        assert_eq!(verifier.cached(&other, JWKS_TTL), Some(Ok(side.jwks())));
+        assert_eq!(verifier.cache_len(), 3);
+    }
+
+    #[tokio::test]
+    async fn every_spelling_of_an_origin_verifies_as_its_one_origin() {
+        let ring = Keyring::parse(&new_seed()).unwrap();
+        let verifier = Verifier::default();
+        verifier.remember(&issuer(ISS), &Ok(ring.jwks()));
+        let spelled = |iss: &str, jti: &str| {
+            let mut c = claims(iss, SUB, AUD, 60, None);
+            c.jti = jti.to_string();
+            ring.sign(&c).unwrap()
+        };
+        for (iss, jti) in [
+            ("https://chat.example:443", "j1"),
+            ("https://CHAT.example/", "j2"),
+            (ISS, "j3"),
+        ] {
+            assert_eq!(issuer(iss).origin(), ISS, "{iss}");
+            assert_eq!(
+                verifier
+                    .verify(&spelled(iss, jti), AUD, None)
+                    .await
+                    .map(|c| c.iss),
+                Ok(ISS.to_string()),
+                "{iss}"
+            );
+        }
+        assert_eq!(verifier.cache_len(), 1);
+        assert_eq!(
+            verifier
+                .verify(&spelled("https://chat.example:443", "j3"), AUD, None)
+                .await,
+            Err(VerifyError::Replay)
+        );
+        assert_eq!(
+            issuer("https://chat.example:8443").origin(),
+            "https://chat.example:8443"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_narrowed_port_list_refuses_before_any_fetch() {
+        let ring = Keyring::parse(&new_seed()).unwrap();
+        let verifier = Verifier::new(
+            JWKS_TTL,
+            IssuerRules::new(IssuerPorts::parse("443").unwrap()),
+        );
+        let token = ring
+            .sign(&claims(
+                "https://chat.example:8443",
+                "alice@chat.example:8443",
+                AUD,
+                60,
+                None,
+            ))
+            .unwrap();
+        assert_eq!(
+            verifier.verify(&token, AUD, None).await,
+            Err(VerifyError::Port)
+        );
+        assert_eq!(
+            verifier.keys("https://chat.example:8443").await,
+            Err(VerifyError::Port)
+        );
+        assert_eq!(verifier.cache_len(), 0);
+        assert_eq!(
+            VerifyError::Port.to_string(),
+            "issuer port is not accepted here"
+        );
+        verifier.remember(&verifier.accept(ISS).unwrap(), &Ok(ring.jwks()));
+        let fine = ring.sign(&claims(ISS, SUB, AUD, 60, None)).unwrap();
+        assert!(verifier.verify(&fine, AUD, None).await.is_ok());
     }
 
     #[tokio::test]
@@ -1205,8 +1538,10 @@ mod tests {
         for iss in [
             "https://127.0.0.1:1",
             "https://10.0.0.5",
+            "https://10.0.0.5:8443",
             "https://[::1]:1",
             "https://localhost:1",
+            "https://localhost:8443",
             "http://127.0.0.1:1",
         ] {
             let sub = format!(
@@ -1221,21 +1556,28 @@ mod tests {
             );
         }
         assert_eq!(verifier.cache_len(), 0);
-        let url = Url::parse("https://localhost.:1/.well-known/jwks.json").unwrap();
-        let first = verifier.fetch(&url).await;
-        assert!(matches!(first, Err(VerifyError::Fetch(_))), "{first:?}");
-        assert!(matches!(
-            verifier.cached(url.as_str(), JWKS_TTL),
-            Some(Err(VerifyError::Fetch(_)))
-        ));
+        for port in [1, 8443] {
+            let origin = format!("https://localhost.:{port}");
+            let slipped = Issuer {
+                iss: origin.clone(),
+                origin: origin.clone(),
+                host: format!("localhost.:{port}"),
+                keys: Url::parse(&origin).unwrap().join(JWKS_PATH).unwrap(),
+            };
+            let first = verifier.fetch(&slipped).await;
+            assert!(matches!(first, Err(VerifyError::Fetch(_))), "{first:?}");
+            assert!(matches!(
+                verifier.cached(&slipped, JWKS_TTL),
+                Some(Err(VerifyError::Fetch(_)))
+            ));
+        }
     }
 
     #[tokio::test]
     async fn verifier_rejects_replayed_assertions() {
         let ring = Keyring::parse(&new_seed()).unwrap();
         let verifier = Verifier::default();
-        let url = jwks_url(ISS, false).unwrap();
-        verifier.remember(&url, &Ok(ring.jwks()));
+        verifier.remember(&issuer(ISS), &Ok(ring.jwks()));
         let token = ring.sign(&claims(ISS, SUB, AUD, 60, None)).unwrap();
         assert!(verifier.verify(&token, AUD, None).await.is_ok());
         assert_eq!(
@@ -1298,22 +1640,17 @@ mod tests {
     #[test]
     fn key_cache_is_capped() {
         let verifier = Verifier::default();
-        for n in 0..CACHE_MAX + 50 {
-            let url = Url::parse(&format!("https://h{n}.example/.well-known/jwks.json")).unwrap();
-            verifier.remember(&url, &Ok(JwkSet::default()));
+        let issuers: Vec<Issuer> = (0..CACHE_MAX + 50)
+            .map(|n| issuer(&format!("https://h{n}.example")))
+            .collect();
+        for one in &issuers {
+            verifier.remember(one, &Ok(JwkSet::default()));
         }
         assert_eq!(verifier.cache_len(), CACHE_MAX);
+        assert!(verifier.cached(&issuers[0], JWKS_TTL).is_none());
         assert!(
             verifier
-                .cached("https://h0.example/.well-known/jwks.json", JWKS_TTL)
-                .is_none()
-        );
-        assert!(
-            verifier
-                .cached(
-                    &format!("https://h{}.example/.well-known/jwks.json", CACHE_MAX + 49),
-                    JWKS_TTL
-                )
+                .cached(&issuers[CACHE_MAX + 49], JWKS_TTL)
                 .is_some()
         );
     }

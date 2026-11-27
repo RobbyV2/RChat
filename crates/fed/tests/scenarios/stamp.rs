@@ -5,8 +5,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::SigningKey;
 use prost::Message;
 use rchat_fed::call::{
-    Call, CallError, CheckContext, HELLO_METHOD, KeySet, MemorySeen, SCHEME, Signer, check_call,
-    sign_call,
+    Call, CallError, CheckContext, HELLO_METHOD, KeySet, MemorySeen, Origin, Ports, SCHEME, Signer,
+    check_call, sign_call,
 };
 use rchat_fed::guard::{Fetch, KeyFetchGuard};
 use rchat_fed::keys::thumbprint;
@@ -111,16 +111,19 @@ impl CheckContext for Victim {
     fn network(&self) -> &str {
         "attacker-net"
     }
-    fn cached_keys(&self, _iss: &str) -> Option<KeySet> {
+    fn ports(&self) -> &Ports {
+        &Ports::Any
+    }
+    fn cached_keys(&self, _iss: &Origin) -> Option<KeySet> {
         None
     }
-    async fn fetch_keys(&mut self, _iss: &str) -> Option<KeySet> {
+    async fn fetch_keys(&mut self, _iss: &Origin) -> Option<KeySet> {
         self.fetches += 1;
         None
     }
-    fn may_fetch(&mut self, network: &str, iss: &str, hello: bool, stamped: bool) -> Fetch {
+    fn may_fetch(&mut self, network: &str, iss: &Origin, hello: bool, stamped: bool) -> Fetch {
         self.guard
-            .may_fetch(network, iss, hello, stamped, false, NOW)
+            .may_fetch(network, iss.as_str(), hello, stamped, false, NOW)
     }
     fn stamp_ok(&self, head: &CallHead) -> bool {
         stamp_ok(head, WORK, K)
@@ -128,14 +131,14 @@ impl CheckContext for Victim {
     fn stamp_once(&mut self, jti: &str, now: i64) -> bool {
         self.stamps.once(jti, now)
     }
-    fn call_kids(&self, _iss: &str) -> Option<BTreeSet<String>> {
+    fn call_kids(&self, _iss: &Origin) -> Option<BTreeSet<String>> {
         None
     }
     fn hello_call_kids(&self) -> Option<BTreeSet<String>> {
         None
     }
-    fn seen(&mut self, iss: &str, jti: &str, exp: i64) -> bool {
-        self.seen.add(iss, jti, exp)
+    fn seen(&mut self, iss: &Origin, jti: &str, exp: i64) -> bool {
+        self.seen.add(iss.as_str(), jti, exp)
     }
 }
 

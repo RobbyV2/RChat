@@ -170,6 +170,7 @@ pub struct AppConfig {
     pub public_peerjs_url: Option<String>,
     pub instance_signing_key: Option<Secret>,
     pub allowed_hosts: Option<String>,
+    pub other_instance_ports: Option<String>,
     pub peerjs_port: Option<u16>,
     pub public_stun: bool,
     pub public_stun_count: u8,
@@ -404,6 +405,9 @@ impl AppConfig {
                 .map_err(|e| anyhow::anyhow!("INSTANCE_SIGNING_KEY: {e}"))?;
         }
         crate::instance::parse_allowed_hosts(config.allowed_hosts.as_deref().unwrap_or_default())?;
+        crate::identity::IssuerPorts::parse(
+            config.other_instance_ports.as_deref().unwrap_or_default(),
+        )?;
         config.ice()?;
         config.relay()?;
         config.outbound()?;
@@ -739,6 +743,7 @@ impl AppConfig {
             relay_secret: self.secrets.relay_secret.clone(),
             p2p_secret: self.secrets.p2p_secret.clone(),
             allowed_hosts: self.allowed_hosts.clone(),
+            other_instance_ports: self.other_instance_ports.clone(),
             peerjs_port: self.peerjs_port.or(self.web_peerjs_port),
             proxy_trust: self.proxy_trust.clone(),
             ice: self.ice().unwrap_or_default(),
@@ -1192,6 +1197,26 @@ mod tests {
             assert!(outbound.own_hosts.iter().any(|h| h == host), "{host}");
         }
         assert!(outbound.own.contains(&"203.0.113.10".parse().unwrap()));
+    }
+
+    #[test]
+    fn other_instance_ports_reach_the_instance_and_bad_ones_refuse_the_start() {
+        let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
+        assert_eq!(load(&[]).unwrap().instance().other_instance_ports, None);
+        assert_eq!(
+            load(&[("OTHER_INSTANCE_PORTS", "443, 8443")])
+                .unwrap()
+                .instance()
+                .other_instance_ports
+                .as_deref(),
+            Some("443, 8443")
+        );
+        for bad in ["0", "65536", "443,https"] {
+            let err = load(&[("OTHER_INSTANCE_PORTS", bad)])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("OTHER_INSTANCE_PORTS"), "{bad}: {err}");
+        }
     }
 
     #[test]

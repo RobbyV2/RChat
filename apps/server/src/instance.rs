@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 
 use crate::crypt::secrets::{P2P_SECRET, RELAY_SECRET, SIGNING_KEY, secret_setting};
 use crate::db::Db;
-use crate::identity::{JWKS_PATH, Keyring, host_of};
+use crate::identity::{IssuerPorts, IssuerRules, JWKS_PATH, Keyring, Verifier, host_of};
 use crate::relay::{IceConfig, IceServer};
 use crate::server::client_ip::ProxyTrust;
 
@@ -27,6 +27,7 @@ pub struct InstanceConfig {
     pub peerjs_url: Option<String>,
     pub signing_key: Option<String>,
     pub allowed_hosts: Option<String>,
+    pub other_instance_ports: Option<String>,
     pub peerjs_port: Option<u16>,
     pub proxy_trust: ProxyTrust,
     pub ice: IceConfig,
@@ -97,6 +98,8 @@ pub struct Instance {
     pub ws_url: Option<Url>,
     pub peerjs_url: Option<Url>,
     pub keys: Keyring,
+    /// Checks the identities other instances sign, on the ports `OTHER_INSTANCE_PORTS` allows.
+    pub verifier: Verifier,
     pub allowed_hosts: Vec<AllowedHost>,
     /// The port of a separate PeerJS server on this host (`PEERJS_PORT`).
     pub peerjs_port: Option<u16>,
@@ -147,6 +150,7 @@ impl Instance {
             peerjs_url,
             signing_key,
             allowed_hosts,
+            other_instance_ports,
             peerjs_port,
             proxy_trust,
             ice,
@@ -196,6 +200,12 @@ impl Instance {
             ws_url: parse(ws_url, "PUBLIC_WS_URL", &["ws", "wss", "http", "https"])?,
             peerjs_url: parse(peerjs_url, "PUBLIC_PEERJS_URL", &["http", "https"])?,
             keys,
+            verifier: Verifier::new(
+                crate::identity::JWKS_TTL,
+                IssuerRules::new(IssuerPorts::parse(
+                    other_instance_ports.as_deref().unwrap_or_default(),
+                )?),
+            ),
             allowed_hosts: parse_allowed_hosts(allowed_hosts.as_deref().unwrap_or_default())?,
             peerjs_port: *peerjs_port,
             proxy_trust: proxy_trust.clone(),
@@ -212,6 +222,7 @@ impl Instance {
             ws_url: None,
             peerjs_url: None,
             keys: Keyring::parse(&crate::identity::new_seed()).expect("keyring"),
+            verifier: Verifier::default(),
             allowed_hosts: Vec::new(),
             peerjs_port: None,
             proxy_trust: ProxyTrust::default(),

@@ -8,7 +8,7 @@ import {
   type JSONWebKeySet,
   type JWTVerifyGetKey,
 } from 'jose'
-import { hostOf, parseQualified, privateHost } from './qualified'
+import { normalizeHost, privateHost } from './qualified'
 
 export const ASSERTION_MAX_TTL = 300
 // P2P identity bindings (the account badge): who `sub` is, vouched for by the instance, for the
@@ -63,34 +63,73 @@ export class AssertionError extends Error {
   }
 }
 
-export function jwksUrl(iss: string, allowLocal = false): URL {
-  let url: URL
-  try {
-    url = new URL(iss)
-  } catch {
-    throw new AssertionError('issuer')
+// An issuer the rules accepted: https on a public host and any port but 0 (local hosts, and
+// http on them, only with `allowLocal`). Only `Issuer.accept` makes one, and fetching and
+// trusting keys take one. Its origin is the instance: another port is another issuer.
+export class Issuer {
+  readonly #iss: string
+  readonly #origin: string
+  readonly #host: string
+  readonly #keys: string
+
+  private constructor(iss: string, url: URL) {
+    this.#iss = iss
+    this.#origin = url.origin
+    this.#host = url.host
+    this.#keys = new URL(JWKS_PATH, url.origin).href
   }
-  const local = privateHost(url.hostname)
-  const scheme = url.protocol === 'https:' || (url.protocol === 'http:' && allowLocal && local)
-  const port = local || url.port === ''
-  const bare =
-    (url.pathname === '/' || url.pathname === '') &&
-    !url.search &&
-    !url.hash &&
-    !url.username &&
-    !url.password &&
-    !/[?#]/.test(iss)
-  if (!scheme || !port || !bare || (local && !allowLocal)) throw new AssertionError('issuer')
-  return new URL(JWKS_PATH, url.origin)
+
+  // As it was named.
+  get iss() {
+    return this.#iss
+  }
+
+  // One spelling (`https://chat.example.com:8443`, no default port): the verified claims' `iss`.
+  get origin() {
+    return this.#origin
+  }
+
+  // What its qualified names carry: `host`, or `host:port` off the default port.
+  get host() {
+    return this.#host
+  }
+
+  get keys() {
+    return this.#keys
+  }
+
+  static accept(iss: string, allowLocal = false): Issuer {
+    let url: URL
+    try {
+      url = new URL(iss)
+    } catch {
+      throw new AssertionError('issuer')
+    }
+    const local = privateHost(url.hostname)
+    const scheme = url.protocol === 'https:' || (url.protocol === 'http:' && allowLocal && local)
+    const port = url.port !== '0'
+    const bare =
+      (url.pathname === '/' || url.pathname === '') &&
+      !url.search &&
+      !url.hash &&
+      !url.username &&
+      !url.password &&
+      !/[?#]/.test(iss)
+    if (!scheme || !port || !bare || (local && !allowLocal)) throw new AssertionError('issuer')
+    return new Issuer(iss, url)
+  }
 }
+
+export const jwksUrl = (iss: string, allowLocal = false): URL =>
+  new URL(Issuer.accept(iss, allowLocal).keys)
 
 const sets = new Map<string, JWTVerifyGetKey>()
 
 // The issuer's key set, cached for `cacheMaxAge` (one cache per lifetime, so assertions and
 // bindings keep their own). Anything but a missing key means the issuer couldn't be asked
 // (unreachable, an error status, a broken key set): `fetch`, never a verdict on the token.
-function issuerKeys(iss: string, cacheMaxAge = KEYS_TTL_MS, allowLocal = false): JWTVerifyGetKey {
-  const url = jwksUrl(iss, allowLocal).href
+function issuerKeys(issuer: Issuer, cacheMaxAge: number): JWTVerifyGetKey {
+  const url = issuer.keys
   const id = `${cacheMaxAge} ${url}`
   const hit = sets.get(id)
   if (hit) return hit
@@ -153,37 +192,32 @@ const issuerOf = (token: string) => {
   return iss
 }
 
-const keysFor = (
-  iss: string,
-  keys: VerifyOptions['keys'],
-  cacheMaxAge: number,
-  allowLocal: boolean
-) => {
-  jwksUrl(iss, allowLocal || keys !== undefined)
-  return keys === undefined
-    ? issuerKeys(iss, cacheMaxAge, allowLocal)
+const keysFor = (issuer: Issuer, keys: VerifyOptions['keys'], cacheMaxAge: number) =>
+  keys === undefined
+    ? issuerKeys(issuer, cacheMaxAge)
     : typeof keys === 'function'
       ? keys
       : createLocalJWKSet(keys)
-}
 
-// `name@host` with exactly one `@`, on the issuer's host.
-const onIssuerHost = (sub: unknown, iss: string) =>
-  typeof sub === 'string' &&
-  sub.split('@').length === 2 &&
-  parseQualified(sub).host !== null &&
-  parseQualified(sub).host === hostOf(iss)
+const asciiLower = (text: string) => text.replace(/[A-Z]/g, c => c.toLowerCase())
+
+// `name@host` with exactly one `@`, on the issuer's host (ASCII case aside, as the server checks).
+const onIssuerHost = (sub: unknown, issuer: Issuer) => {
+  if (typeof sub !== 'string') return false
+  const [name, host, ...more] = sub.split('@')
+  return !!name && host !== undefined && more.length === 0 && asciiLower(host) === issuer.host
+}
 
 export async function verifyAssertion(
   token: string,
   { aud, nonce, keys, now, allowLocal = false }: VerifyOptions
 ): Promise<AssertionClaims> {
-  const iss = issuerOf(token)
-  const getKey = keysFor(iss, keys, KEYS_TTL_MS, allowLocal)
+  const issuer = Issuer.accept(issuerOf(token), allowLocal || keys !== undefined)
+  const getKey = keysFor(issuer, keys, KEYS_TTL_MS)
   let claims: AssertionClaims
   try {
     const { payload } = await jwtVerify(token, getKey, {
-      issuer: iss,
+      issuer: issuer.iss,
       audience: aud,
       algorithms: ['EdDSA'],
       requiredClaims: ['exp', 'iat', 'sub', 'jti'],
@@ -204,8 +238,8 @@ export async function verifyAssertion(
   if (claims.iat > at + LEEWAY || claims.exp - claims.iat > ASSERTION_MAX_TTL)
     throw new AssertionError('lifetime')
   if (nonce !== undefined && claims.nonce !== nonce) throw new AssertionError('nonce')
-  if (!onIssuerHost(claims.sub, iss)) throw new AssertionError('subject')
-  return claims
+  if (!onIssuerHost(claims.sub, issuer)) throw new AssertionError('subject')
+  return { ...claims, iss: issuer.origin }
 }
 
 export interface BindingOptions {
@@ -225,13 +259,14 @@ export async function verifyBinding(
   token: string,
   { ik, host, keys, now, allowLocal = false }: BindingOptions
 ): Promise<BindingClaims> {
-  const iss = issuerOf(token)
-  if (host !== undefined && hostOf(iss) !== host) throw new AssertionError('issuer')
-  const getKey = keysFor(iss, keys, BINDING_KEYS_TTL_MS, allowLocal)
+  const issuer = Issuer.accept(issuerOf(token), allowLocal || keys !== undefined)
+  if (host !== undefined && normalizeHost(issuer.host) !== normalizeHost(host))
+    throw new AssertionError('issuer')
+  const getKey = keysFor(issuer, keys, BINDING_KEYS_TTL_MS)
   let claims: BindingClaims
   try {
     const { payload } = await jwtVerify(token, getKey, {
-      issuer: iss,
+      issuer: issuer.iss,
       audience: BINDING_AUD,
       algorithms: ['EdDSA'],
       requiredClaims: ['exp', 'iat', 'sub', 'ik'],
@@ -247,6 +282,6 @@ export async function verifyBinding(
     throw new AssertionError('lifetime')
   if (claims.aud !== BINDING_AUD) throw new AssertionError('audience')
   if (claims.ik !== ik) throw new AssertionError('ik')
-  if (!onIssuerHost(claims.sub, iss)) throw new AssertionError('subject')
-  return claims
+  if (!onIssuerHost(claims.sub, issuer)) throw new AssertionError('subject')
+  return { ...claims, iss: issuer.origin }
 }
