@@ -1,0 +1,3 @@
+[test]
+# The shared permission rules (the built wasm module) load before any test file.
+preload = ["./app/lib/__tests__/helpers/perms_preload.ts"]

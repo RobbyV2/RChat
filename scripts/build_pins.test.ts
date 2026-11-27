@@ -44,7 +44,6 @@ describe('wasm builds', () => {
   test('wasm-pack never downloads tools in the image, checks or app builds', () => {
     for (const file of [
       'Dockerfile',
-      '.github/workflows/checks.yml',
       'package.json',
       'jfiles/src/build.just',
       'jfiles/src/run.just',
@@ -55,6 +54,9 @@ describe('wasm builds', () => {
       expect(lines.length > 0).toBe(true)
       for (const line of lines) expect(line).toContain('--mode no-install')
     }
+    const checks = read('.github/workflows/checks.yml')
+    expect(checks).not.toContain('wasm-pack build')
+    expect(checks.split('bun run build:wasm').length - 1).toBe(2)
   })
 
   // A restored cache can hold a stale binary that a plain install would keep.

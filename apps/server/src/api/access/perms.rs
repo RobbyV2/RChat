@@ -1,3 +1,7 @@
+use rchat_perms::eval::{self, Channel, Mode, Who};
+use rchat_perms::hier::{self, Actor, Rank, Tier};
+use rchat_perms::rules::HOSTED;
+use rchat_perms::{Mask, delta, masks, registry};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::any::AnyRow;
@@ -23,31 +27,66 @@ pub enum Perm {
     ManageProfiles = 65536,
 }
 
-pub const ALL_PERMS: i64 = 127999;
+/// Channel moderation bits without a server gate stay out of stored masks.
+const UNGATED: Mask = registry::value("PinMessages") | registry::value("BypassSlowmode");
+pub const ALL_PERMS: i64 = (masks::MGMT & !UNGATED) as i64;
 pub const PRE_DELEGATION_PERMS: i64 = 1023;
 
 /// A client may echo newer bits it read without having controls for them.
 /// It can change a delegated permission only when its mask covers that bit.
 pub fn update_bits(current: i64, sent: i64, mask: i64) -> i64 {
-    ((current & !mask) | (sent & (mask | PRE_DELEGATION_PERMS))) & ALL_PERMS
+    delta::update_bits(
+        current as Mask,
+        sent as Mask,
+        mask as Mask,
+        PRE_DELEGATION_PERMS as Mask,
+        ALL_PERMS as Mask,
+    ) as i64
 }
 /// Every permission before `ManageReports` existed.
 pub const PRE_REPORT_PERMS: i64 = 511;
 
 pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
-    match (is_admin, perms) {
-        (true, 0) => ALL_PERMS,
-        (true, p) => p & ALL_PERMS,
-        (false, _) => roles & ALL_PERMS,
+    let who = match is_admin {
+        true => Who::Admin {
+            mask: perms as Mask,
+            roles: roles as Mask,
+        },
+        false => Who::Member {
+            roles: roles as Mask,
+        },
+    };
+    eval::server_bits(&who, 0, &HOSTED) as i64 & ALL_PERMS
+}
+
+fn actor(site_admin: bool, bits: i64) -> Actor<'static> {
+    let tier = match site_admin {
+        true => Tier::Staff,
+        false => Tier::Plain,
+    };
+    Actor {
+        rank: Rank::of(tier),
+        bits: bits as Mask,
     }
 }
 
-pub fn can_moderate(actor: i64, actor_site_admin: bool, target: i64) -> bool {
-    actor_site_admin || ((target & !actor) == 0 && target != actor)
+pub fn can_moderate(actor_bits: i64, actor_site_admin: bool, target: i64) -> bool {
+    hier::may_moderate(
+        &actor(actor_site_admin, actor_bits),
+        &actor(false, target),
+        0,
+        true,
+    )
 }
 
 pub fn can_grant(actor: i64, actor_site_admin: bool, perms: i64) -> bool {
-    actor_site_admin || (perms & ALL_PERMS & !actor) == 0
+    delta::check_bits_edit(
+        actor as Mask,
+        actor_site_admin,
+        0,
+        (perms & ALL_PERMS) as Mask,
+    )
+    .is_ok()
 }
 
 #[derive(Clone, Copy)]
@@ -166,11 +205,12 @@ pub fn fold_access<'a>(
     manages: bool,
     restrict: Restrict,
 ) -> ChannelAccess {
-    if manages {
-        return ChannelAccess::all(true);
-    }
-    let mut matched = false;
-    let mut acc = ChannelAccess::all(false);
+    let Restrict {
+        view: restrict_view,
+        send: restrict_send,
+    } = restrict;
+    let mut roles = Vec::new();
+    let mut member = None;
     for row in rows {
         let PermRow {
             subject,
@@ -179,27 +219,40 @@ pub fn fold_access<'a>(
             history,
         } = row;
         if subjects.contains(subject) {
-            matched = true;
-            acc.view |= *view;
-            acc.send |= *send;
-            acc.history |= *history;
+            let own = subject.starts_with("u:");
+            let (ow, mode) = eval::derived_row(0, 0, Mode::Override, *view, *send, *history, own);
+            match (own, member) {
+                (true, None) => member = Some((ow, mode)),
+                (true, Some(_)) | (false, _) => roles.push(ow),
+            }
         }
     }
-    let Restrict {
-        view: restrict_view,
-        send: restrict_send,
-    } = restrict;
-    let acc = match matched {
-        true => acc,
-        false => ChannelAccess {
-            view: !restrict_view,
-            send: !restrict_send,
-            history: true,
+    let who = Who::Member {
+        roles: match manages {
+            true => masks::MANAGE_CHANNELS,
+            false => 0,
         },
     };
-    match acc.view {
-        true => acc,
-        false => ChannelAccess::all(false),
+    let channel = Channel {
+        everyone: None,
+        restrict_view,
+        restrict_send,
+        voice: false,
+        roles: &roles,
+        member,
+    };
+    let mask = eval::channel_mask(
+        &who,
+        eval::DEFAULT_EVERYONE,
+        &channel,
+        false,
+        false,
+        &HOSTED,
+    );
+    ChannelAccess {
+        view: mask & masks::VIEW != 0,
+        send: mask & masks::SEND != 0,
+        history: mask & masks::HISTORY != 0,
     }
 }
 
@@ -220,6 +273,96 @@ pub fn rule_narrows(rule: &PermRow, restrict: Restrict) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permissions_follow_the_shared_registry() {
+        let all = [
+            Perm::ManageChannels,
+            Perm::DeleteMessages,
+            Perm::Kick,
+            Perm::DeleteServer,
+            Perm::ManageAdmins,
+            Perm::MentionEveryone,
+            Perm::ViewAuditLog,
+            Perm::TimeoutMembers,
+            Perm::ManageWebhooks,
+            Perm::ManageReports,
+            Perm::ManageServer,
+            Perm::ManageInvites,
+            Perm::ManageRoles,
+            Perm::AssignRoles,
+            Perm::ManageProfiles,
+        ];
+        for perm in all {
+            let name = format!("{perm:?}");
+            let bit = registry::BITS
+                .iter()
+                .find(|b| b.name == name)
+                .unwrap_or_else(|| panic!("{name} is not in the registry"));
+            assert_eq!(bit.value, perm as Mask, "{name}");
+            assert_eq!(bit.hosted, registry::State::Live, "{name}");
+        }
+        assert_eq!(all.iter().fold(0, |m, p| m | *p as i64), ALL_PERMS);
+    }
+
+    #[test]
+    fn stored_masks_keep_the_gated_management_bits() {
+        assert_eq!(ALL_PERMS, 127999);
+        assert_eq!(perm_bits(true, 0, 5), ALL_PERMS);
+        assert_eq!(perm_bits(true, 4 | 1024 | 1 << 17, 1), 4);
+        assert_eq!(perm_bits(false, 4, 1 | 2048 | 1 << 29), 1);
+        assert_eq!(perm_bits(false, 0, -1), ALL_PERMS);
+        assert_eq!(update_bits(1 | 4 | 4096, 4096 | 8192 | 2, 8192), 12295);
+        assert_eq!(update_bits(0, -1, 0), PRE_DELEGATION_PERMS);
+        assert_eq!(update_bits(-1, 0, 0), ALL_PERMS);
+        assert_eq!(update_bits(-1, 0, -1), 0);
+        assert!(can_grant(4, false, 4 | 1024) && !can_grant(4, false, 5));
+        assert!(can_grant(0, true, ALL_PERMS));
+    }
+
+    #[test]
+    fn channel_access_is_the_union_of_matching_rules() {
+        let subjects = ["u:a".to_string(), "r:1".to_string(), "r:2".to_string()];
+        let names = ["u:a", "r:1", "r:2", "u:b", "r:3"];
+        for bits in 0u32..1 << 12 {
+            let rows: Vec<PermRow> = (0..3)
+                .filter(|i| bits >> (i * 4) & 1 != 0)
+                .map(|i| PermRow {
+                    subject: names[(i + (bits as usize >> 11) * 3) % 5].to_string(),
+                    view: bits >> (i * 4 + 1) & 1 != 0,
+                    send: bits >> (i * 4 + 2) & 1 != 0,
+                    history: bits >> (i * 4 + 3) & 1 != 0,
+                })
+                .collect();
+            for flags in 0..8 {
+                let restrict = Restrict {
+                    view: flags & 1 != 0,
+                    send: flags & 2 != 0,
+                };
+                let manages = flags & 4 != 0;
+                let matching: Vec<&PermRow> = rows
+                    .iter()
+                    .filter(|r| subjects.contains(&r.subject))
+                    .collect();
+                let any = |f: fn(&PermRow) -> bool, open: bool| match matching.is_empty() {
+                    true => open,
+                    false => matching.iter().any(|r| f(r)),
+                };
+                let view = manages || any(|r| r.view, !restrict.view);
+                let want = [
+                    view,
+                    view && (manages || any(|r| r.send, !restrict.send)),
+                    view && (manages || any(|r| r.history, true)),
+                ];
+                let ChannelAccess {
+                    view,
+                    send,
+                    history,
+                } = fold_access(&rows, &subjects, manages, restrict);
+                assert_eq!([view, send, history], want, "{bits} {flags}");
+            }
+        }
+    }
 
     #[test]
     fn moderation_needs_a_strict_superset() {

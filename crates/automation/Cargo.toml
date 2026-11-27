@@ -10,6 +10,7 @@ default = ["tz"]
 tz = ["dep:jiff"]
 
 [dependencies]
+rchat-perms = { path = "../perms" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"

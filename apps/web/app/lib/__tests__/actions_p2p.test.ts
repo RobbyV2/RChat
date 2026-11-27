@@ -127,6 +127,7 @@ const TEXT = {
   pos: 0,
   send: true,
   exempt: false,
+  perms: 0,
   over: {},
   everyoneSees: true,
 }
@@ -137,6 +138,7 @@ const VOICE = {
   pos: 1,
   send: true,
   exempt: false,
+  perms: 0,
   over: {},
   everyoneSees: true,
 }

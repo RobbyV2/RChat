@@ -26,6 +26,8 @@ export interface CardInput {
   transferAsks: number
   // What the copy calls the instance.
   label: string
+  // Why the last start or action failed, when one did.
+  error?: string | null
 }
 
 export type CardState =
@@ -79,6 +81,18 @@ const textOf = (state: CardState, label: string) =>
 export const statusText = (status: Status | 'off', paused: boolean, label: string) =>
   textOf(nodeState(status, paused), label)
 
+export const NOT_STARTED = 'Not started'
+
+// Why P2P is on in this tab without having started, when an error says so.
+export const startFailure = ({
+  enabled,
+  loading,
+  elsewhere,
+  status,
+  error,
+}: Pick<CardInput, 'enabled' | 'loading' | 'elsewhere' | 'status' | 'error'>): string | null =>
+  enabled && !loading && !elsewhere && status === 'off' ? (error ?? null) : null
+
 const NOTE: Partial<Record<CardState, string>> = {
   unreachable: UNREACHABLE_TEXT,
   unsupported: UNSUPPORTED_TEXT,
@@ -106,15 +120,16 @@ export const homeCard = (s: CardInput): HomeCard => {
   const online = visibleContacts(s.contacts).filter(
     c => c.state === 'mutual' && s.presence[c.ik] === 'online'
   )
+  const failure = startFailure(s)
   return {
     state,
-    status: textOf(state, s.label),
+    status: failure === null ? textOf(state, s.label) : NOT_STARTED,
     online: online.length,
     top: online.slice(0, CARD_CONTACTS),
     requests: requests(s.contacts).length,
     invites: s.serverInvites,
     asks: s.coOwnerAsks + s.transferAsks,
-    note: NOTE[state] ?? null,
+    note: NOTE[state] ?? failure,
   }
 }
 

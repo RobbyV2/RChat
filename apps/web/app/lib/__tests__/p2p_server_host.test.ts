@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { rulesBase, setRulesBase } from '../perms_load'
 import { P } from '../p2p/acl/rules'
 import { applySummary, emptySummary, type Summary } from '../p2p/acl/summary'
 import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from '../p2p/resolve_host'
+import { WASM } from './helpers/perms'
 import { ServerWorld } from './p2p_server_world'
 
 // The evaluator off the page's thread (in a worker): the same events give the same
 // verdicts, records and state in the worker, in this thread and after a cold start from the
-// records; replies are deltas the page applies to its copy; a failing worker loses its rooms and
-// the page loads them again into this thread.
+// records; replies are deltas the page applies to its copy; a failing worker, or one that cannot
+// load the permission rules, loses its rooms and the page loads them again into this thread.
 
 const worker = () =>
   new Worker(new URL('../p2p/p2p.worker.ts', import.meta.url), {
@@ -78,6 +82,24 @@ describe('evaluator host', () => {
     await host.load(w.srv, w.acl.slice(0, 3), [])
     ;(made as unknown as WorkerLike).onerror?.(new Error('boom'))
     expect(lost).toBe(1)
+    const again = await host.load(w.srv, w.acl, w.contents)
+    expect(applySummary(emptySummary(), again.delta)).toEqual(w.sum)
+    host.stop()
+  })
+
+  test('a worker that cannot load the permission rules hands its rooms to this thread', async () => {
+    const w = universe()
+    const base = rulesBase()
+    setRulesBase(pathToFileURL(join(WASM, 'missing')).href)
+    const host = new WorkerHost(worker)
+    setRulesBase(base)
+    let lost = 0
+    host.onLost = () => void (lost += 1)
+    const first = await host.load(w.srv, w.acl.slice(0, 3), []).then(
+      () => 'loaded',
+      (e: unknown) => (e instanceof Error ? e.message : String(e))
+    )
+    expect([first, lost]).toEqual(['acl host lost', 1])
     const again = await host.load(w.srv, w.acl, w.contents)
     expect(applySummary(emptySummary(), again.delta)).toEqual(w.sum)
     host.stop()

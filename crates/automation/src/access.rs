@@ -3,6 +3,9 @@
 
 use crate::grants::{ALL_PERMS, MENTION_EVERYONE, Refusal, VIEW_AUDIT_LOG, self_service};
 use crate::onboarding::{Gate, effective_gate};
+use rchat_perms::Mask;
+use rchat_perms::eval::{Who, server_bits};
+use rchat_perms::rules::{HOSTED, Ruleset};
 use serde::{Deserialize, Serialize};
 
 /// What a timed-out or rules-locked member may still do.
@@ -19,10 +22,17 @@ pub struct Member {
 
 /// Rank, hierarchy, the admin flag, audit and automation authority: never gated.
 pub fn rank_bits(m: &Member) -> u32 {
-    match (m.is_admin, m.perms) {
-        (true, 0) => ALL_PERMS,
-        (_, perms) => perms & ALL_PERMS,
-    }
+    let who = match (m.is_admin, m.perms) {
+        (true, 0) => Who::Admin { mask: 0, roles: 0 },
+        (_, perms) => Who::Member {
+            roles: Mask::from(perms),
+        },
+    };
+    let rules = Ruleset {
+        known: Mask::from(ALL_PERMS),
+        ..HOSTED
+    };
+    (server_bits(&who, 0, &rules) & Mask::from(ALL_PERMS)) as u32
 }
 
 /// What the member may do: nothing while pending or held, read rights under a rules lock.

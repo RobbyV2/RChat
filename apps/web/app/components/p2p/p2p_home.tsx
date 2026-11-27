@@ -39,7 +39,7 @@ import {
   UNSUPPORTED_TEXT,
   type Presence,
 } from '../../lib/p2p/node'
-import { statusText } from '../../lib/p2p/home_card'
+import { NOT_STARTED, startFailure, statusText } from '../../lib/p2p/home_card'
 import { addsContacts, conversations } from '../../lib/p2p/conversations'
 import { enterKey } from '../../lib/keys'
 import { longPress } from '../context_menu'
@@ -634,6 +634,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
   const reader = useP2p(s => s.reader)
   const dropped = useP2p(s => s.dropped)
   const addressHidden = useP2p(s => s.addressHidden)
+  const failure = useP2p(s => startFailure(s))
   const [showBlocked, setShowBlocked] = useState(false)
   const list = visibleContacts(contacts)
   const pending = requestsOf(contacts)
@@ -664,7 +665,13 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             data-p2p-status={status}
             className="min-w-0 truncate text-xs text-on-surface-variant"
           >
-            {loading ? 'Starting…' : <LabelText text={statusText(status, paused, label)} />}
+            {loading ? (
+              'Starting…'
+            ) : (
+              <LabelText
+                text={failure === null ? statusText(status, paused, label) : NOT_STARTED}
+              />
+            )}
           </span>
         )}
         <span className="flex-1" />
@@ -713,6 +720,15 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             {status === 'moved' && !elsewhere && <MovedBanner />}
             {status === 'unreachable' && !elsewhere && <UnreachableNotice />}
             {status === 'unsupported' && !elsewhere && <UnsupportedNotice />}
+            {failure !== null && (
+              <p
+                role="alert"
+                data-p2p-not-started
+                className="rounded-2xl bg-error-container p-4 text-sm break-words text-on-error-container"
+              >
+                <LabelText text={failure} />
+              </p>
+            )}
             {addressHidden && status === 'online' && !elsewhere && <AddressNotice />}
             {!elsewhere && <MovingBanner />}
             {dropped > 0 && <DroppedNote n={dropped} />}

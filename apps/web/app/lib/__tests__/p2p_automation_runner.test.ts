@@ -717,6 +717,7 @@ describe('layering', () => {
       'apps/web/app/lib/p2p/automation_docs.ts',
       'apps/web/app/lib/p2p/canonical.ts',
       'apps/web/app/lib/p2p/limits.ts',
+      'apps/web/app/lib/perms.ts',
     ])
   })
 })

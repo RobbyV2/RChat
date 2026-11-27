@@ -4773,6 +4773,7 @@ dependencies = [
  "aho-corasick",
  "jiff",
  "rand_chacha 0.10.0",
+ "rchat-perms",
  "regex",
  "serde",
  "serde_json",
@@ -4855,6 +4856,14 @@ dependencies = [
  "sha2 0.11.1",
  "subtle",
  "url",
+]
+
+[[package]]
+name = "rchat-perms"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5167,6 +5176,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.10.3",
  "rand_chacha 0.10.0",
+ "rchat-perms",
  "rchat-profanity",
  "redis",
  "regex",
@@ -5205,6 +5215,7 @@ name = "rust-next-wasm"
 version = "0.3.0"
 dependencies = [
  "console_error_panic_hook",
+ "rchat-perms",
  "rchat-profanity",
  "serde_json",
  "wasm-bindgen",

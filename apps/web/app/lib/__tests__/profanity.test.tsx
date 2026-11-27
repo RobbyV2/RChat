@@ -895,7 +895,7 @@ describe('P2P paths', () => {
 
 describe('the compiled matcher', () => {
   const built = existsSync(join(WASM, 'rust_next_wasm_bg.wasm'))
-  // CI's build job sets RCHAT_WASM=required right after wasm-pack; the plain bun job has no wasm.
+  // CI's build job sets RCHAT_WASM=required right after building the module.
   const required = process.env.RCHAT_WASM === 'required'
 
   // Locally `just src build-wasm` first.

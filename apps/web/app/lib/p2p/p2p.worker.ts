@@ -1,5 +1,6 @@
 import type { AdmitOpts } from './acl/admit'
 import type { AclRoom } from './acl_room'
+import { loadPermissionRules } from '../perms_load'
 import { hashBlob } from './hashing'
 import { runKdfJob, type KdfJob } from './kdf_job'
 import { serveAcl, type HostRequest } from './resolve_host'
@@ -21,6 +22,12 @@ interface HashJob {
 const post = (m: unknown) =>
   (self as unknown as { postMessage: (m: unknown) => void }).postMessage(m)
 
+// The ACL evaluator decides through the shared permission rules: the page says where they are,
+// and requests wait for the load. A failed load is reported as `{id: 0, err}`, so the page
+// evaluates in its own thread instead.
+let rules: Promise<void> = Promise.reject(new Error('no permission rules'))
+rules.catch(() => {})
+const RULES_FAILED = 'The permission rules could not load'
 const rooms = new Map<string, AclRoom>()
 const opts: Partial<AdmitOpts> = {}
 
@@ -40,7 +47,14 @@ const hash = ({ id, file }: HashJob) => {
 
 self.onmessage = (e: MessageEvent<HashJob | HostRequest | KdfJob>) => {
   const m = e.data
-  if ('op' in m) serveAcl(rooms, m, post, opts)
+  if ('op' in m && m.op === 'rules') {
+    rules = loadPermissionRules(m.base)
+    rules.catch(() => post({ id: 0, err: RULES_FAILED }))
+  } else if ('op' in m)
+    void rules.then(
+      () => serveAcl(rooms, m, post, opts),
+      () => post({ id: m.id, err: RULES_FAILED })
+    )
   else if ('kdf' in m) runKdfJob(m, post)
   else hash(m)
 }

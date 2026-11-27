@@ -7,6 +7,7 @@ import {
   timeouts,
   type Rank,
 } from '../acl/rules'
+import { fromWire } from '../../perms'
 import type { MemberSum, Summary } from '../acl/summary'
 import { cleanName } from '../keys'
 import { roomLock, shownRoomProfile } from '../../profile_reset'
@@ -252,6 +253,7 @@ export function channelViews(
       ...c,
       send: me === 'join' && (p & P.SendMessages) !== 0,
       exempt: (p & (P.ManageChannels | P.ManageMessages)) !== 0,
+      perms: fromWire(p, RULES_VERSION),
       over: s.overwrites?.[c.id] ?? {},
       everyoneSees: everyoneSees(F, c.id),
     })

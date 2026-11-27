@@ -6,11 +6,11 @@ build:
 
 # Build WASM module (release)
 build-wasm:
-  cd {{ROOT}} && wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release
+  cd {{ROOT}} && wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release && bun scripts/wasm_js.ts
 
 # Build WASM module (dev, faster)
 build-wasm-dev:
-  cd {{ROOT}} && wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev
+  cd {{ROOT}} && wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev && bun scripts/wasm_js.ts --dev
 
 # Rebuild the committed proof-of-work solver (apps/web/public/pow) and its source hash
 pow-wasm:

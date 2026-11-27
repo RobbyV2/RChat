@@ -237,6 +237,7 @@ const useP2pCard = () => {
   const serverInvites = useP2p(s => s.serverInvites.length)
   const coOwnerAsks = useP2p(s => s.coOwnerAsks.length)
   const transferAsks = useP2p(s => s.transferAsks.length)
+  const error = useP2p(s => s.error)
   const { label } = useInstanceLabel()
   return useMemo(
     () =>
@@ -252,6 +253,7 @@ const useP2pCard = () => {
         coOwnerAsks,
         transferAsks,
         label,
+        error,
       }),
     [
       enabled,
@@ -265,6 +267,7 @@ const useP2pCard = () => {
       coOwnerAsks,
       transferAsks,
       label,
+      error,
     ]
   )
 }

@@ -1,0 +1,429 @@
+[
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Manage channels",
+    "name": "ManageChannels",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 1
+    },
+    "scope": "server",
+    "value": 1
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Manage messages",
+    "name": "DeleteMessages",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 2
+    },
+    "scope": "channel",
+    "value": 2
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Kick and ban",
+    "name": "Kick",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 4
+    },
+    "scope": "server",
+    "value": 4
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Delete server",
+    "name": "DeleteServer",
+    "p2p": null,
+    "scope": "server",
+    "value": 8
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Manage admins",
+    "name": "ManageAdmins",
+    "p2p": null,
+    "scope": "server",
+    "value": 16
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Mention everyone",
+    "name": "MentionEveryone",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 128
+    },
+    "scope": "channel",
+    "value": 32
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "View audit log",
+    "name": "ViewAuditLog",
+    "p2p": null,
+    "scope": "server",
+    "value": 64
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Time out members",
+    "name": "TimeoutMembers",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 16777216
+    },
+    "scope": "server",
+    "value": 128
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Manage webhooks",
+    "name": "ManageWebhooks",
+    "p2p": null,
+    "scope": "server",
+    "value": 256
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Manage reports",
+    "name": "ManageReports",
+    "p2p": null,
+    "scope": "server",
+    "value": 512
+  },
+  {
+    "everyone": false,
+    "hosted": "reserved",
+    "label": "Move members",
+    "name": "MoveMembers",
+    "p2p": {
+      "since": 5,
+      "state": "reserved",
+      "value": 67108864
+    },
+    "scope": "channel",
+    "value": 1024
+  },
+  {
+    "everyone": false,
+    "hosted": "reserved",
+    "label": "Manage automations",
+    "name": "ManageAutomations",
+    "p2p": null,
+    "scope": "server",
+    "value": 2048
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Manage server",
+    "name": "ManageServer",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 8
+    },
+    "scope": "server",
+    "value": 4096
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Manage invites",
+    "name": "ManageInvites",
+    "p2p": null,
+    "scope": "server",
+    "value": 8192
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Manage roles",
+    "name": "ManageRoles",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 16
+    },
+    "scope": "server",
+    "value": 16384
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Assign roles",
+    "name": "AssignRoles",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 134217728
+    },
+    "scope": "server",
+    "value": 32768
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Reset server profiles",
+    "name": "ManageProfiles",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 8388608
+    },
+    "scope": "server",
+    "value": 65536
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "View channels",
+    "name": "ViewChannels",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 256
+    },
+    "scope": "channel",
+    "value": 131072
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Send messages",
+    "name": "SendMessages",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 512
+    },
+    "scope": "channel",
+    "value": 262144
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Read history",
+    "name": "ReadHistory",
+    "p2p": {
+      "since": 5,
+      "state": "reserved",
+      "value": 33554432
+    },
+    "scope": "channel",
+    "value": 524288
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Add reactions",
+    "name": "AddReactions",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 4096
+    },
+    "scope": "channel",
+    "value": 1048576
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Attach files",
+    "name": "AttachFiles",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 8192
+    },
+    "scope": "channel",
+    "value": 2097152
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Embed links",
+    "name": "EmbedLinks",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 16384
+    },
+    "scope": "channel",
+    "value": 4194304
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Create polls",
+    "name": "CreatePolls",
+    "p2p": {
+      "since": 5,
+      "state": "reserved",
+      "value": 32768
+    },
+    "scope": "channel",
+    "value": 8388608
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Start threads",
+    "name": "StartThreads",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 65536
+    },
+    "scope": "channel",
+    "value": 16777216
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Connect",
+    "name": "Connect",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 131072
+    },
+    "scope": "channel",
+    "value": 33554432
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Speak",
+    "name": "Speak",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 262144
+    },
+    "scope": "channel",
+    "value": 67108864
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "Video",
+    "name": "Video",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 524288
+    },
+    "scope": "channel",
+    "value": 134217728
+  },
+  {
+    "everyone": true,
+    "hosted": "reserved",
+    "label": "Change server profile",
+    "name": "ChangeProfile",
+    "p2p": {
+      "since": 5,
+      "state": "reserved",
+      "value": 4194304
+    },
+    "scope": "server",
+    "value": 268435456
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Pin messages",
+    "name": "PinMessages",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 1048576
+    },
+    "scope": "channel",
+    "value": 536870912
+  },
+  {
+    "everyone": false,
+    "hosted": "live",
+    "label": "Bypass slow mode",
+    "name": "BypassSlowmode",
+    "p2p": {
+      "since": 5,
+      "state": "live",
+      "value": 2097152
+    },
+    "scope": "channel",
+    "value": 1073741824
+  },
+  {
+    "everyone": false,
+    "hosted": "reserved",
+    "label": "Manage look",
+    "name": "ManageLook",
+    "p2p": {
+      "since": 2,
+      "state": "reserved",
+      "value": 1024
+    },
+    "scope": "server",
+    "value": 2147483648
+  },
+  {
+    "everyone": false,
+    "hosted": "reserved",
+    "label": "Manage apps",
+    "name": "ManageApps",
+    "p2p": {
+      "since": 2,
+      "state": "reserved",
+      "value": 2048
+    },
+    "scope": "server",
+    "value": 4294967296
+  },
+  {
+    "everyone": false,
+    "hosted": "reserved",
+    "label": "Ban members",
+    "name": "BanMembers",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 32
+    },
+    "scope": "server",
+    "value": 8589934592
+  },
+  {
+    "everyone": false,
+    "hosted": "reserved",
+    "label": "Create invites",
+    "name": "CreateInvites",
+    "p2p": {
+      "since": 2,
+      "state": "live",
+      "value": 64
+    },
+    "scope": "server",
+    "value": 17179869184
+  }
+]

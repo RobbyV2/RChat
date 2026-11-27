@@ -9,6 +9,10 @@ import { AclReplica, identityHead, pastOf, type Verdict } from '../../app/lib/p2
 import { idOp, type AclContent, type AclEv } from '../../app/lib/p2p/acl/rules'
 import type { WireV2 } from '../../app/lib/p2p/event_v2'
 import { AGREED, type Agreed } from '../../app/lib/p2p/limits'
+import { ensurePerms } from '../../app/lib/__tests__/helpers/perms'
+
+// Rooms decide through the shared permission rules.
+await ensurePerms()
 
 export type Obj = Record<string, unknown>
 

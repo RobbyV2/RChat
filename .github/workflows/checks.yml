@@ -77,6 +77,23 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
       - run: bun run lint
+      # The web tests load the shared permission rules from the built wasm module.
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-pack
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-0.15.0
+      - if: steps.wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.0 --locked --force
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ runner.os }}-0.2.129
+      - if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --force
+      - run: bun run build:wasm
       # In a new random order each run (scripts/test-ui.sh); a failure prints the seed.
       - run: bun run test:ui
       - run: bun test scripts
@@ -104,8 +121,8 @@ jobs:
           key: wasm-bindgen-${{ runner.os }}-0.2.129
       - if: steps.wasm-bindgen.outputs.cache-hit != 'true'
         run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --force
-      - run: wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release
-      # The compiled matcher against the Rust fixture (the lint job has no wasm and skips it).
+      - run: bun run build:wasm
+      # The compiled matcher against the Rust fixture, failing if the module is missing.
       - run: bun test app/lib/__tests__/profanity.test.tsx
         working-directory: apps/web
         env:

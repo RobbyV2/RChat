@@ -3,6 +3,8 @@ import {
   CARD_CONTACTS,
   cardRows,
   homeCard,
+  NOT_STARTED,
+  startFailure,
   onlineText,
   p2pEntry,
   statusText,
@@ -67,6 +69,23 @@ describe('the Peer-to-peer card on Home', () => {
       note: null,
     })
     expect(cardRows(card)).toEqual([])
+  })
+
+  test('a start that failed says why instead of connecting', () => {
+    const failed = input({ status: 'off', error: 'No rules' })
+    expect(startFailure(failed)).toBe('No rules')
+    const { state, status, note } = homeCard(failed)
+    expect([state, status, note]).toEqual(['connecting', NOT_STARTED, 'No rules'])
+    expect(startFailure(input({ status: 'off' }))).toBe(null)
+    for (const over of [
+      { enabled: false },
+      { loading: true },
+      { elsewhere: true },
+      { status: 'online' as const },
+    ]) {
+      expect(startFailure({ ...failed, ...over })).toBe(null)
+      expect(homeCard({ ...failed, ...over }).status).not.toBe(NOT_STARTED)
+    }
   })
 
   test('the status line follows the P2P node', () => {

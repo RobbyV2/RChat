@@ -1,3 +1,4 @@
+import { rulesBase } from '../perms_load'
 import { createPeerFixture } from './peer_fixture'
 import { AccountSession } from '../client/session'
 const peerOwner = new AccountSession(home)
@@ -160,7 +161,10 @@ describe('the account limits', () => {
       }),
       local
     )
-    expect(sent).toEqual([{ id: 0, op: 'local', local }])
+    expect(sent).toEqual([
+      { id: 0, op: 'rules', base: rulesBase() },
+      { id: 0, op: 'local', local },
+    ])
     host.stop()
     // The worker's side: rooms made after it use them.
     const rooms = new Map<string, AclRoom>()

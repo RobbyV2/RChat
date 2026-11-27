@@ -23,6 +23,13 @@ import { runtimeLimits } from '../user_limits'
 import { LOCAL, type Local } from '../limits'
 import type { P2pDialog } from './store'
 import type { IdentityScope, P2pParts } from './scope'
+import { loaded } from '../../perms'
+import { loadPermissionRules } from '../../perms_load'
+import { unavailable } from '../../capabilities'
+
+const RULES_UNAVAILABLE = unavailable(
+  "P2P couldn't load its permission rules. Reload to try again."
+)
 
 // How long signed leaves get to reach the connected members before the identity stops.
 export const RETIRE_FLUSH_MS = 400
@@ -291,7 +298,23 @@ export function createAccountPart(
 
   // Runs P2P in this tab once it holds the account's lock; until then the tab shows a notice.
   // `create` is the name for a new identity, when one should be made.
+  // P2P decides through the shared permission rules, so nothing starts before they are loaded.
   const run = (username: string, create: string | null) => {
+    if (loaded()) return start(username, create)
+    const mine = state.gen
+    const live = () => mine === state.gen && scope.current(username)
+    useP2p.setState({ loading: true })
+    void loadPermissionRules().then(
+      () => {
+        if (live()) start(username, create)
+      },
+      () => {
+        if (live()) useP2p.setState({ loading: false, error: RULES_UNAVAILABLE })
+      }
+    )
+  }
+
+  const start = (username: string, create: string | null) => {
     if (!scope.current(username)) return
     const mine = state.gen
     // Bumped on every resign, so a boot still in flight stops instead of starting a second node.

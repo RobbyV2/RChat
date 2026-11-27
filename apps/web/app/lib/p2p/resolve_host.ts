@@ -1,3 +1,4 @@
+import { rulesBase } from '../perms_load'
 import type { SumDelta } from './acl/summary'
 import {
   AclRoom,
@@ -132,6 +133,9 @@ export type HostRequest =
   | { id: number; op: 'drop'; room: string }
   // The account's evaluator limits, for every room made after it (sent first).
   | { id: number; op: 'local'; local: EvalLimits }
+  // Where the worker loads the shared permission rules from (sent before anything else). A
+  // failed load replies `{id: 0, err}`.
+  | { id: number; op: 'rules'; base: string }
 
 export type HostReply = { id: number; ok: unknown } | { id: number; err: string }
 
@@ -226,6 +230,7 @@ export const serveAcl = (
   post: (r: HostReply) => void,
   opts: Partial<AdmitOpts>
 ) => {
+  if (m.op === 'rules') return
   if (m.op === 'local') {
     opts.local = m.local
     return
@@ -354,8 +359,9 @@ export interface WorkerLike {
   terminate(): void
 }
 
-// The evaluator in a worker. Requests run in order; if the worker fails, its rooms are lost: the
-// owner reloads them (`onLost`) into this thread, which serves every request from then on.
+// The evaluator in a worker. Requests run in order; if the worker fails or cannot load the
+// permission rules, its rooms are lost: the owner reloads them (`onLost`) into this thread, which
+// serves every request from then on.
 export class WorkerHost extends Base {
   private worker: WorkerLike | null
   private seq = 0
@@ -371,10 +377,12 @@ export class WorkerHost extends Base {
     this.worker = make()
     this.worker.onmessage = e => this.reply(e.data as HostReply)
     this.worker.onerror = () => this.fallBack()
+    this.worker.postMessage({ id: 0, op: 'rules', base: rulesBase() } satisfies HostRequest)
     if (limits) this.worker.postMessage({ id: 0, op: 'local', local: limits } satisfies HostRequest)
   }
 
   private reply(m: HostReply) {
+    if (m.id === 0 && 'err' in m) return this.fallBack()
     const job = this.jobs.get(m.id)
     if (!job) return
     this.jobs.delete(m.id)
@@ -383,7 +391,8 @@ export class WorkerHost extends Base {
   }
 
   private fallBack() {
-    this.worker?.terminate()
+    if (!this.worker) return
+    this.worker.terminate()
     this.worker = null
     this.local = new LocalHost({ local: this.limits })
     const jobs = [...this.jobs.values()]

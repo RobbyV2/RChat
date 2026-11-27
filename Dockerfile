@@ -30,6 +30,10 @@ RUN bun install --frozen-lockfile
 
 COPY . ./
 COPY --from=rust-builder /app/apps/web/public/wasm ./apps/web/public/wasm
+# The same module as JavaScript, for pages without WebAssembly (binaryen comes from bun.lock).
+COPY --from=rust-builder /usr/local/cargo/bin/wasm-bindgen /usr/local/bin/wasm-bindgen
+COPY --from=rust-builder /app/target/wasm32-unknown-unknown/release/rust_next_wasm.wasm /tmp/rust_next_wasm.wasm
+RUN bun scripts/wasm_js.ts /tmp/rust_next_wasm.wasm
 
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL

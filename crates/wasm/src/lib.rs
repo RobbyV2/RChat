@@ -1,5 +1,7 @@
 use wasm_bindgen::prelude::*;
 
+pub mod perms;
+
 #[wasm_bindgen(start)]
 pub fn init_panic_hook() {
     console_error_panic_hook::set_once();

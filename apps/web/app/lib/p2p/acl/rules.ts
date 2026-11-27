@@ -2,6 +2,16 @@ import { isRecord } from '../../bytes'
 import { bytesOf, canonical, isInt } from '../canonical'
 import { AGREED, LOCAL, type Agreed, type Local } from '../limits'
 import type { EvalResult, Facts, FactsQ } from './facts'
+import {
+  atLeast,
+  channelMask,
+  checkBitsEdit,
+  fromWire,
+  hasBit,
+  outranks as above,
+  toWire,
+  type Rank as PermRank,
+} from '../../perms'
 
 // The rules of P2P server ACL events: event classes, the Authority column (what
 // an event relies on, so what a deny can take away), the guards (admission only) and the
@@ -228,14 +238,55 @@ export const simpleCtx = (F: FactsQ, a: string): AuthCtx => ({
 export const CONTENT_REDACT = 'c:redact'
 export const CONTENT_PIN = 'c:pin'
 
-export function authCore(e: AclEv, x: AuthCtx): boolean {
+// A rank as the shared permission rules read it.
+const tiered = (r: Rank): PermRank =>
+  r[0] === Infinity
+    ? { tier: 'owner' }
+    : r[0] === -Infinity
+      ? { tier: 'outside' }
+      : r[0] === -1 && r[1] === ''
+        ? { tier: 'plain' }
+        : { tier: 'role', pos: r[0], tie: r[1] }
+
+// Wire bits as the shared rules read them: the mask of the bits these rules know, and the rest.
+const split = (wire: number, rules: number) => {
+  const mask = fromWire(wire, rules)
+  return { mask, rest: wire & ~toWire(mask, rules) }
+}
+const splits = new Map<number, Map<number, { mask: number; rest: number }>>()
+const splitOf = (wire: number, rules: number) => {
+  let byWire = splits.get(rules)
+  if (!byWire) splits.set(rules, (byWire = new Map()))
+  let s = byWire.get(wire)
+  if (!s) {
+    if (byWire.size >= 4096) byWire.clear()
+    byWire.set(wire, (s = split(wire, rules)))
+  }
+  return s
+}
+
+// The shared permission rules decide whether a mask holds a bit and whether a rank is above
+// another. Wire bits they do not know are compared bit for bit.
+export function authCore(e: AclEv, x: AuthCtx, rules = RULES_VERSION): boolean {
   const a = e.a
   const c = e.c
   const Fr = x.Fr
   const Fo = x.Fo
   const isMem = Fr.mem.has(a)
-  const has = (b: number) => (permsQ(Fr, a) & b) !== 0
-  const outranks = (r: Rank) => gt(x.me, r)
+  const held = () => splitOf(permsQ(Fr, a), rules)
+  const has = (b: number) => {
+    const mine = held()
+    const asked = splitOf(b, rules)
+    return hasBit(mine.mask, asked.mask) || (mine.rest & asked.rest) !== 0
+  }
+  const within = (bits: number) => {
+    const mine = held()
+    const asked = splitOf(bits, rules)
+    return (
+      checkBitsEdit(mine.mask, false, 0, asked.mask) === null && (asked.rest & ~mine.rest) === 0
+    )
+  }
+  const outranks = (r: Rank) => above(tiered(x.me), tiered(r))
   const codeLive = (cid: string) => Fr.codeOk.has(cid) && !Fo.codeDead.has(cid)
   switch (e.t) {
     case 'genesis':
@@ -265,12 +316,16 @@ export function authCore(e: AclEv, x: AuthCtx): boolean {
         (c.wipe !== true || has(MESSAGES))
       )
     case 'unban':
-      return isMem && has(BAN) && (Fr.effBanK.get(c.to) ?? []).every(kb => cmp(x.me, kb) >= 0)
+      return (
+        isMem &&
+        has(BAN) &&
+        (Fr.effBanK.get(c.to) ?? []).every(kb => atLeast(tiered(x.me), tiered(kb)))
+      )
     case 'timeout':
       if (!atNext(Fr.rules)) return isMem
       return isMem && has(TIMEOUT) && !Fr.owners.has(c.to) && outranks(x.rankT(c.to))
     case 'role_create':
-      return isMem && has(ROLES) && outranks([c.pos, e.id]) && (c.bits & ~permsQ(Fr, a)) === 0
+      return isMem && has(ROLES) && outranks([c.pos, e.id]) && within(c.bits)
     case 'role_move':
       return (
         isMem &&
@@ -463,28 +518,26 @@ export type ChanFacts = Pick<FactsQ, 'owners' | 'bits' | 'holds'> &
 // every bit; else P's permissions, the @everyone overwrite, the channel's restrictions
 // (restrict_view and restrict_send clear ViewChannel and SendMessages from that baseline), the
 // denies then the allows of P's roles' overwrites, and P's own overwrite.
-export function channelPerms(F: ChanFacts, P: string, ch: string): number {
-  if (F.owners.has(P)) return ALL
-  let m = permsQ(F, P)
-  if (m & CHANNELS) return ALL
+export function channelPerms(F: ChanFacts, P: string, ch: string, rules = RULES_VERSION): number {
   const ov = F.overwrites.get(ch)
   const c = F.channels.get(ch)
-  const apply = (o: AclContent | undefined) => {
-    if (o) m = (m & ~(o.deny ?? 0)) | (o.allow ?? 0)
-  }
-  apply(ov?.get(`r:${EVERYONE}`))
-  if (c?.restrict_view === true) m &= ~VIEW
-  if (c?.restrict_send === true) m &= ~SEND
-  let deny = 0
-  let allow = 0
-  for (const R of F.holds.get(P) ?? []) {
-    const o = ov?.get(`r:${R}`)
-    deny |= o?.deny ?? 0
-    allow |= o?.allow ?? 0
-  }
-  m = (m & ~deny) | allow
-  apply(ov?.get(`u:${P}`))
-  return m
+  const row = (o: AclContent | undefined) =>
+    o && { allow: fromWire(o.allow ?? 0, rules), deny: fromWire(o.deny ?? 0, rules) }
+  const owner = F.owners.has(P)
+  const held = permsQ(F, P)
+  const mask = channelMask(
+    owner ? { kind: 'owner' } : { kind: 'member', roles: fromWire(held, rules) },
+    0,
+    {
+      everyone: row(ov?.get(`r:${EVERYONE}`)),
+      restrictView: c?.restrict_view === true,
+      restrictSend: c?.restrict_send === true,
+      roles: [...(F.holds.get(P) ?? [])].flatMap(R => row(ov?.get(`r:${R}`)) ?? []),
+      member: row(ov?.get(`u:${P}`)),
+    },
+    rules
+  )
+  return owner || (held & CHANNELS) !== 0 ? ALL : toWire(mask, rules)
 }
 export const canView = (F: ChanFacts, P: string, ch: string) =>
   (channelPerms(F, P, ch) & VIEW) !== 0
