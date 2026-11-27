@@ -90,7 +90,6 @@ import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard, WidgetLinkCards, WidgetMessageLinkCard } from './message_link_card'
 import { RichEmbeds } from './webhooks'
-import { AltBadge } from './alt_text'
 import { profileTrigger } from './profile_card'
 import { EditedMark } from './message_editor'
 import {
@@ -110,9 +109,11 @@ import { mentionHandle } from '../lib/display_name'
 import { removedLifetime, removedTail } from '../lib/upload_expiry'
 import { useUploadLifetime } from './upload_expiry'
 import { ExpiryLine, FileCard } from './file_card'
-import { fileKind, type FileExtra } from '../lib/file_card'
+import { cardMenu, fileKind, type FileExtra } from '../lib/file_card'
 import { hostedVideo } from '../lib/video_attachment'
 import { useNearView, VideoAttachment, VideoPlaceholder } from './video_attachment'
+import { ViewableImage } from './media_lightbox'
+import { altText } from '../lib/alt_text'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -825,15 +826,19 @@ export function P2pFile({
 
   if (shown !== null) {
     return (
-      <div className="mt-1 w-fit max-w-full">
-        <span className="relative block w-fit max-w-full">
-          <img
-            src={shown.url}
-            alt={media.alt ?? filename}
-            className="max-h-80 max-w-full rounded-xl"
-          />
-          <AltBadge alt={media.alt} own={own} />
-        </span>
+      <ViewableImage
+        message={messageId}
+        item={{
+          src: shown.url,
+          name: filename,
+          own,
+          fileMask: true,
+          size,
+          alt: altText(media.alt),
+        }}
+        menu={cardMenu(filename, { ...card, progress })}
+        className="max-h-80 max-w-full rounded-xl"
+      >
         <span className="mt-1 flex items-center gap-2">
           <span className="max-w-60 truncate text-xs text-on-surface-variant">
             <Masked text={filename} file own={own} />
@@ -841,7 +846,7 @@ export function P2pFile({
           {saveButton}
         </span>
         {meta}
-      </div>
+      </ViewableImage>
     )
   }
 
@@ -902,12 +907,15 @@ export function MediaAttachment({
   own,
   postedAt,
   remove,
+  messageId,
 }: {
   media: MessageMedia
   own: boolean
   postedAt: number
   // Takes the attachment off its message, for whoever may.
   remove?: () => void
+  // Its message, whose group its image opens with in the viewer.
+  messageId?: number
 }) {
   const account = useAccount()
   const {
@@ -935,6 +943,14 @@ export function MediaAttachment({
   const videoSrc = useVideoSrc(id, server, mounted, media.size ?? 0, inView)
   const lang = previews && !image && video === null ? fileLang(filename) : null
   const text = useServerText(id, server, lang !== null && !removed && !hidden)
+  const save = () =>
+    void saveMedia(id, server, filename).catch((err: unknown) => {
+      if (!(err instanceof Ended)) account.store.getState().setError(errorText(err))
+    })
+  const primary = fetched
+    ? { label: 'Download' as const, onClick: save }
+    : { label: 'Download' as const, href: api.mediaUrl(id), download: filename }
+  const menu = { download: save, link: mediaLink(account, id), remove }
   if (removed) {
     return (
       <p className="mt-1 text-xs text-on-surface-variant italic">
@@ -960,7 +976,7 @@ export function MediaAttachment({
     return (
       <div className="mt-1 h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
     )
-  if (image && src !== null) {
+  if (image && typeof src === 'string') {
     if (hidden) {
       return (
         <button
@@ -980,28 +996,27 @@ export function MediaAttachment({
       )
     }
     return (
-      <div className="mt-1 w-fit">
-        <span className="relative block w-fit max-w-full">
-          <a href={src} target="_blank" rel="noreferrer" className="block w-fit">
-            <img src={src} alt={media.alt ?? filename} className="max-h-80 max-w-full rounded-xl" />
-          </a>
-          <AltBadge alt={media.alt} own={own} />
-        </span>
+      <ViewableImage
+        message={messageId}
+        item={{
+          src,
+          name: filename,
+          own,
+          fileMask: true,
+          size: media.size,
+          alt: altText(media.alt),
+        }}
+        menu={cardMenu(filename, { primary, progress: null, menu })}
+        bytes={() => api.mediaBlob(id, server)}
+        className="max-h-80 max-w-full rounded-xl"
+      >
         {expiry}
-      </div>
+      </ViewableImage>
     )
   }
   if (hidden) {
     return <SpoilerCover onReveal={() => setRevealed(true)} />
   }
-  const save = () =>
-    void saveMedia(id, server, filename).catch((err: unknown) => {
-      if (!(err instanceof Ended)) account.store.getState().setError(errorText(err))
-    })
-  const primary = fetched
-    ? { label: 'Download' as const, onClick: save }
-    : { label: 'Download' as const, href: api.mediaUrl(id), download: filename }
-  const menu = { download: save, link: mediaLink(account, id), remove }
   const footer = expires_at !== null && <ExpiryLine at={expires_at} />
   const card = (
     <FileCard
@@ -1380,6 +1395,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
                 own={own}
                 postedAt={message.created_at}
                 remove={remove}
+                messageId={message.id}
               />
             )}
             {remove && (

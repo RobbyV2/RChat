@@ -7,8 +7,17 @@ import { ALT_MAX, altAnnouncement, altError, cleanAlt } from '../lib/alt_text'
 import { Masked } from './ui'
 
 // The ALT pill in the bottom-right corner of an image that has a description; pressing it shows
-// the description over the image.
-export function AltBadge({ alt, own = false }: { alt: string | null | undefined; own?: boolean }) {
+// the description over the image, below the pill or, with `up`, above it where there is no room
+// below (the image viewer).
+export function AltBadge({
+  alt,
+  own = false,
+  up = false,
+}: {
+  alt: string | null | undefined
+  own?: boolean
+  up?: boolean
+}) {
   const [open, setOpen] = useState(false)
   const box = useRef<HTMLSpanElement>(null)
   useEffect(() => {
@@ -19,11 +28,11 @@ export function AltBadge({ alt, own = false }: { alt: string | null | undefined;
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
-    document.addEventListener('pointerdown', away)
-    document.addEventListener('keydown', key)
+    window.addEventListener('pointerdown', away)
+    window.addEventListener('keydown', key)
     return () => {
-      document.removeEventListener('pointerdown', away)
-      document.removeEventListener('keydown', key)
+      window.removeEventListener('pointerdown', away)
+      window.removeEventListener('keydown', key)
     }
   }, [open])
   if (!alt) return null
@@ -47,7 +56,8 @@ export function AltBadge({ alt, own = false }: { alt: string | null | undefined;
         <span
           role="note"
           data-alt-text
-          className="absolute top-full left-0 z-20 mt-1 max-h-60 w-max max-w-[min(20rem,calc(100vw-5rem))] min-w-40 overflow-y-auto rounded-xl bg-surface-container-highest p-3 pr-8 text-xs break-words whitespace-pre-line text-on-surface shadow-elevation-2"
+          data-popover
+          className={`absolute z-20 ${up ? 'right-2 bottom-9' : 'top-full left-0 mt-1'} max-h-60 w-max max-w-[min(20rem,calc(100vw-5rem))] min-w-40 overflow-y-auto rounded-xl bg-surface-container-highest p-3 pr-8 text-xs break-words whitespace-pre-line text-on-surface shadow-elevation-2`}
         >
           <Masked text={alt} own={own} />
           <button

@@ -1,6 +1,6 @@
 import type { Invoke } from './desktop'
 import type { Sharing } from './sharing'
-import { openBlob } from './web_sharing'
+import { canCopyImage, copyImage, openBlob, openOriginal } from './web_sharing'
 
 // Files go to disk in pieces this big, so a large one never sits in memory twice.
 export const CHUNK_BYTES = 4 * 1024 * 1024
@@ -48,6 +48,12 @@ export const desktopSharing = (call: Invoke, report: (message: string) => void):
         () => true,
         () => false
       ),
+    // The webview's own clipboard, which takes images.
+    copyImage,
+    canCopyImage,
+    // A new window opens in the system browser, which can't read the page's `blob:` addresses.
+    canOpenOriginal: src => !src.startsWith('blob:'),
+    openOriginal,
     canShare: () => false,
     share: async () => 'failed',
     saveFile: (name, text, mime) => saveBlob(name, new Blob([text], { type: mime })),

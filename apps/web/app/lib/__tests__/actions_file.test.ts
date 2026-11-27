@@ -1,5 +1,17 @@
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
-import { Copy, Download, FileCode, Image, Link, Play, Trash2, X } from 'lucide-react'
+import {
+  Copy,
+  Download,
+  ExternalLink,
+  FileCode,
+  Image,
+  Images,
+  Link,
+  Maximize2,
+  Play,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { ctxFor, paletteCtx, refreshCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { menuItems, openActionMenu } from '../actions/menu'
@@ -103,6 +115,34 @@ test("the card's own buttons follow its main one, in the card's order", () => {
   ])
 })
 
+test('a shown image opens in the viewer, copies as an image and opens on its own', () => {
+  const ran: string[] = []
+  const t = fixed(
+    card({
+      name: 'cat.png',
+      link: LINK,
+      view: () => void ran.push('view'),
+      copyImage: () => void ran.push('copy'),
+      original: () => void ran.push('original'),
+    })
+  )
+  expect(labels(t)).toEqual([
+    'Download',
+    'Open image',
+    'Copy link',
+    'Copy image',
+    'Open original',
+    'Copy file name',
+  ])
+  expect(items(t).map(i => i.icon)).toEqual([Download, Maximize2, Link, Images, ExternalLink, Copy])
+  for (const label of ['Open image', 'Copy image', 'Open original']) row(t, label)?.action?.()
+  expect(ran).toEqual(['view', 'copy', 'original'])
+  expect(labels(fixed(card({ view: null, copyImage: null, original: null })))).toEqual([
+    'Download',
+    'Copy file name',
+  ])
+})
+
 test('whoever may take the attachment off its message gets Remove attachment last', () => {
   let removed = 0
   const t = fixed(card({ link: LINK, remove: () => removed++ }))
@@ -171,11 +211,14 @@ test('file actions are message scope, join only file cards and stay out of the p
   expect(file.map(a => a.id)).toEqual([
     'file_download',
     'file_cancel',
+    'file_view_image',
     'file_show_image',
     'file_show_preview',
     'file_play_audio',
     'file_play_video',
     'file_copy_link',
+    'file_copy_image',
+    'file_open_original',
     'file_copy_name',
     'file_remove',
   ])

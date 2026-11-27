@@ -153,7 +153,8 @@ export const EXTRAS: Record<FileExtra['kind'], { label: string; icon: LucideIcon
 // What a card's menu acts on, as the card is now: `name` as shown, `verb` its main button's
 // ("Save" for a P2P file on the device), `download` while one may start, `cancel` while one
 // runs, `extra` its other buttons, `link` the instance's address of a file it hosts, `remove`
-// takes the attachment off its message for whoever may.
+// takes the attachment off its message for whoever may. A shown image also opens in the viewer
+// (`view`), copies as an image (`copyImage`) and opens on its own in a new tab (`original`).
 export interface FileMenu {
   name: string
   verb: 'Download' | 'Save'
@@ -162,6 +163,9 @@ export interface FileMenu {
   extra: FileExtra[]
   link: string | null
   remove: (() => void) | null
+  view?: (() => void) | null
+  copyImage?: (() => void) | null
+  original?: (() => void) | null
 }
 
 // What a caller gives a card's or video's menu besides its buttons.

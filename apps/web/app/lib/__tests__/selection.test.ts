@@ -278,6 +278,10 @@ describe('selection store', () => {
         copied.push(text)
         return true
       },
+      copyImage: async () => false,
+      canCopyImage: () => false,
+      canOpenOriginal: () => false,
+      openOriginal: () => {},
       canShare: () => false,
       share: async () => 'failed',
       saveFile: () => true,

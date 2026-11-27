@@ -1,6 +1,6 @@
 // The menu of a file card, hosted or P2P. Each row reads the card as it is when it runs.
 
-import { Copy, Download, Link, Trash2, X } from 'lucide-react'
+import { Copy, Download, ExternalLink, Images, Link, Maximize2, Trash2, X } from 'lucide-react'
 import { EXTRAS, type FileExtra } from '../file_card'
 import { sharing } from '../platform'
 import type { Action, ActionCtx } from './types'
@@ -45,6 +45,15 @@ export const fileActions: Action[] = [
     available: ctx => !!cardOf(ctx)?.cancel,
     run: ctx => cardOf(ctx)?.cancel?.(),
   },
+  {
+    id: 'file_view_image',
+    title: 'Open image',
+    icon: Maximize2,
+    ...file,
+    order: 105,
+    available: ctx => !!cardOf(ctx)?.view,
+    run: ctx => cardOf(ctx)?.view?.(),
+  },
   extra('image', 'file_show_image', 110),
   extra('preview', 'file_show_preview', 120),
   extra('audio', 'file_play_audio', 130),
@@ -60,6 +69,24 @@ export const fileActions: Action[] = [
       const link = cardOf(ctx)?.link
       if (link) copy(link)
     },
+  },
+  {
+    id: 'file_copy_image',
+    title: 'Copy image',
+    icon: Images,
+    ...file,
+    order: 205,
+    available: ctx => !!cardOf(ctx)?.copyImage,
+    run: ctx => cardOf(ctx)?.copyImage?.(),
+  },
+  {
+    id: 'file_open_original',
+    title: 'Open original',
+    icon: ExternalLink,
+    ...file,
+    order: 207,
+    available: ctx => !!cardOf(ctx)?.original,
+    run: ctx => cardOf(ctx)?.original?.(),
   },
   {
     id: 'file_copy_name',

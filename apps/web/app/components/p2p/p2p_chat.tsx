@@ -41,7 +41,8 @@ import {
 } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { outgoing } from '../../lib/link_safety'
-import { openActionMenu } from '../../lib/actions/menu'
+import { actionPress, openActionMenu } from '../../lib/actions/menu'
+import type { Target } from '../../lib/actions/types'
 import { peerChat } from '../../lib/actions/p2p_chat'
 import { noticeOpen } from '../../lib/home'
 import { useHome } from '../../lib/home_store'
@@ -100,6 +101,7 @@ import { p2pUnread, p2pUnreadStart } from '../../lib/unread_banner'
 import { Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
+import { LightboxList } from '../media_lightbox'
 import { namePasted } from '../message_composer'
 import { FormatToolbar, useFormatting } from '../format_toolbar'
 import { P2pCallRow } from './p2p_call'
@@ -370,6 +372,7 @@ export const P2pRow = memo(function P2pRow({
         att={vouchedAtts ?? p.fwd?.att ?? p.att}
         canFetch={canAct}
         own={!p.fwd && mine}
+        message={p.id}
       />
       <ReactionBar m={m} canReact={write && held.react} canRemove={write} />
       {threads && !!p.replies && !p.archived && (
@@ -1060,10 +1063,11 @@ export function useP2pList({
     [editingState, scope]
   )
 
-  const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
-    if (p.system?.kind === 'pin')
-      return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m }, undefined, acct, identity)
-    const chat = {
+  const rowTarget = (p: P2pMessage, m: Message): Target => ({
+    kind: 'p2p_message',
+    p,
+    m,
+    chat: {
       draftKey,
       canAct,
       timedOut,
@@ -1073,11 +1077,15 @@ export function useP2pList({
       forwardSkip,
       threads,
       ownName,
-    }
+    },
+  })
+  const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
+    if (p.system?.kind === 'pin')
+      return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m }, undefined, acct, identity)
     openActionMenu(
       x,
       y,
-      { kind: 'p2p_message', p, m, chat },
+      rowTarget(p, m),
       canAct && !timedOut && held.react && !p.archived
         ? {
             header: (
@@ -1091,12 +1099,21 @@ export function useP2pList({
       identity
     )
   }
-  const menuRef = useRef(menu)
+  const forward = (id: string) => {
+    const row = rows.find(r => r.p.id === id)
+    return row ? actionPress('p2p_message_forward', rowTarget(row.p, row.m), acct, identity) : null
+  }
+  const menuRef = useRef({ menu, forward })
   useEffect(() => {
-    menuRef.current = menu
+    menuRef.current = { menu, forward }
   })
   const rowMenu = useCallback(
-    (p: P2pMessage, m: Message, x: number, y: number) => menuRef.current(p, m, x, y),
+    (p: P2pMessage, m: Message, x: number, y: number) => menuRef.current.menu(p, m, x, y),
+    []
+  )
+  // What the image viewer's Forward button runs for message `id`.
+  const forwardRow = useCallback(
+    (id: string | number) => (typeof id === 'string' ? menuRef.current.forward(id) : null),
     []
   )
   const copyRow = useCallback(
@@ -1115,6 +1132,7 @@ export function useP2pList({
     editing,
     editingState,
     rowMenu,
+    forwardRow,
     copyRow,
     picker,
     setPicker,
@@ -1276,6 +1294,7 @@ function IdentityChatBody(props: ChatBodyProps) {
     editing,
     editingState,
     rowMenu,
+    forwardRow,
     copyRow,
     picker,
     setPicker,
@@ -1433,79 +1452,84 @@ function IdentityChatBody(props: ChatBodyProps) {
                 {props.empty}
               </div>
             )}
-            <div ref={contentRef}>
-              {chat.more && (
-                <div className="flex justify-center py-2">
-                  <button onClick={() => void p2pDm.loadOlderPage()} className={textBtn}>
-                    Show older messages
-                  </button>
-                </div>
-              )}
-              {gapNote}
-              {rows.map(({ p, m }, i) => (
-                <Fragment key={p.id}>
-                  {days.has(i) && <DateDivider at={m.created_at} />}
-                  {p.system?.kind === 'pin' ? (
-                    <P2pPinRow
-                      p={p}
-                      m={m}
-                      divider={i === divider}
-                      place={props.pinsPlace}
-                      onMenu={(row, x, y) => rowMenu(row, m, x, y)}
-                    />
-                  ) : p.system ? (
-                    <P2pSystemRow m={m} divider={i === divider} />
-                  ) : p.removed ? (
-                    <P2pHiddenRow m={m} divider={i === divider} />
-                  ) : p.slowHidden ? (
-                    <P2pSlowRow m={m} divider={i === divider} />
-                  ) : p.call ? (
-                    <P2pCallRow p={p} me={me} />
-                  ) : (
-                    <P2pRow
-                      p={p}
-                      m={m}
-                      first={places[i]?.first ?? true}
-                      last={places[i]?.last ?? true}
-                      mine={p.sender === me}
-                      pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
-                      mentioned={pingsMe(p, me)}
-                      divider={i === divider}
-                      flash={flash === m.id}
-                      canAct={canAct && !p.archived}
-                      timedOut={timedOut}
-                      canDelete={mayDelete(p)}
-                      editing={editing && editingState?.id === p.id ? editing : null}
-                      draftKey={key}
-                      threads
-                      onMenu={rowMenu}
-                      onCopy={copyRow}
-                      onJump={rowJump}
-                      {...rowLook(props.lookOf?.(p.sender))}
-                    />
-                  )}
-                </Fragment>
-              ))}
-              {chat.newer && (
-                <div
-                  data-p2p-newer
-                  className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 text-xs text-on-surface-variant"
-                >
-                  <History size={14} />
-                  Newer messages aren&apos;t shown.
-                  <button
-                    onClick={() => void p2pDm.loadNewerPage()}
-                    disabled={chat.loading}
-                    className={textBtn}
+            <LightboxList
+              rows={() => ({ ids: messages.map(p => p.id), places })}
+              forward={forwardRow}
+            >
+              <div ref={contentRef}>
+                {chat.more && (
+                  <div className="flex justify-center py-2">
+                    <button onClick={() => void p2pDm.loadOlderPage()} className={textBtn}>
+                      Show older messages
+                    </button>
+                  </div>
+                )}
+                {gapNote}
+                {rows.map(({ p, m }, i) => (
+                  <Fragment key={p.id}>
+                    {days.has(i) && <DateDivider at={m.created_at} />}
+                    {p.system?.kind === 'pin' ? (
+                      <P2pPinRow
+                        p={p}
+                        m={m}
+                        divider={i === divider}
+                        place={props.pinsPlace}
+                        onMenu={(row, x, y) => rowMenu(row, m, x, y)}
+                      />
+                    ) : p.system ? (
+                      <P2pSystemRow m={m} divider={i === divider} />
+                    ) : p.removed ? (
+                      <P2pHiddenRow m={m} divider={i === divider} />
+                    ) : p.slowHidden ? (
+                      <P2pSlowRow m={m} divider={i === divider} />
+                    ) : p.call ? (
+                      <P2pCallRow p={p} me={me} />
+                    ) : (
+                      <P2pRow
+                        p={p}
+                        m={m}
+                        first={places[i]?.first ?? true}
+                        last={places[i]?.last ?? true}
+                        mine={p.sender === me}
+                        pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
+                        mentioned={pingsMe(p, me)}
+                        divider={i === divider}
+                        flash={flash === m.id}
+                        canAct={canAct && !p.archived}
+                        timedOut={timedOut}
+                        canDelete={mayDelete(p)}
+                        editing={editing && editingState?.id === p.id ? editing : null}
+                        draftKey={key}
+                        threads
+                        onMenu={rowMenu}
+                        onCopy={copyRow}
+                        onJump={rowJump}
+                        {...rowLook(props.lookOf?.(p.sender))}
+                      />
+                    )}
+                  </Fragment>
+                ))}
+                {chat.newer && (
+                  <div
+                    data-p2p-newer
+                    className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 text-xs text-on-surface-variant"
                   >
-                    Show newer
-                  </button>
-                  <button onClick={() => void p2pDm.toPresent()} className={textBtn}>
-                    Jump to present
-                  </button>
-                </div>
-              )}
-            </div>
+                    <History size={14} />
+                    Newer messages aren&apos;t shown.
+                    <button
+                      onClick={() => void p2pDm.loadNewerPage()}
+                      disabled={chat.loading}
+                      className={textBtn}
+                    >
+                      Show newer
+                    </button>
+                    <button onClick={() => void p2pDm.toPresent()} className={textBtn}>
+                      Jump to present
+                    </button>
+                  </div>
+                )}
+              </div>
+            </LightboxList>
           </div>
         </div>
         <div className="relative shrink-0">

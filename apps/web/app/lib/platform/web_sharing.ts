@@ -11,6 +11,51 @@ const copyText = async (text: string) => {
   }
 }
 
+// An image drawn into a canvas, as PNG: what the clipboard takes for every image type. PNG bytes
+// go as they are.
+export const asPng = async (image: Blob | HTMLImageElement): Promise<Blob> => {
+  if (image instanceof Blob && image.type === 'image/png') return image
+  const bitmap = await createImageBitmap(image)
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(png => (png ? resolve(png) : reject(new Error('no image'))), 'image/png')
+  )
+}
+
+export const canCopyImage = () =>
+  typeof ClipboardItem !== 'undefined' &&
+  typeof createImageBitmap === 'function' &&
+  typeof nav()?.clipboard?.write === 'function'
+
+// The clipboard item is made at once and its bytes follow, so a browser that asks for a recent
+// click sees the one that copied.
+export const copyImage = async (image: Blob | HTMLImageElement | Promise<Blob>) => {
+  if (!canCopyImage()) {
+    if (image instanceof Promise) image.catch(() => {})
+    return false
+  }
+  const png = Promise.resolve(image).then(asPng)
+  png.catch(() => {})
+  try {
+    await nav()!.clipboard.write([new ClipboardItem({ 'image/png': png })])
+    return true
+  } catch {
+    return false
+  }
+}
+
+// An iPhone or iPad home screen app opens new windows in Safari, which can't read its `blob:`
+// addresses.
+const homeScreenIos = () => (nav() as { standalone?: unknown } | null)?.standalone === true
+
+export const canOpenOriginal = (src: string) => !(src.startsWith('blob:') && homeScreenIos())
+
+export const openOriginal = (src: string) => void window.open(src, '_blank', 'noopener,noreferrer')
+
 const canShare = () => typeof nav()?.share === 'function'
 
 const share = async (data: ShareData): Promise<ShareResult> => {
@@ -115,6 +160,10 @@ const print = (html: string) =>
 
 export const webSharing: Sharing = {
   copyText,
+  copyImage,
+  canCopyImage,
+  canOpenOriginal,
+  openOriginal,
   canShare,
   share,
   saveFile,

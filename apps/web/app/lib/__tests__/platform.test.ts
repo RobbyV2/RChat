@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { notifications, setNotifier, setSharing, sharing } from '../platform'
-import { webSharing } from '../platform/web_sharing'
+import { asPng, webSharing } from '../platform/web_sharing'
 import { desktopSharing } from '../platform/desktop_sharing'
 import { mobileSharing } from '../platform/mobile'
 import { permissionOf } from '../platform/notifications'
@@ -8,7 +8,14 @@ import { webNotifier } from '../platform/web_notifications'
 import { fakeNotifier } from './fake_notifier'
 
 const g = globalThis as Record<string, unknown>
-const saved = ['Notification', 'window', 'document', 'navigator'].map(k => [k, g[k]] as const)
+const saved = [
+  'Notification',
+  'window',
+  'document',
+  'navigator',
+  'ClipboardItem',
+  'createImageBitmap',
+].map(k => [k, g[k]] as const)
 
 afterEach(() => {
   for (const [k, v] of saved) g[k] = v
@@ -180,6 +187,89 @@ describe('sharing', () => {
       share: async () => Promise.reject(new DOMException('no', 'AbortError')),
     })
     expect(await webSharing.share({ url: 'u' })).toBe('cancelled')
+  })
+
+  // A browser whose images decode into `w` by `h` bitmaps drawn into canvases that make PNGs.
+  const drawing = (w: number, h: number) => {
+    const drawn: unknown[] = []
+    g.createImageBitmap = async (source: unknown) => ({
+      width: w,
+      height: h,
+      source,
+      close: () => {},
+    })
+    g.document = {
+      createElement: () => {
+        const canvas = {
+          width: 0,
+          height: 0,
+          getContext: () => ({ drawImage: (bitmap: unknown) => void drawn.push(bitmap) }),
+          toBlob: (done: (b: Blob | null) => void, type: string) =>
+            done(new Blob([`${canvas.width}x${canvas.height}`], { type })),
+        }
+        return canvas
+      },
+    }
+    return drawn
+  }
+
+  test('an image becomes PNG at its own size; PNG bytes go as they are', async () => {
+    const drawn = drawing(4, 3)
+    const png = new Blob(['p'], { type: 'image/png' })
+    expect(await asPng(png)).toBe(png)
+    const out = await asPng(new Blob(['j'], { type: 'image/jpeg' }))
+    expect([out.type, await out.text(), drawn.length]).toEqual(['image/png', '4x3', 1])
+  })
+
+  test('the web adapter copies an image as PNG where the clipboard takes images', async () => {
+    drawing(2, 2)
+    const written: Record<string, Promise<Blob>>[] = []
+    class Item {
+      constructor(public items: Record<string, Promise<Blob>>) {
+        written.push(items)
+      }
+    }
+    // Like a browser, the clipboard waits for the bytes of what it writes.
+    nav({
+      clipboard: {
+        write: async (items: Item[]) => {
+          for (const item of items) for (const bytes of Object.values(item.items)) await bytes
+        },
+      },
+    })
+    expect(webSharing.canCopyImage()).toBe(false)
+    expect(await webSharing.copyImage(new Blob(['j'], { type: 'image/jpeg' }))).toBe(false)
+    g.ClipboardItem = Item
+    expect(webSharing.canCopyImage()).toBe(true)
+    expect(await webSharing.copyImage(new Blob(['j'], { type: 'image/jpeg' }))).toBe(true)
+    expect(Object.keys(written[0])).toEqual(['image/png'])
+    expect((await written[0]['image/png']).type).toBe('image/png')
+    const fetched = Promise.resolve(new Blob(['w'], { type: 'image/webp' }))
+    expect(await webSharing.copyImage(fetched)).toBe(true)
+    expect((await written[1]['image/png']).type).toBe('image/png')
+    expect(await webSharing.copyImage(Promise.reject(new Error('offline')))).toBe(false)
+    nav({ clipboard: { write: async () => Promise.reject(new Error('denied')) } })
+    expect(await webSharing.copyImage(new Blob(['j'], { type: 'image/jpeg' }))).toBe(false)
+    nav({})
+    expect(webSharing.canCopyImage()).toBe(false)
+  })
+
+  test("the web opens an image on its own; a home screen iPhone app and the shells not the page's blobs", () => {
+    const opened: unknown[][] = []
+    g.window = { open: (...a: unknown[]) => void opened.push(a) }
+    expect(webSharing.canOpenOriginal('blob:https://x/1')).toBe(true)
+    nav({ standalone: true })
+    expect(webSharing.canOpenOriginal('blob:https://x/1')).toBe(false)
+    expect(webSharing.canOpenOriginal('https://x/api/media/f1')).toBe(true)
+    nav({ standalone: false })
+    expect(webSharing.canOpenOriginal('blob:https://x/1')).toBe(true)
+    webSharing.openOriginal('blob:https://x/1')
+    expect(opened).toEqual([['blob:https://x/1', '_blank', 'noopener,noreferrer']])
+    const call = async () => null as never
+    for (const shell of [mobileSharing(call, () => {}), desktopSharing(call, () => {})]) {
+      expect(shell.canOpenOriginal('blob:https://x/1')).toBe(false)
+      expect(shell.canOpenOriginal('https://chat.example/api/media/f1')).toBe(true)
+    }
   })
 
   test('the web adapter prints where the window can; the shells do not', async () => {

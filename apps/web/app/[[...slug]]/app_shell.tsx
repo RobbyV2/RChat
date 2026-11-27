@@ -26,6 +26,7 @@ import { pollAccountCounts, startAccountCounts } from '../lib/client/account_cou
 import { startApp } from '../lib/start'
 import { shareLoginHref } from '../lib/client/share_target'
 import { ContextMenu } from '../components/context_menu'
+import { MediaLightbox } from '../components/media_lightbox'
 import { ReactionPickerHost } from '../components/reactions'
 import { ProfileCard } from '../components/profile_card'
 import { ServerRail } from '../components/server_rail'
@@ -312,6 +313,7 @@ function OverlayLayer() {
       <BanDialog />
       <ExternalLinkDialog />
       <SettingsMenu />
+      <MediaLightbox />
       <ConfirmDialog />
       <ProfileCard />
       <ContextMenu />

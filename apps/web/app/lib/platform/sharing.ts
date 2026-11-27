@@ -13,6 +13,14 @@ export type ShareResult = 'shared' | 'cancelled' | 'failed'
 export interface Sharing {
   // Resolves false when the platform refused (no permission, insecure context).
   copyText: (text: string) => Promise<boolean>
+  // Copies an image (its bytes, now or to come, or a decoded image the page shows) as PNG; false
+  // when the platform refused or can't. `canCopyImage`: whether it can work here at all.
+  copyImage: (image: Blob | HTMLImageElement | Promise<Blob>) => Promise<boolean>
+  canCopyImage: () => boolean
+  // Opens an image the page shows (`src`) on its own, outside the app's page;
+  // `canOpenOriginal` says whether that address opens here.
+  canOpenOriginal: (src: string) => boolean
+  openOriginal: (src: string) => void
   canShare: () => boolean
   share: (data: ShareData) => Promise<ShareResult>
   // Offers `text` as a file download / save dialog; false when the platform can't.

@@ -8,7 +8,7 @@ import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { ReactionBar } from './reactions'
 import { useChannelPerms } from '../lib/client/use_channel_perms'
 import { messageRights, replyAccess } from '../lib/actions/message'
-import { openActionMenu } from '../lib/actions/menu'
+import { actionPress, openActionMenu } from '../lib/actions/menu'
 import { myRank, roleColor, roleLook, threadKey, useStore } from '../lib/store'
 import type { Look } from '../lib/role_looks'
 import { outranksKnown } from '../lib/hierarchy'
@@ -45,6 +45,7 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { PanelHeader, useEscape } from './ui'
+import { LightboxList } from './media_lightbox'
 import { BlockedComposer, BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
 import { ReplyPreview } from './replies'
@@ -382,86 +383,96 @@ export default function ThreadPanel() {
   }
 
   return (
-    <ThreadPanelView
-      onClose={closePanel}
-      bars={
-        <>
-          {wide && <SelectionBar scope={key} sheet={false} compact />}
-          <BulkJobBar scope={key} />
-        </>
-      }
-      overlays={
-        <>
-          {older?.loading && <OlderLoading />}
-          {newer?.loading && <OlderLoading newer />}
-          {detached && !newer?.loading && <PresentBar onJump={() => void jumpToPresent(key)} />}
-          {!detached && positioned && fresh > 0 && (
-            <PresentBar count={fresh} onJump={scroll.toBottom} />
-          )}
-        </>
-      }
-      listRef={listRef}
-      contentRef={contentRef}
-      onScroll={onScroll}
-      head={
-        positioned &&
-        replies.length > 0 &&
-        older?.more !== false && (
-          <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
-        )
-      }
-      root={row(root, ALONE)}
-      count={root.reply_count}
-      replies={
-        <BlockedList
-          messages={replies}
-          focusId={focus?.id ?? null}
-          dayAbove={rootAt}
-          row={(m, i) => (
-            <Selectable key={m.id} m={m} scope={key}>
-              {row(m, places[i] ?? ALONE)}
-            </Selectable>
-          )}
-          tail={lastShownAt => (
-            <>
-              {stale && replies.length === 0 && root.reply_count > 0 && (
-                <MessageListSkeleton seed={key} variant="panel" label="Loading replies" />
-              )}
-              {positioned && detached && replies.length > 0 && (
-                <EdgeSentinel
-                  key={`n${replies[replies.length - 1].id}`}
-                  root={listRef}
-                  edge="bottom"
-                  onVisible={() => {
-                    if (newer?.loading) return
-                    snapEdge()
-                    void loadNewerThread()
-                  }}
+    <LightboxList
+      rows={() => ({ ids: replies.map(m => m.id), places })}
+      forward={id => {
+        const m = id === root.id ? root : replies.find(x => x.id === id)
+        return m
+          ? actionPress('message_forward', { kind: 'message', message: m, list: key }, acct)
+          : null
+      }}
+    >
+      <ThreadPanelView
+        onClose={closePanel}
+        bars={
+          <>
+            {wide && <SelectionBar scope={key} sheet={false} compact />}
+            <BulkJobBar scope={key} />
+          </>
+        }
+        overlays={
+          <>
+            {older?.loading && <OlderLoading />}
+            {newer?.loading && <OlderLoading newer />}
+            {detached && !newer?.loading && <PresentBar onJump={() => void jumpToPresent(key)} />}
+            {!detached && positioned && fresh > 0 && (
+              <PresentBar count={fresh} onJump={scroll.toBottom} />
+            )}
+          </>
+        }
+        listRef={listRef}
+        contentRef={contentRef}
+        onScroll={onScroll}
+        head={
+          positioned &&
+          replies.length > 0 &&
+          older?.more !== false && (
+            <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
+          )
+        }
+        root={row(root, ALONE)}
+        count={root.reply_count}
+        replies={
+          <BlockedList
+            messages={replies}
+            focusId={focus?.id ?? null}
+            dayAbove={rootAt}
+            row={(m, i) => (
+              <Selectable key={m.id} m={m} scope={key}>
+                {row(m, places[i] ?? ALONE)}
+              </Selectable>
+            )}
+            tail={lastShownAt => (
+              <>
+                {stale && replies.length === 0 && root.reply_count > 0 && (
+                  <MessageListSkeleton seed={key} variant="panel" label="Loading replies" />
+                )}
+                {positioned && detached && replies.length > 0 && (
+                  <EdgeSentinel
+                    key={`n${replies[replies.length - 1].id}`}
+                    root={listRef}
+                    edge="bottom"
+                    onVisible={() => {
+                      if (newer?.loading) return
+                      snapEdge()
+                      void loadNewerThread()
+                    }}
+                  />
+                )}
+                <OutboxRows
+                  msgKey={key}
+                  outgoing={outgoing}
+                  places={places.slice(replies.length)}
+                  dayAbove={lastShownAt}
+                  size={30}
                 />
-              )}
-              <OutboxRows
-                msgKey={key}
-                outgoing={outgoing}
-                places={places.slice(replies.length)}
-                dayAbove={lastShownAt}
-                size={30}
-              />
-            </>
-          )}
-        />
-      }
-      footer={
-        <>
-          <TypingIndicator scope={key} server={server} bg="bg-surface-container-low" />
-          {selecting && !wide ? (
-            <SelectionBar scope={key} sheet />
-          ) : dmOther ? (
-            <BlockedComposer user={dmOther} />
-          ) : (
-            <MessageComposer thread />
-          )}
-        </>
-      }
-    />
+              </>
+            )}
+          />
+        }
+        footer={
+          <>
+            <TypingIndicator scope={key} server={server} bg="bg-surface-container-low" />
+            {selecting && !wide ? (
+              <SelectionBar scope={key} sheet />
+            ) : dmOther ? (
+              <BlockedComposer user={dmOther} />
+            ) : (
+              <MessageComposer thread />
+            )}
+          </>
+        }
+      />
+    </LightboxList>
   )
 }

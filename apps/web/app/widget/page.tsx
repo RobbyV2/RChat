@@ -18,6 +18,7 @@ import { plainStamps } from '../lib/timestamps'
 import { ShortTime } from '../components/timestamp'
 import { MarkdownMessage } from '../components/markdown_message'
 import { ContextMenu, longPress } from '../components/context_menu'
+import { LightboxList, MediaLightbox } from '../components/media_lightbox'
 import { TextComposer } from '../components/text_composer'
 import { UserAvatar } from '../components/user_avatar'
 import { fieldCls, filledBtn, Masked, textBtn } from '../components/ui'
@@ -305,15 +306,20 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
       <div className="min-h-16 min-w-0 flex-1 overflow-auto p-3" aria-label="Messages">
         <WidgetForwardAccess.Provider value={fwd => copyAccess(fwd, client)}>
           <WidgetLinkCards.Provider value={client.linkCards}>
-            {rows.map((message, i) => (
-              <ChatRow
-                key={message.id}
-                message={message}
-                place={groups[i]}
-                client={client}
-                reply={setReply}
-              />
-            ))}
+            <LightboxList
+              rows={() => ({ ids: rows.map(m => m.id), places: groups })}
+              forward={() => null}
+            >
+              {rows.map((message, i) => (
+                <ChatRow
+                  key={message.id}
+                  message={message}
+                  place={groups[i]}
+                  client={client}
+                  reply={setReply}
+                />
+              ))}
+            </LightboxList>
           </WidgetLinkCards.Provider>
         </WidgetForwardAccess.Provider>
         <div ref={bottom} />
@@ -589,6 +595,7 @@ export default function WidgetPage() {
           )}
         </details>
       )}
+      <MediaLightbox />
       <ContextMenu />
       <ViewingPrompt />
     </main>

@@ -48,7 +48,7 @@ import { useChannelPerms } from '../lib/client/use_channel_perms'
 import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
 import { messageRights, replyAccess } from '../lib/actions/message'
-import { openActionMenu, useHasMenu } from '../lib/actions/menu'
+import { actionPress, openActionMenu, useHasMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
 import {
   byUsername,
@@ -94,6 +94,7 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { Masked, useEscape, useOwnServer } from './ui'
+import { LightboxList } from './media_lightbox'
 import { FitName, NameWithUsername } from './display_name'
 import { showsUsername } from '../lib/display_name'
 import { PingBadge, pingLabel } from './ping_badge'
@@ -1293,74 +1294,93 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     <span className="text-sm">Be the first to say something.</span>
                   </div>
                 ))}
-              <div ref={contentRef}>
-                {positioned && messages.length > 0 && older?.more !== false && (
-                  <EdgeSentinel key={messages[0].id} root={listRef} edge="top" onVisible={onTop} />
-                )}
-                <BlockedList
-                  messages={messages}
-                  focusId={focus?.id ?? null}
-                  dividerAt={dividerIndex}
-                  divider={unreadDivider}
-                  row={(m, i) => (
-                    <Selectable m={m} scope={scope}>
-                      <MessageRow
-                        m={m}
-                        first={places[i]?.first ?? true}
-                        last={places[i]?.last ?? true}
-                        mentioned={mentionedIds.has(m.id)}
-                        divider={i === dividerIndex}
-                        flash={flash === m.id}
-                        canDelete={canDelete(m)}
-                        canReact={canReact}
-                        canVote={canWrite}
-                        canUnreact={canUnreact}
-                        canReply={replies.quote}
-                        canThread={replies.thread}
-                        canEdit={canEdit(m)}
-                        canForward={forwardable(m)}
-                        editing={editingId === m.id}
-                        server={memberServer}
-                        {...authorLook(
-                          roleLook(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])
+              <LightboxList
+                rows={() => ({ ids: messages.map(m => m.id), places })}
+                forward={id => {
+                  const m = messages.find(x => x.id === id)
+                  return m && scope
+                    ? actionPress(
+                        'message_forward',
+                        { kind: 'message', message: m, list: scope },
+                        acct
+                      )
+                    : null
+                }}
+              >
+                <div ref={contentRef}>
+                  {positioned && messages.length > 0 && older?.more !== false && (
+                    <EdgeSentinel
+                      key={messages[0].id}
+                      root={listRef}
+                      edge="top"
+                      onVisible={onTop}
+                    />
+                  )}
+                  <BlockedList
+                    messages={messages}
+                    focusId={focus?.id ?? null}
+                    dividerAt={dividerIndex}
+                    divider={unreadDivider}
+                    row={(m, i) => (
+                      <Selectable m={m} scope={scope}>
+                        <MessageRow
+                          m={m}
+                          first={places[i]?.first ?? true}
+                          last={places[i]?.last ?? true}
+                          mentioned={mentionedIds.has(m.id)}
+                          divider={i === dividerIndex}
+                          flash={flash === m.id}
+                          canDelete={canDelete(m)}
+                          canReact={canReact}
+                          canVote={canWrite}
+                          canUnreact={canUnreact}
+                          canReply={replies.quote}
+                          canThread={replies.thread}
+                          canEdit={canEdit(m)}
+                          canForward={forwardable(m)}
+                          editing={editingId === m.id}
+                          server={memberServer}
+                          {...authorLook(
+                            roleLook(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])
+                          )}
+                          quoteColor={
+                            m.reply_to?.author
+                              ? roleColor(
+                                  detail?.roles,
+                                  memberFor(m.reply_to.author.username)?.role_ids ?? []
+                                )
+                              : undefined
+                          }
+                          onMenu={rowMenu}
+                          onReply={rowReply}
+                          onEdit={rowEdit}
+                          onJump={rowJump}
+                        />
+                      </Selectable>
+                    )}
+                    tail={lastShownAt => (
+                      <>
+                        {positioned && detached && messages.length > 0 && (
+                          <EdgeSentinel
+                            key={`n${messages[messages.length - 1].id}`}
+                            root={listRef}
+                            edge="bottom"
+                            onVisible={onBottom}
+                          />
                         )}
-                        quoteColor={
-                          m.reply_to?.author
-                            ? roleColor(
-                                detail?.roles,
-                                memberFor(m.reply_to.author.username)?.role_ids ?? []
-                              )
-                            : undefined
-                        }
-                        onMenu={rowMenu}
-                        onReply={rowReply}
-                        onEdit={rowEdit}
-                        onJump={rowJump}
-                      />
-                    </Selectable>
-                  )}
-                  tail={lastShownAt => (
-                    <>
-                      {positioned && detached && messages.length > 0 && (
-                        <EdgeSentinel
-                          key={`n${messages[messages.length - 1].id}`}
-                          root={listRef}
-                          edge="bottom"
-                          onVisible={onBottom}
-                        />
-                      )}
-                      {view && (
-                        <OutboxRows
-                          msgKey={viewKey(view)}
-                          outgoing={outgoing}
-                          places={places.slice(messages.length)}
-                          dayAbove={lastShownAt}
-                        />
-                      )}
-                    </>
-                  )}
-                />
-              </div>
+                        {view && (
+                          <OutboxRows
+                            msgKey={viewKey(view)}
+                            outgoing={outgoing}
+                            places={places.slice(messages.length)}
+                            dayAbove={lastShownAt}
+                          />
+                        )}
+                      </>
+                    )}
+                  />
+                </div>
+              </LightboxList>
             </div>
           </div>
           <div className="relative shrink-0">

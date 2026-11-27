@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
 import { Copy, Trash2 } from 'lucide-react'
 import { ctxFor, currentList, paletteCtx, refreshCtx } from '../actions/ctx'
-import { menuItems, openActionMenu } from '../actions/menu'
+import { actionPress, menuItems, openActionMenu } from '../actions/menu'
 import { paletteCommands } from '../actions/palette'
 import {
   actionById,
@@ -245,6 +245,54 @@ test('a choice in a submenu runs with its value', async () => {
   menuItems(ctx('menu', m5))[0].submenu?.[0].action?.()
   await Promise.resolve()
   expect(got).toEqual([{ level: 'all' }])
+})
+
+test('a button for one action runs it, or shows its choices where it is pressed', async () => {
+  const got: (Args | string)[] = []
+  let allowed = true
+  def({
+    id: 't_go',
+    title: 'Go',
+    scope: 'message',
+    targets: ['message'],
+    available: () => allowed,
+    run: () => void got.push('go'),
+  })
+  def({
+    id: 't_pick',
+    title: 'Pick',
+    scope: 'message',
+    targets: ['message'],
+    available: () => true,
+    run: (_c, a) => void got.push(a),
+    args: [
+      {
+        kind: 'choice',
+        name: 'to',
+        prompt: 'To',
+        choices: () => [
+          { value: 'a', label: 'A' },
+          { value: 'b', label: 'B' },
+        ],
+      },
+    ],
+  })
+  const go = actionPress('t_go', m5)
+  go?.(1, 2)
+  await Promise.resolve()
+  expect(got).toEqual(['go'])
+  expect(actionPress('t_none', m5)).toBeNull()
+  allowed = false
+  expect(actionPress('t_go', m5)).toBeNull()
+  go?.(1, 2)
+  await Promise.resolve()
+  expect(got).toEqual(['go'])
+  actionPress('t_pick', m5)?.(30, 40)
+  const menu = useStore.getState().contextMenu
+  expect([menu?.x, menu?.y, menu?.items.map(i => i.label)]).toEqual([30, 40, ['A', 'B']])
+  menu?.items[1].action?.()
+  await Promise.resolve()
+  expect(got).toEqual(['go', { to: 'b' }])
 })
 
 test('a confirm step asks through askConfirm in a menu; menuRun replaces the steps', async () => {

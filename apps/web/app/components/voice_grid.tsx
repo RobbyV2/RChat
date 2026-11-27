@@ -1462,7 +1462,10 @@ export function CallBanner() {
       <CallOwner>
         <VoiceAudio />
       </CallOwner>
-      <div className="pointer-events-none fixed inset-x-0 top-app z-50 flex max-h-[calc(100dvh-var(--safe-top))] flex-col items-center gap-2 overflow-y-auto pt-3 pb-5 empty:hidden">
+      <div
+        data-call-banner
+        className="pointer-events-none fixed inset-x-0 top-app z-50 flex max-h-[calc(100dvh-var(--safe-top))] flex-col items-center gap-2 overflow-y-auto pt-3 pb-5 empty:hidden"
+      >
         {sessions.map(account => (
           <AccountProvider key={account.renderKey} session={account}>
             <CallBannerBody />

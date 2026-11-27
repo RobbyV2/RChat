@@ -43,6 +43,7 @@ import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
 import { MessageListSkeleton } from '../skeletons'
+import { LightboxList } from '../media_lightbox'
 
 // The thread of a P2P server channel or conversation beside it (full screen on phones): its root,
 // the replies stored here and a composer, through the same panel as instance threads.
@@ -186,23 +187,34 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
   const held = f.can ?? CAN_ALL
   const replies = t.messages ?? EMPTY
   const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])
-  const { rows, num, idOf, source, editing, editingState, rowMenu, copyRow, picker, setPicker } =
-    useP2pList({
-      messages: all,
-      nameOf,
-      userOf,
-      ownName,
-      people,
-      draftKey: key,
-      scope,
-      canAct,
-      timedOut,
-      mayPin: false,
-      mayDelete,
-      forwardSkip: null,
-      threads: false,
-      can: held,
-    })
+  const {
+    rows,
+    num,
+    idOf,
+    source,
+    editing,
+    editingState,
+    rowMenu,
+    forwardRow,
+    copyRow,
+    picker,
+    setPicker,
+  } = useP2pList({
+    messages: all,
+    nameOf,
+    userOf,
+    ownName,
+    people,
+    draftKey: key,
+    scope,
+    canAct,
+    timedOut,
+    mayPin: false,
+    mayDelete,
+    forwardSkip: null,
+    threads: false,
+    can: held,
+  })
   const head = t.head ? rows[0] : null
   const list = useMemo(() => (t.head ? rows.slice(1) : rows), [rows, t.head])
   const shared = useMemo(() => list.map(r => r.m), [list])
@@ -293,64 +305,66 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
     <ChannelCanContext.Provider value={held}>
       <ChatSourceProvider value={source}>
         <div data-p2p-thread className="contents">
-          <ThreadPanelView
-            peer
-            onClose={p2pThread.close}
-            overlays={
-              scroll.positioned &&
-              fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />
-            }
-            listRef={listRef}
-            contentRef={contentRef}
-            onScroll={scroll.onScroll}
-            head={
-              t.more && (
-                <div className="flex justify-center py-2">
-                  <button onClick={() => void p2pThread.loadOlder()} className={textBtn}>
-                    Show older replies
-                  </button>
-                </div>
-              )
-            }
-            root={
-              head ? (
-                row(head, true, ALONE)
-              ) : (
-                <p className="px-4 py-1.5 text-sm text-on-surface-variant italic">
-                  {t.loading ? 'Loading…' : 'Message unavailable'}
-                </p>
-              )
-            }
-            count={t.head?.replies ?? replies.length}
-            replies={list.map((r, i) => (
-              <Fragment key={r.p.id}>
-                {days.has(i) && <DateDivider at={r.m.created_at} />}
-                {row(r, false, places[i] ?? ALONE)}
-              </Fragment>
-            ))}
-            tail={
-              t.loading &&
-              replies.length === 0 &&
-              (t.head?.replies ?? 1) > 0 && (
-                <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
-              )
-            }
-            footer={
-              <>
-                <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
-                <P2pComposer
-                  draftKey={key}
-                  channelTextOnly={f.textOnly}
-                  unstarted={!t.loading && !t.head?.replies && replies.length === 0}
-                  scope={scope}
-                  title="the thread"
-                  placeholder="Message thread"
-                  nameOf={nameOf}
-                  disabled={disabled}
-                />
-              </>
-            }
-          />
+          <LightboxList rows={() => ({ ids: list.map(r => r.p.id), places })} forward={forwardRow}>
+            <ThreadPanelView
+              peer
+              onClose={p2pThread.close}
+              overlays={
+                scroll.positioned &&
+                fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />
+              }
+              listRef={listRef}
+              contentRef={contentRef}
+              onScroll={scroll.onScroll}
+              head={
+                t.more && (
+                  <div className="flex justify-center py-2">
+                    <button onClick={() => void p2pThread.loadOlder()} className={textBtn}>
+                      Show older replies
+                    </button>
+                  </div>
+                )
+              }
+              root={
+                head ? (
+                  row(head, true, ALONE)
+                ) : (
+                  <p className="px-4 py-1.5 text-sm text-on-surface-variant italic">
+                    {t.loading ? 'Loading…' : 'Message unavailable'}
+                  </p>
+                )
+              }
+              count={t.head?.replies ?? replies.length}
+              replies={list.map((r, i) => (
+                <Fragment key={r.p.id}>
+                  {days.has(i) && <DateDivider at={r.m.created_at} />}
+                  {row(r, false, places[i] ?? ALONE)}
+                </Fragment>
+              ))}
+              tail={
+                t.loading &&
+                replies.length === 0 &&
+                (t.head?.replies ?? 1) > 0 && (
+                  <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
+                )
+              }
+              footer={
+                <>
+                  <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
+                  <P2pComposer
+                    draftKey={key}
+                    channelTextOnly={f.textOnly}
+                    unstarted={!t.loading && !t.head?.replies && replies.length === 0}
+                    scope={scope}
+                    title="the thread"
+                    placeholder="Message thread"
+                    nameOf={nameOf}
+                    disabled={disabled}
+                  />
+                </>
+              }
+            />
+          </LightboxList>
           {picker && (
             <EmojiPicker
               anchor={picker.anchor?.isConnected ? picker.anchor : null}

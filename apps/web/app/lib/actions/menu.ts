@@ -191,6 +191,26 @@ export const openChoiceMenu = (
   if (items?.length) st.openContextMenu(x, y, items, opts)
 }
 
+// What a button for the action `id` on `target` does when pressed at a point: runs the action, or
+// shows its choices as a menu there, as the action is at the press. Null while it isn't
+// available.
+export const actionPress = (
+  id: string,
+  target: Target,
+  acct = client.shown(),
+  identity?: ActionCtx['identity']
+): ((x: number, y: number) => void) | null => {
+  const now = () => itemFor(id, ctxFor(acct.store.getState(), target, 'menu', acct, identity))
+  const item = now()
+  if (!item || item.disabled) return null
+  return (x, y) => {
+    const at = now()
+    if (!at || at.disabled) return
+    if (at.submenu?.length) openChoiceMenu(x, y, id, target, {}, acct, identity)
+    else at.action?.()
+  }
+}
+
 // An open action menu (or sheet) follows actions defined or removed while it shows, and keeps
 // its state while its rows stay the same.
 const refreshOpenMenu = () => {

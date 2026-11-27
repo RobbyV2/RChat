@@ -1,6 +1,6 @@
 'use client'
 import { altText, describableFile } from '../../lib/alt_text'
-import { AltBadge, AltField } from '../alt_text'
+import { AltField } from '../alt_text'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -18,7 +18,8 @@ import type { Attachment } from '../../lib/p2p/content'
 import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
 import { FileCard } from '../file_card'
-import { fileKind, pct } from '../../lib/file_card'
+import { cardMenu, fileKind, pct } from '../../lib/file_card'
+import { ViewableImage } from '../media_lightbox'
 import { VideoAttachment } from '../video_attachment'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
@@ -86,7 +87,19 @@ function useFileUrl(h: string, ready: boolean) {
   return url
 }
 
-function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own: boolean }) {
+function Tile({
+  att,
+  canFetch,
+  own,
+  message,
+  index,
+}: {
+  att: Attachment
+  canFetch: boolean
+  own: boolean
+  message?: string
+  index: number
+}) {
   const identity = useP2pApp()!
   const { p2pFiles } = identity
 
@@ -98,6 +111,7 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
   const url = useFileUrl(att.h, done && !!v.type && kindOf(v.type) !== null)
   const { label } = useInstanceLabel()
   const thumb = useThumb(done ? undefined : att.thumb)
+  const placeholder = useThumb(done ? att.thumb : undefined)
   useEffect(() => {
     if (!textOnly) p2pFiles.watch(att)
   }, [att, textOnly])
@@ -113,7 +127,10 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
       att={att}
       canFetch={canFetch}
       own={own}
+      message={message}
+      index={index}
       v={v}
+      placeholder={placeholder}
       url={url}
       thumb={thumb}
       save={() => void p2pFiles.save(att)}
@@ -125,12 +142,16 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
 }
 
 // A P2P attachment as its state `v` shows it, with `url` the stored file once it plays inline
-// and `thumb` its checked preview.
+// and `thumb` its checked preview. An image opens in the viewer with the others of its
+// `message`'s group, `index` being its place among the message's attachments.
 export function TileView({
   att,
   canFetch,
   own,
+  message,
+  index = 0,
   v,
+  placeholder = null,
   url,
   thumb,
   save,
@@ -141,7 +162,11 @@ export function TileView({
   att: Attachment
   canFetch: boolean
   own: boolean
+  message?: string
+  index?: number
   v: FileView | undefined
+  // The checked preview of a stored image, shown in the viewer while the image loads.
+  placeholder?: string | null
   url: string | null
   thumb: string | null
   save: () => void
@@ -175,6 +200,20 @@ export function TileView({
     </span>
   )
 
+  const card = {
+    name: clean,
+    own,
+    fileMask: false,
+    kind: fileKind(clean, att.mime),
+    size: att.size,
+    detail: att.dur !== undefined ? ` · ${fmtDur(att.dur)}` : undefined,
+    dashed: true,
+    primary: done
+      ? { label: 'Save' as const, onClick: save }
+      : { label: 'Download' as const, onClick: get, disabled: !canGet },
+    menu: { download: done ? save : canGet ? get : null, link: null },
+  }
+
   if (hidden) {
     if (kind === 'image' && url)
       return (
@@ -201,34 +240,29 @@ export function TileView({
 
   if (done && url && kind === 'image')
     return (
-      <div data-p2p-file={att.h} className="mt-1 w-fit max-w-full">
-        <span className="relative block w-fit max-w-full">
-          <img
-            src={url}
-            alt={altText(att.alt) ?? name}
-            width={att.w}
-            height={att.h_px}
-            className="h-auto max-h-80 w-auto max-w-full rounded-xl"
-          />
-          <AltBadge alt={altText(att.alt)} own={own} />
-        </span>
+      <ViewableImage
+        message={message}
+        index={index}
+        item={{
+          src: url,
+          name: clean,
+          own,
+          fileMask: false,
+          size: att.size,
+          w: att.w,
+          h: att.h_px,
+          placeholder,
+          alt: altText(att.alt),
+        }}
+        menu={cardMenu(clean, { ...card, progress: null })}
+        width={att.w}
+        height={att.h_px}
+        className="h-auto max-h-80 w-auto max-w-full rounded-xl"
+        data={{ 'data-p2p-file': att.h }}
+      >
         {caption}
-      </div>
+      </ViewableImage>
     )
-
-  const card = {
-    name: clean,
-    own,
-    fileMask: false,
-    kind: fileKind(clean, att.mime),
-    size: att.size,
-    detail: att.dur !== undefined ? ` · ${fmtDur(att.dur)}` : undefined,
-    dashed: true,
-    primary: done
-      ? { label: 'Save' as const, onClick: save }
-      : { label: 'Download' as const, onClick: get, disabled: !canGet },
-    menu: { download: done ? save : canGet ? get : null, link: null },
-  }
 
   const stored = (
     <p className="mt-2 text-xs text-on-surface-variant">
@@ -300,21 +334,24 @@ export function TileView({
   )
 }
 
-// `own`: files you sent, whose names are never masked for you.
+// `own`: files you sent, whose names are never masked for you. `message`: the message they are
+// attached to, whose group their images open with in the viewer.
 export function AttachmentList({
   att,
   canFetch,
   own = false,
+  message,
 }: {
   att: Attachment[]
   canFetch: boolean
   own?: boolean
+  message?: string
 }) {
   if (!att.length) return null
   return (
     <div className="flex flex-col gap-1">
-      {att.map(a => (
-        <Tile key={a.h} att={a} canFetch={canFetch} own={own} />
+      {att.map((a, i) => (
+        <Tile key={a.h} att={a} canFetch={canFetch} own={own} message={message} index={i} />
       ))}
     </div>
   )
