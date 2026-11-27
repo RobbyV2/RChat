@@ -75,6 +75,7 @@ const room = (id: string, people: number, sensitive?: true) =>
     owners: [],
     channels: [{ id: 'vc', name: 'vc', kind: 'voice', pos: 0, sensitive }],
     chans: {},
+    members: [],
     voice: {
       vc: Array.from({ length: people }, (_, i) => ({
         ik: `k${i}`,

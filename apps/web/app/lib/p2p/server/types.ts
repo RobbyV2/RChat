@@ -204,6 +204,11 @@ export interface MemberView {
   myInvite: boolean
   // Banned, and our rank is at least that of every ban of them (unban).
   unban: boolean
+  // Banned for a time: when it ends (ms), and whether we made that ban.
+  banUntil?: number
+  banMine?: true
+  // Banned: the reason given.
+  banReason?: string
   // Their roles, the highest first, and the highest (the member list groups by it).
   roles: string[]
   top: string | null
@@ -254,6 +259,8 @@ export interface ServerView {
   // The tab reading this room is still waiting for its resolved ACL on disk.
   awaitingAcl?: boolean
   textOnlyChannels?: boolean
+  // Bans may end by themselves and wipe a window of messages.
+  timedBans?: true
   id: string
   name: string
   color: number | null

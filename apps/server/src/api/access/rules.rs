@@ -239,14 +239,7 @@ pub(super) async fn channel_viewable(
 }
 
 pub(super) async fn is_banned(db: &Db, server: &str, username: &str) -> sqlx::Result<bool> {
-    Ok(
-        sqlx::query("SELECT 1 FROM server_bans WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(username)
-            .fetch_optional(db)
-            .await?
-            .is_some(),
-    )
+    crate::api::bans::banned(db, server, username).await
 }
 
 fn password_live(at: &str) -> String {

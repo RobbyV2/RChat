@@ -141,6 +141,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "servers",
         "profiles_mode TEXT NOT NULL DEFAULT 'all' CHECK(profiles_mode IN ('all','no_names','off'))",
     ),
+    ("server_bans", "expires_at {INT}"),
+    ("server_bans", "reason TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -259,13 +261,14 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 46: provider ownership of directory group aliases and indexed claim digests.
 /// 47: server profiles (`member_profiles`, `servers.profiles_mode`).
 /// 48: the Reset server profiles permission, given to roles and admin permission sets with Kick.
-pub const SCHEMA_VERSION: i64 = 48;
+/// 49: timed bans with a reason (`server_bans.expires_at`, `server_bans.reason`).
+pub const SCHEMA_VERSION: i64 = 49;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 18] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 19] {
     [
         "CREATE INDEX IF NOT EXISTS idx_tokens_sso ON tokens(sso_provider, sso_sid) WHERE sso_sid IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",
@@ -292,6 +295,7 @@ pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 18] {
         "CREATE INDEX IF NOT EXISTS idx_media_timed_expiry ON media((uploaded_at + ttl)) WHERE ttl > 0",
         "CREATE INDEX IF NOT EXISTS idx_media_kept ON media(ttl) WHERE ttl IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_servers_upload_expiry_by ON servers(upload_expiry_by) WHERE upload_expiry_by IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_server_bans_expires ON server_bans(expires_at) WHERE expires_at IS NOT NULL",
     ]
 }
 

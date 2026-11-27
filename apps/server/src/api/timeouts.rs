@@ -167,7 +167,7 @@ async fn moderator(db: &Db, access: &ServerAccess, target: &str) -> Result<audit
         .staff_if(bypassed))
 }
 
-fn clean_reason(reason: Option<String>) -> Result<Option<String>, ApiError> {
+pub(crate) fn clean_reason(reason: Option<String>) -> Result<Option<String>, ApiError> {
     match reason
         .map(|r| r.trim().to_string())
         .filter(|r| !r.is_empty())

@@ -3387,6 +3387,7 @@ async fn stale_rows_are_swept() {
             config_shares: 2,
             audit_log: 1,
             member_timeouts: 1,
+            server_bans: 0,
             bulk_delete_jobs: 1,
             webhook_deliveries: 0,
             recovery_challenges: 1,
@@ -8588,4 +8589,46 @@ async fn announcement_tables_are_added_and_dismissals_survive_restart() {
             close(&db).await;
         }
     }).await;
+}
+
+#[tokio::test]
+async fn ban_options_keep_existing_bans_without_an_end() {
+    on_each_database("ban_options_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for sql in [
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'Club', 1)",
+            "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('club', 'bob', 'alice', 7)",
+            "DROP INDEX idx_server_bans_expires",
+            "ALTER TABLE server_bans DROP COLUMN expires_at",
+            "ALTER TABLE server_bans DROP COLUMN reason",
+            "UPDATE settings SET value = '48' WHERE key = 'schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        assert_eq!(count(&db, STORED_SCHEMA).await, 48);
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(index_count(&db, "idx_server_bans_expires").await, 1);
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM server_bans WHERE server = 'club' AND username = 'bob' AND banned_by = 'alice' AND created_at = 7 AND expires_at IS NULL AND reason IS NULL").await,
+                1,
+                "{round}: the old ban has no end and no reason"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM server_bans WHERE username = 'carol' AND expires_at = 99 AND reason = 'spam'").await,
+                i64::from(round == 1),
+                "{round}: a timed ban survives a restart"
+            );
+            if round == 0 {
+                sqlx::query("INSERT INTO server_bans(server, username, banned_by, created_at, expires_at, reason) VALUES('club', 'carol', 'alice', 8, 99, 'spam')")
+                    .execute(&db)
+                    .await
+                    .expect("timed ban");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
 }

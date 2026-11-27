@@ -695,13 +695,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
     let (member, banned, history) = match who.username {
         Some(u) => (
             is_member(db, &key, u).await?,
-            exists(
-                db,
-                "SELECT 1 FROM server_bans WHERE server = $1 AND username = $2",
-                &key,
-                u,
-            )
-            .await?,
+            crate::api::bans::banned(db, &key, u).await?,
             exists(
                 db,
                 "SELECT 1 FROM interactions WHERE server = $1 AND username = $2",
@@ -1977,6 +1971,43 @@ impl ResolvedMessage {
             true => Ok(()),
             false => Err(forbidden("Not allowed")),
         }
+    }
+}
+
+/// Whether `actor` may delete `author`'s messages in channel `channel_id`: the channel through
+/// the gate for `actor`, then the rule of `ResolvedMessage::require_can_delete` for a message of
+/// `author` there. `None` for a channel `actor` can't see.
+pub(crate) async fn may_delete_in(
+    db: &Db,
+    actor: &User,
+    channel_id: i64,
+    author: &str,
+) -> Result<Option<bool>, ApiError> {
+    let channel = match resolve_channel(db, channel_id, Some(actor), &Proof::none()).await {
+        Ok(channel) => channel,
+        Err(e) if e.failed() => return Err(e),
+        Err(_) => return Ok(None),
+    };
+    let message = ResolvedMessage {
+        scope: MsgScope {
+            channel_id: Some(channel_id),
+            dm_id: None,
+            thread_root_id: None,
+            kind: "user".to_string(),
+            author: author.to_string(),
+            media_id: None,
+            media_filename: None,
+            media_kind: MediaKind::Server,
+            server: Some(channel.server().name().to_string()),
+            dm_users: None,
+        },
+        channel: Some(channel),
+        user: Some(actor.clone()),
+    };
+    match message.require_can_delete(db).await {
+        Ok(()) => Ok(Some(true)),
+        Err(e) if e.failed() => Err(e),
+        Err(_) => Ok(Some(false)),
     }
 }
 

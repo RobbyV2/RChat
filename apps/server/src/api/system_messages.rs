@@ -562,7 +562,7 @@ mod tests {
             State(state.clone()),
             Authed(mem_user("alice", false)),
             Path("club".to_string()),
-            target("carol"),
+            Json(crate::api::bans::BanReq::forever("carol")),
         )
         .await
         .expect("ban");
@@ -570,7 +570,7 @@ mod tests {
             State(state.clone()),
             Authed(mem_user("alice", false)),
             Path("club".to_string()),
-            target("erin"),
+            Json(crate::api::bans::BanReq::forever("erin")),
         )
         .await
         .expect("ban a non-member");

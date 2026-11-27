@@ -34,6 +34,8 @@ import { SettingSwitch } from '../settings_fields'
 import { ServerProfilesMode } from './p2p_server_profile'
 import { ChannelAccess, MemberCard, roleMenuItems, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
+import { banStateText, timedBan } from '../../lib/p2p/ban_expiry'
+import { useNow } from '../timeout_dialog'
 import { hex, nameColor } from '../../lib/p2p/roles'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
@@ -435,6 +437,7 @@ function Members({ v }: { v: ServerView }) {
 
   const me = useP2p(s => s.me)
   const ask = useStore(s => s.askConfirm)
+  const openDialog = useStore(s => s.openDialog)
   const kick = can(v, P.Kick)
   const ban = can(v, P.Ban)
   const list = v.members
@@ -496,7 +499,9 @@ function Members({ v }: { v: ServerView }) {
             )}
             {m.ik !== me && !m.owner && ban && m.below && (
               <button
-                onClick={() => ask(banRequest(v, m.ik, who(m.name)))}
+                onClick={() =>
+                  openDialog({ kind: 'ban_request', request: banRequest(v, m.ik, who(m.name)) })
+                }
                 className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
               >
                 Ban
@@ -522,6 +527,7 @@ function Bans({ v }: { v: ServerView }) {
   const { p2pServer } = identity
 
   const lift = can(v, P.Ban)
+  const now = useNow(v.members.some(timedBan), 30_000)
   const list = v.members.filter(m => m.m === 'ban').sort((a, b) => a.name.localeCompare(b.name))
   const [shown, setShown] = useState(PAGE)
   const more = useCallback(() => setShown(n => n + PAGE), [])
@@ -536,6 +542,11 @@ function Bans({ v }: { v: ServerView }) {
               <button onClick={() => void p2pServer.unban(v.id, m.ik)} className={textBtn}>
                 Lift ban
               </button>
+            )}
+            {(timedBan(m) || (lift && m.banReason)) && (
+              <span className="basis-full pl-11 text-xs break-words text-on-surface-variant">
+                {[banStateText(m, now), lift ? m.banReason : null].filter(Boolean).join(' · ')}
+              </span>
             )}
           </MemberLine>
         ))}

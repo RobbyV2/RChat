@@ -1,4 +1,4 @@
-import { RULES_VERSION, gt, restricts, type Rank } from '../acl/rules'
+import { RULES_VERSION, gt, restricts, timedBans, type Rank } from '../acl/rules'
 import type { MemberSum, Summary } from '../acl/summary'
 import { cleanName } from '../keys'
 import { roomLock, shownRoomProfile } from '../../profile_reset'
@@ -8,6 +8,7 @@ import { serverWire, type EventRecord, type OutboxRecord, type RoomRecord } from
 import { reactionsOf, type P2pMessage } from '../dm'
 import { around, type PageOpts } from '../jump'
 import { LIMITS as EV, type MsgContent } from '../content'
+import { clip } from '../rate'
 import type { Local } from '../limits'
 import {
   can,
@@ -133,6 +134,15 @@ export function serverView(
       waits: m.m === 'invite' && m.waits === true && env.trying(m.ik),
       myInvite: m.m === 'invite' && !!m.inviters?.length && m.inviters.every(x => x === env.me),
       unban: m.m === 'ban' && banner && !!meRank && (!m.banRank || !gt(m.banRank, meRank)),
+      ...(m.m === 'ban' && m.banUntil !== undefined
+        ? {
+            banUntil: m.banUntil,
+            ...(m.banBy === env.me ? { banMine: true as const } : {}),
+          }
+        : {}),
+      ...(m.m === 'ban' && m.banReason !== undefined
+        ? { banReason: clip(m.banReason, env.lim.display.reason) }
+        : {}),
       roles: m.m === 'join' ? sortRoles(m.roles, at) : [],
       top: m.m === 'join' ? topRoleOf(s, m.ik) : null,
     }))
@@ -143,6 +153,7 @@ export function serverView(
   return {
     id: room,
     textOnlyChannels: s.rules === RULES_VERSION,
+    ...(timedBans(s.rules) ? { timedBans: true as const } : {}),
     name: n?.name ?? r.name ?? 'P2P server',
     color: n?.color ?? null,
     me,

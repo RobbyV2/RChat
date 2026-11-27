@@ -812,7 +812,7 @@ pub(crate) async fn add_account(
             continue;
         }
         let inserted = sqlx::query(
-            "INSERT INTO members(server, username, is_admin, joined_at) SELECT s.name, $2, 0, $3 FROM servers s WHERE s.name = $1 AND COALESCE(s.password_hash, '') <> '!purging' AND NOT EXISTS(SELECT 1 FROM server_bans b WHERE b.server = s.name AND b.username = $2)",
+            "INSERT INTO members(server, username, is_admin, joined_at) SELECT s.name, $2, 0, $3 FROM servers s WHERE s.name = $1 AND COALESCE(s.password_hash, '') <> '!purging' AND NOT EXISTS(SELECT 1 FROM server_bans b WHERE b.server = s.name AND b.username = $2 AND (b.expires_at IS NULL OR b.expires_at > $3))",
         )
         .bind(server)
         .bind(key)

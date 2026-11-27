@@ -20,6 +20,7 @@ use crate::api::access::{
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
 use crate::api::auth::{Work, clean_multiline, hash_in, new_token, present};
+use crate::api::bans::{self, BanOptions, BanReq, BanResp};
 use crate::api::categories::{
     announce, bump, channel_order, layout_version, listed, load_layout, rank, seen_version,
     server_categories, write_layout,
@@ -405,6 +406,10 @@ pub struct ServerBan {
     pub user: UserRef,
     /// When the ban was created, Unix seconds.
     pub banned_at: i64,
+    /// When the ban ends, Unix seconds; `null` for a ban without an end.
+    pub expires_at: Option<i64>,
+    /// The reason given with the ban.
+    pub reason: Option<String>,
 }
 
 /// The viewer's relation to an invited server: `member` (already a member), `banned` (banned
@@ -455,12 +460,12 @@ pub struct Invite {
 pub struct MembersQuery {
     /// Legacy offset paging: number of items to skip (negative counts as 0). Ignored when
     /// `cursor` is given.
-    offset: Option<i64>,
+    pub(crate) offset: Option<i64>,
     /// Page size, default 50, clamped to 1-50.
-    limit: Option<i64>,
+    pub(crate) limit: Option<i64>,
     /// Opaque cursor from the previous page's `X-Next-Cursor` header. Blank means the first
     /// page.
-    cursor: Option<String>,
+    pub(crate) cursor: Option<String>,
 }
 
 /// Query parameters for listing your servers.
@@ -2890,19 +2895,14 @@ pub(crate) async fn insert_member_locked(
     if is_member(&mut *tx, server, username).await? {
         return Ok(None);
     }
-    let banned = sqlx::query("SELECT 1 FROM server_bans WHERE server = $1 AND username = $2")
-        .bind(server)
-        .bind(username)
-        .fetch_optional(&mut *tx)
-        .await?
-        .is_some();
+    let banned = crate::api::bans::banned(&mut *tx, server, username).await?;
     if banned {
         return Err(forbidden(BANNED));
     }
     room_in_server(tx, limits, server).await?;
     room_for_account(tx, limits, username).await?;
     let inserted = sqlx::query(
-        "INSERT INTO members(server, username, is_admin, joined_at, joined_via) SELECT $1, $2, 0, $3, $4 WHERE NOT EXISTS(SELECT 1 FROM server_bans WHERE server = $1 AND username = $2) ON CONFLICT(server, username) DO NOTHING",
+        "INSERT INTO members(server, username, is_admin, joined_at, joined_via) SELECT $1, $2, 0, $3, $4 WHERE NOT EXISTS(SELECT 1 FROM server_bans WHERE server = $1 AND username = $2 AND (expires_at IS NULL OR expires_at > $3)) ON CONFLICT(server, username) DO NOTHING",
     )
     .bind(server)
     .bind(username)
@@ -4399,8 +4399,14 @@ pub(crate) async fn kick_member(
 /// Ban a user
 ///
 /// Bans `username` from the server: they are removed with their roles dropped, taken out of the
-/// server's voice channels, and blocked from rejoining until unbanned. Works on non-members too,
-/// and banning someone already banned succeeds without changes. Requires the Kick server
+/// server's voice channels, and blocked from rejoining until unbanned. Works on non-members too.
+/// `duration_secs` (60 seconds to two years) ends the ban by itself; without it the ban holds
+/// until someone lifts it. `reason` (at most 300 characters) is kept with the ban and in the
+/// audit log. `purge_hours` (0 to 168) also deletes the messages the user sent in that many
+/// hours before now, in the background: one bulk delete job of yours per channel and thread,
+/// only where you may delete that user's messages. `purge_skipped` and `purge_busy` count the
+/// places left alone.
+/// Banning someone already banned replaces the ban's end and reason. Requires the Kick server
 /// permission, and the target's server permissions must be a strict subset of yours. Banning a
 /// member posts a `leave` system message like leaving does (no reason shown). Emits
 /// `member_kicked` (with `banned: true`) to the server and the user when they were a member,
@@ -4414,10 +4420,10 @@ pub(crate) async fn kick_member(
     path = "/api/v1/servers/{name}/bans",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
-    request_body = UsernameReq,
+    request_body = BanReq,
     responses(
-        (status = 200, description = "User banned", body = OkResp),
-        (status = 400, description = "You can't ban yourself, or `Invalid username` (reason `invalid`, field `username`) for a name no account could have (blank, longer than 100 characters, or with `@`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 200, description = "User banned", body = BanResp),
+        (status = 400, description = "You can't ban yourself, `duration_secs` outside 60 to 63072000, `purge_hours` outside 0 to 168, a reason over 300 characters, or `Invalid username` (reason `invalid`, field `username`) for a name no account could have (blank, longer than 100 characters, or with `@`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Kick permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
@@ -4430,9 +4436,15 @@ pub(crate) async fn ban_member(
     State(state): State<AppState>,
     Authed(user): Authed,
     Path(name): Path<String>,
-    Json(req): Json<UsernameReq>,
-) -> Result<Json<OkResp>, ApiError> {
-    let target = req.username.to_lowercase();
+    Json(req): Json<BanReq>,
+) -> Result<Json<BanResp>, ApiError> {
+    let BanReq {
+        username,
+        duration_secs,
+        reason,
+        purge_hours,
+    } = req;
+    let target = username.to_lowercase();
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::Kick).await?;
     let key = access.name().to_string();
@@ -4442,6 +4454,12 @@ pub(crate) async fn ban_member(
     if !crate::api::names::could_be_username(&target) {
         return Err(ApiError::invalid("Invalid username", "username"));
     }
+    let t = now();
+    let BanOptions {
+        expires_at,
+        reason,
+        purge_hours,
+    } = bans::options(duration_secs, reason, purge_hours, t)?;
     let held = match is_member(&state.db, &key, &target).await? {
         true => None,
         false => Some(lookup::outside_ban(&state, &user)?),
@@ -4457,24 +4475,43 @@ pub(crate) async fn ban_member(
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
-    let banned = sqlx::query(
-        "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES($1, $2, $3, $4) ON CONFLICT(server, username) DO NOTHING",
+    let before = sqlx::query(
+        "SELECT expires_at, reason FROM server_bans WHERE server = $1 AND username = $2 AND (expires_at IS NULL OR expires_at > $3)",
     )
     .bind(&key)
     .bind(&target)
-    .bind(&user.username)
-    .bind(now())
-    .execute(&mut *tx)
+    .bind(t)
+    .fetch_optional(&mut *tx)
     .await?
-    .rows_affected()
-        > 0;
+    .map(|r| Ok::<_, sqlx::Error>((r.try_get::<Option<i64>, _>(0)?, r.try_get::<Option<String>, _>(1)?)))
+    .transpose()?;
+    let changed = before.as_ref() != Some(&(expires_at, reason.clone()));
+    if changed {
+        sqlx::query(
+            "INSERT INTO server_bans(server, username, banned_by, created_at, expires_at, reason) VALUES($1, $2, $3, $4, $5, $6) ON CONFLICT(server, username) DO UPDATE SET banned_by = excluded.banned_by, created_at = excluded.created_at, expires_at = excluded.expires_at, reason = excluded.reason",
+        )
+        .bind(&key)
+        .bind(&target)
+        .bind(&user.username)
+        .bind(t)
+        .bind(expires_at)
+        .bind(reason.as_deref())
+        .execute(&mut *tx)
+        .await?;
+    }
     let ended = end_membership(&mut tx, &key, &target).await?;
-    if banned || ended.is_some() {
+    if changed || ended.is_some() {
         audit::record(
             &mut tx,
             Entry::new(&key, &actor, audit::Action::MemberBan)
                 .target(Target::user(&target))
-                .details(Details::new().set("was_member", ended.is_some())),
+                .details(
+                    Details::new()
+                        .set("was_member", ended.is_some())
+                        .set("expires_at", expires_at)
+                        .set("reason", reason.clone())
+                        .set("purge_hours", purge_hours),
+                ),
         )
         .await?;
     }
@@ -4497,7 +4534,28 @@ pub(crate) async fn ban_member(
     if let Some(held) = held {
         held.spend();
     }
-    Ok(ok())
+    let purge = match purge_hours {
+        0 => bans::Purge::default(),
+        hours => bans::enqueue_purge(&state.db, &user, &key, &target, t - hours * 3600).await?,
+    };
+    let bans::Purge {
+        jobs,
+        skipped: purge_skipped,
+        busy: purge_busy,
+    } = purge;
+    let purge_places = jobs.len() as i64;
+    bans::spawn_purge(&state, jobs);
+    let still = match changed {
+        true => expires_at,
+        false => before.and_then(|(until, _)| until),
+    };
+    Ok(Json(BanResp {
+        ok: true,
+        expires_at: still,
+        purge_places,
+        purge_skipped,
+        purge_busy,
+    }))
 }
 
 /// Unban a user
@@ -4583,24 +4641,51 @@ pub(crate) async fn list_bans(
         limit,
         cursor,
     } = q;
-    let (bans, more) = recent_pairs(
-        db,
-        "SELECT username, created_at FROM server_bans WHERE server = $1 ORDER BY created_at DESC, username DESC LIMIT $2 OFFSET $3",
-        "SELECT username, created_at FROM server_bans WHERE server = $1 AND (created_at, username) < ($2, $3) ORDER BY created_at DESC, username DESC LIMIT $4",
-        key,
-        pair_cursor(cursor.as_deref())?,
-        offset.unwrap_or(0).max(0),
-        limit.unwrap_or(50).clamp(1, 50),
-    )
-    .await?;
-    let next = pair_next(more, bans.last());
-    let names: Vec<String> = bans.iter().map(|(name, _)| name.clone()).collect();
+    let t = now();
+    let limit = limit.unwrap_or(50).clamp(1, 50);
+    let rows = match pair_cursor(cursor.as_deref())? {
+        Some((at, name)) => {
+            sqlx::query("SELECT username, created_at, expires_at, reason FROM server_bans WHERE server = $1 AND (expires_at IS NULL OR expires_at > $2) AND (created_at, username) < ($3, $4) ORDER BY created_at DESC, username DESC LIMIT $5")
+                .bind(key)
+                .bind(t)
+                .bind(at)
+                .bind(name)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
+        }
+        None => {
+            sqlx::query("SELECT username, created_at, expires_at, reason FROM server_bans WHERE server = $1 AND (expires_at IS NULL OR expires_at > $2) ORDER BY created_at DESC, username DESC LIMIT $3 OFFSET $4")
+                .bind(key)
+                .bind(t)
+                .bind(limit + 1)
+                .bind(offset.unwrap_or(0).max(0))
+                .fetch_all(db)
+                .await?
+        }
+    };
+    let mut bans = Vec::with_capacity(rows.len());
+    for r in &rows {
+        bans.push((
+            r.try_get::<String, _>(0)?,
+            r.try_get::<i64, _>(1)?,
+            r.try_get::<Option<i64>, _>(2)?,
+            r.try_get::<Option<String>, _>(3)?,
+        ));
+    }
+    let more = bans.len() as i64 > limit;
+    bans.truncate(limit as usize);
+    let last = bans.last().map(|(name, at, _, _)| (name.clone(), *at));
+    let next = pair_next(more, last.as_ref());
+    let names: Vec<String> = bans.iter().map(|(name, ..)| name.clone()).collect();
     let refs = user_refs(db, &names).await;
     Ok(Paged(
         bans.into_iter()
-            .map(|(username, banned_at)| ServerBan {
+            .map(|(username, banned_at, expires_at, reason)| ServerBan {
                 user: user_from(&refs, &username),
                 banned_at,
+                expires_at,
+                reason,
             })
             .collect(),
         next,
@@ -7418,9 +7503,7 @@ mod tests {
             State(state.clone()),
             Authed(actor),
             Path(server.to_string()),
-            Json(UsernameReq {
-                username: target.to_string(),
-            }),
+            Json(BanReq::forever(target)),
         )
         .await
         .map(|_| ())
@@ -7653,12 +7736,21 @@ mod tests {
         let body = Json(UsernameReq {
             username: target.to_string(),
         });
+        let json = |v: serde_json::Value| v.to_string();
         let res = match banning {
-            true => ban_member(State(state.clone()), Authed(actor), path, body).await,
-            false => kick_member(State(state.clone()), Authed(actor), path, body).await,
+            true => ban_member(
+                State(state.clone()),
+                Authed(actor),
+                path,
+                Json(BanReq::forever(target)),
+            )
+            .await
+            .map(|Json(done)| json(serde_json::json!({ "ok": done.ok }))),
+            false => kick_member(State(state.clone()), Authed(actor), path, body)
+                .await
+                .map(|Json(ok)| serde_json::to_string(&ok).expect("json")),
         };
-        res.map(|Json(ok)| serde_json::to_string(&ok).expect("json"))
-            .map_err(|ApiError(code, msg, _)| (code, msg))
+        res.map_err(|ApiError(code, msg, _)| (code, msg))
     }
 
     async fn set_admin_row(db: &Db, username: &str, perms: i64) {

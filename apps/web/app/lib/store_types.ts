@@ -125,6 +125,17 @@ export interface ConfirmRequest {
   choices?: ConfirmChoice[]
 }
 
+// A ban dialog for one member of a hosted server or a P2P room: what that side supports and how
+// it bans.
+export interface BanRequest {
+  title: string
+  name: string
+  user?: UserRef
+  note: string
+  support: import('./durations').BanSupport
+  run: (choice: import('./durations').BanChoice) => Promise<boolean> | boolean
+}
+
 export interface AdminPlace {
   section: AdminSection | null
   item: string | null
@@ -145,6 +156,8 @@ export type ActiveDialog =
   | { kind: 'timeout'; server: string; user: UserRef }
   | { kind: 'server_profile'; server: string }
   | { kind: 'profile_reset'; server: string; user: UserRef }
+  | { kind: 'ban'; server: string; user: UserRef }
+  | { kind: 'ban_request'; request: BanRequest }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
   | { kind: 'remove_phrase_confirm'; username: string }
@@ -672,7 +685,11 @@ export interface RChatState {
   ) => Promise<void>
   deleteChannel: (id: number) => Promise<void>
   kickMember: (server: string, username: string) => Promise<void>
-  banMember: (server: string, username: string) => Promise<void>
+  banMember: (
+    server: string,
+    username: string,
+    choice?: import('./durations').BanChoice
+  ) => Promise<boolean>
   timeoutMember: (
     server: string,
     username: string,

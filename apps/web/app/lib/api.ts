@@ -57,6 +57,7 @@ import type {
   ProfilesMode,
   Role,
   SearchResult,
+  BanResult,
   ServerBan,
   ServerDetail,
   ServerMatch,
@@ -708,8 +709,11 @@ export const endpoints = (c: ApiClient) => ({
   deleteChannel: (id: number) => c.req<unknown>('DELETE', `/channels/${id}`),
   kickMember: (server: string, username: string) =>
     c.req<unknown>('POST', `/servers/${seg(server)}/kick`, { username }),
-  banMember: (server: string, username: string) =>
-    c.req<unknown>('POST', `/servers/${seg(server)}/bans`, { username }),
+  banMember: (
+    server: string,
+    username: string,
+    options: { duration_secs?: number; reason?: string; purge_hours?: number } = {}
+  ) => c.req<BanResult>('POST', `/servers/${seg(server)}/bans`, { username, ...options }),
   timeoutMember: (server: string, username: string, seconds: number, reason: string | null) =>
     c.req<TimeoutWire>('PUT', `/servers/${seg(server)}/timeouts/${seg(username)}`, {
       seconds,

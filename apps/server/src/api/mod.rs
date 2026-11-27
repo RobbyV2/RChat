@@ -5,6 +5,7 @@ pub mod admin_users;
 pub mod announcements;
 pub mod audit;
 pub mod auth;
+pub mod bans;
 pub mod blocks;
 pub mod brand;
 pub mod budget;

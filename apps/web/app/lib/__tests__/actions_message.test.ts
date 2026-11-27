@@ -940,7 +940,6 @@ test('icons of the message rows', () => {
 })
 
 const KICK = 'Kick this member? They are removed from the server but can join again.'
-const BAN = "Ban this user? They are removed from the server and can't join again until unbanned."
 const DELETE =
   'Delete this message for everyone? Hold Shift while clicking the trash icon to skip this.'
 const bobRef = user('bob', { display_name: 'Bobby' })
@@ -960,13 +959,7 @@ test('each message row runs its action', async () => {
         ['kickMember', 's', 'bob'],
       ],
     ],
-    [
-      'Ban from server',
-      [
-        ['askConfirm', 'Ban from Server', BAN, 'Ban'],
-        ['banMember', 's', 'bob'],
-      ],
-    ],
+    ['Ban from server', [['openDialog', { kind: 'ban', server: 's', user: bobRef }]]],
     ['Time Out', [['openDialog', { kind: 'timeout', server: 's', user: bobRef }]]],
     ['Assign r1', [['assignRole', 's', 1, 'bob']]],
     ['Assign Moderator', [['assignRole', 's', 2, 'bob']]],

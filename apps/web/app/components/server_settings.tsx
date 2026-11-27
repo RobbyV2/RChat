@@ -88,6 +88,7 @@ import {
   textBtn,
 } from './ui'
 import { LabelText } from './instance_badge'
+import { endsText } from '../lib/durations'
 
 const SEARCH_DEBOUNCE = 250
 const PICKER_HITS = 8
@@ -1145,14 +1146,23 @@ export function BanList({ server }: { server: string }) {
             avatarColor={b.avatar_color}
             size={28}
           />
-          <span className="min-w-0 flex-1 truncate text-sm">
-            <span className="streamer">
-              <Masked text={b.display_name} by={b.username} />
+          <span className="min-w-0 flex-1 text-sm">
+            <span className="block truncate">
+              <span className="streamer">
+                <Masked text={b.display_name} by={b.username} />
+              </span>
+              <span className="text-xs text-on-surface-variant">
+                {' '}
+                · banned {new Date(b.banned_at * 1000).toLocaleDateString()}
+              </span>
             </span>
-            <span className="text-xs text-on-surface-variant">
-              {' '}
-              · banned {new Date(b.banned_at * 1000).toLocaleDateString()}
-            </span>
+            {(b.expires_at || b.reason) && (
+              <span className="block text-xs break-words text-on-surface-variant">
+                {[b.expires_at ? `Ends ${endsText(b.expires_at * 1000)}` : '', b.reason ?? '']
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            )}
           </span>
           <button onClick={() => void unbanMember(server, b.username)} className={textBtn}>
             Unban

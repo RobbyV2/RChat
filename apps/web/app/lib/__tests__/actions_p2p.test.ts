@@ -1,4 +1,5 @@
 import { shownPeer } from './shown_peer'
+import { PURGE_ALL } from '../durations'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import {
   ArrowRight,
@@ -186,7 +187,13 @@ const settle = () => new Promise(r => setTimeout(r, 0))
 // What the rows did: confirms (accepted with their first choice), copies and P2P calls.
 const recorder = () => {
   const calls: unknown[][] = []
+  const openDialog = useStore.getState().openDialog
   useStore.setState({
+    openDialog: d => {
+      if (d.kind !== 'ban_request') return openDialog(d)
+      const closes = d.request.run({ seconds: 3600, reason: 'spam', purgeHours: PURGE_ALL })
+      calls.push(['ban dialog', d.request.title, d.request.name, d.request.support, closes])
+    },
     askConfirm: (c: ConfirmRequest) => {
       calls.push(['confirm', c.title, c.body, c.confirm])
       c.action(c.choices?.[0]?.value ?? '')
@@ -603,8 +610,8 @@ describe("a P2P member's menu", () => {
       ['server.kick', SRV, CAROL],
     ])
     expect(await run(row(carol, 'Ban Member'))).toEqual([
-      ['confirm', 'Ban Member', "Ban this member? They can't come back.", 'Ban'],
-      ['server.ban', SRV, CAROL, false],
+      ['server.ban', SRV, CAROL, { wipe: true, reason: 'spam' }],
+      ['ban dialog', 'Ban Member', 'this member', { timed: false, purge: 'all' }, true],
     ])
     const transfer = await run(row(carol, 'Transfer Ownership'))
     expect(transfer[0][2]).toContain('owned by this member.')
@@ -619,6 +626,33 @@ describe("a P2P member's menu", () => {
       ],
       ['server.withdraw', SRV, DAVE],
     ])
+  })
+
+  test('the ban dialog closes once the ban is asked for, while the room has not synced', async () => {
+    state({ streamer: true })
+    const v = server({ perms: MOD, owner: ME, owners: [ME, BOB] })
+    const rec = recorder()
+    const { p2pServer } = shownPeer()
+    const asked: unknown[] = []
+    p2pServer.ban = (...a: unknown[]) => {
+      asked.push(a)
+      return new Promise<null>(() => {})
+    }
+    let closes: unknown
+    useStore.setState({
+      openDialog: d => {
+        if (d.kind === 'ban_request')
+          closes = d.request.run({ seconds: null, reason: null, purgeHours: 0 })
+      },
+    })
+    try {
+      row(onMember(v, MEMBERS.carol), 'Ban Member')?.action?.()
+      await settle()
+      expect(closes).toBe(true)
+      expect(asked).toEqual([[SRV, CAROL, { wipe: false }]])
+    } finally {
+      rec.restore()
+    }
   })
 
   test('a role choice gives or takes the role; taking your own asks first', async () => {

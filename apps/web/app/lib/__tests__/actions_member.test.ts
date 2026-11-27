@@ -493,7 +493,6 @@ const effects = async (rows: ContextMenuItem[]) => {
 
 const bobRef = { username: 'bob', display_name: 'Bobby' }
 const KICK = 'Kick this member? They are removed from the server but can join again.'
-const BAN = "Ban this user? They are removed from the server and can't join again until unbanned."
 const TRANSFER =
   "Make this member the server admin? You lose your admin rights and can't take them back."
 
@@ -508,13 +507,7 @@ test('each member row runs its action', async () => {
         ['kickMember', 's', 'bob'],
       ],
     ],
-    [
-      'Ban from server',
-      [
-        ['askConfirm', 'Ban from Server', BAN, 'Ban'],
-        ['banMember', 's', 'bob'],
-      ],
-    ],
+    ['Ban from server', [['openDialog', { kind: 'ban', server: 's', user: bobby }]]],
     ['Time Out', [['openDialog', { kind: 'timeout', server: 's', user: bobby }]]],
     ['Revoke Admin', [['revokeAdmin', 's', 'bob']]],
     [

@@ -52,6 +52,7 @@ pub struct Swept {
     pub config_shares: u64,
     pub audit_log: u64,
     pub member_timeouts: u64,
+    pub server_bans: u64,
     pub bulk_delete_jobs: u64,
     pub webhook_deliveries: u64,
     pub recovery_challenges: u64,
@@ -191,6 +192,7 @@ pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Re
             t - TIMEOUT_KEEP,
         )
         .await?,
+        server_bans: crate::api::bans::sweep_expired(db, t).await?,
         bulk_delete_jobs: delete_batched(
             db,
             "DELETE FROM bulk_delete_jobs WHERE id IN (SELECT id FROM bulk_delete_jobs WHERE status <> 'running' AND finished_at < $1 LIMIT $2)",

@@ -1,4 +1,4 @@
-import { gt } from '../acl/rules'
+import { BAN_REASON_MAX, gt, timedBans } from '../acl/rules'
 import { cacheKey, countOf, moveCounts, storedSize } from '../dag'
 import { CANT_TEXT } from '../flows'
 import { can, channelPermsOf, channelsOf, membershipOf, P, rankOf, roleRank } from '../state'
@@ -91,15 +91,30 @@ export function kick(cx: ServerCtx, room: string, ik: string) {
 }
 
 // `wipe`: "Also hide all their messages" (needs Manage messages).
-export function ban(cx: ServerCtx, room: string, ik: string, reason?: string, wipe = false) {
+// `terms`: an end (ms) and how many hours back the wipe reaches, written only in rooms whose
+// rules read them.
+// `terms.seconds`: how long the ban lasts from the time it is signed.
+export function ban(
+  cx: ServerCtx,
+  room: string,
+  ik: string,
+  reason?: string,
+  wipe = false,
+  terms: { seconds?: number; purgeH?: number } = {}
+) {
+  const next = timedBans(cx.sumOf(room).rules)
   return cx.emit(
     room,
     'ban',
     plan => ({
       to: ik,
       seen: plan.seen ?? {},
-      ...(reason ? { reason: reason.slice(0, cx.local.display.reason) } : {}),
+      ...(reason ? { reason: [...reason].slice(0, BAN_REASON_MAX).join('') } : {}),
       ...(wipe ? { wipe: true } : {}),
+      ...(next && terms.seconds !== undefined
+        ? { until: Math.max(cx.clock.now(), plan.ts) + terms.seconds * 1000 }
+        : {}),
+      ...(next && wipe && terms.purgeH !== undefined ? { purge_h: terms.purgeH } : {}),
     }),
     { to: ik }
   )

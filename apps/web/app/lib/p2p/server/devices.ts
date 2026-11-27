@@ -1,4 +1,5 @@
-import type { Disowned } from '../acl_room'
+import type { Disowned, Reapply } from '../acl_room'
+import { banOver } from '../acl/rules'
 import { getEvents } from '../dag'
 import { serverWire, type EventRecord } from '../db'
 import { signRevocation2, signRotation2, RESIGN_CONTENT } from '../event_v2'
@@ -14,6 +15,7 @@ export async function reapplyAll(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
   const failed: string[] = []
   for (const r of rt.reapply) {
+    if (ended(cx, room, r)) continue
     const to = typeof r.c.to === 'string' ? r.c.to : undefined
     const seen = r.t === 'kick' || r.t === 'ban' || r.t === 'revoke'
     await cx
@@ -30,6 +32,10 @@ export async function reapplyAll(cx: ServerCtx, room: string) {
     )
 }
 
+// A timed ban whose end has passed: not made again.
+const ended = (cx: ServerCtx, room: string, r: Reapply) =>
+  r.t === 'ban' && banOver(cx.sumOf(room).rules, r.c as Record<string, unknown>, cx.clock.now())
+
 // Our denies to apply again; in a new copy, our kicks and bans in the old one
 // that its upgrade didn't have in its past too (not carried over).
 export async function reapplyOf(cx: ServerCtx, room: string) {
@@ -37,12 +43,13 @@ export async function reapplyOf(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
   const up = prev && cx.rooms.has(prev) ? (rt.upgrade ?? (await cx.upgradeOf(prev, room))) : null
   if (up) rt.upgrade = up
-  return cx.host.reapply(
+  const list = await cx.host.reapply(
     room,
     cx.me,
     cx.deps.node.lostDevices(),
     prev && up ? { room: prev, up } : undefined
   )
+  return list.filter(r => !ended(cx, room, r))
 }
 
 // Our devices in the servers we are in, with what the node knows of them.

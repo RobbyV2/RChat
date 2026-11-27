@@ -23,6 +23,7 @@ const resolves =
 // Components that draw a member or an author inside a server, hosted or P2P.
 const IN_A_SERVER = [
   'audit_log.tsx',
+  'ban_dialog.tsx',
   'channel_sidebar.tsx',
   'inbox.tsx',
   'markdown_message.tsx',

@@ -77,7 +77,7 @@ import {
   profanityValue,
   setMasking,
 } from '../profanity'
-import { dmView, serverNames } from '../selectors'
+import { dmView, serverNames, userRefFor } from '../selectors'
 import { type ShowSpoilers, parseSpoilers, spoilersKey, spoilersValue } from '../spoilers'
 import type { RChatState } from '../store_types'
 import { type TimeoutWire, fromWire } from '../timeouts'
@@ -106,13 +106,10 @@ export function menuActions(
   store: Pick<StoreApi<RChatState>, 'getState' | 'setState'>,
   inSession: AccountSession['lifetime']['inSession']
 ) {
-  const confirmBan = (server: string, username: string) =>
-    store.getState().askConfirm({
-      title: 'Ban from Server',
-      body: "Ban this user? They are removed from the server and can't join again until unbanned.",
-      confirm: 'Ban',
-      action: () => void store.getState().banMember(server, username),
-    })
+  const confirmBan = (server: string, username: string) => {
+    const user = userRefFor(store.getState(), username)
+    store.getState().openDialog({ kind: 'ban', server, user })
+  }
 
   // Records the running timeouts (or none) of members of `server`, as a moderator sees them.
   const noteMemberTimeouts = (

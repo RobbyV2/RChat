@@ -5,6 +5,7 @@ import type { AccountSession } from '../client/session'
 
 import { ApiError } from '../api'
 import type { PendingUpload } from '../attachments'
+import { hostedBan, purgeNote } from '../durations'
 import { siteSettings } from '../features'
 import {
   type LayoutOrder,
@@ -1067,11 +1068,19 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       act(async () => void (await api.disconnectGuest(server, name))),
     muteGuest: (server, name, muted) =>
       act(async () => void (await api.muteGuest(server, name, muted))),
-    banMember: (server, username) =>
-      act(async () => {
-        await live(api.banMember(server, username))
+    banMember: async (server, username, choice) => {
+      const at = sessionMark()
+      try {
+        const done = await live(api.banMember(server, username, hostedBan(choice)))
+        const note = purgeNote(done)
+        if (note) get().showToast(note)
         if (get().bans[server]) await get().loadBans(server, true)
-      }),
+        return true
+      } catch (e) {
+        if (at === sessionMark()) fail(e)
+        return false
+      }
+    },
     unbanMember: (server, username) =>
       act(async () => {
         await live(api.unbanMember(server, username))

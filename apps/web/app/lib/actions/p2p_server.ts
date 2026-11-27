@@ -659,9 +659,10 @@ export const peerServer = identityActions(identity => {
       run: ctx => {
         const t = memberOf(ctx)
         if (t)
-          ctx.acct.store
-            .getState()
-            .askConfirm(identity().banRequest(t.v, t.m.ik, who(t.m.name, ctx.acct)))
+          ctx.acct.store.getState().openDialog({
+            kind: 'ban_request',
+            request: identity().banRequest(t.v, t.m.ik, who(t.m.name, ctx.acct)),
+          })
       },
     },
     {

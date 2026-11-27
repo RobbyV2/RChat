@@ -58,6 +58,10 @@ describe('audit sentences', () => {
       { text: 'Bob', name: true, by: 'bob', person: true },
     ])
     expect(sentenceText(entry({ action: 'member.kick' }))).toBe('Alice kicked Bob')
+    expect(sentenceText(entry({ action: 'member.unban' }))).toBe('Alice unbanned Bob')
+    expect(
+      sentenceText(entry({ action: 'member.unban', actor: null, details: { expired: true } }))
+    ).toBe('The ban of Bob ended')
     expect(sentenceText(entry({ action: 'member.admin_grant' }))).toBe('Alice made Bob an admin')
   })
 

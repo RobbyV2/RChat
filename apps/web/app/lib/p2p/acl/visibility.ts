@@ -5,6 +5,7 @@ import type { EvalResult } from './facts'
 import { EMPTY, type Ix } from './reach'
 import { uncontested, witnessed } from './storage'
 import {
+  banWipes,
   channelPerms,
   CHANNELS,
   cmp,
@@ -351,7 +352,7 @@ export class ContentView {
       if (removed !== null) h = { why: 'removed', by: ix.ids[removed] }
     }
     if (!h) {
-      const wipe = this.wipedBy(m.a)
+      const wipe = this.wipedBy(m.a, m.ts)
       if (wipe !== null) h = { why: 'wipe', by: ix.ids[wipe] }
     }
     this.baseMemo.set(m.id, h)
@@ -453,17 +454,19 @@ export class ContentView {
     return null
   }
 
-  // An effective ban of P with `wipe` that no unban lifted.
-  wipedBy(P: string): number | null {
+  // An effective ban of P with `wipe` that still hides something of P's (`banWipes`). With `ts`:
+  // one that hides a message P sent then.
+  wipedBy(P: string, ts?: number): number | null {
     const fe = this.fe
     const ix = this.ix
+    const rules = ix.ev[ix.genesis]?.c.rules
     for (const b of ix.banEv.get(P) ?? EMPTY) {
       if (!fe.inS(b) || !fe.isEffI(b) || ix.ev[b].c.wipe !== true) continue
       const kb = ix.k(b)
       const lifted = (ix.unbanEv.get(P) ?? EMPTY).some(
         u => fe.inS(u) && !fe.isVoidI(u) && ix.before(b, u) && cmp(ix.k(u), kb) >= 0
       )
-      if (!lifted) return b
+      if (banWipes(rules, ix.ev[b], ts, lifted)) return b
     }
     return null
   }

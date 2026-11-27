@@ -3,7 +3,20 @@ import type { Ix } from './reach'
 import { roomMode } from '../../profile_fields'
 import type { ResetFact } from '../../profile_reset'
 import type { ProfilesMode } from '../../types'
-import { EVERYONE, gt, permsQ, poster, rank, evalLimits, type AclContent, type Rank } from './rules'
+import {
+  banEnd,
+  banReason,
+  banTerms,
+  cmp,
+  EVERYONE,
+  gt,
+  permsQ,
+  poster,
+  rank,
+  evalLimits,
+  type AclContent,
+  type Rank,
+} from './rules'
 
 // The page's summary of one P2P server's current state: its types, its codec (stored form, diff,
 // apply) and its builder. The page loads this without the evaluator; the evaluator's room
@@ -44,6 +57,12 @@ export interface MemberSum {
   code?: string
   // The highest rank among the effective bans of a banned member (unban needs at least it).
   banRank?: Rank
+  // A ban that ends by itself: when the last of the standing bans ends (ms) and who made that
+  // ban. Absent while any standing ban has no end.
+  banUntil?: number
+  banBy?: string
+  // The reason the standing bans give (`banReason`).
+  banReason?: string
   // An invitee whose invites are all a non-owner's that no third member acknowledged yet: its
   // join waits (W3(e)).
   waits?: true
@@ -404,6 +423,28 @@ function memberSum(src: SummarySource, ik: string): MemberSum | undefined {
     let k: Rank | undefined
     for (const r of F.effBanK.get(ik) ?? []) if (!k || gt(r, k)) k = r
     if (k) sum.banRank = k
+    const rules = ix.ev[ix.genesis]?.c.rules
+    const unbans = ix.unbanEv.get(ik) ?? []
+    const standing = (ix.banEv.get(ik) ?? []).filter(
+      b =>
+        fe.inS(b) &&
+        fe.isEffI(b) &&
+        !unbans.some(
+          u => fe.inS(u) && !fe.isVoidI(u) && ix.before(b, u) && cmp(ix.k(u), ix.k(b)) >= 0
+        )
+    )
+    const terms = standing.map(b => ({
+      by: ix.ev[b].a,
+      ts: ix.ev[b].ts,
+      ...banTerms(rules, ix.ev[b]),
+    }))
+    const end = banEnd(terms)
+    if (end) {
+      sum.banUntil = end.until
+      sum.banBy = end.by
+    }
+    const reason = banReason(terms)
+    if (reason !== null) sum.banReason = reason
   }
   if (m === 'join') {
     let j = -1

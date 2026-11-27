@@ -736,15 +736,14 @@ describe('headers and the page', () => {
       copy: false,
     })
     const v = { id: 'room', perms: P.Ban } as ServerView
-    expect(banRequest(v, 'ik', 'Bob').body).toBe(
-      "Ban Bob? Nothing they post from now on is shown, and they can't come back."
-    )
-    expect(banRequest(v, 'ik', 'Bob').choices).toBeUndefined()
-    const mod = banRequest({ ...v, perms: P.Ban | P.ManageMessages }, 'ik', 'Bob')
-    expect(mod.choices?.map(c => c.label)).toEqual([
-      'Hide what they post from now on',
-      'Also hide all their messages',
-    ])
+    expect(banRequest(v, 'ik', 'Bob').name).toBe('Bob')
+    expect(banRequest(v, 'ik', 'Bob').support).toEqual({ timed: false, purge: 'none' })
+    const mod = { ...v, perms: P.Ban | P.ManageMessages }
+    expect(banRequest(mod, 'ik', 'Bob').support).toEqual({ timed: false, purge: 'all' })
+    expect(banRequest({ ...mod, timedBans: true }, 'ik', 'Bob').support).toEqual({
+      timed: true,
+      purge: 'window',
+    })
   })
 })
 

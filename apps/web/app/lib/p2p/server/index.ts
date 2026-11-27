@@ -1375,8 +1375,14 @@ export class Servers {
     return roles.kick(ctx(this), room, ik)
   }
 
-  ban(room: string, ik: string, reason?: string, wipe = false) {
-    return roles.ban(ctx(this), room, ik, reason, wipe)
+  ban(
+    room: string,
+    ik: string,
+    reason?: string,
+    wipe = false,
+    terms: { seconds?: number; purgeH?: number } = {}
+  ) {
+    return roles.ban(ctx(this), room, ik, reason, wipe, terms)
   }
 
   unban(room: string, ik: string) {

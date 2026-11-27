@@ -229,10 +229,12 @@ async fn reconcile_after_lookup(
         for server in targets.keys() {
             let available = sqlx::query(
                 "SELECT 1 FROM servers WHERE name=$1 AND COALESCE(password_hash,'') <> '!purging'
-                 AND NOT EXISTS(SELECT 1 FROM server_bans WHERE server=$1 AND username=$2)",
+                 AND NOT EXISTS(SELECT 1 FROM server_bans WHERE server=$1 AND username=$2
+                 AND (expires_at IS NULL OR expires_at > $3))",
             )
             .bind(server)
             .bind(username)
+            .bind(db::now())
             .fetch_optional(&mut *tx)
             .await?
             .is_some();

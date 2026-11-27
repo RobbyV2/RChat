@@ -257,6 +257,16 @@ export interface FriendSummary {
 
 export interface ServerBan extends UserRef {
   banned_at: number
+  expires_at?: number | null
+  reason?: string | null
+}
+
+export interface BanResult {
+  ok: boolean
+  expires_at: number | null
+  purge_places: number
+  purge_skipped: number
+  purge_busy: number
 }
 
 export interface ServerDetail {

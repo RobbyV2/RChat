@@ -365,7 +365,9 @@ export function sentence(entry: AuditEntry): Part[] {
     case 'member.ban':
       return [...actor, t(' banned '), ...user]
     case 'member.unban':
-      return [...actor, t(' unbanned '), ...user]
+      return entry.details.expired === true
+        ? [t('The ban of '), ...user, t(' ended')]
+        : [...actor, t(' unbanned '), ...user]
     case 'member.timeout': {
       const d = entry.details.duration
       const changed = changesOf(entry).some(c => c.field === 'until' && c.before !== null)

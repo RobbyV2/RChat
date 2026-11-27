@@ -1,9 +1,11 @@
 import { resolve as resolveNotify } from '../../notify'
+import { p2pBan, P2P_BAN_NOTE, p2pBanSupport } from '../../durations'
 import type { RoomExtras } from '../../profile_fields'
 import type { LockSecs, LockState, ResetField } from '../../profile_reset'
 import { lookOf, roomLookOf, shownUser } from '../../server_profile'
-import type { ConfirmRequest } from '../../store_types'
+import type { BanRequest } from '../../store_types'
 import type { ProfilesMode, UserRef } from '../../types'
+import { BanExpiry } from '../ban_expiry'
 import type { P2pStore, RoomRecord, ServerCache } from '../db'
 import { cacheKey } from '../dag'
 import { knownRules } from '../acl/rules'
@@ -23,7 +25,7 @@ import {
   type ServerArrival,
   type ServerView,
 } from '../server'
-import { unsentText, WIPE_TEXT } from '../flows'
+import { unsentText } from '../flows'
 import { membershipOf, P, type HistoryVis } from '../state'
 import type { IdentityScope, P2pParts } from './scope'
 
@@ -600,34 +602,19 @@ export function createServersPart(
   // The channel opened last in each server, for this tab.
   const lastChannel = new Map<string, string>()
 
-  // The ban confirmation: with Manage messages, "Also hide all their messages".
-  const banRequest = (v: ServerView, ik: string, name: string): ConfirmRequest => {
-    const wipe = (v.perms & P.ManageMessages) !== 0
+  // The ban dialog's P2P side: it closes once the ban is asked for; a ban waiting for the room
+  // to sync shows with the other moderation actions that wait.
+  const banRequest = (v: ServerView, ik: string, name: string): BanRequest => {
+    const support = p2pBanSupport(v.timedBans === true, (v.perms & P.ManageMessages) !== 0)
     return {
       title: 'Ban Member',
-      body: wipe
-        ? `Ban ${name}? They can't come back.`
-        : `Ban ${name}? Nothing they post from now on is shown, and they can't come back.`,
-      confirm: 'Ban',
-      ...(wipe
-        ? {
-            choices: [
-              {
-                value: 'keep',
-                label: 'Hide what they post from now on',
-                detail: 'Their earlier messages stay.',
-                danger: true,
-              },
-              {
-                value: 'wipe',
-                label: WIPE_TEXT,
-                detail: 'Everything they posted is hidden too.',
-                danger: true,
-              },
-            ],
-          }
-        : {}),
-      action: choice => void p2pServer.ban(v.id, ik, choice === 'wipe'),
+      name,
+      note: P2P_BAN_NOTE,
+      support,
+      run: choice => {
+        void p2pServer.ban(v.id, ik, p2pBan(choice, support))
+        return true
+      },
     }
   }
 
@@ -837,9 +824,15 @@ export function createServersPart(
       withServers(s =>
         s.moderate(room, { act: 'Withdraw the invite of', who: ik }, () => s.kick(room, ik))
       ),
-    ban: (room: string, ik: string, wipe = false) =>
+    ban: (
+      room: string,
+      ik: string,
+      o: { wipe?: boolean; reason?: string; seconds?: number; purgeH?: number } = {}
+    ) =>
       withServers(s =>
-        s.moderate(room, { act: 'Ban', who: ik }, () => s.ban(room, ik, undefined, wipe))
+        s.moderate(room, { act: 'Ban', who: ik }, () =>
+          s.ban(room, ik, o.reason, o.wipe === true, { seconds: o.seconds, purgeH: o.purgeH })
+        )
       ),
     unban: (room: string, ik: string) =>
       withServers(s =>
@@ -963,6 +956,21 @@ export function createServersPart(
     })
   )
 
+  const banExpiry = new BanExpiry({
+    now: Date.now,
+    random: Math.random,
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: t => clearTimeout(t as ReturnType<typeof setTimeout>),
+    view: room => useP2p.getState().servers[room] ?? null,
+    unban: (room, ik) => void state.servers?.unban(room, ik).catch(() => {}),
+  })
+  scope.onDispose(
+    useP2p.subscribe((s, prev) => {
+      if (s.servers !== prev.servers) banExpiry.sync(s.servers)
+    })
+  )
+  scope.onDispose(() => banExpiry.stop())
+
   scope.onDispose(
     useViewing.subscribe((s, prev) => {
       if (s.revision !== prev.revision) hidePeerChannel()
@@ -974,6 +982,7 @@ export function createServersPart(
     searchAccess = null
     for (const timer of serverTimers.values()) clearTimeout(timer)
     serverTimers.clear()
+    banExpiry.stop()
     lastChannel.clear()
     threadsChecked.clear()
   })

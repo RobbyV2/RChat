@@ -96,6 +96,9 @@ export interface AclContent {
   everyone_bits?: number
   sigs?: Record<string, string>
   wipe?: boolean
+  until?: number
+  reason?: string
+  purge_h?: number
   rules?: number
   from?: { srv: string }
   id?: string
@@ -691,6 +694,91 @@ const REQUIRED: Record<string, string[]> = {
   proof: ['x', 'y'],
 }
 
+export const BAN_REASON_MAX = 300
+export const BAN_PURGE_H_MAX = 168
+const atNext = (rules: unknown) => typeof rules === 'number' && rules >= RULES_NEXT
+// Whether a room of these rules reads the end, reason and wipe window of a ban.
+export const timedBans = atNext
+
+// The fields a ban carries from RULES_NEXT on, each with its type and range.
+const banFieldsOk = (c: Record<string, unknown>) =>
+  (c.until === undefined || (isInt(c.until, -Infinity) && (c.until as number) > 0)) &&
+  (c.reason === undefined ||
+    (isStr(c.reason) && [...(c.reason as string)].length <= BAN_REASON_MAX)) &&
+  (c.purge_h === undefined ||
+    (isInt(c.purge_h, -Infinity) &&
+      (c.purge_h as number) >= 0 &&
+      (c.purge_h as number) <= BAN_PURGE_H_MAX))
+
+export interface BanTerms {
+  // When the ban ends (ms), null for a ban without an end.
+  until: number | null
+  reason: string | null
+  // The hours before the ban its `wipe` reaches back, null for everything.
+  purgeH: number | null
+}
+
+// The reason a ban gives, read at display in rooms of every rules.
+const reasonOf = (c: Record<string, unknown>) =>
+  isStr(c.reason) && c.reason !== ''
+    ? [...(c.reason as string)].slice(0, BAN_REASON_MAX).join('')
+    : null
+
+// What a ban says about its end, reason and wipe window, read at display. Rooms on earlier rules
+// keep the end and the window unread: a ban there has no end and its wipe hides everything. An
+// end at or before the ban's own time is a ban that is already over and waits for its unban.
+export function banTerms(rules: unknown, e: { ts: number; c: Record<string, unknown> }): BanTerms {
+  const reason = reasonOf(e.c)
+  if (!atNext(rules) || !banFieldsOk(e.c)) return { until: null, reason, purgeH: null }
+  return {
+    until: (e.c.until as number | undefined) ?? null,
+    reason,
+    purgeH: (e.c.purge_h as number | undefined) ?? null,
+  }
+}
+
+// Whether a timed ban's end has passed at `now`, in a room that reads it.
+export const banOver = (rules: unknown, c: Record<string, unknown>, now: number) =>
+  atNext(rules) && isInt(c.until, -Infinity) && (c.until as number) <= now
+
+// When the standing bans of one member end: the latest end, with who made that ban and its
+// reason. Null when there is none or any of them has no end.
+export function banEnd(
+  bans: (BanTerms & { by: string })[]
+): { until: number; by: string; reason: string | null } | null {
+  let last: { until: number; by: string; reason: string | null } | null = null
+  for (const b of bans) {
+    if (b.until === null) return null
+    if (!last || b.until > last.until) last = { until: b.until, by: b.by, reason: b.reason }
+  }
+  return last
+}
+
+// The reason shown with the standing bans of one member: that of the ban that ends last, or,
+// while one of them has no end, that of the newest.
+export function banReason(bans: (BanTerms & { by: string; ts: number })[]): string | null {
+  const end = banEnd(bans)
+  if (end) return end.reason
+  let last: (BanTerms & { ts: number }) | null = null
+  for (const b of bans) if (!last || b.ts > last.ts) last = b
+  return last?.reason ?? null
+}
+
+// Whether a wiping ban hides a message its target sent at `ts` (with no `ts`: any message).
+// Once an unban lifted it, only a wipe window of the rules that read it keeps hiding the messages
+// it reached up to the ban; any other wipe shows them again.
+export function banWipes(
+  rules: unknown,
+  ban: { ts: number; c: Record<string, unknown> },
+  ts: number | undefined,
+  lifted = false
+) {
+  const { purgeH } = banTerms(rules, ban)
+  const from = purgeH === null ? -Infinity : ban.ts - purgeH * 3_600_000
+  if (lifted) return purgeH !== null && (ts === undefined || (ts >= from && ts <= ban.ts))
+  return ts === undefined || ts >= from
+}
+
 // A genesis nonce: 16 random bytes, b64u.
 export const NONCE_LEN = 16
 
@@ -705,6 +793,7 @@ export function aclContentOk(t: string, c: unknown, rules?: number | null): c is
     typeof c.text_only !== 'boolean'
   )
     return false
+  if (t === 'ban' && atNext(rules) && !banFieldsOk(c)) return false
   if (t === 'genesis')
     return (
       isInt(c.rules, -Infinity) &&
