@@ -63,6 +63,10 @@ test('the boxes take no class names, styles, off-scale steps or margins', () => 
     // @ts-expect-error a box is placed, never spaced, by its parent
     <Row key={4} gap="sm" place="mt-2" />,
     <Row key={5} gap="sm" place="ml-auto min-w-0 flex-1" />,
+    <Stack key={6} gap="sm" place="min-h-0 flex-1 overflow-y-auto overscroll-contain" />,
+    <Surface key={7} pad="lg" place="max-w-md w-full" />,
+    // @ts-expect-error sizes come from the content or the container scale
+    <Surface key={8} pad="lg" place="w-[13rem]" />,
   ]
-  expect(boxes.length).toBe(6)
+  expect(boxes.length).toBe(9)
 })

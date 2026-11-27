@@ -81,3 +81,12 @@ test('grid columns change only at the named widths', () => {
   )
   has(gridLook(3, 'none'), 'grid-cols-3')
 })
+
+test('a divided stack lines its children apart, and a surface lines one edge or all', () => {
+  has(stackLook('none', 'stretch', 'start', true), 'divide-y', 'divide-outline-variant')
+  expect(stackLook('sm').includes('divide')).toBe(false)
+  has(surface({ border: true }), 'border', 'border-outline-variant')
+  has(surface({ border: 'bottom' }), 'border-b')
+  expect(surface({ border: 'bottom' }).split(' ').includes('border')).toBe(false)
+  expect(surface().includes('border')).toBe(false)
+})

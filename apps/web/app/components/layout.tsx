@@ -10,6 +10,7 @@ import {
   type RowAlign,
   type Space,
   type StackAlign,
+  type SurfaceBorder,
   type SurfaceInset,
   type SurfaceRadius,
   type SurfaceTone,
@@ -53,14 +54,15 @@ function render<S extends string>(
   return createElement(as, { ...rest, className: placed(display, look, place) })
 }
 
-// Children one under the other, `gap` apart.
+// Children one under the other, `gap` apart; `divided` draws a line between them.
 export function Stack<const S extends string = never>({
   gap,
   align,
   justify,
+  divided,
   ...box
-}: Box<S> & { gap: Space; align?: StackAlign; justify?: Justify }) {
-  return render('flex', stackLook(gap, align, justify), box)
+}: Box<S> & { gap: Space; align?: StackAlign; justify?: Justify; divided?: boolean }) {
+  return render('flex', stackLook(gap, align, justify, divided), box)
 }
 
 // Children side by side on one line (center, or text baseline), `gap` apart; `wrap` continues a
@@ -77,7 +79,8 @@ export function Row<const S extends string = never>({
 
 // A card: a surface padded by `pad` on every side (`inset="bar"` for a header or toolbar line),
 // its children a column `gap` apart. `fit` makes it as wide as its content (an image, a code), so
-// nothing leaves empty space beside it.
+// nothing leaves empty space beside it. `tone="plain"` pads without a surface of its own;
+// `border="bottom"` (or `top`) lines one edge, as a panel's header or footer.
 export function Surface<const S extends string = never>({
   pad,
   gap = 'none',
@@ -93,7 +96,7 @@ export function Surface<const S extends string = never>({
   gap?: Space
   tone?: SurfaceTone
   radius?: SurfaceRadius
-  border?: boolean
+  border?: SurfaceBorder
   inset?: SurfaceInset
   fit?: boolean
   align?: StackAlign

@@ -82,9 +82,16 @@ const JUSTIFY: Record<Justify, string> = {
 // The looks below leave the display (`flex`, `grid`) to the component, so a placement can hide a
 // box (`hidden md:flex`).
 
-// A column: children one under the other, `gap` apart.
-export const stackLook = (gap: Space, align: StackAlign = 'stretch', justify: Justify = 'start') =>
-  `min-w-0 flex-col ${GAP[gap]} ${ITEMS[align]} ${JUSTIFY[justify]}`
+// A column: children one under the other, `gap` apart; `divided` draws a line between them.
+export const stackLook = (
+  gap: Space,
+  align: StackAlign = 'stretch',
+  justify: Justify = 'start',
+  divided = false
+) =>
+  `min-w-0 flex-col ${GAP[gap]} ${ITEMS[align]} ${JUSTIFY[justify]}${
+    divided ? ' divide-y divide-outline-variant' : ''
+  }`
 
 // A line: children side by side, `gap` apart, on one center (or baseline) line; `wrap` lets a
 // line that runs out of room continue under itself with the same gap.
@@ -101,6 +108,15 @@ export type SurfaceRadius = 'none' | 'md' | 'lg' | 'xl' | 'group' | 'hero'
 // How a surface pads its content: `even` the same on all four sides; `bar` (a header, footer or
 // toolbar line) one step less above and below than at the sides.
 export type SurfaceInset = 'even' | 'bar'
+// A line along every side, or only along the top or bottom (a header or footer of a panel).
+export type SurfaceBorder = boolean | 'top' | 'bottom'
+
+const BORDER: Record<'true' | 'false' | 'top' | 'bottom', string> = {
+  true: 'border border-outline-variant',
+  false: '',
+  top: 'border-t border-outline-variant',
+  bottom: 'border-b border-outline-variant',
+}
 
 const TONE: Record<SurfaceTone, string> = {
   plain: '',
@@ -140,7 +156,7 @@ export const surfaceLook = ({
   gap: Space
   tone: SurfaceTone
   radius: SurfaceRadius
-  border: boolean
+  border: SurfaceBorder
   inset: SurfaceInset
   fit: boolean
   align: StackAlign
@@ -152,7 +168,7 @@ export const surfaceLook = ({
     ITEMS[align],
     TONE[tone],
     RADIUS[radius],
-    border ? 'border border-outline-variant' : '',
+    BORDER[String(border) as keyof typeof BORDER],
     fit ? 'w-fit max-w-full' : '',
   ]
     .filter(Boolean)

@@ -20,7 +20,8 @@ type Edge = 'top' | 'right' | 'bottom' | 'left' | 'inset' | 'inset-x' | 'inset-y
 type Margin = 'm' | 'mx' | 'my' | 'mt' | 'mr' | 'mb' | 'ml' | 'ms' | 'me'
 type Length = `${number}` | `${number}/${number}` | 'px' | 'full' | 'auto' | 'app' | `[${string}]`
 type Layer = 'raised' | 'float' | 'popover' | 'page' | 'top' | 'banner' | 'drag' | 'chrome'
-type Display = 'hidden' | 'flex' | 'inline-flex'
+type Display = 'hidden' | 'flex' | 'inline-flex' | 'grid' | 'block'
+type Container = 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl' | '6xl' | 'prose'
 type LayoutUtility =
   | 'absolute'
   | 'relative'
@@ -46,8 +47,16 @@ type LayoutUtility =
   | `row-${string}`
   | 'w-full'
   | 'w-fit'
+  | 'h-full'
+  | 'h-app'
+  | 'min-h-app'
   | 'min-w-0'
+  | 'min-h-0'
   | 'max-w-full'
+  | 'max-h-full'
+  | `max-w-${Container}`
+  | `overflow-${'' | 'x-' | 'y-'}${'auto' | 'hidden' | 'visible' | 'clip'}`
+  | `overscroll-${'' | 'x-' | 'y-'}contain`
   | 'opacity-0'
   | 'opacity-100'
   | 'pointer-events-none'
