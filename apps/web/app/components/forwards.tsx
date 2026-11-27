@@ -286,7 +286,7 @@ function PillGlyph({ server, own }: { server: PlaceNames['server']; own: boolean
   return (
     <span
       aria-hidden
-      className={`flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-[5px] text-[9px] leading-none font-semibold ${
+      className={`flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-[5px] text-3xs leading-none font-semibold ${
         server.p2p
           ? 'bg-tertiary-container text-on-tertiary-container'
           : 'bg-primary-container text-on-primary-container'

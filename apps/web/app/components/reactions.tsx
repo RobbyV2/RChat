@@ -114,7 +114,7 @@ function ReactionTooltip({
       style={pos ?? { top: -9999, left: -9999 }}
       className="pointer-events-none fixed z-50 flex max-w-64 items-center gap-3 rounded-lg bg-inverse-surface px-3 py-2 text-inverse-on-surface shadow-elevation-2"
     >
-      <span aria-hidden className="shrink-0 font-emoji text-[32px] leading-none">
+      <span aria-hidden className="shrink-0 font-emoji text-3xl leading-none">
         {r.emoji}
       </span>
       <span aria-hidden className="text-sm leading-snug">
@@ -390,7 +390,7 @@ export function QuickReactions({ m, anchor }: { m: Message; anchor: HTMLElement 
   const coarse = useMedia(COARSE_QUERY)
   const { toggle, openPicker } = useReactionActions()
   const close = useStore(s => s.closeContextMenu)
-  const size = coarse ? 'h-12 w-12 text-[26px]' : 'h-9 w-9 text-[20px]'
+  const size = coarse ? 'h-12 w-12 text-2xl' : 'h-9 w-9 text-xl'
   const full = reactionsFull(m)
   return (
     <div className={`flex items-center gap-1 ${coarse ? 'justify-around' : ''}`}>

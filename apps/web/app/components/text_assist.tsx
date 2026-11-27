@@ -310,7 +310,7 @@ export function useTextAssist({
         keyOf={m => m.emoji.emoji}
         render={m => (
           <>
-            <span className="w-7 shrink-0 text-center font-emoji text-[22px] leading-none">
+            <span className="w-7 shrink-0 text-center font-emoji text-2xl leading-none">
               {withTone(m.emoji, prefs.tone)}
             </span>
             <span className="min-w-0 truncate">:{m.code}:</span>

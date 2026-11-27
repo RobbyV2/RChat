@@ -153,7 +153,7 @@ function P2pVoiceRowBody({
         {count > 0 && (
           <span
             title={`${count} in voice`}
-            className="ml-auto shrink-0 rounded-full bg-surface-container-highest px-1.5 text-[11px] leading-4 font-medium text-on-surface-variant tabular-nums"
+            className="ml-auto shrink-0 rounded-full bg-surface-container-highest px-1.5 text-2xs leading-4 font-medium text-on-surface-variant tabular-nums"
           >
             {count}
           </span>

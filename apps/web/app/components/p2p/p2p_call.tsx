@@ -88,7 +88,7 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
         <Icon size={20} />
         <span
           aria-hidden
-          className="absolute -bottom-0.5 left-3 rounded bg-tertiary-container px-0.5 text-[8px] leading-tight font-bold text-on-tertiary-container"
+          className="absolute -bottom-0.5 left-3 rounded bg-tertiary-container px-0.5 text-3xs leading-tight font-bold text-on-tertiary-container"
         >
           P2P
         </span>

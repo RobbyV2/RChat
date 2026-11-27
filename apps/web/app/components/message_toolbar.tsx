@@ -126,7 +126,7 @@ export function MessageToolbar({
                 onClick={() => {
                   if (!blocked) toggle(m, e)
                 }}
-                className={`${messageToolCls} ${quickCls} font-emoji text-[18px] leading-none ${blocked ? 'cursor-not-allowed [&>span]:opacity-40' : 'hover:[&>span]:scale-115'}`}
+                className={`${messageToolCls} ${quickCls} font-emoji text-lg leading-none ${blocked ? 'cursor-not-allowed [&>span]:opacity-40' : 'hover:[&>span]:scale-115'}`}
               >
                 <span className="transition-transform">{e}</span>
               </button>

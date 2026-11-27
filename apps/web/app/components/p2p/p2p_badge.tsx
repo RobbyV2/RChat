@@ -35,7 +35,7 @@ export function P2pBadge({ label = 'P2P', title }: { label?: string; title?: str
   return (
     <span
       title={title ?? 'Peer-to-peer: stored on your devices, not on the instance'}
-      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-tertiary px-1.5 py-px text-[11px] leading-4 font-medium text-tertiary"
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-tertiary px-1.5 py-px text-2xs leading-4 font-medium text-tertiary"
     >
       <Waypoints size={12} aria-hidden />
       {label}
@@ -290,7 +290,7 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
         open(r.left, r.bottom)
       }}
       {...longPress(open)}
-      className={`inline-flex min-w-0 items-center gap-1 rounded-full py-px text-[11px] leading-4 font-medium ${
+      className={`inline-flex min-w-0 items-center gap-1 rounded-full py-px text-2xs leading-4 font-medium ${
         size === 'icon' ? 'shrink-0 p-px' : 'shrink px-1.5'
       } ${cls}`}
     >

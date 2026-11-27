@@ -53,7 +53,7 @@ export function InstanceChip({ host, className = '' }: { host: string; className
       title={
         streamer ? 'Lives on another RChat instance' : `Lives on ${host}, another RChat instance`
       }
-      className={`inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-tertiary-container px-2 py-0.5 text-[11px] leading-4 font-medium text-on-tertiary-container ${className}`}
+      className={`inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-tertiary-container px-2 py-0.5 text-2xs leading-4 font-medium text-on-tertiary-container ${className}`}
     >
       <Globe size={11} className="shrink-0" />
       <span className="streamer truncate">{host}</span>
@@ -80,11 +80,11 @@ export function RailInstance() {
       className="flex w-15 shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
     >
       <Globe size={16} className="shrink-0" />
-      <span className="streamer w-full truncate text-center text-[10px] leading-3 font-semibold text-on-surface">
+      <span className="streamer w-full truncate text-center text-3xs leading-3 font-semibold text-on-surface">
         {label}
       </span>
       {named && (
-        <span className="streamer w-full truncate text-center text-[9px] leading-3">{host}</span>
+        <span className="streamer w-full truncate text-center text-3xs leading-3">{host}</span>
       )}
     </button>
   )

@@ -358,7 +358,7 @@ function Rating({
                   }`}
                   style={{ height: `${Math.max(4, (n / top) * 48)}px` }}
                 />
-                <span className="text-[10px] text-on-surface-variant tabular-nums">{i + 1}</span>
+                <span className="text-3xs text-on-surface-variant tabular-nums">{i + 1}</span>
               </div>
             ))}
           </div>

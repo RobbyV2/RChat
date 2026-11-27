@@ -193,7 +193,7 @@ function ServerTile({
       {mine && (
         <span
           title="Creator"
-          className="absolute -right-1 -bottom-0.5 rounded-full bg-tertiary-container px-1.5 text-[9px] leading-4 font-bold text-on-tertiary-container"
+          className="absolute -right-1 -bottom-0.5 rounded-full bg-tertiary-container px-1.5 text-3xs leading-4 font-bold text-on-tertiary-container"
         >
           C
         </span>
@@ -249,7 +249,7 @@ function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
   return (
     <span
-      className={`flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-[9px] leading-none font-semibold ${
+      className={`flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold ${
         active ? 'bg-primary text-on-primary' : 'folder-mini'
       }`}
     >

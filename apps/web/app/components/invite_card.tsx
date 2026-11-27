@@ -611,7 +611,7 @@ function Frame({
       }
     >
       {!big && (
-        <p className="mb-2 text-[11px] font-semibold tracking-wide text-on-surface-variant uppercase">
+        <p className="mb-2 text-2xs font-semibold tracking-wide text-on-surface-variant uppercase">
           {heading ??
             (invalid ? "You've received an invite, but…" : "You've been invited to join a server")}
         </p>
@@ -1071,7 +1071,7 @@ function RemoteOrigin({ host, name }: { host: string; name?: string }) {
       {name && name !== host && (
         <span
           title={streamer ? 'The name this site gives itself' : `${host} calls itself ${name}`}
-          className="streamer max-w-full min-w-0 truncate text-[11px] text-on-surface-variant"
+          className="streamer max-w-full min-w-0 truncate text-2xs text-on-surface-variant"
         >
           {name}
         </span>

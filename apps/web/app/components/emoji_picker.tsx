@@ -535,7 +535,7 @@ const PickerBody = memo(function PickerBody({
                 data-s={s}
                 data-i={i}
                 className={`flex aspect-square scroll-mt-9 scroll-mb-1 items-center justify-center rounded-xl font-emoji leading-none select-none ${
-                  sheet ? 'text-[30px] active:bg-surface-container-highest' : 'text-[26px]'
+                  sheet ? 'text-3xl active:bg-surface-container-highest' : 'text-2xl'
                 } aria-selected:bg-secondary-container aria-selected:ring-2 aria-selected:ring-primary aria-selected:ring-inset aria-[selected=false]:hover:bg-surface-container-highest`}
               >
                 <span className={sheet ? '' : 'transition-transform duration-100 hover:scale-110'}>
@@ -663,7 +663,7 @@ const PickerBody = memo(function PickerBody({
             aria-haspopup="menu"
             aria-expanded={toneOpen}
             onClick={() => setToneOpen(o => !o)}
-            className={`flex h-10 w-10 items-center justify-center rounded-full font-emoji text-[22px] leading-none ${
+            className={`flex h-10 w-10 items-center justify-center rounded-full font-emoji text-2xl leading-none ${
               toneOpen ? 'bg-surface-container-highest' : 'hover:bg-surface-container-highest'
             }`}
           >
@@ -688,7 +688,7 @@ const PickerBody = memo(function PickerBody({
                     setToneOpen(false)
                     if (!sheet) searchRef.current?.focus()
                   }}
-                  className={`flex h-9 w-9 items-center justify-center rounded-full font-emoji text-[20px] leading-none ${
+                  className={`flex h-9 w-9 items-center justify-center rounded-full font-emoji text-xl leading-none ${
                     t === tone
                       ? 'bg-secondary-container ring-2 ring-primary ring-inset'
                       : 'hover:bg-surface-container-high'
@@ -716,7 +716,7 @@ const PickerBody = memo(function PickerBody({
         <div className="flex h-14 shrink-0 items-center gap-3 border-t border-outline-variant/60 bg-surface-container px-4">
           {preview && (
             <>
-              <span aria-hidden className="font-emoji text-[32px] leading-none">
+              <span aria-hidden className="font-emoji text-3xl leading-none">
                 {withTone(preview, tone)}
               </span>
               <div className="min-w-0">

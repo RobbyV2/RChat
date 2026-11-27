@@ -14,7 +14,7 @@ export function DirectBadge({ label = 'Direct' }: { label?: string }) {
   return (
     <span
       title="Direct (P2P) call"
-      className="shrink-0 rounded bg-tertiary-container px-1 py-0.5 text-[10px] leading-none font-bold whitespace-nowrap text-on-tertiary-container"
+      className="shrink-0 rounded bg-tertiary-container px-1 py-0.5 text-3xs leading-none font-bold whitespace-nowrap text-on-tertiary-container"
     >
       {label}
     </span>
@@ -55,7 +55,7 @@ export function CallType({
         (p2p ? (
           <DirectBadge label={ROUTE_LABEL.p2p} />
         ) : (
-          <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-[10px] leading-none font-bold whitespace-nowrap text-on-surface-variant">
+          <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-3xs leading-none font-bold whitespace-nowrap text-on-surface-variant">
             {ROUTE_LABEL.server}
           </span>
         ))}
@@ -112,7 +112,7 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
         {route === 'p2p' && (
           <span
             aria-hidden
-            className="absolute -bottom-0.5 left-3 rounded bg-tertiary-container px-0.5 text-[8px] leading-tight font-bold text-on-tertiary-container"
+            className="absolute -bottom-0.5 left-3 rounded bg-tertiary-container px-0.5 text-3xs leading-tight font-bold text-on-tertiary-container"
           >
             P2P
           </span>

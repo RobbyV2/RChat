@@ -166,7 +166,7 @@ export function RelaySection() {
               key={r.url}
               className="flex items-center gap-2 rounded-xl bg-surface-container px-3 py-1.5"
             >
-              <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-[10px] leading-none font-bold text-on-surface-variant">
+              <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-3xs leading-none font-bold text-on-surface-variant">
                 {isTurn(r.url) ? 'TURN' : 'STUN'}
               </span>
               <span className="min-w-0 flex-1 truncate font-mono text-xs" title={r.url}>

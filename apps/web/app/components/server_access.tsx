@@ -85,7 +85,7 @@ const CHIP: Record<PasswordStatus, string> = {
 function Chip({ status }: { status: PasswordStatus }) {
   return (
     <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium ${CHIP[status]}`}
+      className={`shrink-0 rounded-full px-2 py-0.5 text-2xs leading-4 font-medium ${CHIP[status]}`}
     >
       {STATUS_LABEL[status]}
     </span>

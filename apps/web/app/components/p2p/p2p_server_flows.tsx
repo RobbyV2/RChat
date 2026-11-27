@@ -577,7 +577,7 @@ function DevicesSectionBody() {
                   <span className="ml-2 text-xs text-on-surface-variant">This device</span>
                 )}
               </p>
-              <p className="font-mono text-[11px] text-on-surface-variant">
+              <p className="font-mono text-2xs text-on-surface-variant">
                 {d.dk.slice(0, 12)} · {d.rooms.length} {d.rooms.length === 1 ? 'server' : 'servers'}
                 {d.created ? ` · added ${when(d.created)}` : ''}
               </p>
@@ -799,7 +799,7 @@ function RecoverDialogBody() {
               />
               <span className="min-w-0 flex-1 truncate">
                 {d.label}{' '}
-                <span className="font-mono text-[11px] text-on-surface-variant">
+                <span className="font-mono text-2xs text-on-surface-variant">
                   {d.dk.slice(0, 12)}
                 </span>
               </span>

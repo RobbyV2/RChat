@@ -80,7 +80,7 @@ export function AccountSwitcherTile() {
           <InstanceTag origin={group.origin} name={group.name} />
         </span>
         {model.otherBadge > 0 && (
-          <span className="absolute -left-2 -top-1 rounded-full bg-danger px-1 text-[10px] font-bold text-on-danger">
+          <span className="absolute -left-2 -top-1 rounded-full bg-danger px-1 text-3xs font-bold text-on-danger">
             {model.otherBadge}
           </span>
         )}
@@ -88,7 +88,7 @@ export function AccountSwitcherTile() {
       <span className="streamer w-full truncate px-0.5 text-xs font-semibold">
         <Masked text={row.display} />
       </span>
-      <span className="streamer w-full truncate px-0.5 text-[10px] text-on-surface-variant">
+      <span className="streamer w-full truncate px-0.5 text-3xs text-on-surface-variant">
         <Masked text={group.name} />
       </span>
     </button>

@@ -350,7 +350,7 @@ export function LiveBadge({
     <span
       title={title}
       className={`flex shrink-0 items-center rounded-[4px] bg-danger font-bold tracking-wide text-on-danger ${
-        size === 'sm' ? 'px-1 py-px text-[9px] leading-3' : 'px-1.5 py-0.5 text-[11px] leading-4'
+        size === 'sm' ? 'px-1 py-px text-3xs leading-3' : 'px-1.5 py-0.5 text-2xs leading-4'
       }`}
     >
       LIVE
@@ -484,7 +484,7 @@ export function Tile({
         className={`absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-0.75rem)] ${
           isGuestName(user.username) ? '' : 'cursor-pointer'
         } items-center gap-1 rounded-md bg-scrim/70 font-medium text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary ${
-          compact ? 'px-1.5 py-0.5 text-[11px]' : 'px-2 py-1 text-xs'
+          compact ? 'px-1.5 py-0.5 text-2xs' : 'px-2 py-1 text-xs'
         }`}
       >
         {screen ? (

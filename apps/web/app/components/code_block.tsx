@@ -71,7 +71,7 @@ export function CodeBlock({ code, tag }: { code: string; tag: string | null }) {
   const label = hl ? LANGS[hl.lang] : named ? LANGS[named] : tag || 'Text'
   return (
     <div data-code-block="" className="my-1 max-w-full rounded-lg bg-surface-container-high">
-      <div className="flex h-7 items-center justify-between gap-2 pr-1 pl-3 text-[11px] text-on-surface-variant">
+      <div className="flex h-7 items-center justify-between gap-2 pr-1 pl-3 text-2xs text-on-surface-variant">
         <span className="truncate font-medium">{label}</span>
         <CopyButton text={code} />
       </div>
@@ -182,7 +182,7 @@ export function CodePreview({
             {fmtSize(bytes)}
           </span>
         )}
-        <span className="shrink-0 rounded bg-surface-container-highest px-1.5 py-0.5 text-[11px] text-on-surface-variant">
+        <span className="shrink-0 rounded bg-surface-container-highest px-1.5 py-0.5 text-2xs text-on-surface-variant">
           {LANGS[lang]}
         </span>
         <span className="ml-auto flex shrink-0 items-center">{actions}</span>

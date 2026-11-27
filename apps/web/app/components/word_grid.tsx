@@ -32,7 +32,7 @@ export function WordGrid({ words, selected, onChange }: Props) {
             >
               {word}
               {idx >= 0 && (
-                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-medium text-on-primary">
+                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-3xs font-medium text-on-primary">
                   {idx + 1}
                 </span>
               )}

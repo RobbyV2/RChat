@@ -42,7 +42,7 @@ const METHOD_CLS: Record<Method, string> = {
 export function MethodBadge({ method }: { method: Method }) {
   return (
     <span
-      className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold ${METHOD_CLS[method]}`}
+      className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-2xs font-semibold ${METHOD_CLS[method]}`}
     >
       {method}
     </span>
@@ -100,9 +100,9 @@ function FieldInput({
         {field.name}
         {field.required && <span className="text-error">*</span>}
       </label>
-      <span className="text-[11px] text-on-surface-variant">{typeLabel(field)}</span>
+      <span className="text-2xs text-on-surface-variant">{typeLabel(field)}</span>
       {field.nullable && (
-        <label className="ml-auto flex items-center gap-1 text-[11px] text-on-surface-variant">
+        <label className="ml-auto flex items-center gap-1 text-2xs text-on-surface-variant">
           <input
             type="checkbox"
             checked={isNull}
@@ -116,7 +116,7 @@ function FieldInput({
   const help = firstLine(field.description)
   const footer = (
     <>
-      {help && <p className="text-[11px] leading-snug text-on-surface-variant">{help}</p>}
+      {help && <p className="text-2xs leading-snug text-on-surface-variant">{help}</p>}
       {error && (
         <p role="alert" className="text-xs text-error">
           {error}

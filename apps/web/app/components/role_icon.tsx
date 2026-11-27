@@ -7,7 +7,7 @@ export function RoleIcon({ emoji, role }: { emoji?: string; role?: string }) {
       title={role}
       aria-label={role}
       data-role-icon
-      className="inline-flex h-4 w-4 shrink-0 items-center justify-center self-center text-[14px] leading-4"
+      className="inline-flex h-4 w-4 shrink-0 items-center justify-center self-center text-sm leading-4"
     >
       {emoji}
     </span>

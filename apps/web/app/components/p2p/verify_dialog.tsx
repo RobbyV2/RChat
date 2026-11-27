@@ -104,7 +104,7 @@ function VerifyDialogBody({ ik }: { ik: string }) {
                 <span key={i}>{g}</span>
               ))}
             </div>
-            <p className="streamer font-mono text-[11px] text-on-surface-variant">
+            <p className="streamer font-mono text-2xs text-on-surface-variant">
               Their key {fingerprint(ik)}
             </p>
           </div>

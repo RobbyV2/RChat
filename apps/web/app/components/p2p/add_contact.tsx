@@ -65,7 +65,7 @@ function Preview({ card }: { card: Card }) {
         <p className="streamer truncate text-sm font-medium">
           <Masked text={card.name || 'Unnamed'} />
         </p>
-        <p className="streamer truncate font-mono text-[11px] text-on-surface-variant">
+        <p className="streamer truncate font-mono text-2xs text-on-surface-variant">
           {fingerprint(card.ik)}
         </p>
       </div>

@@ -217,7 +217,7 @@ function Row({
         )}
       </span>
       {item.hint && (
-        <kbd className="shrink-0 rounded-md border border-outline-variant px-1.5 py-0.5 font-mono text-[11px] text-on-surface-variant">
+        <kbd className="shrink-0 rounded-md border border-outline-variant px-1.5 py-0.5 font-mono text-2xs text-on-surface-variant">
           {/^Mod|^Shift|^Escape/.test(item.hint) ? shortcutLabel(item.hint) : item.hint}
         </kbd>
       )}
@@ -505,7 +505,7 @@ function ListView() {
                   <Masked text={sec.owner.label} />
                 </h3>
               )}
-            <p className="px-3 pt-2 pb-1 text-[11px] font-medium tracking-wide text-on-surface-variant uppercase">
+            <p className="px-3 pt-2 pb-1 text-2xs font-medium tracking-wide text-on-surface-variant uppercase">
               {sec.label}
             </p>
             {sec.items.map(({ item, hits }) => {
@@ -544,7 +544,7 @@ function ListView() {
           </p>
         )}
       </div>
-      <div className="hidden shrink-0 items-center gap-4 border-t border-outline-variant px-4 py-2 text-[11px] text-on-surface-variant md:flex">
+      <div className="hidden shrink-0 items-center gap-4 border-t border-outline-variant px-4 py-2 text-2xs text-on-surface-variant md:flex">
         <span>↑↓ Move</span>
         <span>Enter Run</span>
         <span>Esc Close</span>

@@ -202,7 +202,7 @@ export function FileCardBody({
           </span>
           <div className="min-w-0 flex-1" title={shown}>
             <MaskedTogether word={`file:${name}`}>
-              <div className="flex min-w-0 text-[15px] leading-5">
+              <div className="flex min-w-0 text-sm leading-5">
                 <span className="truncate font-semibold text-on-surface">
                   <MaskedText text={base} shown={shownBase} />
                 </span>

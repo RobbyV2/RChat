@@ -14,7 +14,7 @@ export function WebhookBadge() {
   return (
     <span
       title="Posted through a webhook, not by a member"
-      className="shrink-0 self-center rounded-md bg-tertiary-container px-1 py-px text-[10px] leading-4 font-semibold tracking-wide text-on-tertiary-container"
+      className="shrink-0 self-center rounded-md bg-tertiary-container px-1 py-px text-3xs leading-4 font-semibold tracking-wide text-on-tertiary-container"
     >
       WEBHOOK
     </span>

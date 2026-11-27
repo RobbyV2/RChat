@@ -29,7 +29,7 @@ export function EditedMark({ at }: { at: number }) {
       data-edited
       title={when}
       aria-label={`Edited ${when}`}
-      className="ml-1 cursor-default align-baseline text-[0.7rem] text-on-surface-variant select-none"
+      className="ml-1 cursor-default align-baseline text-2xs text-on-surface-variant select-none"
     >
       (edited)
     </span>

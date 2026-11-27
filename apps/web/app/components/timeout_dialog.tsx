@@ -66,7 +66,7 @@ export function TimeoutBadge({ t, compact = false }: { t: Timeout; compact?: boo
       title={title}
       aria-label={title}
       role="img"
-      className="flex shrink-0 items-center gap-0.5 rounded-md bg-error-container px-1.5 py-0.5 text-[10px] font-medium text-on-error-container tabular-nums"
+      className="flex shrink-0 items-center gap-0.5 rounded-md bg-error-container px-1.5 py-0.5 text-3xs font-medium text-on-error-container tabular-nums"
     >
       <Timer size={compact ? 11 : 12} aria-hidden />
       {remainingText(t.ends - now)}

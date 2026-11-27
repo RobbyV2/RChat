@@ -541,7 +541,7 @@ function P2pSectionBody() {
           <div className="flex flex-col gap-1 px-2">
             <p className="text-sm font-medium">Name shown to contacts</p>
             <NameField />
-            <p className="streamer font-mono text-[11px] text-on-surface-variant">Key {fp}</p>
+            <p className="streamer font-mono text-2xs text-on-surface-variant">Key {fp}</p>
           </div>
           <P2pServerProfiles />
           <BadgeSetting />

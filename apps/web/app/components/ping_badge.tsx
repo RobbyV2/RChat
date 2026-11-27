@@ -8,7 +8,7 @@ export function PingBadge({ count, className = '' }: { count: number; className?
     <span
       data-ping-badge={count}
       title={pingLabel(count)}
-      className={`flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-danger px-1 text-[11px] leading-none font-bold text-on-danger tabular-nums ${className}`}
+      className={`flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-danger px-1 text-2xs leading-none font-bold text-on-danger tabular-nums ${className}`}
     >
       <span aria-hidden>{badgeText(count)}</span>
       <span className="sr-only">{pingLabel(count)}</span>

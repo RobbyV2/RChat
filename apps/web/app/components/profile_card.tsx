@@ -83,7 +83,7 @@ export function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; childr
       ? 'bg-primary-container text-on-primary-container'
       : 'bg-tertiary-container text-on-tertiary-container'
   return (
-    <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
+    <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-3xs font-medium ${cls}`}>
       {children}
     </span>
   )
@@ -182,7 +182,7 @@ const ACTIONS: Record<ProfileAction, { label: string; icon: LucideIcon; danger?:
 export const cardDanger = (a: ProfileAction, timedOut: boolean) =>
   !!ACTIONS[a].danger && !(a === 'timeout' && timedOut)
 
-const labelCls = 'text-[11px] font-semibold tracking-wide text-on-surface-variant uppercase'
+const labelCls = 'text-2xs font-semibold tracking-wide text-on-surface-variant uppercase'
 // The account's handle, never masked: the card is where you check who an account is.
 export function ProfileHandle({
   user,
