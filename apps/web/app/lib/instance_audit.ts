@@ -14,6 +14,7 @@ const ACTIONS: Record<string, { verb: string; target: boolean }> = {
   'user.sign_out': { verb: 'signed out', target: true },
   'report_forms.change': { verb: 'changed the report forms', target: false },
   'encryption.backed_up': { verb: 'saved a copy of the key file', target: false },
+  'encryption.rotate': { verb: 'rotated data keys', target: false },
 }
 
 // The longest value of a setting a line shows in full.

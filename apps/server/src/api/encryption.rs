@@ -31,6 +31,9 @@ pub struct EncryptionView {
     pub places: SealedPlaces,
     /// The newest jobs that encrypt or decrypt stored messages.
     pub jobs: Vec<SealJob>,
+    /// The data key rotation that runs, or that left records under the old keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<crate::api::seal::rotate::RotationView>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -105,7 +108,53 @@ pub(crate) async fn admin_status(
         copies_confirmed: crate::api::seal::copies(&state).await?,
         places: sealed_places(&state.db).await?,
         jobs: crate::api::seal::jobs::recent(&state.db).await?,
+        rotation: crate::api::seal::rotate::current(&state.db)
+            .await?
+            .map(|r| r.view()),
     }))
+}
+
+/// What "Rotate data keys" takes: the purposes (every one when left out) and the confirmation.
+#[derive(Deserialize)]
+pub struct RotateReq {
+    pub purposes: Option<Vec<String>>,
+    pub reauth: ReAuthBody,
+}
+
+const BAD_PURPOSE: &str = "purposes must be content, media, secrets, search or bus";
+
+/// `POST /api/v1/admin/encryption/rotate`: "Rotate data keys", after confirming it is you.
+pub(crate) async fn post_rotate(
+    State(state): State<AppState>,
+    AuthedSession(session): AuthedSession,
+    Json(RotateReq { purposes, reauth }): Json<RotateReq>,
+) -> Result<Json<crate::api::seal::rotate::Rotation>, ApiError> {
+    require_site_admin(&session.user)?;
+    let purposes = match purposes {
+        None => crate::crypt::Purpose::ALL.to_vec(),
+        Some(names) => names
+            .iter()
+            .map(|n| crate::crypt::Purpose::parse(n).ok_or_else(|| super::bad(BAD_PURPOSE)))
+            .collect::<Result<_, _>>()?,
+    };
+    check(
+        &state,
+        &session,
+        ReAuth::try_from(reauth)?,
+        Purpose::RotateKeys,
+    )
+    .await?;
+    let rotation = crate::api::seal::rotate::start(&state, &purposes).await?;
+    super::instance_audit::record_in(
+        &mut *state.db.acquire().await?,
+        &session.user.username,
+        "encryption.rotate",
+        None,
+        serde_json::json!({"purposes": rotation.purposes}),
+        now(),
+    )
+    .await?;
+    Ok(Json(rotation))
 }
 
 /// What "Key copy saved" takes.

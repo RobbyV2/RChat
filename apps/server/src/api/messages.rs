@@ -3703,7 +3703,8 @@ async fn read_streams(
 }
 
 /// The candidates of the JSON stream list `$1` for the JSON term pairs `$2`, newest first, and
-/// with `keyed` for the keyed terms `$3` of encrypted messages, `[channel, term, bucket]`.
+/// with `keyed` for the keyed terms `$3` of encrypted messages, `[channel, term, bucket, set]`:
+/// each search key's terms (`set`) are walked on their own.
 /// A true phrase occurs in every required posting list of its representation, so each stream
 /// walks the list whose newest entry is oldest and none where a term is missing.
 fn walk_sql(short_spans: bool, keyed: bool) -> String {
@@ -3716,8 +3717,8 @@ fn walk_sql(short_spans: bool, keyed: bool) -> String {
     };
     let keyed = match keyed {
         true => format!(" UNION ALL SELECT ({POSTING_HEAD}) AS id,s.stream,s.floor,t.form,t.term FROM streams s JOIN
-            (SELECT 5 AS form,value->>0 AS channel,value->>1 AS term FROM json_each($3) UNION
-             SELECT 6,value->>0,value->>2 FROM json_each($3)) t ON t.channel=s.channel"),
+            (SELECT 5+2*COALESCE(value->>3,0) AS form,value->>0 AS channel,value->>1 AS term FROM json_each($3) UNION
+             SELECT 6+2*COALESCE(value->>3,0),value->>0,value->>2 FROM json_each($3)) t ON t.channel=s.channel"),
         false => String::new(),
     };
     format!("WITH RECURSIVE terms(form,term) AS MATERIALIZED (SELECT 0,value->>0 FROM json_each($2) UNION

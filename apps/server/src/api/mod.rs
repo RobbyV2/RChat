@@ -2878,6 +2878,7 @@ fn api_routes(
             "/admin/encryption/backed_up",
             put(encryption::put_backed_up),
         )
+        .route("/admin/encryption/rotate", post(encryption::post_rotate))
         .route(
             "/admin/servers/{name}/seal_forced",
             put(seal::put_server_forced),

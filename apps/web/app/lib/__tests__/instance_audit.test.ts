@@ -232,4 +232,6 @@ test('encryption requirements and the saved key copy read as sentences', () => {
   expect(text(gone)).toBe('root stopped requiring encrypted storage in a server')
   const saved = entry({ action: 'encryption.backed_up', target: null, detail: {} })
   expect(text(saved)).toBe('root saved a copy of the key file')
+  const rotated = entry({ action: 'encryption.rotate', target: null, detail: { purposes: [] } })
+  expect(text(rotated)).toBe('root rotated data keys')
 })

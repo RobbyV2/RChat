@@ -7,6 +7,7 @@ use sqlx::{AnyConnection, Row};
 
 use super::{MEDIA_CHUNK, SWEEP_BATCH, s3_key};
 use crate::api::access::{Proof, resolve_channel, resolve_dm};
+use crate::api::seal::rotate::Outcome;
 use crate::api::seal::{NEEDS_KEY, channel_place, dm_place};
 use crate::api::{ApiError, MediaRef};
 use crate::crypt::media::{Facts, MediaKey, ObjectReader, chunks};
@@ -368,6 +369,144 @@ pub(crate) async fn seal_now(state: &AppState, id: &str) -> Result<bool, ApiErro
     }
 }
 
+/// Seals the file `id` again under the active `media` key when a key of `retiring` sealed it:
+/// its database chunks and name, or its S3 object written over. The object names its key, so a
+/// stop between writing it and marking the row is mended the next time; an object written for a
+/// file deleted or stored plain meanwhile is removed. `None` when the file is not under a
+/// retiring key.
+pub(crate) async fn reseal_now(
+    state: &AppState,
+    id: &str,
+    retiring: &[u32],
+) -> Result<Option<Outcome>, ApiError> {
+    let db = &state.db;
+    let row = sqlx::query("SELECT size, seal_key, name_sealed, (SELECT COUNT(*) FROM media_chunks c WHERE c.media_id = media.id) FROM media WHERE id = $1 AND seal_key IS NOT NULL")
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let (size, key_id): (i64, i64) = (row.try_get(0)?, row.try_get(1)?);
+    let (record, stored): (Option<Vec<u8>>, i64) = (row.try_get(2)?, row.try_get(3)?);
+    let Ok(key_id) = u32::try_from(key_id) else {
+        return Ok(Some(Outcome::Lost));
+    };
+    if !retiring.contains(&key_id) {
+        return Ok(None);
+    }
+    let Some(old) = MediaKey::named(db, key_id)
+        .await
+        .map_err(ApiError::internal)?
+    else {
+        return Ok(Some(Outcome::Lost));
+    };
+    let Some(facts) = record.as_deref().and_then(|r| old.open_facts(id, r)) else {
+        return Ok(Some(Outcome::Lost));
+    };
+    let fresh = {
+        let ring = crate::db::ring(db);
+        let mut conn = db.acquire().await?;
+        MediaKey::stored_on(&ring, &mut conn)
+            .await
+            .map_err(ApiError::internal)?
+    };
+    let Some(fresh) = fresh.filter(|k| !retiring.contains(&k.id())) else {
+        return Ok(Some(Outcome::Left));
+    };
+    let total = chunks(size as u64);
+    let in_s3 = stored == 0 && size > 0;
+    let _permit = SEALING.acquire().await.map_err(ApiError::internal)?;
+    let resealed = match (in_s3, state.s3.as_deref()) {
+        (true, None) => return Ok(Some(Outcome::Left)),
+        (true, Some(bucket)) => {
+            let object = bucket
+                .get_object(sealed_key(id))
+                .await
+                .map_err(ApiError::internal)?
+                .to_vec();
+            let named = crate::crypt::media::object_header(&object)
+                .map_err(ApiError::internal)?
+                .0;
+            if named != fresh.id() {
+                let mut reader = ObjectReader::new(id, size as u64, old.clone());
+                let Ok(parts) = reader.feed(&object) else {
+                    return Ok(Some(Outcome::Lost));
+                };
+                if !reader.finished() {
+                    return Ok(Some(Outcome::Lost));
+                }
+                drop(object);
+                let data = parts.concat();
+                bucket
+                    .put_object_with_content_type(
+                        sealed_key(id),
+                        &fresh.seal_object(id, &data),
+                        super::NEUTRAL_MIME,
+                    )
+                    .await
+                    .map_err(ApiError::internal)?;
+            }
+            Vec::new()
+        }
+        (false, _) => {
+            let rows: Vec<Vec<u8>> = sqlx::query_scalar(
+                "SELECT data FROM media_chunks WHERE media_id = $1 ORDER BY seq",
+            )
+            .bind(id)
+            .fetch_all(db)
+            .await?;
+            let mut sealed = Vec::with_capacity(rows.len());
+            for (seq, record) in rows.iter().enumerate() {
+                match old.open_chunk(id, seq as u64, total, record) {
+                    Ok(plain) => sealed.push(fresh.seal_chunk(id, seq as u64, total, &plain)),
+                    Err(_) => return Ok(Some(Outcome::Lost)),
+                }
+            }
+            sealed
+        }
+    };
+    let mut tx = match is_sqlite(db) {
+        true => db.begin_with("BEGIN IMMEDIATE").await?,
+        false => db.begin().await?,
+    };
+    let marked = sqlx::query(
+        "UPDATE media SET seal_key = $1, name_sealed = $2 WHERE id = $3 AND seal_key = $4",
+    )
+    .bind(i64::from(fresh.id()))
+    .bind(fresh.seal_facts(id, &facts))
+    .bind(id)
+    .bind(i64::from(key_id))
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if marked == 1 {
+        for (seq, chunk) in resealed.iter().enumerate() {
+            sqlx::query("UPDATE media_chunks SET data = $1 WHERE media_id = $2 AND seq = $3")
+                .bind(chunk)
+                .bind(id)
+                .bind(seq as i64)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+    if marked == 0 && in_s3 {
+        let now: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT seal_key FROM media WHERE id = $1")
+                .bind(id)
+                .fetch_optional(db)
+                .await?;
+        if matches!(now, None | Some(None))
+            && let Some(bucket) = state.s3.as_deref()
+            && let Err(e) = bucket.delete_object(sealed_key(id)).await
+        {
+            tracing::warn!("s3 delete failed for {}: {e}", sealed_key(id));
+        }
+    }
+    Ok(Some(Outcome::Moved))
+}
+
 /// Stores the sealed file `id` plain again: its database chunks opened and written back, or a
 /// plain S3 object written before the sealed one goes. A file that does not open stays as it
 /// is. Returns whether this call wrote it.
@@ -522,9 +661,11 @@ pub(crate) fn chunk_stream(
     })
 }
 
-/// The plain bytes of the sealed S3 object `bytes` of file `id`, as it arrives.
+/// The plain bytes of a sealed S3 object as they arrive, under the key the object names (the
+/// row's key, or the one a key rotation wrote it under before marking the row).
 pub(crate) fn object_stream<S, E>(
     bytes: S,
+    db: Db,
     id: String,
     size: u64,
     key: MediaKey,
@@ -533,38 +674,80 @@ where
     S: futures_util::Stream<Item = Result<axum::body::Bytes, E>> + Unpin,
     E: std::fmt::Display,
 {
-    let reader = ObjectReader::new(&id, size, key);
-    futures_util::stream::unfold(
-        (bytes, reader, std::collections::VecDeque::new(), false),
-        |(mut bytes, mut reader, mut ready, ended)| async move {
-            loop {
-                if let Some(chunk) = ready.pop_front() {
-                    return Some((Ok(chunk), (bytes, reader, ready, ended)));
+    struct Read<S> {
+        bytes: S,
+        db: Db,
+        id: String,
+        size: u64,
+        key: Option<MediaKey>,
+        reader: Option<ObjectReader>,
+        head: Vec<u8>,
+        ready: std::collections::VecDeque<Vec<u8>>,
+        ended: bool,
+    }
+    let fail = |what: &str| std::io::Error::other(what.to_owned());
+    let start = Read {
+        bytes,
+        db,
+        id,
+        size,
+        key: Some(key),
+        reader: None,
+        head: Vec::new(),
+        ready: std::collections::VecDeque::new(),
+        ended: false,
+    };
+    futures_util::stream::unfold(start, move |mut r| async move {
+        loop {
+            if let Some(chunk) = r.ready.pop_front() {
+                return Some((Ok(chunk), r));
+            }
+            if r.ended {
+                return None;
+            }
+            let part = match r.bytes.next().await {
+                Some(Ok(part)) => part.to_vec(),
+                Some(Err(e)) => {
+                    r.ended = true;
+                    return Some((Err(std::io::Error::other(e.to_string())), r));
                 }
-                if ended {
-                    return None;
+                None if r.reader.as_ref().is_some_and(ObjectReader::finished) => return None,
+                None => {
+                    r.ended = true;
+                    return Some((Err(fail("a stored object ended early")), r));
                 }
-                match bytes.next().await {
-                    Some(Ok(part)) => match reader.feed(&part) {
-                        Ok(done) => ready.extend(done),
-                        Err(_) => {
-                            let e = std::io::Error::other("a stored object can't be opened");
-                            return Some((Err(e), (bytes, reader, ready, true)));
-                        }
-                    },
-                    Some(Err(e)) => {
-                        let e = std::io::Error::other(e.to_string());
-                        return Some((Err(e), (bytes, reader, ready, true)));
-                    }
-                    None if reader.finished() => return None,
-                    None => {
-                        let e = std::io::Error::other("a stored object ended early");
-                        return Some((Err(e), (bytes, reader, ready, true)));
-                    }
+            };
+            let part = match r.reader.is_some() {
+                true => part,
+                false => {
+                    r.head.extend_from_slice(&part);
+                    let Ok((named, _)) = crate::crypt::media::object_header(&r.head) else {
+                        continue;
+                    };
+                    let key = match r.key.take() {
+                        Some(key) if key.id() == named => Some(key),
+                        Some(_) | None => MediaKey::named(&r.db, named).await.ok().flatten(),
+                    };
+                    let Some(key) = key else {
+                        r.ended = true;
+                        return Some((Err(fail("a stored object can't be opened")), r));
+                    };
+                    r.reader = Some(ObjectReader::new(&r.id, r.size, key));
+                    std::mem::take(&mut r.head)
+                }
+            };
+            let Some(reader) = r.reader.as_mut() else {
+                continue;
+            };
+            match reader.feed(&part) {
+                Ok(done) => r.ready.extend(done),
+                Err(_) => {
+                    r.ended = true;
+                    return Some((Err(fail("a stored object can't be opened")), r));
                 }
             }
-        },
-    )
+        }
+    })
 }
 
 #[cfg(test)]

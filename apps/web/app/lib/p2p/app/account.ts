@@ -9,6 +9,7 @@ import { keepAsker } from '../keep'
 import { dbName, P2pStore, removeP2pDb } from '../db'
 import { dropSealed } from '../sealed_drop'
 import { resumeEarlier } from '../seal_earlier'
+import { replacing, resumeRekey } from '../device_rekey'
 import { followSiteSeal, vaultOf } from '../sealed_db'
 import { BadgeKeeper, Badges, peersCanCheck, readSlots } from '../badge'
 import { fingerprint, keyId } from '../keys'
@@ -241,7 +242,10 @@ export function createAccountPart(
     const everything = s.sealing.everything
     const available = everything ? await s.sealing.available() : useP2p.getState().seal.available
     const durable = deviceKeys(vaultOf(s.sealing.stored)).durable()
-    if (!s.closed) useP2p.setState({ seal: { everything, available, durable } })
+    const sealedAny = s.sealing.sealedAny
+    const rekey = await replacing(s)
+    if (!s.closed)
+      useP2p.setState({ seal: { everything, available, durable, sealedAny, replacing: rekey } })
   }
 
   // Another tab runs P2P: this one opens the database to show what is stored, and reloads when
@@ -540,6 +544,10 @@ export function createAccountPart(
         if (await s.sealing.lost()) await dropSealed(s.db)
         await followSite(s)
         void resumeEarlier(s, state.identityLimits(username).search)
+        void resumeRekey(s, state.identityLimits(username).search)
+          .catch(() => {})
+          .then(() => noteSeal(s))
+          .catch(() => {})
         const stopSite = owner.store.subscribe((now, was) => {
           if (s.closed) return stopSite()
           if (now.settings.encryption_required !== was.settings.encryption_required)

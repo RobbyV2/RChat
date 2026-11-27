@@ -7,6 +7,7 @@ use zeroize::Zeroizing;
 
 use super::ring::{RESET_SETTING, Ring, SecretsReset};
 use super::{Key, Purpose, header, open, row_aad, seal};
+use crate::api::seal::rotate::{Outcome, Tally};
 use crate::db::Db;
 
 pub const SIGNING_KEY: &str = "instance_signing_key";
@@ -215,6 +216,111 @@ async fn seal_hook_secrets(conn: &mut AnyConnection, (id, dek): &(u32, Key)) -> 
         tracing::info!("sealed the stored secrets of {sealed} outgoing webhooks");
     }
     Ok(())
+}
+
+/// Seals the `SETTINGS` secrets a key of `retiring` sealed again under the active `secrets`
+/// key, each only while it still holds the record that was read.
+pub(crate) async fn reseal_settings(db: &Db, retiring: &[u32]) -> anyhow::Result<Tally> {
+    let ring = crate::db::ring(db);
+    let mut conn = db.acquire().await?;
+    let conn = &mut *conn;
+    let mut tally = Tally::default();
+    let active = ring.stored_data_key_on(conn, Purpose::Secrets).await?;
+    for key in SETTINGS {
+        let name = sealed_name(key);
+        let Some(record) = stored(conn, &name).await? else {
+            continue;
+        };
+        let raw = URL_SAFE_NO_PAD.decode(record.trim())?;
+        if !header(&raw).is_ok_and(|h| retiring.contains(&h.key_id)) {
+            continue;
+        }
+        let Ok(plain) = open_setting(&ring, conn, key, &record).await else {
+            tally.add(Outcome::Lost);
+            continue;
+        };
+        let Some((id, dek)) = active.as_ref().filter(|(id, _)| !retiring.contains(id)) else {
+            tally.add(Outcome::Left);
+            continue;
+        };
+        let aad = row_aad(SETTINGS_TABLE, SETTINGS_COLUMN, key, *id);
+        let fresh = URL_SAFE_NO_PAD.encode(seal(*id, dek, &aad, plain.as_bytes()));
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = $2 AND value = $3")
+            .bind(fresh)
+            .bind(&name)
+            .bind(&record)
+            .execute(&mut *conn)
+            .await?;
+        tally.add(Outcome::Moved);
+    }
+    Ok(tally)
+}
+
+/// Seals a batch of the outgoing webhook secrets a key of `retiring` sealed again under the
+/// active `secrets` key, after the hook `at`.
+pub(crate) async fn reseal_hooks(db: &Db, retiring: &[u32], at: &str) -> anyhow::Result<Tally> {
+    let ring = crate::db::ring(db);
+    let mut conn = db.acquire().await?;
+    let conn = &mut *conn;
+    let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as("SELECT id, secret_sealed FROM outgoing_webhooks WHERE secret_sealed IS NOT NULL AND id > $1 ORDER BY id LIMIT $2")
+        .bind(at.parse::<i64>().unwrap_or(0))
+        .bind(HOOK_BATCH)
+        .fetch_all(&mut *conn)
+        .await?;
+    let active = ring.stored_data_key_on(conn, Purpose::Secrets).await?;
+    let mut tally = Tally::default();
+    for (hook, record) in &rows {
+        let Ok(h) = header(record) else {
+            continue;
+        };
+        if !retiring.contains(&h.key_id) {
+            continue;
+        }
+        let binding = hook.to_string();
+        let plain = match ring.key_by_id_on(conn, h.key_id).await? {
+            Some((Purpose::Secrets, old)) => {
+                opened(&old, h.key_id, HOOK_TABLE, HOOK_COLUMN, &binding, record).ok()
+            }
+            Some(_) | None => None,
+        };
+        let Some(plain) = plain else {
+            tally.add(Outcome::Lost);
+            continue;
+        };
+        let Some((id, dek)) = active.as_ref().filter(|(id, _)| !retiring.contains(id)) else {
+            tally.add(Outcome::Left);
+            continue;
+        };
+        let aad = row_aad(HOOK_TABLE, HOOK_COLUMN, &binding, *id);
+        sqlx::query(
+            "UPDATE outgoing_webhooks SET secret_sealed = $1 WHERE id = $2 AND secret_sealed = $3",
+        )
+        .bind(seal(*id, dek, &aad, plain.as_bytes()))
+        .bind(hook)
+        .bind(record)
+        .execute(&mut *conn)
+        .await?;
+        tally.add(Outcome::Moved);
+    }
+    tally.next = match rows.last() {
+        Some((last, _)) if rows.len() as i64 == HOOK_BATCH => Some(last.to_string()),
+        _ => None,
+    };
+    Ok(tally)
+}
+
+/// The `SETTINGS` secrets sealed under the data key `id`.
+pub async fn settings_under(db: &Db, id: u32) -> anyhow::Result<i64> {
+    let mut conn = db.acquire().await?;
+    let mut named = 0;
+    for key in SETTINGS {
+        let Some(record) = stored(&mut conn, &sealed_name(key)).await? else {
+            continue;
+        };
+        let raw = URL_SAFE_NO_PAD.decode(record.trim())?;
+        named += i64::from(header(&raw).is_ok_and(|h| h.key_id == id));
+    }
+    Ok(named)
 }
 
 /// One of the `SETTINGS` secrets: its sealed row opened, else its plain row.

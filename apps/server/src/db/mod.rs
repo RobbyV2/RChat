@@ -18,6 +18,7 @@ use sqlx::{AnyConnection, Row};
 
 #[cfg(test)]
 pub(crate) use channel_index::build_step;
+pub(crate) use channel_index::requeue_rekeyed;
 #[cfg(test)]
 pub(crate) use channel_index::tests::without_channel_index;
 pub(crate) use channel_index::{Tokenizer, has_long_span, term_bucket};

@@ -1920,7 +1920,8 @@ pub(crate) async fn download_media(
                         .get_object_stream(sealed::sealed_key(&id))
                         .await
                         .map_err(ApiError::internal)?;
-                    let opened = sealed::object_stream(stream.bytes, id.clone(), stored, key);
+                    let opened =
+                        sealed::object_stream(stream.bytes, db.clone(), id.clone(), stored, key);
                     match wanted {
                         Wanted::Part { start, end } => {
                             Body::from_stream(cut_stream(Box::pin(opened), 0, start, end))

@@ -98,8 +98,9 @@ pub(super) async fn channels(
 }
 
 /// The keyed terms the channel index walk looks for in the streams of encrypted channels, as
-/// the JSON `[[channel, term, bucket], ...]` of the runs `runs` of the text. `None` when no
-/// stream is of one, or the site has no search key.
+/// the JSON `[[channel, term, bucket, set], ...]` of the runs `runs` of the text, `set` 0 for
+/// the search key and 1 on for the keys a rotation replaces. `None` when no stream is of one,
+/// or the site has no search key.
 pub(super) async fn keyed_terms(
     db: &Db,
     streams: &[Stream],
@@ -114,23 +115,26 @@ pub(super) async fn keyed_terms(
     if wanted.is_empty() || runs.is_empty() {
         return Ok(None);
     }
-    let keyers = Grams::of_channels(db, wanted)
+    let keyers = Grams::every_of_channels(db, wanted)
         .await
         .map_err(ApiError::internal)?;
     let mut terms = Vec::new();
-    for (channel, keyer) in &keyers {
+    for (channel, set, keyer) in &keyers {
         for run in runs {
             let gram = keyer.gram(run);
-            terms.push(serde_json::json!([channel, term(gram), bucket(gram)]));
+            terms.push(serde_json::json!([channel, term(gram), bucket(gram), set]));
         }
     }
     Ok((!terms.is_empty()).then(|| serde_json::Value::Array(terms).to_string()))
 }
 
 /// The grams each channel's candidates must hold, as `Scan::Sealed` takes them: none for text
-/// shorter than a run, or without a search key.
+/// shorter than a run, without a search key, or while a rotation of it has messages left under
+/// the old one (then every encrypted candidate is read).
 async fn needles(db: &Db, channels: &[i64], text: &str) -> Result<Option<String>, ApiError> {
-    if text.chars().count() < FTS_MIN_CHARS {
+    if text.chars().count() < FTS_MIN_CHARS
+        || crate::db::ring(db).rotating(crate::crypt::Purpose::Search)
+    {
         return Ok(None);
     }
     let keyers = Grams::of_channels(db, channels.iter().copied())

@@ -194,6 +194,77 @@ async fn requeue_sealed(conn: &mut sqlx::AnyConnection) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Puts the encrypted messages `rows` (`id, channel, author, body`) back on the catch-all
+/// posting with the keyed terms of every retiring search key taken off, to be merged again
+/// under the active search key.
+pub(crate) async fn requeue_rekeyed(
+    db: &Db,
+    rows: &[(i64, i64, String, Vec<u8>)],
+) -> sqlx::Result<()> {
+    if rows.is_empty() || !has_channel_index(db).await? {
+        return Ok(());
+    }
+    let ring = super::ring(db);
+    let mut old = Vec::new();
+    for id in ring.retiring_ids(db, crate::crypt::Purpose::Search).await? {
+        if let Some((crate::crypt::Purpose::Search, dek)) = ring
+            .key_by_id(db, id)
+            .await
+            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?
+        {
+            old.push((id, dek));
+        }
+    }
+    let opener = crate::crypt::body::Opener::of(db, rows.iter().map(|r| r.3.as_slice())).await?;
+    for (id, channel, author, record) in rows {
+        let scope = crate::crypt::body::Scope::Channel(*channel);
+        let opened = opener.message(
+            *id,
+            Some(scope),
+            author,
+            Some(record),
+            crate::crypt::body::Parts::default(),
+        );
+        let mut terms = Vec::new();
+        if !opened.unreadable {
+            for (key_id, dek) in &old {
+                let keyer =
+                    crate::crypt::grams::Grams::new(ring.subkeys.get(*key_id, dek, &scope.key()));
+                terms.extend(crate::crypt::grams::postings(
+                    &keyer.document(&opened.parts.content),
+                ));
+            }
+        }
+        let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+        let stream: Option<i64> =
+            sqlx::query_scalar("SELECT stream FROM search_documents WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
+        let Some(stream) = stream else {
+            continue;
+        };
+        sqlx::query("DELETE FROM search_postings WHERE stream = $1 AND id = $2 AND term IN (SELECT value FROM json_each($3))")
+            .bind(stream)
+            .bind(id)
+            .bind(serde_json::Value::from(terms).to_string())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT OR IGNORE INTO search_postings(stream, term, id) VALUES($1, '', $2)")
+            .bind(stream)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT OR IGNORE INTO search_merge(id) VALUES($1)")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+    }
+    Ok(())
+}
+
 /// Creates the channel index and its triggers where the database lacks them, in one short write.
 /// The messages that exist then wait for `build_step`; searches read the index once it holds
 /// them all.

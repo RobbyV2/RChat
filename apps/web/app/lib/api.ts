@@ -1246,6 +1246,8 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('PUT', '/admin/encryption/copies', { confirmed }),
   adminKeysSaved: (reauth: ReAuthBody) =>
     c.req<{ backed_up_at: number }>('PUT', '/admin/encryption/backed_up', { reauth }),
+  adminRotateKeys: (reauth: ReAuthBody, purposes?: string[]) =>
+    c.req<unknown>('POST', '/admin/encryption/rotate', { reauth, purposes }),
   adminRequireServerEncryption: (name: string, on: boolean) =>
     c.req<StoredSeal>('PUT', `/admin/servers/${seg(name)}/seal_forced`, { on }),
   adminUsers: (cursor: string | null, q: string, filter: AccountFilter = 'all') =>

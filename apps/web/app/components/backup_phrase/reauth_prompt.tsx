@@ -40,6 +40,7 @@ export function ReAuthPrompt({
     | 'delete_account'
     | 'seal-data'
     | 'keys-saved'
+    | 'rotate-keys'
   context?: string
   links: LinkedProvider[]
   ways?: Way[]

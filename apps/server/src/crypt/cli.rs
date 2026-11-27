@@ -7,7 +7,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use zeroize::Zeroizing;
 
 use super::ring::{Ring, RingStatus, SecretsReset, create_key_file, write_new_file};
-use super::{CryptError, KEY_LEN, Kek, NONCE_LEN, check_key_id, decrypt, encrypt, parse_keys};
+use super::{
+    CryptError, KEY_LEN, Kek, NONCE_LEN, Purpose, check_key_id, decrypt, encrypt, parse_keys,
+};
 use crate::api::seal::jobs::{Direction, Target, begin, run_job, still_sealed};
 use crate::config::AppConfig;
 use crate::db::DbOptions;
@@ -65,7 +67,7 @@ pub enum KeysCommand {
         out: Option<PathBuf>,
     },
     /// Store encrypted messages, their files, and the encrypted copies plain again: of every
-    /// place, or of one server or DM. Keys can be removed once nothing encrypted is left.
+    /// place, or of one server or DM. Stored secrets keep needing the keys.
     Unseal {
         /// Only this server.
         #[arg(long, conflicts_with = "dm")]
@@ -73,6 +75,16 @@ pub enum KeysCommand {
         /// Only this DM, by its id.
         #[arg(long)]
         dm: Option<i64>,
+    },
+    /// Move every data key under the first key of ENCRYPTION_KEYS now. Run it once every copy
+    /// lists that key first; copies that announce themselves (Redis) do it by themselves.
+    Rewrap,
+    /// Rotate data keys: the next generation becomes active and what the old one sealed is sealed
+    /// again; the old one is destroyed a day after. Every purpose, or one.
+    Rotate {
+        /// content, media, secrets, search or bus.
+        #[arg(long)]
+        purpose: Option<String>,
     },
 }
 
@@ -239,6 +251,7 @@ pub fn printed(status: &RingStatus) -> String {
     let RingStatus {
         source,
         fingerprints,
+        kept,
         key_file,
         database_key,
         backed_up_at,
@@ -254,6 +267,17 @@ pub fn printed(status: &RingStatus) -> String {
     }];
     for print in fingerprints {
         out.push(format!("  {print}"));
+    }
+    for print in kept {
+        let id = print.split_once(':').map_or(print.as_str(), |(id, _)| id);
+        let used = data_keys
+            .iter()
+            .any(|k| k.kek == id && k.state != "destroyed");
+        let note = match used {
+            true => "kept from the key file until its data keys are wrapped again",
+            false => "kept from the key file, which no data key needs now: it can be deleted",
+        };
+        out.push(format!("  {print} ({note})"));
     }
     if *database_key {
         out.push("Secrets are stored with a key in the database.".to_owned());
@@ -324,6 +348,30 @@ pub async fn run(config: &AppConfig, command: KeysCommand) -> anyhow::Result<Str
             passphrase_file,
             out,
         } => imported(&input, passphrase_file.as_deref(), out.as_deref()),
+        KeysCommand::Rewrap => {
+            let ring = std::sync::Arc::new(ring()?);
+            let opts = DbOptions {
+                controls: None,
+                ring: Some(ring.clone()),
+                ..config.db_options()
+            };
+            let db = crate::db::open_with(config.database_url.as_deref(), &opts).await?;
+            let moved = ring.rewrap(&db, true).await;
+            crate::db::close(&db).await;
+            let first = ring
+                .first_kek()
+                .ok_or_else(|| anyhow::anyhow!("no root key is set: set ENCRYPTION_KEYS"))?;
+            Ok(format!("Moved {} data keys under the key {first}.", moved?))
+        }
+        KeysCommand::Rotate { purpose } => {
+            let purposes = match purpose.as_deref() {
+                None => Purpose::ALL.to_vec(),
+                Some(name) => vec![Purpose::parse(name).ok_or_else(|| {
+                    anyhow::anyhow!("--purpose must be content, media, secrets, search or bus")
+                })?],
+            };
+            rotated(config, &purposes).await
+        }
         KeysCommand::Unseal { server, dm } => {
             let target = match (server, dm) {
                 (Some(name), _) => Target::Server(name.to_lowercase()),
@@ -333,6 +381,49 @@ pub async fn run(config: &AppConfig, command: KeysCommand) -> anyhow::Result<Str
             unsealed(config, &target).await
         }
     }
+}
+
+/// Rotates the data keys of `purposes` and seals what the old ones sealed again, here, to the
+/// end.
+async fn rotated(config: &AppConfig, purposes: &[Purpose]) -> anyhow::Result<String> {
+    let opts = DbOptions {
+        controls: None,
+        ring: Some(std::sync::Arc::new(Ring::load(
+            &config.encryption,
+            config.database_url.as_deref(),
+        )?)),
+        ..config.db_options()
+    };
+    let db = crate::db::open_with(config.database_url.as_deref(), &opts).await?;
+    let instance = crate::instance::Instance::load(&db, &config.instance()).await?;
+    let state =
+        crate::state::AppState::new(db, crate::ws::Hub::new(), config.s3()?, None, instance);
+    let fail = |crate::api::ApiError(_, e, _)| anyhow::anyhow!("{e}");
+    let rotation = crate::api::seal::rotate::begin(&state, purposes)
+        .await
+        .map_err(fail)?;
+    if rotation.purposes.is_empty() {
+        crate::db::close(&state.db).await;
+        return Ok("No data key to rotate: nothing is encrypted with one yet.".to_owned());
+    }
+    let ran = crate::api::seal::rotate::run(&state).await.map_err(fail)?;
+    let left = crate::api::seal::rotate::current(&state.db)
+        .await
+        .map_err(fail)?;
+    crate::db::close(&state.db).await;
+    let names = rotation.purposes.join(", ");
+    Ok(match (ran, left) {
+        (false, _) => {
+            format!("A running server is rotating the data keys of {names}; it goes on there.")
+        }
+        (true, None) => {
+            format!("Rotated the data keys of {names}. The old ones are destroyed a day from now.")
+        }
+        (true, Some(r)) => format!(
+            "{} records could not be sealed again; the old data keys of {names} stay.",
+            r.left
+        ),
+    })
 }
 
 /// Runs the decrypting job of `target` here, to its end.

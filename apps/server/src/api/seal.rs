@@ -965,6 +965,7 @@ pub(crate) async fn put_copies(
 }
 
 pub(crate) mod jobs;
+pub(crate) mod rotate;
 mod sweep;
 pub(crate) use jobs::{SealJob, get_job, list_jobs, resume_jobs, start_job};
 pub(crate) use sweep::sweep;

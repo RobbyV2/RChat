@@ -60,6 +60,40 @@ impl Grams {
         Ok(Some(Grams::new(ring.subkeys.get(id, &dek, &scope.key()))))
     }
 
+    /// The keyers of `channels` under the stored `search` key (set 0), and while a rotation of
+    /// that key has messages left under the keys it replaces, under each of those (sets 1 on).
+    pub async fn every_of_channels(
+        db: &Db,
+        channels: impl IntoIterator<Item = i64>,
+    ) -> anyhow::Result<Vec<(i64, usize, Grams)>> {
+        let channels: Vec<i64> = channels.into_iter().collect();
+        let mut out: Vec<(i64, usize, Grams)> = Grams::of_channels(db, channels.iter().copied())
+            .await?
+            .into_iter()
+            .map(|(channel, keyer)| (channel, 0, keyer))
+            .collect();
+        let ring = crate::db::ring(db);
+        if !ring.rotating(Purpose::Search) {
+            return Ok(out);
+        }
+        let mut set = 0;
+        for id in ring.retiring_ids(db, Purpose::Search).await? {
+            let Some((Purpose::Search, dek)) = ring.key_by_id(db, id).await? else {
+                continue;
+            };
+            set += 1;
+            out.extend(channels.iter().map(|channel| {
+                let scope = Scope::Channel(*channel).key();
+                (
+                    *channel,
+                    set,
+                    Grams::new(ring.subkeys.get(id, &dek, &scope)),
+                )
+            }));
+        }
+        Ok(out)
+    }
+
     /// The keyers of `channels` under the stored `search` key. Empty while the site has none.
     pub async fn of_channels(
         db: &Db,

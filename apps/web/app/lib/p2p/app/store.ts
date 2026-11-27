@@ -127,9 +127,18 @@ export interface SealFacts {
   everything: boolean
   available: boolean
   durable: boolean
+  // Whether this device sealed anything with a device key, and whether it is replacing that key.
+  sealedAny: boolean
+  replacing: boolean
 }
 
-export const NO_SEAL_FACTS: SealFacts = { everything: false, available: true, durable: true }
+export const NO_SEAL_FACTS: SealFacts = {
+  everything: false,
+  available: true,
+  durable: true,
+  sealedAny: false,
+  replacing: false,
+}
 
 export interface P2pState {
   // A fresh token after this runtime has loaded its persisted room and channel counters.

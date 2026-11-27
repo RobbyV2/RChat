@@ -156,6 +156,8 @@ pub enum Purpose {
     },
     /// Saying a copy of the key file is kept somewhere safe.
     KeysSaved,
+    /// Rotating data keys.
+    RotateKeys,
 }
 
 impl Purpose {
@@ -170,6 +172,7 @@ impl Purpose {
             Purpose::DeleteAccount => "delete_account",
             Purpose::SealData { .. } => "seal-data",
             Purpose::KeysSaved => "keys-saved",
+            Purpose::RotateKeys => "rotate-keys",
         }
     }
 
@@ -179,7 +182,8 @@ impl Purpose {
             Purpose::RemovePhrase
             | Purpose::SetPassword
             | Purpose::DeleteAccount
-            | Purpose::KeysSaved => "",
+            | Purpose::KeysSaved
+            | Purpose::RotateKeys => "",
             Purpose::LinkIdp { provider } => provider,
             Purpose::P2pData { ik } => ik,
             Purpose::StaffView { channel } => channel,
@@ -194,6 +198,7 @@ impl Purpose {
             | Purpose::P2pData { .. }
             | Purpose::SealData { .. }
             | Purpose::KeysSaved
+            | Purpose::RotateKeys
             | Purpose::LinkIdp { .. }
             | Purpose::StaffView { .. }
             | Purpose::DeleteAccount

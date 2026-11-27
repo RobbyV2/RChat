@@ -497,6 +497,9 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
         let mut interval = tokio::time::interval(Duration::from_secs(300));
         loop {
             interval.tick().await;
+            if let Err(e) = crate::db::ring(&sealing.db).note_keys(&sealing.db).await {
+                tracing::warn!("reading the data keys' states failed: {e}");
+            }
             if holds(&sealing, "seal-sweep", Duration::from_secs(290)).await {
                 if let Err(crate::api::ApiError(_, e, _)) =
                     crate::api::seal::sweep(&sealing.db).await
@@ -510,6 +513,11 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
                 }
                 if let Err(e) = crate::api::seal::resume_jobs(&sealing).await {
                     tracing::warn!("resuming the jobs over stored messages failed: {e}");
+                }
+                if let Err(crate::api::ApiError(_, e, _)) =
+                    crate::api::seal::rotate::keep_up(&sealing).await
+                {
+                    tracing::warn!("keeping the data keys failed: {e}");
                 }
             }
         }

@@ -84,6 +84,10 @@
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },
   {
+    "route": "post /api/v1/admin/encryption/rotate",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
     "route": "put /api/v1/admin/servers/{name}/seal_forced",
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },

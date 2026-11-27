@@ -309,6 +309,17 @@ mod tests {
             None,
             "one place at most"
         );
+        assert_eq!(action(&["keys", "rewrap"]), Some(KeysCommand::Rewrap));
+        assert_eq!(
+            action(&["keys", "rotate"]),
+            Some(KeysCommand::Rotate { purpose: None })
+        );
+        assert_eq!(
+            action(&["keys", "rotate", "--purpose", "media"]),
+            Some(KeysCommand::Rotate {
+                purpose: Some("media".into())
+            })
+        );
     }
 
     #[test]

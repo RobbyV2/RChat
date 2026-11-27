@@ -819,3 +819,42 @@ async fn earlier_messages_encrypted_by_a_job_are_found_the_same_with_no_plain_te
         temp.done(state).await;
     }
 }
+
+#[tokio::test]
+async fn a_search_key_rotation_finds_the_same_before_during_and_after() {
+    use crate::crypt::Purpose;
+    crate::api::seal::rotate::SETTLE.store(0, std::sync::atomic::Ordering::Relaxed);
+    for (state, temp) in each_db_keyed("rotate_search").await {
+        let db = &state.db;
+        let (docs, qs) = corpus_in_both(&state, 0x5eed_0009).await;
+        if is_sqlite(db) {
+            crate::db::build_channel_index(db).await.expect("merge");
+        }
+        let found = same_hits(&state, &qs).await;
+        assert!(found > 100, "the queries find something: {found}");
+        let ring = crate::db::ring(db);
+        ring.rotate(db, Purpose::Search)
+            .await
+            .expect("rotate")
+            .expect("a new key");
+        assert!(ring.rotating(Purpose::Search));
+        assert_eq!(
+            same_hits(&state, &qs).await,
+            found,
+            "while nothing is keyed again yet"
+        );
+        crate::api::seal::rotate::begin(&state, &[Purpose::Search])
+            .await
+            .expect("begin");
+        assert!(crate::api::seal::rotate::run(&state).await.expect("run"));
+        assert!(!ring.rotating(Purpose::Search));
+        if is_sqlite(db) {
+            crate::db::build_channel_index(db).await.expect("merge");
+            assert_eq!(count(db, UNKEYED).await, 0, "only keyed terms");
+        }
+        assert_eq!(same_hits(&state, &qs).await, found, "after");
+        let sealed = count(db, "SELECT COUNT(*) FROM messages WHERE body IS NOT NULL").await;
+        assert_eq!(sealed, docs.len() as i64);
+        temp.done(state).await;
+    }
+}

@@ -224,6 +224,9 @@ struct Dek {
 struct Loaded {
     source: Option<Source>,
     keks: Vec<Kek>,
+    /// The instance key file's keys while `ENCRYPTION_KEYS` replaces them: they only open the data
+    /// keys they wrapped until those are wrapped again under the first key.
+    kept: Vec<Kek>,
 }
 
 /// One data key as `server keys status` and the admin page list it.
@@ -247,6 +250,9 @@ pub struct RingStatus {
     pub source: String,
     /// `id:fingerprint` of every root key, the wrapping key first.
     pub fingerprints: Vec<String>,
+    /// `id:fingerprint` of the instance key file's keys kept to open older data keys while
+    /// `ENCRYPTION_KEYS` replaces them.
+    pub kept: Vec<String>,
     pub key_file: Option<String>,
     /// Whether the `secrets` purpose runs on the key kept in the database.
     pub database_key: bool,
@@ -334,6 +340,8 @@ pub struct Ring {
     making: tokio::sync::Mutex<()>,
     deks: RwLock<HashMap<u32, Dek>>,
     active: RwLock<HashMap<Purpose, u32>>,
+    /// The purposes whose replaced data key still seals records a rotation has not reached.
+    retiring: RwLock<std::collections::HashSet<Purpose>>,
     unreadable: std::sync::atomic::AtomicU64,
     grams_from: std::sync::Mutex<Option<(i64, i64)>>,
     pub subkeys: Subkeys,
@@ -429,6 +437,7 @@ impl Ring {
             making: tokio::sync::Mutex::new(()),
             deks: RwLock::default(),
             active: RwLock::default(),
+            retiring: RwLock::default(),
             unreadable: std::sync::atomic::AtomicU64::new(0),
             grams_from: std::sync::Mutex::new(None),
             subkeys: Subkeys::default(),
@@ -456,16 +465,29 @@ impl Ring {
             None => Vec::new(),
         };
         let key_file = instance_key_file(database_url, keys_file.as_deref());
+        let file = key_file.as_deref().filter(|p| p.exists());
         let loaded = match keys {
-            Some(text) => Loaded {
-                source: Some(Source::Operator),
-                keks: parse_keys(text)
-                    .map_err(|e| anyhow::anyhow!("ENCRYPTION_KEYS is malformed: {e}"))?,
-            },
-            None => match key_file.as_deref().filter(|p| p.exists()) {
+            Some(text) => {
+                let keks = parse_keys(text)
+                    .map_err(|e| anyhow::anyhow!("ENCRYPTION_KEYS is malformed: {e}"))?;
+                let kept = match file {
+                    Some(path) => read_key_file(path)?
+                        .into_iter()
+                        .filter(|k| keks.iter().all(|o| o.id != k.id))
+                        .collect(),
+                    None => Vec::new(),
+                };
+                Loaded {
+                    source: Some(Source::Operator),
+                    keks,
+                    kept,
+                }
+            }
+            None => match file {
                 Some(path) => Loaded {
                     source: Some(Source::File),
                     keks: read_key_file(path)?,
+                    kept: Vec::new(),
                 },
                 None => Loaded::default(),
             },
@@ -494,6 +516,11 @@ impl Ring {
             .iter()
             .map(|k| k.id.clone())
             .collect()
+    }
+
+    /// The id of the key new data keys are wrapped under.
+    pub fn first_kek(&self) -> Option<String> {
+        read(&self.loaded).keks.first().map(|k| k.id.clone())
     }
 
     /// The loaded root keys in their file form, for `server keys export`.
@@ -557,6 +584,7 @@ impl Ring {
         *write(&self.loaded) = Loaded {
             source: Some(Source::File),
             keks,
+            kept: Vec::new(),
         };
         Ok(Ok(()))
     }
@@ -603,9 +631,11 @@ impl Ring {
     }
 
     fn kek(&self, id: &str, purpose: Purpose) -> Option<Kek> {
-        if let Some(found) = read(&self.loaded).keks.iter().find(|k| k.id == id) {
+        let loaded = read(&self.loaded);
+        if let Some(found) = loaded.keks.iter().chain(&loaded.kept).find(|k| k.id == id) {
             return Some(found.clone());
         }
+        drop(loaded);
         match purpose {
             Purpose::Secrets => self.alias.iter().find(|k| k.id == id).cloned(),
             Purpose::Content | Purpose::Media | Purpose::Search | Purpose::Bus => None,
@@ -962,6 +992,11 @@ impl Ring {
     /// `check` on one connection. The data keys that unwrap stay held, so reading a record
     /// under one of them asks the database nothing.
     pub async fn check_on(&self, conn: &mut AnyConnection) -> anyhow::Result<Vec<i64>> {
+        let retiring: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT purpose FROM data_keys WHERE state = 'retiring'")
+                .fetch_all(&mut *conn)
+                .await?;
+        *write(&self.retiring) = retiring.iter().filter_map(|n| Purpose::parse(n)).collect();
         let rows = sqlx::query(
             "SELECT id, purpose, gen, kek, wrapped FROM data_keys WHERE state <> 'destroyed' ORDER BY id",
         )
@@ -1019,23 +1054,213 @@ impl Ring {
         Ok(lost)
     }
 
+    /// Wraps every data key another root key wraps (an older key, the instance key file's while
+    /// `ENCRYPTION_KEYS` replaces it, the database key, `ACCOUNT_SECRETS_KEY`) under the first
+    /// key, compare-and-swap on its stored form, once `everyone` (every live copy) holds that
+    /// key. Then the database key is blanked when no data key uses it. Answers how many moved.
+    pub async fn rewrap(&self, db: &Db, everyone: bool) -> anyhow::Result<u64> {
+        let Some(first) = read(&self.loaded).keks.first().cloned() else {
+            return Ok(0);
+        };
+        if !everyone {
+            return Ok(0);
+        }
+        let mut conn = db.acquire().await?;
+        let conn = &mut *conn;
+        let rows = sqlx::query(
+            "SELECT id, purpose, gen, kek, wrapped FROM data_keys WHERE kek <> $1 AND state <> 'destroyed' ORDER BY id",
+        )
+        .bind(&first.id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let mut moved = 0;
+        for row in rows {
+            let (id, purpose, generation): (i64, String, i64) =
+                (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
+            let (kek, wrapped): (String, String) = (row.try_get(3)?, row.try_get(4)?);
+            let Some(purpose) = Purpose::parse(&purpose) else {
+                continue;
+            };
+            let Ok(key) = self
+                .unwrap_row(conn, purpose, generation, &kek, &wrapped)
+                .await?
+            else {
+                continue;
+            };
+            moved += sqlx::query("UPDATE data_keys SET kek = $1, wrapped = $2 WHERE id = $3 AND kek = $4 AND wrapped = $5")
+                .bind(&first.id)
+                .bind(first.wrap(purpose, generation, &key))
+                .bind(id)
+                .bind(&kek)
+                .bind(&wrapped)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected();
+        }
+        let in_database: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM data_keys WHERE kek = $1 AND state <> 'destroyed'",
+        )
+        .bind(DATABASE_KEK)
+        .fetch_one(&mut *conn)
+        .await?;
+        if in_database == 0 && self.database_kek(conn, false).await?.is_some() {
+            put_setting(conn, DB_KEK_SETTING, SEALED_MARK).await?;
+        }
+        if moved > 0 {
+            tracing::info!("wrapped {moved} data keys under the key {}", first.id);
+        }
+        Ok(moved)
+    }
+
+    /// Makes the next generation of the data key of `purpose` active: the one it replaces is
+    /// retiring until a rotation sealed its records again. `None` when no key may wrap it.
+    pub async fn rotate(&self, db: &Db, purpose: Purpose) -> anyhow::Result<Option<(u32, Key)>> {
+        let mut tx = db.begin().await?;
+        let made = match self.renew_on(&mut tx, purpose).await {
+            Ok(made) => tx
+                .commit()
+                .await
+                .map(|()| made)
+                .map_err(anyhow::Error::from),
+            Err(e) => Err(e),
+        };
+        match made {
+            Ok(made) => {
+                if made.is_some() {
+                    write(&self.retiring).insert(purpose);
+                }
+                Ok(made)
+            }
+            Err(e) => {
+                write(&self.active).remove(&purpose);
+                Err(e)
+            }
+        }
+    }
+
+    /// The retiring data keys of `purpose`.
+    pub async fn retiring_ids(&self, db: &Db, purpose: Purpose) -> sqlx::Result<Vec<u32>> {
+        let ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM data_keys WHERE purpose = $1 AND state = 'retiring' ORDER BY id",
+        )
+        .bind(purpose.name())
+        .fetch_all(db)
+        .await?;
+        Ok(ids
+            .into_iter()
+            .filter_map(|id| u32::try_from(id).ok())
+            .collect())
+    }
+
+    /// Holds `id` as the active key of `purpose`, as a process that has not seen a rotation does.
+    #[cfg(test)]
+    pub fn pin_active(&self, purpose: Purpose, id: u32) {
+        write(&self.active).insert(purpose, id);
+    }
+
+    /// Whether a rotation of `purpose` has records left under the key it replaces.
+    pub fn rotating(&self, purpose: Purpose) -> bool {
+        read(&self.retiring).contains(&purpose)
+    }
+
+    /// Reads the data keys' states again, as another process may have rotated one: which
+    /// purposes have a retiring key, and drops a held active key that is active no more, so the
+    /// next record is sealed under the one that is.
+    pub async fn note_keys(&self, db: &Db) -> sqlx::Result<()> {
+        let rows: Vec<(i64, String, String)> =
+            sqlx::query_as("SELECT id, purpose, state FROM data_keys WHERE state <> 'destroyed'")
+                .fetch_all(db)
+                .await?;
+        let mut retiring = std::collections::HashSet::new();
+        let mut active = HashMap::new();
+        for (id, purpose, state) in &rows {
+            let Some(purpose) = Purpose::parse(purpose) else {
+                continue;
+            };
+            match state.as_str() {
+                "retiring" => {
+                    retiring.insert(purpose);
+                }
+                "active" => {
+                    active.insert(purpose, *id);
+                }
+                _ => {}
+            }
+        }
+        *write(&self.retiring) = retiring;
+        write(&self.active)
+            .retain(|purpose, id| active.get(purpose).is_some_and(|a| *a == i64::from(*id)));
+        Ok(())
+    }
+
+    /// The retiring keys of `purpose` sealed nothing a rotation still has to reach: they retire.
+    pub async fn retire(&self, db: &Db, purpose: Purpose) -> sqlx::Result<()> {
+        sqlx::query(
+            "UPDATE data_keys SET state = 'retired', retired_at = $1 WHERE purpose = $2 AND state = 'retiring'",
+        )
+        .bind(crate::db::now())
+        .bind(purpose.name())
+        .execute(db)
+        .await?;
+        write(&self.retiring).remove(&purpose);
+        Ok(())
+    }
+
+    /// The data keys retired at `before` or earlier, with their purposes.
+    pub async fn retired_by(&self, db: &Db, before: i64) -> sqlx::Result<Vec<(u32, Purpose)>> {
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT id, purpose FROM data_keys WHERE state = 'retired' AND retired_at <= $1 ORDER BY id",
+        )
+        .bind(before)
+        .fetch_all(db)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, p)| Some((u32::try_from(id).ok()?, Purpose::parse(&p)?)))
+            .collect())
+    }
+
+    /// Destroys the retired data key `id`: its wrapped form is blanked, so no copy of the
+    /// database opens what it sealed.
+    pub async fn destroy(&self, db: &Db, id: u32) -> sqlx::Result<bool> {
+        let done = sqlx::query("UPDATE data_keys SET state = 'destroyed', destroyed_at = $1, wrapped = '' WHERE id = $2 AND state = 'retired'")
+            .bind(crate::db::now())
+            .bind(i64::from(id))
+            .execute(db)
+            .await?
+            .rows_affected();
+        write(&self.deks).remove(&id);
+        self.subkeys.forget(Some(id));
+        Ok(done == 1)
+    }
+
+    /// The retired data key `id` still names records: it is retiring again.
+    pub async fn unretire(&self, db: &Db, id: u32, purpose: Purpose) -> sqlx::Result<()> {
+        sqlx::query(
+            "UPDATE data_keys SET state = 'retiring', retired_at = NULL WHERE id = $1 AND state = 'retired'",
+        )
+        .bind(i64::from(id))
+        .execute(db)
+        .await?;
+        write(&self.retiring).insert(purpose);
+        Ok(())
+    }
+
     pub async fn status(&self, db: &Db) -> anyhow::Result<RingStatus> {
         let mut conn = db.acquire().await?;
         let conn = &mut *conn;
         let made = setting(conn, MADE_SETTING).await?;
         let source = self.source(made.as_deref());
-        let (source, fingerprints) = {
+        let (source, fingerprints, kept) = {
             let loaded = read(&self.loaded);
             let source = match source {
                 Some(source) => source.name(),
                 None => "none",
             };
-            let prints = loaded
-                .keks
-                .iter()
-                .map(|k| format!("{}:{}", k.id, k.fingerprint()))
-                .collect();
-            (source.to_owned(), prints)
+            let print = |k: &Kek| format!("{}:{}", k.id, k.fingerprint());
+            let prints = loaded.keks.iter().map(print).collect();
+            let kept = loaded.kept.iter().map(print).collect();
+            (source.to_owned(), prints, kept)
         };
         let rows =
             sqlx::query("SELECT id, purpose, gen, kek, wrapped, state FROM data_keys ORDER BY id")
@@ -1078,6 +1303,7 @@ impl Ring {
                 .flatten(),
             source,
             fingerprints,
+            kept,
             database_key,
             backed_up_at,
             secrets_reset,

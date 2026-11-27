@@ -294,6 +294,47 @@ export class Sealing {
     return false
   }
 
+  // The id of the key new records are sealed with, when this device sealed anything; null
+  // otherwise.
+  async inUse(): Promise<number | null> {
+    if (this.used.size === 0) return null
+    return (await this.ready()).id
+  }
+
+  // Makes a new device key the one new records are sealed with. The old one stays to open what
+  // it sealed until `forget`.
+  async renew(): Promise<number> {
+    const next = await this.keys().rotate()
+    this.search.set(next.id, await deviceSearchKey(next.key))
+    this.held.set(next.id, next.key)
+    this.cur = next
+    await this.note()
+    return next.id
+  }
+
+  // Drops the key `id`, once nothing stored is sealed with it.
+  async forget(id: number) {
+    if (this.cur?.id === id) return
+    this.used.delete(id)
+    delete this.checks[String(id)]
+    this.held.delete(id)
+    this.search.delete(id)
+    await this.save()
+    await this.keys().drop(id)
+  }
+
+  // The key a device record names.
+  keyOf(record: Uint8Array): number | undefined {
+    return recordHeader(record)?.keyId
+  }
+
+  // A device record of `store`, `key` and `room` sealed again under the current key; null when
+  // it doesn't open or there is no key.
+  async rebox(store: string, key: string, room: string, record: Uint8Array) {
+    const plain = await this.openBytes(store, key, room, record)
+    return plain ? this.sealBytes(store, key, room, plain) : null
+  }
+
   // Forgets everything that was sealed, after its rows were removed.
   async reset() {
     this.rooms.clear()

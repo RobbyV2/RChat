@@ -3,6 +3,7 @@ import { OwnLoadNotice } from './own_load'
 import { Name } from './name'
 import { instanceAddress, instanceName, personCalled, handleName, serverName } from '../lib/names'
 import { asAccount, pictured } from '../lib/people'
+import { DeviceKeySection } from './p2p/device_key'
 import { useP2p } from '../lib/client/p2p_react'
 
 import { SignInLinks, SignInMethods } from './sso/sign_in_methods'
@@ -1224,6 +1225,7 @@ function SectionBody({ section }: { section: SettingsSection }) {
             <p className={sectionCls}>Blocked users</p>
             <BlockedUsersSection />
           </PageRow>
+          <DeviceKeySection />
         </Stack>
       )
     case 'p2p':

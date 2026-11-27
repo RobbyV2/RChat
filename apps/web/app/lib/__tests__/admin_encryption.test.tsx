@@ -5,6 +5,7 @@ import {
   BACKUP_WARNING,
   fingerprints,
   jobPlace,
+  keptLines,
   keySavedLine,
   keySourceLine,
   keySourceNote,
@@ -16,6 +17,8 @@ import {
   readinessLine,
   RESET_SHOWN_FOR,
   resetWarning,
+  rotating,
+  rotationLine,
   runningJob,
   SET_KEYS,
   unreadableLine,
@@ -38,6 +41,8 @@ const view = (part: Partial<AdminEncryption> = {}): AdminEncryption => ({
   copies_confirmed: null,
   places: { servers: 0, dms: 0 },
   jobs: [],
+  kept: [],
+  rotation: null,
   ...part,
 })
 
@@ -285,4 +290,79 @@ test('the new parts of the answer are read defensively', () => {
   expect(
     parseAdminEncryption({ source: 'none', copies_confirmed: 'yes' })!.copies_confirmed
   ).toBeNull()
+})
+
+test('a rotation and the key file kept beside ENCRYPTION_KEYS are said plainly', () => {
+  const rotation = {
+    purposes: ['content'],
+    done: 3,
+    steps: 9,
+    left: 0,
+    ended: false,
+    waiting: false,
+  }
+  expect(rotationLine(rotation)).toBe('Rotating data keys: 3 of 9 steps.')
+  expect(rotationLine({ ...rotation, done: 9, waiting: true })).toBe(
+    'Rotating data keys: a last pass follows in a few minutes.'
+  )
+  expect(rotationLine({ ...rotation, ended: true, left: 2 })).toBe(
+    "2 records couldn't be encrypted again. The old data keys stay."
+  )
+  expect(rotating(view({ rotation }))).toBe(true)
+  expect(rotating(view({ rotation: { ...rotation, ended: true, left: 2 } }))).toBe(false)
+  expect(rotating(view())).toBe(false)
+  const key = (kek: string, state = 'active') => ({
+    id: 1,
+    purpose: 'content',
+    generation: 1,
+    kek,
+    state,
+    held: true,
+    mismatch: false,
+  })
+  const kept = view({ source: 'operator', kept: ['k1:0a1b2c3d'], data_keys: [key('k1')] })
+  expect(keptLines(kept)).toEqual([
+    "The key file's key k1 still opens data keys until they move under the key in use.",
+  ])
+  expect(keptLines({ ...kept, data_keys: [key('k2'), key('k1', 'destroyed')] })).toEqual([
+    "The key file's key k1 is no longer needed. The key file can be deleted.",
+  ])
+  const parsed = parseAdminEncryption({
+    source: 'operator',
+    kept: ['k1:0a1b2c3d', 4],
+    rotation: { purposes: ['content', 7], done: 12, steps: 9, left: -1, ended: 'no' },
+  })!
+  expect(parsed.kept).toEqual(['k1:0a1b2c3d'])
+  expect(parsed.rotation).toEqual({
+    purposes: ['content'],
+    done: 9,
+    steps: 9,
+    left: 0,
+    ended: false,
+    waiting: false,
+  })
+  expect(parseAdminEncryption({ source: 'none', rotation: 'x' })!.rotation).toBeNull()
+  const html = renderToStaticMarkup(
+    <EncryptionStatus
+      view={view({
+        source: 'operator',
+        fingerprints: ['k2:aaaaaaaa'],
+        rotation,
+        ...{ kept: kept.kept, data_keys: kept.data_keys },
+      })}
+    />
+  )
+  expect(html).toContain('data-rotation')
+  expect(html).toContain('data-kept')
+})
+
+test('a site whose secrets run on the database key can rotate them too', () => {
+  const html = renderToStaticMarkup(
+    <EncryptionStatus view={view({ database_key: true })} rotateAction={<button>Rotate</button>} />
+  )
+  expect(html).toContain('Rotate')
+  const none = renderToStaticMarkup(
+    <EncryptionStatus view={view()} rotateAction={<button>Rotate</button>} />
+  )
+  expect(none).not.toContain('Rotate')
 })

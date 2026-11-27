@@ -73,6 +73,11 @@ impl Sealer {
     }
 
     /// The record of `plain` kept in `at` for the row `binding`.
+    /// The data key it seals under.
+    pub fn key_id(&self) -> u32 {
+        self.key_id
+    }
+
     pub fn seal(&self, at: Column, binding: &str, plain: &[u8]) -> Vec<u8> {
         let aad = row_aad(at.table, at.column, binding, self.key_id);
         seal(self.key_id, &self.key, &aad, plain)

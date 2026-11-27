@@ -33,6 +33,7 @@ import { p2pAbout, type AboutChange } from '../../server_about'
 import { parseP2pMemberList, type P2pMemberListChange } from '../../member_list'
 import type { P2pThread } from './store'
 import { sealEarlier } from '../seal_earlier'
+import { replaceDeviceKey, replacing } from '../device_rekey'
 import type { IdentityScope, P2pParts } from './scope'
 import { time } from '../../platform/time'
 import type { Cancel } from '../../clock'
@@ -832,6 +833,25 @@ export function createServersPart(
     sealEarlierHere: (room: string) => {
       const s = state.store
       if (s) void sealEarlier(s, room, state.limits.search).catch(() => {})
+    },
+    // Replaces this device's key and seals what the old one sealed again in the background;
+    // false when there is nothing to replace or a replacement runs.
+    async replaceDeviceKey() {
+      const s = state.store
+      if (!s) return false
+      const started = await replaceDeviceKey(s, state.limits.search)
+      if (started) useP2p.setState(st => ({ seal: { ...st.seal, replacing: true } }))
+      return started
+    },
+    // Whether this device sealed anything, and whether a replacement of its key still runs.
+    async replacingDeviceKey() {
+      const s = state.store
+      if (!s) return false
+      const now = await replacing(s)
+      const sealedAny = s.sealing.sealedAny
+      if (state.store === s)
+        useP2p.setState(st => ({ seal: { ...st.seal, sealedAny, replacing: now } }))
+      return now
     },
     // Asks whether this device can keep a device key (making it), for the settings.
     async checkSealKey() {

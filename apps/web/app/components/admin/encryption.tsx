@@ -17,6 +17,8 @@ import {
   REQUIRE_SERVER_HINT,
   REQUIRE_SITE,
   REQUIRE_SITE_HINT,
+  ROTATE,
+  ROTATE_CONFIRM,
   UNSEAL,
   UNSEAL_CONFIRM,
   UNSEAL_SERVER_CONFIRM,
@@ -24,6 +26,7 @@ import {
   jobPlace,
   keySavedLine,
   keySourceLine,
+  keptLines,
   keySourceNote,
   lostKeys,
   lostWarning,
@@ -31,6 +34,8 @@ import {
   placesLine,
   readinessLine,
   resetWarning,
+  rotating,
+  rotationLine,
   runningJob,
   unreadableLine,
   type AdminEncryption,
@@ -78,12 +83,14 @@ export function EncryptionStatus({
   keyAction,
   storage,
   jobActions,
+  rotateAction,
 }: {
   view: AdminEncryption
   now?: number
   keyAction?: ReactNode
   storage?: ReactNode
   jobActions?: ReactNode
+  rotateAction?: ReactNode
 }) {
   const prints = fingerprints(view)
   const lost = lostKeys(view)
@@ -109,12 +116,27 @@ export function EncryptionStatus({
           </p>
         )}
         {note !== null && <p className="text-xs text-on-surface-variant">{note}</p>}
+        {keptLines(view).map(line => (
+          <p key={line} data-kept className="text-xs text-on-surface-variant">
+            {line}
+          </p>
+        ))}
         {view.source === 'file' && view.backed_up_at !== null && (
           <p data-backed-up className="text-xs text-on-surface-variant">
             {keySavedLine(view.backed_up_at, now)}
           </p>
         )}
         {keyAction}
+        {prints.length === 0 && view.database_key && (
+          <>
+            {view.rotation && (
+              <p role="status" data-rotation className="text-sm">
+                {rotationLine(view.rotation)}
+              </p>
+            )}
+            {rotateAction}
+          </>
+        )}
       </Card>
       {prints.length > 0 && (
         <Card>
@@ -129,6 +151,12 @@ export function EncryptionStatus({
             ))}
           </Stack>
           <p className="text-xs text-on-surface-variant">If a key leaked, rotate data keys too.</p>
+          {view.rotation && (
+            <p role="status" data-rotation className="text-sm">
+              {rotationLine(view.rotation)}
+            </p>
+          )}
+          {rotateAction}
         </Card>
       )}
       <Card>
@@ -174,7 +202,7 @@ export function EncryptionStatus({
 interface Confirming {
   title: string
   body: string
-  purpose: 'seal-data' | 'keys-saved'
+  purpose: 'seal-data' | 'keys-saved' | 'rotate-keys'
   context: string
   run(body: ReAuthBody): Promise<unknown>
 }
@@ -253,11 +281,11 @@ function StorageSwitches({ view, reload }: { view: AdminEncryption; reload(): vo
   )
 }
 
-// The status with its controls; asked again every two seconds while a job runs.
+// The status with its controls; asked again every two seconds while a job or a rotation runs.
 function EncryptionControls({ view, reload }: { view: AdminEncryption; reload(): void }) {
   const owner = useAccount()
   const [step, setStep] = useState<Confirming | null>(null)
-  const busy = runningJob(view)
+  const busy = runningJob(view) || rotating(view)
   useEffect(() => {
     if (!busy) return
     return time().every(2000, reload)
@@ -311,6 +339,24 @@ function EncryptionControls({ view, reload }: { view: AdminEncryption; reload():
       </Button>
     </Row>
   )
+  const rotateAction = (
+    <Row gap="sm" wrap>
+      <Button
+        disabled={rotating(view)}
+        onClick={() =>
+          setStep({
+            title: ROTATE,
+            body: ROTATE_CONFIRM,
+            purpose: 'rotate-keys',
+            context: '',
+            run: body => sendTo(owner, ask.adminRotateKeys(body)),
+          })
+        }
+      >
+        {ROTATE}
+      </Button>
+    </Row>
+  )
   return (
     <>
       <EncryptionStatus
@@ -318,6 +364,7 @@ function EncryptionControls({ view, reload }: { view: AdminEncryption; reload():
         keyAction={keyAction}
         storage={<StorageSwitches view={view} reload={reload} />}
         jobActions={jobActions}
+        rotateAction={rotateAction}
       />
       {step && (
         <ReAuthDialog

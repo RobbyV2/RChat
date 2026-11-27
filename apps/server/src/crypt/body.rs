@@ -151,6 +151,11 @@ impl Writer {
         }))
     }
 
+    /// The data key it seals under.
+    pub fn key_id(&self) -> u32 {
+        self.key_id
+    }
+
     /// The `messages.grams` of a message holding `parts`, as Postgres reads an `integer[]`:
     /// `None` for a DM and while there is no search key or `SEARCH_SEALED=scan`, so a search
     /// reads the row itself.

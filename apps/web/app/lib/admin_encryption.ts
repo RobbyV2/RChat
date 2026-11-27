@@ -27,6 +27,9 @@ export interface AdminEncryption {
   source: string
   // `id:fingerprint` of every root key, the one in use first.
   fingerprints: string[]
+  // `id:fingerprint` of the key file's keys kept to open older data keys while ENCRYPTION_KEYS
+  // replaces the file.
+  kept: string[]
   key_file: string | null
   // Whether secrets are sealed with a key kept in the database.
   database_key: boolean
@@ -45,6 +48,17 @@ export interface AdminEncryption {
   places: { servers: number; dms: number }
   // The newest jobs over stored messages, newest first.
   jobs: PlacedJob[]
+  rotation: RotationView | null
+}
+
+// A data key rotation that runs, or that left records under the old keys.
+export interface RotationView {
+  purposes: string[]
+  done: number
+  steps: number
+  left: number
+  ended: boolean
+  waiting: boolean
 }
 
 export const BACKUP_WARNING =
@@ -172,6 +186,7 @@ export function parseAdminEncryption(value: unknown): AdminEncryption | null {
     fingerprints: Array.isArray(v.fingerprints)
       ? v.fingerprints.filter((f): f is string => typeof f === 'string')
       : [],
+    kept: Array.isArray(v.kept) ? v.kept.filter((f): f is string => typeof f === 'string') : [],
     key_file: typeof v.key_file === 'string' ? v.key_file : null,
     database_key: v.database_key === true,
     backed_up_at: typeof v.backed_up_at === 'number' ? v.backed_up_at : null,
@@ -199,8 +214,53 @@ export function parseAdminEncryption(value: unknown): AdminEncryption | null {
     copies_confirmed: typeof v.copies_confirmed === 'boolean' ? v.copies_confirmed : null,
     places: { servers: count(record(v.places).servers), dms: count(record(v.places).dms) },
     jobs: Array.isArray(v.jobs) ? v.jobs.flatMap(j => jobOf(j) ?? []) : [],
+    rotation: rotationOf(v.rotation),
   }
 }
+
+const rotationOf = (value: unknown): RotationView | null => {
+  if (typeof value !== 'object' || value === null) return null
+  const r = value as Record<string, unknown>
+  const steps = count(r.steps)
+  return {
+    purposes: Array.isArray(r.purposes)
+      ? r.purposes.filter((p): p is string => typeof p === 'string')
+      : [],
+    done: Math.min(count(r.done), steps),
+    steps,
+    left: count(r.left),
+    ended: r.ended === true,
+    waiting: r.waiting === true,
+  }
+}
+
+export const ROTATE = 'Rotate data keys'
+export const ROTATE_CONFIRM =
+  'New data keys encrypt everything stored encrypted again. The old ones are destroyed a day after.'
+
+// How a rotation goes, or what it left behind.
+export function rotationLine(r: RotationView): string {
+  if (r.ended && r.left > 0)
+    return `${counted(r.left, 'record', 'records')} couldn't be encrypted again. The old data keys stay.`
+  if (r.waiting) return 'Rotating data keys: a last pass follows in a few minutes.'
+  return `Rotating data keys: ${r.done} of ${r.steps} steps.`
+}
+
+// The key file's keys kept beside ENCRYPTION_KEYS, and whether a data key still needs them.
+export function keptLines(view: AdminEncryption): string[] {
+  const used = new Set(view.data_keys.filter(k => k.state !== 'destroyed').map(k => k.kek))
+  return view.kept.flatMap(entry => {
+    const id = entry.slice(0, Math.max(0, entry.lastIndexOf(':')))
+    if (!id) return []
+    return [
+      used.has(id)
+        ? `The key file's key ${id} still opens data keys until they move under the key in use.`
+        : `The key file's key ${id} is no longer needed. The key file can be deleted.`,
+    ]
+  })
+}
+
+export const rotating = (view: AdminEncryption) => view.rotation !== null && !view.rotation.ended
 
 export const REQUIRE_SITE = 'Require encryption on this site'
 export const REQUIRE_SITE_HINT = "Servers and DMs can't turn encrypted storage off."
