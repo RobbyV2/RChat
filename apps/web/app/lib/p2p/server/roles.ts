@@ -3,10 +3,18 @@ import { cacheKey, countOf, moveCounts, storedSize } from '../dag'
 import { CANT_TEXT } from '../flows'
 import { cleanName } from '../keys'
 import { memberExtras } from '../../profile_fields'
-import { chanFactsOf, channelsOf, managesRoleOf, memberOf, membershipOf, rankOf } from '../state'
+import {
+  chanFactsOf,
+  channelsOf,
+  managesRoleOf,
+  memberOf,
+  membersOf,
+  membershipOf,
+  rankOf,
+} from '../state'
 import { unindexRoom } from '../search'
 import type { ServerCtx } from './context'
-import { ServerError, NO_ROOM_TEXT, newRolePos } from './types'
+import { ServerError, NO_ROOM_TEXT, newRolePos, type Outgoing, type Retired } from './types'
 import { ROLE_LOOKS, type RoleSum } from '../acl/summary'
 import { clip } from '../rate'
 
@@ -169,28 +177,35 @@ export function timeout(cx: ServerCtx, room: string, ik: string, seconds: number
   }))
 }
 
-export async function leave(cx: ServerCtx, room: string) {
+// The signed leave's id, when we were in the server.
+export async function leave(cx: ServerCtx, room: string): Promise<string | null> {
   const m = cx.myMembership(room)
-  if (m === 'join') await cx.emit(room, 'leave', plan => ({ seen: plan.seen ?? {} }))
-  else cx.gossip.leave(room)
+  const id = m === 'join' ? await cx.emit(room, 'leave', plan => ({ seen: plan.seen ?? {} })) : null
+  if (id === null) cx.gossip.leave(room)
   await cx.updateRoom(room, cur => ({ ...cur, joining: null }))
   cx.changed(room)
+  return id
 }
 
 // Leaves every server we are in, for an identity that is being removed from this device: our
 // profile in each goes back to the identity's own name with nothing set for that server first,
-// when that can be signed. The servers we are still in.
-export async function retire(cx: ServerCtx) {
+// when that can be signed. The leaves of servers with other members are handed back, for the
+// device to keep them until a member has them.
+export async function retire(cx: ServerCtx): Promise<Retired> {
   const kept: string[] = []
+  const leaves: Outgoing[] = []
   for (const room of cx.joinedRooms()) {
-    const m = memberOf(cx.sumOf(room), cx.me)
+    const sum = cx.sumOf(room)
+    const m = memberOf(sum, cx.me)
     const set = Object.keys(memberExtras(m, cleanName)).length > 0
     if (m?.profile && (m.profile.name !== cx.deps.node.name || set))
       await cx.emit(room, 'profile', () => cx.profileContent()).catch(() => {})
-    await leave(cx, room).catch(() => {})
+    const others = membersOf(sum).some(o => o.ik !== cx.me && o.m === 'join')
+    const id = await leave(cx, room).catch(() => null)
     if (cx.myMembership(room) === 'join') kept.push(room)
+    else if (id !== null && others) leaves.push({ room, id })
   }
-  return kept
+  return { kept, leaves }
 }
 
 // Removes a server we are not in any more from this device. Our device's chain there is kept,

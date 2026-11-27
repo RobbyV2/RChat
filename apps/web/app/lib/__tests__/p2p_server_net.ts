@@ -54,7 +54,7 @@ export const makeMember = async (
   opts: {
     seed?: number
     db?: string
-    node?: Pick<NodeDeps, 'limits' | 'session' | 'contacts'>
+    node?: Pick<NodeDeps, 'limits' | 'session' | 'contacts'> & { transport?: NodeDeps['transport'] }
     dms?: Partial<ConstructorParameters<typeof Dms>[0]>
     servers?: Partial<ConstructorParameters<typeof Servers>[0]>
   } = {}

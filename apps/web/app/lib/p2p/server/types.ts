@@ -352,6 +352,18 @@ export interface ServerView {
   migrateDiff: { added: string[]; removed: string[] } | null
 }
 
+// An event of ours that has to reach a member of its server before this device lets it go.
+export interface Outgoing {
+  room: string
+  id: string
+}
+
+// What leaving every server took: the servers we are still in, and the leaves to deliver.
+export interface Retired {
+  kept: string[]
+  leaves: Outgoing[]
+}
+
 export interface Parked {
   wire: WireV2
   missing: Set<string>

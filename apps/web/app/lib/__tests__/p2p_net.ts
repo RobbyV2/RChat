@@ -237,6 +237,7 @@ export const makeNode = async (
     limits?: NodeDeps['limits']
     session?: NodeDeps['session']
     contacts?: NodeDeps['contacts']
+    transport?: Transport
   } = {}
 ) => {
   const db = opts.db ?? `test-${name}-${dbSeq++}-${Math.random()}`
@@ -244,7 +245,7 @@ export const makeNode = async (
   const node = (await P2pNode.open(
     {
       store,
-      transport: hub.transport(),
+      transport: opts.transport ?? hub.transport(),
       host: opts.host ?? 'chat.example',
       clock: opts.clock,
       visibility: opts.visibility,

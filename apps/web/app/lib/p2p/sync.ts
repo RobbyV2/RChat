@@ -198,6 +198,9 @@ export class Sync {
   readonly limits: SyncLimits
   // Links per session, one per room the session syncs.
   private links = new Map<Session, Map<string, Link>>()
+  // Pushes of ours still unacknowledged when their link closed, by session and room: an ack still
+  // coming there counts for those only.
+  private closedOn = new WeakMap<Session, Map<string, { ik: string; ids: Set<string> }>>()
   private headsTimers = new Map<string, unknown>()
   private t: (name: string) => string
 
@@ -240,6 +243,7 @@ export class Sync {
     if (have) return have
     const link = new Link(s, ik, room)
     byRoom.set(room, link)
+    this.closedOn.get(s)?.delete(room)
     void this.sendHeads(link)
     this.deps.onState?.(room)
     return link
@@ -253,6 +257,11 @@ export class Sync {
   private close(link: Link) {
     if (link.closed) return
     link.closed = true
+    if (link.inFlight.length) {
+      const closed = this.closedOn.get(link.session) ?? new Map()
+      closed.set(link.room, { ik: link.ik, ids: new Set(link.inFlight.map(p => p.id)) })
+      this.closedOn.set(link.session, closed)
+    }
     if (link.headsTimer !== null) this.deps.clock.clear(link.headsTimer)
     if (link.peerFull !== null) this.deps.clock.clear(link.peerFull)
     const byRoom = this.links.get(link.session)
@@ -405,18 +414,22 @@ export class Sync {
     if (found.size) await this.delivered(link, [...found])
   }
 
-  private async delivered(link: Link, ids: string[]) {
+  private delivered(link: Link, ids: string[]) {
+    return this.deliveredTo(link.room, link.ik, ids)
+  }
+
+  private async deliveredTo(room: string, ik: string, ids: string[]) {
     const tx = this.deps.store.db.transaction('outbox', 'readwrite')
     const marked: string[] = []
     for (const id of ids) {
       const o = await tx.store.get(id)
-      if (o && o.room === link.room && !o.deliveredTo.includes(link.ik)) {
-        await tx.store.put({ ...o, deliveredTo: [...o.deliveredTo, link.ik] })
+      if (o && o.room === room && !o.deliveredTo.includes(ik)) {
+        await tx.store.put({ ...o, deliveredTo: [...o.deliveredTo, ik] })
         marked.push(id)
       }
     }
     await tx.done
-    if (marked.length) this.deps.onDelivered(link.room, marked)
+    if (marked.length) this.deps.onDelivered(room, marked)
   }
 
   // ----- Pulling -----
@@ -693,8 +706,12 @@ export class Sync {
     }
     if (added.length && !quota) this.deps.onQuota?.(false)
     const max = this.limits.acksMax
+    // Also when storing them closed the link (a leave): the sender learns we have them.
     for (let i = 0; i < acks.length; i += max)
-      this.send(link, { t: this.t('ack'), room: link.room, ids: acks.slice(i, i + max) })
+      if (link.session.state === 'ready')
+        void link.session
+          .send({ t: this.t('ack'), room: link.room, ids: acks.slice(i, i + max) })
+          .catch(() => {})
     if (refused.length || full.length || later.length) {
       const msg: Message = { t: this.t('ack'), room: link.room, ids: [] }
       if (refused.length) msg.drop = refused.slice(0, max)
@@ -870,7 +887,13 @@ export class Sync {
   }
 
   private onAck(m: Message, s: Session) {
-    const link = this.linkFor(s, m.room)
+    const room = typeof m.room === 'string' ? m.room : null
+    const closed = room === null ? undefined : this.closedOn.get(s)?.get(room)
+    if (room !== null && closed) return this.lateAck(m, s, room, closed)
+    // On a link that is open, an ack counts even when the peer may not talk about the room any
+    // more (we left it): it only confirms our own pushes.
+    const open = room === null ? undefined : this.links.get(s)?.get(room)
+    const link = open && !open.closed ? open : this.linkFor(s, m.room)
     if (!link) return
     const list = (x: unknown) =>
       x === undefined ? [] : strArray(x, this.limits.acksMax, isEventId)
@@ -896,6 +919,15 @@ export class Sync {
       if (drop.length) await this.failed(link, drop)
       if (full.length || ids.length) await this.notePeerFull(link, full.length > 0)
     })
+  }
+
+  // An ack on a link that closed meanwhile: what the peer stored of what we pushed it there.
+  private lateAck(m: Message, s: Session, room: string, closed: { ik: string; ids: Set<string> }) {
+    const ids = m.ids === undefined ? [] : strArray(m.ids, this.limits.acksMax, isEventId)
+    if (!ids) return s.strike()
+    const stored = ids.filter(id => closed.ids.delete(id))
+    if (!closed.ids.size) this.closedOn.get(s)?.delete(room)
+    if (stored.length) void this.deliveredTo(room, closed.ik, stored).catch(() => {})
   }
 
   // Events the other side refused for good: they show as failed, with Retry and Delete.

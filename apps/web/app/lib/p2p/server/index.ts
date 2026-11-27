@@ -58,6 +58,7 @@ import {
   type Migrated,
   type LostRoom,
   type ChannelPatch,
+  type Outgoing,
 } from './types'
 import { type Rt } from './rt'
 import * as views from './views'
@@ -132,6 +133,7 @@ export class Servers {
   private idents = new Map<string, IdentRecord>()
   private rooms = new Map<string, RoomRecord>()
   private changeFns = new Set<(room: string) => void>()
+  private deliveredFns = new Set<() => void>()
   private arriveFns = new Set<(a: ServerArrival) => void>()
   private aimedFns = new Set<(targets: string[]) => void>()
   private redeems = new WeakMap<Session, number>()
@@ -193,7 +195,10 @@ export class Servers {
       stateWanted: room => this.wanted(room),
       onHeads: link => this.heard(link),
       onStored: (room, _from, added) => void this.stored(room, added).catch(() => {}),
-      onDelivered: room => this.changed(room),
+      onDelivered: room => {
+        this.changed(room)
+        for (const fn of [...this.deliveredFns]) fn()
+      },
       onTyping: () => {},
       onState: room => this.changed(room),
       limits: { ...this.local.sync, ...deps.limits },
@@ -1460,6 +1465,29 @@ export class Servers {
 
   retire() {
     return roles.retire(ctx(this))
+  }
+
+  // Waits until each of our `events` reached a member of its server (one acknowledged it), for at
+  // most `ms`. True when every one did. A store that can't be read leaves it to the bound.
+  delivered(events: readonly Outgoing[], ms: number): Promise<boolean> {
+    return new Promise(resolve => {
+      let done = false
+      const finish = (ok: boolean) => {
+        if (done) return
+        done = true
+        this.deliveredFns.delete(check)
+        this.clock.clear(timer)
+        resolve(ok)
+      }
+      const check = () =>
+        void Promise.all(events.map(e => this.db.get('outbox', e.id))).then(
+          rows => rows.every(o => o !== undefined && o.deliveredTo.length > 0) && finish(true),
+          () => {}
+        )
+      const timer = this.clock.set(() => finish(false), ms)
+      this.deliveredFns.add(check)
+      check()
+    })
   }
 
   forget(room: string) {

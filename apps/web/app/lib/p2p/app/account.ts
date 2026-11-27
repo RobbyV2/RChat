@@ -19,6 +19,7 @@ import { hidesIp } from '../../relays'
 import { Calls, type PendingCall } from '../calls'
 import { RELAY_DENIED_TEXT } from '../voice'
 import { Servers } from '../server'
+import type { Outgoing } from '../server/types'
 import { runtimeLimits } from '../user_limits'
 import { LOCAL, type Local } from '../limits'
 import type { P2pDialog } from './store'
@@ -31,8 +32,9 @@ const RULES_UNAVAILABLE = unavailable(
   "P2P couldn't load its permission rules. Reload to try again."
 )
 
-// How long signed leaves get to reach the connected members before the identity stops.
-export const RETIRE_FLUSH_MS = 400
+// How long the signed leaves of an identity that is being removed get to reach a member of each
+// server before its data is deleted anyway.
+export const LEAVE_DELIVERY_MAX_MS = 5_000
 // How long an identity that is being removed gets to come online in this tab, how much of that
 // the members of its servers get to connect, and how long leaves that fail are tried again.
 const RETIRE_START_MS = 15_000
@@ -773,19 +775,26 @@ export function createAccountPart(
     },
 
     // Leaves every P2P server of this identity with a signed leave, then deletes the identity,
-    // its device key and everything else P2P from this browser. The identity has to be online
-    // in this tab (`runHere`). False when the data stayed: it is not, or a server was not left.
+    // its device key and everything else P2P from this browser once a member of each server has
+    // the leave (or `LEAVE_DELIVERY_MAX_MS` passed). The identity has to be online in this tab
+    // (`runHere`). False when the data stayed: it is not, or a server was not left.
     async retire(username = useP2p.getState().account): Promise<boolean> {
       const sv = state.servers
       if (!username || !scope.current(username) || !sv || !onlineHere()) return false
       const until = Date.now() + RETIRE_RETRY_MS
-      let kept = await sv.retire().catch(() => null)
+      const leaves: Outgoing[] = []
+      const pass = async () => {
+        const done = await sv.retire().catch(() => null)
+        leaves.push(...(done?.leaves ?? []))
+        return done?.kept ?? null
+      }
+      let kept = await pass()
       while (kept?.length !== 0 && state.servers === sv && Date.now() < until) {
         await pause(RETIRE_POLL_MS)
-        kept = await sv.retire().catch(() => null)
+        kept = await pass()
       }
       if (kept?.length !== 0 || state.servers !== sv) return false
-      await pause(RETIRE_FLUSH_MS)
+      await sv.delivered(leaves, LEAVE_DELIVERY_MAX_MS)
       if (state.servers !== sv) return false
       return p2p.removeData(username)
     },

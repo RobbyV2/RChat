@@ -65,6 +65,7 @@
     "declineInvite",
     "deleteCategory",
     "deleteRole",
+    "delivered",
     "dismissReached",
     "disownDevice",
     "edit",

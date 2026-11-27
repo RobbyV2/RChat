@@ -1,7 +1,7 @@
 import { P } from '../p2p/acl/rules'
 import { memberOf } from '../p2p/state'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { Hub, ManualClock } from './p2p_net'
+import { Hub, ManualClock, SlowLink } from './p2p_net'
 import { P2pStore } from '../p2p/db'
 import { keyId } from '../p2p/keys'
 import { applyImport, exportP2p, kdfBounds, unlockP2p, type Kdf } from '../p2p/transfer'
@@ -39,7 +39,7 @@ describe('P2P servers', () => {
       await joinWithCode(clock, a, room, b)
     }
     const own = await b.servers.create('Own')
-    expect(await b.servers.retire()).toEqual([])
+    expect((await b.servers.retire()).kept).toEqual([])
     for (const room of [...rooms, own]) expect(b.servers.myMembership(room)).toBe('leave')
     for (const room of rooms)
       await pump(
@@ -47,7 +47,51 @@ describe('P2P servers', () => {
         () => a.servers.view(room)?.members.find(m => m.ik === b.node.ik)?.m === undefined,
         'a sees b leave'
       )
-    expect(await b.servers.retire()).toEqual([])
+    expect((await b.servers.retire()).kept).toEqual([])
+  })
+
+  test('the leaves of a removed identity wait on a slow link until a member has them', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeMember(hub, 'Alice', clock)
+    const link = new SlowLink(() => hub.transport())
+    const b = await makeMember(hub, 'Bob', clock, { node: { transport: link.transport() } })
+    const room = await a.servers.create('One')
+    await joinWithCode(clock, a, room, b)
+    const alone = await b.servers.create('Alone')
+    link.held = true
+    const { kept, leaves } = await b.servers.retire()
+    expect(kept).toEqual([])
+    expect(leaves.map(l => l.room)).toEqual([room])
+    expect(b.servers.myMembership(alone)).toBe('leave')
+    const sent: { ok: boolean | null } = { ok: null }
+    void b.servers.delivered(leaves, 24 * 60 * 60_000).then(ok => (sent.ok = ok))
+    await clock.advance(2_000)
+    expect(sent.ok).toBeNull()
+    expect(link.pending).toBeGreaterThan(0)
+    link.release()
+    await pump(clock, () => sent.ok !== null, 'the leave reaches Alice', 100)
+    expect(sent.ok).toBe(true)
+    expect(a.servers.view(room)?.members.find(m => m.ik === b.node.ik)?.m).toBeUndefined()
+    expect(await b.servers.delivered(leaves, 5_000)).toBe(true)
+  })
+
+  test('the wait for a leave nobody receives ends at its bound', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeMember(hub, 'Alice', clock)
+    const link = new SlowLink(() => hub.transport())
+    const b = await makeMember(hub, 'Bob', clock, { node: { transport: link.transport() } })
+    const room = await a.servers.create('One')
+    await joinWithCode(clock, a, room, b)
+    link.held = true
+    const { leaves } = await b.servers.retire()
+    const sent: { ok: boolean | null } = { ok: null }
+    void b.servers.delivered(leaves, 5_000).then(ok => (sent.ok = ok))
+    await clock.advance(4_999)
+    expect(sent.ok).toBeNull()
+    await clock.advance(1)
+    expect(sent.ok).toBe(false)
   })
 
   test('an identity that is removed takes its server profile off before it leaves', async () => {
@@ -63,7 +107,7 @@ describe('P2P servers', () => {
       (m.servers as unknown as { sumOf: (room: string) => Parameters<typeof memberOf>[0] }).sumOf(
         room
       )
-    expect(await b.servers.retire()).toEqual([])
+    expect((await b.servers.retire()).kept).toEqual([])
     expect(memberOf(sumOf(b), b.node.ik)?.profile as unknown).toEqual({ name: 'Bob' })
     await pump(
       clock,
@@ -82,10 +126,10 @@ describe('P2P servers', () => {
     await joinWithCode(clock, a, room, b)
     const node = b.node as unknown as { author: () => null }
     node.author = () => null
-    expect(await b.servers.retire()).toEqual([room])
+    expect((await b.servers.retire()).kept).toEqual([room])
     expect(b.servers.myMembership(room)).toBe('join')
     Reflect.deleteProperty(node, 'author')
-    expect(await b.servers.retire()).toEqual([])
+    expect((await b.servers.retire()).kept).toEqual([])
     expect(b.servers.myMembership(room)).toBe('leave')
   })
 
@@ -106,7 +150,7 @@ describe('P2P servers', () => {
       writes += 1
       throw new Error('storage')
     }
-    expect(await b.servers.retire()).toEqual([])
+    expect((await b.servers.retire()).kept).toEqual([])
     expect(writes).toBe(1)
     expect(b.servers.myMembership(room)).toBe('leave')
     await pump(

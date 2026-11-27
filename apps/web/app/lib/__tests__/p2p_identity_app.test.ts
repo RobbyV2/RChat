@@ -645,6 +645,53 @@ test('a parked identity that runs here waits for its server to link, however lat
   }
 }, 60_000)
 
+test('over a slow link a removed identity keeps its data until the owner has its leave', async () => {
+  const user = 'retire-slow'
+  const alice = testAccount(user, 'https://identity-retire-slow.test')
+  const bob = testAccount('retire-slow-owner', alice.conn.origin)
+  alice.discovery.done()
+  bob.discovery.done()
+  const hub = new Hub()
+  const link = new SlowLink(() => hub.transport())
+  const app = createP2pApp(alice, 'main', { transport: () => link.transport(), leaderDeps: quiet })
+  const owner = createP2pApp(bob, 'main', { transport: () => hub.transport(), leaderDeps: quiet })
+  const dbs = [app.dbFor(user), owner.dbFor('retire-slow-owner')]
+  try {
+    await app.p2pAccount(user)
+    await app.p2p.enable('Alice')
+    await owner.p2pAccount('retire-slow-owner')
+    await owner.p2p.enable('Bob')
+    await waitFor(
+      () => app.node?.status === 'online' && owner.node?.status === 'online',
+      'both identities'
+    )
+    const room = await shareRoom(owner, app)
+    const ik = app.node!.ik
+    link.held = true
+    const retiring = app.p2p.retire(user)
+    await waitFor(
+      () => app.servers?.myMembership(room) === 'leave' && link.pending > 0,
+      'the leave waits on the link'
+    )
+    expect(app.p2p.hasData(user)).toBe(true)
+    expect(gone(owner, room, ik)).toBe(false)
+    link.release()
+    expect(await retiring).toBe(true)
+    expect(gone(owner, room, ik)).toBe(true)
+    expect(app.p2p.hasData(user)).toBe(false)
+  } finally {
+    await app.dispose()
+    await owner.dispose()
+    memoryStorage.removeItem(peerStorage(alice.conn, user).scoped(app.p2pKey(user)))
+    memoryStorage.removeItem(
+      peerStorage(bob.conn, 'retire-slow-owner').scoped(owner.p2pKey('retire-slow-owner'))
+    )
+    await Promise.all(dbs.map(db => removeP2pDb(db)))
+    alice.store.dispose()
+    bob.store.dispose()
+  }
+}, 60_000)
+
 test('an identity another tab runs moves here to leave its servers, and stays deleted in both tabs', async () => {
   const user = 'retire-tabs'
   const origin = 'https://identity-retire-tabs.test'
