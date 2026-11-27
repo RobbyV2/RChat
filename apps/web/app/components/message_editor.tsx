@@ -1,4 +1,6 @@
 'use client'
+import { altError } from '../lib/alt_text'
+import { AltField } from './alt_text'
 import { useStoreApi } from '../lib/client/react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
@@ -50,6 +52,8 @@ export interface EditBinding {
   setText: (text: string) => void
   save: (fine: boolean) => void
   cancel: (fine: boolean) => void
+  // The description of the message's image, when it has one.
+  alt?: { text: string; set: (text: string) => void }
 }
 
 export function MessageEditor({ binding }: { binding?: EditBinding }) {
@@ -60,6 +64,8 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
   const storeSet = useStore(s => s.setEditText)
   const storeSave = useStore(s => s.saveEdit)
   const storeCancel = useStore(s => s.cancelEdit)
+  const storeAlt = useStore(s => s.editing?.alt)
+  const storeSetAlt = useStore(s => s.setEditAlt)
   const storeMax = useStore(s => limitsOf(s.instance).message_chars)
   const max = binding ? binding.max : storeMax
   const text = binding ? binding.text : storeText
@@ -68,6 +74,11 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
   const setEditText = binding ? binding.setText : storeSet
   const saveEdit = binding ? binding.save : storeSave
   const cancelEdit = binding ? binding.cancel : storeCancel
+  const alt = binding
+    ? binding.alt
+    : storeAlt === undefined
+      ? undefined
+      : { text: storeAlt, set: storeSetAlt }
   const fine = useMedia('(pointer: fine)')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [below, setBelow] = useState(false)
@@ -108,6 +119,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
 
   const count = charCount(text)
   const tooLong = count > max
+  const blocked = tooLong || (alt !== undefined && altError(alt.text) !== null)
   const save = () => saveEdit(fine)
   const cancel = () => cancelEdit(fine)
 
@@ -150,6 +162,11 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
           </span>
         )}
       </div>
+      {alt && (
+        <div data-alt-field className="mt-1.5 w-full max-w-md">
+          <AltField value={alt.text} onChange={alt.set} />
+        </div>
+      )}
       <div className="mt-1 text-xs text-on-surface-variant pointer-coarse:hidden">
         escape to{' '}
         <button type="button" onClick={cancel} className={linkCls}>
@@ -159,7 +176,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
         <button
           type="button"
           onClick={save}
-          disabled={tooLong}
+          disabled={blocked}
           className={`${linkCls} disabled:opacity-40`}
         >
           save
@@ -176,7 +193,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
         <button
           type="button"
           onClick={save}
-          disabled={tooLong}
+          disabled={blocked}
           className={`${touchBtn} bg-primary text-on-primary disabled:opacity-40`}
         >
           Save

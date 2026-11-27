@@ -1,3 +1,4 @@
+import { withAlts } from '../../alt_text'
 import { atLeast, outranks as above } from '../../perms'
 import {
   RULES_VERSION,
@@ -697,7 +698,7 @@ export async function rows(cx: ServerCtx, room: string, recs: EventRecord[]) {
       reply,
       mentions: c.fwd ? [] : (c.mentions ?? []),
       fwd: c.fwd ?? null,
-      att: c.att ?? [],
+      att: withAlts(c.att ?? [], edit ? serverWire(edit).c : null),
       edited: edit ? edit.effTs : null,
       reactions: reactionsOf(reacts, cx.me),
       pinned: sh.pin?.on && pin && !thread ? pin.effTs : null,

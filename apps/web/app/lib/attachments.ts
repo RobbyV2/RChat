@@ -10,6 +10,8 @@ export interface PendingUpload {
   scope: string
   // P2P only: 'auto' or the URL of one of the user's TURN relays (see relays.ts).
   relay?: string
+  // "Describe this image", as typed.
+  alt?: string
 }
 
 // The server refuses a P2P id that is already another user's attachment (or a server file).

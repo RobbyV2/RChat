@@ -280,6 +280,7 @@ async fn hosting_broadcasts_reach_others_only_through_p2p_who() {
         removed: false,
         removed_by_author: false,
         spoiler: false,
+        alt: None,
     });
     let created = WsEvent::Message {
         server: None,

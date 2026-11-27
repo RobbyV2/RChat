@@ -1769,8 +1769,8 @@ export class Servers {
     return messages.message(ctx(this), room, target)
   }
 
-  edit(room: string, target: string, body: string) {
-    return messages.edit(ctx(this), room, target, body)
+  edit(room: string, target: string, body: string, alts?: Record<string, string>) {
+    return messages.edit(ctx(this), room, target, body, alts)
   }
 
   redact(room: string, target: string) {

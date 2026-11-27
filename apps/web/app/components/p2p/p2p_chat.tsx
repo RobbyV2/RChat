@@ -1052,6 +1052,9 @@ export function useP2pList({
             setText: p2pDm.setEditText,
             save: () => void p2pDm.saveEdit(),
             cancel: () => p2pDm.cancelEdit(),
+            ...(editingState.alt
+              ? { alt: { text: editingState.alt.text, set: p2pDm.setEditAlt } }
+              : {}),
           }
         : null,
     [editingState, scope]

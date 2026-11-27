@@ -43,6 +43,8 @@ export interface Attachment {
   dur?: number
   // A JPEG preview of at most 6 KiB (b64u), checked again before it is shown.
   thumb?: string
+  // A description of the image, read only when shown (`altText`).
+  alt?: string
 }
 
 // A forwarded copy: who wrote it, when, and what.
@@ -90,6 +92,9 @@ export interface MsgContent {
 export interface EditContent {
   target: string
   body: string
+  // New descriptions of the message's images by root hash (empty removes one), read only when
+  // shown (`withAlts`).
+  alts?: Record<string, string>
 }
 
 export interface RedactContent {

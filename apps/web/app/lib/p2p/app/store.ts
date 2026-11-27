@@ -157,7 +157,14 @@ export interface P2pState {
   // When we may post again in a slow-mode channel, by draft key.
   slowUntil: Record<string, number>
   replying: { room: string; id: string } | null
-  editing: { room: string; id: string; text: string; focus: number } | null
+  // `alt`: the description of the message's first image as edited, with its root hash.
+  editing: {
+    room: string
+    id: string
+    text: string
+    focus: number
+    alt?: { h: string; text: string; was: string | null }
+  } | null
   focus: { room: string; id: string; n: number } | null
   pulling: boolean
   // The browser refused to store more P2P data.
@@ -228,6 +235,8 @@ export interface PendingFile {
   hashed: Hashed | null
   preview: Preview | null
   error: string | null
+  // "Describe this image", as typed.
+  alt?: string
 }
 
 export interface FileView extends BlobView {

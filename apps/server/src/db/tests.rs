@@ -9155,3 +9155,56 @@ async fn servers_keep_their_look_when_descriptions_and_icon_kinds_are_added() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn messages_keep_their_files_when_image_descriptions_are_added() {
+    on_each_database("media_alt_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let before = (SCHEMA_VERSION - 1).to_string();
+        let channel: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(&db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', 'look', 'abc', 'cat.png', 7)")
+            .bind(channel)
+            .execute(&db)
+            .await
+            .expect("message");
+        sqlx::query("ALTER TABLE messages DROP COLUMN media_alt")
+            .execute(&db)
+            .await
+            .expect("drop");
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind(&before)
+            .execute(&db)
+            .await
+            .expect("version");
+        assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION - 1);
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE content = 'look' AND media_id = 'abc' AND media_filename = 'cat.png' AND created_at = 7 AND media_alt IS NULL").await,
+                1,
+                "{round}: the old message keeps its file and has no description"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE content = 'later' AND media_alt = 'A cat'").await,
+                i64::from(round == 1),
+                "{round}: a description written after the upgrade survives a restart"
+            );
+            if round == 0 {
+                sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, media_alt, created_at) VALUES($1, 'alice', 'later', 'def', 'dog.png', 'A cat', 8)")
+                    .bind(channel)
+                    .execute(&db)
+                    .await
+                    .expect("described");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}

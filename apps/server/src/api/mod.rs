@@ -3,6 +3,7 @@ pub mod account_deletion;
 pub mod admin;
 pub mod admin_cli;
 pub mod admin_users;
+pub mod alt_text;
 pub mod announcements;
 pub mod audit;
 pub mod auth;
@@ -824,6 +825,10 @@ pub struct MediaRef {
     pub removed_by_author: bool,
     /// Clients blur the attachment until it is clicked.
     pub spoiler: bool,
+    /// A description of the image for people who can't see it, at most 1000 characters.
+    /// Absent without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt: Option<String>,
 }
 
 impl MediaRef {
@@ -846,6 +851,7 @@ impl MediaRef {
             removed: false,
             removed_by_author: false,
             spoiler,
+            alt: None,
         }
     }
 }

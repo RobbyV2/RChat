@@ -1,4 +1,5 @@
 import { client } from '../client/client'
+import { altError, altText, altToSend, describable } from '../alt_text'
 import type { AccountSession } from '../client/session'
 // Messages and DMs: the loaded windows with their tails and heads, live appends, quotes and
 // edits, pins, link cards, the outbox, embeds, P2P availability and the DM list.
@@ -1293,6 +1294,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   ): Promise<{ opts: SendOpts; p2pId: string | null }> => {
     if (!pending) return { opts: {}, p2pId: null }
     const { file, spoiler, mode } = pending
+    const media_alt = altToSend(pending.alt)
     if (mode === 'p2p') {
       const relay = pending.relay ?? relayBook.prefs.choice
       await relayBook.check(relay)
@@ -1302,6 +1304,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       return {
         opts: {
           media_spoiler: spoiler,
+          ...(media_alt ? { media_alt } : {}),
           p2p: {
             filename: file.name,
             size: file.size,
@@ -1317,7 +1320,10 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     const max = limitsOf(get().instance).upload_bytes
     if (file.size > max) throw new Error(tooLargeText(max))
     const uploaded = await api.uploadMedia(file)
-    return { opts: { media_id: uploaded.id, media_spoiler: spoiler }, p2pId: null }
+    return {
+      opts: { media_id: uploaded.id, media_spoiler: spoiler, ...(media_alt ? { media_alt } : {}) },
+      p2pId: null,
+    }
   }
 
   // Per session: how far the server's clock runs ahead of this device, from sends it answered
@@ -1588,6 +1594,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     | 'openPing'
     | 'uploadFile'
     | 'toggleSpoiler'
+    | 'setUploadAlt'
+    | 'setEditAlt'
     | 'toggleUploadMode'
     | 'loadOlderThread'
     | 'loadNewerThread'
@@ -1910,10 +1918,22 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const { me, guest } = get()
       if (guest || !me || m.author.username !== me.username || m.kind !== 'user' || m.forward)
         return
-      set({ editing: { key, id: m.id, text: m.content } })
+      set({
+        editing: {
+          key,
+          id: m.id,
+          text: m.content,
+          ...(describable(m.media) ? { alt: m.media?.alt ?? '' } : {}),
+        },
+      })
     },
 
     setEditText: text => set(s => (s.editing ? { editing: { ...s.editing, text } } : {})),
+
+    setEditAlt: alt =>
+      set(s =>
+        s.editing && s.editing.alt !== undefined ? { editing: { ...s.editing, alt } } : {}
+      ),
 
     cancelEdit: refocus => {
       const ed = get().editing
@@ -1939,11 +1959,16 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         return
       }
       if (charCount(text) > limitsOf(get().instance).message_chars) return
+      if (ed.alt !== undefined && altError(ed.alt)) return
+      const alt =
+        ed.alt !== undefined && altText(ed.alt) !== (m.media?.alt ?? null)
+          ? altText(ed.alt)
+          : undefined
       get().cancelEdit(refocus)
-      if (text === m.content) return
+      if (text === m.content && alt === undefined) return
       const edited_at = Math.floor(Date.now() / 1000)
       patchReactions(m.id, x => ({ ...x, content: text, edited_at }))
-      live(api.editMessage(m.id, text))
+      live(api.editMessage(m.id, text, alt))
         .then(saved => {
           if (findMessage(m.id)?.content === text) applyUpdated(saved)
         })
@@ -2132,6 +2157,12 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         file && mode ? { file, spoiler: false, mode, scope } : null
       set(s => ({ pending: keyed(s.pending, key, pending) }))
     },
+
+    setUploadAlt: (key, alt) =>
+      set(s => {
+        const cur = s.pending[key]
+        return cur ? { pending: { ...s.pending, [key]: { ...cur, alt } } } : {}
+      }),
 
     toggleSpoiler: key =>
       set(s => {

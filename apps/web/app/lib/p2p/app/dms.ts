@@ -1,3 +1,4 @@
+import { altError, altText, describableFile, editAltsFor } from '../../alt_text'
 import { resolve as resolveNotify } from '../../notify'
 import { applySed, parseSed } from '../../sed'
 import type { UserRef } from '../../types'
@@ -572,11 +573,12 @@ export function createDmsPart(
           p2pHost.toast(TOO_LONG_TEXT)
           return false
         }
+        const alts = editAltsFor(last.att)
         return (
           (await onTarget(
             room,
-            (d, r) => d.edit(r, last.id, next),
-            (sv, r) => sv.edit(r, last.id, next)
+            (d, r) => d.edit(r, last.id, next, alts),
+            (sv, r) => sv.edit(r, last.id, next, alts)
           )) !== null
         )
       }
@@ -638,11 +640,25 @@ export function createDmsPart(
     startEdit(room: string, id: string) {
       const m = findMessage(id)
       if (!m) return
+      // An edit needs text, so a message without any can't change its description.
+      const image = m.body.trim() ? m.att.find(a => describableFile(a.name, a.mime)) : undefined
+      const was = image ? altText(image.alt) : null
       useP2p.setState(st => ({
-        editing: { room, id, text: m.body, focus: (st.editing?.focus ?? 0) + 1 },
+        editing: {
+          room,
+          id,
+          text: m.body,
+          focus: (st.editing?.focus ?? 0) + 1,
+          ...(image ? { alt: { h: image.h, text: was ?? '', was } } : {}),
+        },
         replying: null,
       }))
     },
+
+    setEditAlt: (text: string) =>
+      useP2p.setState(st =>
+        st.editing?.alt ? { editing: { ...st.editing, alt: { ...st.editing.alt, text } } } : {}
+      ),
 
     editLast(room: string) {
       const m = lastEditable(room)
@@ -662,12 +678,16 @@ export function createDmsPart(
       const m = findMessage(e.id)
       const body = e.text.trim()
       if (body && bodyTooLong(e.text)) return p2pHost.toast(TOO_LONG_TEXT)
+      const tooLong = e.alt ? altError(e.alt.text) : null
+      if (tooLong) return p2pHost.toast(tooLong)
+      const changed = !!e.alt && altText(e.alt.text) !== e.alt.was
+      const alts = m ? editAltsFor(m.att, e.alt) : undefined
       useP2p.setState({ editing: null })
-      if (!m || !body || body === m.body.trim()) return
+      if (!m || !body || (body === m.body.trim() && !changed)) return
       await onTarget(
         e.room,
-        (d, r) => d.edit(r, e.id, e.text),
-        (sv, r) => sv.edit(r, e.id, e.text)
+        (d, r) => d.edit(r, e.id, e.text, alts),
+        (sv, r) => sv.edit(r, e.id, e.text, alts)
       )
     },
 

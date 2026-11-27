@@ -1466,6 +1466,7 @@ async fn post(
         content,
         media_id,
         media_spoiler,
+        media_alt: None,
         p2p: None,
         reply_to: None,
         mention_reply: false,

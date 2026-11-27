@@ -1254,7 +1254,7 @@ pub(crate) async fn delete_media(
     match media_kind {
         MediaKind::P2p => {
             let mut tx = state.db.begin().await?;
-            sqlx::query("UPDATE messages SET media_removed = 2, media_hoster = NULL, media_expires_at = NULL, media_size = NULL, media_mime = NULL, media_sha256 = NULL WHERE id = $1")
+            sqlx::query("UPDATE messages SET media_removed = 2, media_hoster = NULL, media_expires_at = NULL, media_size = NULL, media_mime = NULL, media_sha256 = NULL, media_alt = NULL WHERE id = $1")
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
@@ -1274,7 +1274,7 @@ pub(crate) async fn delete_media(
                     .fetch_optional(&mut *tx)
                     .await?
                     .is_some();
-            sqlx::query("UPDATE messages SET media_removed = 2 WHERE id = $1")
+            sqlx::query("UPDATE messages SET media_removed = 2, media_alt = NULL WHERE id = $1")
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
@@ -1950,7 +1950,7 @@ async fn sweep_batch(db: &Db, at: i64) -> sqlx::Result<(Vec<String>, Vec<WsEvent
         });
     }
     bind_ids(format!(
-        "UPDATE messages SET media_removed = 1 WHERE media_id IN ({list}) AND media_kind != 'p2p'"
+        "UPDATE messages SET media_removed = 1, media_alt = NULL WHERE media_id IN ({list}) AND media_kind != 'p2p'"
     ))
     .execute(&mut *tx)
     .await?;

@@ -419,6 +419,8 @@ export interface MessageMedia {
   removed: boolean
   removed_by_author: boolean
   spoiler: boolean
+  // A description of the image for people who can't see it; absent without one.
+  alt?: string
 }
 
 export interface Embed {

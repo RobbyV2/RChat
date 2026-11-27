@@ -1,4 +1,6 @@
 'use client'
+import { altText, describableFile } from '../../lib/alt_text'
+import { AltBadge, AltField } from '../alt_text'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -200,13 +202,16 @@ export function TileView({
   if (done && url && kind === 'image')
     return (
       <div data-p2p-file={att.h} className="mt-1 w-fit max-w-full">
-        <img
-          src={url}
-          alt={name}
-          width={att.w}
-          height={att.h_px}
-          className="h-auto max-h-80 w-auto max-w-full rounded-xl"
-        />
+        <span className="relative block w-fit max-w-full">
+          <img
+            src={url}
+            alt={altText(att.alt) ?? name}
+            width={att.w}
+            height={att.h_px}
+            className="h-auto max-h-80 w-auto max-w-full rounded-xl"
+          />
+          <AltBadge alt={altText(att.alt)} own={own} />
+        </span>
         {caption}
       </div>
     )
@@ -376,12 +381,18 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
 }
 
 function PendingFilesBody({ room }: { room: string }) {
+  const { p2pFiles } = useP2pApp()!
   const list = useP2p(s => s.attaching[room])
   if (!list?.length) return null
   return (
     <div className="mb-2 flex gap-3 overflow-x-auto px-1 pt-2 pb-1" aria-label="Files to send">
       {list.map(p => (
-        <PendingChip key={p.id} room={room} p={p} />
+        <div key={p.id} className="flex w-40 shrink-0 flex-col gap-1">
+          <PendingChip room={room} p={p} />
+          {describableFile(p.file.name, p.file.type) && (
+            <AltField compact value={p.alt ?? ''} onChange={v => p2pFiles.setAlt(room, p.id, v)} />
+          )}
+        </div>
       ))}
       <span
         title="Sent peer-to-peer: stored on your devices and shared with the people in this conversation"

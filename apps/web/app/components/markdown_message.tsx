@@ -90,6 +90,7 @@ import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard, WidgetLinkCards, WidgetMessageLinkCard } from './message_link_card'
 import { RichEmbeds } from './webhooks'
+import { AltBadge } from './alt_text'
 import { profileTrigger } from './profile_card'
 import { EditedMark } from './message_editor'
 import {
@@ -825,7 +826,14 @@ export function P2pFile({
   if (shown !== null) {
     return (
       <div className="mt-1 w-fit max-w-full">
-        <img src={shown.url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
+        <span className="relative block w-fit max-w-full">
+          <img
+            src={shown.url}
+            alt={media.alt ?? filename}
+            className="max-h-80 max-w-full rounded-xl"
+          />
+          <AltBadge alt={media.alt} own={own} />
+        </span>
         <span className="mt-1 flex items-center gap-2">
           <span className="max-w-60 truncate text-xs text-on-surface-variant">
             <Masked text={filename} file own={own} />
@@ -973,9 +981,12 @@ export function MediaAttachment({
     }
     return (
       <div className="mt-1 w-fit">
-        <a href={src} target="_blank" rel="noreferrer" className="block w-fit">
-          <img src={src} alt={filename} className="max-h-80 max-w-full rounded-xl" />
-        </a>
+        <span className="relative block w-fit max-w-full">
+          <a href={src} target="_blank" rel="noreferrer" className="block w-fit">
+            <img src={src} alt={media.alt ?? filename} className="max-h-80 max-w-full rounded-xl" />
+          </a>
+          <AltBadge alt={media.alt} own={own} />
+        </span>
         {expiry}
       </div>
     )

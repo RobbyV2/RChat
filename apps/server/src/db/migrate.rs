@@ -160,6 +160,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("pending_purges", "self_requested {INT} NOT NULL DEFAULT 0"),
     ("servers", "description TEXT"),
     ("servers", "icon_kind TEXT"),
+    ("messages", "media_alt TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -288,7 +289,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 55: the rank order of a server's roles.
 /// 56: how roles show (display order, groups in the member list, icon, name color) and the
 /// `user_roles(role_id, username)` index in place of `idx_user_roles_role`.
-pub const SCHEMA_VERSION: i64 = 56;
+/// 57: descriptions of attached images (`messages.media_alt`).
+pub const SCHEMA_VERSION: i64 = 57;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

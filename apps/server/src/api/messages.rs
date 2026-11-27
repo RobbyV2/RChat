@@ -40,7 +40,7 @@ use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 use rchat_perms::masks;
 
-pub(crate) const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews";
+pub(crate) const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews, m.media_alt";
 /// Top-level messages of a DM.
 const DM_TOP: &str = "m.dm_id = $1 AND m.thread_root_id IS NULL";
 
@@ -85,6 +85,13 @@ pub struct SendReq {
     pub(crate) media_id: Option<String>,
     /// Optional; blur the attachment behind a spoiler. Defaults to `false`.
     pub(crate) media_spoiler: Option<bool>,
+    /// Optional description of the attached image for people who can't see it: at most 1000
+    /// characters (code points) after cleanup (trimmed, control characters other than newlines
+    /// dropped, runs of 3 or more newlines cut to 2), checked by the profanity filter in server
+    /// channels. Blank is none. Needs `media_id` or `p2p` (`400 Image description needs an
+    /// attachment`).
+    #[serde(default)]
+    pub(crate) media_alt: Option<String>,
     /// Optional peer-to-peer attachment hosted by the sender's client instead of the server.
     /// Omit for no P2P file.
     pub(crate) p2p: Option<P2pAttachment>,
@@ -131,6 +138,7 @@ impl SendReq {
             mention_reply: false,
             media_id: None,
             media_spoiler: None,
+            media_alt: None,
             p2p: None,
             forward_of: None,
             show_source: None,
@@ -385,6 +393,10 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
                 removed: removed != 0,
                 removed_by_author: removed == 2,
                 spoiler: r.try_get::<i64, _>(9)? != 0,
+                alt: match removed {
+                    0 => r.try_get(41)?,
+                    _ => None,
+                },
             })
         }
         None => None,
@@ -1178,6 +1190,7 @@ async fn p2p_media(
         removed: false,
         removed_by_author: false,
         spoiler,
+        alt: None,
     })
 }
 
@@ -1294,6 +1307,7 @@ pub(crate) async fn insert_message(
         content,
         media_id,
         media_spoiler,
+        media_alt,
         p2p,
         reply_to: _,
         mention_reply: _,
@@ -1359,13 +1373,20 @@ pub(crate) async fn insert_message(
     {
         settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
     }
+    let alt = crate::api::alt_text::alt_to_store(
+        db,
+        media_alt.as_deref(),
+        media.is_some(),
+        channel_id.is_some(),
+    )
+    .await?;
     let has_cards = hook.is_some_and(|h| !h.embeds.is_empty());
     if content.trim().is_empty() && media.is_none() && !has_cards && poll.is_none() {
         return Err(bad("Message is empty"));
     }
     let t = now();
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind, webhook_id, webhook_name, webhook_avatar, webhook_embeds, no_previews) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind, webhook_id, webhook_name, webhook_avatar, webhook_embeds, no_previews, media_alt) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -1394,6 +1415,7 @@ pub(crate) async fn insert_message(
     .bind(hook.map(|h| h.avatar.clone()))
     .bind(hook.and_then(|h| crate::api::webhooks::stored_embeds(&h.embeds)))
     .bind(i64::from(no_previews))
+    .bind(&alt)
     .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
@@ -1401,6 +1423,7 @@ pub(crate) async fn insert_message(
         crate::api::polls::insert(&mut tx, id, spec, t).await?;
     }
     tx.commit().await?;
+    let media = media.map(|m| MediaRef { alt, ..m });
     let mut msgs = [Message {
         id,
         channel_id,
@@ -1595,7 +1618,7 @@ async fn forwarded(
         (None, Some(_)) => Some(Origin::Dm),
         (None, None) => return Err(cannot_forward()),
     };
-    let row = sqlx::query("SELECT m.content, m.kind, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.author, m.created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_dropped FROM messages m WHERE m.id = $1")
+    let row = sqlx::query("SELECT m.content, m.kind, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.media_kind, m.media_hoster, m.media_expires_at, COALESCE(m.media_size, (SELECT md.size FROM media md WHERE md.id = m.media_id)), m.media_mime, m.author, m.created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_dropped, m.media_alt FROM messages m WHERE m.id = $1")
         .bind(id)
         .fetch_optional(db)
         .await?
@@ -1632,6 +1655,7 @@ async fn forwarded(
                 removed: false,
                 removed_by_author: false,
                 spoiler: row.try_get::<i64, _>(5)? != 0,
+                alt: row.try_get(16)?,
             };
             (stored.then_some(media), None)
         }
@@ -1684,6 +1708,9 @@ async fn insert_forward(
         if let Some(media) = media.as_ref().filter(|m| m.kind == MediaKind::Server) {
             settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
         }
+        if let Some(alt) = media.as_ref().and_then(|m| m.alt.as_deref()) {
+            settings.check_profanity(ProfanityTarget::Messages, alt)?;
+        }
         if let Some(data) = &snapshot {
             crate::api::polls::check_snapshot(&settings, data)?;
         }
@@ -1711,7 +1738,7 @@ async fn insert_forward(
         media => (media, dropped),
     };
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, fwd_author, fwd_created_at, fwd_source_id, fwd_origin, fwd_dropped, created_at, no_previews) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, 'server', NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, fwd_author, fwd_created_at, fwd_source_id, fwd_origin, fwd_dropped, created_at, no_previews, media_alt) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, 'server', NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -1731,6 +1758,7 @@ async fn insert_forward(
     .bind(&dropped)
     .bind(t)
     .bind(i64::from(text_only))
+    .bind(media.as_ref().and_then(|m| m.alt.clone()))
     .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
@@ -2603,11 +2631,17 @@ pub struct EditReq {
     /// the message has an attachment.
     #[schema(example = "Hello again")]
     content: String,
+    /// New description of the attached image (see `media_alt` of `POST /api/v1/channels/{id}/messages`);
+    /// `null` or blank removes it, omit to keep it. Needs an attachment.
+    #[serde(default, deserialize_with = "crate::api::auth::present")]
+    #[schema(value_type = Option<String>, example = "A cat asleep on a red mat")]
+    media_alt: Option<Option<String>>,
 }
 
 /// Edit a message
 ///
-/// Replaces the text of your own message and sets `edited_at`. Requires a bearer token. Only the
+/// Replaces the text of your own message, and with `media_alt` the description of its image, and
+/// sets `edited_at`. Requires a bearer token. Only the
 /// author can edit, only `user` messages (not call logs), and only while the author can still
 /// send there: in server channels, membership and the send permission (slow mode does not
 /// apply); in DMs, being a participant. The text is checked like a new message (length, blank
@@ -2626,11 +2660,11 @@ pub(crate) async fn edit_message(
     Authed(user): Authed,
     Json(req): Json<EditReq>,
 ) -> Result<Json<Message>, ApiError> {
-    let EditReq { content } = req;
+    let EditReq { content, media_alt } = req;
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.edit_gate(&state.db).await?;
     let row = sqlx::query(
-        "SELECT content, kind, media_removed, fwd_source_id FROM messages WHERE id = $1",
+        "SELECT content, kind, media_removed, fwd_source_id, media_alt FROM messages WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -2649,11 +2683,20 @@ pub(crate) async fn edit_message(
     if message.channel().is_some() {
         check_profanity(&state.db, ProfanityTarget::Messages, &content).await?;
     }
+    let old_alt: Option<String> = row.try_get(4)?;
+    let alt = match media_alt {
+        Some(_) if !attached => return Err(bad(crate::api::alt_text::NOTHING_TO_DESCRIBE)),
+        Some(text) => {
+            crate::api::alt_text::clean_alt(&state.db, text.as_deref(), message.channel().is_some())
+                .await?
+        }
+        None => old_alt.clone(),
+    };
     let floor = match message.channel() {
         Some(channel) => channel.read_since(&state.db).await?,
         None => None,
     };
-    if content != old {
+    if content != old || alt != old_alt {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
         let (mut tx, text_only) =
             begin_message_write(&state.db, message.scope().channel_id, false).await?;
@@ -2663,12 +2706,13 @@ pub(crate) async fn edit_message(
                 None => false,
             };
         sqlx::query(
-            "UPDATE messages SET content = $1, edited_at = $2, no_previews = $4 WHERE id = $3",
+            "UPDATE messages SET content = $1, edited_at = $2, no_previews = $4, media_alt = $5 WHERE id = $3",
         )
         .bind(&content)
         .bind(now())
         .bind(id)
         .bind(i64::from(text_only))
+        .bind(&alt)
         .execute(&mut *tx)
         .await?;
         if relink || text_only {
@@ -4760,6 +4804,7 @@ mod tests {
                 content: "hello".to_string(),
                 media_id: None,
                 media_spoiler: None,
+                media_alt: None,
                 p2p: None,
                 reply_to: None,
                 mention_reply: true,
@@ -4807,6 +4852,7 @@ mod tests {
                 content,
                 media_id: media_id.map(str::to_string),
                 media_spoiler: None,
+                media_alt: None,
                 p2p: None,
                 reply_to: None,
                 mention_reply: true,
@@ -4870,6 +4916,7 @@ mod tests {
                 content: "a".repeat(state.limits.message_max_chars + 1),
                 media_id: None,
                 media_spoiler: None,
+                media_alt: None,
                 p2p: None,
                 reply_to: None,
                 mention_reply: true,
@@ -4979,6 +5026,7 @@ mod tests {
             content: String::new(),
             media_id: None,
             media_spoiler: None,
+            media_alt: None,
             p2p: Some(P2pAttachment {
                 filename: "big.bin".to_string(),
                 size,
@@ -5381,6 +5429,7 @@ mod tests {
                     content: "in the thread".to_string(),
                     media_id: None,
                     media_spoiler: None,
+                    media_alt: None,
                     p2p: None,
                     reply_to: None,
                     mention_reply: true,
@@ -5409,6 +5458,7 @@ mod tests {
                     content: "direct".to_string(),
                     media_id: None,
                     media_spoiler: None,
+                    media_alt: None,
                     p2p: None,
                     reply_to: None,
                     mention_reply: true,
@@ -9338,6 +9388,7 @@ mod tests {
                         content: "hello".to_string(),
                         media_id: None,
                         media_spoiler: None,
+                        media_alt: None,
                         p2p: None,
                         reply_to: None,
                         mention_reply: true,
@@ -9399,6 +9450,7 @@ mod tests {
             content: content.to_string(),
             media_id: None,
             media_spoiler: None,
+            media_alt: None,
             p2p: None,
             reply_to,
             mention_reply,
@@ -11418,6 +11470,7 @@ mod tests {
             Authed(mem_user(who, false)),
             Json(EditReq {
                 content: content.to_string(),
+                media_alt: None,
             }),
         )
         .await
@@ -12061,6 +12114,7 @@ mod tests {
             content: "ignored".to_string(),
             media_id: None,
             media_spoiler: None,
+            media_alt: None,
             p2p: None,
             reply_to: Some(source),
             mention_reply: true,
@@ -12895,6 +12949,7 @@ mod tests {
             Authed(mem_user("alice", false)),
             Json(EditReq {
                 content: "forged".to_string(),
+                media_alt: None,
             }),
         )
         .await;
@@ -13398,6 +13453,7 @@ mod tests {
             Authed(mem_user("alice", false)),
             Json(EditReq {
                 content: "@everyone now".to_string(),
+                media_alt: None,
             }),
         )
         .await
@@ -13500,6 +13556,7 @@ mod tests {
             content: content.to_string(),
             media_id: None,
             media_spoiler: None,
+            media_alt: None,
             p2p: None,
             reply_to: None,
             mention_reply: false,

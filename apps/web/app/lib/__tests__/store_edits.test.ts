@@ -146,6 +146,49 @@ describe('inline editing', () => {
     expect(st().editing).toEqual({ key: 'c1', id: 10, text: 'teh plan' })
   })
 
+  test('an image keeps its description in the edit, and a change to it alone is sent', async () => {
+    const media: MessageMedia = {
+      id: 'f',
+      filename: 'cat.png',
+      kind: 'server',
+      hoster: null,
+      expires_at: null,
+      size: null,
+      mime: null,
+      removed: false,
+      removed_by_author: false,
+      spoiler: false,
+      alt: 'A cat',
+    }
+    const pic = msg(13, { author: bob, content: 'look', media, reactions: [] })
+    useStore.setState({ messages: { c1: [pic] } })
+    st().startEdit('c1', pic)
+    expect(st().editing).toEqual({ key: 'c1', id: 13, text: 'look', alt: 'A cat' })
+    st().saveEdit(false)
+    await tick()
+    expect(patches).toEqual([])
+    st().startEdit('c1', pic)
+    st().setEditAlt('  A sleepy cat ')
+    st().saveEdit(false)
+    await tick()
+    expect(patches).toEqual([
+      { url: '/api/messages/13', body: { content: 'look', media_alt: 'A sleepy cat' } },
+    ])
+    useStore.setState({ messages: { c1: [pic] } })
+    st().startEdit('c1', pic)
+    st().setEditAlt('   ')
+    st().saveEdit(false)
+    await tick()
+    expect(patches.at(-1)?.body).toEqual({ content: 'look', media_alt: null })
+    st().startEdit('c1', pic)
+    st().setEditAlt('x'.repeat(1001))
+    st().saveEdit(false)
+    expect(st().editing?.id).toBe(13)
+    st().cancelEdit()
+    st().startEdit('c1', mine)
+    expect(st().editing?.alt).toBeUndefined()
+  })
+
   test('Up edits the newest own message, nothing without one', () => {
     useStore.setState({ messages: { c1: [mine, msg(12, { author: bob }), reply] } })
     expect(st().editLast('c1')).toBe(true)

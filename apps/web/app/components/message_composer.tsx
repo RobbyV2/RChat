@@ -25,6 +25,8 @@ import { guestPostingStatus, postGuest } from '../lib/guest_chat'
 import { useAccount } from '../lib/client/react'
 import { TextComposer } from './text_composer'
 import { outgoing } from '../lib/link_safety'
+import { altError, describableFile } from '../lib/alt_text'
+import { AltField } from './alt_text'
 import { accountPrompt } from '../lib/features'
 import { charCount, counterFrom, messageFilterOn } from '../lib/rules'
 import { useShownOrNull, useViewServer } from './shown_user'
@@ -285,6 +287,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const canAttach = !textOnly && (uploadsOn || p2pOn) && can.attach
   const uploadFile = useStore(s => s.uploadFile)
   const toggleSpoiler = useStore(s => s.toggleSpoiler)
+  const setUploadAlt = useStore(s => s.setUploadAlt)
   const toggleUploadMode = useStore(s => s.toggleUploadMode)
   const sendMessage = useStore(s => s.sendMessage)
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
@@ -509,7 +512,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   }
 
   const send = () => {
-    if ((!text.trim() && !pending) || tooLong) return
+    if ((!text.trim() && !pending) || tooLong || altError(pending?.alt ?? '')) return
     const sed = pending || !draftKey ? null : parseSed(text)
     if (sed && draftKey) {
       const key = draftKey
@@ -601,6 +604,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             {pending.spoiler ? 'Spoiler · ' : ''}
             {pending.file.name}
           </span>
+        </div>
+      )}
+      {pending && describableFile(pending.file.name, pending.file.type) && (
+        <div data-alt-field className="mb-2 w-72 max-w-full">
+          <AltField
+            value={pending.alt ?? ''}
+            onChange={v => draftKey && setUploadAlt(draftKey, v)}
+          />
         </div>
       )}
       {pickerOpen && (

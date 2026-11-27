@@ -1,3 +1,4 @@
+import { altError, altToSend } from '../../alt_text'
 import { instanceLabel } from '../../instance_label'
 import { writeLocal } from '../../instances'
 import { fitContent, LIMITS as EV, type Attachment } from '../content'
@@ -202,6 +203,9 @@ export function createAttachmentsPart(
     toggleSpoiler: (room: string, id: number) =>
       setPending(room, list => list.map(p => (p.id === id ? { ...p, spoiler: !p.spoiler } : p))),
 
+    setAlt: (room: string, id: number, alt: string) =>
+      setPending(room, list => list.map(p => (p.id === id ? { ...p, alt } : p))),
+
     clear: (room: string) => setPending(room, () => []),
 
     // Keeps the files here and returns them as message attachments; null (with a toast) when they
@@ -226,6 +230,11 @@ export function createAttachmentsPart(
         p2pHost.toast(PREPARING_TEXT)
         return null
       }
+      const tooLong = list.map(p => altError(p.alt ?? '')).find(e => e !== null)
+      if (tooLong) {
+        p2pHost.toast(tooLong)
+        return null
+      }
       const seen = new Set<string>()
       const att: Attachment[] = []
       for (const p of list) {
@@ -245,6 +254,8 @@ export function createAttachmentsPart(
         if (pv.h_px) a.h_px = pv.h_px
         if (pv.dur !== undefined) a.dur = pv.dur
         if (pv.thumb) a.thumb = pv.thumb
+        const alt = altToSend(p.alt)
+        if (alt) a.alt = alt
         att.push(a)
       }
       const fitted = fitAttachments(body, att)

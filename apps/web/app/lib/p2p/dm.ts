@@ -1,3 +1,4 @@
+import { withAlts } from '../alt_text'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64u, concat, utf8 } from './canonical'
 import {
@@ -228,7 +229,7 @@ export const deriveMessage = (
     reply,
     mentions: c.fwd ? [] : (c.mentions ?? []),
     fwd: c.fwd ?? null,
-    att: c.att ?? [],
+    att: withAlts(c.att ?? [], edit?.wire.c),
     edited: edit ? edit.effTs : null,
     reactions: reactionsOf(related, me),
     pinned: pinOf(related),
@@ -1052,11 +1053,11 @@ export class Dms {
     return r
   }
 
-  async edit(room: string, target: string, body: string) {
+  async edit(room: string, target: string, body: string, alts?: Record<string, string>) {
     const r = await this.ownMessage(room, target)
     if (r.sender !== this.me || (r.wire.c as MsgContent | null)?.fwd)
       throw new DmError("You can't edit this message")
-    return this.create(room, 'edit', { target, body })
+    return this.create(room, 'edit', alts ? { target, body, alts } : { target, body })
   }
 
   async redact(room: string, target: string) {

@@ -188,11 +188,17 @@ export async function message(cx: ServerCtx, room: string, target: string) {
   return r
 }
 
-export async function edit(cx: ServerCtx, room: string, target: string, body: string) {
+export async function edit(
+  cx: ServerCtx,
+  room: string,
+  target: string,
+  body: string,
+  alts?: Record<string, string>
+) {
   const r = await cx.message(room, target)
   if (r.sender !== cx.me || (serverWire(r).c as MsgContent | null)?.fwd)
     throw new ServerError("You can't edit this message")
-  return cx.content(room, 'edit', { target, body, ch: r.chan })
+  return cx.content(room, 'edit', { target, body, ch: r.chan, ...(alts ? { alts } : {}) })
 }
 
 export async function redact(cx: ServerCtx, room: string, target: string) {

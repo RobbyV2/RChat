@@ -200,6 +200,8 @@ export interface Editing {
   id: number
   text: string
   focus?: number
+  // The description of the message's image as edited; absent without an image.
+  alt?: string
 }
 
 export interface Focus {
@@ -686,6 +688,8 @@ export interface RChatState {
   openPing: (ping: Ping, switching?: boolean) => Promise<void>
   uploadFile: (key: string, file: File | null) => void
   toggleSpoiler: (key: string) => void
+  setUploadAlt: (key: string, alt: string) => void
+  setEditAlt: (alt: string) => void
   toggleUploadMode: (key: string) => void
   openThread: (root: Message, at?: number) => Promise<void>
   // `q` fills the search box (from the palette).

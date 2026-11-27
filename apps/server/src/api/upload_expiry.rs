@@ -961,6 +961,7 @@ mod tests {
             content: content.to_string(),
             media_id,
             media_spoiler: None,
+            media_alt: None,
             p2p: None,
             reply_to: None,
             mention_reply: false,
