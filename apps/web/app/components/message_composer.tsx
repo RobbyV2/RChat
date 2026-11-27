@@ -13,11 +13,9 @@ import {
   File as FileIcon,
   Lock,
   Plus,
-  SendHorizontal,
   Server,
   Share2,
   ShieldAlert,
-  Smile,
   X,
 } from 'lucide-react'
 import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
@@ -29,17 +27,14 @@ import { outgoing } from '../lib/link_safety'
 import { altError, describableFile } from '../lib/alt_text'
 import { AltField } from './alt_text'
 import { accountPrompt } from '../lib/features'
-import { charCount, counterFrom, messageFilterOn } from '../lib/rules'
+import { charCount, messageFilterOn } from '../lib/rules'
 import { useShownOrNull, useViewServer } from './shown_user'
 import { dmPlaceholder } from '../lib/display_name'
-import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
-import { spliceText } from '../lib/autocomplete'
-import { loadEmojiData } from '../lib/emoji'
 import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
 import { parseSed } from '../lib/sed'
 import { useChannelCan } from '../lib/place/use_rights'
-import { useHostedServer } from '../lib/place/react'
+import { useHostedServer, useLive } from '../lib/place/react'
 import { NO_THREADS_TEXT } from '../lib/channel_perms'
 import { textOnlyDestination } from '../lib/channel_content'
 import { clock } from '../lib/slowmode'
@@ -48,12 +43,10 @@ import { Dialog, FieldError, fieldCls, Masked, useOwnServer } from './ui'
 import { SITE_FILTER_NOTE } from '../lib/home'
 import { useUploadHint } from './upload_expiry'
 import { useHome } from '../lib/home_store'
-import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
-import { useMedia } from './context_menu'
 import { ReplyBar } from './replies'
 import { ForwardBar, useForwardClip } from './forwards'
-import { useTextAssist } from './text_assist'
-import { FormatToolbar, useFormatting } from './format_toolbar'
+import { ComposerField } from './composer_field'
+import { useCompose } from '../lib/place/use_composer'
 import { TimedOutBar, useMyTimeoutEnds } from './timeout_dialog'
 import { previewFor } from '../lib/apps/preview'
 import { CreatePollDialog } from './poll_dialog'
@@ -276,7 +269,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const uploadsOn = useStore(s => s.settings.asset_uploads)
   const p2pOn = useStore(s => s.settings.p2p_attachments)
   const uploadMax = useStore(s => limitsOf(s.instance).upload_bytes)
-  const max = useStore(s => limitsOf(s.instance).message_chars)
+  const compose = useCompose(thread ? 'thread' : 'main')
+  const { text, max, replying } = useLive(compose.state)
   const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
   const placeChannel = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
   const can = useChannelCan(
@@ -298,25 +292,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sendMessage = useStore(s => s.sendMessage)
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
   const linkPrefs = useStore(s => s.linkPrefs)
-  const setDraft = useStore(s => s.setDraft)
-  const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
-  const replying = useStore(s => (draftKey ? s.replying[draftKey] !== undefined : false))
   const forwarding = useForwardClip() !== null
   const cancelReply = useStore(s => s.cancelReply)
   const focusAsk = useStore(s => s.composerFocus)
-  const editLast = useStore(s => s.editLast)
   const sedEdit = useStore(s => s.sedEdit)
-  const noteTyping = useStore(s => s.noteTyping)
-  const [focused, setFocused] = useState(false)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [pollOpen, setPollOpen] = useState(false)
-  const [pickerFor, setPickerFor] = useState<string | null>(null)
-  const sheet = useMedia(SHEET_QUERY)
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const emojiRef = useRef<HTMLButtonElement>(null)
-  const sel = useRef({ start: 0, end: 0 })
-  const pickerOpen = pickerFor !== null && pickerFor === draftKey
   const focusSeen = useRef(focusAsk?.n ?? 0)
   const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
   const posting = useStore(s =>
@@ -332,67 +315,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     focusSeen.current = focusAsk.n
     if (focusAsk.key === draftKey) inputRef.current?.focus()
   }, [focusAsk, draftKey])
-
-  const typingNow = focused && text.trim() !== ''
-  useEffect(() => {
-    if (!draftKey) return
-    noteTyping(draftKey, typingNow)
-  }, [draftKey, typingNow, text, noteTyping])
-  useEffect(() => {
-    if (!draftKey) return
-    return () => noteTyping(draftKey, false)
-  }, [draftKey, noteTyping])
-
-  const draftNow = () => (draftKey ? (account.store.getState().drafts[draftKey] ?? '') : '')
-
-  const assist = useTextAssist({
-    listKey: draftKey,
-    text,
-    getText: draftNow,
-    setText: value => {
-      if (draftKey) setDraft(draftKey, value)
-    },
-    inputRef,
-    paused: pickerOpen,
-    maxHeight: 160,
-  })
-  const { trackCaret } = assist
-  const formatting = useFormatting({
-    inputRef,
-    getText: draftNow,
-    setText: value => {
-      if (draftKey) setDraft(draftKey, value)
-    },
-  })
-
-  const openPicker = () => {
-    const el = inputRef.current
-    if (el) sel.current = { start: el.selectionStart, end: el.selectionEnd }
-    setPickerFor(pickerOpen ? null : draftKey)
-  }
-
-  const insertEmoji = (picked: string) => {
-    if (!draftKey) return
-    const cur = draftNow()
-    const start = Math.min(sel.current.start, cur.length)
-    const end = Math.min(Math.max(sel.current.end, start), cur.length)
-    const at = start + picked.length
-    sel.current = { start: at, end: at }
-    setDraft(draftKey, spliceText(cur, start, end, picked))
-  }
-
-  const closePicker = () => {
-    setPickerFor(null)
-    if (sheet) return
-    requestAnimationFrame(() => {
-      const el = inputRef.current
-      const focused = document.activeElement
-      if (!el || (focused && focused !== document.body)) return
-      el.focus({ preventScroll: true })
-      el.setSelectionRange(sel.current.start, sel.current.end)
-      trackCaret(el)
-    })
-  }
 
   if (!thread && !view) return null
 
@@ -477,9 +399,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       ? `Message #${mask(servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? '')}`
       : dmPlaceholder(dms.find(d => d.id === view?.dmId)?.other, streamer, mask)
 
-  const setText = (value: string) => {
-    if (draftKey) setDraft(draftKey, value)
-  }
+  const { setText } = compose
+  const draftNow = compose.getText
 
   const pollTarget: PollTarget | null =
     textOnly || !can.polls
@@ -523,10 +444,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     if ((!text.trim() && !pending) || tooLong || altError(pending?.alt ?? '')) return
     const sed = pending || !draftKey ? null : parseSed(text)
     if (sed && draftKey) {
-      const key = draftKey
-      void sedEdit(key, sed).then(
+      void sedEdit(draftKey, sed).then(
         account.lifetime.inSession(ok => {
-          if (ok && draftNow() === text) setDraft(key, '')
+          if (ok && draftNow() === text) setText('')
         })
       )
       return
@@ -622,9 +542,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           />
         </div>
       )}
-      {pickerOpen && (
-        <EmojiPicker anchor={emojiRef.current} onPick={insertEmoji} onClose={closePicker} />
-      )}
       {slowLeft > 0 && (
         <p
           role="status"
@@ -635,124 +552,56 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         </p>
       )}
       {!thread && <SiteFilterNote />}
-      {bar}
-      <div
-        className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
-      >
-        {assist.popups}
-        <FormatToolbar open={formatting.selected} onFormat={formatting.apply} />
-        {canAttach && (
+      <ComposerField
+        compose={compose}
+        listKey={draftKey}
+        placeholder={placeholder + suffix}
+        slowLeft={slowLeft}
+        mayEditLast={can.send}
+        bar={bar}
+        inputRef={inputRef}
+        onSend={send}
+        onPaste={e => {
+          if (!canAttach) return false
+          const file = Array.from(e.clipboardData.items)
+            .find(i => i.kind === 'file' && i.type.startsWith('image/'))
+            ?.getAsFile()
+          if (file) attach(namePasted(file))
+          return !!file
+        }}
+        tools={
           <>
-            <IconButton
-              icon={Plus}
-              label="Attach a file"
-              place="pointer-coarse:-mx-1.5"
-              onClick={() => fileRef.current?.click()}
-            />
-            <input
-              ref={fileRef}
-              type="file"
-              className="hidden"
-              onChange={e => {
-                attach(e.target.files?.item(0) ?? null)
-                e.target.value = ''
-              }}
-            />
+            {canAttach && (
+              <>
+                <IconButton
+                  icon={Plus}
+                  label="Attach a file"
+                  place="pointer-coarse:-mx-1.5"
+                  onClick={() => fileRef.current?.click()}
+                />
+                <input
+                  ref={fileRef}
+                  type="file"
+                  className="hidden"
+                  onChange={e => {
+                    attach(e.target.files?.item(0) ?? null)
+                    e.target.value = ''
+                  }}
+                />
+              </>
+            )}
+            {pollTarget && (
+              <IconButton
+                icon={ChartColumn}
+                label="Create poll"
+                place="pointer-coarse:-mx-1.5"
+                data-create-poll
+                onClick={() => setPollOpen(true)}
+              />
+            )}
           </>
-        )}
-        {pollTarget && (
-          <IconButton
-            icon={ChartColumn}
-            label="Create poll"
-            place="pointer-coarse:-mx-1.5"
-            data-create-poll
-            onClick={() => setPollOpen(true)}
-          />
-        )}
-        <textarea
-          ref={inputRef}
-          rows={1}
-          {...assist.textarea}
-          onFocus={() => setFocused(true)}
-          onBlur={() => {
-            assist.textarea.onBlur()
-            setFocused(false)
-          }}
-          onKeyDown={e => {
-            if (assist.popupKey(e)) return
-            if (formatting.onKeyDown(e)) return
-            if (
-              e.key === 'ArrowUp' &&
-              !text &&
-              !e.shiftKey &&
-              !e.altKey &&
-              !e.metaKey &&
-              !e.ctrlKey &&
-              !composing(e) &&
-              draftKey &&
-              can.send &&
-              editLast(draftKey)
-            ) {
-              e.preventDefault()
-              return
-            }
-            if (e.key === 'Escape' && !e.nativeEvent.isComposing && closeBar) {
-              e.preventDefault()
-              closeBar()
-              return
-            }
-            if (sendKey(e)) {
-              e.preventDefault()
-              send()
-            }
-          }}
-          onPaste={e => {
-            if (!canAttach) return
-            const file = Array.from(e.clipboardData.items)
-              .find(i => i.kind === 'file' && i.type.startsWith('image/'))
-              ?.getAsFile()
-            if (file) {
-              e.preventDefault()
-              attach(namePasted(file))
-            }
-          }}
-          placeholder={placeholder + suffix}
-          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
-        />
-        {count > counterFrom(max) && (
-          <span
-            title={`Messages can be up to ${max} characters`}
-            className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
-          >
-            {max - count}
-          </span>
-        )}
-        <IconButton
-          ref={emojiRef}
-          icon={Smile}
-          label="Emoji"
-          place="pointer-coarse:-mx-1.5"
-          aria-haspopup="dialog"
-          aria-expanded={pickerOpen}
-          onPointerEnter={() => void loadEmojiData().catch(() => {})}
-          onClick={openPicker}
-        />
-        <IconButton
-          icon={SendHorizontal}
-          label="Send"
-          place="pointer-coarse:-mx-1.5"
-          tooltip={
-            tooLong
-              ? 'Message is too long'
-              : slowLeft > 0
-                ? `Slow mode: ${clock(slowLeft)}`
-                : 'Send'
-          }
-          tone="filled"
-          onClick={send}
-          disabled={tooLong || slowLeft > 0}
-        />
-      </div>
+        }
+      />
     </div>
   )
 }

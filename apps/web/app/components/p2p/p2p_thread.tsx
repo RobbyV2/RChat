@@ -359,6 +359,7 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
                   <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
                   <P2pComposer
                     draftKey={key}
+                    list="thread"
                     channelTextOnly={f.textOnly}
                     unstarted={!t.loading && !t.head?.replies && replies.length === 0}
                     scope={scope}

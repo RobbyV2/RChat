@@ -34,8 +34,6 @@ import {
   MessageSquareText,
   Plus,
   Reply,
-  SendHorizontal,
-  Smile,
   Trash2,
   X,
 } from 'lucide-react'
@@ -48,20 +46,10 @@ import { noticeOpen } from '../../lib/home'
 import { useHome } from '../../lib/home_store'
 import { chatKey, chatScope, type P2pChat } from '../../lib/p2p/app'
 import { hiddenRemovedText, SLOW_HIDDEN_TEXT } from '../../lib/p2p/flows'
-import {
-  bodyTooLong,
-  messageActs,
-  STORAGE_FULL_TEXT,
-  PEER_FULL_TEXT,
-  type P2pMessage,
-} from '../../lib/p2p/dm'
+import { messageActs, STORAGE_FULL_TEXT, PEER_FULL_TEXT, type P2pMessage } from '../../lib/p2p/dm'
 import { LIMITS as P2P_LIMITS } from '../../lib/p2p/content'
-import { charCount, counterFrom } from '../../lib/rules'
 import { clock } from '../../lib/slowmode'
 import { useCountdown } from '../../lib/countdown'
-import { composing, sendKey } from '../../lib/keys'
-import { spliceText } from '../../lib/autocomplete'
-import { loadEmojiData } from '../../lib/emoji'
 import { newSince } from '../../lib/lists'
 import { systemParts } from '../../lib/system_messages'
 import type { Message, UserRef } from '../../lib/types'
@@ -69,6 +57,9 @@ import { P2pDm, P2pRoom, type P2pList } from '../../lib/place/place'
 import { PlaceProvider, useLive } from '../../lib/place/react'
 import { messagesAt } from '../../lib/place/use_messages'
 import { MessageList } from '../message_list'
+import { ComposerField, fits } from '../composer_field'
+import { useCompose } from '../../lib/place/use_composer'
+import type { ComposerList } from '../../lib/place/composer'
 import { chat as chatFeature } from '../../lib/place/chat'
 import { featureAt, isUnsupported } from '../../lib/place/feature'
 import { MarkdownMessage } from '../markdown_message'
@@ -89,9 +80,8 @@ import { PinLine, PinsWindow } from '../pins'
 import { ThreadsWindow } from '../threads'
 import { asMessage, numbering } from '../../lib/p2p/shown_message'
 import { TypingIndicator } from '../typing_indicator'
-import { EmojiPicker, SHEET_QUERY } from '../emoji_picker'
-import { longPress, useMedia } from '../context_menu'
-import { useTextAssist } from '../text_assist'
+import { EmojiPicker } from '../emoji_picker'
+import { longPress } from '../context_menu'
 import { MessageTime } from '../timestamp'
 import { useChatScroll, useFocusMessage } from '../viewport_height'
 import { GroupedRow, groupPadCls, mentionRowCls } from '../message_pane'
@@ -104,7 +94,6 @@ import { Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
-import { FormatToolbar, useFormatting } from '../format_toolbar'
 import { P2pCallRow } from './p2p_call'
 import { RoleIcon } from '../role_icon'
 import type { Look } from '../../lib/role_looks'
@@ -558,6 +547,7 @@ const shownRow = (
 
 function P2pComposerBody({
   draftKey: key,
+  list = 'main',
   channelTextOnly = false,
   unstarted = false,
   scope,
@@ -571,6 +561,7 @@ function P2pComposerBody({
   unstarted?: boolean
   // Where the draft, files, reply and sends go (a conversation, channel or thread).
   draftKey: string
+  list?: ComposerList
   scope: string
   title: string
   placeholder: string
@@ -582,17 +573,13 @@ function P2pComposerBody({
 
   const account = useAccount()
   const { store } = account
-  const text = useP2p(s => s.drafts[key] ?? '')
+  const compose = useCompose(list)
+  const { text, max } = useLive(compose.state)
   const replying = useP2p(s => (s.replying?.room === key ? s.replying.id : null))
   const replyTo = useP2p(s => shownRow(s, replying))
   const forwardClip = useForwardClip()
   const suffix = useActorSuffix(usePeerActor())
   const streamer = useStore(s => s.streamer)
-  const sheet = useMedia(SHEET_QUERY)
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [focused, setFocused] = useState(false)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-  const emojiRef = useRef<HTMLButtonElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const files = useP2p(s => s.attaching[key]?.length ?? 0)
   // A thread's replies count in its channel's slow mode: the channel's countdown.
@@ -601,34 +588,8 @@ function P2pComposerBody({
   const held = useContext(ChannelCanContext)
   const noFiles = channelTextOnly || !held.attach
   const textOnly = noFiles || siteTextOnly
-  const sel = useRef({ start: 0, end: 0 })
-  const typedAt = useRef(0)
-  const getText = () => identity.useP2p.getState().drafts[key] ?? ''
-  const setText = (v: string) => p2pDm.setDraft(key, v)
-  const assist = useTextAssist({
-    listKey: scope,
-    text,
-    getText,
-    setText,
-    inputRef,
-    paused: pickerOpen,
-    maxHeight: 160,
-  })
-  const formatting = useFormatting({ inputRef, getText, setText })
   const linkPrefs = useStore(s => s.linkPrefs)
-
-  const typing = focused && text.trim() !== ''
-  useEffect(() => {
-    if (!typing) {
-      if (typedAt.current) p2pDm.typing(key, false)
-      typedAt.current = 0
-      return
-    }
-    const now = Date.now()
-    if (now - typedAt.current < p2pDm.typingEvery(key)) return
-    typedAt.current = now
-    p2pDm.typing(key, true)
-  }, [typing, text, key])
+  const { getText, setText } = compose
 
   if (disabled) return <>{disabled}</>
   if (unstarted && !held.threads)
@@ -641,16 +602,14 @@ function P2pComposerBody({
       </NoteBar>
     )
 
-  const count = charCount(text)
-  const tooLong = count > BODY_MAX || bodyTooLong(text)
+  const tooLong = !fits(compose, text, max)
   const send = () => {
     if ((noFiles && files > 0) || (!text.trim() && !files) || tooLong || slowLeft > 0) return
     const sent = text
     void p2pDm.send(key, outgoing(linkPrefs, sent)).then(ok => {
       if (ok && getText() === sent) setText('')
     })
-    typedAt.current = 0
-    p2pDm.typing(key, false)
+    compose.typing(key, false)
   }
   const bar = replyTo ? (
     <ComposerBar onClose={p2pDm.cancelReply} closeLabel="Cancel reply">
@@ -687,23 +646,6 @@ function P2pComposerBody({
     <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
       <Stack gap="sm" align="start">
         <PeerCodeButton text={text} peer />
-        {pickerOpen && (
-          <EmojiPicker
-            anchor={emojiRef.current}
-            onPick={e => {
-              const cur = getText()
-              const start = Math.min(sel.current.start, cur.length)
-              const end = Math.min(Math.max(sel.current.end, start), cur.length)
-              sel.current = { start: start + e.length, end: start + e.length }
-              setText(spliceText(cur, start, end, e))
-            }}
-            onClose={() => {
-              setPickerOpen(false)
-              if (!sheet)
-                requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }))
-            }}
-          />
-        )}
         {(!textOnly || files > 0) && <PendingFiles room={key} />}
         <Stack gap="2xs" place="w-full">
           {slowLeft > 0 && (
@@ -715,138 +657,54 @@ function P2pComposerBody({
             </Row>
           )}
           <Stack gap="none">
-            {bar}
-            <div
-              className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
-            >
-              {assist.popups}
-              <FormatToolbar open={formatting.selected} onFormat={formatting.apply} />
-              {!textOnly && (
-                <>
-                  <button
-                    title="Attach files"
-                    aria-label="Attach files"
-                    onClick={() => fileRef.current?.click()}
-                    className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-                  >
-                    <Plus size={20} />
-                  </button>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    multiple
-                    data-p2p-file-input
-                    className="hidden"
-                    onChange={e => {
-                      p2pFiles.add(key, Array.from(e.target.files ?? []))
-                      e.target.value = ''
-                    }}
-                  />
-                </>
-              )}
-              <textarea
-                ref={inputRef}
-                rows={1}
-                data-p2p-composer
-                {...assist.textarea}
-                onFocus={() => setFocused(true)}
-                onBlur={() => {
-                  assist.textarea.onBlur()
-                  setFocused(false)
-                }}
-                onKeyDown={e => {
-                  if (assist.popupKey(e)) return
-                  if (formatting.onKeyDown(e)) return
-                  if (
-                    e.key === 'ArrowUp' &&
-                    !text &&
-                    !e.shiftKey &&
-                    !e.altKey &&
-                    !e.metaKey &&
-                    !e.ctrlKey &&
-                    !composing(e) &&
-                    p2pDm.editLast(key)
-                  ) {
-                    e.preventDefault()
-                    return
-                  }
-                  if (e.key === 'Escape' && !e.nativeEvent.isComposing && replyTo) {
-                    e.preventDefault()
-                    p2pDm.cancelReply()
-                    return
-                  }
-                  if (sendKey(e)) {
-                    e.preventDefault()
-                    send()
-                  }
-                }}
-                onPaste={e => {
-                  if (textOnly) return
-                  const pasted = Array.from(e.clipboardData.items)
-                    .filter(i => i.kind === 'file')
-                    .map(i => i.getAsFile())
-                    .filter((f): f is File => f !== null)
-                  if (!pasted.length) return
-                  e.preventDefault()
-                  p2pFiles.add(
-                    key,
-                    pasted.map(f => (f.name && f.name !== 'image.png' ? f : namePasted(f)))
-                  )
-                }}
-                placeholder={streamer ? 'Send a P2P message' : placeholder + suffix}
-                className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
-              />
-              {(count > counterFrom(BODY_MAX) || tooLong) && (
-                <span
-                  data-too-long={tooLong ? '' : undefined}
-                  title={
-                    count > BODY_MAX
-                      ? `Messages can be up to ${BODY_MAX} characters`
-                      : tooLong
-                        ? 'This message takes too much space. Use fewer special characters.'
-                        : `Messages can be up to ${BODY_MAX} characters`
-                  }
-                  className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
-                >
-                  {count > BODY_MAX || !tooLong ? BODY_MAX - count : 'Too long'}
-                </span>
-              )}
-              <button
-                ref={emojiRef}
-                type="button"
-                title="Emoji"
-                aria-label="Emoji"
-                aria-expanded={pickerOpen}
-                onPointerEnter={() => void loadEmojiData().catch(() => {})}
-                onClick={() => {
-                  const el = inputRef.current
-                  if (el) sel.current = { start: el.selectionStart, end: el.selectionEnd }
-                  setPickerOpen(o => !o)
-                }}
-                className={`shrink-0 rounded-full p-1.5 ${
-                  pickerOpen
-                    ? 'bg-surface-container-highest text-primary'
-                    : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
-                }`}
-              >
-                <Smile size={20} />
-              </button>
-              <button
-                title={
-                  tooLong
-                    ? 'Message is too long'
-                    : slowLeft > 0
-                      ? `Slow mode: ${clock(slowLeft)}`
-                      : 'Send'
-                }
-                aria-label="Send"
-                onClick={send}
-                disabled={tooLong || slowLeft > 0 || (noFiles && files > 0)}
-                className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
-              >
-                <SendHorizontal size={16} />
-              </button>
-            </div>
+            <ComposerField
+              compose={compose}
+              listKey={scope}
+              placeholder={streamer ? 'Send a P2P message' : placeholder + suffix}
+              slowLeft={slowLeft}
+              blocked={noFiles && files > 0}
+              bar={bar}
+              inputProps={{ 'data-p2p-composer': '' }}
+              onSend={send}
+              onPaste={e => {
+                if (textOnly) return false
+                const pasted = Array.from(e.clipboardData.items)
+                  .filter(i => i.kind === 'file')
+                  .map(i => i.getAsFile())
+                  .filter((f): f is File => f !== null)
+                if (!pasted.length) return false
+                p2pFiles.add(
+                  key,
+                  pasted.map(f => (f.name && f.name !== 'image.png' ? f : namePasted(f)))
+                )
+                return true
+              }}
+              tools={
+                !textOnly && (
+                  <>
+                    <button
+                      title="Attach files"
+                      aria-label="Attach files"
+                      onClick={() => fileRef.current?.click()}
+                      className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+                    >
+                      <Plus size={20} />
+                    </button>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      multiple
+                      data-p2p-file-input
+                      className="hidden"
+                      onChange={e => {
+                        p2pFiles.add(key, Array.from(e.target.files ?? []))
+                        e.target.value = ''
+                      }}
+                    />
+                  </>
+                )
+              }
+            />
           </Stack>
         </Stack>
       </Stack>
