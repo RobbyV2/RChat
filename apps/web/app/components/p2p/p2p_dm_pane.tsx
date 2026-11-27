@@ -26,6 +26,8 @@ import {
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { useRoomCallShare, VoiceGrid } from '../voice_grid'
 import { IncomingCallBar, P2pCallButtons } from './p2p_call'
+import { P2pDm } from '../../lib/place/place'
+import { PlaceProvider } from '../../lib/place/react'
 import { NoteBar, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
 import { Masked } from '../ui'
 import { Row } from '../layout'
@@ -137,7 +139,7 @@ export function useDmFacts() {
 // The open conversation. Beside the instance's DM list it has no way back: the list is there.
 function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => void }) {
   const identity = useP2pApp()!
-  const { p2p, p2pDm } = identity
+  const { p2p } = identity
 
   const chat = useP2p(s => s.chat)
   const typingIks = useP2p(s => (s.chat ? (s.typing[s.chat.room] ?? NONE) : NONE))
@@ -145,10 +147,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   const shieldId = useId()
   const statusId = useId()
   const streamer = useStore(s => s.streamer)
-  const pinsOpen = useP2p(s => s.pins !== null && s.pins.room === s.chat?.room)
-  const threadsOpen = useP2p(
-    s => s.threads !== null && s.chat !== null && s.threads === s.chat.room
-  )
   const menuPings = useStore(allPings)
   const staged = useP2p(
     s =>
@@ -247,18 +245,10 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       </span>
       <Row gap="2xs" place="ml-auto shrink-0">
         <P2pCallButtons peer={peerIk} name={peerName} online={online} canCall={canAct} />
-        <PinsButton
-          toggle={{
-            open: pinsOpen,
-            onClick: () => (pinsOpen ? p2pDm.closePins() : void p2pDm.openPins()),
-          }}
-        />
-        <ThreadsButton
-          toggle={{
-            open: threadsOpen,
-            onClick: () => (threadsOpen ? p2pDm.closeThreads() : p2pDm.openThreads()),
-          }}
-        />
+        <PlaceProvider place={P2pDm.open(identity, chat.room)}>
+          <PinsButton />
+          <ThreadsButton />
+        </PlaceProvider>
       </Row>
     </header>
   )
@@ -314,8 +304,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       mayDelete={mayDelete}
       mayPin
       forwardSkip={peerIk}
-      pinsEmpty="This conversation doesn't have any pinned messages yet."
-      pinsPlace="conversation"
       dataAttr={{ 'data-p2p-dm': '' }}
     />
   )

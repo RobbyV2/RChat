@@ -1,13 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import {
-  canPin,
-  isPinned,
-  noPinsText,
-  pinPlace,
-  unlinkPin,
-  withPinnedAt,
-  withoutPin,
-} from '../pins'
+import { canPin, isPinned, pinPlace, unlinkPin, withPinnedAt, withoutPin } from '../pins'
 import { msg } from './fixtures'
 
 describe('pins', () => {
@@ -46,7 +38,5 @@ describe('pins', () => {
   test('copy names the scope', () => {
     expect(pinPlace('c4')).toBe('channel')
     expect(pinPlace('d4')).toBe('conversation')
-    expect(noPinsText('c1')).toBe("This channel doesn't have any pinned messages yet.")
-    expect(noPinsText('d1')).toBe("This conversation doesn't have any pinned messages yet.")
   })
 })

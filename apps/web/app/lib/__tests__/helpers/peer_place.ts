@@ -10,6 +10,7 @@ export const peerPlace = (app: P2pApp, over: Partial<P2pList> = {}) =>
     idOf: () => null,
     message: () => undefined,
     user: ik => user(ik),
+    name: ik => ik,
     names: new Map(),
     people: () => [],
     openPicker: () => {},

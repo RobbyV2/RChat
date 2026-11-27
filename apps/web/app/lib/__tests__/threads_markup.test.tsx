@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useStore } from '../store'
-import { ThreadsButton, ThreadsPanel, type useThreadPages } from '../../components/threads'
+import { ThreadsPanel, type useThreadPages } from '../../components/threads'
 import type { ThreadRow } from '../thread_list'
 import { me, msg, user } from './fixtures'
 
@@ -90,16 +90,5 @@ describe('the Threads list', () => {
     expect(searched).toContain('aria-label="Clear search"')
     expect(panel(list(null))).toContain('Loading threads')
     expect(panel(list(null, { failed: true }))).toContain('Retry')
-  })
-
-  test('the header button is named and says whether its list is open', () => {
-    const closed = renderToStaticMarkup(
-      <ThreadsButton toggle={{ open: false, onClick: () => {} }} />
-    )
-    expect(closed).toContain('title="Threads"')
-    expect(closed).toContain('aria-label="Threads"')
-    expect(closed).toContain('aria-expanded="false"')
-    const open = renderToStaticMarkup(<ThreadsButton toggle={{ open: true, onClick: () => {} }} />)
-    expect(open).toContain('aria-expanded="true"')
   })
 })

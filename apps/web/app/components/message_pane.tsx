@@ -107,7 +107,7 @@ import { MessageEditor, editAction } from './message_editor'
 import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction } from './forwards'
-import { PinNotice, PinsButton, PinsWindow } from './pins'
+import { PinNotice, PinsButton, PinsWindow, useCanPin } from './pins'
 import { ThreadsButton, ThreadsWindow } from './threads'
 import { PollCard } from './poll_card'
 import { SystemNotice } from './system_messages'
@@ -851,6 +851,10 @@ export function HeaderMore({ scope, search }: { scope: string | null; search: bo
   )
 }
 
+function OpenPins() {
+  return <PinsWindow canUnpin={useCanPin()} />
+}
+
 // A channel the site admin has not opened as staff, in place of its messages.
 function StaffShut({ channel }: { channel: number }) {
   const ask = useStore(s => s.askStaffView)
@@ -1411,7 +1415,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </div>
         </>
       )}
-      {scope && <PinsWindow />}
+      {scope && <OpenPins />}
       {scope && <ThreadsWindow />}
       {dragging && (
         <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-surface/80 font-medium text-primary">

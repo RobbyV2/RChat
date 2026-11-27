@@ -1,13 +1,16 @@
 'use client'
 
 import { useStoreApi } from '../lib/client/react'
+import { isUnsupported } from '../lib/place/feature'
+import { pins as pinsFeature, type Pinned, type Pins, type PinsState } from '../lib/place/pins'
+import { useFeature, useLive } from '../lib/place/react'
 import { useEffect, useId, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChartColumn, FileText, Pin, X, type LucideIcon } from 'lucide-react'
 import { PreviewSpoiler, RevealChannelPreview } from './preview_reveal'
 import { useMediaSrc } from '../lib/media_src'
-import { PINS_TITLE, noPinsText, pinPlace } from '../lib/pins'
-import { channelCan, useMask, useStore, viewKey } from '../lib/store'
+import { PINS_TITLE } from '../lib/pins'
+import { channelCan, useMask, useStore } from '../lib/store'
 import { useForwardAccess } from '../lib/forward_access'
 import type { Message, MessageMedia } from '../lib/types'
 import { longPress, useMedia } from './context_menu'
@@ -36,28 +39,8 @@ export function useCanPin() {
   return can && !timedOut
 }
 
-export const confirmUnpin = (store: ReturnType<typeof useStoreApi>, unpin: () => void) =>
-  store.getState().askConfirm({
-    title: 'Unpin Message',
-    body: 'Remove this message from the pinned messages?',
-    confirm: 'Unpin',
-    action: unpin,
-  })
-
-// The header button. `toggle` binds it to another pin list (a P2P conversation).
-export function PinsButton({
-  toggle,
-  className = '',
-}: {
-  toggle?: { open: boolean; onClick: () => void }
-  className?: string
-}) {
-  const storeOpen = useStore(
-    s => s.pins !== null && s.view !== null && s.pins.key === viewKey(s.view)
-  )
-  const openPins = useStore(s => s.openPins)
-  const closePins = useStore(s => s.closePins)
-  const open = toggle ? toggle.open : storeOpen
+function PinsToggle({ pins, className }: { pins: Pins; className: string }) {
+  const open = useLive(pins.state).open
   return (
     <button
       data-pins-button
@@ -65,7 +48,7 @@ export function PinsButton({
       aria-label={PINS_TITLE}
       aria-haspopup="dialog"
       aria-expanded={open}
-      onClick={() => (toggle ? toggle.onClick() : open ? closePins() : openPins())}
+      onClick={() => (open ? pins.close() : pins.open())}
       className={`rounded-full p-1.5 hover:bg-surface-container-high ${
         open ? 'bg-surface-container-high text-primary' : ''
       } ${className}`}
@@ -75,11 +58,17 @@ export function PinsButton({
   )
 }
 
+// The header button of the place around it.
+export function PinsButton({ className = '' }: { className?: string }) {
+  const here = useFeature(pinsFeature)
+  return isUnsupported(here) ? null : <PinsToggle pins={here} className={className} />
+}
+
 const pinLinkCls =
   'cursor-pointer rounded-sm font-medium text-on-surface outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
 
-// "alice pinned a message to this channel. See all pinned messages." for instance and P2P
-// messages: `name` as the source shows people, `onMessage` null when the message is gone.
+// "alice pinned a message to this channel. See all pinned messages." for the messages of any
+// place: `name` as the place shows people, `target` null when the message is gone.
 export function PinLine({
   row,
   inner,
@@ -88,8 +77,7 @@ export function PinLine({
   name,
   place,
   ts,
-  onMessage,
-  onPins,
+  target,
 }: {
   row: Record<string, string | number>
   inner?: Record<string, string>
@@ -98,9 +86,10 @@ export function PinLine({
   name: ReactNode
   place: 'conversation' | 'channel'
   ts: number
-  onMessage: (() => void) | null
-  onPins: () => void
+  target: string | null
 }) {
+  const here = useFeature(pinsFeature)
+  const pins = isUnsupported(here) ? null : here
   return (
     <div {...row}>
       {divider}
@@ -114,15 +103,15 @@ export function PinLine({
         </span>
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {name} pinned{' '}
-          {onMessage ? (
-            <button type="button" onClick={onMessage} className={pinLinkCls}>
+          {target !== null && pins ? (
+            <button type="button" onClick={() => pins.show(target)} className={pinLinkCls}>
               a message
             </button>
           ) : (
             'a message'
           )}{' '}
           to this {place}. See all{' '}
-          <button type="button" onClick={onPins} className={pinLinkCls}>
+          <button type="button" onClick={() => pins?.open()} className={pinLinkCls}>
             pinned messages
           </button>
           .<MessageTime ts={ts} className="ml-2 text-xs opacity-70" />
@@ -144,9 +133,6 @@ export function PinNotice({
   onMenu: (m: Message, x: number, y: number) => void
 }) {
   const store = useStoreApi()
-  const openPins = useStore(s => s.openPins)
-  const openPinned = useStore(s => s.openPinned)
-  const scope = useStore(s => (s.view ? viewKey(s.view) : null))
   const target = m.pin_message_id ?? null
   return (
     <PinLine
@@ -163,20 +149,19 @@ export function PinNotice({
       }
       place={m.dm_id !== null ? 'conversation' : 'channel'}
       ts={m.created_at}
-      onMessage={
-        target !== null ? () => (scope ? void openPinned(scope, target) : undefined) : null
-      }
-      onPins={openPins}
+      target={target === null ? null : String(target)}
     />
   )
 }
 
-function PinMedia({ m }: { m: Message }) {
+function PinMedia({ m, server }: { m: Message; server: string | null }) {
   const media = m.media
   if (!media) return null
   if (media.removed)
     return <p className="mt-1 text-xs text-on-surface-variant italic">Attachment removed</p>
-  const preview = <PinMediaContent media={media} by={m.webhook ? null : m.author.username} />
+  const preview = (
+    <PinMediaContent media={media} server={server} by={m.webhook ? null : m.author.username} />
+  )
   return media.spoiler ? (
     <PreviewSpoiler key={media.id} file>
       {preview}
@@ -186,12 +171,19 @@ function PinMedia({ m }: { m: Message }) {
   )
 }
 
-function PinMediaContent({ media, by }: { media: MessageMedia; by: string | null }) {
+function PinMediaContent({
+  media,
+  server,
+  by,
+}: {
+  media: MessageMedia
+  server: string | null
+  by: string | null
+}) {
   const previews = useStore(s => s.settings.asset_previews)
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const image = media.kind === 'server' && previews && IMAGE_EXT.test(media.filename)
   const filename = useMask(useOwn(by), true)
-  const src = useMediaSrc(media.id, server, image)
+  const src = useMediaSrc(media.id, server ?? undefined, image)
   if (image && src)
     return (
       <img
@@ -212,26 +204,28 @@ function PinMediaContent({ media, by }: { media: MessageMedia; by: string | null
 }
 
 function PinEntry({
-  m,
+  pinned,
+  server,
   canUnpin,
   onJump,
   onUnpin,
   profiles,
 }: {
-  m: Message
+  pinned: Pinned
+  server: string | null
   canUnpin: boolean
-  onJump: (id: number) => void
-  onUnpin: (id: number) => void
+  onJump: (key: string) => void
+  onUnpin: (key: string) => void
   profiles: boolean
 }) {
   const store = useStoreApi()
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  const { key, message: m } = pinned
   const { access, target } = useForwardAccess(m, { server: server ?? undefined })
   const text = { ...m, media: null, embeds: [] }
   const onClick = (e: MouseEvent) => {
     const hit = e.target instanceof Element ? e.target.closest('a, button, [role="button"]') : null
     if (hit && hit !== e.currentTarget) return
-    onJump(m.id)
+    onJump(key)
   }
   return (
     <li
@@ -260,7 +254,7 @@ function PinEntry({
           <div className="mt-1 max-h-36 overflow-hidden">
             <MarkdownMessage message={text} />
           </div>
-          <PinMedia m={m} />
+          <PinMedia m={m} server={server} />
         </>
       ) : (
         <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1 text-sm text-on-surface-variant">
@@ -271,7 +265,7 @@ function PinEntry({
       <Row gap="2xs" place="absolute top-2 right-2">
         <Button
           variant="tonal"
-          onClick={() => onJump(m.id)}
+          onClick={() => onJump(key)}
           place="opacity-0 group-focus-within/pin:opacity-100 group-hover/pin:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
         >
           Jump
@@ -282,7 +276,7 @@ function PinEntry({
             label="Unpin Message"
             tone="danger"
             size="sm"
-            onClick={() => onUnpin(m.id)}
+            onClick={() => onUnpin(key)}
           />
         )}
       </Row>
@@ -290,32 +284,17 @@ function PinEntry({
   )
 }
 
-export function PinsWindow() {
-  const store = useStoreApi()
-  const pins = useStore(s => s.pins)
-  const scope = useStore(s => (s.view ? viewKey(s.view) : null))
-  const closePins = useStore(s => s.closePins)
-  const openPins = useStore(s => s.openPins)
-  const jumpTo = useStore(s => s.jumpTo)
-  const canUnpin = useCanPin()
-  if (pins === null || pins.key !== scope || !scope) return null
-  return (
-    <PinsPanel
-      list={pins.list}
-      failed={pins.failed}
-      place={pinPlace(scope)}
-      empty={noPinsText(scope)}
-      canUnpin={canUnpin}
-      profiles
-      onClose={closePins}
-      onRetry={openPins}
-      onJump={id => {
-        closePins()
-        void jumpTo(scope, id)
-      }}
-      onUnpin={id => confirmUnpin(store, () => void store.getState().unpinMessage(id))}
-    />
-  )
+function PinsList({ pins, canUnpin }: { pins: Pins; canUnpin: boolean }) {
+  const state = useLive(pins.state)
+  if (!state.open) return null
+  return <PinsPanel pins={pins} state={state} canUnpin={canUnpin} />
+}
+
+// The pinned messages of the conversation on screen in the place around it, while they are
+// open. `canUnpin`: whether you may change the pins there now.
+export function PinsWindow({ canUnpin }: { canUnpin: boolean }) {
+  const here = useFeature(pinsFeature)
+  return isUnsupported(here) ? null : <PinsList pins={here} canUnpin={canUnpin} />
 }
 
 // A list that drops down from a conversation's header button (`button`, a selector of it), as a
@@ -419,31 +398,10 @@ export function HeaderPopover({
 }
 
 // The pinned messages of one conversation, as a popover (a sheet on phones).
-export function PinsPanel({
-  list,
-  failed,
-  place,
-  empty,
-  canUnpin,
-  profiles,
-  onClose,
-  onRetry,
-  onJump,
-  onUnpin,
-}: {
-  list: Message[] | null
-  failed: boolean
-  place: string
-  empty: string
-  canUnpin: boolean
-  profiles: boolean
-  onClose: () => void
-  onRetry: () => void
-  onJump: (id: number) => void
-  onUnpin: (id: number) => void
-}) {
+function PinsPanel({ pins, state, canUnpin }: { pins: Pins; state: PinsState; canUnpin: boolean }) {
+  const { list, failed, place } = state
   return (
-    <HeaderPopover icon={Pin} title={PINS_TITLE} button="[data-pins-button]" onClose={onClose}>
+    <HeaderPopover icon={Pin} title={PINS_TITLE} button="[data-pins-button]" onClose={pins.close}>
       <Surface
         tone="plain"
         radius="none"
@@ -461,7 +419,7 @@ export function PinsPanel({
             <span className="text-sm text-on-surface-variant">
               Couldn&apos;t load pinned messages.
             </span>
-            <Button onClick={onRetry}>Retry</Button>
+            <Button onClick={pins.open}>Retry</Button>
           </Surface>
         )}
         {list !== null && list.length === 0 && (
@@ -469,19 +427,20 @@ export function PinsPanel({
             <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant">
               <Pin size={26} />
             </span>
-            <p className="text-center text-sm text-on-surface-variant">{empty}</p>
+            <p className="text-center text-sm text-on-surface-variant">{`This ${place} doesn't have any pinned messages yet.`}</p>
           </Surface>
         )}
         {list !== null && list.length > 0 && (
           <Stack as="ul" gap="sm" aria-label={`Pinned messages in this ${place}`}>
-            {list.map(m => (
+            {list.map(pinned => (
               <PinEntry
-                key={m.id}
-                m={m}
+                key={pinned.key}
+                pinned={pinned}
+                server={state.server}
                 canUnpin={canUnpin}
-                onJump={onJump}
-                onUnpin={onUnpin}
-                profiles={profiles}
+                onJump={pins.jump}
+                onUnpin={pins.unpin}
+                profiles={state.profiles}
               />
             ))}
           </Stack>

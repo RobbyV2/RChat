@@ -49,6 +49,8 @@ export interface P2pList {
   idOf: (num: number) => string | null
   message: (id: string) => P2pMessage | undefined
   user: (ik: string) => UserRef
+  // The name a key goes by here, as threads are searched by it.
+  name: (ik: string) => string
   // The names that mention someone here, lowercased, to their identity keys.
   names: ReadonlyMap<string, string>
   people: (query: string) => UserRef[]

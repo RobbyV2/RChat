@@ -21,6 +21,3 @@ export const withoutPin = (list: Message[], id: number) =>
   list.some(m => m.id === id) ? list.filter(m => m.id !== id) : list
 
 export const pinPlace = (key: string) => (key.startsWith('d') ? 'conversation' : 'channel')
-
-export const noPinsText = (key: string) =>
-  `This ${pinPlace(key)} doesn't have any pinned messages yet.`

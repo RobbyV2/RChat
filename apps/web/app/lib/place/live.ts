@@ -51,3 +51,16 @@ export const derived = <T, U>(source: Live<T>, map: (value: T) => U): Live<U> =>
     ...(source.initial ? { initial: mapped(source.initial) } : {}),
   }
 }
+
+const sameParts = (a: readonly unknown[], b: readonly unknown[]) =>
+  a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
+
+// A value built from `parts`, again only when one of them changes.
+export const built = <P extends readonly unknown[], T>(parts: () => P, build: (parts: P) => T) => {
+  let held: { parts: P; value: T } | null = null
+  return () => {
+    const now = parts()
+    if (held === null || !sameParts(held.parts, now)) held = { parts: now, value: build(now) }
+    return held.value
+  }
+}

@@ -6,13 +6,14 @@ import { MessageSquareText, MessagesSquare, Search, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { useForwardAccess } from '../lib/forward_access'
 import { snippetParts } from '../lib/replies'
-import { useStore, viewKey } from '../lib/store'
+import { useStore } from '../lib/store'
+import { isUnsupported } from '../lib/place/feature'
+import { useFeature, useLive } from '../lib/place/react'
+import { threads as threadsFeature, type ThreadPage, type Threads } from '../lib/place/threads'
 import {
   THREADS_SEARCH,
   THREADS_TITLE,
-  hostedThreadPage,
   mergeRows,
-  pingedRows,
   repliesText,
   rootLine,
   threadsEmpty,
@@ -29,20 +30,8 @@ import { KeyAvatar } from './p2p/p2p_badge'
 import { Button, IconButton } from './controls'
 import { Masked, Sentinel, useOwn } from './ui'
 
-// The header button. `toggle` binds it to another list (a P2P conversation's).
-export function ThreadsButton({
-  toggle,
-  className = '',
-}: {
-  toggle?: { open: boolean; onClick: () => void }
-  className?: string
-}) {
-  const storeOpen = useStore(
-    s => s.threads !== null && s.view !== null && s.threads === viewKey(s.view)
-  )
-  const openThreads = useStore(s => s.openThreads)
-  const closeThreads = useStore(s => s.closeThreads)
-  const open = toggle ? toggle.open : storeOpen
+function ThreadsToggle({ threads, className }: { threads: Threads; className: string }) {
+  const open = useLive(threads.state).open !== null
   return (
     <button
       data-threads-button
@@ -50,7 +39,7 @@ export function ThreadsButton({
       aria-label={THREADS_TITLE}
       aria-haspopup="dialog"
       aria-expanded={open}
-      onClick={() => (toggle ? toggle.onClick() : open ? closeThreads() : openThreads())}
+      onClick={() => (open ? threads.close() : threads.open())}
       className={`rounded-full p-1.5 hover:bg-surface-container-high ${
         open ? 'bg-surface-container-high text-primary' : ''
       } ${className}`}
@@ -60,7 +49,11 @@ export function ThreadsButton({
   )
 }
 
-export type ThreadPage = { items: ThreadRow[]; next: string | null }
+// The header button of the place around it.
+export function ThreadsButton({ className = '' }: { className?: string }) {
+  const here = useFeature(threadsFeature)
+  return isUnsupported(here) ? null : <ThreadsToggle threads={here} className={className} />
+}
 
 interface ListState {
   rows: ThreadRow[] | null
@@ -316,50 +309,29 @@ export function ThreadsPanel({
   )
 }
 
-// The Threads list of the open instance channel or DM.
+// The Threads list of the conversation on screen in the place around it, while it is open.
 export function ThreadsWindow() {
-  const { api } = useAccount()
-  const key = useStore(s => s.threads)
-  const shown = useStore(s => s.view !== null && s.threads === viewKey(s.view))
-  if (!key || !shown) return null
-  return <HostedThreads key={key} listKey={key} api={api} />
+  const here = useFeature(threadsFeature)
+  return isUnsupported(here) ? null : <OpenThreads threads={here} />
 }
 
-function HostedThreads({
-  listKey,
-  api,
-}: {
-  listKey: string
-  api: ReturnType<typeof useAccount>['api']
-}) {
-  const closeThreads = useStore(s => s.closeThreads)
-  const openThread = useStore(s => s.openThread)
-  const jumpTo = useStore(s => s.jumpTo)
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const selfDm = useStore(s => {
-    const v = s.view
-    return v?.kind === 'dm' && s.dms.some(d => d.id === v.dmId && d.is_self)
-  })
-  const pings = useStore(s => s.pings)
-  const load = useCallback(
-    (query: string, cursor: string | null) => hostedThreadPage(api, listKey, query, cursor),
-    [api, listKey]
-  )
-  const list = useThreadPages(load)
+function OpenThreads({ threads }: { threads: Threads }) {
+  const key = useLive(threads.state).open
+  return key === null ? null : <ThreadsList key={key} threads={threads} />
+}
+
+function ThreadsList({ threads }: { threads: Threads }) {
+  const state = useLive(threads.state)
+  const list = useThreadPages(threads.page)
   return (
     <ThreadsPanel
-      list={{ ...list, rows: list.rows && pingedRows(list.rows, pings) }}
-      selfDm={selfDm}
-      server={server}
-      onClose={closeThreads}
-      onOpen={r => {
-        closeThreads()
-        void openThread(r.root)
-      }}
-      onJump={r => {
-        closeThreads()
-        void jumpTo(listKey, r.root.id)
-      }}
+      list={{ ...list, rows: list.rows && state.shown(list.rows) }}
+      selfDm={state.selfDm}
+      server={state.server}
+      peer={state.byKey}
+      onClose={threads.close}
+      onOpen={threads.openThread}
+      onJump={threads.jump}
     />
   )
 }

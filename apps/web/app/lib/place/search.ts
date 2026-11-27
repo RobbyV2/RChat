@@ -6,7 +6,7 @@ import { shortSearch, type SearchArgs } from '../search'
 import type { Message, SearchResult, UserRef } from '../types'
 import type { ViewingTarget } from '../viewing'
 import { defineFeature } from './feature'
-import type { Live } from './live'
+import { built, type Live } from './live'
 
 // The filters as typed; `channel` is a channel id ('' for any).
 export interface SearchFilters {
@@ -72,19 +72,6 @@ export interface Search {
   steps: (q: string) => boolean
   // Keeps what the results need loaded; the answer stops it.
   watch: () => () => void
-}
-
-const same = (a: readonly unknown[], b: readonly unknown[]) =>
-  a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
-
-// A value built from `parts`, again only when one of them changes.
-const built = <P extends readonly unknown[], T>(parts: () => P, build: (parts: P) => T) => {
-  let held: { parts: P; value: T } | null = null
-  return () => {
-    const now = parts()
-    if (held === null || !same(held.parts, now)) held = { parts: now, value: build(now) }
-    return held.value
-  }
 }
 
 const hosted = (account: AccountSession, server: string | null): Search => {

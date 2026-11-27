@@ -803,7 +803,7 @@ function P2pChannelPaneBody({
   membersOpen: boolean
 }) {
   const identity = useP2pApp()!
-  const { memberName, memberUser, p2pDm, p2pSearch } = identity
+  const { memberName, memberUser, p2pSearch } = identity
 
   const acct = useAccount()
 
@@ -817,8 +817,6 @@ function P2pChannelPaneBody({
   const status = useP2p(s => s.status)
   const movedAt = useP2p(s => s.movedAt)
   const movingAt = useP2p(s => s.movingAt)
-  const pinsOpen = useP2p(s => s.pins !== null && s.pins.room === s.chat?.room)
-  const threadsOpen = useP2p(s => s.threads !== null && !!s.chat && s.threads === chatKey(s.chat))
   const searchOpen = useP2p(s => s.panel === 'search')
   const typingIks = useP2p(s => (s.chat?.ch ? (s.serverTyping[chatKey(s.chat)] ?? NONE) : NONE))
   const menuPings = useStore(allPings)
@@ -922,20 +920,10 @@ function P2pChannelPaneBody({
       </span>
       <Row gap="2xs" place="ml-auto shrink-0">
         {chat && !voiceCh && (
-          <PinsButton
-            toggle={{
-              open: pinsOpen,
-              onClick: () => (pinsOpen ? p2pDm.closePins() : void p2pDm.openPins()),
-            }}
-          />
-        )}
-        {chat && !voiceCh && (
-          <ThreadsButton
-            toggle={{
-              open: threadsOpen,
-              onClick: () => (threadsOpen ? p2pDm.closeThreads() : p2pDm.openThreads()),
-            }}
-          />
+          <PlaceProvider place={P2pRoom.open(identity, room)}>
+            <PinsButton />
+            <ThreadsButton />
+          </PlaceProvider>
         )}
         {!v.readOnly && (
           <button
@@ -1067,8 +1055,6 @@ function P2pChannelPaneBody({
         mayDelete={mayDelete}
         mayPin={held.pin && timedOut === null}
         forwardSkip={null}
-        pinsEmpty="This channel doesn't have any pinned messages yet."
-        pinsPlace="channel"
         dataAttr={{ 'data-p2p-channel-pane': '' }}
       />
     </ChannelCanContext.Provider>

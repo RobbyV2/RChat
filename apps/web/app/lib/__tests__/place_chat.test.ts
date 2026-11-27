@@ -36,6 +36,7 @@ const seated = (world: ContractWorld, seat: Seat, calls: Calls): Chat => {
     idOf: num => (num === 1 ? 'e1' : null),
     message: id => (id === 'e1' ? stored : undefined),
     user: ik => user(ik, { display_name: ik === 'A' ? 'Ann' : 'Bob' }),
+    name: ik => ik,
     names: new Map(Object.entries(KEYS)),
     people: q => (q === 'b' ? [user('B')] : []),
     openPicker: m => void calls.picked.push(m),

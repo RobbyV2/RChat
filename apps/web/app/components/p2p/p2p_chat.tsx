@@ -6,7 +6,7 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
-import { useAccount, useStoreApi } from '../../lib/client/react'
+import { useAccount } from '../../lib/client/react'
 import { ChannelCanContext } from '../../lib/place/use_rights'
 import { NO_THREADS_TEXT, type ChannelCan } from '../../lib/channel_perms'
 
@@ -55,7 +55,7 @@ import {
   PEER_FULL_TEXT,
   type P2pMessage,
 } from '../../lib/p2p/dm'
-import { LIMITS as P2P_LIMITS, readFwdSrc } from '../../lib/p2p/content'
+import { LIMITS as P2P_LIMITS } from '../../lib/p2p/content'
 import { charCount, counterFrom } from '../../lib/rules'
 import { clock } from '../../lib/slowmode'
 import { useCountdown } from '../../lib/countdown'
@@ -63,7 +63,6 @@ import { composing, sendKey } from '../../lib/keys'
 import { spliceText } from '../../lib/autocomplete'
 import { loadEmojiData } from '../../lib/emoji'
 import { newSince } from '../../lib/lists'
-import { plainLine } from '../../lib/replies'
 import { systemParts } from '../../lib/system_messages'
 import type { Message, UserRef } from '../../lib/types'
 import { P2pDm, P2pRoom, type P2pList } from '../../lib/place/place'
@@ -84,9 +83,9 @@ import {
   useForwardClip,
   useVouchedFiles,
 } from '../forwards'
-import { PinLine, PinsPanel, confirmUnpin } from '../pins'
-import { ThreadsPanel, useThreadPages, type ThreadPage } from '../threads'
-import { pageThreads } from '../../lib/thread_list'
+import { PinLine, PinsWindow } from '../pins'
+import { ThreadsWindow } from '../threads'
+import { asMessage, numbering } from '../../lib/p2p/shown_message'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker, SHEET_QUERY } from '../emoji_picker'
 import { longPress, useMedia } from '../context_menu'
@@ -116,75 +115,6 @@ import { Row, Stack, Surface } from '../layout'
 
 const BODY_MAX = P2P_LIMITS.body
 const EMPTY: P2pMessage[] = []
-
-// Shared message components key rows by a number that grows in display order (jumps and the
-// unread line rely on it): display time in ms times 1000, plus a counter for ties.
-export const numbering = (list: P2pMessage[]) => {
-  const num = new Map<string, number>()
-  let last = 0
-  for (const m of list) {
-    const n = Math.max(m.ts * 1000, last + 1)
-    num.set(m.id, n)
-    last = n
-  }
-  return num
-}
-
-const seconds = (ms: number) => Math.floor(ms / 1000)
-
-export const asMessage = (
-  m: P2pMessage,
-  num: number,
-  replyNum: number,
-  user: (ik: string) => UserRef,
-  me: string
-): Message => ({
-  id: num,
-  channel_id: null,
-  dm_id: null,
-  thread_root_id: null,
-  author: user(m.sender),
-  content: m.unavailable ? '_Message unavailable_' : m.fwd ? m.fwd.body : m.body,
-  created_at: seconds(m.ts),
-  reply_count: m.replies ?? 0,
-  media: null,
-  embeds: [],
-  kind: m.system ? m.system.kind : 'user',
-  call: null,
-  reactions: m.reactions.map(r => ({
-    emoji: r.key,
-    count: r.count,
-    me: r.me,
-    first_at: seconds(r.first),
-  })),
-  reply_to: m.reply
-    ? {
-        id: replyNum,
-        author: m.reply.sender ? user(m.reply.sender) : null,
-        content: m.reply.body === null ? '' : plainLine(m.reply.body),
-        has_media: false,
-        deleted: m.reply.body === null,
-        mention: m.reply.sender === me && m.sender !== me,
-      }
-    : null,
-  edited_at: m.edited !== null ? seconds(m.edited) : null,
-  forward: m.fwd
-    ? {
-        author: {
-          username: m.fwd.name,
-          display_name: m.fwd.name,
-          avatar_kind: 'color',
-          avatar_color: null,
-        },
-        created_at: seconds(m.fwd.ts),
-        source_id: 0,
-        origin: null,
-        dropped: null,
-        p2p: readFwdSrc(m.fwd),
-      }
-    : null,
-  pinned_at: m.pinned !== null ? seconds(m.pinned) : null,
-})
 
 // A note in the composer's place: why nothing can be sent here, or what is in the way. It keeps
 // clear of the bottom safe area as the composer does.
@@ -521,10 +451,6 @@ function P2pPinRow({
   place: 'conversation' | 'channel'
   onMenu: (p: P2pMessage, x: number, y: number) => void
 }) {
-  const identity = useP2pApp()!
-  const { p2pDm } = identity
-
-  const target = p.system?.target ?? null
   return (
     <PinLine
       row={{ 'data-row': '', 'data-mid': m.id, 'data-event': p.id }}
@@ -538,8 +464,7 @@ function P2pPinRow({
       }
       place={place}
       ts={m.created_at}
-      onMessage={target ? () => void p2pDm.jumpTo(target) : null}
-      onPins={() => void p2pDm.openPins()}
+      target={p.system?.target ?? null}
     />
   )
 }
@@ -1047,6 +972,7 @@ export function useP2pList({
       idOf,
       message: id => rows.find(r => r.p.id === id)?.p,
       user,
+      name: nameOf,
       names,
       people: q => {
         const needle = q.toLowerCase()
@@ -1062,7 +988,7 @@ export function useP2pList({
       openPicker: (m, anchor) => setPicker({ m, anchor }),
     }
     return (ch === null ? P2pDm.open(identity, room) : P2pRoom.open(identity, room)).shownBy(list)
-  }, [identity, room, ch, idOf, rows, user, names, me, people])
+  }, [identity, room, ch, idOf, rows, user, nameOf, names, me, people])
   // The picker of this list reacts through its own place.
   const react = useCallback(
     (m: Message, emoji: string, note?: boolean) => {
@@ -1201,8 +1127,6 @@ export interface ChatBodyProps {
   mayPin: boolean
   // Forward targets other than this conversation (contacts).
   forwardSkip: string | null
-  pinsEmpty: string
-  pinsPlace: 'conversation' | 'channel'
   dataAttr: Record<string, string>
   // How senders' names look, in a server.
   lookOf?: (ik: string) => Look
@@ -1226,77 +1150,16 @@ function useFirstUnread(key: string | null) {
   return found && found.key === key ? found : null
 }
 
-// The Threads list of the open conversation or channel, from what is stored here.
-function P2pThreadsList({
-  nameOf,
-  toMessage,
-}: {
-  nameOf: (ik: string) => string
-  toMessage: (p: P2pMessage) => Message
-}) {
-  const identity = useP2pApp()!
-  const { p2pDm, p2pThread } = identity
-  const convert = useRef(toMessage)
-  const names = useRef(nameOf)
-  useEffect(() => {
-    convert.current = toMessage
-    names.current = nameOf
-  })
-  const load = useCallback(
-    async (query: string, cursor: string | null): Promise<ThreadPage> => {
-      const all = (await p2pThread.list()).map(t => ({
-        ...t,
-        id: t.root.id,
-        text: t.root.fwd ? t.root.fwd.body : t.root.body,
-        names: [names.current(t.root.sender)],
-      }))
-      const page = pageThreads(all, query, cursor)
-      return {
-        items: page.items.map(t => ({
-          key: t.id,
-          root: convert.current(t.root),
-          files: (t.root.fwd?.att ?? t.root.att).length > 0,
-          replies: t.root.replies ?? 0,
-          lastAt: Math.floor((t.root.lastReply ?? t.root.ts) / 1000),
-          pinged: t.pinged,
-        })),
-        next: page.next,
-      }
-    },
-    [p2pThread]
-  )
-  const list = useThreadPages(load)
-  return (
-    <ThreadsPanel
-      list={list}
-      server={null}
-      peer
-      onClose={p2pDm.closeThreads}
-      onOpen={r => {
-        p2pDm.closeThreads()
-        void p2pThread.open(r.key)
-      }}
-      onJump={r => {
-        p2pDm.closeThreads()
-        void p2pDm.jumpTo(r.key)
-      }}
-    />
-  )
-}
-
 function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
   const { profileName, p2pDm, p2pFiles } = identity
 
-  const store = useStoreApi()
   const { chat, canAct, nameOf, people, mayDelete, mayPin, disabled, forwardSkip, typingNames } =
     props
   const timedOut = props.timedOut ?? false
   const key = chatKey(chat)
   const me = useP2p(s => s.me)
   const movingAt = useP2p(s => s.movingAt)
-  const pins = useP2p(s => (s.pins && s.pins.room === s.chat?.room ? s.pins : null))
-  const threadsOpen = useP2p(s => s.threads !== null && s.threads === key)
   const focus = useP2p(s => (s.focus && s.focus.room === s.chat?.room ? s.focus : null))
   const pulling = useP2p(s => s.pulling)
   const storageFull = useP2p(s => s.storageFull)
@@ -1315,7 +1178,6 @@ function IdentityChatBody(props: ChatBodyProps) {
   const canDrop = canAct && !timedOut && !textOnly && movingAt === null
 
   const {
-    user,
     rows,
     shared,
     num,
@@ -1511,7 +1373,7 @@ function IdentityChatBody(props: ChatBodyProps) {
                         p={p}
                         m={m}
                         divider={i === divider}
-                        place={props.pinsPlace}
+                        place={chat.ch ? 'channel' : 'conversation'}
                         onMenu={(row, x, y) => rowMenu(row, m, x, y)}
                       />
                     ) : p.system ? (
@@ -1589,39 +1451,8 @@ function IdentityChatBody(props: ChatBodyProps) {
             disabled={disabled}
           />
         </div>
-        {pins && (
-          <PinsPanel
-            list={
-              pins.list?.map(p =>
-                asMessage(p, num.get(p.id) ?? Math.max(1, p.ts * 1000), 0, user, me ?? '')
-              ) ?? null
-            }
-            failed={false}
-            place={props.pinsPlace}
-            empty={props.pinsEmpty}
-            canUnpin={canAct && !timedOut && mayPin}
-            profiles={false}
-            onClose={p2pDm.closePins}
-            onRetry={() => void p2pDm.openPins()}
-            onJump={n => {
-              const id = pins.list?.find(p => (num.get(p.id) ?? Math.max(1, p.ts * 1000)) === n)?.id
-              p2pDm.closePins()
-              if (id) void p2pDm.jumpTo(id)
-            }}
-            onUnpin={n => {
-              const id = pins.list?.find(p => (num.get(p.id) ?? Math.max(1, p.ts * 1000)) === n)?.id
-              if (id) confirmUnpin(store, () => void p2pDm.pin(id, false))
-            }}
-          />
-        )}
-        {threadsOpen && (
-          <P2pThreadsList
-            nameOf={nameOf}
-            toMessage={p =>
-              asMessage(p, num.get(p.id) ?? Math.max(1, p.ts * 1000), 0, user, me ?? '')
-            }
-          />
-        )}
+        <PinsWindow canUnpin={canAct && !timedOut && mayPin} />
+        <ThreadsWindow />
         {picker && (
           <EmojiPicker
             anchor={picker.anchor?.isConnected ? picker.anchor : null}
