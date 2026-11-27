@@ -37,13 +37,15 @@ use crate::api::pings::{
 };
 use crate::api::polls::PollReq;
 use crate::api::rare::{self, Rare};
+use crate::api::seal;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Message, OkResp, ProfanityTarget, Settings, UserRef, allowed,
     bad, check_len, embeds, media, ok, placeholders, valid_color,
 };
 use crate::crypt::body::{Opened, Parts};
+use crate::crypt::copies::{self, DELIVERIES};
 use crate::crypt::secrets::{HOOK_COLUMN, HOOK_TABLE, Sealer, open_or};
-use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, lock_server, now, pepper};
+use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, is_sqlite, lock_server, now, pepper};
 use crate::limits::bucket::{self, Keyed};
 use crate::net_guard::{self, AllowedHost, Http, Policy};
 use crate::state::AppState;
@@ -1153,6 +1155,7 @@ fn poster(hook: &Hook, name: &str, kind: AvatarKind, color: Option<String>) -> U
         avatar_color: color,
         banner_color: None,
         bio: None,
+        bio_sealed: None,
         is_site_admin: false,
         appear_offline: true,
         created_at: 0,
@@ -3174,7 +3177,8 @@ async fn payload(
     Ok(data.map(|d| (event, d)))
 }
 
-/// Queues `fact` for `hook`. Only the fact is stored (ids, never content).
+/// Queues `fact` for `hook`. Only the fact is stored (ids, never content), sealed while its
+/// server stores content sealed.
 async fn queue(state: &AppState, hook: i64, fact: &Fact) -> Result<(), ApiError> {
     let db = &state.db;
     let text = serde_json::to_string(fact).map_err(|e| bad(&e.to_string()))?;
@@ -3183,17 +3187,39 @@ async fn queue(state: &AppState, hook: i64, fact: &Fact) -> Result<(), ApiError>
         true => ("failed", None, Some("Payload too large"), Some(t)),
         false => ("pending", Some(text), None, None),
     };
-    sqlx::query("INSERT INTO webhook_deliveries(hook_id, event, payload, status, next_at, last_error, created_at, finished_at) SELECT $1, $2, $3, $4, $5, $6, $5, $7 WHERE (SELECT COUNT(*) FROM webhook_deliveries WHERE hook_id = $1 AND status = 'pending') < $8")
+    let mut tx = match is_sqlite(db) {
+        true => db.begin_with("BEGIN IMMEDIATE").await?,
+        false => db.begin().await?,
+    };
+    let sealer = match &payload {
+        Some(_) => seal::copy_sealer_of(db, &mut tx, seal::Source::Server(fact.server())).await?,
+        None => None,
+    };
+    let plain = match &sealer {
+        Some(_) => None,
+        None => payload.as_deref(),
+    };
+    let queued: Option<i64> = sqlx::query("INSERT INTO webhook_deliveries(hook_id, event, payload, status, next_at, last_error, created_at, finished_at) SELECT $1, $2, $3, $4, $5, $6, $5, $7 WHERE (SELECT COUNT(*) FROM webhook_deliveries WHERE hook_id = $1 AND status = 'pending') < $8 RETURNING id")
         .bind(hook)
         .bind(fact.event())
-        .bind(payload)
+        .bind(plain)
         .bind(status)
         .bind(t)
         .bind(error)
         .bind(finished)
         .bind(state.limits.webhook_queue_max)
-        .execute(db)
-        .await?;
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?;
+    if let (Some(sealer), Some(id), Some(text)) = (&sealer, queued, &payload) {
+        sqlx::query("UPDATE webhook_deliveries SET payload_sealed = $1 WHERE id = $2")
+            .bind(sealer.seal(DELIVERIES, &id.to_string(), text.as_bytes()))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -3519,7 +3545,7 @@ pub async fn run_due(state: &AppState, policy: &Policy, at: i64) -> Result<usize
 /// from current data first. Returns whether a request was sent.
 async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<bool, ApiError> {
     let db = &state.db;
-    let row = sqlx::query("SELECT d.hook_id, d.payload, d.attempts, d.created_at, h.url, h.secret, h.enabled, h.server, h.creator, h.secret_sealed FROM webhook_deliveries d JOIN outgoing_webhooks h ON h.id = d.hook_id WHERE d.id = $1 AND d.status = 'pending'")
+    let row = sqlx::query("SELECT d.hook_id, d.payload, d.attempts, d.created_at, h.url, h.secret, h.enabled, h.server, h.creator, h.secret_sealed, d.payload_sealed FROM webhook_deliveries d JOIN outgoing_webhooks h ON h.id = d.hook_id WHERE d.id = $1 AND d.status = 'pending'")
         .bind(id)
         .fetch_optional(db)
         .await?;
@@ -3540,6 +3566,15 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
         row.try_get(8)?,
     );
     let sealed: Option<Vec<u8>> = row.try_get(9)?;
+    let record: Option<Vec<u8>> = row.try_get(10)?;
+    let opener = copies::Opener::of(db, record.as_deref()).await?;
+    let stored = copies::text_or(
+        &opener,
+        DELIVERIES,
+        &id.to_string(),
+        record.as_deref(),
+        stored,
+    );
     let off = !Settings::cached(db).await.outgoing_webhooks;
     let give_up = async |why: &str| {
         finish(
@@ -3682,7 +3717,7 @@ async fn finish(
     counts: bool,
 ) -> Result<(), ApiError> {
     let db = &state.db;
-    sqlx::query("UPDATE webhook_deliveries SET status = $1, attempts = $2, last_code = COALESCE($3, last_code), last_ms = COALESCE($4, last_ms), last_error = $5, payload = NULL, finished_at = $6 WHERE id = $7")
+    sqlx::query("UPDATE webhook_deliveries SET status = $1, attempts = $2, last_code = COALESCE($3, last_code), last_ms = COALESCE($4, last_ms), last_error = $5, payload = NULL, payload_sealed = NULL, finished_at = $6 WHERE id = $7")
         .bind(status)
         .bind(attempts)
         .bind(code)
@@ -5368,6 +5403,96 @@ mod tests {
             "the log keeps one finished delivery"
         );
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn deliveries_of_an_encrypted_server_are_stored_sealed() {
+        for (state, temp) in crate::api::test_util::each_db_keyed("wh_sealed").await {
+            let db = &state.db;
+            add_user(db, "owner", "Owner").await;
+            add_member(db, "rchat", "owner", 1, 0, 1).await;
+            exec(
+                db,
+                "UPDATE settings SET value = '1' WHERE key = 'outgoing_webhooks'",
+            )
+            .await;
+            Settings::forget(db);
+            let (port, seen) = receiver(vec![200, 200, 200]).await;
+            let url = format!("http://127.0.0.1:{port}/in");
+            let hook = outgoing_hook(db, &url, "ping", "owner").await;
+            let rows = || async {
+                sqlx::query_as::<_, (i64, Option<String>, Option<Vec<u8>>, String)>(
+                    "SELECT id, payload, payload_sealed, status FROM webhook_deliveries ORDER BY id",
+                )
+                .fetch_all(db)
+                .await
+                .expect("deliveries")
+            };
+            queue(&state, hook, &ping(hook)).await.expect("plain");
+            crate::api::servers::update_server(
+                State(state.clone()),
+                Authed(mem_user("owner", false)),
+                Path("rchat".to_string()),
+                Json(serde_json::from_value(json!({"seal": true})).expect("patch")),
+            )
+            .await
+            .map(|_| ())
+            .expect("switch");
+            for _ in 0..3 {
+                queue(&state, hook, &ping(hook)).await.expect("sealed");
+            }
+            let queued = rows().await;
+            let forms: Vec<(bool, bool)> = queued
+                .iter()
+                .map(|(_, plain, record, _)| (plain.is_some(), record.is_some()))
+                .collect();
+            assert_eq!(
+                forms,
+                [(true, false), (false, true), (false, true), (false, true)],
+                "only the record holds what a sealed server queues"
+            );
+            assert!(
+                queued[0]
+                    .1
+                    .as_deref()
+                    .is_some_and(|p| p.contains("webhook_id"))
+            );
+            let (moved_from, moved_to) = (queued[2].0, queued[3].0);
+            sqlx::query("UPDATE webhook_deliveries SET payload_sealed = (SELECT payload_sealed FROM webhook_deliveries WHERE id = $1) WHERE id = $2")
+                .bind(moved_from)
+                .bind(moved_to)
+                .execute(db)
+                .await
+                .expect("move");
+            assert_eq!(
+                run_due(&state, &local_policy(), now()).await.expect("run"),
+                3
+            );
+            let done = rows().await;
+            let ends: Vec<(&str, bool)> = done
+                .iter()
+                .map(|(_, plain, record, status)| {
+                    (status.as_str(), plain.is_none() && record.is_none())
+                })
+                .collect();
+            assert_eq!(
+                ends,
+                [
+                    ("delivered", true),
+                    ("delivered", true),
+                    ("delivered", true),
+                    ("failed", true)
+                ],
+                "a record moved to another delivery does not open, and nothing is kept once done"
+            );
+            let bodies = seen.await.expect("receiver");
+            assert_eq!(bodies.len(), 3);
+            for (_, body) in &bodies {
+                let sent: Value = serde_json::from_str(body).expect("json");
+                assert_eq!(sent["data"]["webhook_id"], json!(hook), "{body}");
+            }
+            temp.done(state).await;
+        }
     }
 
     #[tokio::test]

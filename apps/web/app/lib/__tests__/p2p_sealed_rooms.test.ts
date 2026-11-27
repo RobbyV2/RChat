@@ -3,7 +3,13 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, ManualClock } from './p2p_net'
 import { dmRoomId, loadMessages, STORE_TYPE } from '../p2p/dm'
 import { CANT_TEXT } from '../p2p/flows'
+import type { EventRecord } from '../p2p/db'
+import { PING_LOG } from '../p2p/inbox'
+import { PING_STORE, PingLog } from '../p2p/ping_log'
+import { vaultOf } from '../p2p/sealed_db'
 import { dropSealed } from '../p2p/sealed_drop'
+import { deviceKeys } from '../platform'
+import { deviceAad, openDevice, recordHeader } from '../seal_record'
 import { DEVICE_KEYS_META } from '../platform/device_keys'
 import {
   bodies,
@@ -370,5 +376,96 @@ describe('encrypted storage of a P2P conversation', () => {
     expect(await dmBodies(again, a)).toEqual(await dmBodies(a, b))
     expect((await dmBodies(again, a)).sort()).toEqual(['and this', 'held by both'])
     await pump(clock, () => again.store.sealing.room(room), 'and seals the conversation again')
+  })
+})
+
+describe('the inbox of an encrypted P2P conversation', () => {
+  test('its rows keep what pinged sealed, and rows from before stay as they were', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await befriend(clock, a, b)
+    const arrived: EventRecord[] = []
+    b.dms.onArrive(x => {
+      if (x.ping) arrived.push(x.rec)
+    })
+    const log = new PingLog({
+      store: b.store,
+      dms: b.dms,
+      servers: b.servers,
+      now: () => clock.now(),
+    })
+    const stored = async () =>
+      ((await b.store.sealing.stored.get('meta', PING_LOG)) as { list: Record<string, unknown>[] })
+        .list
+    const shape = (row: Record<string, unknown> | undefined) =>
+      row && [ArrayBuffer.isView(row.box), row.kind ?? null, row.emoji ?? null]
+
+    await a.dms.send(room, { body: 'plain @Bob' })
+    await pump(clock, () => arrived.length === 1, 'the plain ping')
+    log.note(room, null, 'mention', arrived[0])
+    expect(await log.flush()).toBe(true)
+    await b.dms.setStore(room, true)
+    await pump(clock, () => a.store.sealing.room(room), 'alice follows')
+    await a.dms.send(room, { body: 'sealed @Bob' })
+    await pump(clock, () => arrived.length === 2, 'the sealed ping')
+    log.note(room, null, 'mention', arrived[1])
+    const mine = await b.dms.send(room, { body: 'react to this' })
+    await pump(clock, async () => (await dmBodies(a, b)).length === 3, 'alice has it')
+    await a.dms.react(room, mine, '🦊', true)
+    await pump(clock, () => arrived.length === 3, 'the reaction')
+    log.note(room, null, 'reaction', arrived[2])
+    expect(await log.flush()).toBe(true)
+
+    const byId = async (id: string) => (await stored()).find(r => r.id === id)
+    expect(shape(await byId(arrived[0].id))).toEqual([false, 'mention', null])
+    expect(shape(await byId(arrived[1].id))).toEqual([true, null, null])
+    expect(shape(await byId(arrived[2].id))).toEqual([true, null, null])
+    expect(JSON.stringify(await stored())).not.toContain('🦊')
+    const boxed = (await byId(arrived[2].id))!
+    expect(boxed).toMatchObject({ room, actor: a.node.ik, target: mine, seen: false })
+    const box = boxed.box as Uint8Array
+    expect(recordHeader(box)?.version).toBe(2)
+    const { key } = await deviceKeys(vaultOf(b.store.sealing.stored)).current()
+    const opened = await openDevice(key, deviceAad(PING_STORE, boxed.id as string, room), box)
+    expect(JSON.parse(new TextDecoder().decode(opened!))).toEqual({ kind: 'reaction', emoji: '🦊' })
+    expect(await openDevice(key, deviceAad(PING_STORE, arrived[1].id, room), box)).toBeNull()
+
+    // The inbox reads every row whole, and marking a sealed one keeps it sealed.
+    const read = (await log.read()).list
+    expect(read.map(p => [p.id, p.kind, p.emoji]).sort()).toEqual(
+      [
+        [arrived[0].id, 'mention', null],
+        [arrived[1].id, 'mention', null],
+        [arrived[2].id, 'reaction', '🦊'],
+      ].sort()
+    )
+    expect(await log.mark([arrived[1].id])).toBe(1)
+    expect(shape(await byId(arrived[1].id))).toEqual([true, null, null])
+    expect((await byId(arrived[1].id))?.seen).toBe(true)
+
+    // Turned off: new rows are plain, sealed ones stay sealed.
+    await b.dms.setStore(room, false)
+    await pump(clock, () => !a.store.sealing.room(room), 'alice follows again')
+    await a.dms.send(room, { body: 'plain again @Bob' })
+    await pump(clock, () => arrived.length === 4, 'the last ping')
+    log.note(room, null, 'mention', arrived[3])
+    expect(await log.flush()).toBe(true)
+    expect(shape(await byId(arrived[3].id))).toEqual([false, 'mention', null])
+    expect(shape(await byId(arrived[2].id))).toEqual([true, null, null])
+
+    // Without its device key the device keeps no sealed row.
+    stopMember(b)
+    await b.store.sealing.stored.delete('meta', DEVICE_KEYS_META)
+    b.store.close()
+    const { P2pStore } = await import('../p2p/db')
+    const again = await P2pStore.create(b.db)
+    expect(await dropSealed(again.db)).toEqual([room])
+    const left = ((await again.meta<{ list: { id: string }[] }>(PING_LOG))?.list ?? []).map(
+      p => p.id
+    )
+    expect(left.sort()).toEqual([arrived[0].id, arrived[3].id].sort())
+    again.close()
   })
 })

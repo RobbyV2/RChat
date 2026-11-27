@@ -6,6 +6,7 @@ pub mod snapshot;
 mod store;
 #[cfg(test)]
 mod tests;
+mod text;
 
 pub(crate) use query::{groups as groups_in, list as list_in, open_count, reporter_known};
 pub(crate) use store::{forget_user, purge_server, sweep};
@@ -1532,7 +1533,7 @@ pub(crate) async fn patch_report(
     };
     let t = now();
     let mut tx = db.begin().await?;
-    store::change(&mut tx, &scope, &user.username, change, t).await?;
+    store::change(db, &mut tx, &scope, &user.username, change, t).await?;
     let done = match deed {
         Some(deed) => Some(deed.carry_out(&mut tx, &user.username, id, t).await?),
         None => None,
@@ -1599,7 +1600,7 @@ pub(crate) async fn add_note(
     request_body = EscalateBody,
     responses(
         (status = 200, description = "The report, now `escalated`", body = ReportDetail),
-        (status = 400, description = "`Only server reports can be escalated` or `Note must be at most 1000 characters`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "`Only server reports can be escalated`, `Note must be at most 1000 characters`, or `This report can't be opened`: its stored text does not open with the keys this site holds. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`You are timed out in this server`", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses); also while reports to the instance are turned off (reason `off_site`). `Server not found or wrong password`: you can read the report but are not a member of its server", body = ApiErrorBody),

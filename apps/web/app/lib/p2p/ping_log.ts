@@ -4,20 +4,24 @@ import type { EditContent, MsgContent } from './content'
 import {
   addPings,
   byThreadCounter,
+  isSealedPing,
   logValue,
   markSeen,
   parseLog,
   pingUnread,
   PING_LOG,
   readSeqs,
+  whatOf,
   type P2pPingKind,
   type PingRec,
+  type PingRow,
   type InboxLimits,
   type PingText,
 } from './inbox'
 import { LOCAL } from './limits'
 import { time } from '../platform/time'
 import type { Cancel } from '../clock'
+import type { Sealing } from './sealed_db'
 
 // The ping a counted arrival leaves in the log.
 export const pingOf = (
@@ -43,10 +47,50 @@ export const pingOf = (
   }
 }
 
-// The noted pings and the read positions, as stored.
-export const readPings = async (s: P2pStore) => {
+// The store of the device records of ping rows (sealed_db.ts).
+export const PING_STORE = 'inbox'
+
+// The rows of `add` as they are stored: a ping of a room or DM that stores its events sealed
+// keeps its kind and emoji in a box.
+export const sealPings = async (
+  sealing: Sealing | undefined,
+  add: PingRec[]
+): Promise<PingRow[]> => {
+  if (!sealing) return add
+  const out: PingRow[] = []
+  for (const p of add) {
+    const { kind, emoji, ...base } = p
+    const box = await sealing.box(PING_STORE, p.id, p.room, { kind, emoji })
+    out.push(box ? { ...base, box } : p)
+  }
+  return out
+}
+
+// The stored rows as the inbox reads them; a sealed row that doesn't open is left out.
+export const openPings = async (sealing: Sealing | undefined, rows: PingRow[]) => {
+  const out: PingRec[] = []
+  for (const p of rows) {
+    if (!isSealedPing(p)) {
+      out.push(p)
+      continue
+    }
+    const { box, ...base } = p
+    const what = sealing ? whatOf(await sealing.unbox(PING_STORE, p.id, p.room, box)) : null
+    if (what) out.push({ ...base, ...what })
+  }
+  return out
+}
+
+// The stored ping rows and the read positions, as stored; sealed rows stay boxed.
+const storedPings = async (s: P2pStore) => {
   const [raw, rooms] = await Promise.all([s.meta<unknown>(PING_LOG), s.rooms()])
   return { list: parseLog(raw), readSeq: readSeqs(rooms) }
+}
+
+// The noted pings and the read positions, as stored.
+export const readPings = async (s: P2pStore) => {
+  const { list, readSeq } = await storedPings(s)
+  return { list: await openPings(s.sealing, list), readSeq }
 }
 
 // The message a ping shows (for a reaction, the message reacted to), while it is there.
@@ -129,8 +173,12 @@ export class PingLog {
     const add = this.batch
     this.batch = []
     const now = this.deps.now ?? (() => time().now())
+    let rows: PingRow[] = []
+    const seal = async () => {
+      rows = await sealPings(this.deps.store.sealing, add)
+    }
     return add.length
-      ? this.write(list => addPings(list, add, now(), this.limits))
+      ? this.write(list => addPings(list, rows, now(), this.limits), false, seal)
       : Promise.resolve(true)
   }
 
@@ -140,12 +188,18 @@ export class PingLog {
     this.batch = []
   }
 
-  // `true` once written (or nothing to write), `false` when the database refused.
-  private write(fn: (list: PingRec[], readSeq: Map<string, number>) => PingRec[], rooms = false) {
+  // `true` once written (or nothing to write), `false` when the database refused. `before` runs
+  // first, outside the write's transaction.
+  private write(
+    fn: (list: PingRow[], readSeq: Map<string, number>) => PingRow[],
+    rooms = false,
+    before: () => Promise<void> = async () => {}
+  ) {
     const s = this.deps.store
     const done = this.writes.then(async () => {
       try {
         if (s.closed) return false
+        await before()
         const readSeq = rooms ? readSeqs(await s.rooms()) : new Map<string, number>()
         const tx = s.db.transaction('meta', 'readwrite')
         const list = parseLog(await tx.store.get(PING_LOG))
@@ -168,6 +222,13 @@ export class PingLog {
     return readPings(this.deps.store)
   }
 
+  // The rows as stored, for what needs only their plain fields.
+  private async rows() {
+    void this.flush()
+    await this.writes
+    return storedPings(this.deps.store)
+  }
+
   // Notes pings as seen without touching the counters (they were taken off already).
   async seen(ids: readonly string[]) {
     if (!ids.length) return
@@ -178,7 +239,7 @@ export class PingLog {
 
   // The unread thread pings of a channel or conversation (`ch` null), with their roots.
   async threadPings(room: string, ch: string | null) {
-    const { list, readSeq } = await this.read()
+    const { list, readSeq } = await this.rows()
     return list.flatMap(p =>
       p.room === room && p.ch === ch && p.thread && pingUnread(p, readSeq)
         ? [{ id: p.id, thread: p.thread }]
@@ -188,7 +249,7 @@ export class PingLog {
 
   // The unread pings of a thread, to mark when it is read.
   async ofThread(room: string, ch: string | null, root: string) {
-    const { list, readSeq } = await this.read()
+    const { list, readSeq } = await this.rows()
     return list
       .filter(p => p.room === room && p.ch === ch && p.thread === root && pingUnread(p, readSeq))
       .map(p => p.id)
@@ -200,7 +261,7 @@ export class PingLog {
     if (!ids.length) return 0
     void this.flush()
     const want = new Set(ids)
-    let cut: PingRec[] = []
+    let cut: PingRow[] = []
     const ok = await this.write((list, readSeq) => {
       cut = list.filter(p => want.has(p.id) && pingUnread(p, readSeq))
       return cut.length ? markSeen(list, new Set(cut.map(p => p.id))) : list

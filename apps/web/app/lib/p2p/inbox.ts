@@ -32,6 +32,26 @@ export interface PingRec {
   thread?: string | null
 }
 
+// What every stored ping row holds: ids, the sender, times and whether it was seen.
+export type PingBase = Omit<PingRec, 'kind' | 'emoji'>
+
+// The row of a ping of a room or DM that stores its events sealed (sealed_db.ts): what the ping
+// is, its kind and emoji, is kept in `box`, a device record. The rest stays as it is, so the log
+// is pruned and marked without opening it.
+export interface SealedPing extends PingBase {
+  box: Uint8Array
+}
+
+export type PingRow = PingRec | SealedPing
+
+export const isSealedPing = (p: PingRow): p is SealedPing => 'box' in p
+
+// What a sealed row keeps in its box.
+export interface PingWhat {
+  kind: P2pPingKind
+  emoji: string | null
+}
+
 export const PING_LOG = 'inbox'
 // limits.ts `inbox`: pings kept and for how long, the page, and how soon counts and writes follow.
 export type InboxLimits = Local['inbox']
@@ -44,7 +64,15 @@ const text = (x: unknown, max = 200) =>
   typeof x === 'string' && x.length > 0 && x.length <= max ? x : null
 const num = (x: unknown) => (Number.isSafeInteger(x) && (x as number) >= 0 ? (x as number) : null)
 
-const recOf = (x: unknown): PingRec | null => {
+// The kind and emoji of a ping, as a row or a box holds them; null when they are not well formed.
+export const whatOf = (x: unknown): PingWhat | null => {
+  if (typeof x !== 'object' || x === null) return null
+  const o = x as Record<string, unknown>
+  if (!KINDS.includes(o.kind as P2pPingKind)) return null
+  return { kind: o.kind as P2pPingKind, emoji: o.emoji === null ? null : text(o.emoji, 64) }
+}
+
+const recOf = (x: unknown): PingRow | null => {
   if (typeof x !== 'object' || x === null) return null
   const o = x as Record<string, unknown>
   const id = text(o.id)
@@ -53,29 +81,30 @@ const recOf = (x: unknown): PingRec | null => {
   const at = num(o.at ?? o.ts)
   const seq = num(o.seq)
   if (!id || !room || !actor || at === null || seq === null) return null
-  if (!KINDS.includes(o.kind as P2pPingKind)) return null
-  return {
+  const base: PingBase = {
     id,
     room,
     ch: o.ch === null ? null : text(o.ch),
-    kind: o.kind as P2pPingKind,
     actor,
     at,
     seq,
-    emoji: o.emoji === null ? null : text(o.emoji, 64),
     target: o.target === null ? null : text(o.target),
     seen: o.seen === true,
     thread: typeof o.thread === 'string' ? text(o.thread) : null,
   }
+  if (ArrayBuffer.isView(o.box)) return { ...base, box: o.box as Uint8Array }
+  const what = whatOf(o)
+  return what && { ...base, ...what }
 }
 
-// The stored list (`{v: 1, list}`); anything unreadable is left out.
-export const parseLog = (x: unknown): PingRec[] => {
+// The stored list (`{v: 1, list}`), sealed rows as they are stored; anything unreadable is left
+// out.
+export const parseLog = (x: unknown): PingRow[] => {
   if (typeof x !== 'object' || x === null) return []
   const { v, list } = x as Record<string, unknown>
   if (v !== 1 || !Array.isArray(list)) return []
   const seen = new Set<string>()
-  const out: PingRec[] = []
+  const out: PingRow[] = []
   for (const item of list) {
     const r = recOf(item)
     if (!r || seen.has(r.id)) continue
@@ -85,20 +114,20 @@ export const parseLog = (x: unknown): PingRec[] => {
   return out
 }
 
-export const logValue = (list: PingRec[]) => ({ v: 1, list })
+export const logValue = (list: PingRow[]) => ({ v: 1, list })
 
 // Newest arrival first; ties by id, so the order is stable.
-export const newerFirst = (a: PingRec, b: PingRec) =>
+export const newerFirst = (a: PingBase, b: PingBase) =>
   b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
 
 // The list with new pings added: one per event, nothing older than `pingKeepMs`, at most
 // `pingsKept` (the newest).
-export const addPings = (
-  list: PingRec[],
-  add: PingRec[],
+export const addPings = <T extends PingBase>(
+  list: T[],
+  add: T[],
   now: number,
   lim: Pick<InboxLimits, 'pingsKept' | 'pingKeepMs'> = LOCAL.inbox
-): PingRec[] => {
+): T[] => {
   const ids = new Set(list.map(p => p.id))
   const all = [...list]
   for (const p of add)
@@ -112,11 +141,11 @@ export const addPings = (
     .slice(0, lim.pingsKept)
 }
 
-export const markSeen = (list: PingRec[], ids: ReadonlySet<string>): PingRec[] =>
+export const markSeen = <T extends PingBase>(list: T[], ids: ReadonlySet<string>): T[] =>
   list.map(p => (ids.has(p.id) && !p.seen ? { ...p, seen: true } : p))
 
 // The counter a ping sits in: its conversation, or `{room}/{channel}`.
-export const counterKey = (p: Pick<PingRec, 'room' | 'ch'>) =>
+export const counterKey = (p: Pick<PingBase, 'room' | 'ch'>) =>
   p.ch === null ? p.room : `${p.room}/${p.ch}`
 
 // Read positions by counter, from the stored rooms.
@@ -129,7 +158,7 @@ export const readSeqs = (rooms: readonly RoomRecord[]) => {
   return out
 }
 
-export const pingUnread = (p: PingRec, readSeq: ReadonlyMap<string, number>) =>
+export const pingUnread = (p: PingBase, readSeq: ReadonlyMap<string, number>) =>
   !p.seen && (!!p.thread || p.seq > (readSeq.get(counterKey(p)) ?? 0))
 
 // What the inbox needs to know of P2P right now.
@@ -209,14 +238,14 @@ export const markAllTargets = (
 }
 
 // How many of the pings sit in each counter (a thread's count in its channel's).
-export const byCounter = (list: readonly PingRec[]): Map<string, number> => {
+export const byCounter = (list: readonly PingBase[]): Map<string, number> => {
   const out = new Map<string, number>()
   for (const p of list) out.set(counterKey(p), (out.get(counterKey(p)) ?? 0) + 1)
   return out
 }
 
 // The same per thread too (`{room}/{channel}#{root}`), for taking marked pings off the counters.
-export const byThreadCounter = (list: readonly PingRec[]): Map<string, number> => {
+export const byThreadCounter = (list: readonly PingBase[]): Map<string, number> => {
   const out = new Map<string, number>()
   for (const p of list) {
     const k = p.thread ? `${counterKey(p)}#${p.thread}` : counterKey(p)

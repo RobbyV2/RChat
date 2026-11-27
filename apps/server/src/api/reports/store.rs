@@ -5,14 +5,17 @@ use super::forms::StoredAnswer;
 use super::limits::{Caps, Class, allowed};
 use super::query::visible;
 use super::snapshot::Snapshot;
+use super::text::{self, BLANK_DETAIL, Text};
 use super::{Audience, ModAction, MutedReporter, Placed, ReportKind, Status};
 use crate::api::access::ReportScope;
 use crate::api::audit::{
     self, Action, ChannelRef, Details, Entry, Target, TargetKind, like_escape,
 };
 use crate::api::{
-    ApiError, LIST_PAGE, Paged, decode_cursor, encode_cursor, instance_audit, user_from, user_refs,
+    ApiError, LIST_PAGE, Paged, bad, decode_cursor, encode_cursor, instance_audit, user_from,
+    user_refs,
 };
+use crate::crypt::copies::{Opener, Sealer};
 use crate::db::{Db, PURGE_BATCH, delete_batched};
 
 /// How many reports `forget_user` reads at a time.
@@ -96,6 +99,17 @@ pub(super) async fn insert(
     }
     let snapshot = serde_json::to_string(&placed.snapshot).map_err(ApiError::internal)?;
     let answers = serde_json::to_string(answers).map_err(ApiError::internal)?;
+    let source = text::source_of(server, placed.dm_id);
+    let sealer = crate::api::seal::copy_sealer_of(db, &mut tx, source).await?;
+    let kept = Text {
+        snapshot,
+        answers,
+        note: note.map(str::to_owned),
+    };
+    let stored = match &sealer {
+        Some(_) => Text::blank(),
+        None => kept.clone(),
+    };
     let id: i64 = sqlx::query("INSERT INTO reports(kind, server, server_name, target_kind, target_key, target_user, message_id, channel_id, channel_private, dm_id, role_id, role_name, reporter, form, form_label, form_rev, reason, reason_label, note, answers, snapshot, created_at, updated_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $22) RETURNING id")
         .bind(kind.as_str())
         .bind(server)
@@ -115,13 +129,16 @@ pub(super) async fn insert(
         .bind(form_rev)
         .bind(reason)
         .bind(reason_label)
-        .bind(note)
-        .bind(answers)
-        .bind(snapshot)
+        .bind(stored.note)
+        .bind(stored.answers)
+        .bind(stored.snapshot)
         .bind(t)
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
+    if let Some(sealer) = &sealer {
+        text::store_record(&mut tx, id, kept.seal(sealer, id)).await?;
+    }
     event(&mut tx, id, None, "created", json!({}), t).await?;
     tx.commit().await?;
     Ok(Some(id))
@@ -136,15 +153,40 @@ pub(super) async fn event(
     detail: Value,
     t: i64,
 ) -> sqlx::Result<()> {
-    sqlx::query("INSERT INTO report_events(report_id, actor, kind, detail, created_at) VALUES($1, $2, $3, $4, $5)")
+    noted(conn, None, id, actor, kind, detail, t).await
+}
+
+/// `event` for a line that holds a note: with a `sealer`, its detail is stored sealed.
+async fn noted(
+    conn: &mut AnyConnection,
+    sealer: Option<&Sealer>,
+    id: i64,
+    actor: Option<&str>,
+    kind: &str,
+    detail: Value,
+    t: i64,
+) -> sqlx::Result<()> {
+    let detail = detail.to_string();
+    let line: i64 = sqlx::query("INSERT INTO report_events(report_id, actor, kind, detail, created_at) VALUES($1, $2, $3, $4, $5) RETURNING id")
         .bind(id)
         .bind(actor)
         .bind(kind)
-        .bind(detail.to_string())
+        .bind(match sealer {
+            Some(_) => BLANK_DETAIL,
+            None => detail.as_str(),
+        })
         .bind(t)
-        .execute(&mut *conn)
-        .await
-        .map(|_| ())
+        .fetch_one(&mut *conn)
+        .await?
+        .try_get(0)?;
+    if let Some(sealer) = sealer {
+        sqlx::query("UPDATE report_events SET detail_sealed = $1 WHERE id = $2")
+            .bind(text::detail_record(sealer, line, &detail))
+            .bind(line)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
 }
 
 /// A change to one report.
@@ -186,8 +228,12 @@ impl Noted {
 
 /// The channel of the reported message as report `id` keeps it: the channel's name now, or the
 /// one it had when the report was sent, and whether it was private then.
-async fn channel_of(conn: &mut AnyConnection, id: i64) -> Result<Option<ChannelRef>, ApiError> {
-    let Some(row) = sqlx::query("SELECT r.channel_id, r.channel_private, c.name, r.snapshot FROM reports r LEFT JOIN channels c ON c.id = r.channel_id WHERE r.id = $1")
+async fn channel_of(
+    db: &Db,
+    conn: &mut AnyConnection,
+    id: i64,
+) -> Result<Option<ChannelRef>, ApiError> {
+    let Some(row) = sqlx::query("SELECT r.channel_id, r.channel_private, c.name, r.snapshot, r.sealed FROM reports r LEFT JOIN channels c ON c.id = r.channel_id WHERE r.id = $1")
         .bind(id)
         .fetch_optional(&mut *conn)
         .await?
@@ -199,10 +245,19 @@ async fn channel_of(conn: &mut AnyConnection, id: i64) -> Result<Option<ChannelR
     };
     let name = match row.try_get::<Option<String>, _>(2)? {
         Some(name) => name,
-        None => serde_json::from_str::<Snapshot>(&row.try_get::<String, _>(3)?)
-            .ok()
-            .and_then(|snapshot| snapshot.channel)
-            .unwrap_or_default(),
+        None => {
+            let record: Option<Vec<u8>> = row.try_get(4)?;
+            let opener = Opener::on(db, conn, record.as_deref()).await?;
+            let plain = Text {
+                snapshot: row.try_get(3)?,
+                ..Text::default()
+            };
+            let Text { snapshot, .. } = Text::of(&opener, id, record.as_deref(), plain);
+            serde_json::from_str::<Snapshot>(&snapshot)
+                .ok()
+                .and_then(|snapshot| snapshot.channel)
+                .unwrap_or_default()
+        }
     };
     Ok(Some(ChannelRef {
         id: channel,
@@ -222,7 +277,9 @@ enum About<'a> {
 /// the instance audit log for the reports to the instance. The entry never names the reporter
 /// or the one reported. In the server's log it carries the channels of the reported messages,
 /// so it is hidden from who can't view one of them.
+#[allow(clippy::too_many_arguments)]
 async fn log(
+    db: &Db,
     conn: &mut AnyConnection,
     scope: &ReportScope,
     actor: &str,
@@ -241,7 +298,7 @@ async fn log(
                 .iter()
                 .fold(Details::new(), |d, (key, value)| d.set(key, value.clone()));
             let details = match about {
-                About::One(id) => match channel_of(conn, id).await? {
+                About::One(id) => match channel_of(db, conn, id).await? {
                     Some(channel) => details.channel(&channel),
                     None => details,
                 },
@@ -301,6 +358,7 @@ fn object(detail: &[(&str, Value)]) -> Value {
 
 /// Applies `change` by `actor` at `t` on `conn`, with its history lines and audit entries.
 pub(super) async fn change(
+    db: &Db,
     conn: &mut AnyConnection,
     scope: &ReportScope,
     actor: &str,
@@ -328,6 +386,7 @@ pub(super) async fn change(
         let detail = status_detail(status, action);
         event(&mut *conn, id, Some(actor), "status", object(&detail), t).await?;
         log(
+            db,
             &mut *conn,
             scope,
             actor,
@@ -356,6 +415,7 @@ pub(super) async fn change(
         .await?;
         let detail = [("assigned", Value::from(assignee.is_some()))];
         log(
+            db,
             &mut *conn,
             scope,
             actor,
@@ -384,8 +444,20 @@ pub(super) async fn note(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    event(&mut tx, id, Some(actor), "note", json!({ "text": text }), t).await?;
-    log(&mut tx, scope, actor, Noted::Note, About::One(id), &[], t).await?;
+    let sealer = text::sealer_of(db, &mut tx, id).await?;
+    let detail = json!({ "text": text });
+    noted(&mut tx, sealer.as_ref(), id, Some(actor), "note", detail, t).await?;
+    log(
+        db,
+        &mut tx,
+        scope,
+        actor,
+        Noted::Note,
+        About::One(id),
+        &[],
+        t,
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -411,12 +483,38 @@ pub(super) async fn escalate(
     if claimed == 0 {
         return Ok(false);
     }
-    let copy: i64 = sqlx::query("INSERT INTO reports(kind, server, server_name, target_kind, target_key, target_user, message_id, channel_id, channel_private, dm_id, role_id, role_name, reporter, form, form_label, form_rev, reason, reason_label, note, answers, snapshot, franking, escalated_from, created_at, updated_at) SELECT 'instance', server, server_name, target_kind, target_key, target_user, message_id, channel_id, channel_private, dm_id, role_id, role_name, reporter, form, form_label, form_rev, reason, reason_label, note, answers, snapshot, franking, id, $1, $1 FROM reports WHERE id = $2 RETURNING id")
+    let row = sqlx::query("SELECT snapshot, answers, note, sealed FROM reports WHERE id = $1")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let record: Option<Vec<u8>> = row.try_get(3)?;
+    let plain = Text {
+        snapshot: row.try_get(0)?,
+        answers: row.try_get(1)?,
+        note: row.try_get(2)?,
+    };
+    let opener = Opener::on(db, &mut tx, record.as_deref()).await?;
+    let kept = match &record {
+        Some(record) => Text::open(&opener, id, record).ok_or_else(|| bad(text::UNREADABLE))?,
+        None => plain,
+    };
+    let sealer = text::sealer_of(db, &mut tx, id).await?;
+    let stored = match &sealer {
+        Some(_) => Text::blank(),
+        None => kept.clone(),
+    };
+    let copy: i64 = sqlx::query("INSERT INTO reports(kind, server, server_name, target_kind, target_key, target_user, message_id, channel_id, channel_private, dm_id, role_id, role_name, reporter, form, form_label, form_rev, reason, reason_label, note, answers, snapshot, franking, escalated_from, created_at, updated_at) SELECT 'instance', server, server_name, target_kind, target_key, target_user, message_id, channel_id, channel_private, dm_id, role_id, role_name, reporter, form, form_label, form_rev, reason, reason_label, $3, $4, $5, franking, id, $1, $1 FROM reports WHERE id = $2 RETURNING id")
         .bind(t)
         .bind(id)
+        .bind(stored.note)
+        .bind(stored.answers)
+        .bind(stored.snapshot)
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
+    if let Some(sealer) = &sealer {
+        text::store_record(&mut tx, copy, kept.seal(sealer, copy)).await?;
+    }
     sqlx::query("UPDATE reports SET escalated_to = $1 WHERE id = $2")
         .bind(copy)
         .bind(id)
@@ -430,10 +528,30 @@ pub(super) async fn escalate(
         detail.insert(key.to_string(), Value::from(other));
         Value::Object(detail)
     };
-    event(&mut tx, id, Some(actor), "escalate", said("to", copy), t).await?;
+    let noting = sealer.as_ref().filter(|_| note.is_some());
+    noted(
+        &mut tx,
+        noting,
+        id,
+        Some(actor),
+        "escalate",
+        said("to", copy),
+        t,
+    )
+    .await?;
     event(&mut tx, copy, None, "created", json!({}), t).await?;
-    event(&mut tx, copy, Some(actor), "escalate", said("from", id), t).await?;
+    noted(
+        &mut tx,
+        noting,
+        copy,
+        Some(actor),
+        "escalate",
+        said("from", id),
+        t,
+    )
+    .await?;
     log(
+        db,
         &mut tx,
         scope,
         actor,
@@ -521,7 +639,7 @@ pub(super) async fn resolve_all(
             }
         }
         let about = About::Many(&channels);
-        log(&mut tx, scope, actor, Noted::Resolve, about, &detail, t).await?;
+        log(db, &mut tx, scope, actor, Noted::Resolve, about, &detail, t).await?;
     }
     tx.commit().await?;
     Ok(audiences)
@@ -729,11 +847,60 @@ fn forget_in(value: &mut Value, username: &str) -> bool {
     }
 }
 
+/// `forget_in` over the reports stored sealed: each is opened, and written again sealed under
+/// the key it had when the account appears in it.
+async fn forget_sealed(db: &Db, conn: &mut AnyConnection, username: &str) -> sqlx::Result<()> {
+    let mut after = 0i64;
+    loop {
+        let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as("SELECT id, sealed FROM reports WHERE id > $1 AND sealed IS NOT NULL ORDER BY id LIMIT $2")
+            .bind(after)
+            .bind(FORGET_BATCH)
+            .fetch_all(&mut *conn)
+            .await?;
+        let opener = Opener::on(db, conn, rows.iter().map(|(_, r)| r.as_slice())).await?;
+        for (id, record) in &rows {
+            after = *id;
+            let Some(kept) = Text::open(&opener, *id, record) else {
+                continue;
+            };
+            let parsed = |text: &str| serde_json::from_str::<Value>(text).ok();
+            let (mut snapshot, mut answers) = (parsed(&kept.snapshot), parsed(&kept.answers));
+            let mut changed = false;
+            for value in [&mut snapshot, &mut answers].into_iter().flatten() {
+                changed |= forget_in(value, username);
+            }
+            if !changed {
+                continue;
+            }
+            let next = Text {
+                snapshot: snapshot.map_or(kept.snapshot.clone(), |v| v.to_string()),
+                answers: answers.map_or(kept.answers.clone(), |v| v.to_string()),
+                note: kept.note.clone(),
+            };
+            if let Some(sealed) = next.reseal(&opener, *id, record) {
+                sqlx::query("UPDATE reports SET sealed = $1 WHERE id = $2 AND sealed = $3")
+                    .bind(sealed)
+                    .bind(id)
+                    .bind(record.as_slice())
+                    .execute(&mut *conn)
+                    .await?;
+            }
+        }
+        if (rows.len() as i64) < FORGET_BATCH {
+            return Ok(());
+        }
+    }
+}
+
 /// Drops a deleted account's name from the reports (as reporter, assignee, the one reported, an
 /// author in a snapshot, a person an answer names, the actor of an event, the one an event
 /// assigned, the one who muted a reporter), so a new account with the same username never inherits the history. What was
 /// written stays.
-pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sqlx::Result<()> {
+pub(crate) async fn forget_user(
+    db: &Db,
+    conn: &mut AnyConnection,
+    username: &str,
+) -> sqlx::Result<()> {
     let named = like_escape(&Value::from(username).to_string());
     let mut after = 0i64;
     loop {
@@ -766,6 +933,7 @@ pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sql
             break;
         }
     }
+    forget_sealed(db, conn, username).await?;
     sqlx::query("UPDATE report_events SET detail = '{\"assignee\":null}' WHERE kind = 'assign' AND detail = $1")
         .bind(json!({ "assignee": username }).to_string())
         .execute(&mut *conn)
@@ -972,8 +1140,8 @@ mod tests {
             run(&db, "INSERT INTO report_pace(reporter, kind, last_at) VALUES('erin', 'server', 12)").await;
 
             let mut conn = db.acquire().await.expect("conn");
-            forget_user(&mut conn, "bob").await.expect("forget bob");
-            forget_user(&mut conn, "carol").await.expect("forget carol");
+            forget_user(&db, &mut conn, "bob").await.expect("forget bob");
+            forget_user(&db, &mut conn, "carol").await.expect("forget carol");
             drop(conn);
 
             let mut text = String::new();
@@ -1064,7 +1232,7 @@ mod tests {
             )
             .await;
             let mut conn = db.acquire().await.expect("conn");
-            forget_user(&mut conn, "a_b").await.expect("forget");
+            forget_user(&db, &mut conn, "a_b").await.expect("forget");
             drop(conn);
             assert_eq!(
                 count(&db, &format!("SELECT COUNT(*) FROM reports WHERE id = {kept} AND target_user = 'axb' AND snapshot LIKE '%axb%'")).await,
@@ -1102,7 +1270,7 @@ mod tests {
                     .try_get(0)
                     .expect("id");
                 let mut conn = db.acquire().await.expect("conn");
-                forget_user(&mut conn, name).await.expect("forget");
+                forget_user(&db, &mut conn, name).await.expect("forget");
                 drop(conn);
                 let row = sqlx::query("SELECT target_user, snapshot, answers FROM reports WHERE id = $1")
                     .bind(id)
@@ -1146,7 +1314,7 @@ mod tests {
                     .expect("report");
             }
             let mut conn = db.acquire().await.expect("conn");
-            forget_user(&mut conn, "content").await.expect("forget");
+            forget_user(&db, &mut conn, "content").await.expect("forget");
             drop(conn);
             let gone = (n + 1) / 2;
             assert_eq!(

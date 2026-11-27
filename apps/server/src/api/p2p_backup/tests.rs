@@ -1752,3 +1752,83 @@ fn backup_refusals_carry_their_reason() {
         )
     );
 }
+
+#[tokio::test]
+async fn backups_are_sealed_again_while_the_site_requires_it() {
+    for (state, temp) in crate::api::test_util::each_db_keyed("backup_sealed").await {
+        let require = |on: bool| {
+            let state = state.clone();
+            async move {
+                crate::api::seal::put_required(
+                    State(state),
+                    Authed(mem_user("root", true)),
+                    Json(crate::api::seal::RequireReq { on }),
+                )
+                .await
+                .map(|_| ())
+                .expect("site");
+            }
+        };
+        add_user(&state, "alice", None).await;
+        let v = ik(1);
+        put(&state, "alice", &v, 1, b"plain blob", T0 + 1)
+            .await
+            .expect("plain");
+        require(true).await;
+        put(&state, "alice", &v, 2, b"client sealed blob", T0 + 2)
+            .await
+            .expect("sealed");
+        require(false).await;
+        put(&state, "alice", &v, 3, b"after", T0 + 3)
+            .await
+            .expect("plain again");
+        let rows = sqlx::query(
+            "SELECT version, size, data, data_sealed IS NOT NULL FROM p2p_backups ORDER BY version",
+        )
+        .fetch_all(&state.db)
+        .await
+        .expect("rows");
+        let forms: Vec<(i64, i64, Vec<u8>, bool)> = rows
+            .iter()
+            .map(|r| {
+                let sealed = match crate::db::is_sqlite(&state.db) {
+                    true => r.get::<i64, _>(3) != 0,
+                    false => r.get::<bool, _>(3),
+                };
+                (r.get(0), r.get(1), r.get(2), sealed)
+            })
+            .collect();
+        assert_eq!(
+            forms,
+            [
+                (1, 10, b"plain blob".to_vec(), false),
+                (2, 18, Vec::new(), true),
+                (3, 5, b"after".to_vec(), false)
+            ]
+        );
+        assert_eq!(
+            version_of(&state, "alice", &v, 2, T0 + 4)
+                .await
+                .expect("v2"),
+            b"client sealed blob"
+        );
+        assert_eq!(
+            latest_of(&state, "alice", &v).await.expect("latest").1,
+            b"after"
+        );
+        sqlx::query("UPDATE p2p_backups SET data = $1, data_sealed = (SELECT data_sealed FROM p2p_backups WHERE version = 2) WHERE version = 1")
+            .bind(&b""[..])
+            .execute(&state.db)
+            .await
+            .expect("move");
+        assert_eq!(
+            version_of(&state, "alice", &v, 1, T0 + 4).await.map(|_| ()),
+            Err(refused(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                super::UNREADABLE
+            )),
+            "a record moved to another version does not open"
+        );
+        temp.done(state).await;
+    }
+}

@@ -1555,7 +1555,7 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
                         row.as_ref().map(|u| u.created_at),
                     )
                     .await?;
-                    drop_user_rows(&mut tx, key).await?;
+                    drop_user_rows(&state.db, &mut tx, key).await?;
                     Some((gone, polls))
                 }
                 false => None,
@@ -1707,7 +1707,11 @@ async fn drop_sso_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> 
     Ok(())
 }
 
-async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> sqlx::Result<()> {
+async fn drop_user_rows(
+    db: &Db,
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    key: &str,
+) -> sqlx::Result<()> {
     drop_sso_rows(tx, key).await?;
     for sql in [
         "DELETE FROM messages WHERE author = $1",
@@ -1768,7 +1772,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
     }
     crate::api::bulk_delete::forget_author(tx, key).await?;
     crate::api::audit::forget_user(tx, key).await?;
-    reports::forget_user(tx, key).await?;
+    reports::forget_user(db, tx, key).await?;
     crate::api::policy::forget_creator(tx, key).await?;
     crate::api::instance_audit::forget_user(tx, key).await
 }
@@ -4631,6 +4635,7 @@ mod tests {
                 avatar_color,
                 banner_color,
                 bio,
+                bio_sealed,
                 is_site_admin,
                 appear_offline,
                 created_at,
@@ -4641,7 +4646,7 @@ mod tests {
             } = u.clone();
             (
                 (username, display_name, password_hash, password_kind),
-                (avatar_kind, avatar_color, banner_color, bio),
+                (avatar_kind, avatar_color, banner_color, bio, bio_sealed),
                 (is_site_admin, appear_offline, created_at),
             )
         };

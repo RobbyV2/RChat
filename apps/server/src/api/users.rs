@@ -293,13 +293,16 @@ async fn card_of(
         }
         (_, _, _) => (None, None),
     };
-    let profile = seen.map(|_| ProfileFacts {
-        bio: user.bio.clone(),
-        banner_color: user.banner_color.clone(),
-        created_at: user.created_at,
-        server_bio,
-        server_banner,
-    });
+    let profile = match seen {
+        Some(_) => Some(ProfileFacts {
+            bio: crate::crypt::copies::bio_of(&state.db, &user).await?,
+            banner_color: user.banner_color.clone(),
+            created_at: user.created_at,
+            server_bio,
+            server_banner,
+        }),
+        None => None,
+    };
     match profile.is_some() || member.is_some() {
         true => Ok(UserCard {
             user: UserRef::from_user(&user),

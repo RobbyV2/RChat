@@ -2932,7 +2932,7 @@ async fn detail_shows_snapshot_events_and_related() {
     );
     assert_eq!(detail.events[1].detail, json!({"text": "looking"}));
     let mut conn = db.acquire().await.expect("conn");
-    forget_user(&mut conn, "bob").await.expect("forget");
+    forget_user(db, &mut conn, "bob").await.expect("forget");
     drop(conn);
     let detail = w.detail("mo", id).await.expect("after the account is gone");
     assert_eq!(
@@ -3220,7 +3220,7 @@ async fn assignees_must_handle_reports() {
         [id]
     );
     let mut conn = db.acquire().await.expect("conn");
-    forget_user(&mut conn, "olga").await.expect("forget");
+    forget_user(db, &mut conn, "olga").await.expect("forget");
     drop(conn);
     let lines = w.history(id).await.join("\n");
     assert!(!lines.contains("olga"), "{lines}");
@@ -5186,3 +5186,5 @@ fn csv_cells() {
     assert_eq!(export::stamp(0), "1970-01-01T00:00:00Z");
     assert_eq!(export::stamp(2_000_000_000), "2033-05-18T03:33:20Z");
 }
+
+mod sealed;

@@ -1,6 +1,7 @@
 import { time } from '../platform/time'
 import { blankRoom, cacheKey, countOf, moveCounts, TOTAL, TOTAL_BYTES } from './dag'
 import type { P2pDatabase, RoomRecord, ServerCache } from './db'
+import { isSealedPing, logValue, parseLog, PING_LOG } from './inbox'
 import { isSealed, sealingOf } from './sealed_db'
 
 // How many of the members it knew a server is asked of again.
@@ -10,7 +11,7 @@ const ASK = 32
 // events are emptied here (events, their links, outbox and index rows, counters), and their
 // records start over, so the device takes them from its peers again. The device's own chains in
 // servers stay, so what it signs later goes on from them. A server is asked of the members the
-// device last knew. Returns the rooms it emptied.
+// device last knew. The inbox keeps no row it sealed. Returns the rooms it emptied.
 export async function dropSealed(db: P2pDatabase, now = time().now()): Promise<string[]> {
   const sealing = sealingOf(db)
   if (!sealing) return []
@@ -77,6 +78,9 @@ export async function dropSealed(db: P2pDatabase, now = time().now()): Promise<s
   const children = tx.objectStore('children')
   for (let c = await children.openCursor(); c; c = await c.continue())
     if (gone.has(c.value.parent) || gone.has(c.value.child)) await c.delete()
+  const pings = parseLog(await meta.get(PING_LOG))
+  const plain = pings.filter(p => !isSealedPing(p))
+  if (plain.length < pings.length) await meta.put(logValue(plain), PING_LOG)
   await tx.done
   await sealing.reset()
   return [...rooms]

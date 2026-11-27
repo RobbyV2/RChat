@@ -908,3 +908,5 @@ async fn a_block_refuses_the_dm_switch_like_a_message() {
         finish(state, temp).await;
     }
 }
+
+mod copies;

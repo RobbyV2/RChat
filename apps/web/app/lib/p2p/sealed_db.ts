@@ -337,6 +337,26 @@ export class Sealing {
     return typeof room === 'string' && (this.on(room) || (this.cur !== null && storedSealed(rec)))
   }
 
+  // A device record of `value` for the entry `key` of `store` in `room`, for what is kept beside
+  // the events of a sealed room (the inbox rows of its pings); null while `room` stores its
+  // events plain.
+  async box(store: string, key: string, room: string, value: unknown): Promise<Uint8Array | null> {
+    const cur = this.cur
+    if (!cur || !this.on(room)) return null
+    const plain = enc.encode(JSON.stringify(value))
+    return sealDevice(cur.key, cur.id, deviceAad(store, key, room), plain)
+  }
+
+  // What a record `box` made holds; undefined, and counted, when it doesn't open.
+  async unbox(store: string, key: string, room: string, record: Uint8Array): Promise<unknown> {
+    const id = recordHeader(record)?.keyId
+    const held = id === undefined ? null : await this.key(id)
+    const plain = held && (await openDevice(held, deviceAad(store, key, room), record))
+    const value = plain ? parsed(plain) : undefined
+    if (value === undefined) this.unreadable += 1
+    return value
+  }
+
   // The event record a stored one holds. One that doesn't open reads as `unopened` and is
   // counted; a key that is gone is `lost()`'s to handle at the next start.
   async open<T>(rec: T): Promise<T> {

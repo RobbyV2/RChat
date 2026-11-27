@@ -3134,6 +3134,7 @@ pub(crate) mod test_util {
             avatar_color: None,
             banner_color: None,
             bio: None,
+            bio_sealed: None,
             is_site_admin: site_admin,
             appear_offline: false,
             created_at: now(),

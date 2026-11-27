@@ -150,6 +150,9 @@ pub struct User {
     pub avatar_color: Option<String>,
     pub banner_color: Option<String>,
     pub bio: Option<String>,
+    /// The description stored sealed (`copies::BIOS`), in place of `bio`. Read with
+    /// `copies::bio_of`.
+    pub bio_sealed: Option<Vec<u8>>,
     pub is_site_admin: bool,
     pub appear_offline: bool,
     pub created_at: i64,
@@ -219,6 +222,10 @@ impl User {
             avatar_color: row.try_get("avatar_color")?,
             banner_color: row.try_get("banner_color")?,
             bio: row.try_get("bio")?,
+            bio_sealed: match row.try_get("bio_sealed") {
+                Err(sqlx::Error::ColumnNotFound(_)) => None,
+                read => read?,
+            },
             is_site_admin: row.try_get::<i64, _>("is_site_admin")? != 0,
             appear_offline: row.try_get::<i64, _>("appear_offline")? != 0,
             created_at: row.try_get("created_at")?,

@@ -1267,6 +1267,71 @@ mod body {
     }
 }
 
+mod copies {
+    use super::super::copies::{BACKUPS, BIOS, DELIVERIES, Opener, REPORTS, Sealer};
+    use crate::db::{close, open_keyed, temp_db_path};
+
+    #[tokio::test]
+    async fn a_copy_opens_only_as_its_own_row_and_column() {
+        let path = temp_db_path("copies_binding");
+        let _ = std::fs::remove_file(&path);
+        let db = open_keyed(path.to_str()).await.expect("open");
+        let ring = crate::db::ring(&db);
+        let mut conn = db.acquire().await.expect("connection");
+        assert!(
+            Sealer::of(&ring, &mut conn).await.expect("read").is_none(),
+            "a sealer never makes the key"
+        );
+        drop(conn);
+        ring.data_key(&db, super::super::Purpose::Content)
+            .await
+            .expect("content key");
+        let mut conn = db.acquire().await.expect("connection");
+        let sealer = Sealer::of(&ring, &mut conn)
+            .await
+            .expect("read")
+            .expect("sealer");
+        drop(conn);
+        let record = sealer.seal(REPORTS, "7", b"what was reported");
+        assert_eq!(&record[..2], [0x52, 0x01]);
+        assert!(!String::from_utf8_lossy(&record).contains("reported"));
+        let opener = Opener::of(&db, [record.as_slice()]).await.expect("opener");
+        let before = ring.unreadable();
+        assert_eq!(
+            opener.text(REPORTS, "7", &record).as_deref(),
+            Some("what was reported")
+        );
+        for (at, binding) in [
+            (REPORTS, "8"),
+            (DELIVERIES, "7"),
+            (BIOS, "7"),
+            (BACKUPS, "7"),
+        ] {
+            assert!(
+                opener.open(at, binding, &record).is_none(),
+                "{}.{} {binding}",
+                at.table,
+                at.column
+            );
+        }
+        assert_eq!(ring.unreadable(), before + 4, "each miss is counted");
+        let again = opener
+            .reseal(REPORTS, "7", &record, b"what was kept")
+            .expect("resealed");
+        assert_ne!(again, record);
+        assert_eq!(again[2..6], record[2..6], "under the same key");
+        assert_eq!(
+            opener.text(REPORTS, "7", &again).as_deref(),
+            Some("what was kept")
+        );
+        let mut cut = record.clone();
+        cut.truncate(record.len() - 1);
+        assert!(opener.open(REPORTS, "7", &cut).is_none(), "a cut record");
+        close(&db).await;
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 mod reads {
     /// The string literals of `code`, each with the line it starts on.
     fn literals(code: &str) -> Vec<(usize, String)> {
@@ -1315,27 +1380,37 @@ mod reads {
         })
     }
 
-    /// The sealed columns a query reads: `(table, column)` for each column of a table the
-    /// query names.
-    fn sealed_reads(sql: &str) -> Vec<(&'static str, &'static str)> {
-        const COLUMNS: [(&str, &str); 8] = [
-            ("messages", "content"),
-            ("messages", "webhook_embeds"),
-            ("messages", "media_filename"),
-            ("messages", "fwd_dropped"),
-            ("messages", "media_alt"),
-            ("polls", "question"),
-            ("poll_options", "text"),
-            ("poll_snapshots", "data"),
-        ];
+    /// Each column that may be stored sealed: its table, the column and the column of its
+    /// record.
+    const COLUMNS: [(&str, &str, &str); 15] = [
+        ("messages", "content", "body"),
+        ("messages", "webhook_embeds", "body"),
+        ("messages", "media_filename", "body"),
+        ("messages", "fwd_dropped", "body"),
+        ("messages", "media_alt", "body"),
+        ("polls", "question", "body"),
+        ("poll_options", "text", "body"),
+        ("poll_snapshots", "data", "body"),
+        ("reports", "snapshot", "sealed"),
+        ("reports", "answers", "sealed"),
+        ("reports", "note", "sealed"),
+        ("report_events", "detail", "detail_sealed"),
+        ("webhook_deliveries", "payload", "payload_sealed"),
+        ("users", "bio", "bio_sealed"),
+        ("p2p_backups", "data", "data_sealed"),
+    ];
+
+    /// The sealed columns a query reads: `(table, column, record)` for each column of a table
+    /// the query names.
+    fn sealed_reads(sql: &str) -> Vec<(&'static str, &'static str, &'static str)> {
         COLUMNS
             .into_iter()
-            .filter(|(table, column)| word(sql, table) && word(sql, column))
+            .filter(|(table, column, _)| word(sql, table) && word(sql, column))
             .collect()
     }
 
     /// Queries that read a sealed column without its record, each for a stated reason.
-    const PLAIN_READS: [(&str, &str, &str); 8] = [
+    const PLAIN_READS: [(&str, &str, &str); 7] = [
         (
             "db/channel_index.rs",
             "",
@@ -1363,20 +1438,15 @@ mod reads {
             "audit details are JSON text in a column named data of another table",
         ),
         (
-            "api/reports/query.rs",
-            "",
-            "report text columns, sealed with the copies of reported content",
-        ),
-        (
             "api/reports/store.rs",
-            "",
-            "report text columns, sealed with the copies of reported content",
+            "snapshot LIKE $1",
+            "finds the plain reports that name an account; a sealed report has blank columns and is read whole after",
         ),
     ];
 
-    /// Message and poll text is read in SQL only together with its `body` record, which
-    /// `crypt::body` opens: a query that selects a sealed column alone would show a sealed row
-    /// as empty.
+    /// Message and poll text, and the copies of content beside it, are read in SQL only together
+    /// with their records, which `crypt::body` and `crypt::copies` open: a query that selects a
+    /// sealed column alone would show a sealed row as empty.
     #[test]
     fn content_reads_go_through_open_body() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -1398,8 +1468,14 @@ mod reads {
                 let allowed = PLAIN_READS
                     .iter()
                     .any(|(file, part, _)| file == path && sql.contains(part));
-                if !word(&sql, "body") && !allowed {
-                    misses.push(format!("{path}:{line} reads {reads:?} without body"));
+                let without: Vec<_> = reads
+                    .iter()
+                    .filter(|(_, _, record)| !word(&sql, record))
+                    .collect();
+                if !without.is_empty() && !allowed {
+                    misses.push(format!(
+                        "{path}:{line} reads {without:?} without its record"
+                    ));
                 }
             }
         }
@@ -1409,7 +1485,11 @@ mod reads {
         assert_eq!(found, [(1, "SELECT content FROM messages".to_owned())]);
         assert_eq!(
             sealed_reads("SELECT m.content FROM messages m"),
-            [("messages", "content")]
+            [("messages", "content", "body")]
+        );
+        assert_eq!(
+            sealed_reads("SELECT bio, bio_sealed FROM users"),
+            [("users", "bio", "bio_sealed")]
         );
         assert!(sealed_reads("SELECT contents FROM messages_fts").is_empty());
     }

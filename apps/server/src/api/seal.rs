@@ -15,9 +15,9 @@ use super::access::resolve_dm;
 use super::admin::require_site_admin;
 use super::system_messages::{post_storage, post_storage_dm};
 use super::{ApiError, Authed, OkResp, ok};
-use crate::crypt::Purpose;
 use crate::crypt::body::{Opened, Parts, Scope, Writer, open_body};
 use crate::crypt::ring::Readiness;
+use crate::crypt::{Purpose, copies};
 use crate::db::{Db, is_sqlite, now, pool_key};
 use crate::hub::CopyNote;
 use crate::state::AppState;
@@ -226,6 +226,92 @@ pub(crate) async fn place(
         Scope::Channel(id) => Ok(channel_place(conn, sqlite, id).await?.1),
         Scope::Dm(id) => dm_place(conn, sqlite, id).await,
     }
+}
+
+/// Where a copy of content comes from: the place whose state it is stored in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Source<'a> {
+    Server(&'a str),
+    Dm(i64),
+    /// No server or DM: only the site's requirement seals it.
+    Site,
+}
+
+async fn site_floors(conn: &mut AnyConnection) -> sqlx::Result<Floors> {
+    let site = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT {SITE_SQL}")))
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(Floors {
+        switch: 0,
+        forced: 0,
+        site,
+    })
+}
+
+/// What seals a copy from `source` when it is written, held against a switch until the
+/// caller's transaction ends. A server or DM that is gone leaves the site's requirement.
+pub(crate) async fn copy_place(
+    conn: &mut AnyConnection,
+    sqlite: bool,
+    source: Source<'_>,
+) -> sqlx::Result<Floors> {
+    let (sql, lock) = match source {
+        Source::Site => return site_floors(conn).await,
+        Source::Server(_) => (
+            "SELECT s.seal, s.seal_forced, {SITE_SQL} FROM servers s WHERE s.name = $1",
+            " FOR KEY SHARE OF s",
+        ),
+        Source::Dm(_) => (
+            "SELECT d.seal, CAST(0 AS BIGINT), {SITE_SQL} FROM dms d WHERE d.id = $1",
+            " FOR SHARE OF d",
+        ),
+    };
+    let lock = match sqlite {
+        true => "",
+        false => lock,
+    };
+    let sql = format!("{}{lock}", sql.replace("{SITE_SQL}", SITE_SQL));
+    let query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    let query = match source {
+        Source::Server(name) => query.bind(name),
+        Source::Dm(id) => query.bind(id),
+        Source::Site => query,
+    };
+    match query.fetch_optional(&mut *conn).await? {
+        Some(r) => Ok(Floors {
+            switch: r.try_get(0)?,
+            forced: r.try_get(1)?,
+            site: r.try_get(2)?,
+        }),
+        None => site_floors(conn).await,
+    }
+}
+
+/// The sealer of a copy in the state `floors`: `None` while nothing seals it. A sealed place
+/// without a key refuses the write.
+pub(crate) async fn copy_sealer(
+    db: &Db,
+    conn: &mut AnyConnection,
+    floors: Floors,
+) -> Result<Option<copies::Sealer>, ApiError> {
+    if floors.floor().is_none() {
+        return Ok(None);
+    }
+    match copies::Sealer::of(&crate::db::ring(db), conn).await {
+        Ok(Some(sealer)) => Ok(Some(sealer)),
+        Ok(None) => Err(ApiError::keys(NEEDS_KEY)),
+        Err(e) => Err(ApiError::internal(e)),
+    }
+}
+
+/// `copy_place` and `copy_sealer` in one step.
+pub(crate) async fn copy_sealer_of(
+    db: &Db,
+    conn: &mut AnyConnection,
+    source: Source<'_>,
+) -> Result<Option<copies::Sealer>, ApiError> {
+    let floors = copy_place(conn, is_sqlite(db), source).await?;
+    copy_sealer(db, conn, floors).await
 }
 
 /// The writer of a place in the state `floors`: `None` while nothing seals it. A sealed place

@@ -9185,3 +9185,67 @@ async fn keyed_search_upgrade_preserves_v62_rows() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn sealed_copies_upgrade_preserves_v63_rows() {
+    on_each_database("sealed_copies_upgrade", |url| async move {
+        let db = super::open(Some(&url)).await.unwrap();
+        let mut steps: Vec<String> = [
+            ("reports", "sealed"),
+            ("report_events", "detail_sealed"),
+            ("webhook_deliveries", "payload_sealed"),
+            ("users", "bio_sealed"),
+            ("p2p_backups", "data_sealed"),
+        ]
+        .iter()
+        .map(|(table, column)| format!("ALTER TABLE {table} DROP COLUMN {column}"))
+        .collect();
+        steps.extend([
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, bio, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 'kept bio', 1)",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 1)",
+            "INSERT INTO reports(kind, server, server_name, target_kind, target_key, form, form_label, reason, note, answers, snapshot, created_at, updated_at) VALUES('server', 'den', 'Den', 'user', 'u:alice', 'user', 'Report a user', 'spam', 'kept note', '[{\"id\":\"details\"}]', '{\"channel\":\"kept\"}', 1, 1)",
+            "INSERT INTO report_events(report_id, actor, kind, detail, created_at) SELECT id, 'alice', 'note', '{\"text\":\"kept line\"}', 2 FROM reports",
+            "INSERT INTO outgoing_webhooks(server, name, url, events, secret, creator, created_at) VALUES('den', 'Out', 'https://93.184.216.34/a', 'ping', '', 'alice', 1)",
+            "INSERT INTO webhook_deliveries(hook_id, event, payload, next_at, created_at) SELECT id, 'ping', '{\"kept\":1}', 1, 1 FROM outgoing_webhooks",
+            "UPDATE settings SET value='63' WHERE key='schema_version'",
+        ]
+        .map(str::to_owned));
+        for sql in steps {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&db)
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        sqlx::query("INSERT INTO p2p_backups(username, ik, version, size, updated_at, data) VALUES('alice', 'k', 1, 4, 1, $1)")
+            .bind(&b"blob"[..])
+            .execute(&db)
+            .await
+            .unwrap();
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open_started(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            for sql in [
+                "SELECT COUNT(*) FROM users WHERE username = 'alice' AND bio = 'kept bio' AND bio_sealed IS NULL",
+                "SELECT COUNT(*) FROM reports WHERE note = 'kept note' AND answers = '[{\"id\":\"details\"}]' AND snapshot = '{\"channel\":\"kept\"}' AND sealed IS NULL",
+                "SELECT COUNT(*) FROM report_events WHERE detail = '{\"text\":\"kept line\"}' AND detail_sealed IS NULL",
+                "SELECT COUNT(*) FROM webhook_deliveries WHERE payload = '{\"kept\":1}' AND payload_sealed IS NULL AND status = 'pending'",
+                "SELECT COUNT(*) FROM p2p_backups WHERE size = 4 AND data_sealed IS NULL",
+            ] {
+                assert_eq!(count(&db, sql).await, 1, "{sql}");
+            }
+            let data: Vec<u8> = sqlx::query_scalar("SELECT data FROM p2p_backups")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+            assert_eq!(data, b"blob");
+            let alice = super::get_user(&db, "alice").await.unwrap().unwrap();
+            assert_eq!(
+                crate::crypt::copies::bio_of(&db, &alice).await.unwrap().as_deref(),
+                Some("kept bio")
+            );
+            close(&db).await;
+        }
+    })
+    .await;
+}

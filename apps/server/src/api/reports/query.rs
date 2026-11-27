@@ -7,6 +7,7 @@ use sqlx::any::AnyRow;
 use super::export::ExportRow;
 use super::forms::{FieldKind, StoredAnswer};
 use super::snapshot::Snapshot;
+use super::text::{Text, detail_of};
 use super::{
     GroupBy, ModAction, ReportDetail, ReportEvent, ReportGroup, ReportKind, ReportQuery, ReportRow,
     Status, invalid,
@@ -16,6 +17,7 @@ use crate::api::{
     ApiError, LIST_PAGE, OFFSET_MAX, Paged, UserRef, cursor_int, decode_cursor, encode_cursor,
     user_from, user_refs,
 };
+use crate::crypt::copies::Opener;
 use crate::db::{Db, User};
 
 /// The longest excerpt of a report in a list, in characters.
@@ -250,7 +252,9 @@ fn grouping_ok(scope: &ReportScope, by: GroupBy) -> Result<(), ApiError> {
     }
 }
 
-const COLUMNS: &str = "r.id, r.kind, r.status, r.action, r.reason, r.reason_label, r.form, r.form_label, r.target_kind, r.target_key, r.target_user, r.server, r.server_name, r.channel_id, c.name, r.role_name, r.reporter, r.assignee, r.snapshot, r.answers, r.escalated_to, r.created_at, r.updated_at, r.note";
+const COLUMNS: &str = "r.id, r.kind, r.status, r.action, r.reason, r.reason_label, r.form, r.form_label, r.target_kind, r.target_key, r.target_user, r.server, r.server_name, r.channel_id, c.name, r.role_name, r.reporter, r.assignee, r.snapshot, r.answers, r.escalated_to, r.created_at, r.updated_at, r.note, r.sealed";
+/// Where `COLUMNS` has `r.sealed`.
+const SEALED: usize = 24;
 const FROM: &str = "FROM reports r LEFT JOIN channels c ON c.id = r.channel_id";
 
 /// A report as its row holds it.
@@ -281,19 +285,30 @@ fn excerpt(target_kind: &str, snapshot: &Snapshot, answers: &[StoredAnswer]) -> 
     text.unwrap_or_default().chars().take(EXCERPT_MAX).collect()
 }
 
-fn raw(r: &AnyRow) -> Result<Raw, ApiError> {
+fn raw(r: &AnyRow, opener: &Opener) -> Result<Raw, ApiError> {
     let wrong =
         |what: &str, value: &str| ApiError::internal(format!("a report has the {what} {value}"));
+    let id: i64 = r.try_get(0)?;
     let kind: String = r.try_get(1)?;
     let status: String = r.try_get(2)?;
     let action: Option<String> = r.try_get(3)?;
     let target_kind: String = r.try_get(8)?;
-    let snapshot: Snapshot = serde_json::from_str(&r.try_get::<String, _>(18)?).unwrap_or_default();
-    let answers: Vec<StoredAnswer> =
-        serde_json::from_str(&r.try_get::<String, _>(19)?).unwrap_or_default();
+    let plain = Text {
+        snapshot: r.try_get(18)?,
+        answers: r.try_get(19)?,
+        note: r.try_get(23)?,
+    };
+    let record: Option<Vec<u8>> = r.try_get(SEALED)?;
+    let Text {
+        snapshot,
+        answers,
+        note,
+    } = Text::of(opener, id, record.as_deref(), plain);
+    let snapshot: Snapshot = serde_json::from_str(&snapshot).unwrap_or_default();
+    let answers: Vec<StoredAnswer> = serde_json::from_str(&answers).unwrap_or_default();
     Ok(Raw {
         row: ReportRow {
-            id: r.try_get(0)?,
+            id,
             kind: ReportKind::parse(&kind).ok_or_else(|| wrong("kind", &kind))?,
             status: Status::parse(&status).ok_or_else(|| wrong("status", &status))?,
             action: match action {
@@ -327,7 +342,7 @@ fn raw(r: &AnyRow) -> Result<Raw, ApiError> {
         target_user: r.try_get(10)?,
         reporter: r.try_get(16)?,
         assignee: r.try_get(17)?,
-        note: r.try_get(23)?,
+        note,
         snapshot,
         answers,
     })
@@ -366,7 +381,11 @@ async fn rows(db: &Db, clause: Clause, order: &str, limit: i64) -> Result<Vec<Ra
         clause.sql
     );
     let found = clause.fetch(db, sql).await?;
-    let raws = found.iter().map(raw).collect::<Result<Vec<_>, _>>()?;
+    let opener = Opener::of_rows(db, &found, SEALED).await?;
+    let raws = found
+        .iter()
+        .map(|r| raw(r, &opener))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(named(db, raws).await)
 }
 
@@ -638,7 +657,7 @@ pub(crate) async fn reporter_known(
 /// A page of the history of report `id`: the lines before the line `before` (without one, the
 /// newest), oldest first, and the cursor for the lines before them.
 async fn events(db: &Db, id: i64, before: Option<i64>) -> Result<Paged<ReportEvent>, ApiError> {
-    let mut found = sqlx::query("SELECT id, kind, actor, detail, created_at FROM report_events WHERE report_id = $1 AND id < $2 ORDER BY id DESC LIMIT $3")
+    let mut found = sqlx::query("SELECT id, kind, actor, detail, created_at, detail_sealed FROM report_events WHERE report_id = $1 AND id < $2 ORDER BY id DESC LIMIT $3")
         .bind(id)
         .bind(before.unwrap_or(i64::MAX))
         .bind(LIST_PAGE + 1)
@@ -656,9 +675,16 @@ async fn events(db: &Db, id: i64, before: Option<i64>) -> Result<Paged<ReportEve
         actors.extend(r.try_get::<Option<String>, _>(2)?);
     }
     let refs = user_refs(db, &actors).await;
+    let opener = Opener::of_rows(db, &found, 5).await?;
     let mut events = Vec::with_capacity(found.len());
     for r in &found {
         let kind: String = r.try_get(1)?;
+        let detail = detail_of(
+            &opener,
+            r.try_get(0)?,
+            r.try_get::<Option<Vec<u8>>, _>(5)?.as_deref(),
+            r.try_get(3)?,
+        );
         let actor: Option<String> = r.try_get(2)?;
         events.push(ReportEvent {
             actor: match kind.as_str() {
@@ -666,7 +692,7 @@ async fn events(db: &Db, id: i64, before: Option<i64>) -> Result<Paged<ReportEve
                 _ => actor.as_deref().map(|a| user_from(&refs, a)),
             },
             kind,
-            detail: serde_json::from_str(&r.try_get::<String, _>(3)?)
+            detail: serde_json::from_str(&detail)
                 .unwrap_or_else(|_| Value::Object(serde_json::Map::new())),
             created_at: r.try_get(4)?,
         });

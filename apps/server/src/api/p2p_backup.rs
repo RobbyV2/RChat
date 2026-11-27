@@ -13,7 +13,9 @@ use crate::api::access::not_found;
 use crate::api::media::{Held, declared_length, read_raw, reading_slot, reserve, send_held};
 use crate::api::rare::{self, Rare};
 use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, Session, check_at};
+use crate::api::seal::Source;
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, Settings, bad, ok};
+use crate::crypt::copies::{BACKUPS, Opener, backup_binding};
 use crate::db::{Db, PURGE_BATCH, PURGING_HASH, User, now};
 use crate::state::AppState;
 
@@ -27,6 +29,8 @@ pub const BACKUP_IDENTITIES: usize = 8;
 const DAY_SECS: i64 = 86400;
 const VERSION_HEADER: &str = "x-backup-version";
 const BAD_IK: &str = "ik must be a base64url Ed25519 public key";
+/// A stored version whose record does not open with the keys this site holds.
+pub(crate) const UNREADABLE: &str = "This backup can't be opened";
 
 /// The latest version of one P2P identity's backup.
 #[derive(Debug, PartialEq, Serialize, ToSchema)]
@@ -270,7 +274,7 @@ async fn send(
 ) -> Result<Response, ApiError> {
     let held = room_to_send(state, username, size, max).await?;
     let row = sqlx::query(
-        "SELECT data FROM p2p_backups WHERE username = $1 AND ik = $2 AND version = $3",
+        "SELECT data, data_sealed FROM p2p_backups WHERE username = $1 AND ik = $2 AND version = $3",
     )
     .bind(username)
     .bind(ik)
@@ -278,7 +282,22 @@ async fn send(
     .fetch_optional(&state.read())
     .await?
     .ok_or_else(not_found)?;
-    Ok(blob(version, row.try_get(0)?, held))
+    let data = match row.try_get::<Option<Vec<u8>>, _>(1)? {
+        Some(record) => {
+            let binding = backup_binding(username, ik, version);
+            let opener = Opener::of(&state.db, [record.as_slice()]).await?;
+            let mut plain = opener.open(BACKUPS, &binding, &record).ok_or_else(|| {
+                ApiError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    UNREADABLE.to_string(),
+                    None,
+                )
+            })?;
+            std::mem::take(&mut *plain)
+        }
+        None => row.try_get(0)?,
+    };
+    Ok(blob(version, data, held))
 }
 
 /// On Postgres, holds the account's backups until the transaction ends, so uploads and deletes
@@ -480,7 +499,7 @@ pub(crate) async fn list_backups(
 /// short of its `Content-Length`. Works while the `p2p_backup` or `p2p` switch of
 /// `GET /api/v1/settings` is off. Requires a bearer token; guests can't call it. General
 /// rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/me/p2p_backup/{ik}", tag = "Account", params(("ik" = String, Path, description = "The P2P identity key: an Ed25519 public key, base64url without padding (43 characters)")), responses((status = 200, description = "The latest version's bytes", content_type = "application/octet-stream", body = Vec<u8>, headers(("x-backup-version" = i64, description = "The number of the version returned"))), (status = 400, description = "`ik must be a base64url Ed25519 public key`", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: your account holds no backup for this `ik`, or the instance keeps no P2P backups", body = ApiErrorBody), (status = 429, description = "Your backup downloads and uploads already hold 3 places or your share of the upload buffer (JSON `Too many backup transfers at once, try again in a moment`), or too many requests in the general bucket", body = ApiErrorBody), (status = 503, description = "`Too many transfers right now, try again in a moment`: the upload buffer is full, or the token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/me/p2p_backup/{ik}", tag = "Account", params(("ik" = String, Path, description = "The P2P identity key: an Ed25519 public key, base64url without padding (43 characters)")), responses((status = 200, description = "The latest version's bytes", content_type = "application/octet-stream", body = Vec<u8>, headers(("x-backup-version" = i64, description = "The number of the version returned"))), (status = 400, description = "`ik must be a base64url Ed25519 public key`", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: your account holds no backup for this `ik`, or the instance keeps no P2P backups", body = ApiErrorBody), (status = 429, description = "Your backup downloads and uploads already hold 3 places or your share of the upload buffer (JSON `Too many backup transfers at once, try again in a moment`), or too many requests in the general bucket", body = ApiErrorBody), (status = 500, description = "`This backup can't be opened`: the version is stored encrypted and its record does not open with the keys this site holds", body = ApiErrorBody), (status = 503, description = "`Too many transfers right now, try again in a moment`: the upload buffer is full, or the token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn get_backup(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -545,7 +564,7 @@ pub(crate) async fn list_versions_at(
 /// takes nothing for 30 seconds or runs over 10 minutes is cut off short of its
 /// `Content-Length`. Works while the `p2p_backup` or `p2p` switch of `GET /api/v1/settings` is
 /// off. Requires a bearer token; guests can't call it. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/me/p2p_backup/{ik}/versions/{version}", tag = "Account", params(("ik" = String, Path, description = "The P2P identity key: an Ed25519 public key, base64url without padding (43 characters)"), ("version" = i64, Path, description = "The version's number")), responses((status = 200, description = "The version's bytes", content_type = "application/octet-stream", body = Vec<u8>, headers(("x-backup-version" = i64, description = "The number of the version returned"))), (status = 400, description = "`ik must be a base64url Ed25519 public key`. A version that is not a number gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the version aged out, was deleted or was never stored, or the instance keeps no P2P backups", body = ApiErrorBody), (status = 429, description = "Your backup downloads and uploads already hold 3 places or your share of the upload buffer (JSON `Too many backup transfers at once, try again in a moment`), or too many requests in the general bucket", body = ApiErrorBody), (status = 503, description = "`Too many transfers right now, try again in a moment`: the upload buffer is full, or the token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/me/p2p_backup/{ik}/versions/{version}", tag = "Account", params(("ik" = String, Path, description = "The P2P identity key: an Ed25519 public key, base64url without padding (43 characters)"), ("version" = i64, Path, description = "The version's number")), responses((status = 200, description = "The version's bytes", content_type = "application/octet-stream", body = Vec<u8>, headers(("x-backup-version" = i64, description = "The number of the version returned"))), (status = 400, description = "`ik must be a base64url Ed25519 public key`. A version that is not a number gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the version aged out, was deleted or was never stored, or the instance keeps no P2P backups", body = ApiErrorBody), (status = 429, description = "Your backup downloads and uploads already hold 3 places or your share of the upload buffer (JSON `Too many backup transfers at once, try again in a moment`), or too many requests in the general bucket", body = ApiErrorBody), (status = 500, description = "`This backup can't be opened`: the version is stored encrypted and its record does not open with the keys this site holds", body = ApiErrorBody), (status = 503, description = "`Too many transfers right now, try again in a moment`: the upload buffer is full, or the token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn get_version(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -663,13 +682,20 @@ pub(crate) async fn put_at(
         .bind(version)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO p2p_backups(username, ik, version, size, updated_at, data) VALUES($1, $2, $3, $4, $5, $6)")
+    let sealer = crate::api::seal::copy_sealer_of(&state.db, &mut tx, Source::Site).await?;
+    let record = sealer
+        .map(|sealer| sealer.seal(BACKUPS, &backup_binding(username, ik, version), &data.data));
+    sqlx::query("INSERT INTO p2p_backups(username, ik, version, size, updated_at, data, data_sealed) VALUES($1, $2, $3, $4, $5, $6, $7)")
         .bind(username)
         .bind(ik)
         .bind(version)
         .bind(new.size)
         .bind(t)
-        .bind(&data.data)
+        .bind(match record {
+            Some(_) => &[][..],
+            None => data.data.as_slice(),
+        })
+        .bind(record.as_deref())
         .execute(&mut *tx)
         .await?;
     for (each, versions) in &stored {

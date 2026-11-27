@@ -577,7 +577,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         avatar_kind: user.avatar_kind,
         avatar_color: user.avatar_color.clone(),
         banner_color: user.banner_color.clone(),
-        bio: user.bio.clone(),
+        bio: crate::crypt::copies::bio_of(db, user).await?,
         is_site_admin: user.is_site_admin,
         appear_offline: user.appear_offline,
         password_kind: user.password_kind.clone(),
@@ -1503,8 +1503,19 @@ pub(crate) async fn patch_me(
         update_display_name(&mut tx, &user.username, name).await?;
     }
     if let Some(text) = &bio {
-        sqlx::query("UPDATE users SET bio = $1 WHERE username = $2")
-            .bind(text)
+        let sealer = match text {
+            Some(_) => {
+                crate::api::seal::copy_sealer_of(&state.db, &mut tx, crate::api::seal::Source::Site)
+                    .await?
+            }
+            None => None,
+        };
+        let record = sealer.as_ref().zip(text.as_ref()).map(|(sealer, text)| {
+            sealer.seal(crate::crypt::copies::BIOS, &user.username, text.as_bytes())
+        });
+        sqlx::query("UPDATE users SET bio = $1, bio_sealed = $2 WHERE username = $3")
+            .bind(record.is_none().then_some(text.as_deref()).flatten())
+            .bind(record)
             .bind(&user.username)
             .execute(&mut *tx)
             .await?;
@@ -1526,7 +1537,11 @@ pub(crate) async fn patch_me(
     let renamed = display_name
         .as_ref()
         .is_some_and(|n| *n != user.display_name);
-    if avatar.is_some() || renamed || bio.as_ref().is_some_and(|b| *b != user.bio) {
+    let had = match &bio {
+        Some(_) => crate::crypt::copies::bio_of(&state.db, &user).await?,
+        None => None,
+    };
+    if avatar.is_some() || renamed || bio.as_ref().is_some_and(|b| *b != had) {
         state.hub.broadcast(WsEvent::UserUpdated {
             user: user_ref.clone(),
             scope: crate::api::access::user_scope(&state.read(), &stored.username).await,
@@ -1544,8 +1559,8 @@ pub(crate) async fn patch_me(
     }
     Ok(Json(MeUpdated {
         user: user_ref,
+        bio: crate::crypt::copies::bio_of(&state.db, &stored).await?,
         banner_color: stored.banner_color,
-        bio: stored.bio,
         appear_offline: stored.appear_offline,
     }))
 }
