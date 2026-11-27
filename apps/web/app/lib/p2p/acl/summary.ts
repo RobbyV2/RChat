@@ -210,14 +210,19 @@ export const emptySummary = (): Summary => ({
 // Ranks hold the infinities of owners and non-members; what is stored (and exported as JSON)
 // writes them as +-2^53, which no position (a safe integer) can be.
 export const BIG = 2 ** 53
+const mapNumbers = <T>(x: T, to: (n: number) => number | null): T => {
+  if (typeof x === 'number') return to(x) as T
+  if (Array.isArray(x)) return x.map(item => mapNumbers(item, to)) as T
+  if (typeof x !== 'object' || x === null) return x
+  const out: Record<string, unknown> = {}
+  for (const [key, field] of Object.entries(x))
+    if (field !== undefined) out[key] = mapNumbers(field, to)
+  return out as T
+}
 export const toStored = <T>(x: T): T =>
-  JSON.parse(
-    JSON.stringify(x, (_k, v: unknown) => (v === Infinity ? BIG : v === -Infinity ? -BIG : v))
-  ) as T
+  mapNumbers(x, n => (n === Infinity ? BIG : n === -Infinity ? -BIG : Number.isNaN(n) ? null : n))
 export const fromStored = <T>(x: T): T =>
-  JSON.parse(JSON.stringify(x), (_k, v: unknown) =>
-    v === BIG ? Infinity : v === -BIG ? -Infinity : v
-  ) as T
+  mapNumbers(x, n => (n === BIG ? Infinity : n === -BIG ? -Infinity : n))
 
 // Whether two summaries hold the same state, whatever the order of their keys and of the lists
 // that are sets (a member's roles and devices; a cache and a fresh replica list them apart).

@@ -89,6 +89,7 @@ import {
   TIMED_OUT_SHARE,
 } from '../lib/timeouts'
 import { useChannelPerms } from '../lib/client/use_channel_perms'
+import { useStable } from '../lib/stable_key'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const seenShares = new WeakMap<object, ReadonlySet<string>>()
@@ -1261,7 +1262,7 @@ export function VoiceGrid({
   useEffect(() => {
     if (focus === null && focusRaw !== null) setFocus(null)
   }, [focus, focusRaw])
-  const shares = JSON.stringify(
+  const shares = useStable(
     tiles.flatMap((t): LiveShare[] =>
       t.screen && t.shareId !== null
         ? [{ key: t.key, id: t.shareId, own: t.user.username === self }]
@@ -1269,7 +1270,7 @@ export function VoiceGrid({
     )
   )
   useEffect(() => {
-    const next = autoFocus(seenShares.get(store) ?? new Set(), JSON.parse(shares) as LiveShare[])
+    const next = autoFocus(seenShares.get(store) ?? new Set(), shares)
     seenShares.set(store, next.seen)
     if (next.focus !== null) setFocus(next.focus)
   }, [store, shares])

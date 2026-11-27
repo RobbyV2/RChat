@@ -44,6 +44,7 @@ import { NameWithUsername } from './display_name'
 import { Grid, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
 import { usePermissionRules } from './use_permission_rules'
+import { useStable } from '../lib/stable_key'
 
 const TEXT_DEBOUNCE = 300
 const SUGGESTIONS = 5
@@ -98,7 +99,7 @@ function AuditLog({ server }: { server: string }) {
   const [to, setTo] = useState('')
   const target = useDebounced(targetText, TEXT_DEBOUNCE)
   const filters: AuditFilters = { ...NO_FILTERS, group, actor, target, from, to }
-  const key = JSON.stringify(auditQuery(filters))
+  const query = useStable(auditQuery(filters))
   const [log, setLog] = useState<LogState>(EMPTY)
   const epoch = useRef(0)
   useLooksFor(server, peopleIn(log.list))
@@ -108,7 +109,7 @@ function AuditLog({ server }: { server: string }) {
       const showError = inSession(setError)
       setLog(s => ({ ...s, loading: true }))
       try {
-        const page = await api.listAudit(server, cursor, JSON.parse(key))
+        const page = await api.listAudit(server, cursor, query)
         if (epoch.current !== mine) return
         setLog(s => {
           const base = cursor === null ? [] : s.list
@@ -126,7 +127,7 @@ function AuditLog({ server }: { server: string }) {
         showError(errorText(e))
       }
     },
-    [server, key, setError]
+    [server, query, setError]
   )
 
   useEffect(() => {
@@ -140,7 +141,7 @@ function AuditLog({ server }: { server: string }) {
     void fetchFrom(log.next, epoch.current)
   }, [log, fetchFrom])
 
-  const filtered = key !== '{}'
+  const filtered = Object.keys(query).length > 0
   const back = () => openDialog({ kind: 'server_settings', server, section: 'audit' })
 
   return (

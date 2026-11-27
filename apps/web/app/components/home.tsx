@@ -95,6 +95,7 @@ import { homeActors, type HomeActor } from '../lib/client/home_actors'
 import type { AccountSession } from '../lib/client/session'
 import { useAddingAllowed } from './add_instance'
 import { AccountTag, ActorAvatar } from './account_tag'
+import { holder } from '../lib/stable_key'
 
 function showOwner(account: AccountSession, peer?: P2pApp | null) {
   if (client.shown() !== account) client.show(account)
@@ -693,8 +694,9 @@ const p2pPlaceKeys = (st: Pick<P2pState, 'rooms' | 'servers' | 'contacts'>, loca
 function JumpBackIn({ recents, action }: { recents: Recent[]; action?: ReactNode }) {
   const account = useAccount()
   const source = useMemo(() => {
+    const hold = holder<string[]>()
     const snapshot = () =>
-      JSON.stringify(
+      hold(
         account.identities
           .list()
           .flatMap(app => Array.from(p2pPlaceKeys(app.useP2p.getState(), app.localId)))
@@ -734,7 +736,7 @@ function JumpBackIn({ recents, action }: { recents: Recent[]; action?: ReactNode
       ),
       p2p: new Set<string>([
         ...p2pPlaceKeys({ rooms: p2pRooms, servers: p2pServers, contacts }, viewed?.localId),
-        ...JSON.parse(peerPlaces),
+        ...peerPlaces,
       ]),
     }
     return recents.filter(r => recentShown(r, at)).slice(0, RECENTS_SHOWN)

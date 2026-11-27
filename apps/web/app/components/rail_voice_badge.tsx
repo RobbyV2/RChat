@@ -16,6 +16,8 @@ import {
   voiceListsWanted,
   voiceSum,
 } from '../lib/voice_rail'
+import { stableKey, useStableSelector } from '../lib/stable_key'
+import type { RChatState } from '../lib/store_types'
 
 // The top-left badge of a server or folder tile while people are in its voice channels.
 export function RailVoiceBadge({ count }: { count: number }) {
@@ -72,16 +74,17 @@ export function useP2pVoice(rooms: readonly string[]) {
 // once, and their badges show when it arrives.
 export function useVoiceLists() {
   const discover = useStore(s => s.discoverChannels)
-  const wanted = useStore(s => {
-    const names = voiceListsWanted(s)
-    return names.length ? JSON.stringify([s.channelLabelEpoch, names]) : ''
-  })
+  const wanted = useStore(
+    useStableSelector((s: RChatState) => ({
+      epoch: s.channelLabelEpoch,
+      names: voiceListsWanted(s),
+    }))
+  )
   const asked = useRef(new Set<string>())
   useEffect(() => {
-    if (!wanted) return
-    const [epoch, names] = JSON.parse(wanted) as [number, string[]]
+    const { epoch, names } = wanted
     for (const name of names) {
-      const key = JSON.stringify([epoch, name])
+      const key = stableKey([epoch, name])
       if (asked.current.has(key)) continue
       asked.current.add(key)
       discover(name).catch(() => {})

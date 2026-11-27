@@ -55,6 +55,8 @@ import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { useInstanceLabel } from './instance_badge'
 import { ServerGlyph } from './server_rail'
+import { useStableSelector } from '../lib/stable_key'
+import type { P2pState } from '../lib/p2p/app/store'
 
 const DELETED_USER = 'Deleted user'
 
@@ -509,19 +511,14 @@ const useP2pOrigin = (place: FwdPlace | undefined) => {
       live = false
     }
   }, [app, ev])
-  const key = useP2p(s => {
-    if (!place) return ''
-    const at = app && ev ? app.eventPlace(ev) : null
-    const pill = p2pPill(place, at, s.servers)
-    const author = app && at && vouches(place, at) ? app.heldAuthor(at) : null
-    return JSON.stringify({ pill, author })
-  })
-  const origin = useMemo(
-    () =>
-      key
-        ? (JSON.parse(key) as { pill: ForwardPill; author: UserRef | null })
-        : { pill: NO_PILL, author: null },
-    [key]
+  const origin = useP2p(
+    useStableSelector((s: P2pState): { pill: ForwardPill; author: UserRef | null } => {
+      if (!place) return { pill: NO_PILL, author: null }
+      const at = app && ev ? app.eventPlace(ev) : null
+      const pill = p2pPill(place, at, s.servers)
+      const author = app && at && vouches(place, at) ? app.heldAuthor(at) : null
+      return { pill, author }
+    })
   )
   // A vouched copy's files show as its original holds them.
   const at = origin.author && app && ev ? app.eventPlace(ev) : null

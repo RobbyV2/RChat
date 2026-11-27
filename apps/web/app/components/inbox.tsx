@@ -52,6 +52,7 @@ import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
 import { INSTANCE_INBOX } from '../lib/inbox_source'
 import { longPress, useMedia } from './context_menu'
+import { useStable } from '../lib/stable_key'
 
 const freshSources = (adapters: InboxAdapter[]): Record<string, SourceState> =>
   Object.fromEntries(adapters.map(a => [a.id, freshSource()]))
@@ -297,12 +298,12 @@ function useEntryLooks(entries: readonly InboxEntry[]) {
       if (server === null || isWebhookAuthor(e.actor.username)) continue
       by.set(server, (by.get(server) ?? new Set()).add(e.actor.username))
     }
-    return JSON.stringify([...by].map(([server, names]) => [server, [...names].sort()]))
+    return [...by].map(([server, names]): [string, string[]] => [server, [...names].sort()])
   }, [entries])
+  const wanted = useStable(key)
   useEffect(() => {
-    for (const [server, names] of JSON.parse(key) as [string, string[]][])
-      void ensureMembers(server, names)
-  }, [key, ensureMembers])
+    for (const [server, names] of wanted) void ensureMembers(server, names)
+  }, [wanted, ensureMembers])
 }
 
 function Row({

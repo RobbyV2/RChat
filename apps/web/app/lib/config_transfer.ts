@@ -22,7 +22,7 @@ import {
   type RailEntry,
   type SelfPin,
 } from './nav_layout'
-import { notifyValue, parseNotify, type NotifyPrefs } from './notify'
+import { parseNotify, type NotifyPrefs } from './notify'
 import { isMotionChoice, motionLabel, type AnimPrefs } from './motion/setting'
 import {
   MAX_USED,
@@ -43,6 +43,7 @@ import {
 import type { StorageLike } from './instances'
 import { isShowSpoilers, type ShowSpoilers } from './spoilers'
 import { cleanP2pSection, type P2pSection } from './p2p/section'
+import { plainCopy } from './stable_key'
 
 const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
@@ -213,7 +214,7 @@ const pickLayout = (l: NonNullable<ConfigSource['layout']>): ConfigLayout => ({
   ...(l.p2p?.length ? { p2p: l.p2p.map(copyEntry) } : {}),
 })
 
-const pickNotify = (p: NotifyPrefs): NotifyPrefs => JSON.parse(notifyValue(p)) as NotifyPrefs
+const pickNotify = (p: NotifyPrefs): NotifyPrefs => plainCopy(p)
 
 const pickEmoji = (p: EmojiPrefs): EmojiPrefs => ({
   v: 1,
