@@ -1,3 +1,4 @@
+import { readyIdentities, runDeletion } from '../account_deletion'
 import {
   clearConfirmationHint,
   confirmationLoginGuard,
@@ -412,8 +413,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     p2pGate.account(signedIn ? username : null)
   }
 
+  // While the account's deletion runs, the session it revoked ends here, also when another tab
+  // signs the account out, only once the P2P identities are done.
+  let deleting = false
+
   const expireSession = () => {
-    if (get().authExpired) return
+    if (get().authExpired || deleting) return
     interruptProviderPopup(acct)
     set({ authExpired: true })
     get().logout()
@@ -1586,6 +1591,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'setAppearOffline'
     | 'refreshAccount'
     | 'expireSession'
+    | 'deleteAccount'
+    | 'keepAccount'
     | 'checkSession'
     | 'changePassword'
     | 'bootstrap'
@@ -1759,6 +1766,39 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }),
 
     expireSession,
+    deleteAccount: async (reauth, removeP2p) => {
+      if (deleting) return
+      const at = sessionMark()
+      deleting = true
+      const letGo = client.accounts.keep(acct)
+      try {
+        await runDeletion(
+          {
+            prepare: () => readyIdentities(acct),
+            request: body => api.deleteAccount(body),
+            signOut: () => {
+              deleting = false
+              if (at === sessionMark()) expireSession()
+            },
+          },
+          reauth,
+          removeP2p
+        )
+      } finally {
+        deleting = false
+        letGo()
+      }
+    },
+    keepAccount: () =>
+      act(async () => {
+        const at = sessionMark()
+        await api.keepAccount()
+        const me = get().me
+        if (at !== sessionMark() || !me) return
+        const { delete_at: _, ...kept } = me
+        set({ me: kept })
+        toast('Your account is kept')
+      }),
     checkSession: refetchMe,
     refreshAccount: async () => {
       if (!get().token || !get().me) return

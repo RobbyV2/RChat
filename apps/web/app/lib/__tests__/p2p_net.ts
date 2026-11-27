@@ -7,6 +7,7 @@ import {
   type Transport,
   type Visibility,
 } from '../p2p/node'
+import type { ChannelLike, LockLike } from '../p2p/leader'
 import type { Clock, Pipe } from '../p2p/session'
 
 // In-memory transport for P2P tests: a pair of pipes with optional delay, tampering and
@@ -211,4 +212,77 @@ export const makeNode = async (
     { name }
   )) as P2pNode
   return { node, store, db }
+}
+
+// Web Locks and BroadcastChannel stand-ins: one lock name, steal and abort supported.
+export class FakeLocks implements LockLike {
+  held: { done: boolean; reject: (e: Error) => void } | null = null
+  private waiting: {
+    cb: (l: unknown) => Promise<unknown>
+    resolve: (v: unknown) => void
+    reject: (e: Error) => void
+    done: boolean
+  }[] = []
+
+  request(
+    _name: string,
+    opts: { signal?: AbortSignal; ifAvailable?: boolean; steal?: boolean },
+    cb: (lock: unknown) => Promise<unknown>
+  ) {
+    return new Promise<unknown>((resolve, reject) => {
+      const e = { cb, resolve, reject, done: false }
+      if (opts.steal) {
+        const old = this.held
+        if (old) {
+          old.done = true
+          old.reject(new Error('AbortError'))
+        }
+        this.held = null
+        return this.grant(e)
+      }
+      if (!this.held && this.waiting.length === 0) return this.grant(e)
+      if (opts.ifAvailable) return void cb(null).then(resolve, reject)
+      this.waiting.push(e)
+      opts.signal?.addEventListener('abort', () => {
+        const i = this.waiting.indexOf(e)
+        if (i < 0) return
+        this.waiting.splice(i, 1)
+        reject(new Error('AbortError'))
+      })
+    })
+  }
+
+  private grant(e: (typeof this.waiting)[number]) {
+    this.held = e
+    const finish = (settle: () => void) => {
+      if (e.done) return
+      e.done = true
+      settle()
+      if (this.held !== e) return
+      this.held = null
+      const next = this.waiting.shift()
+      if (next) this.grant(next)
+    }
+    void Promise.resolve()
+      .then(() => e.cb({}))
+      .then(
+        v => finish(() => e.resolve(v)),
+        err => finish(() => e.reject(err))
+      )
+  }
+}
+
+export const bus = () => {
+  const chans = new Set<ChannelLike>()
+  return (): ChannelLike => {
+    const c: ChannelLike = {
+      onmessage: null,
+      postMessage: msg => {
+        for (const o of chans) if (o !== c) queueMicrotask(() => o.onmessage?.({ data: msg }))
+      },
+      close: () => void chans.delete(c),
+    }
+    chans.add(c)
+    return c
+  }
 }

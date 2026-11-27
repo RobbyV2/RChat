@@ -328,7 +328,10 @@ pub(crate) async fn report_view(db: &Db, admin: &str, server: &str) -> Result<()
 }
 
 /// How many P2P backups and synced identities the instance holds for `account`.
-async fn p2p_counts(conn: &mut sqlx::AnyConnection, account: &str) -> sqlx::Result<(i64, i64)> {
+pub(crate) async fn p2p_counts(
+    conn: &mut sqlx::AnyConnection,
+    account: &str,
+) -> sqlx::Result<(i64, i64)> {
     let row = sqlx::query(
         "SELECT (SELECT COUNT(*) FROM p2p_backups WHERE username = $1), (SELECT COUNT(*) FROM p2p_identities WHERE username = $1)",
     )
@@ -338,17 +341,18 @@ async fn p2p_counts(conn: &mut sqlx::AnyConnection, account: &str) -> sqlx::Resu
     Ok((row.try_get(0)?, row.try_get(1)?))
 }
 
-/// `admin` started the purge of the account `account` at `t`, which removes the P2P backups and
-/// synced identities the instance holds for it: written in the transaction that hides the
-/// account, so the entry and the purge commit together. Nothing is written when it holds none.
+/// `admin` started the purge of the account `account` at `t`, which removed the P2P backups and
+/// synced identities the instance held for it, counted by `HiddenUser::p2p_held`: written in
+/// the transaction that hides the account, so the entry and the removal commit together.
+/// Nothing is written when it held none.
 pub(crate) async fn p2p_purge_in(
     conn: &mut sqlx::AnyConnection,
     admin: &str,
     account: &str,
+    (backups, identities): (i64, i64),
     t: i64,
 ) -> Result<(), ApiError> {
     let reason = reason()?;
-    let (backups, identities) = p2p_counts(conn, account).await.map_err(not_recorded)?;
     if backups == 0 && identities == 0 {
         return Ok(());
     }

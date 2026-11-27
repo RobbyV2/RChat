@@ -5,6 +5,7 @@ import { SignInMethods, useSignInLinks } from './sso/sign_in_methods'
 import { useConfirmation } from './sso/use_confirmation'
 import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
 import { PhraseSettings } from './backup_phrase/phrase_settings'
+import { DeleteAccount } from './account_deletion'
 import type { LinkedProvider, ReAuthBody } from '../lib/types'
 import { Dialog } from './ui'
 import { ManageAccounts, SettingsAccountPicker } from './account_switcher'
@@ -675,6 +676,7 @@ function AccountMethods() {
       <PasswordSection links={list.links ?? []} />
       <SignInMethods list={list} />
       {phrase && <PhraseSettings links={list.links ?? []} />}
+      <DeleteAccount links={list.links ?? []} />
     </>
   )
 }

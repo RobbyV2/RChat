@@ -8632,3 +8632,50 @@ async fn ban_options_keep_existing_bans_without_an_end() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn waiting_purges_stay_immediate_when_own_deletions_are_added() {
+    on_each_database("own_deletion_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for sql in [
+            "INSERT INTO pending_purges(kind, key, created_at, claimed_at) VALUES('user', 'bob', 7, 3)",
+            "ALTER TABLE pending_purges DROP COLUMN self_requested",
+            "UPDATE settings SET value = '49' WHERE key = 'schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        assert_eq!(count(&db, STORED_SCHEMA).await, 49);
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM pending_purges WHERE kind = 'user' AND key = 'bob' AND created_at = 7 AND claimed_at = 3 AND self_requested = 0").await,
+                1,
+                "{round}: the old purge was not asked for by its account"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM pending_purges WHERE key = 'carol' AND self_requested = 1").await,
+                i64::from(round == 1),
+                "{round}: an own deletion survives a restart"
+            );
+            if round == 0 {
+                sqlx::query("INSERT INTO pending_purges(kind, key, created_at, self_requested) VALUES('user', 'carol', 8, 1)")
+                    .execute(&db)
+                    .await
+                    .expect("own deletion");
+                sqlx::query("INSERT INTO pending_purges(kind, key, created_at) VALUES('user', 'dave', 9)")
+                    .execute(&db)
+                    .await
+                    .expect("purge");
+                assert_eq!(
+                    count(&db, "SELECT self_requested FROM pending_purges WHERE key = 'dave'").await,
+                    0,
+                    "the default"
+                );
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}

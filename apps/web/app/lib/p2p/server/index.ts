@@ -1398,6 +1398,10 @@ export class Servers {
     return roles.leave(ctx(this), room)
   }
 
+  retire() {
+    return roles.retire(ctx(this))
+  }
+
   forget(room: string) {
     return roles.forget(ctx(this), room)
   }

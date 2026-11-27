@@ -84,6 +84,15 @@ export class P2pIdentities {
     this.changed()
   }
   private running: ReadonlySet<string> | null = null
+  private held = new Set<string>()
+
+  // Keeps an identity running as if it were admitted, until the returned release.
+  hold(localId: string) {
+    this.held.add(localId)
+    return () => {
+      if (this.held.delete(localId)) this.changed()
+    }
+  }
 
   // The manifest also lists identities which are currently parked or disabled.
   enabledIds(username: string) {
@@ -105,7 +114,7 @@ export class P2pIdentities {
       const enabled = parseOn(
         readLocal(peerStorage(this.account.conn, this.username, id).scoped(p2pKey(this.username)))
       )
-      const admitted = ids.has(id)
+      const admitted = ids.has(id) || this.held.has(id)
       if (
         !enabled ||
         ((before?.has(id) ?? true) === admitted && (admitted || !app.useP2p.getState().enabled))

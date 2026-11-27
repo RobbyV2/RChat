@@ -24,6 +24,17 @@ import { LOCAL, type Local } from '../limits'
 import type { P2pDialog } from './store'
 import type { IdentityScope, P2pParts } from './scope'
 
+// How long signed leaves get to reach the connected members before the identity stops.
+export const RETIRE_FLUSH_MS = 400
+// How long an identity that is being removed gets to come online in this tab, how much of that
+// the members of its servers get to connect, and how long leaves that fail are tried again.
+const RETIRE_START_MS = 15_000
+const RETIRE_REACH_MS = 5_000
+const RETIRE_RETRY_MS = 5_000
+const RETIRE_POLL_MS = 100
+
+const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 export function createAccountPart(
   parts: Pick<
     P2pParts,
@@ -628,6 +639,9 @@ export function createAccountPart(
     }
   }
 
+  // This tab runs the identity's node and it is online.
+  const onlineHere = () => !!state.servers && state.node?.status === 'online'
+
   const p2p = {
     // The limits P2P started with in this tab (the defaults before it starts).
     limits: () => state.limits,
@@ -680,6 +694,44 @@ export function createAccountPart(
       else if (error) useP2p.setState({ error })
       if (ok) owner.identities.dataRemoved(username, scope.localId)
       return ok
+    },
+
+    // Runs this identity in this tab, for steps that sign with it: a parked identity starts here
+    // and one that another tab runs moves here. Then the members of its servers get a moment to
+    // connect. False when it is not online here within `ms`.
+    async runHere(username: string, ms = RETIRE_START_MS): Promise<boolean> {
+      const until = Date.now() + ms
+      while (!onlineHere()) {
+        if (!scope.current(username) || !readOn(username) || Date.now() >= until) return false
+        const l = state.leader
+        if (!l) await p2pAccount(username)
+        else if (l.state === 'waiting') l.takeOver()
+        await pause(RETIRE_POLL_MS)
+      }
+      const sv = state.servers!
+      const reach = Math.min(until, Date.now() + RETIRE_REACH_MS)
+      const unreached = () =>
+        sv.serverRooms().some(r => sv.myMembership(r.id) === 'join' && !sv.online(r.id))
+      while (state.servers === sv && unreached() && Date.now() < reach) await pause(RETIRE_POLL_MS)
+      return onlineHere()
+    },
+
+    // Leaves every P2P server of this identity with a signed leave, then deletes the identity,
+    // its device key and everything else P2P from this browser. The identity has to be online
+    // in this tab (`runHere`). False when the data stayed: it is not, or a server was not left.
+    async retire(username = useP2p.getState().account): Promise<boolean> {
+      const sv = state.servers
+      if (!username || !scope.current(username) || !sv || !onlineHere()) return false
+      const until = Date.now() + RETIRE_RETRY_MS
+      let kept = await sv.retire().catch(() => null)
+      while (kept?.length !== 0 && state.servers === sv && Date.now() < until) {
+        await pause(RETIRE_POLL_MS)
+        kept = await sv.retire().catch(() => null)
+      }
+      if (kept?.length !== 0 || state.servers !== sv) return false
+      await pause(RETIRE_FLUSH_MS)
+      if (state.servers !== sv) return false
+      return p2p.removeData(username)
     },
 
     setPaused: (on: boolean) => withNode(n => n.setPaused(on)),

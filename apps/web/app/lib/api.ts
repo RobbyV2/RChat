@@ -565,6 +565,9 @@ export const endpoints = (c: ApiClient) => ({
     c.req<{ username: string; nonce: string }>('POST', '/auth/recovery/challenge', { username }),
   setRecovery: (key: string, reauth: ReAuthBody) =>
     c.req<{ set: boolean }>('PUT', '/me/recovery', { key, reauth }),
+  deleteAccount: (reauth: ReAuthBody) =>
+    c.req<{ delete_at: number }>('POST', '/me/delete', { reauth }),
+  keepAccount: () => c.req<{ ok: boolean }>('DELETE', '/me/delete'),
   changePassword: (current: Secret | undefined, next: Secret, reauth?: ReAuthBody) =>
     c.req<{ ok: boolean }>('POST', '/me/password', { current, new: next, reauth }),
   userProfile: (username: string, server?: string | null) =>

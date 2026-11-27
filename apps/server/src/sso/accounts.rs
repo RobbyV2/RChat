@@ -325,6 +325,7 @@ async fn sign_in_once(
         &id.groups,
     )
     .await?;
+    crate::api::account_deletion::cancel_in(&mut tx, &username).await?;
     let token = auth::new_token();
     sqlx::query("INSERT INTO tokens(token, username, created_at, sso_provider, sso_sid) VALUES($1,$2,$3,$4,$5)")
         .bind(secret_key(&token))

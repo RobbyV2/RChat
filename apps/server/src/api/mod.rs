@@ -1,4 +1,5 @@
 pub mod access;
+pub mod account_deletion;
 pub mod admin;
 pub mod admin_cli;
 pub mod admin_users;
@@ -2165,6 +2166,10 @@ pub fn routes(
             .route(
                 "/me/recovery",
                 put(recovery::set_phrase).delete(recovery::remove_phrase),
+            )
+            .route(
+                "/me/delete",
+                post(account_deletion::request).delete(account_deletion::cancel),
             )
             .route(
                 "/me/p2p_backup/{ik}",

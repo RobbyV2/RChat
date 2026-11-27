@@ -1,4 +1,5 @@
 import { P } from '../p2p/acl/rules'
+import { memberOf } from '../p2p/state'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, ManualClock } from './p2p_net'
 import { P2pStore } from '../p2p/db'
@@ -26,6 +27,95 @@ const failure = (p: Promise<unknown>) =>
 afterEach(stopAll)
 
 describe('P2P servers', () => {
+  test('an identity that is removed leaves every server it is in with a signed leave', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const rooms: string[] = []
+    for (const name of ['One', 'Two']) {
+      const room = await a.servers.create(name)
+      rooms.push(room)
+      await joinWithCode(clock, a, room, b)
+    }
+    const own = await b.servers.create('Own')
+    expect(await b.servers.retire()).toEqual([])
+    for (const room of [...rooms, own]) expect(b.servers.myMembership(room)).toBe('leave')
+    for (const room of rooms)
+      await pump(
+        clock,
+        () => a.servers.view(room)?.members.find(m => m.ik === b.node.ik)?.m === undefined,
+        'a sees b leave'
+      )
+    expect(await b.servers.retire()).toEqual([])
+  })
+
+  test('an identity that is removed takes its server profile off before it leaves', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('One')
+    await joinWithCode(clock, a, room, b)
+    await b.servers.setRoomProfile(room, { nick: 'Robert', bio: 'here' })
+    await pump(clock, () => a.servers.nameOf(b.node.ik, room) === 'Robert', 'nickname')
+    const sumOf = (m: typeof b) =>
+      (m.servers as unknown as { sumOf: (room: string) => Parameters<typeof memberOf>[0] }).sumOf(
+        room
+      )
+    expect(await b.servers.retire()).toEqual([])
+    expect(memberOf(sumOf(b), b.node.ik)?.profile as unknown).toEqual({ name: 'Bob' })
+    await pump(
+      clock,
+      () => memberOf(sumOf(a), b.node.ik)?.profile?.nick === undefined,
+      'a sees the profile go'
+    )
+    expect(a.servers.nameOf(b.node.ik, room)).toBe('Bob')
+  })
+
+  test('a server whose leave cannot be signed yet is named, and left on the next try', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('One')
+    await joinWithCode(clock, a, room, b)
+    const node = b.node as unknown as { author: () => null }
+    node.author = () => null
+    expect(await b.servers.retire()).toEqual([room])
+    expect(b.servers.myMembership(room)).toBe('join')
+    Reflect.deleteProperty(node, 'author')
+    expect(await b.servers.retire()).toEqual([])
+    expect(b.servers.myMembership(room)).toBe('leave')
+  })
+
+  test('a name that cannot be written back does not stop the leave', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('One')
+    await joinWithCode(clock, a, room, b)
+    const servers = b.servers as unknown as {
+      emit: (room: string, t: string, make: () => Record<string, unknown>) => Promise<string>
+      profileContent: () => Record<string, unknown>
+    }
+    await servers.emit(room, 'profile', () => ({ name: 'Robert' }))
+    let writes = 0
+    servers.profileContent = () => {
+      writes += 1
+      throw new Error('storage')
+    }
+    expect(await b.servers.retire()).toEqual([])
+    expect(writes).toBe(1)
+    expect(b.servers.myMembership(room)).toBe('leave')
+    await pump(
+      clock,
+      () => a.servers.view(room)?.members.find(m => m.ik === b.node.ik)?.m === undefined,
+      'a sees b leave'
+    )
+  })
+
   test('a stopped startup cannot restart timers after a later valid start', async () => {
     const { servers, store } = await makeMember(new Hub(), 'Alice', new ManualClock())
     await servers.indexing

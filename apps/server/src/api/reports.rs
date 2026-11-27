@@ -1452,7 +1452,8 @@ impl Deed {
                     instance_audit::record_in(tx, actor, "user.ban", Some(&who), about, t).await?;
                 }
                 if hidden.starts_purge() {
-                    crate::api::staff_audit::p2p_purge_in(tx, actor, &who, t).await?;
+                    crate::api::staff_audit::p2p_purge_in(tx, actor, &who, hidden.p2p_held(), t)
+                        .await?;
                 }
                 Ok(Done::Owner(hidden))
             }

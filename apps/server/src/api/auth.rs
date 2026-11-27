@@ -82,6 +82,10 @@ pub struct Me {
     /// signing in, and whether this session must change it first. Null for every other
     /// account.
     pub password_temporary: Option<TempView>,
+    /// Set while the account waits to be deleted at its own request: when it is deleted (Unix
+    /// seconds). `DELETE /api/v1/me/delete` keeps the account. Absent for every other account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delete_at: Option<i64>,
 }
 
 fn password_kind_schema() -> utoipa::openapi::Object {
@@ -591,6 +595,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
             Some(temp) => Some(TempView::of(temp, crate::api::restricted(db, user).await)),
             None => None,
         },
+        delete_at: crate::api::account_deletion::due(db, &user.username).await?,
     })
 }
 
@@ -967,6 +972,7 @@ async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
     if held != 1 {
         return Err(invalid_credentials());
     }
+    crate::api::account_deletion::cancel_in(&mut tx, &user.username).await?;
     sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
         .bind(secret_key(&token))
         .bind(&user.username)

@@ -4,6 +4,7 @@ import { AccountProvider, useLiveSessions } from '../lib/client/react'
 import { useStore } from '../lib/store'
 import { temporaryNotice } from '../lib/temp_password'
 import { ViewActorTag } from './view_actor'
+import { DeletionBanner } from './account_deletion'
 import { LabelText } from './instance_badge'
 import { NoticeStack } from './notice_stack'
 
@@ -42,6 +43,7 @@ function AccountBanners() {
   return (
     <>
       {!error && !toast && <TemporaryPassword />}
+      {!error && !toast && <DeletionBanner className={bannerCls} />}
       {error && (
         <div role="alert" className={`${bannerCls} bg-error-container text-on-error-container`}>
           <ViewActorTag />

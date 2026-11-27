@@ -138,6 +138,8 @@ impl Modify for Bearer {
         super::recovery::status,
         super::recovery::set_phrase,
         super::recovery::remove_phrase,
+        super::account_deletion::request,
+        super::account_deletion::cancel,
         super::p2p_backup::list_backups,
         super::p2p_backup::get_backup,
         super::p2p_backup::list_versions,
@@ -964,6 +966,7 @@ pub(crate) mod tests {
             dms_cursor: None,
             can_create_servers: true,
             password_temporary: None,
+            delete_at: None,
         };
         let value = serde_json::to_value(me).expect("me");
         assert_eq!(value["is_site_admin"], Value::Bool(true));

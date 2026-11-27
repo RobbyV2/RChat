@@ -140,6 +140,7 @@ pub enum Purpose {
     SetPassword,
     P2pData { ik: String },
     StaffView { channel: String },
+    DeleteAccount,
 }
 
 impl Purpose {
@@ -151,13 +152,14 @@ impl Purpose {
             Purpose::SetPassword => "set_password",
             Purpose::P2pData { .. } => "p2p-data",
             Purpose::StaffView { .. } => "staff_view",
+            Purpose::DeleteAccount => "delete_account",
         }
     }
 
     pub fn context(&self) -> &str {
         match self {
             Purpose::SetPhrase { key } => key,
-            Purpose::RemovePhrase | Purpose::SetPassword => "",
+            Purpose::RemovePhrase | Purpose::SetPassword | Purpose::DeleteAccount => "",
             Purpose::LinkIdp { provider } => provider,
             Purpose::P2pData { ik } => ik,
             Purpose::StaffView { channel } => channel,
@@ -171,6 +173,7 @@ impl Purpose {
             | Purpose::P2pData { .. }
             | Purpose::LinkIdp { .. }
             | Purpose::StaffView { .. }
+            | Purpose::DeleteAccount
             | Purpose::SetPassword => false,
         }
     }

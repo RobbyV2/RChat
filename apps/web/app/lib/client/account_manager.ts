@@ -40,8 +40,17 @@ export class AccountManager {
   private reconciling = false
   private previous?: AccountSession
   private recency = 0
+  private keeping = new Set<AccountSession>()
   budget = 8
   constructor(private ports: Ports) {}
+  // Keeps a session signed in here while it finishes what it started, even after another tab
+  // signs the account out, until the returned release.
+  keep(session: AccountSession) {
+    this.keeping.add(session)
+    return () => {
+      if (this.keeping.delete(session)) this.schedule()
+    }
+  }
   lastShown(account: AccountSession) {
     const username = usernameOf(account)
     return username === undefined
@@ -157,6 +166,14 @@ export class AccountManager {
           credential: 'guest',
         })
     }
+    for (const [id, e] of this.entries)
+      if (this.keeping.has(e.session) && !wanted.has(id))
+        wanted.set(id, {
+          origin: e.origin,
+          username: e.username,
+          connect: true,
+          credential: e.credential,
+        })
     let changed = false
     for (const [id, entry] of this.entries) {
       if (wanted.get(id)?.credential === entry.credential && ports.live().includes(entry.session))

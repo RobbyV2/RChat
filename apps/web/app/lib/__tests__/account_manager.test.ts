@@ -399,3 +399,68 @@ test('a shown account retires its credential and resumes only the newest replace
     memoryStorage.clear()
   }
 })
+
+test('a kept session stays signed in when another tab removes its credential, until it is let go', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  const page = Object.assign(new EventTarget(), {
+    location: new URL('https://client.test/'),
+    localStorage: memoryStorage,
+  })
+  Object.defineProperty(globalThis, 'window', { value: page, configurable: true })
+  const alpha = testAccount('alice', 'https://keep.test')
+  let stop = () => {}
+  try {
+    alpha.credentialTarget = 'alice'
+    alpha.identities.setRunning = () => {}
+    alpha.store.setState({ bootstrap: async () => {} })
+    alpha.store.setSocket = (on: boolean) => {
+      alpha.socketAllowed = on
+    }
+    Object.assign(alpha.tabLock, {
+      start() {},
+      stop() {},
+      holds: () => true,
+      subscribe: () => () => {},
+    })
+    const tokenKey = accountStorage(alpha.conn).token('alice')
+    memoryStorage.setItem(tokenKey, 'saved-alice')
+    let book = addInstance(parseBook(null), {
+      origin: alpha.conn.origin,
+      id: alpha.conn.host,
+      name: alpha.conn.host,
+    })
+    book = addAccount(
+      book,
+      alpha.conn.origin,
+      { username: 'alice', avatar: null, display: null, connect: true, added: 0, identities: [] },
+      null
+    )
+    const manager = new AccountManager({
+      book: () => book,
+      shown: () => alpha,
+      live: () => client.live(),
+      protected: () => undefined,
+      protectedIdentity: () => undefined,
+      watch: () => () => {},
+      publish: () => {},
+    })
+    stop = manager.start()
+    expect(alpha.mode).toBe('shown')
+    const letGo = manager.keep(alpha)
+    memoryStorage.removeItem(tokenKey)
+    page.dispatchEvent(Object.assign(new Event('storage'), { key: tokenKey }))
+    await drain()
+    manager.reconcile()
+    expect(alpha.store.getState().signedOut).toBe(false)
+    expect(alpha.store.getState().me?.username).toBe('alice')
+    letGo()
+    await drain()
+    expect(alpha.store.getState().signedOut).toBe(true)
+  } finally {
+    stop()
+    if (client.live().includes(alpha)) alpha.store.dispose()
+    memoryStorage.clear()
+    if (descriptor) Object.defineProperty(globalThis, 'window', descriptor)
+    else Reflect.deleteProperty(globalThis, 'window')
+  }
+})

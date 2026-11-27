@@ -625,6 +625,8 @@ export interface Me extends UserRef {
   // Set while the password is a temporary one: when it stops signing in (unix seconds, null
   // for never), and what this session must do. Absent on older servers.
   password_temporary?: { expires_at: number | null; change: PasswordChangeMode } | null
+  // Set while the account waits to be deleted at its own request: when, in unix seconds.
+  delete_at?: number
 }
 
 export interface AuthResponse {

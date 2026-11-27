@@ -9,6 +9,7 @@ use sqlx::Row;
 
 use crate::api::access::subjects::{Level, ProfileChoices};
 use crate::api::access::{MsgScope, ReportMode, not_found, report_scope, staff_message};
+use crate::api::account_deletion;
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
@@ -1218,12 +1219,20 @@ pub(crate) struct HiddenUser {
     servers: Option<Vec<String>>,
     /// Whether anything changed: the account was hidden, or its name was banned.
     pub changed: bool,
+    /// The P2P backups and synced identities the instance held for the account and removed
+    /// when it hid it.
+    p2p: (i64, i64),
 }
 
 impl HiddenUser {
     /// Whether the account was hidden here, which starts its purge.
     pub(crate) fn starts_purge(&self) -> bool {
         self.servers.is_some()
+    }
+
+    /// How many P2P backups and synced identities hiding the account removed.
+    pub(crate) fn p2p_held(&self) -> (i64, i64) {
+        self.p2p
     }
 
     async fn recount(&self, state: &AppState) {
@@ -1238,15 +1247,27 @@ impl HiddenUser {
     /// it the sign-out, the word to its servers and the purge.
     pub(crate) async fn finish(self, state: &AppState) {
         self.recount(state).await;
+        if let Some((kind, key)) = self.announce(state) {
+            spawn_purge(state, kind, &key);
+        }
+    }
+
+    /// Signs an account hidden here out everywhere and tells its servers that it left: the
+    /// purge that is left to run, or `None` when it was hidden before.
+    fn announce(self, state: &AppState) -> Option<(PurgeKind, String)> {
         let HiddenUser {
             key,
             kind,
             servers,
             changed: _,
+            p2p: _,
         } = self;
-        if let Some(servers) = servers {
-            announce_hidden(state, &key, kind, servers);
-        }
+        let servers = servers?;
+        state.hub.broadcast(WsEvent::TokensRevoked {
+            username: key.clone(),
+        });
+        remove_user_events(state, key.clone(), servers);
+        Some((kind, key))
     }
 }
 
@@ -1308,12 +1329,17 @@ pub(crate) async fn hide_user_in(
             kind,
             servers: None,
             changed,
+            p2p: (0, 0),
         });
     }
     let servers = member_servers(tx, key).await?;
+    let p2p = staff_audit::p2p_counts(tx, key).await?;
     drop_sso_rows(tx, key).await?;
     for sql in [
         "DELETE FROM tokens WHERE username = $1",
+        "DELETE FROM p2p_backups WHERE username = $1",
+        "DELETE FROM p2p_backup_seq WHERE username = $1",
+        "DELETE FROM p2p_identities WHERE username = $1",
         "DELETE FROM config_shares WHERE owner = $1",
         "DELETE FROM members WHERE username = $1",
         "DELETE FROM user_roles WHERE username = $1",
@@ -1338,12 +1364,14 @@ pub(crate) async fn hide_user_in(
     if kind == PurgeKind::Ban {
         ban_name(tx, key).await?;
     }
+    account_deletion::cancel_in(tx, key).await?;
     note_purge(tx, kind, key, now()).await?;
     Ok(HiddenUser {
         key: key.to_string(),
         kind,
         servers: Some(servers),
         changed: true,
+        p2p,
     })
 }
 
@@ -1385,21 +1413,11 @@ async fn hide_user(
     let mut tx = state.db.begin().await?;
     let hidden = hide_user_in(&mut tx, key, kind).await?;
     if hidden.starts_purge() {
-        staff_audit::p2p_purge_in(&mut tx, admin, key, now()).await?;
+        staff_audit::p2p_purge_in(&mut tx, admin, key, hidden.p2p_held(), now()).await?;
     }
     tx.commit().await?;
     hidden.finish(state).await;
     Ok(())
-}
-
-/// Signs the hidden account `key` out everywhere, tells `servers` that it left and starts its
-/// purge.
-fn announce_hidden(state: &AppState, key: &str, kind: PurgeKind, servers: Vec<String>) {
-    state.hub.broadcast(WsEvent::TokensRevoked {
-        username: key.to_string(),
-    });
-    remove_user_events(state, key.to_string(), servers);
-    spawn_purge(state, kind, key);
 }
 
 fn spawn_purge(state: &AppState, kind: PurgeKind, key: &str) {
@@ -1598,18 +1616,25 @@ async fn release_purge(db: &Db, kind: PurgeKind, key: &str) {
 pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
     let t = now();
     let rows = sqlx::query(
-        "SELECT kind, key FROM pending_purges WHERE claimed_at < $1 ORDER BY created_at LIMIT 100",
+        "SELECT kind, key, self_requested FROM pending_purges WHERE claimed_at < $1 AND (self_requested = 0 OR created_at <= $2) ORDER BY created_at LIMIT 100",
     )
     .bind(t - PURGE_LEASE)
+    .bind(t - account_deletion::GRACE_SECS)
     .fetch_all(&state.db)
     .await?;
     let mut done = 0;
     for r in &rows {
-        let (tag, key): (String, String) = (r.try_get(0)?, r.try_get(1)?);
+        let (tag, key, own): (String, String, i64) = (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
         let Some(kind) = PurgeKind::parse(&tag) else {
             continue;
         };
-        match claim_purge(state, kind, &key, now()).await {
+        let claimed = match own != 0 {
+            true => begin_own(state, &key).await.map_err(|e| e.1),
+            false => claim_purge(state, kind, &key, now())
+                .await
+                .map_err(|e| e.to_string()),
+        };
+        match claimed {
             Ok(true) => {}
             Ok(false) => continue,
             Err(e) => {
@@ -1625,6 +1650,34 @@ pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
         }
     }
     Ok(done)
+}
+
+/// Starts the deletion the account `key` asked for once its wait is over: hides it, signs it
+/// out and tells its servers. `false` when the deletion was called off, or when the account may
+/// not delete itself by then, which calls it off.
+async fn begin_own(state: &AppState, key: &str) -> Result<bool, ApiError> {
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE users SET password_hash = password_hash WHERE username = $1")
+        .bind(key)
+        .execute(&mut *tx)
+        .await?;
+    if !account_deletion::cancel_in(&mut tx, key).await? {
+        return Ok(false);
+    }
+    let kept = match user_row(&mut *tx, key).await? {
+        Some(user) if user.password_hash != PURGING_HASH => {
+            account_deletion::refused(&mut tx, &state.sso, &user).await?
+        }
+        Some(_) | None => true,
+    };
+    if kept {
+        tx.commit().await?;
+        return Ok(false);
+    }
+    let hidden = hide_user_in(&mut tx, key, PurgeKind::User).await?;
+    tx.commit().await?;
+    hidden.recount(state).await;
+    Ok(hidden.announce(state).is_some())
 }
 
 async fn drop_sso_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> sqlx::Result<()> {

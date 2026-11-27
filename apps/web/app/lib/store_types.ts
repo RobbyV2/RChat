@@ -457,6 +457,11 @@ export interface RChatState {
     reauth?: import('./types').ReAuthBody
   ) => Promise<string | null>
   expireSession: () => void
+  // Asks the instance to delete the account, optionally removes its P2P identities from this
+  // device, and ends the session here.
+  deleteAccount: (reauth: import('./types').ReAuthBody, removeP2p: boolean) => Promise<void>
+  // Calls off a deletion that waits.
+  keepAccount: () => Promise<void>
   checkSession: () => Promise<void>
   refreshAccount: () => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>

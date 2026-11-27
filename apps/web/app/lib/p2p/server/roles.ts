@@ -1,7 +1,18 @@
 import { BAN_REASON_MAX, gt, timedBans, timeouts, TIMEOUT_MAX_MS } from '../acl/rules'
 import { cacheKey, countOf, moveCounts, storedSize } from '../dag'
 import { CANT_TEXT } from '../flows'
-import { can, channelPermsOf, channelsOf, membershipOf, P, rankOf, roleRank } from '../state'
+import { cleanName } from '../keys'
+import { memberExtras } from '../../profile_fields'
+import {
+  can,
+  channelPermsOf,
+  channelsOf,
+  memberOf,
+  membershipOf,
+  P,
+  rankOf,
+  roleRank,
+} from '../state'
 import { unindexRoom } from '../search'
 import type { ServerCtx } from './context'
 import { ServerError, NO_ROOM_TEXT, newRolePos } from './types'
@@ -142,6 +153,22 @@ export async function leave(cx: ServerCtx, room: string) {
   else cx.gossip.leave(room)
   await cx.updateRoom(room, cur => ({ ...cur, joining: null }))
   cx.changed(room)
+}
+
+// Leaves every server we are in, for an identity that is being removed from this device: our
+// profile in each goes back to the identity's own name with nothing set for that server first,
+// when that can be signed. The servers we are still in.
+export async function retire(cx: ServerCtx) {
+  const kept: string[] = []
+  for (const room of cx.joinedRooms()) {
+    const m = memberOf(cx.sumOf(room), cx.me)
+    const set = Object.keys(memberExtras(m, cleanName)).length > 0
+    if (m?.profile && (m.profile.name !== cx.deps.node.name || set))
+      await cx.emit(room, 'profile', () => cx.profileContent()).catch(() => {})
+    await leave(cx, room).catch(() => {})
+    if (cx.myMembership(room) === 'join') kept.push(room)
+  }
+  return kept
 }
 
 // Removes a server we are not in any more from this device. Our device's chain there is kept,
