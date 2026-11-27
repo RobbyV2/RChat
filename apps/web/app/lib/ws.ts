@@ -50,9 +50,14 @@ const LIMITED_ATTEMPT = 3
 export const mayConnectEarly = (failedAt: number | null, now: number, limited: boolean): boolean =>
   !limited && (failedAt === null || now - failedAt >= EARLY_AFTER)
 
+const CONNECTING = 0
+const OPEN = 1
+
 export interface WsEndpoints {
-  url: () => string
-  probe: () => string
+  // A new socket to the instance's gateway.
+  open: () => WebSocket
+  // Whether the instance answers plain requests.
+  reachable: () => Promise<boolean>
   // The instance's reconnect timings; the defaults without it.
   timings?: () => ReconnectTimings
 }
@@ -131,7 +136,7 @@ export class WsClient {
   ensureConnected() {
     if (this.stopped) return
     const rs = this.ws?.readyState
-    if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) return
+    if (rs === OPEN || rs === CONNECTING) return
     if (this.reconnectTimer) {
       if (!mayConnectEarly(this.failedAt, Date.now(), this.limited)) return
       clearTimeout(this.reconnectTimer)
@@ -175,7 +180,7 @@ export class WsClient {
   }
 
   private send(payload: unknown) {
-    if (this.ws?.readyState !== WebSocket.OPEN) return false
+    if (this.ws?.readyState !== OPEN) return false
     const text = wsText(payload)
     if (text === null) return false
     this.ws.send(text)
@@ -184,10 +189,10 @@ export class WsClient {
 
   private connect() {
     if (this.stopped) return
-    const ws = new WebSocket(this.endpoints.url())
+    const ws = this.endpoints.open()
     this.ws = ws
     this.connectTimer = setTimeout(() => {
-      if (this.ws === ws && ws.readyState !== WebSocket.OPEN) ws.close()
+      if (this.ws === ws && ws.readyState !== OPEN) ws.close()
     }, 5_000)
     ws.onopen = () => {
       if (this.ws !== ws) return
@@ -247,11 +252,11 @@ export class WsClient {
 
   private async probe() {
     const ws = this.ws
-    const stale = () => this.stopped || this.ws !== ws || ws?.readyState === WebSocket.OPEN
+    const stale = () => this.stopped || this.ws !== ws || ws?.readyState === OPEN
     try {
-      const res = await fetch(this.endpoints.probe())
+      const up = await this.endpoints.reachable()
       if (stale()) return
-      if (res.ok) {
+      if (up) {
         this.onStatus('yellow')
         this.onPoll()
       } else {

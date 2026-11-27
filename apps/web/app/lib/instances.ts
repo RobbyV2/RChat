@@ -5,7 +5,7 @@ import { getBasePath } from './basePath'
 import { hostOf, normalizeHost, privateHost } from './qualified'
 
 export { privateHost }
-import { WsClient, wsUrlFrom, type WsEndpoints } from './ws'
+import { WsClient, wsUrlFrom } from './ws'
 import { shellInfo } from './platform/desktop'
 import type { InstanceInfo } from './types'
 
@@ -23,7 +23,9 @@ export interface PeerTarget {
   secure: boolean
 }
 
-export interface Endpoints extends WsEndpoints {
+export interface Endpoints {
+  url: () => string
+  probe: () => string
   origin: string
   api: string
   peer: (info?: InstanceInfo | null) => PeerTarget
@@ -357,8 +359,8 @@ export class InstanceConnection {
   }
 
   private pinned = {
-    url: () => versionedUrl(this.ends.url(), this.api.prefix),
-    probe: () => this.health(),
+    open: () => this.api.socket(versionedUrl(this.ends.url(), this.api.prefix)),
+    reachable: () => this.api.reachable(this.health()),
     timings: () => limitsOf(this.info),
   }
 

@@ -50,6 +50,39 @@ export default tseslint.config(
     },
   },
   {
+    files: ['apps/web/app/**/*.{ts,tsx}'],
+    ignores: [
+      'apps/web/app/lib/api.ts',
+      'apps/web/app/lib/api/**',
+      'apps/web/app/**/__tests__/**',
+      'apps/web/app/**/*.test.{ts,tsx}',
+    ],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        ...['fetch', 'WebSocket', 'XMLHttpRequest', 'EventSource'].map(name => ({
+          name,
+          message: 'Requests and sockets leave through the API client (app/lib/api).',
+        })),
+      ],
+      'no-restricted-properties': [
+        'error',
+        ...['window', 'globalThis', 'self'].flatMap(object =>
+          ['fetch', 'WebSocket', 'XMLHttpRequest', 'EventSource'].map(property => ({
+            object,
+            property,
+            message: 'Requests and sockets leave through the API client (app/lib/api).',
+          }))
+        ),
+        {
+          object: 'navigator',
+          property: 'sendBeacon',
+          message: 'Requests leave through the API client (app/lib/api).',
+        },
+      ],
+    },
+  },
+  {
     files: ['apps/web/public/sw.js'],
     languageOptions: {
       globals: {

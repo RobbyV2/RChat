@@ -270,6 +270,17 @@ export class ApiClient {
     return handleResponse<InstanceInfo>(res)
   }
 
+  // The one place a socket to this instance is opened. Credentials go in its first message,
+  // never in the address.
+  socket(url: string): WebSocket {
+    return new WebSocket(url)
+  }
+
+  // Whether the instance answers at its health address. Carries no credentials.
+  async reachable(url: string): Promise<boolean> {
+    return (await fetch(url, { credentials: 'omit' })).ok
+  }
+
   setToken(token: string | null) {
     this.token = token
   }

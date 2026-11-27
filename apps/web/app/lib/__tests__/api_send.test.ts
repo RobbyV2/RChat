@@ -244,3 +244,34 @@ describe('credentials', () => {
     expect((await fails(client(pace).mediaStart('m1', undefined, 4))).status).toBe(404)
   })
 })
+
+describe('sockets and probes', () => {
+  test('a socket opens at the address given, with nothing added', () => {
+    const real = globalThis.WebSocket
+    const opened: string[] = []
+    globalThis.WebSocket = class {
+      constructor(url: string) {
+        opened.push(url)
+      }
+    } as unknown as typeof WebSocket
+    try {
+      const c = client()
+      c.setToken('tok')
+      c.socket('wss://chat.example/api/v1/ws')
+      expect(opened).toEqual(['wss://chat.example/api/v1/ws'])
+    } finally {
+      globalThis.WebSocket = real
+    }
+  })
+
+  test('the health probe carries no credentials', async () => {
+    const c = client()
+    c.setToken('tok')
+    const sent = serve(ok())
+    expect(await c.reachable('https://chat.example/api/v1/health')).toBe(true)
+    expect(sent[0].init.credentials).toBe('omit')
+    expect(sent[0].init.headers).toBeUndefined()
+    serve(new Response('', { status: 502 }))
+    expect(await c.reachable('https://chat.example/api/v1/health')).toBe(false)
+  })
+})

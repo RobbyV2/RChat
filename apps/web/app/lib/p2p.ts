@@ -1,4 +1,5 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
+import { openPeer } from './api/peer'
 import { backoffDelay } from './backoff'
 import { fromBase64, fromBase64Url, randomHex, toBase64 } from './bytes'
 import { readLocal, writeLocal, type InstanceConnection } from './instances'
@@ -979,7 +980,9 @@ export class P2pManager {
       cur.reconnect()
       return cur
     }
-    const peer = new Peer(this.peerId(), { ...this.conn.peer(), config: this.relays.autoConfig() })
+    const peer = openPeer(Peer, this.peerId(), this.conn.peer(), {
+      config: this.relays.autoConfig(),
+    })
     this.wire(peer)
     return peer
   }

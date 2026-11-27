@@ -20,6 +20,8 @@ const roomRevision = (room: WidgetRoomMetadata) => ({
 
 const roomChanged = (error: unknown) => error instanceof ApiError && error.status === 412
 
+const OPEN = 1
+
 export class WidgetConnection {
   private api = createApi(location.origin + '/api', 'omit')
   private socket: WebSocket | null = null
@@ -266,7 +268,7 @@ export class WidgetConnection {
     const url = new URL('/api/v1/ws', location.href)
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     url.searchParams.set('widget', this.id)
-    const ws = new WebSocket(url)
+    const ws = this.api.socket(url.href)
     this.socket = ws
     ws.onopen = () => {
       if (this.socket !== ws) return
@@ -351,7 +353,7 @@ export class WidgetConnection {
     }
   }
   private signal(msg: VoiceMsg) {
-    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    if (this.socket?.readyState !== OPEN) return false
     this.socket.send(JSON.stringify(msg))
     return true
   }

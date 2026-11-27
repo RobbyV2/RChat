@@ -1,4 +1,5 @@
 import Peer, { type DataConnection } from 'peerjs'
+import { openPeer } from '../api/peer'
 import { randomHex } from '../bytes'
 import type { InstanceConnection } from '../instances'
 import type { IceCache } from '../ice'
@@ -190,8 +191,7 @@ export class PeerTransport implements Transport {
     const Peer = this.peerClass
     return new Promise((resolve, reject) => {
       // A fresh token each time, so an old registration never blocks the new one.
-      const peer = new Peer(id, {
-        ...this.owner.conn.peer(),
+      const peer = openPeer(Peer, id, this.owner.conn.peer(), {
         token: randomHex(8),
         config: answerConfig(false, this.owner.relays),
       })

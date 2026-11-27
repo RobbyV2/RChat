@@ -33,11 +33,16 @@ class FakeWebSocket {
   }
 }
 
+const ends = {
+  open: () => new FakeWebSocket() as unknown as WebSocket,
+  reachable: async () => true,
+}
+
 const openClient = () => {
   globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket
   globalThis.fetch = (async () => new Response('ok')) as unknown as typeof fetch
   const statuses: string[] = []
-  const client = new WsClient({ url: () => 'ws://x/api/ws', probe: () => 'http://x/api/health' })
+  const client = new WsClient(ends)
   client.onStatus = s => statuses.push(s)
   client.start('token')
   const ws = sockets[sockets.length - 1]
@@ -77,8 +82,7 @@ describe('realtime reconnects', () => {
     try {
       const timings = { reconnect_base_ms: 9000, reconnect_cap_ms: 9000, reconnect_floor_ms: 8000 }
       const client = new WsClient({
-        url: () => 'ws://x/api/ws',
-        probe: () => 'http://x/api/health',
+        ...ends,
         timings: () => timings,
       })
       client.start('token')
