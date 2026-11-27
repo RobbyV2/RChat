@@ -425,12 +425,15 @@ export function createPaletteIndexer(acct: AccountSession) {
         n = dropChannel(ev.server, ev.channel_id) + 1
         break
       case 'channel_perms_changed':
-        // What may be read there can shrink (history included): start the channel over.
-        n = dropChannel(ev.server, ev.channel_id) + 1
-        forgetSeen(k => k === `c${ev.channel_id}` || k.startsWith('t'))
+      case 'channels_perms_changed': {
+        // What may be read there can shrink (history included): start the channels over.
+        const ids = ev.type === 'channel_perms_changed' ? [ev.channel_id] : ev.channel_ids
+        n = ids.reduce((sum, id) => sum + dropChannel(ev.server, id), 0) + 1
+        forgetSeen(k => ids.some(id => k === `c${id}`) || k.startsWith('t'))
         if (!store.getState().servers[ev.server] && verified.has(ev.server))
           void verifyServer(ev.server, gen)
         break
+      }
       case 'server_deleted':
         n = dropServer(ev.name) + 1
         break

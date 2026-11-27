@@ -868,6 +868,15 @@ export const endpoints = (c: ApiClient) => ({
     }),
   clearChannelPerm: (id: number, subject: string) =>
     c.req<unknown>('DELETE', `/channels/${id}/perms/${seg(subject)}`),
+  categoryPerms: (id: number, cursor: string | null = null) =>
+    c.page<ChannelPerm>(withCursor(`/categories/${id}/perms`, cursor)),
+  setCategoryPerm: (id: number, rule: { subject: string; allow: number; deny: number }) =>
+    c.req<unknown>('PUT', `/categories/${id}/perms`, rule),
+  clearCategoryPerm: (id: number, subject: string) =>
+    c.req<unknown>('DELETE', `/categories/${id}/perms/${seg(subject)}`),
+  // `confirm`: even when the category's rules let someone in who could not see or send there.
+  syncChannelPerms: (id: number, confirm: boolean) =>
+    c.req<unknown>('POST', `/channels/${id}/perms/sync`, { confirm }),
   channelMessages: (id: number, page: PageOpts = {}) =>
     c.req<Message[]>('GET', `/channels/${id}/messages${pageQuery(page)}`),
   sendChannelMessage: (id: number, content: string, opts: SendOpts = {}) =>

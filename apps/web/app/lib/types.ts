@@ -132,6 +132,8 @@ export interface Channel {
   topic?: string | null
   category_id?: number | null
   position?: number
+  // Its permission rules copy its category's.
+  perm_sync?: boolean
   // What you hold in the channel (server details only; events leave it out).
   my_perms?: number
 }
@@ -1209,6 +1211,7 @@ export type WsEvent =
   | { type: 'member_roles_changed'; server: string; username: string; role_ids: number[] }
   | { type: 'upload_expiry_changed'; server: string }
   | { type: 'channel_perms_changed'; server: string; channel_id: number }
+  | { type: 'channels_perms_changed'; server: string; channel_ids: number[] }
   | { type: 'layout_changed'; server: string; layout: ChannelLayout }
   | { type: 'user_updated'; user: UserRef }
   | {

@@ -294,6 +294,16 @@ pub(super) fn track(ev: &WsEvent, access: &mut Access) {
             access.floors.clear();
             access.who.forget();
         }
+        WsEvent::ChannelsPermsChanged {
+            server: _,
+            channel_ids,
+        } => {
+            for id in channel_ids {
+                access.viewable.remove(id);
+            }
+            access.floors.clear();
+            access.who.forget();
+        }
         WsEvent::ServerRenamed { old_name, server } => {
             access.topics_dirty |= access.held(old_name);
             if access.member_servers.remove(old_name) {
@@ -801,6 +811,10 @@ pub(super) fn wants(
         WsEvent::ChannelPermsChanged {
             server,
             channel_id: _,
+        }
+        | WsEvent::ChannelsPermsChanged {
+            server,
+            channel_ids: _,
         } => in_server(server),
         WsEvent::LayoutChanged {
             server,

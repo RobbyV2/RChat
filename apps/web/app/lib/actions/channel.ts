@@ -111,6 +111,29 @@ export const channelActions: Action[] = [
     },
   },
   {
+    id: 'channel_perm_sync',
+    title: 'Sync Permissions',
+    subtitle: () => 'With its category',
+    ...onChannel,
+    order: 915,
+    available: ctx => {
+      const at = channelOf(ctx)
+      const detail = at && ctx.s.servers[at.server]
+      const current = detail?.channels.find(c => c.id === at?.channel.id) ?? at?.channel
+      return (
+        !!at &&
+        !!current &&
+        manages(ctx, at.server) &&
+        current.perm_sync !== true &&
+        !!detail?.categories?.some(c => c.id === current.category_id)
+      )
+    },
+    run: ctx => {
+      const at = channelOf(ctx)
+      if (at) void ctx.acct.store.getState().syncChannelPerms(at.server, at.channel.id)
+    },
+  },
+  {
     id: 'channel_delete',
     title: 'Delete Channel',
     ...onChannel,
@@ -174,6 +197,20 @@ export const channelActions: Action[] = [
         ctx.acct.store
           .getState()
           .openDialog({ kind: 'category', server: at.server, id: at.category.id })
+    },
+  },
+  {
+    id: 'category_permissions',
+    title: 'Permissions',
+    ...onCategory,
+    order: 115,
+    available: ctx => {
+      const at = categoryOf(ctx)
+      return at !== null && manages(ctx, at.server)
+    },
+    run: ctx => {
+      const at = categoryOf(ctx)
+      if (at) ctx.acct.store.getState().openDialog({ kind: 'server_settings', server: at.server })
     },
   },
   {

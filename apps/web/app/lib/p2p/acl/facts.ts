@@ -21,6 +21,8 @@ import {
   introduces,
   NEG,
   roleMetaOk,
+  channelMetaOk,
+  CHANNELS,
   managesAt,
   profileModeOk,
   profileResetOk,
@@ -123,6 +125,9 @@ export interface Facts extends FactsQ {
   profileReset: RMap<string, ResetFact>
   // The server's description and icon (`about`, a display register).
   about: AclContent | undefined
+  // Categories by id and the category of each channel (`category`, `chcat`, registers).
+  categories: RMap<string, AclContent>
+  chcats: RMap<string, AclContent>
   addsTo: RMap<string, readonly Pend[]>
   consumed: RSet<string>
   codeOk: RSet<string>
@@ -891,6 +896,30 @@ export abstract class View {
     }
     return out
   }
+  // Category(id) and ChCat(ch) (`category`, `chcat`): the same register, whose Authority is
+  // Manage channels; a write whose author loses it to a concurrent deny doesn't count. As for
+  // channels, a category deleted by one of the concurrent latest writes stays deleted. An id that
+  // names a channel, now or before, is never a category: overwrites on it are the channel's.
+  categoryOf(id: string): AclContent | undefined {
+    if (this.ix.channelEv.has(id)) return undefined
+    const r = this.channelMeta(this.ix.categoryEv.get(id))
+    if (!r) return undefined
+    const c = this.ix.ev[r.win].c
+    return r.maxes.some(x => this.ix.ev[x].c.gone === true) ? { ...c, gone: true } : c
+  }
+  chcatOf(ch: string): AclContent | undefined {
+    const r = this.channelMeta(this.ix.chcatEv.get(ch))
+    return r && this.ix.ev[r.win].c
+  }
+  private channelMeta(xs: readonly number[] | undefined) {
+    const ix = this.ix
+    const ws = (xs ?? EMPTY).filter(x => {
+      if (!channelMetaOk(ix.ev[x], ix.rec[x].local.facts)) return false
+      const held = this.heldAfterDenies(x)
+      return held === null || (held.perms & CHANNELS) !== 0
+    })
+    return this.register(ws)
+  }
   // Whether the denies concurrent with the write `w` take from its author what its Authority
   // needs: the permission `bit`, and a rank above `over` when one is given.
   private metaDenied(w: number, bit: number, over?: Rank): boolean {
@@ -914,8 +943,8 @@ export abstract class View {
       )
     )
   }
-  // What the author of the write `w` holds once the denies concurrent with it count: their
-  // permissions and their rank. Null for an owner.
+  // What the author of `w` holds in St(w) after the effective denies concurrent with `w` that act
+  // on their roles: their permissions and rank. Null for an owner.
   private heldAfterDenies(w: number): { perms: number; me: Rank } | null {
     const ix = this.ix
     const e = ix.ev[w]
@@ -1092,6 +1121,16 @@ export function fullFacts(V: View): Facts {
     const r = V.profileResetOf(T)
     if (r) profileReset.set(T, r)
   }
+  const categories = new Map<string, AclContent>()
+  for (const id of ix.categoryEv.keys()) {
+    const c = V.categoryOf(id)
+    if (c) categories.set(id, c)
+  }
+  const chcats = new Map<string, AclContent>()
+  for (const ch of ix.chcatEv.keys()) {
+    const c = V.chcatOf(ch)
+    if (c) chcats.set(ch, c)
+  }
   const overwrites = new Map<string, Map<string, AclContent>>()
   for (const [key, xs] of ix.chpermEv) {
     const { ch, subj } = ix.ev[xs[0]].c
@@ -1131,6 +1170,8 @@ export function fullFacts(V: View): Facts {
     profileMode: V.profileModeOf(),
     profileReset,
     about: V.aboutOf(),
+    categories,
+    chcats,
     addsTo,
     consumed,
     codeOk,
@@ -1203,6 +1244,8 @@ const EMPTY_FACTS: Facts = {
   profileMode: undefined,
   profileReset: new Map(),
   about: undefined,
+  categories: new Map(),
+  chcats: new Map(),
   addsTo: new Map(),
   consumed: new Set(),
   codeOk: new Set(),

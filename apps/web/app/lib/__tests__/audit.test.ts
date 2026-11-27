@@ -65,6 +65,28 @@ describe('audit sentences', () => {
     expect(sentenceText(entry({ action: 'member.admin_grant' }))).toBe('Alice made Bob an admin')
   })
 
+  test('category rules and syncs read as what they did', () => {
+    const category = { kind: 'category', id: 7, name: 'Team', user: null } as AuditEntry['target']
+    const role = { subject: { kind: 'role', id: 1, name: 'Mods' }, channels: [5] }
+    expect(
+      sentenceText(entry({ action: 'channel.category_perms', target: category, details: role }))
+    ).toBe('Alice set permissions for the role "Mods" in the category "Team"')
+    expect(
+      sentenceText(
+        entry({
+          action: 'channel.category_perms',
+          target: category,
+          details: { ...role, removed: true },
+        })
+      )
+    ).toBe('Alice removed the permissions of the role "Mods" in the category "Team"')
+    expect(
+      sentenceText(
+        entry({ action: 'channel.perm_sync', target: channelTarget('plans'), details: {} })
+      )
+    ).toBe('Alice synced the permissions of #plans with its category')
+  })
+
   test("a person's name carries their username, so your own is never masked", () => {
     const rule = sentence(
       entry({

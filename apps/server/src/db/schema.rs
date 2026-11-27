@@ -38,11 +38,12 @@ CREATE TABLE IF NOT EXISTS data_keys(id INTEGER PRIMARY KEY AUTOINCREMENT, purpo
 CREATE INDEX IF NOT EXISTS idx_scim_group_members_username ON scim_group_members(username);
 CREATE INDEX IF NOT EXISTS idx_sso_user_groups_key ON sso_user_groups(source,alias_key);
 CREATE INDEX IF NOT EXISTS idx_sso_grants_server ON sso_grants(server);
-CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, topic TEXT, category_id INTEGER, position INTEGER NOT NULL DEFAULT 0, sensitive INTEGER NOT NULL DEFAULT 0, text_only INTEGER NOT NULL DEFAULT 0, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, topic TEXT, category_id INTEGER, position INTEGER NOT NULL DEFAULT 0, sensitive INTEGER NOT NULL DEFAULT 0, text_only INTEGER NOT NULL DEFAULT 0, perm_sync INTEGER NOT NULL DEFAULT 0, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS widgets(id TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, mode TEXT NOT NULL, enabled INTEGER NOT NULL, composer INTEGER NOT NULL, origins TEXT NOT NULL, revision TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS widgets_server_id ON widgets(server, id);
 CREATE INDEX IF NOT EXISTS widgets_channel ON widgets(channel_id);
 CREATE TABLE IF NOT EXISTS channel_categories(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS category_perms(category_id INTEGER NOT NULL REFERENCES channel_categories(id) ON DELETE CASCADE, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, subject TEXT NOT NULL, allow INTEGER NOT NULL DEFAULT 0, deny INTEGER NOT NULL DEFAULT 0, mode TEXT NOT NULL DEFAULT 'override' CHECK(mode IN ('override','merge')), PRIMARY KEY(category_id, subject));
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, joined_via INTEGER, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0, mentionable INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0, display_position INTEGER, hoist INTEGER NOT NULL DEFAULT 0, icon TEXT, color_names INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
@@ -143,6 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_system ON messages(author, kind, created
 CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 CREATE INDEX IF NOT EXISTS idx_channel_categories_server ON channel_categories(server, position);
+CREATE INDEX IF NOT EXISTS idx_category_perms_server ON category_perms(server);
 CREATE INDEX IF NOT EXISTS idx_group_pings_channel ON group_pings(channel_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_message ON group_pings(message_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_created ON group_pings(created_at);
@@ -214,11 +216,12 @@ CREATE TABLE IF NOT EXISTS data_keys(id BIGINT GENERATED ALWAYS AS IDENTITY PRIM
 CREATE INDEX IF NOT EXISTS idx_scim_group_members_username ON scim_group_members(username);
 CREATE INDEX IF NOT EXISTS idx_sso_user_groups_key ON sso_user_groups(source,alias_key);
 CREATE INDEX IF NOT EXISTS idx_sso_grants_server ON sso_grants(server);
-CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, topic TEXT, category_id BIGINT, position BIGINT NOT NULL DEFAULT 0, sensitive BIGINT NOT NULL DEFAULT 0, text_only BIGINT NOT NULL DEFAULT 0, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, topic TEXT, category_id BIGINT, position BIGINT NOT NULL DEFAULT 0, sensitive BIGINT NOT NULL DEFAULT 0, text_only BIGINT NOT NULL DEFAULT 0, perm_sync BIGINT NOT NULL DEFAULT 0, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS widgets(id TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, mode TEXT NOT NULL, enabled BIGINT NOT NULL, composer BIGINT NOT NULL, origins TEXT NOT NULL, revision TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS widgets_server_id ON widgets(server, id);
 CREATE INDEX IF NOT EXISTS widgets_channel ON widgets(channel_id);
 CREATE TABLE IF NOT EXISTS channel_categories(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, position BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS category_perms(category_id BIGINT NOT NULL REFERENCES channel_categories(id) ON DELETE CASCADE, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, subject TEXT NOT NULL, allow BIGINT NOT NULL DEFAULT 0, deny BIGINT NOT NULL DEFAULT 0, mode TEXT NOT NULL DEFAULT 'override' CHECK(mode IN ('override','merge')), PRIMARY KEY(category_id, subject));
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, joined_via BIGINT, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0, mentionable BIGINT NOT NULL DEFAULT 0, position BIGINT NOT NULL DEFAULT 0, display_position BIGINT, hoist BIGINT NOT NULL DEFAULT 0, icon TEXT, color_names BIGINT NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
@@ -320,6 +323,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_system ON messages(author, kind, created
 CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 CREATE INDEX IF NOT EXISTS idx_channel_categories_server ON channel_categories(server, position);
+CREATE INDEX IF NOT EXISTS idx_category_perms_server ON category_perms(server);
 CREATE INDEX IF NOT EXISTS idx_group_pings_channel ON group_pings(channel_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_message ON group_pings(message_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_created ON group_pings(created_at);

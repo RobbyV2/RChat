@@ -71,10 +71,11 @@ import { readableNow, type PublicRead } from '../lib/public_reading'
 import { parseMembersVisible } from '../lib/profile_choice'
 import { enterKey } from '../lib/keys'
 import { allowListTitle, emptyAllowText } from '../lib/channel_access'
-import { toggledRule, type RuleFlag } from '../lib/channel_perms'
+import { flaggedMasks, toggledRule, type RuleFlag } from '../lib/channel_perms'
 import { hasBit } from '../lib/perms'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type {
+  Category,
   Channel,
   ChannelPerm,
   ChannelPermInput,
@@ -525,6 +526,8 @@ function ChannelPermsEditor({
   const staffOpen = useStore(s => s.staffOpen.includes(channelId))
   const me = useStore(s => s.me?.username ?? null)
   const everyone = useStore(s => s.servers[server]?.everyone_perms)
+  const categories = useStore(s => s.servers[server]?.categories)
+  const syncChannelPerms = useStore(s => s.syncChannelPerms)
   const rulesLoaded = usePermissionRules()
   const [rows, setRows] = useState<ChannelPerm[]>([])
   const [shut, setShut] = useState(false)
@@ -592,6 +595,7 @@ function ChannelPermsEditor({
     </label>
   )
 
+  const category = categories?.find(c => c.id === channel.category_id)
   if (shut)
     return (
       <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-xl bg-surface-container-low p-2">
@@ -607,6 +611,33 @@ function ChannelPermsEditor({
 
   return (
     <div className="mt-1.5 space-y-2 rounded-xl bg-surface-container-low p-2">
+      {category && (
+        <div
+          data-sync
+          className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant"
+        >
+          <span className="min-w-0 flex-1">
+            {channel.perm_sync
+              ? `Synced with ${category.name}. Changing a rule here stops it.`
+              : `Not synced with ${category.name}.`}
+          </span>
+          {!channel.perm_sync && (
+            <button
+              onClick={() =>
+                void syncChannelPerms(server, channelId).then(
+                  inSession(() => {
+                    void reload()
+                    refresh?.()
+                  })
+                )
+              }
+              className={textBtn}
+            >
+              Sync now
+            </button>
+          )}
+        </div>
+      )}
       <RestrictionToggles
         nobody="admins"
         value={channel}
@@ -685,6 +716,176 @@ function ChannelPermsEditor({
           </button>
         )}
       </div>
+    </div>
+  )
+}
+
+const RULE_FLAGS: [RuleFlag, string][] = [
+  ['can_view', 'View'],
+  ['can_send', 'Send'],
+  ['can_read_history', 'History'],
+]
+
+// A category's permission rules: they reach the channels synced with it.
+function CategoryPermsEditor({
+  server,
+  category,
+  roles,
+}: {
+  server: string
+  category: Category
+  roles: Role[]
+}) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
+  const id = category.id
+  const setCategoryPerm = useStore(s => s.setCategoryPerm)
+  const clearCategoryPerm = useStore(s => s.clearCategoryPerm)
+  const setError = useStore(s => s.setError)
+  const me = useStore(s => s.me?.username ?? null)
+  const [rows, setRows] = useState<ChannelPerm[]>([])
+  const [subject, setSubject] = useState('')
+  const reload = useCallback(async () => {
+    const showError = inSession(setError)
+    try {
+      const all: ChannelPerm[] = []
+      let cursor: string | null = null
+      do {
+        const page: Page<ChannelPerm> = await api.categoryPerms(id, cursor)
+        all.push(...page.items)
+        cursor = page.next
+      } while (cursor !== null)
+      setRows(all)
+    } catch (e) {
+      showError(errorText(e))
+    }
+  }, [id, setError])
+  useEffect(() => {
+    void reload()
+  }, [reload])
+  const save = (subj: string, masks: { allow: number; deny: number }) =>
+    void setCategoryPerm(id, { subject: subj, ...masks }).then(inSession(reload))
+  const allow = (subj: string) =>
+    save(
+      subj,
+      RULE_FLAGS.reduce((m, [flag]) => flaggedMasks(m, flag, true), { allow: 0, deny: 0 })
+    )
+  const listed = (subj: string) => rows.some(r => r.subject === subj)
+  const label = (subj: string) =>
+    subj === EVERYONE_SUBJECT
+      ? '@everyone'
+      : subj.startsWith('u:')
+        ? subj.slice(2)
+        : (roles.find(r => `r:${r.id}` === subj)?.name ?? subj)
+  return (
+    <div data-category-perms className="mt-1.5 space-y-2 rounded-xl bg-surface-container-low p-2">
+      <p className="text-xs text-on-surface-variant">
+        These rules reach the channels synced with this category.
+      </p>
+      {rows.map(perm => (
+        <div key={perm.subject} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="streamer min-w-0 flex-1 truncate text-sm">{label(perm.subject)}</span>
+          {RULE_FLAGS.map(([flag, text]) => (
+            <label key={flag} className="flex items-center gap-1 text-xs">
+              <input
+                type="checkbox"
+                checked={perm[flag]}
+                onChange={() =>
+                  save(
+                    perm.subject,
+                    flaggedMasks(
+                      { allow: perm.allow ?? 0, deny: perm.deny ?? 0 },
+                      flag,
+                      !perm[flag]
+                    )
+                  )
+                }
+                className="accent-primary"
+              />
+              {text}
+            </label>
+          ))}
+          <button
+            onClick={() => void clearCategoryPerm(id, perm.subject).then(inSession(reload))}
+            aria-label={`Remove ${label(perm.subject)}`}
+            title={`Remove ${label(perm.subject)}`}
+            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-error"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+      <div className="flex flex-wrap gap-2">
+        <select
+          value={subject}
+          onChange={e => setSubject(e.target.value)}
+          title="Add role"
+          aria-label="Add role"
+          className={fieldCls}
+        >
+          <option value="">Add role…</option>
+          {!listed(EVERYONE_SUBJECT) && <option value={EVERYONE_SUBJECT}>@everyone</option>}
+          {roles
+            .filter(r => !listed(`r:${r.id}`))
+            .map(r => (
+              <option key={r.id} value={`r:${r.id}`}>
+                {r.name}
+              </option>
+            ))}
+        </select>
+        <button
+          onClick={() => {
+            if (!subject || listed(subject)) return
+            allow(subject)
+            setSubject('')
+          }}
+          className={textBtn}
+        >
+          Add
+        </button>
+      </div>
+      <div className="flex items-start gap-2">
+        <MemberPicker
+          server={server}
+          exclude={m => listed(`u:${m.username}`)}
+          onPick={m => allow(`u:${m.username}`)}
+        />
+        {me && !listed(`u:${me}`) && (
+          <button onClick={() => allow(`u:${me}`)} className={`${textBtn} shrink-0`}>
+            Add me
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CategoryControls({
+  server,
+  category,
+  roles,
+  synced,
+}: {
+  server: string
+  category: Category
+  roles: Role[]
+  synced: number
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div data-category={category.id} className="rounded-xl px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{category.name}</span>
+        <span className="text-xs text-on-surface-variant">
+          {synced === 1 ? '1 synced channel' : `${synced} synced channels`}
+        </span>
+        <button onClick={() => setOpen(!open)} aria-expanded={open} className={textBtn}>
+          {open ? 'Hide permissions' : 'Permissions'}
+        </button>
+      </div>
+      {open && <CategoryPermsEditor server={server} category={category} roles={roles} />}
     </div>
   )
 }
@@ -1668,6 +1869,15 @@ function Settings({ server, section }: { server: string; section: ServerSettings
     channels: () => (
       <>
         <CategoryCreator server={server} />
+        {(detail.categories ?? []).map(cat => (
+          <CategoryControls
+            key={cat.id}
+            server={server}
+            category={cat}
+            roles={detail.roles}
+            synced={detail.channels.filter(c => c.category_id === cat.id && c.perm_sync).length}
+          />
+        ))}
         {detail.channels.map(c => (
           <ChannelControls key={c.id} server={server} channel={c} roles={detail.roles} />
         ))}

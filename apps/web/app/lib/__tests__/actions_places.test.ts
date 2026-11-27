@@ -134,6 +134,7 @@ const recorder = () => {
     'setChannelSensitive',
     'setChannelTextOnly',
     'deleteChannel',
+    'syncChannelPerms',
     'deleteCategory',
     'setCategoriesCollapsed',
     'askMarkAllRead',
@@ -485,6 +486,7 @@ test('a channel row acts on its own channel, not the open one', async () => {
     ['Enable text only', [['setChannelTextOnly', 's', 2, true]]],
     ['Copy Channel ID', [['copy', '2']]],
     ['Rename Channel', []],
+    ['Sync Permissions', [['syncChannelPerms', 's', 2]]],
     [
       'Delete Channel',
       [
@@ -516,6 +518,7 @@ test('a category, as a member and as a manager', async () => {
   expect(labels(categoryAt)).toEqual([
     'Create channel here',
     'Rename category',
+    'Permissions',
     'Delete category',
     'Collapse all',
     'Expand all',
@@ -525,6 +528,7 @@ test('a category, as a member and as a manager', async () => {
   expect(await effects(items(categoryAt))).toEqual([
     ['Create channel here', [['setCategoriesCollapsed', 's', [7], false]]],
     ['Rename category', [['openDialog', { kind: 'category', server: 's', id: 7 }]]],
+    ['Permissions', [['openDialog', { kind: 'server_settings', server: 's' }]]],
     [
       'Delete category',
       [

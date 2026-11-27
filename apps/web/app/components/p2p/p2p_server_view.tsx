@@ -22,6 +22,7 @@ import {
   Plus,
   Search,
   UserPlus,
+  ChevronDown,
   Users,
   Volume2,
   Waypoints,
@@ -34,7 +35,8 @@ import { displayName, shieldOf } from '../../lib/p2p/contacts'
 import { movedText, type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import { serverPings, serverUnread } from '../../lib/p2p/alerts'
-import type { MemberView, ServerView } from '../../lib/p2p/server'
+import type { ChannelView, MemberView, ServerView } from '../../lib/p2p/server'
+import { roomGroups } from '../../lib/categories'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { levelOf, mutedOf } from '../../lib/notify'
 import { folderKey, railItems, serverKey, type Folder } from '../../lib/nav_layout'
@@ -470,6 +472,7 @@ function P2pServerSidebarBody() {
   const prefs = useStore(s => s.notifyPrefs)
   const [adding, setAdding] = useState<string | null>(null)
   const [kind, setKind] = useState<'text' | 'voice'>('text')
+  const [shut, setShut] = useState<Set<string>>(() => new Set())
   if (!v)
     return (
       <aside className="flex h-full w-60 shrink-0 flex-col bg-surface-container-low">
@@ -477,6 +480,61 @@ function P2pServerSidebarBody() {
       </aside>
     )
   const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
+  const groups = roomGroups({ channels: shown, categories: v.categories }, can(v, P.ManageChannels))
+  const row = (c: ChannelView) => {
+    if (c.kind === 'voice')
+      return (
+        <P2pVoiceRow
+          key={c.id}
+          v={v}
+          c={c}
+          active={active === c.id}
+          menu={(x, y) =>
+            openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
+          }
+          memberMenu={m => (x, y) =>
+            openActionMenu(x, y, { kind: 'p2p_member', v, m }, undefined, acct, identity)
+          }
+        />
+      )
+    const counts = v.chans[c.id]
+    const scope = channelScope(v.id, c.id)
+    const muted = mutedOf(prefs, scope, Date.now()) || mutedOf(prefs, serverScope(v.id), Date.now())
+    const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
+    const unread = !!counts?.unread && !muted
+    return (
+      <button
+        key={c.id}
+        data-p2p-channel={c.name}
+        onClick={() => p2pServer.openChannel(c.id)}
+        {...longPress((x, y) =>
+          openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
+        )}
+        className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
+          active === c.id
+            ? 'bg-secondary-container text-on-secondary-container'
+            : `hover:bg-surface-container hover:text-on-surface ${unread ? 'font-semibold text-on-surface' : 'text-on-surface-variant'} ${muted ? 'opacity-60' : ''}`
+        }`}
+      >
+        <Hash size={16} className="shrink-0" />
+        <span className="truncate">
+          <Masked text={c.name} own={own} />
+        </span>
+        {c.restrict_view && (
+          <span
+            title="Private channel"
+            aria-label="Private channel"
+            role="img"
+            className="flex shrink-0"
+          >
+            <Lock size={12} />
+          </span>
+        )}
+        <MutedIcon scope={scope} />
+        <P2pChannelEnd room={v.id} ch={c.id} pings={pings} unread={unread} />
+      </button>
+    )
+  }
   const submit = () => {
     const name = (adding ?? '').trim()
     setAdding(null)
@@ -530,59 +588,41 @@ function P2pServerSidebarBody() {
         )}
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
-        {shown.map(c => {
-          if (c.kind === 'voice')
-            return (
-              <P2pVoiceRow
-                key={c.id}
-                v={v}
-                c={c}
-                active={active === c.id}
-                menu={(x, y) =>
-                  openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
-                }
-                memberMenu={m => (x, y) =>
-                  openActionMenu(x, y, { kind: 'p2p_member', v, m }, undefined, acct, identity)
-                }
-              />
-            )
-          const counts = v.chans[c.id]
-          const scope = channelScope(v.id, c.id)
-          const muted =
-            mutedOf(prefs, scope, Date.now()) || mutedOf(prefs, serverScope(v.id), Date.now())
-          const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
-          const unread = !!counts?.unread && !muted
+        {groups.uncategorized.map(row)}
+        {groups.categories.map(({ category, channels }) => {
+          const open = !shut.has(category.id)
           return (
-            <button
-              key={c.id}
-              data-p2p-channel={c.name}
-              onClick={() => p2pServer.openChannel(c.id)}
-              {...longPress((x, y) =>
-                openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
-              )}
-              className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
-                active === c.id
-                  ? 'bg-secondary-container text-on-secondary-container'
-                  : `hover:bg-surface-container hover:text-on-surface ${unread ? 'font-semibold text-on-surface' : 'text-on-surface-variant'} ${muted ? 'opacity-60' : ''}`
-              }`}
-            >
-              <Hash size={16} className="shrink-0" />
-              <span className="truncate">
-                <Masked text={c.name} own={own} />
-              </span>
-              {c.restrict_view && (
-                <span
-                  title="Private channel"
-                  aria-label="Private channel"
-                  role="img"
-                  className="flex shrink-0"
-                >
-                  <Lock size={12} />
+            <div key={category.id} className="flex flex-col gap-0.5 pt-2">
+              <button
+                data-p2p-category={category.name}
+                aria-expanded={open}
+                onClick={() =>
+                  setShut(prev => {
+                    const next = new Set(prev)
+                    if (open) next.add(category.id)
+                    else next.delete(category.id)
+                    return next
+                  })
+                }
+                {...longPress((x, y) =>
+                  openActionMenu(
+                    x,
+                    y,
+                    { kind: 'p2p_category', v, cat: category },
+                    undefined,
+                    acct,
+                    identity
+                  )
+                )}
+                className="mx-2 flex min-w-0 items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-medium tracking-wider text-on-surface-variant uppercase hover:text-on-surface"
+              >
+                <ChevronDown size={12} className={`shrink-0 ${open ? '' : '-rotate-90'}`} />
+                <span className="truncate">
+                  <Masked text={category.name} own={own} />
                 </span>
-              )}
-              <MutedIcon scope={scope} />
-              <P2pChannelEnd room={v.id} ch={c.id} pings={pings} unread={unread} />
-            </button>
+              </button>
+              {(open ? channels : channels.filter(c => c.id === active)).map(row)}
+            </div>
           )
         })}
         {adding !== null && (

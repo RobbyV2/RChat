@@ -25,7 +25,7 @@ import {
 // (acl_room.ts) is a SummarySource.
 
 // The shape of the page's summary: a cached one of another shape is not used.
-export const SUM_SHAPE = 7
+export const SUM_SHAPE = 8
 
 export type Membership = 'invite' | 'join' | 'leave' | 'ban'
 
@@ -111,6 +111,22 @@ export interface OverSum {
   deny: number
 }
 
+// A category: its name and place, and the fields of its latest write this version doesn't
+// know, kept by the next write.
+export interface CategorySum {
+  name: string
+  pos: number
+  extra?: Record<string, unknown>
+}
+
+// The category of a channel (`cat`, null for none) and whether its overwrites copy the
+// category's (`sync`), with the fields of its latest write this version doesn't know.
+export interface ChcatSum {
+  cat: string | null
+  sync: boolean
+  extra?: Record<string, unknown>
+}
+
 export interface CodeSum {
   a: string
   h: string
@@ -129,6 +145,8 @@ export interface Summary {
   channels: Record<string, AclContent>
   // Overwrites by channel, then subject (`r:<role>`, `u:<ik>`).
   overwrites: Record<string, Record<string, OverSum>>
+  categories: Record<string, CategorySum>
+  chcats: Record<string, ChcatSum>
   settings: AclContent | null
   // What members may set in their room profile; null (no write counts) reads as everything.
   profiles: ProfilesMode | null
@@ -149,8 +167,16 @@ export interface Summary {
 // without a prototype, so a key like `__proto__` is only a key.
 export const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
 
-type Keyed = 'members' | 'roles' | 'channels' | 'overwrites' | 'codes'
-const KEYED: readonly Keyed[] = ['members', 'roles', 'channels', 'overwrites', 'codes']
+type Keyed = 'members' | 'roles' | 'channels' | 'overwrites' | 'categories' | 'chcats' | 'codes'
+const KEYED: readonly Keyed[] = [
+  'members',
+  'roles',
+  'channels',
+  'overwrites',
+  'categories',
+  'chcats',
+  'codes',
+]
 
 export interface SumDelta {
   top?: Partial<Omit<Summary, Keyed>>
@@ -167,6 +193,8 @@ export const emptySummary = (): Summary => ({
   everyone: 0,
   channels: dict(),
   overwrites: dict(),
+  categories: dict(),
+  chcats: dict(),
   settings: null,
   profiles: null,
   about: null,
@@ -283,6 +311,43 @@ export const overwritesOf = (F: EvalResult['facts']) => {
   return out
 }
 
+const extraOf = (c: AclContent, known: ReadonlySet<string>) => {
+  const extra = Object.entries(c).filter(([k]) => !known.has(k))
+  return extra.length ? Object.fromEntries(extra) : undefined
+}
+const CATEGORY_FIELDS = new Set(['id', 'name', 'pos', 'gone'])
+const CHCAT_FIELDS = new Set(['ch', 'cat', 'sync'])
+
+// The live categories (not gone), the CATEGORIES_MAX lowest by place then id.
+export const CATEGORIES_MAX = 50
+export const categoriesOf = (F: EvalResult['facts']) => {
+  const live = [...F.categories]
+    .filter(([, c]) => c.gone !== true && typeof c.name === 'string')
+    .map(([id, c]): [string, CategorySum] => {
+      const sum: CategorySum = { name: c.name as string, pos: c.pos as number }
+      const extra = extraOf(c, CATEGORY_FIELDS)
+      if (extra) sum.extra = extra
+      return [id, sum]
+    })
+    .sort(([a, x], [b, y]) => x.pos - y.pos || (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, CATEGORIES_MAX)
+  const out = dict<CategorySum>()
+  for (const [id, c] of live) out[id] = c
+  return out
+}
+
+// The category of each channel that has a `chcat`.
+export const chcatsOf = (F: EvalResult['facts']) => {
+  const out = dict<ChcatSum>()
+  for (const [ch, c] of F.chcats) {
+    const sum: ChcatSum = { cat: (c.cat as string | null) ?? null, sync: c.sync === true }
+    const extra = extraOf(c, CHCAT_FIELDS)
+    if (extra) sum.extra = extra
+    out[ch] = sum
+  }
+  return out
+}
+
 // What the builder reads of a room: its index and current state, the evaluation behind it, its
 // heads, and the stored events it dropped. Read once per build; nothing here changes during one.
 export interface SumEval {
@@ -389,6 +454,8 @@ export function buildSummary(
   const channels = dict<AclContent>()
   for (const [id, c] of F.channels) channels[id] = c
   const overwrites = overwritesOf(F)
+  const categories = categoriesOf(F)
+  const chcats = chcatsOf(F)
   const gone = src.gone
   return {
     summary: {
@@ -400,6 +467,8 @@ export function buildSummary(
       everyone: F.bits.get(EVERYONE) ?? 0,
       channels,
       overwrites,
+      categories,
+      chcats,
       settings: F.setting ?? null,
       profiles: roomMode(F.profileMode) ?? null,
       about: F.about ?? null,

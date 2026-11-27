@@ -1243,6 +1243,7 @@ fn channel_row(r: &sqlx::any::AnyRow) -> Result<Channel, ApiError> {
         position: r.try_get(8)?,
         sensitive: r.try_get::<i64, _>(9)? != 0,
         text_only: r.try_get::<i64, _>(10)? != 0,
+        perm_sync: r.try_get::<i64, _>(11)? != 0,
         my_perms: None,
     })
 }
@@ -1282,7 +1283,7 @@ async fn server_detail(
         icon_kind,
     } = access.lite().clone();
     let rows = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only FROM channels WHERE server = $1 ORDER BY position, id",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only, perm_sync FROM channels WHERE server = $1 ORDER BY position, id",
     )
     .bind(&name)
     .fetch_all(db)
@@ -4169,6 +4170,11 @@ pub(crate) async fn create_channel(
         return Err(bad("Text only applies to text channels"));
     }
     let key = access.name().to_string();
+    if let Some(category) = req.category_id
+        && !req.restrict_view
+    {
+        category_perms::check_copy(&state.db, &access, category).await?;
+    }
     let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &key, None).await?;
@@ -4216,10 +4222,21 @@ pub(crate) async fn create_channel(
         return Err(not_found("Category not found"));
     };
     let id: i64 = row.try_get(0)?;
+    let (synced, ruled) = match req.category_id {
+        Some(category) if !req.restrict_view => (
+            true,
+            category_perms::copy_category_rules(&mut tx, id, category).await?,
+        ),
+        _ => (false, false),
+    };
     let created = ChannelRef {
         id,
         name: channel_name.clone(),
-        private: req.restrict_view,
+        private: req.restrict_view
+            || (ruled
+                && audit::channel_ref(&mut *tx, id)
+                    .await?
+                    .is_some_and(|c| c.private)),
     };
     audit::record(
         &mut tx,
@@ -4250,12 +4267,19 @@ pub(crate) async fn create_channel(
         topic: None,
         category_id: req.category_id,
         position,
+        perm_sync: synced,
         my_perms: None,
     };
     state.hub.broadcast(WsEvent::ChannelCreated {
         server: key.clone(),
         channel: channel.clone(),
     });
+    if ruled {
+        state.hub.broadcast(WsEvent::ChannelPermsChanged {
+            server: key.clone(),
+            channel_id: id,
+        });
+    }
     if let Some(layout) = layout {
         announce(&state, &key, layout, Some(id), None);
     }
@@ -4472,7 +4496,7 @@ pub(crate) async fn update_channel(
     }
     tx.commit().await?;
     let row = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only FROM channels WHERE id = $1",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only, perm_sync FROM channels WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&state.db)
@@ -6145,10 +6169,15 @@ pub(crate) async fn delete_role(
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM channel_perms WHERE subject = $1")
-        .bind(format!("r:{id}"))
-        .execute(&mut *tx)
-        .await?;
+    for sql in [
+        "DELETE FROM channel_perms WHERE subject = $1",
+        "DELETE FROM category_perms WHERE subject = $1",
+    ] {
+        sqlx::query(sql)
+            .bind(format!("r:{id}"))
+            .execute(&mut *tx)
+            .await?;
+    }
     if let Some(gone) = &gone {
         bump_roles_version(&mut tx, &key).await?;
         let (name, color, perms): (String, String, i64) =
@@ -6639,20 +6668,73 @@ async fn guard_rule_edit(
     before: Option<&PermRow>,
     after: Option<&PermRow>,
 ) -> Result<bool, ApiError> {
+    let access = channel.server();
+    let member = match access.as_member() {
+        Some(member) => Some((member, channel.member_rights(db).await?.mask)),
+        None => None,
+    };
+    guard_edit(
+        db,
+        access,
+        channel.rights().mask,
+        member,
+        subject,
+        before,
+        after,
+    )
+    .await
+}
+
+/// `guard_rule_edit` for a category's rule: checked against what the caller holds in a channel
+/// of the server without rules.
+async fn guard_category_rule(
+    db: &Db,
+    access: &ServerAccess,
+    subject: &str,
+    before: Option<&PermRow>,
+    after: Option<&PermRow>,
+) -> Result<bool, ApiError> {
+    let unruled = async |a: &ServerAccess| -> Result<i64, ApiError> {
+        let none = Restrict {
+            view: false,
+            send: false,
+        };
+        let standing = a.standing(db).await?;
+        Ok(channel_mask([], &standing, a.everyone(db).await?, none, false, false) as i64)
+    };
+    let member = match access.as_member() {
+        Some(member) => {
+            let own = unruled(&member).await?;
+            Some((member, own))
+        }
+        None => None,
+    };
+    let mine = unruled(access).await?;
+    guard_edit(db, access, mine, member, subject, before, after).await
+}
+
+/// Checks a rule edit with the caller's mask `mine`, then with the plain membership's mask:
+/// returns whether only instance powers let it pass.
+async fn guard_edit(
+    db: &Db,
+    access: &ServerAccess,
+    mine: i64,
+    member: Option<(ServerAccess, i64)>,
+    subject: &str,
+    before: Option<&PermRow>,
+    after: Option<&PermRow>,
+) -> Result<bool, ApiError> {
     let ow = |row: Option<&PermRow>| row.map(|r| r.evaluated());
     let steps = match (ow(before), ow(after)) {
         (Some((b, was)), Some((a, now))) if was != now => vec![(Some(b), None), (None, Some(a))],
         (b, a) => vec![(b.map(|x| x.0), a.map(|x| x.0))],
     };
-    let access = channel.server();
-    let mine = channel.rights().mask;
     for (b, a) in &steps {
         check_rule_edit(db, access, mine, subject, *b, *a).await?;
     }
-    let Some(member) = access.as_member() else {
+    let Some((member, own)) = member else {
         return Ok(false);
     };
-    let own = channel.member_rights(db).await?.mask;
     for (b, a) in &steps {
         if check_rule_edit(db, &member, own, subject, *b, *a)
             .await
@@ -6662,6 +6744,15 @@ async fn guard_rule_edit(
         }
     }
     Ok(false)
+}
+
+/// A channel whose rules are edited one by one stops copying its category's.
+async fn stop_sync(conn: &mut AnyConnection, id: i64) -> sqlx::Result<()> {
+    sqlx::query("UPDATE channels SET perm_sync = 0 WHERE id = $1 AND perm_sync <> 0")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
 fn perm_view(row: &PermRow) -> ChannelPerm {
@@ -6952,6 +7043,7 @@ pub(crate) async fn set_channel_perm(
         guard_rule_edit(&state.db, &channel, &subject, was.as_ref(), now.as_ref()).await?;
     let actor = actor.staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    stop_sync(&mut tx, id).await?;
     match &now {
         Some(row) => {
             sqlx::query(
@@ -7057,6 +7149,7 @@ pub(crate) async fn clear_channel_perm(
     let bypassed = guard_rule_edit(&state.db, &channel, &subject, Some(&was), None).await?;
     let actor = actor.staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    stop_sync(&mut tx, id).await?;
     let at = audit::channel_ref(&mut *tx, id).await?;
     let removed = sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1 AND subject = $2")
         .bind(id)
@@ -7792,6 +7885,9 @@ pub(crate) async fn set_everyone_perms(
     }))
 }
 
+pub(crate) mod category_perms;
+#[cfg(test)]
+mod category_perms_tests;
 #[cfg(test)]
 mod looks_tests;
 #[cfg(test)]
@@ -13860,6 +13956,7 @@ mod tests {
                 topic: None,
                 category_id: None,
                 position: 0,
+                perm_sync: false,
                 my_perms: None,
             },
         };

@@ -35,12 +35,18 @@ import { lockUntil } from '../profile_reset'
 import { shownParts, showsMore, withLook } from '../server_profile'
 import { memberState, myPerms, previewServer } from '../selectors'
 import { keepMyPerms, withChannel } from '../channel_perms'
+import { EVERYONE_SUBJECT } from '../rules'
+import type { Page } from '../lists'
+import { HOSTED, baseBits, widened } from '../perms'
+import { loadPermissionRules } from '../perms_load'
+import { subjectNames, syncConfirmText } from '../categories'
 import type { Paged, RChatState } from '../store_types'
 import { groupFor, groupKey, mapGroups, regroup, serverGroups } from '../member_groups'
 import { type RolePlaces, placeRoles, withRole, withRoleEvents } from '../role_looks'
 import { localUntil, type TimeoutWire } from '../timeouts'
 import { cleanTopic } from '../topic'
 import {
+  type ChannelPerm,
   type Member,
   type Message,
   Perm,
@@ -945,6 +951,9 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'unassignRole'
     | 'setChannelPerm'
     | 'clearChannelPerm'
+    | 'setCategoryPerm'
+    | 'clearCategoryPerm'
+    | 'syncChannelPerms'
     | 'adminDeleteUser'
     | 'adminRemovePhrase'
     | 'adminSignOut'
@@ -1225,6 +1234,88 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     setChannelPerm: (id, perm) => act(async () => void (await api.setChannelPerm(id, perm))),
     clearChannelPerm: (id, subject) =>
       act(async () => void (await api.clearChannelPerm(id, subject))),
+    setCategoryPerm: (id, rule) => act(async () => void (await api.setCategoryPerm(id, rule))),
+    clearCategoryPerm: (id, subject) =>
+      act(async () => void (await api.clearCategoryPerm(id, subject))),
+    syncChannelPerms: (server, id) =>
+      act(async () => {
+        const detail = get().servers[server]
+        const channel = detail?.channels.find(c => c.id === id)
+        const category = detail?.categories?.find(c => c.id === channel?.category_id)
+        if (!detail || !channel || !category) return
+        await live(loadPermissionRules())
+        const every = async (page: (cursor: string | null) => Promise<Page<ChannelPerm>>) => {
+          const out: ChannelPerm[] = []
+          let cursor: string | null = null
+          do {
+            const next: Page<ChannelPerm> = await live(page(cursor))
+            out.push(...next.items)
+            cursor = next.next
+          } while (cursor !== null)
+          return out
+        }
+        const [before, after] = await Promise.all([
+          every(cursor => api.channelPerms(id, cursor)),
+          every(cursor => api.categoryPerms(category.id, cursor)),
+        ])
+        const rules = (list: ChannelPerm[]) =>
+          list.map(r => ({
+            subject: r.subject,
+            allow: r.allow ?? 0,
+            deny: r.deny ?? 0,
+            merge: r.mode === 'merge',
+          }))
+        const members = [...new Set([...before, ...after].map(r => r.subject))]
+          .filter(s => s.startsWith('u:'))
+          .map(s => s.slice(2))
+        await get().ensureMembers(server, members)
+        const held = Object.fromEntries(
+          members.map(name => [
+            `u:${name}`,
+            (memberState(get(), server, name)?.role_ids ?? []).map(r => `r:${r}`),
+          ])
+        )
+        const subjects = widened(
+          rules(before),
+          rules(after),
+          { subject: EVERYONE_SUBJECT, bits: detail.everyone_perms ?? baseBits() },
+          Object.fromEntries(detail.roles.map(r => [`r:${r.id}`, r.perms])),
+          held,
+          {
+            restrictView: !!channel.restrict_view,
+            restrictSend: !!channel.restrict_send,
+            voice: channel.kind === 'voice',
+          },
+          HOSTED
+        )
+        const confirmed = () => void act(async () => void (await api.syncChannelPerms(id, true)))
+        const ask = (names: string[] | null) =>
+          get().askConfirm({
+            title: 'Sync Permissions',
+            body: names
+              ? syncConfirmText(category.name, `#${channel.name}`, names)
+              : `Syncing with ${category.name} lets more people see or send in #${channel.name}.`,
+            confirm: 'Sync',
+            action: confirmed,
+          })
+        if (!subjects.length) {
+          try {
+            return void (await live(api.syncChannelPerms(id, false)))
+          } catch (e) {
+            if (!(e instanceof ApiError && e.status === 409)) throw e
+            return ask(null)
+          }
+        }
+        const nameOf = (subject: string) =>
+          subject === EVERYONE_SUBJECT
+            ? '@everyone'
+            : subject.startsWith('r:')
+              ? (detail.roles.find(r => `r:${r.id}` === subject)?.name ?? 'a role')
+              : get().streamer
+                ? 'a member'
+                : (memberState(get(), server, subject.slice(2))?.display_name ?? subject.slice(2))
+        ask(subjectNames(subjects, nameOf))
+      }),
     adminDeleteUser: username => act(async () => void (await api.adminDeleteUser(username))),
     adminRemovePhrase: username =>
       act(async () => {
@@ -1659,6 +1750,10 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         refetchServer(ev.server)
     },
     channel_perms_changed: ev => {
+      dropLinkCards()
+      refetchServer(ev.server)
+    },
+    channels_perms_changed: ev => {
       dropLinkCards()
       refetchServer(ev.server)
     },

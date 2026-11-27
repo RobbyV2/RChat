@@ -28,12 +28,14 @@ import {
   shownOrder,
   type DisplayMove,
   type Move,
+  subjectName,
 } from '../p2p/roles'
 import { stepRole } from '../hierarchy'
 import { ownsP2pServer, type MemberView, type RoleView, type ServerView } from '../p2p/server/types'
 import { P } from '../p2p/state'
 import { editsRoomProfile } from '../server_profile_editor'
 import { peerTimeout } from '../timeouts'
+import { subjectNames, syncConfirmText } from '../categories'
 import { sharing } from '../platform'
 import { maskOf } from '../store'
 import type { ConfirmRequest } from '../store_types'
@@ -840,12 +842,170 @@ export const peerServer = identityActions(identity => {
     },
   ]
 
+  // Categories: who manages channels creates, renames and deletes them, moves channels between
+  // them and syncs a channel's overwrites with its category's.
+  const categoryOf = ({ target }: ActionCtx) => (target.kind === 'p2p_category' ? target : null)
+  const managedCategory = (ctx: ActionCtx) => {
+    const t = categoryOf(ctx)
+    return t && can(t.v, P.ManageChannels) ? t : null
+  }
+  const nameArg = (prompt: string) => ({
+    kind: 'text' as const,
+    name: 'name',
+    prompt,
+    check: (text: string) => (text.trim() ? null : 'Enter a name'),
+  })
+  const onCategory = { scope: 'p2p', targets: ['p2p_category'] } as const
+
+  const categoryActions: Action[] = [
+    {
+      id: 'p2p_category_create',
+      title: 'Create Category',
+      scope: 'p2p',
+      targets: ['p2p_server'],
+      order: 260,
+      args: [nameArg('Category name')],
+      available: ctx => {
+        const t = ctx.target.kind === 'p2p_server' ? ctx.target : null
+        return !!t && can(t.v, P.ManageChannels)
+      },
+      run: (ctx, { name }) => {
+        const t = ctx.target.kind === 'p2p_server' ? ctx.target : null
+        if (t && name?.trim()) void identity().p2pServer.createCategory(t.v.id, name)
+      },
+    },
+    {
+      id: 'p2p_category_channel',
+      title: 'Create Channel',
+      ...onCategory,
+      order: 100,
+      args: [nameArg('Channel name')],
+      available: ctx => managedCategory(ctx) !== null,
+      run: (ctx, { name }) => {
+        const t = managedCategory(ctx)
+        if (t && name?.trim()) void identity().p2pServer.addChannelIn(t.v.id, name, t.cat.id)
+      },
+    },
+    {
+      id: 'p2p_category_edit',
+      title: 'Rename Category',
+      ...onCategory,
+      order: 110,
+      args: [nameArg('Category name')],
+      available: ctx => managedCategory(ctx) !== null,
+      run: (ctx, { name }) => {
+        const t = managedCategory(ctx)
+        if (t && name?.trim()) void identity().p2pServer.editCategory(t.v.id, t.cat.id, { name })
+      },
+    },
+    {
+      id: 'p2p_category_permissions',
+      title: 'Permissions',
+      ...onCategory,
+      order: 120,
+      available: ctx => managedCategory(ctx) !== null,
+      run: ctx => {
+        const t = managedCategory(ctx)
+        if (t) identity().p2p.openDialog({ kind: 'server_settings', room: t.v.id, tab: 'channels' })
+      },
+    },
+    {
+      id: 'p2p_category_delete',
+      title: 'Delete Category',
+      danger: true,
+      ...onCategory,
+      order: 130,
+      available: ctx => managedCategory(ctx) !== null,
+      run: ctx => {
+        const t = managedCategory(ctx)
+        if (!t) return
+        ctx.acct.store.getState().askConfirm({
+          title: 'Delete Category',
+          body: `Delete the category ${t.cat.name}? Its channels are kept and move out of it.`,
+          confirm: 'Delete',
+          action: identity().inIdentity(
+            () => void identity().p2pServer.deleteCategory(t.v.id, t.cat.id)
+          ),
+        })
+      },
+    },
+    {
+      id: 'p2p_channel_move_category',
+      title: 'Move to Category',
+      scope: 'p2p',
+      targets: ['p2p_channel'],
+      order: 305,
+      args: [
+        {
+          kind: 'choice',
+          name: 'cat',
+          prompt: 'Category',
+          choices: ctx => {
+            const t = managed(ctx)
+            if (!t) return []
+            return [
+              { value: '', label: 'No category', checked: t.ch.cat === null },
+              ...t.v.categories.map(c => ({
+                value: c.id,
+                label: c.name,
+                checked: t.ch.cat === c.id,
+              })),
+            ]
+          },
+        },
+      ],
+      available: ctx => {
+        const t = managed(ctx)
+        return !!t && t.v.categories.length > 0
+      },
+      run: (ctx, { cat }) => {
+        const t = managed(ctx)
+        if (t && cat !== undefined && (cat || null) !== t.ch.cat)
+          void identity().p2pServer.placeChannel(t.v.id, t.ch.id, cat || null)
+      },
+    },
+    {
+      id: 'p2p_channel_perm_sync',
+      title: 'Sync Permissions',
+      subtitle: () => 'With its category',
+      scope: 'p2p',
+      targets: ['p2p_channel'],
+      order: 306,
+      available: ctx => {
+        const t = managed(ctx)
+        return !!t && t.ch.cat !== null && !t.ch.sync
+      },
+      run: async ctx => {
+        const t = managed(ctx)
+        const cat = t && t.v.categories.find(c => c.id === t.ch.cat)
+        if (!t || !cat) return
+        const widens = await identity().p2pServer.syncWidens(t.v.id, t.ch.id)
+        if (widens === null) return
+        const go = () => void identity().p2pServer.syncChannel(t.v.id, t.ch.id)
+        if (!widens.length) return go()
+        ctx.acct.store.getState().askConfirm({
+          title: 'Sync Permissions',
+          body: syncConfirmText(
+            cat.name,
+            `#${t.ch.name}`,
+            subjectNames(widens, subj =>
+              subjectName(t.v, subj, roleMask(t.v, ctx.acct), ctx.s.streamer)
+            )
+          ),
+          confirm: 'Sync',
+          action: identity().inIdentity(go),
+        })
+      },
+    },
+  ]
+
   const p2pServerActions: Action[] = [
     ...serverActions,
     ...folderActions,
     ...channelActions,
     ...memberActions,
     ...roleActions,
+    ...categoryActions,
   ]
 
   return {

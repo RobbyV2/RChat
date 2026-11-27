@@ -117,6 +117,10 @@ impl Seat<'_> {
             | WsEvent::ChannelDeleted {
                 server, channel_id, ..
             } => ours(server) && *channel_id == self.channel,
+            WsEvent::ChannelsPermsChanged {
+                server,
+                channel_ids,
+            } => ours(server) && channel_ids.contains(&self.channel),
             WsEvent::ChannelUpdated { server, channel } => {
                 ours(server) && channel.id == self.channel
             }

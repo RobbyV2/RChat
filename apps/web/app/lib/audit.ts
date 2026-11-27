@@ -459,6 +459,17 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(' set permissions for '), ...subjectParts(entry), t(` in ${ch()}`)]
     case 'channel.perm_clear':
       return [...actor, t(' removed the permissions of '), ...subjectParts(entry), t(` in ${ch()}`)]
+    case 'channel.perm_sync':
+      return [...actor, t(` synced the permissions of ${ch()} with its category`)]
+    case 'channel.category_perms':
+      return [
+        ...actor,
+        t(
+          entry.details.removed === true ? ' removed the permissions of ' : ' set permissions for '
+        ),
+        ...subjectParts(entry),
+        t(` in the category ${label}`),
+      ]
     case 'channel.reorder':
       return [...actor, t(' reordered the channels')]
     case 'channel.category_create':

@@ -477,6 +477,11 @@ pub struct Channel {
     /// Counted over the channels the caller can see, so it has no gaps.
     #[serde(default)]
     pub position: i64,
+    /// The channel's permission rules copy its category's: changes to the category's rules
+    /// reach it too (see `PUT /api/v1/categories/{id}/perms`). Editing one of its own rules, or
+    /// moving it to another category, ends that.
+    #[serde(default)]
+    pub perm_sync: bool,
 }
 
 /// A channel category: a named, collapsible group of text and voice channels.
@@ -2445,6 +2450,19 @@ fn api_routes(
         .route(
             "/categories/{id}",
             patch(categories::rename_category).delete(categories::delete_category),
+        )
+        .route(
+            "/categories/{id}/perms",
+            get(servers::category_perms::list_category_perms)
+                .put(servers::category_perms::set_category_perm),
+        )
+        .route(
+            "/categories/{id}/perms/{subject}",
+            delete(servers::category_perms::clear_category_perm),
+        )
+        .route(
+            "/channels/{id}/perms/sync",
+            post(servers::category_perms::sync_channel_perms),
         )
         .route(
             "/channels/{id}",

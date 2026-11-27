@@ -250,7 +250,20 @@ export type ChannelView = { id: string } & ChannelContent & {
     over: Record<string, OverSum>
     // Every member sees it, so its name may leave the server (acl/rules.ts everyoneSees).
     everyoneSees: boolean
+    // Its category (null: none, or one that is gone) and whether its overwrites copy the
+    // category's.
+    cat: string | null
+    sync: boolean
   }
+
+// A category of channels, its place and its overwrites (which gate nothing themselves: the
+// channels that copy them hold copies).
+export interface CategoryView {
+  id: string
+  name: string
+  pos: number
+  over: Record<string, OverSum>
+}
 
 // A moderation action waiting for a fresh heads exchange.
 export interface ModView {
@@ -301,6 +314,7 @@ export interface ServerView {
   profileLock: LockState
   system: SystemContent
   channels: ChannelView[]
+  categories: CategoryView[]
   roles: RoleView[]
   everyone: number
   members: MemberView[]
@@ -459,6 +473,8 @@ export const RESIGN_ACL = [
   'profile_mode',
   'profile_reset',
   'about',
+  'category',
+  'chcat',
   'code',
   'code_revoke',
 ]

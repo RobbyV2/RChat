@@ -1,4 +1,4 @@
-import { hasBit, maskOr } from './perms'
+import { hasBit, maskAnd, maskNot, maskOr } from './perms'
 import {
   ChannelPermBit,
   Perm,
@@ -27,6 +27,26 @@ export const toggledRule = (perm: ChannelPerm, flag: RuleFlag): ChannelPermInput
   ...perm,
   [flag]: !perm[flag],
 })
+
+// The masks of a rule with one flag set: on allows the flag's permissions and stops denying
+// them, off denies them and stops allowing them. Every other bit stays.
+export const flaggedMasks = (
+  rule: { allow: number; deny: number },
+  flag: RuleFlag,
+  on: boolean
+): { allow: number; deny: number } => {
+  const group = maskOf(
+    flag === 'can_view'
+      ? [ChannelPermBit.ViewChannels]
+      : flag === 'can_read_history'
+        ? [ChannelPermBit.ReadHistory]
+        : SEND_BITS
+  )
+  const keep = (mask: number) => maskAnd(mask, maskNot(group))
+  return on
+    ? { allow: maskOr(rule.allow, group), deny: keep(rule.deny) }
+    : { allow: keep(rule.allow), deny: maskOr(rule.deny, group) }
+}
 
 // The composer's answer to a first thread reply without Start threads.
 export const NO_THREADS_TEXT = 'You do not have permission to start threads in this channel.'

@@ -40,6 +40,8 @@ import {
   emptySummary,
   inviteOf,
   type OverSum,
+  type CategorySum,
+  type ChcatSum,
   type RoleSum,
   type SumDelta,
   type SumMemo,
@@ -320,6 +322,8 @@ export interface Carried {
   roles: Record<string, RoleSum>
   channels: Record<string, AclContent>
   overwrites?: Record<string, Record<string, OverSum>>
+  categories?: Record<string, CategorySum>
+  chcats?: Record<string, ChcatSum>
   settings: AclContent | null
 }
 

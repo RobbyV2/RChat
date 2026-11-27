@@ -32,7 +32,13 @@ import {
 } from '../../lib/p2p/roles'
 import { EVERYONE, P } from '../../lib/p2p/state'
 import { shownBanner, shownBio } from '../../lib/server_profile'
-import type { ChannelView, MemberView, RoleView, ServerView } from '../../lib/p2p/server'
+import type {
+  CategoryView,
+  ChannelView,
+  MemberView,
+  RoleView,
+  ServerView,
+} from '../../lib/p2p/server'
 import { allowListTitle, emptyAllowText, type RestrictKey } from '../../lib/channel_access'
 import { matching, nextPage, page, PAGE } from '../../lib/paging'
 import { longPress } from '../context_menu'
@@ -486,7 +492,17 @@ function MemberPickerBody({
   )
 }
 
-function ChannelAccessBody({ v, c }: { v: ServerView; c: ChannelView }) {
+// A channel's overwrites and switches, or a category's overwrites (which reach the channels
+// synced with it).
+function ChannelAccessBody({
+  v,
+  c: channel,
+  cat,
+}: {
+  v: ServerView
+  c?: ChannelView
+  cat?: CategoryView
+}) {
   const identity = useP2pApp()!
   const { p2pServer } = identity
 
@@ -497,11 +513,23 @@ function ChannelAccessBody({ v, c }: { v: ServerView; c: ChannelView }) {
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const maskRole = useMask(own)
   const mask = useMask()
+  const c = channel ?? {
+    id: cat?.id ?? '',
+    kind: 'text' as const,
+    over: cat?.over ?? ({} as ChannelView['over']),
+    restrict_view: false,
+    restrict_send: false,
+    slow: 0,
+  }
+  const write = (subj: string, o: { allow: number; deny: number }) =>
+    void (channel
+      ? p2pServer.setOverwrite(v.id, c.id, subj, o)
+      : p2pServer.setCategoryOverwrite(v.id, c.id, subj, o))
   const rows = Object.entries(c.over).filter(
     ([subj]) => subj.startsWith('r:') || subj.startsWith('u:')
   )
   const listed = (subj: string) => rows.some(([s]) => s === subj)
-  const allow = (subj: string) => void p2pServer.setOverwrite(v.id, c.id, subj, ALLOW_BOTH)
+  const allow = (subj: string) => write(subj, ALLOW_BOTH)
   // A voice channel is only joined or not (View channels): no send rules, no slow mode.
   const voice = c.kind === 'voice'
   const restricted = !!c.restrict_view || (!voice && !!c.restrict_send)
@@ -510,6 +538,7 @@ function ChannelAccessBody({ v, c }: { v: ServerView; c: ChannelView }) {
     .filter(m => m.m === 'join' && m.below && !m.owner && !listed(`u:${m.ik}`))
     .sort((a, b) => a.name.localeCompare(b.name))
   const toggle = (key: RestrictKey) =>
+    channel &&
     void p2pServer.editChannel(
       v.id,
       c.id,
@@ -519,18 +548,23 @@ function ChannelAccessBody({ v, c }: { v: ServerView; c: ChannelView }) {
     )
   return (
     <div data-p2p-channel-access className="space-y-2 rounded-xl bg-surface-container-low p-2">
-      <RestrictionToggles nobody={NOBODY} value={c} onToggle={toggle} send={!voice} />
-      <p className="pt-1 text-xs font-medium text-on-surface-variant">
-        {allowListTitle(restricted)}
-      </p>
-      {rows.length === 0 && (
-        <Note>{emptyAllowText(!!c.restrict_view, !voice && !!c.restrict_send, NOBODY)}</Note>
+      {channel ? (
+        <>
+          <RestrictionToggles nobody={NOBODY} value={c} onToggle={toggle} send={!voice} />
+          <p className="pt-1 text-xs font-medium text-on-surface-variant">
+            {allowListTitle(restricted)}
+          </p>
+          {rows.length === 0 && (
+            <Note>{emptyAllowText(!!c.restrict_view, !voice && !!c.restrict_send, NOBODY)}</Note>
+          )}
+        </>
+      ) : (
+        <Note>These rules reach the channels synced with this category.</Note>
       )}
       {rows.map(([subj, o]) => {
         const f = overFlags(o)
         const off = !mayWrite(v, subj)
-        const set = (view: boolean, send: boolean) =>
-          void p2pServer.setOverwrite(v.id, c.id, subj, overBits(view, send))
+        const set = (view: boolean, send: boolean) => write(subj, overBits(view, send))
         const name = subjectText(identity)(streamer, v, subj, me, maskRole, mask)
         return (
           <div
@@ -563,7 +597,7 @@ function ChannelAccessBody({ v, c }: { v: ServerView; c: ChannelView }) {
               </label>
             )}
             <button
-              onClick={() => void p2pServer.setOverwrite(v.id, c.id, subj, { allow: 0, deny: 0 })}
+              onClick={() => write(subj, { allow: 0, deny: 0 })}
               disabled={off}
               aria-label={`Remove ${name}`}
               title={`Remove ${name}`}
@@ -618,7 +652,7 @@ function ChannelAccessBody({ v, c }: { v: ServerView; c: ChannelView }) {
           }}
         />
       )}
-      {!voice && (
+      {channel && !voice && (
         <SlowmodeField
           current={c.slow ?? 0}
           onApply={n => void p2pServer.editChannel(v.id, c.id, { slow: n })}

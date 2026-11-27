@@ -1357,10 +1357,15 @@ pub(crate) async fn hide_user_in(
     ] {
         sqlx::query(sql).bind(key).execute(&mut **tx).await?;
     }
-    sqlx::query("DELETE FROM channel_perms WHERE subject = $1")
-        .bind(format!("u:{key}"))
-        .execute(&mut **tx)
-        .await?;
+    for sql in [
+        "DELETE FROM channel_perms WHERE subject = $1",
+        "DELETE FROM category_perms WHERE subject = $1",
+    ] {
+        sqlx::query(sql)
+            .bind(format!("u:{key}"))
+            .execute(&mut **tx)
+            .await?;
+    }
     if kind == PurgeKind::Ban {
         ban_name(tx, key).await?;
     }
@@ -1742,10 +1747,15 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
     ] {
         sqlx::query(sql).bind(key).execute(&mut **tx).await?;
     }
-    sqlx::query("DELETE FROM channel_perms WHERE subject = $1")
-        .bind(format!("u:{key}"))
-        .execute(&mut **tx)
-        .await?;
+    for sql in [
+        "DELETE FROM channel_perms WHERE subject = $1",
+        "DELETE FROM category_perms WHERE subject = $1",
+    ] {
+        sqlx::query(sql)
+            .bind(format!("u:{key}"))
+            .execute(&mut **tx)
+            .await?;
+    }
     crate::api::bulk_delete::forget_author(tx, key).await?;
     crate::api::audit::forget_user(tx, key).await?;
     reports::forget_user(tx, key).await?;

@@ -49,6 +49,7 @@ import {
   roleName,
   sortRoles,
   type MemberView,
+  type CategoryView,
   type ChannelView,
   type ServerView,
 } from './types'
@@ -203,6 +204,7 @@ export function serverView(
     profileLock: roomLock(memberOf(s, env.me)?.reset, Math.floor(clock / 1000)),
     system: systemOf(s, env.lim.display),
     channels: readOnly ? [] : channelViews(s, env.me, me, env.lim.display),
+    categories: readOnly ? [] : categoryViews(s, env.lim.display),
     roles: readOnly
       ? []
       : order.map(r => ({
@@ -263,6 +265,8 @@ export function channelViews(
   for (const c of channelsOf(s, lim)) {
     const p = channelPermsOf(s, myIk, c.id, F)
     if (!(p & P.ViewChannel)) continue
+    const placed = s.chcats?.[c.id]
+    const cat = placed?.cat && s.categories?.[placed.cat] ? placed.cat : null
     out.push({
       ...c,
       send: me === 'join' && (p & P.SendMessages) !== 0,
@@ -270,9 +274,23 @@ export function channelViews(
       perms: channelMaskOf(s, myIk, c.id, F),
       over: s.overwrites?.[c.id] ?? {},
       everyoneSees: everyoneSees(F, c.id),
+      cat,
+      sync: cat !== null && placed?.sync === true,
     })
   }
   return out
+}
+
+// The live categories, by place then id, with names cut to the display limit.
+export function categoryViews(s: Summary, lim: Pick<Local['display'], 'name'>): CategoryView[] {
+  return Object.entries(s.categories ?? {})
+    .map(([id, c]) => ({
+      id,
+      name: Array.from(c.name).slice(0, lim.name).join(''),
+      pos: c.pos,
+      over: s.overwrites?.[id] ?? {},
+    }))
+    .sort((a, b) => a.pos - b.pos || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
 // Whether we may view `ch`.

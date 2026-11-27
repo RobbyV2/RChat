@@ -472,6 +472,7 @@ fn every_event() -> Vec<WsEvent> {
         topic: None,
         category_id: None,
         position: 0,
+        perm_sync: false,
         my_perms: None,
     };
     let mut evs = Vec::new();
@@ -756,6 +757,10 @@ fn every_event() -> Vec<WsEvent> {
                 server: s(server),
                 channel_id: 1,
             },
+            WsEvent::ChannelsPermsChanged {
+                server: s(server),
+                channel_ids: vec![1, 2],
+            },
             WsEvent::VoiceState {
                 server: s(server),
                 channel_id: 1,
@@ -1012,6 +1017,25 @@ async fn shared_channel_cache_follows_permission_events() {
     );
     track(&roles_of("bob"), &mut bob);
     assert!(bob.viewable.is_empty(), "its own roles do");
+    assert_eq!(
+        channel_gate(&state, &mut bob, "rchat", text).await,
+        Some(false)
+    );
+    let copies = |ids: Vec<i64>| WsEvent::ChannelsPermsChanged {
+        server: s("rchat"),
+        channel_ids: ids,
+    };
+    track(&copies(vec![text + 1000]), &mut bob);
+    assert_eq!(
+        bob.viewable.len(),
+        1,
+        "other channels' rules change nothing here"
+    );
+    track(&copies(vec![text + 1000, text]), &mut bob);
+    assert!(
+        bob.viewable.is_empty(),
+        "the listed channels are checked again"
+    );
     assert_eq!(
         channel_gate(&state, &mut bob, "rchat", text).await,
         Some(false)

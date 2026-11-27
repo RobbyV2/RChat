@@ -323,6 +323,12 @@ pub enum WsEvent {
         server: String,
         channel_id: i64,
     },
+    /// The permission rules of several channels changed at once (a category's rules reached the
+    /// channels that copy them).
+    ChannelsPermsChanged {
+        server: String,
+        channel_ids: Vec<i64>,
+    },
     LayoutChanged {
         server: String,
         layout: Arc<ChannelLayout>,

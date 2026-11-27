@@ -54,10 +54,12 @@ pub enum Action {
     ChannelDelete,
     ChannelPermSet,
     ChannelPermClear,
+    ChannelPermSync,
     ChannelReorder,
     CategoryCreate,
     CategoryUpdate,
     CategoryDelete,
+    CategoryPerms,
     ServerUpdate,
     SystemMessages,
     AccessMode,
@@ -118,10 +120,12 @@ pub const ACTIONS: &[Action] = &[
     Action::ChannelDelete,
     Action::ChannelPermSet,
     Action::ChannelPermClear,
+    Action::ChannelPermSync,
     Action::ChannelReorder,
     Action::CategoryCreate,
     Action::CategoryUpdate,
     Action::CategoryDelete,
+    Action::CategoryPerms,
     Action::ServerUpdate,
     Action::SystemMessages,
     Action::AccessMode,
@@ -189,10 +193,12 @@ impl Action {
             Action::ChannelDelete => "channel.delete",
             Action::ChannelPermSet => "channel.perm_set",
             Action::ChannelPermClear => "channel.perm_clear",
+            Action::ChannelPermSync => "channel.perm_sync",
             Action::ChannelReorder => "channel.reorder",
             Action::CategoryCreate => "channel.category_create",
             Action::CategoryUpdate => "channel.category_update",
             Action::CategoryDelete => "channel.category_delete",
+            Action::CategoryPerms => "channel.category_perms",
             Action::ServerUpdate => "server.update",
             Action::SystemMessages => "server.system_messages",
             Action::AccessMode => "access.mode",
@@ -584,7 +590,7 @@ pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sql
         .execute(&mut *conn)
         .await?;
     let named = like_escape(&Value::from(username).to_string());
-    let rows = sqlx::query("SELECT id, details FROM audit_log WHERE action IN ('channel.perm_set', 'channel.perm_clear') AND details LIKE $1 ESCAPE '\\'")
+    let rows = sqlx::query("SELECT id, details FROM audit_log WHERE action IN ('channel.perm_set', 'channel.perm_clear', 'channel.category_perms') AND details LIKE $1 ESCAPE '\\'")
         .bind(&named)
         .fetch_all(&mut *conn)
         .await?;

@@ -6,7 +6,13 @@ import type { InboxEntry } from '../inbox'
 import type { Folder } from '../nav_layout'
 import type { Contact } from '../p2p/contacts'
 import type { P2pMessage } from '../p2p/dm'
-import type { ChannelView, MemberView, RoleView, ServerView } from '../p2p/server/types'
+import type {
+  CategoryView,
+  ChannelView,
+  MemberView,
+  RoleView,
+  ServerView,
+} from '../p2p/server/types'
 import type { PaletteGroup } from '../palette'
 import type { ChannelCan } from '../channel_perms'
 import type { RChatState } from '../store_types'
@@ -113,6 +119,7 @@ export type Target =
   | { kind: 'p2p_channel'; v: ServerView; ch: ChannelView }
   | { kind: 'p2p_member'; v: ServerView; m: MemberView }
   | { kind: 'p2p_role'; v: ServerView; r: RoleView }
+  | { kind: 'p2p_category'; v: ServerView; cat: CategoryView }
   // A P2P message as its list shows it (`m`), and a line that says a message was pinned.
   | { kind: 'p2p_message'; p: P2pMessage; m: Message; chat: ChatFacts }
   | { kind: 'p2p_pin_line'; p: P2pMessage; m: Message }

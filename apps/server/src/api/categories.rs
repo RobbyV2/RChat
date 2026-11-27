@@ -243,8 +243,15 @@ pub(crate) async fn write_layout(
     }
     for (pos, (id, category)) in places.into_iter().enumerate() {
         let pos = pos as i64;
+        let moved = was.get(&id).is_some_and(|(had, _)| *had != category);
         if was.get(&id) != Some(&(category, pos)) {
-            sqlx::query("UPDATE channels SET category_id = $1, position = $2 WHERE id = $3")
+            let sql = match moved {
+                true => {
+                    "UPDATE channels SET category_id = $1, position = $2, perm_sync = 0 WHERE id = $3"
+                }
+                false => "UPDATE channels SET category_id = $1, position = $2 WHERE id = $3",
+            };
+            sqlx::query(sql)
                 .bind(category)
                 .bind(pos)
                 .bind(id)

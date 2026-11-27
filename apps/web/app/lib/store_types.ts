@@ -782,6 +782,13 @@ export interface RChatState {
   unassignRole: (server: string, id: number, username: string) => Promise<void>
   setChannelPerm: (id: number, perm: ChannelPermInput) => Promise<void>
   clearChannelPerm: (id: number, subject: string) => Promise<void>
+  setCategoryPerm: (
+    id: number,
+    rule: { subject: string; allow: number; deny: number }
+  ) => Promise<void>
+  clearCategoryPerm: (id: number, subject: string) => Promise<void>
+  // Copies the category's rules to the channel, asking first when that lets more people in.
+  syncChannelPerms: (server: string, id: number) => Promise<void>
   adminDeleteUser: (username: string) => Promise<void>
   adminRemovePhrase: (username: string) => Promise<void>
   adminSignOut: (username: string) => Promise<void>

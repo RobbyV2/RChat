@@ -85,6 +85,20 @@ export interface PermsModule {
     afterSubjects: string,
     afterMasks: Float64Array
   ): string
+  perms_widened(
+    beforeSubjects: string,
+    beforeRows: Float64Array,
+    afterSubjects: string,
+    afterRows: Float64Array,
+    everyoneSubject: string,
+    everyone: number,
+    roleSubjects: string,
+    roleBits: Float64Array,
+    memberSubjects: string,
+    memberRoles: string,
+    flags: number,
+    rules: number
+  ): string
   perms_display_order(places: Float64Array): Float64Array
   perms_hoist_groups(places: Float64Array, hoist: Uint8Array): Float64Array
 }
@@ -398,6 +412,48 @@ export const widens = (before: [string, number][], after: [string, number][]) =>
     Float64Array.from(before.map(([, m]) => m)),
     after.map(([s]) => s).join('\n'),
     Float64Array.from(after.map(([, m]) => m))
+  )
+  return out === '' ? [] : out.split('\n')
+}
+
+// A channel rule as the sync check reads it: subject, allow, deny and whether it merges.
+export interface SyncRule {
+  subject: string
+  allow: number
+  deny: number
+  merge: boolean
+}
+
+// The subjects that gain View or Send (Connect in a voice channel) in a channel whose rules
+// `before` become `after`: @everyone (its rule's subject and its bits), each role as a member
+// holding only it (`roleBits` by subject), each pair of roles as `a+b`, and each member subject
+// with the roles it holds (`memberRoles`, by subject).
+export const widened = (
+  before: SyncRule[],
+  after: SyncRule[],
+  everyone: { subject: string; bits: number },
+  roleBits: Record<string, number>,
+  memberRoles: Record<string, string[]>,
+  place: { restrictView: boolean; restrictSend: boolean; voice: boolean },
+  ruleset: number
+) => {
+  const members = Object.entries(memberRoles)
+  const rows = (list: SyncRule[]) =>
+    Float64Array.from(list.flatMap(r => [r.allow, r.deny, r.merge ? 1 : 0]))
+  const roles = Object.entries(roleBits)
+  const out = rules().perms_widened(
+    before.map(r => r.subject).join('\n'),
+    rows(before),
+    after.map(r => r.subject).join('\n'),
+    rows(after),
+    everyone.subject,
+    everyone.bits,
+    roles.map(([s]) => s).join('\n'),
+    Float64Array.from(roles.map(([, b]) => b)),
+    members.map(([s]) => s).join('\n'),
+    members.map(([, held]) => held.join(',')).join('\n'),
+    (place.restrictView ? 1 : 0) | (place.restrictSend ? 2 : 0) | (place.voice ? 4 : 0),
+    ruleset
   )
   return out === '' ? [] : out.split('\n')
 }

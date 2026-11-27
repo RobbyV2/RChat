@@ -357,6 +357,24 @@ class SnapFacts implements Facts {
       )
     )
   }
+  get categories() {
+    return this.one('categories', () =>
+      lazyMap(
+        id => this.V.categoryOf(id) !== undefined,
+        id => this.V.categoryOf(id),
+        () => this.full().categories as ReadonlyMap<string, AclContent>
+      )
+    )
+  }
+  get chcats() {
+    return this.one('chcats', () =>
+      lazyMap(
+        ch => this.V.chcatOf(ch) !== undefined,
+        ch => this.V.chcatOf(ch),
+        () => this.full().chcats as ReadonlyMap<string, AclContent>
+      )
+    )
+  }
   get overwrites() {
     return this.one('overwrites', () => {
       const of = (ch: string) => this.full().overwrites.get(ch)

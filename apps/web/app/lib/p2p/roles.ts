@@ -32,6 +32,22 @@ export const mayWriteRow = (v: Pick<ServerView, 'rank' | 'roles' | 'members'>, s
   return v.members.find(m => `u:${m.ik}` === subj)?.below ?? true
 }
 
+// The name of an overwrite's subject: @everyone, a role (through `mask`) or a member ("a member"
+// in streamer mode).
+export const subjectName = (
+  v: Pick<ServerView, 'roles' | 'members'>,
+  subj: string,
+  mask: (text: string) => string = text => text,
+  streamer = false
+) =>
+  subj === `r:${EVERYONE}`
+    ? '@everyone'
+    : subj.startsWith('r:')
+      ? mask(v.roles.find(r => r.id === subj.slice(2))?.name ?? 'a role')
+      : streamer
+        ? 'a member'
+        : (v.members.find(m => m.ik === subj.slice(2))?.name ?? 'someone')
+
 export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   { label: 'Manage channels', bit: P.ManageChannels },
   { label: 'Manage messages', bit: P.ManageMessages, hint: "Delete and pin others' messages" },

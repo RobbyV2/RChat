@@ -499,6 +499,97 @@ pub fn perms_widens(
     .join("\n")
 }
 
+/// Each rule is a subject (joined with newlines) and three numbers: allow, deny and its mode (1
+/// merge). Role bits are given the same way, one number per role subject. Member subjects are
+/// joined with newlines, and the roles each holds with commas, one line per member. `flags` holds
+/// the channel's restrict and voice flags. The answer is joined with newlines.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn perms_widened(
+    before_subjects: &str,
+    before_rows: &[f64],
+    after_subjects: &str,
+    after_rows: &[f64],
+    everyone_subject: &str,
+    everyone: f64,
+    role_subjects: &str,
+    role_bits: &[f64],
+    member_subjects: &str,
+    member_roles: &str,
+    flags: u32,
+    rules: i32,
+) -> String {
+    let Some(r) = ruleset(rules) else {
+        return String::new();
+    };
+    let rows = |subjects: &str, numbers: &[f64]| -> Vec<(String, Ow, Mode)> {
+        subjects
+            .split('\n')
+            .filter(|s| !s.is_empty())
+            .zip(numbers.as_chunks::<3>().0)
+            .map(|(s, [allow, deny, mode])| {
+                let ow = Ow {
+                    allow: mask(*allow),
+                    deny: mask(*deny),
+                };
+                let mode = match *mode as u8 {
+                    1 => Mode::Merge,
+                    _ => Mode::Override,
+                };
+                (s.to_string(), ow, mode)
+            })
+            .collect()
+    };
+    let (before, after) = (
+        rows(before_subjects, before_rows),
+        rows(after_subjects, after_rows),
+    );
+    let bits: Vec<(&str, Mask)> = role_subjects
+        .split('\n')
+        .zip(role_bits)
+        .map(|(s, b)| (s, mask(*b)))
+        .collect();
+    let role_of = |s: &str| bits.iter().find(|(x, _)| *x == s).map_or(0, |(_, b)| *b);
+    let held: Vec<(&str, Vec<String>)> = member_subjects
+        .split('\n')
+        .zip(member_roles.split('\n'))
+        .map(|(m, roles)| {
+            let roles = roles
+                .split(',')
+                .filter(|r| !r.is_empty())
+                .map(str::to_string)
+                .collect();
+            (m, roles)
+        })
+        .collect();
+    let roles_of = |m: &str| {
+        held.iter()
+            .find(|(x, _)| *x == m)
+            .map_or_else(Vec::new, |(_, roles)| roles.clone())
+    };
+    let place = rchat_perms::sync::Place {
+        restrict_view: flags & RESTRICT_VIEW != 0,
+        restrict_send: flags & RESTRICT_SEND != 0,
+        voice: flags & VOICE != 0,
+    };
+    rchat_perms::sync::widened(
+        &borrowed(&before),
+        &borrowed(&after),
+        (everyone_subject, mask(everyone)),
+        &role_of,
+        &roles_of,
+        place,
+        r,
+    )
+    .join("\n")
+}
+
+fn borrowed(list: &[(String, Ow, Mode)]) -> Vec<(&str, Ow, Mode)> {
+    list.iter()
+        .map(|(s, ow, m)| (s.as_str(), *ow, *m))
+        .collect()
+}
+
 fn looks(places: &[f64], hoist: &[u8]) -> Vec<rchat_perms::looks::Look> {
     places
         .iter()

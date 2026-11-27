@@ -3,6 +3,7 @@ import {
   CAN_ALL,
   CAN_NONE,
   canOf,
+  flaggedMasks,
   hostedMask,
   keepMyPerms,
   legacyMask,
@@ -201,4 +202,28 @@ test('a P2P channel gives its mask to a joined identity only', () => {
   expect(p2pMask({ me: 'invite', channels }, 'a')).toBe(0)
   expect(p2pMask({ me: null, channels }, 'a')).toBe(0)
   expect(p2pMask(undefined, 'a')).toBeNull()
+})
+
+test('a flag set on a rule moves only its own permissions', () => {
+  const send = [
+    B.SendMessages,
+    B.AddReactions,
+    B.AttachFiles,
+    B.EmbedLinks,
+    B.CreatePolls,
+    B.StartThreads,
+  ].reduce((m, b) => maskOr(m, b), 0)
+  const rule = { allow: maskOr(B.ViewChannels, Perm.DeleteMessages), deny: B.ReadHistory }
+  expect(flaggedMasks(rule, 'can_send', false)).toEqual({
+    allow: rule.allow,
+    deny: maskOr(B.ReadHistory, send),
+  })
+  expect(flaggedMasks(rule, 'can_read_history', true)).toEqual({
+    allow: maskOr(rule.allow, B.ReadHistory),
+    deny: 0,
+  })
+  expect(flaggedMasks(rule, 'can_view', false)).toEqual({
+    allow: Perm.DeleteMessages,
+    deny: maskOr(B.ReadHistory, B.ViewChannels),
+  })
 })

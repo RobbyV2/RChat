@@ -770,6 +770,27 @@ export const profileResetOk = (e: AclEv, St: FactsQ, bit: number) =>
 export const aboutOk = (e: AclEv, St: FactsQ) =>
   St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & SERVER) !== 0)
 
+const SHORT_ID_MAX = 64
+const shortId = (x: unknown): x is string =>
+  typeof x === 'string' && x !== '' && x.length <= SHORT_ID_MAX
+
+// category ({id, name, pos, gone?}, one register per id) and chcat ({ch, cat, sync}, one per
+// channel) are registers like role_meta: no case in authCore, guards or classify. A write counts
+// when it is well formed and its author, in St(w), is an owner or a member who holds Manage
+// channels.
+export const channelMetaOk = (e: AclEv, St: FactsQ) => {
+  const c = e.c
+  const shaped =
+    e.t === 'category'
+      ? shortId(c.id) &&
+        (c.gone === true || (typeof c.name === 'string' && isInt(c.pos, -Infinity)))
+      : e.t === 'chcat' &&
+        shortId(c.ch) &&
+        (c.cat === null || shortId(c.cat)) &&
+        typeof c.sync === 'boolean'
+  return shaped && (St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & CHANNELS) !== 0))
+}
+
 export function classify(e: AclEv, F: FactsQ): { cls: Cls; self: boolean } {
   switch (e.t) {
     case 'kick':

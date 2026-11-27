@@ -264,6 +264,10 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             server,
             channel_id: _,
         }
+        | WsEvent::ChannelsPermsChanged {
+            server,
+            channel_ids: _,
+        }
         | WsEvent::LayoutChanged {
             server,
             layout: _,
@@ -894,6 +898,15 @@ impl Channels {
             } => {
                 self.slots.lock().unwrap().remove(channel_id);
             }
+            WsEvent::ChannelsPermsChanged {
+                server: _,
+                channel_ids,
+            } => {
+                let mut slots = self.slots.lock().unwrap();
+                for id in channel_ids {
+                    slots.remove(id);
+                }
+            }
             WsEvent::ServerRenamed {
                 old_name,
                 server: _,
@@ -1076,6 +1089,7 @@ mod tests {
             topic: None,
             category_id: None,
             position: 0,
+            perm_sync: false,
             my_perms: None,
         };
         router.deliver(WsEvent::ServerUpdated {
@@ -1185,6 +1199,16 @@ mod tests {
             channel_id: 1,
         });
         assert!(channels.slot(1).get().is_none());
+        fill(1, "a", true);
+        channels.observe(&WsEvent::ChannelsPermsChanged {
+            server: s("a"),
+            channel_ids: vec![1, 9],
+        });
+        assert!(channels.slot(1).get().is_none());
+        assert!(
+            channels.slot(2).get().is_some(),
+            "channels not listed keep theirs"
+        );
         channels.observe(&WsEvent::ServerDeleted { name: s("a") });
         assert!(channels.slot(2).get().is_none());
         let kept = Some(ChannelPolicy {

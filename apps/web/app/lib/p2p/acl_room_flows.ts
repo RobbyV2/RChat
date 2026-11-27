@@ -8,7 +8,7 @@ import {
   type AclContent,
   type AclEv,
 } from './acl/rules'
-import { dict, overwritesOf, rolesOf, type RoleSum } from './acl/summary'
+import { categoriesOf, chcatsOf, dict, overwritesOf, rolesOf, type RoleSum } from './acl/summary'
 import type { RoomCtx } from './acl_room_ctx'
 import type { Carried, Disowned, Reapply } from './acl_room'
 import { AGREED } from './limits'
@@ -100,6 +100,8 @@ export function carried(cx: RoomCtx, up: string): Carried | null {
     roles,
     channels,
     overwrites: overwritesOf(F),
+    categories: categoriesOf(F),
+    chcats: chcatsOf(F),
     settings: F.setting ?? null,
   }
 }

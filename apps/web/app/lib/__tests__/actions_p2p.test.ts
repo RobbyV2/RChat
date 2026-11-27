@@ -135,6 +135,8 @@ const TEXT = {
   perms: 0,
   over: {},
   everyoneSees: true,
+  cat: null as string | null,
+  sync: false,
 }
 const VOICE = {
   id: 'v1',
@@ -146,6 +148,8 @@ const VOICE = {
   perms: 0,
   over: {},
   everyoneSees: true,
+  cat: null as string | null,
+  sync: false,
 }
 
 // Book club, owned by Bob; we hold `perms` in it.
@@ -158,6 +162,7 @@ const server = (over: Partial<ServerView> = {}): ServerView =>
     owners: [BOB],
     perms: 0,
     rank: [Infinity, ''],
+    categories: [],
     roles: ROLES,
     channels: [TEXT, VOICE],
     members: Object.values(MEMBERS),
@@ -197,6 +202,9 @@ const onRole = (v: ServerView, r: RoleView): Target => ({ kind: 'p2p_role', v, r
 
 const settle = () => new Promise(r => setTimeout(r, 0))
 
+// What `syncWidens` answers in the recorded runs.
+let widens: string[] = []
+
 // What the rows did: confirms (accepted with their first choice), copies and P2P calls.
 const recorder = () => {
   const calls: unknown[][] = []
@@ -229,7 +237,15 @@ const recorder = () => {
           `${name}.${String(k)}`,
           ...args.map(a => (a && typeof a === 'object' && 'h' in a ? a.h : a)),
         ])
-        return Promise.resolve(k === 'ensureRoom' ? 'room-x' : k === 'forward' ? true : null)
+        return Promise.resolve(
+          k === 'ensureRoom'
+            ? 'room-x'
+            : k === 'forward'
+              ? true
+              : k === 'syncWidens'
+                ? widens
+                : null
+        )
       }
   }
   const { p2pServer, p2pRail, p2pVoice, p2p, p2pDm, p2pThread, p2pFiles, p2pCall, p2pBadge } =
@@ -263,6 +279,10 @@ const recorder = () => {
     'showRoles',
     'deleteRole',
     'unlockProfile',
+    'deleteCategory',
+    'placeChannel',
+    'syncWidens',
+    'syncChannel',
   ])
   spy('rail', p2pRail, ['move', 'ungroup'])
   spy('voice', p2pVoice, ['join', 'leave'])
@@ -336,6 +356,7 @@ describe("a P2P server's menu (rail tile and header)", () => {
       'Invite People',
       'Server Settings',
       'Edit Server Profile',
+      'Create Category',
       'Copy Server ID',
       'Leave Server',
     ])
@@ -1272,4 +1293,72 @@ test('P2P chat rows stay out of the palette', () => {
     .filter(id => /^p2p_(message|pin|call|badge)_/.test(id))
   expect(added.length).toBe(20)
   expect(added.filter(id => ids.has(id))).toEqual([])
+})
+
+describe('categories', () => {
+  const CAT = { id: 'k1', name: 'Team', pos: 0, over: {} }
+  const onCategory = (v: ServerView): Target => ({ kind: 'p2p_category', v, cat: CAT })
+  const IN = { ...TEXT, cat: 'k1', sync: false }
+
+  test('only those who manage channels see the category and sync rows', () => {
+    state()
+    const plain = server({ categories: [CAT] })
+    expect(labels(onCategory(plain))).toEqual([])
+    expect(labels(onChannel(plain, IN))).not.toContain('Sync Permissions')
+    const v = server({ perms: P.ManageChannels, categories: [CAT] })
+    expect(labels(onCategory(v))).toEqual([
+      'Create Channel',
+      'Rename Category',
+      'Permissions',
+      'Delete Category',
+    ])
+    expect(labels(onChannel(v, IN)).filter(l => /Category|Sync/.test(l))).toEqual([
+      'Move to Category',
+      'Sync Permissions',
+    ])
+    expect(labels(onChannel(v, { ...IN, sync: true }))).not.toContain('Sync Permissions')
+    expect(labels(onChannel(v, { ...IN, cat: null }))).not.toContain('Sync Permissions')
+    expect(labels(onChannel(server({ perms: P.ManageChannels }), IN))).not.toContain(
+      'Move to Category'
+    )
+    expect(
+      row(onChannel(v, IN), 'Move to Category')!.submenu!.map(i => [i.label, i.checked])
+    ).toEqual([
+      ['No category', false],
+      ['Team', true],
+    ])
+  })
+
+  test('moving, deleting and syncing, with a confirm when a sync lets more people in', async () => {
+    state()
+    const v = server({ perms: P.ManageChannels, categories: [CAT] })
+    const none = row(onChannel(v, IN), 'Move to Category')!.submenu![0]
+    expect(await run(none)).toEqual([['server.placeChannel', SRV, TEXT.id, null]])
+    expect(await run(row(onCategory(v), 'Delete Category'))).toEqual([
+      [
+        'confirm',
+        'Delete Category',
+        'Delete the category Team? Its channels are kept and move out of it.',
+        'Delete',
+      ],
+      ['server.deleteCategory', SRV, 'k1'],
+    ])
+    widens = []
+    expect(await run(row(onChannel(v, IN), 'Sync Permissions'))).toEqual([
+      ['server.syncWidens', SRV, TEXT.id],
+      ['server.syncChannel', SRV, TEXT.id],
+    ])
+    widens = ['r:everyone', 'r:r1']
+    expect(await run(row(onChannel(v, IN), 'Sync Permissions'))).toEqual([
+      ['server.syncWidens', SRV, TEXT.id],
+      [
+        'confirm',
+        'Sync Permissions',
+        'Syncing with Team lets @everyone and Mods see or send in #general.',
+        'Sync',
+      ],
+      ['server.syncChannel', SRV, TEXT.id],
+    ])
+    widens = []
+  })
 })

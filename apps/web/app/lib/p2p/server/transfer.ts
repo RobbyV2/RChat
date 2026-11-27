@@ -331,6 +331,28 @@ export async function carryOver(cx: ServerCtx, to: string) {
             await cx.emit(to, 'channel', () => ({ ...knownChannel(c), id: c.id }))
         },
       ])
+    // Categories and the category of each channel, with their ids.
+    for (const [id, cat] of Object.entries(s.categories ?? {}))
+      steps.push([
+        `k:${id}`,
+        async () => {
+          if (!cur().categories?.[id])
+            await cx.emit(to, 'category', () => ({
+              ...cat.extra,
+              id,
+              name: cat.name,
+              pos: cat.pos,
+            }))
+        },
+      ])
+    for (const [ch, cc] of Object.entries(s.chcats ?? {}))
+      steps.push([
+        `h:${ch}`,
+        async () => {
+          if (!cur().chcats?.[ch])
+            await cx.emit(to, 'chcat', () => ({ ...cc.extra, ch, cat: cc.cat, sync: cc.sync }))
+        },
+      ])
     if (s.settings)
       steps.push([
         'settings',

@@ -8487,6 +8487,60 @@ async fn role_looks_are_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn category_rules_are_added_to_an_old_database() {
+    on_each_database("category_perms_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for sql in [
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'Club', 1)".to_string(),
+            "INSERT INTO channel_categories(server, name, position, created_at) VALUES('club', 'Team', 0, 1)".to_string(),
+            "INSERT INTO channels(server, name, kind, created_at, category_id, position) SELECT 'club', 'plans', 'text', 1, id, 0 FROM channel_categories WHERE name = 'Team'".to_string(),
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history, allow, deny) SELECT id, 'everyone', 0, 1, 1, 0, 131072 FROM channels WHERE name = 'plans'".to_string(),
+            "DROP TABLE category_perms".to_string(),
+            "ALTER TABLE channels DROP COLUMN perm_sync".to_string(),
+            format!(
+                "UPDATE settings SET value = '{}' WHERE key = 'schema_version'",
+                super::migrate::CATEGORY_PERMS_VERSION - 1
+            ),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&db)
+                .await
+                .expect(&sql);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, &format!("SELECT COUNT(*) FROM channels WHERE name = 'plans' AND perm_sync = {round} AND category_id IS NOT NULL")).await,
+                1,
+                "{round}: an old channel copies nothing and keeps its category; a mark set after the upgrade stays"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channel_perms WHERE subject = 'everyone' AND deny = 131072 AND can_view = 0").await,
+                1,
+                "{round}: its rules stay"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM category_perms WHERE subject = 'r:1' AND allow = 131072 AND mode = 'override'").await,
+                round,
+                "{round}: a category rule written after the upgrade stays"
+            );
+            if round == 0 {
+                for sql in [
+                    "INSERT INTO category_perms(category_id, server, subject, allow) SELECT id, 'club', 'r:1', 131072 FROM channel_categories WHERE name = 'Team'",
+                    "UPDATE channels SET perm_sync = 1 WHERE name = 'plans'",
+                ] {
+                    sqlx::query(sql).execute(&db).await.expect(sql);
+                }
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn channel_labels_preserve_topics_and_channel_ids() {
     on_each_database("channel_labels", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");

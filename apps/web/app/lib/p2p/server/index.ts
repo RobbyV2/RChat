@@ -72,6 +72,7 @@ import * as receive from './receive'
 import * as serve from './serve'
 import * as emitter from './emit'
 import * as roles from './roles'
+import * as categories from './categories'
 import * as moderation from './moderation'
 
 export {
@@ -105,6 +106,7 @@ export type {
   SearchHit,
   MemberView,
   RoleView,
+  CategoryView,
   ChannelView,
   ModView,
   ReachedView,
@@ -1353,7 +1355,46 @@ export class Servers {
   }
 
   setOverwrite(room: string, ch: string, subj: string, allow: number, deny: number) {
-    return emitter.setOverwrite(ctx(this), room, ch, subj, allow, deny)
+    return categories.setChannelOverwrite(ctx(this), room, ch, subj, { allow, deny })
+  }
+
+  // ----- Categories -----
+
+  addChannelIn(
+    room: string,
+    name: string,
+    cat: string,
+    opts: { restrictView?: boolean; kind?: 'text' | 'voice' } = {}
+  ) {
+    return categories.addChannelIn(ctx(this), room, name, cat, opts)
+  }
+
+  createCategory(room: string, name: string) {
+    return categories.createCategory(ctx(this), room, name)
+  }
+
+  editCategory(room: string, id: string, patch: categories.CategoryPatch) {
+    return categories.editCategory(ctx(this), room, id, patch)
+  }
+
+  deleteCategory(room: string, id: string) {
+    return categories.deleteCategory(ctx(this), room, id)
+  }
+
+  placeChannel(room: string, ch: string, cat: string | null) {
+    return categories.placeChannel(ctx(this), room, ch, cat)
+  }
+
+  setCategoryOverwrite(room: string, cat: string, subj: string, allow: number, deny: number) {
+    return categories.setCategoryOverwrite(ctx(this), room, cat, subj, { allow, deny })
+  }
+
+  syncChannel(room: string, ch: string) {
+    return categories.syncChannel(ctx(this), room, ch)
+  }
+
+  syncWidens(room: string, ch: string) {
+    return categories.syncWidens(ctx(this), room, ch)
   }
 
   // ----- Roles -----

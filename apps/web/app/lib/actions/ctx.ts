@@ -88,6 +88,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'p2p_channel':
     case 'p2p_member':
     case 'p2p_role':
+    case 'p2p_category':
     case 'widget_message':
     case 'p2p_message':
     case 'p2p_pin_line':
@@ -134,6 +135,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'p2p_channel':
     case 'p2p_member':
     case 'p2p_role':
+    case 'p2p_category':
     case 'widget_message':
     case 'p2p_message':
     case 'p2p_pin_line':
@@ -179,6 +181,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'p2p_channel':
     case 'p2p_member':
     case 'p2p_role':
+    case 'p2p_category':
     case 'widget_message':
     case 'p2p_message':
     case 'p2p_pin_line':
@@ -295,6 +298,7 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'p2p_channel':
     case 'p2p_member':
     case 'p2p_role':
+    case 'p2p_category':
     case 'widget_message':
     case 'p2p_message':
     case 'p2p_pin_line':

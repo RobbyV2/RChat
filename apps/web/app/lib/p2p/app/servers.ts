@@ -12,7 +12,7 @@ import { loadDmThread, loadDmThreadAround, loadDmThreads, type P2pMessage } from
 import { cacheKey } from '../dag'
 import { knownRules } from '../acl/rules'
 import { cachedSummary } from '../server/load'
-import { channelViews } from '../server/views'
+import { categoryViews, channelViews } from '../server/views'
 import { keyId } from '../keys'
 import { displayName } from '../contacts'
 import type { WireV2 } from '../event_v2'
@@ -108,6 +108,7 @@ export function createServersPart(
       profileLock: { locked: false },
       system: { ch: null, join: true, leave: true },
       channels: sum && me === 'join' ? channelViews(sum, ik, me, state.limits.display) : [],
+      categories: sum && me === 'join' ? categoryViews(sum, state.limits.display) : [],
       roles: [],
       everyone: 0,
       members: [],
@@ -849,6 +850,23 @@ export function createServersPart(
       withServers(s => s.editChannel(room, id, patch)),
     setOverwrite: (room: string, ch: string, subj: string, o: { allow: number; deny: number }) =>
       withServers(s => s.setOverwrite(room, ch, subj, o.allow, o.deny)),
+    // Categories: a category's overwrites reach the channels that copy them.
+    addChannelIn: (room: string, name: string, cat: string, kind: 'text' | 'voice' = 'text') =>
+      withServers(s => s.addChannelIn(room, name, cat, { kind })),
+    createCategory: (room: string, name: string) => withServers(s => s.createCategory(room, name)),
+    editCategory: (room: string, id: string, patch: { name?: string; pos?: number }) =>
+      withServers(s => s.editCategory(room, id, patch)),
+    deleteCategory: (room: string, id: string) => withServers(s => s.deleteCategory(room, id)),
+    placeChannel: (room: string, ch: string, cat: string | null) =>
+      withServers(s => s.placeChannel(room, ch, cat)),
+    setCategoryOverwrite: (
+      room: string,
+      cat: string,
+      subj: string,
+      o: { allow: number; deny: number }
+    ) => withServers(s => s.setCategoryOverwrite(room, cat, subj, o.allow, o.deny)),
+    syncChannel: (room: string, ch: string) => withServers(s => s.syncChannel(room, ch)),
+    syncWidens: (room: string, ch: string) => withServers(async s => s.syncWidens(room, ch)),
     // Roles. Taking a role from someone is a removal: it waits for sync too.
     createRole: (room: string, role: { name: string; color: number | null; bits: number }) =>
       withServers(s => s.createRole(room, role)),

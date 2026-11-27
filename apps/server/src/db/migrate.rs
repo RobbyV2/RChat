@@ -131,6 +131,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("roles", "hoist {INT} NOT NULL DEFAULT 0"),
     ("roles", "icon TEXT"),
     ("roles", "color_names {INT} NOT NULL DEFAULT 1"),
+    ("channels", "perm_sync {INT} NOT NULL DEFAULT 0"),
     ("tokens", "sso_sid TEXT"),
     ("servers", "upload_expiry {INT}"),
     ("media", "ttl {INT}"),
@@ -291,7 +292,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// `user_roles(role_id, username)` index in place of `idx_user_roles_role`.
 /// 57: descriptions of attached images (`messages.media_alt`).
 /// 58: wrapped data keys for encryption at rest.
-pub const SCHEMA_VERSION: i64 = 58;
+/// 59: category permission rules and channels that copy their category's rules.
+pub const SCHEMA_VERSION: i64 = 59;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -302,6 +304,9 @@ pub(super) const ROLE_ORDER_VERSION: i64 = 55;
 /// The schema version that adds how roles show.
 #[cfg(test)]
 pub(super) const ROLE_LOOKS_VERSION: i64 = 56;
+/// The schema version that adds category permission rules.
+#[cfg(test)]
+pub(super) const CATEGORY_PERMS_VERSION: i64 = 59;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 20] {

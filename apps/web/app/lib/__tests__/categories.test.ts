@@ -3,6 +3,11 @@ import {
   applyLayout,
   categoryOfZone,
   channelGroups,
+  groupChannels,
+  namesText,
+  subjectNames,
+  roomGroups,
+  syncConfirmText,
   fullIndex,
   layoutOrder,
   moveCategory,
@@ -127,5 +132,70 @@ describe('layouts', () => {
     expect(layout.version).toBe(4)
     expect(layout.categories.map(c => c.name)).toEqual(['Empty', 'Games'])
     expect(layoutOrder(applyLayout(d, layout))).toEqual(order)
+  })
+})
+
+describe('groups of P2P rooms and the sync texts', () => {
+  test('rooms group by their category ids, by place; a channel of a gone category shows without one', () => {
+    const chan = (id: string, pos: number, cat: string | null) =>
+      ({ id, pos, cat, name: id, kind: 'text' }) as never
+    const groups = roomGroups(
+      {
+        channels: [
+          chan('b', 1, 'k1'),
+          chan('a', 0, null),
+          chan('c', 2, 'gone'),
+          chan('d', 0, 'k1'),
+        ],
+        categories: [
+          { id: 'k2', name: 'Later', pos: 5, over: {} },
+          { id: 'k1', name: 'Team', pos: 1, over: {} },
+        ],
+      },
+      false
+    )
+    expect(groups.uncategorized.map(c => (c as { id: string }).id)).toEqual(['a', 'c'])
+    expect(
+      groups.categories.map(g => [g.category.id, g.channels.map(c => (c as { id: string }).id)])
+    ).toEqual([['k1', ['d', 'b']]])
+    expect(
+      groupChannels(
+        [{ id: 'x', position: 0, category_id: null }],
+        [{ id: 'k9', position: 0 }],
+        true
+      ).categories.map(g => g.category.id)
+    ).toEqual(['k9'])
+  })
+
+  test('a moved channel stops copying its category', () => {
+    const synced = detail({
+      channels: [
+        { ...ch(3, 'text', 1, 10), perm_sync: true },
+        { ...ch(1, 'text', 0), perm_sync: false },
+      ],
+    })
+    const kept = applyLayout(synced, {
+      version: 2,
+      uncategorized: [1],
+      categories: [{ id: 10, name: 'Games', channels: [3] }],
+    })
+    expect(kept.channels.find(c => c.id === 3)?.perm_sync).toBe(true)
+    const moved = applyLayout(synced, {
+      version: 3,
+      uncategorized: [1, 3],
+      categories: [{ id: 10, name: 'Games', channels: [] }],
+    })
+    expect(moved.channels.find(c => c.id === 3)?.perm_sync).toBe(false)
+  })
+
+  test('the sync confirm names who it lets in', () => {
+    expect(namesText([])).toBe('')
+    expect(namesText(['@everyone'])).toBe('@everyone')
+    expect(namesText(['@everyone', 'Mods', 'bob'])).toBe('@everyone, Mods and bob')
+    const names: Record<string, string> = { 'r:1': 'Mods', 'r:2': 'Muted', 'u:bob': 'bob' }
+    expect(subjectNames(['r:1+r:2', 'u:bob'], s => names[s])).toEqual(['Mods with Muted', 'bob'])
+    expect(syncConfirmText('Team', '#plans', ['Mods'])).toBe(
+      'Syncing with Team lets Mods see or send in #plans.'
+    )
   })
 })

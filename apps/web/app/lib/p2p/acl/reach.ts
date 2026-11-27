@@ -128,6 +128,8 @@ export class Ix {
   // `profile_reset` writes by the member they name, and the members each author named.
   profileResetEv = new Map<string, number[]>()
   profileResetBy = new Map<string, Set<string>>()
+  categoryEv = new Map<string, number[]>()
+  chcatEv = new Map<string, number[]>()
   profileBy = new Map<string, number[]>()
   settingsEv: number[] = []
   aboutEv: number[] = []
@@ -251,6 +253,12 @@ export class Ix {
         break
       case 'about':
         this.aboutEv.push(i)
+        break
+      case 'category':
+        if (typeof c.id === 'string') pushM(this.categoryEv, c.id, i)
+        break
+      case 'chcat':
+        if (typeof c.ch === 'string') pushM(this.chcatEv, c.ch, i)
         break
       case 'assign':
         pushM(this.assignEv, `${c.to}|${c.role}`, i)

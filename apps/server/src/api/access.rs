@@ -3124,7 +3124,7 @@ where
 /// client.
 pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>> {
     let row =
-        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only FROM channels WHERE id = $1")
+        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only, perm_sync FROM channels WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
             .await?;
@@ -3143,6 +3143,7 @@ pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(Str
                 position: r.try_get(8)?,
                 sensitive: r.try_get::<i64, _>(9)? != 0,
                 text_only: r.try_get::<i64, _>(10)? != 0,
+                perm_sync: r.try_get::<i64, _>(11)? != 0,
                 my_perms: None,
             },
         ))),

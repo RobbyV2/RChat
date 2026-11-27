@@ -212,6 +212,8 @@ export const actParts = (t: string, to?: string, ends = false): { act: string; w
     profile_mode: 'Change what server profiles may hold',
     channel: 'Change a channel',
     chperm: 'Change who may use a channel',
+    category: 'Change a category',
+    chcat: 'Move a channel to a category',
     settings: 'Change the server settings',
     about: 'Change the server description and icon',
     profile: 'Change their profile',
@@ -297,6 +299,14 @@ export const effectHolds = (
         (c.color === undefined || r.color === c.color) &&
         ROLE_LOOKS.every(k => c[k] === undefined || same(r[k], c[k]))
       )
+    }
+    case 'category': {
+      const k = typeof c.id === 'string' ? s.categories?.[c.id] : undefined
+      return c.gone === true ? !k : !!k && k.name === c.name && k.pos === c.pos
+    }
+    case 'chcat': {
+      const k = typeof c.ch === 'string' ? s.chcats?.[c.ch] : undefined
+      return !!k && k.cat === (c.cat ?? null) && k.sync === c.sync
     }
     case 'settings':
       return same(s.settings, c)
