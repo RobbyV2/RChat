@@ -33,6 +33,7 @@ const ROWS: Record<Target['kind'], boolean> = {
   embed: true,
   timestamp: false,
   file: true,
+  link: false,
   inbox: true,
   thread: true,
   card: true,

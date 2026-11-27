@@ -74,6 +74,8 @@ export type Target =
   | { kind: 'file'; now(): FileMenu | null }
   // A timestamp in a message's text: `ts` in milliseconds, `token` as written.
   | { kind: 'timestamp'; ts: number; token: string }
+  // A link in a message or embed; `own`: in one's own message.
+  | { kind: 'link'; href: string; label: string | null; own: boolean }
   // An inbox row, with its panel's open and mark-read.
   | { kind: 'inbox'; entry: InboxEntry; open(): void; read(): void }
   // A row of a Threads list: open the thread, or jump to its root in the conversation.

@@ -272,6 +272,7 @@ describe('the settings dialog', () => {
     const html = signedIn({ kind: 'settings', section: 'privacy' })
     expect([...html.matchAll(/data-settings-part="([a-z_]+)"/g)].map(m => m[1])).toEqual([
       'user_privacy',
+      'user_links',
       'user_blocked',
     ])
   })

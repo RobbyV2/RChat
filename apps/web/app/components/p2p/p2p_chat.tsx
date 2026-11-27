@@ -40,6 +40,7 @@ import {
   X,
 } from 'lucide-react'
 import { useStore } from '../../lib/store'
+import { outgoing } from '../../lib/link_safety'
 import { openActionMenu } from '../../lib/actions/menu'
 import { peerChat } from '../../lib/actions/p2p_chat'
 import { noticeOpen } from '../../lib/home'
@@ -640,6 +641,7 @@ function P2pComposerBody({
     maxHeight: 160,
   })
   const formatting = useFormatting({ inputRef, getText, setText })
+  const linkPrefs = useStore(s => s.linkPrefs)
 
   const typing = focused && text.trim() !== ''
   useEffect(() => {
@@ -670,7 +672,7 @@ function P2pComposerBody({
   const send = () => {
     if ((noFiles && files > 0) || (!text.trim() && !files) || tooLong || slowLeft > 0) return
     const sent = text
-    void p2pDm.send(key, sent).then(ok => {
+    void p2pDm.send(key, outgoing(linkPrefs, sent)).then(ok => {
       if (ok && getText() === sent) setText('')
     })
     typedAt.current = 0

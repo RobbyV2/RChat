@@ -50,6 +50,7 @@ import { serverInitial } from '../lib/rules'
 import { joinNeeds } from '../lib/joining'
 import type { Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
+import { openMessageLink } from '../lib/link_open'
 import { AboutLine } from './server_about'
 import { aboutText } from '../lib/server_about'
 import { Dialog, fieldCls, FieldError, filledBtn, LinkPage, Masked, textBtn, useOwn } from './ui'
@@ -1160,7 +1161,7 @@ export function RemoteInviteCard({
   const open = () =>
     internal
       ? void routeInstanceLink(owner, { origin: invite.origin, path })
-      : window.open(remoteInviteUrl(invite), '_blank', 'noopener,noreferrer')
+      : openMessageLink(owner, remoteInviteUrl(invite), null, false)
   const openBtn = (
     <button
       onClick={open}

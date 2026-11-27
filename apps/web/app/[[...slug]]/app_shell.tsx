@@ -43,6 +43,7 @@ import WebhooksDialog from '../components/webhooks_dialog'
 import TimeoutDialog from '../components/timeout_dialog'
 import ServerProfileDialog from '../components/server_profile_dialog'
 import BanDialog from '../components/ban_dialog'
+import ExternalLinkDialog from '../components/external_link_dialog'
 import { AppPreview } from '../components/app_preview'
 import { ViewingPrompt } from '../components/viewing_prompt'
 import { RelayPrompt } from '../components/relay_settings'
@@ -307,6 +308,7 @@ function OverlayLayer() {
       <TimeoutDialog />
       <ServerProfileDialog />
       <BanDialog />
+      <ExternalLinkDialog />
       <SettingsMenu />
       <ConfirmDialog />
       <ProfileCard />

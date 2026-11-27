@@ -21,8 +21,20 @@ export function WebhookBadge() {
 }
 
 type CardText = (s: string) => ReactNode
+// A link as messages show it: its menu, and the warning before it opens another site.
+type CardLink = (href: string, className: string, children: ReactNode) => ReactNode
 
-function RichCard({ embed, text, line }: { embed: RichEmbed; text: CardText; line: CardText }) {
+function RichCard({
+  embed,
+  text,
+  line,
+  link: Link,
+}: {
+  embed: RichEmbed
+  text: CardText
+  line: CardText
+  link: CardLink
+}) {
   const color = embedColor(embed.color)
   const link = safeLink(embed.url)
   const rows = fieldRows(embed.fields ?? [])
@@ -33,14 +45,11 @@ function RichCard({ embed, text, line }: { embed: RichEmbed; text: CardText; lin
     >
       {embed.title &&
         (link ? (
-          <a
-            href={link}
-            target="_blank"
-            rel="noreferrer"
-            className="block text-sm font-semibold break-words text-primary hover:underline"
-          >
-            {line(embed.title)}
-          </a>
+          Link(
+            link,
+            'block text-sm font-semibold break-words text-primary hover:underline',
+            line(embed.title)
+          )
         ) : (
           <p className="text-sm font-semibold break-words text-on-surface">{line(embed.title)}</p>
         ))}
@@ -73,16 +82,18 @@ export function RichEmbeds({
   embeds,
   text,
   line,
+  link,
 }: {
   embeds: RichEmbed[]
   text: CardText
   line: CardText
+  link: CardLink
 }) {
   if (!embeds.length) return null
   return (
     <div className="flex flex-col">
       {embeds.map((e, i) => (
-        <RichCard key={i} embed={e} text={text} line={line} />
+        <RichCard key={i} embed={e} text={text} line={line} link={link} />
       ))}
     </div>
   )

@@ -68,6 +68,7 @@ import { remarkMask } from '../lib/profanity'
 import { markSpoilers, spoilerParts } from '../lib/spoilers'
 import { hideSpoilers, type MdNode as SpoilerNode } from '../lib/spoiler_tree'
 import { openActionMenu } from '../lib/actions/menu'
+import { warnsBefore } from '../lib/link_open'
 import {
   Ended,
   errorText,
@@ -199,6 +200,8 @@ const remarkStamps = () => (tree: unknown) => markStamps(tree as MdNode)
 const messageUrl = (url: string, key: string) =>
   key === 'href' && url.startsWith('rchat://') ? url : defaultUrlTransform(url)
 const InLink = createContext(false)
+// Whether the links shown are in one's own message: those open without the warning.
+const OwnLinks = createContext(false)
 const PlainLinks = createContext(false)
 
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
@@ -218,11 +221,7 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
     return <img src={shown} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
   if (!src) return <>{alt}</>
   if (inLink) return <>{alt || src}</>
-  return (
-    <a href={href} target="_blank" rel="noreferrer" className="text-primary underline">
-      {alt || src}
-    </a>
-  )
+  return <MessageLink href={href}>{alt || src}</MessageLink>
 }
 
 // A `||spoiler||`: a dark pill until clicked (or Enter / Space), for this view only. "Show
@@ -385,16 +384,45 @@ export function messageLinkAction(account: AccountSession, href: string) {
 export function MessageLink({ href, children, className, ...props }: React.ComponentProps<'a'>) {
   const acct = useAccount()
   const widget = useContext(WidgetLinkCards) !== null
+  const own = useContext(OwnLinks)
+  const self = useRef<HTMLAnchorElement>(null)
   const open = !widget && href ? messageLinkAction(acct, href) : null
+  // An outside link from someone else asks first, also for a middle or modified click.
+  const warn = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (widget || !href || open || !warnsBefore(acct, href, own)) return false
+    e.preventDefault()
+    acct.store.getState().openDialog({
+      kind: 'external_link',
+      href,
+      label: e.currentTarget.textContent,
+    })
+    return true
+  }
   return (
     <a
       {...props}
+      {...(widget || !href
+        ? {}
+        : longPress((x, y) =>
+            openActionMenu(
+              x,
+              y,
+              { kind: 'link', href, label: self.current?.textContent ?? null, own },
+              { header: <span className="font-mono text-xs break-all">{href}</span> },
+              acct
+            )
+          ))}
+      ref={self}
       href={href}
       target={open ? undefined : '_blank'}
       rel={open ? undefined : 'noreferrer'}
+      onAuxClick={e => {
+        if (e.button === 1) warn(e)
+      }}
       onClick={e => {
-        if (widget || !href || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
-          return
+        if (widget || !href || e.button !== 0) return
+        if (warn(e)) return
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
         const action = open ?? messageLinkAction(acct, href)
         if (action) {
           e.preventDefault()
@@ -1199,90 +1227,103 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     [embeds, local, remoteOk, hidden]
   )
   return (
-    <div className="min-w-0 text-sm leading-relaxed break-words">
-      {!editor && !widget && <PeerCodeButton text={content} peer={!!src} />}
-      {editor ??
-        (content.trim() !== '' ? (
-          <MaskPlain>
-            <MaskedWords>
-              <SpoilerPieces>
-                <PlainLinks.Provider value={!!message.no_previews}>
-                  <ReactMarkdown
-                    urlTransform={messageUrl}
-                    remarkPlugins={plugins}
-                    components={components}
-                  >
-                    {source}
-                  </ReactMarkdown>
-                </PlainLinks.Provider>
-              </SpoilerPieces>
-            </MaskedWords>
-          </MaskPlain>
-        ) : (
-          edited && (
-            <p className="my-0.5">
-              <EditedMark at={edited} />
-            </p>
-          )
-        ))}
-      {media !== null && (
-        <div className="group/att relative w-fit max-w-full">
-          {!media.removed && attachmentsOff(media) ? (
-            <p className="mt-1 flex items-center gap-1.5 text-xs text-on-surface-variant italic">
-              <Ban size={12} className="shrink-0" />
-              {attachmentsOff(media)}
-            </p>
-          ) : media.kind === 'p2p' && !media.removed ? (
-            <P2pFile media={media} messageId={message.id} />
+    <OwnLinks.Provider value={own}>
+      <div className="min-w-0 text-sm leading-relaxed break-words">
+        {!editor && !widget && <PeerCodeButton text={content} peer={!!src} />}
+        {editor ??
+          (content.trim() !== '' ? (
+            <MaskPlain>
+              <MaskedWords>
+                <SpoilerPieces>
+                  <PlainLinks.Provider value={!!message.no_previews}>
+                    <ReactMarkdown
+                      urlTransform={messageUrl}
+                      remarkPlugins={plugins}
+                      components={components}
+                    >
+                      {source}
+                    </ReactMarkdown>
+                  </PlainLinks.Provider>
+                </SpoilerPieces>
+              </MaskedWords>
+            </MaskPlain>
           ) : (
-            <MediaAttachment media={media} own={own} postedAt={message.created_at} />
-          )}
-          {canDelete && !media.removed && (
-            <button
-              title="Remove attachment"
-              aria-label="Remove attachment"
-              onClick={() => void deleteMedia(message.id)}
-              className="absolute -top-1.5 -right-1.5 rounded-full bg-surface-container-highest p-1 text-on-surface-variant opacity-0 shadow-elevation-1 group-focus-within/att:opacity-100 group-hover/att:opacity-100 hover:text-error max-md:opacity-100"
-            >
-              <X size={12} />
-            </button>
-          )}
-        </div>
-      )}
-      {message.webhook && message.webhook.embeds.length > 0 && (
-        <RichEmbeds embeds={message.webhook.embeds} text={card.text} line={card.line} />
-      )}
-      {!message.no_previews &&
-        !src &&
-        messageLinks.map(l =>
-          widgetCards ? (
-            <WidgetMessageLinkCard key={l.id} link={l} card={widgetCards.get(l.id)} />
-          ) : (
-            <MessageLinkCard key={l.id} link={l} />
-          )
+            edited && (
+              <p className="my-0.5">
+                <EditedMark at={edited} />
+              </p>
+            )
+          ))}
+        {media !== null && (
+          <div className="group/att relative w-fit max-w-full">
+            {!media.removed && attachmentsOff(media) ? (
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-on-surface-variant italic">
+                <Ban size={12} className="shrink-0" />
+                {attachmentsOff(media)}
+              </p>
+            ) : media.kind === 'p2p' && !media.removed ? (
+              <P2pFile media={media} messageId={message.id} />
+            ) : (
+              <MediaAttachment media={media} own={own} postedAt={message.created_at} />
+            )}
+            {canDelete && !media.removed && (
+              <button
+                title="Remove attachment"
+                aria-label="Remove attachment"
+                onClick={() => void deleteMedia(message.id)}
+                className="absolute -top-1.5 -right-1.5 rounded-full bg-surface-container-highest p-1 text-on-surface-variant opacity-0 shadow-elevation-1 group-focus-within/att:opacity-100 group-hover/att:opacity-100 hover:text-error max-md:opacity-100"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
         )}
-      {!message.no_previews &&
-        !src &&
-        !widget &&
-        invites.map(i => (
-          <InviteCard
-            key={i.code ?? i.server}
-            variant="embed"
-            server={i.server}
-            password={i.password}
-            code={i.code ?? null}
+        {message.webhook && message.webhook.embeds.length > 0 && (
+          <RichEmbeds
+            embeds={message.webhook.embeds}
+            text={card.text}
+            line={card.line}
+            link={(href, className, children) => (
+              <MessageLink href={href} className={className}>
+                {children}
+              </MessageLink>
+            )}
           />
-        ))}
-      {previews &&
-        !src &&
-        !widget &&
-        remotes.map(i => (
-          <RemoteInviteCard key={remoteKey(i)} invite={i} onResolved={onResolved} />
-        ))}
-      {previews &&
-        !src &&
-        links.map(e => <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />)}
-      {previews && hidden.slice(0, 3).map(url => <SpoilerLinkCard key={url} url={url} />)}
-    </div>
+        )}
+        {!message.no_previews &&
+          !src &&
+          messageLinks.map(l =>
+            widgetCards ? (
+              <WidgetMessageLinkCard key={l.id} link={l} card={widgetCards.get(l.id)} />
+            ) : (
+              <MessageLinkCard key={l.id} link={l} />
+            )
+          )}
+        {!message.no_previews &&
+          !src &&
+          !widget &&
+          invites.map(i => (
+            <InviteCard
+              key={i.code ?? i.server}
+              variant="embed"
+              server={i.server}
+              password={i.password}
+              code={i.code ?? null}
+            />
+          ))}
+        {previews &&
+          !src &&
+          !widget &&
+          remotes.map(i => (
+            <RemoteInviteCard key={remoteKey(i)} invite={i} onResolved={onResolved} />
+          ))}
+        {previews &&
+          !src &&
+          links.map(e => (
+            <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />
+          ))}
+        {previews && hidden.slice(0, 3).map(url => <SpoilerLinkCard key={url} url={url} />)}
+      </div>
+    </OwnLinks.Provider>
   )
 })

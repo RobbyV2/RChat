@@ -7,6 +7,7 @@ import type { PollTarget } from './polls_store'
 import type { Selection } from './selection'
 import type { PendingUpload } from './attachments'
 import type { Decision, RelayChoice, RelayPrefs } from './relays'
+import type { LinkPrefs } from './link_safety'
 import type { CallRoute } from './call_choice'
 import type { P2pApp } from './p2p/app/runtime'
 import type { ConfigDoc, SectionKey } from './config_transfer'
@@ -170,6 +171,8 @@ export type ActiveDialog =
   | { kind: 'ban'; server: string; user: UserRef }
   | { kind: 'ban_request'; request: BanRequest }
   | { kind: 'timeout_request'; request: TimeoutRequest }
+  // The warning before a message's link opens another site; `label`: the link's own text.
+  | { kind: 'external_link'; href: string; label: string | null }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
   | { kind: 'remove_phrase_confirm'; username: string }
@@ -387,6 +390,8 @@ export interface RChatState {
   theme: Theme
   streamer: boolean
   iceHelpers: boolean
+  // This account's link safety choices on this device.
+  linkPrefs: LinkPrefs
   iceRelay: boolean
   relayPrefs: RelayPrefs
   // The relay host the consent prompt asks about, or null.
@@ -445,6 +450,8 @@ export interface RChatState {
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
   setIceHelpers: (on: boolean) => void
+  setLinkPrefs: (prefs: LinkPrefs) => void
+  trustLinkHost: (host: string) => void
   setIceRelay: (on: boolean) => void
   saveRelays: (next: RelayPrefs) => void
   answerRelayPrompt: (decision: Decision) => void

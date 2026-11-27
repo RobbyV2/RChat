@@ -28,6 +28,7 @@ import { canForward } from '../forward'
 import { locatedNow } from '../forward_locate'
 import { hostedPill } from '../forward_pill'
 import { messageLinkUrl } from '../message_links'
+import { openMessageLink } from '../link_open'
 import { sharing } from '../platform'
 import { canPin } from '../pins'
 import { pollClosed, votersShown } from '../polls'
@@ -427,6 +428,28 @@ export const embedActions: Action[] = [
       if (t)
         for (const e of t.message.embeds)
           void ctx.acct.store.getState().deleteEmbed(t.message.id, e.ord, false)
+    },
+  },
+  {
+    id: 'link_open',
+    title: 'Open Link',
+    icon: ExternalLink,
+    scope: 'message',
+    targets: ['link'],
+    available: ({ target }) => target.kind === 'link',
+    run: ({ acct, target }) => {
+      if (target.kind === 'link') openMessageLink(acct, target.href, target.label, target.own)
+    },
+  },
+  {
+    id: 'link_copy',
+    title: 'Copy Link',
+    icon: Link,
+    scope: 'message',
+    targets: ['link'],
+    available: ({ target }) => target.kind === 'link',
+    run: ({ target }) => {
+      if (target.kind === 'link') copy(target.href)
     },
   },
   {

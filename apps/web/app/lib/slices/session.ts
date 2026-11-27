@@ -51,6 +51,7 @@ import { forwardKey } from '../forward'
 import { type FriendsDeps, friendsInitial, type friendsSlice } from '../friends_store'
 import { NO_GROUP_PINGS } from '../group_pings'
 import { iceKey, iceValue, parseIce } from '../ice'
+import { linkPrefsKey, linkPrefsValue, parseLinkPrefs, trustHost } from '../link_safety'
 import { limitsOf } from '../instance_limits'
 import {
   fitsHome,
@@ -408,7 +409,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     ice.setRelay(relay)
     if (relayAnswer) settleRelayPrompt('deny')
     relayBook.load(signedIn && username !== null ? home.scoped(relaysKey(username)) : null)
-    set({ iceHelpers: on, iceRelay: relay })
+    set({
+      iceHelpers: on,
+      iceRelay: relay,
+      linkPrefs: parseLinkPrefs(readLocal(home.scoped(linkPrefsKey(username)))),
+    })
     void ice.setSignedIn(signedIn)
     p2pGate.account(signedIn ? username : null)
   }
@@ -1607,6 +1612,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'setTheme'
     | 'setStreamer'
     | 'setIceHelpers'
+    | 'setLinkPrefs'
+    | 'trustLinkHost'
     | 'setIceRelay'
     | 'saveRelays'
     | 'answerRelayPrompt'
@@ -1732,6 +1739,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       ice.setHelpers(on)
       set({ iceHelpers: on })
     },
+
+    setLinkPrefs: prefs => {
+      writeLocal(home.scoped(linkPrefsKey(get().me?.username ?? null)), linkPrefsValue(prefs))
+      set({ linkPrefs: prefs })
+    },
+
+    trustLinkHost: host => get().setLinkPrefs(trustHost(get().linkPrefs, host)),
 
     setIceRelay: relay => {
       const on = get().iceHelpers

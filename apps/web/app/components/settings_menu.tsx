@@ -69,6 +69,7 @@ import { DesktopSection } from './desktop_settings'
 import { BlockedUsersSection } from './blocking'
 import { PaletteSettingsSection } from './palette_settings'
 import { Choice, PrivacyChoices } from './friends'
+import { LinkSafetySection } from './link_safety_settings'
 import { PassSwitch, WordGrid } from './word_grid'
 import { PageRow, SettingsPage, type PageSection } from './settings_page'
 import {
@@ -1213,6 +1214,9 @@ function SectionBody({ section }: { section: SettingsSection }) {
         <section>
           <PageRow id="user_privacy">
             <PrivacyChoices />
+          </PageRow>
+          <PageRow id="user_links" className="pt-5">
+            <LinkSafetySection />
           </PageRow>
           <PageRow id="user_blocked" className="pt-5">
             <p className={sectionCls}>Blocked users</p>

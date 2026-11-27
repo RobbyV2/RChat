@@ -102,6 +102,12 @@ const ROWS: Record<SettingsSection, SettingsRow[]> = {
       keywords: ['direct messages', 'dm', 'friend requests'],
     },
     {
+      id: 'user_links',
+      label: 'Links',
+      line: 'Warnings before outside links, tracking removal and trusted domains.',
+      keywords: ['external links', 'warning', 'tracking', 'trusted domains', 'utm'],
+    },
+    {
       id: 'user_blocked',
       label: 'Blocked users',
       keywords: ['block', 'unblock'],

@@ -24,6 +24,7 @@ import { limitsOf } from '../lib/instance_limits'
 import { guestPostingStatus, postGuest } from '../lib/guest_chat'
 import { useAccount } from '../lib/client/react'
 import { TextComposer } from './text_composer'
+import { outgoing } from '../lib/link_safety'
 import { accountPrompt } from '../lib/features'
 import { charCount, counterFrom, messageFilterOn } from '../lib/rules'
 import { useShownOrNull, useViewServer } from './shown_user'
@@ -287,6 +288,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const toggleUploadMode = useStore(s => s.toggleUploadMode)
   const sendMessage = useStore(s => s.sendMessage)
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
+  const linkPrefs = useStore(s => s.linkPrefs)
   const setDraft = useStore(s => s.setDraft)
   const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
   const replying = useStore(s => (draftKey ? s.replying[draftKey] !== undefined : false))
@@ -403,7 +405,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             send={async content => {
               const message = await account.lifetime.live(
                 postGuest(account.api, view.server, `/channels/${channelId}/guest-messages`, {
-                  content,
+                  content: outgoing(linkPrefs, content),
                   reply_to: quote?.id,
                   thread_root_id: thread && rootId !== null ? rootId : undefined,
                 })
@@ -499,9 +501,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     ) : null
 
   const doSend = (p2pExpiresIn?: number | null, relay?: RelayChoice) => {
+    const sent = outgoing(linkPrefs, text)
     void (thread
-      ? sendThreadMessage(text, p2pExpiresIn, relay)
-      : sendMessage(text, p2pExpiresIn, relay))
+      ? sendThreadMessage(sent, p2pExpiresIn, relay)
+      : sendMessage(sent, p2pExpiresIn, relay))
     setText('')
   }
 

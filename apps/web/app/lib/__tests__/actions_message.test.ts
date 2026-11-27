@@ -979,6 +979,17 @@ test('the timestamp menu copies the token as written, under the full date', () =
   expect(opened).toEqual([1, { header: 'full date' }])
 })
 
+test('a link in a message has its own menu: open and copy, never in the palette', () => {
+  state({ guest: false })
+  const link: Target = { kind: 'link', href: 'https://evil.example/x', label: null, own: false }
+  expect(items(link).map(i => [i.label, i.icon])).toEqual([
+    ['Open Link', ExternalLink],
+    ['Copy Link', Link],
+  ])
+  const ids = new Set(paletteCommands(paletteCtx(useStore.getState())).map(r => r.id))
+  expect(['link_open', 'link_copy'].filter(id => ids.has(id))).toEqual([])
+})
+
 const entry = (unread: boolean, friends = false): InboxEntry => ({
   key: 'n:1',
   adapter: 'instance',

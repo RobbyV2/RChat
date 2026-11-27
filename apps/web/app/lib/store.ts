@@ -17,6 +17,7 @@ import { emptyLayout } from './nav_layout'
 import { NO_DM_EDGE } from './dm_list'
 import { DEFAULT_FEATURES } from './features'
 import { SELF_AUDIO_IDLE } from './voice_layout'
+import { DEFAULT_LINK_PREFS } from './link_safety'
 import type { RChatState } from './store_types'
 import {
   Ended,
@@ -454,6 +455,7 @@ export function createChatStore(acct: AccountSession) {
       theme: client.device.theme,
       streamer: client.device.streamer,
       iceHelpers: true,
+      linkPrefs: DEFAULT_LINK_PREFS,
       iceRelay: false,
       relayPrefs: relayBook.prefs,
       relayPrompt: null,
