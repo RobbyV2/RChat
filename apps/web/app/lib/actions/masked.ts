@@ -34,6 +34,8 @@ const ROWS: Record<Target['kind'], boolean> = {
   embed: true,
   timestamp: false,
   file: true,
+  composer: false,
+  scheduled: true,
   link: false,
   inbox: true,
   thread: true,

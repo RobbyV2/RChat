@@ -88,13 +88,15 @@ export { type Kdf, type P2pSection } from './section'
 
 // The search index is rebuilt; meta holds counters and flags of this browser only. Files never
 // go into the dump: when the user asks for them, they follow it in the `.rchat` file, streamed
-// (see `writeFiles`).
+// (see `writeFiles`). Scheduled messages stay on the device that sends them, so no two devices
+// send one.
 export const EXCLUDED: ReadonlySet<string> = new Set([
   'blobs',
   'blob_parts',
   'blob_hashes',
   'search',
   'meta',
+  'scheduled',
 ])
 
 // Bytes of the complete files stored here (sent and downloaded).

@@ -12,8 +12,9 @@ export interface ClientLimits {
   reconnect_floor_ms: number
   resync_jitter_ms: number
   catch_up_delay_ms: number
-  // 0 means none for the last three.
+  // 0 means none for the last four.
   servers_per_account: number
+  scheduled_per_account: number
   session_max_age_secs: number
   session_idle_secs: number
   // Seconds an uploaded file stays by default (servers may choose otherwise).
@@ -29,6 +30,7 @@ export const DEFAULT_LIMITS: Readonly<ClientLimits> = Object.freeze({
   resync_jitter_ms: 10000,
   catch_up_delay_ms: 5000,
   servers_per_account: 0,
+  scheduled_per_account: 0,
   session_max_age_secs: 0,
   session_idle_secs: 0,
   media_retention_secs: 86400,

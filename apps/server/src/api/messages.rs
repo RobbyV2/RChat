@@ -1302,6 +1302,7 @@ pub(crate) async fn insert_message(
     groups: Vec<GroupMention>,
     hook: Option<&crate::api::webhooks::HookPost>,
     plain: bool,
+    claim: Option<&crate::api::scheduled::Claim>,
 ) -> Result<Message, ApiError> {
     let SendReq {
         content,
@@ -1422,6 +1423,7 @@ pub(crate) async fn insert_message(
     if let Some(spec) = &poll {
         crate::api::polls::insert(&mut tx, id, spec, t).await?;
     }
+    crate::api::scheduled::finish_in(&mut tx, claim, id, t).await?;
     tx.commit().await?;
     let media = media.map(|m| MediaRef { alt, ..m });
     let mut msgs = [Message {
@@ -1855,7 +1857,11 @@ async fn deliver(
     req: SendReq,
     place: Place,
     scope: PingScope<'_>,
-) -> Result<Json<Message>, ApiError> {
+    claim: Option<&crate::api::scheduled::Claim>,
+) -> Result<Message, ApiError> {
+    if claim.is_some() && req.forward_of.is_some() {
+        return Err(bad("A scheduled message cannot be a forward"));
+    }
     message_rate(state, user).await?;
     let thread_root_id = match place {
         Place::Thread(root) => Some(root),
@@ -1914,6 +1920,7 @@ async fn deliver(
                 groups,
                 None,
                 plain,
+                claim,
             )
             .await?;
             (message, quote, false)
@@ -1949,7 +1956,111 @@ async fn deliver(
     if message.forward.is_none() {
         ping_message(state, scope, &message, user, replied(&quote)).await;
     }
-    Ok(Json(message))
+    Ok(message)
+}
+
+/// Where a message is sent: a channel, the thread of a root message, or a DM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SendTo {
+    Channel(i64),
+    Thread(i64),
+    Dm(i64),
+}
+
+/// Sends a message of `user` to `to` through the access gate: the profanity filter in
+/// channels and threads, the place's resolve, its send gate (slow mode included) or the DM
+/// block check, then `deliver`. A scheduled message passes its `claim`, which its row gives
+/// up as sent in the message's own transaction.
+pub(crate) async fn send_to(
+    state: &AppState,
+    user: &User,
+    to: SendTo,
+    req: SendReq,
+    claim: Option<&crate::api::scheduled::Claim>,
+) -> Result<Message, ApiError> {
+    match to {
+        SendTo::Channel(id) => {
+            if req.forward_of.is_none() {
+                check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
+            }
+            let channel = resolve_channel(&state.db, id, Some(user), &Proof::none()).await?;
+            channel.send_gate(&state.db).await?;
+            deliver(
+                state,
+                user,
+                req,
+                Place::Channel(id),
+                PingScope::Channel(&channel),
+                claim,
+            )
+            .await
+        }
+        SendTo::Thread(id) => {
+            let root = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
+            match root.thread_home()? {
+                ThreadHome::Channel(channel) => {
+                    if req.forward_of.is_none() {
+                        check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
+                    }
+                    channel.send_gate(&state.db).await?;
+                    root.thread_start_gate(&state.db, id).await?;
+                    deliver(
+                        state,
+                        user,
+                        req,
+                        Place::Thread(id),
+                        PingScope::Channel(channel),
+                        claim,
+                    )
+                    .await
+                }
+                ThreadHome::Dm { id: dm, users: _ } => {
+                    let users = resolve_dm(&state.db, dm, user).await?;
+                    crate::api::blocks::check_dm_write(&state.db, &user.username, &users).await?;
+                    deliver(
+                        state,
+                        user,
+                        req,
+                        Place::Thread(id),
+                        PingScope::Dm {
+                            id: dm,
+                            users: &users,
+                        },
+                        claim,
+                    )
+                    .await
+                }
+            }
+        }
+        SendTo::Dm(id) => {
+            let users = resolve_dm(&state.db, id, user).await?;
+            crate::api::blocks::check_dm_write(&state.db, &user.username, &users).await?;
+            deliver(
+                state,
+                user,
+                req,
+                Place::Dm(id),
+                PingScope::Dm { id, users: &users },
+                claim,
+            )
+            .await
+        }
+    }
+}
+
+/// Checks `reply_to` for a message `user` would send to `to`, as sending does.
+pub(crate) async fn check_reply(
+    db: &Db,
+    user: &User,
+    to: SendTo,
+    reply_to: Option<i64>,
+) -> Result<(), ApiError> {
+    let place = match to {
+        SendTo::Channel(id) => Place::Channel(id),
+        SendTo::Thread(id) => Place::Thread(id),
+        SendTo::Dm(id) => Place::Dm(id),
+    };
+    quoted(db, user, place, reply_to, false).await.map(|_| ())
 }
 
 /// Where a message is, as far as the caller can read it.
@@ -2354,19 +2465,9 @@ pub(crate) async fn send_channel_message(
     Authed(user): Authed,
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
-    if req.forward_of.is_none() {
-        check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
-    }
-    let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
-    channel.send_gate(&state.db).await?;
-    deliver(
-        &state,
-        &user,
-        req,
-        Place::Channel(id),
-        PingScope::Channel(&channel),
-    )
-    .await
+    send_to(&state, &user, SendTo::Channel(id), req, None)
+        .await
+        .map(Json)
 }
 
 /// List thread replies
@@ -2432,39 +2533,9 @@ pub(crate) async fn send_thread_message(
     Authed(user): Authed,
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
-    let root = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
-    match root.thread_home()? {
-        ThreadHome::Channel(channel) => {
-            if req.forward_of.is_none() {
-                check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
-            }
-            channel.send_gate(&state.db).await?;
-            root.thread_start_gate(&state.db, id).await?;
-            deliver(
-                &state,
-                &user,
-                req,
-                Place::Thread(id),
-                PingScope::Channel(channel),
-            )
-            .await
-        }
-        ThreadHome::Dm { id: dm, users: _ } => {
-            let users = resolve_dm(&state.db, dm, &user).await?;
-            crate::api::blocks::check_dm_write(&state.db, &user.username, &users).await?;
-            deliver(
-                &state,
-                &user,
-                req,
-                Place::Thread(id),
-                PingScope::Dm {
-                    id: dm,
-                    users: &users,
-                },
-            )
-            .await
-        }
-    }
+    send_to(&state, &user, SendTo::Thread(id), req, None)
+        .await
+        .map(Json)
 }
 
 /// List DM messages
@@ -2511,16 +2582,9 @@ pub(crate) async fn send_dm_message(
     Authed(user): Authed,
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
-    let users = resolve_dm(&state.db, id, &user).await?;
-    crate::api::blocks::check_dm_write(&state.db, &user.username, &users).await?;
-    deliver(
-        &state,
-        &user,
-        req,
-        Place::Dm(id),
-        PingScope::Dm { id, users: &users },
-    )
-    .await
+    send_to(&state, &user, SendTo::Dm(id), req, None)
+        .await
+        .map(Json)
 }
 
 /// Delete a message

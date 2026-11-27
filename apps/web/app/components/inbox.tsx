@@ -1,5 +1,6 @@
 'use client'
 
+import { ScheduledButton } from './scheduled'
 import { ViewActorTag } from './view_actor'
 import {
   useCallback,
@@ -469,6 +470,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
             onClick={readAll}
             place="ml-auto"
           />
+          <ScheduledButton />
           {onClose && <IconButton icon={X} label="Close inbox" onClick={() => onClose(false)} />}
         </Row>
       </Surface>

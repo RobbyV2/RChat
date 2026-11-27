@@ -20,6 +20,7 @@ import { p2pContactActions } from './p2p_contact'
 import { p2pServerActions } from './p2p_server'
 import { placeActions } from './place'
 import { roleActions } from './role'
+import { scheduledActions } from './scheduled'
 import { defineAction } from './registry'
 import { selectionActions } from './selection'
 import { serverActions } from './server'
@@ -59,6 +60,7 @@ export const registerAppActions = () => {
     p2pServerActions,
     p2pChatActions,
     maskedActions,
+    scheduledActions,
   ])
     for (const a of list) defineAction(a)
 }

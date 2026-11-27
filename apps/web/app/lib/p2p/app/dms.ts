@@ -18,9 +18,9 @@ import {
   threadPingTotal,
   type Arrival,
 } from '../dm'
-import type { Fwd } from '../content'
+import type { Attachment, Fwd } from '../content'
 import type { PageOpts } from '../jump'
-import { Servers } from '../server'
+import { ServerError, Servers } from '../server'
 import { channelReadSkips, threadsSig } from './servers'
 import { typingResendMs } from '../sync'
 import type { RoomSummary, P2pChat } from './store'
@@ -340,6 +340,14 @@ export function createDmsPart(
       : parts.servers.withServers(s => server(s, t.room, t.ch, t.thread))
   }
 
+  // The message a draft key's place gets: `body`, a reply to `reply`, files `att`.
+  const messageFor = (t: Target, body: string, opts: { reply?: string; att?: Attachment[] }) => ({
+    body,
+    reply: opts.reply,
+    att: opts.att ?? [],
+    ...(t.thread ? { thread: t.thread } : {}),
+  })
+
   // The rows a draft key shows: a thread's root and replies, or the open conversation's.
   const listOf = (key: string | null) => {
     const st = useP2p.getState()
@@ -588,11 +596,11 @@ export function createDmsPart(
       if (!current() || att === null) return false
       const st = useP2p.getState()
       const reply = st.replying?.room === room ? st.replying.id : undefined
+      const msg = messageFor(targetOf(room), text, { reply, att })
       const id = await onTarget(
         room,
-        (d, r, thread) => d.send(r, { body: text, reply, att, ...(thread ? { thread } : {}) }),
-        (sv, r, ch, thread) =>
-          sv.send(r, { ch, body: text, reply, att, ...(thread ? { thread } : {}) })
+        (d, r) => d.send(r, msg),
+        (sv, r, ch) => sv.send(r, { ch, ...msg })
       )
       // A failed send keeps what it replied to.
       if (!current()) return false
@@ -604,6 +612,23 @@ export function createDmsPart(
       if (current() && t.kind === 'server') await parts.servers.readSlow(t.room, t.ch)
       if (current() && id !== null && useP2p.getState().chat?.newer) void p2pDm.toPresent()
       return current() && id !== null
+    },
+
+    // Sends `body` to a draft key's place now, apart from the composer: no sed, no reply bar and
+    // no files being attached. The event id; throws why it can't be sent.
+    async post(key: string, body: string, opts: { reply?: string; att?: Attachment[] } = {}) {
+      const t = targetOf(key)
+      const msg = messageFor(t, body, opts)
+      if (t.kind === 'dm') {
+        const d = state.dms
+        if (!d) throw new DmError(parts.calls.ELSEWHERE_TEXT)
+        return d.send(t.room, msg)
+      }
+      const sv = state.servers
+      if (!sv) throw new ServerError(parts.calls.ELSEWHERE_TEXT)
+      const id = await sv.send(t.room, { ch: t.ch, ...msg })
+      await parts.servers.readSlow(t.room, t.ch)
+      return id
     },
 
     // `room` is a draft key: a conversation, or a server channel.

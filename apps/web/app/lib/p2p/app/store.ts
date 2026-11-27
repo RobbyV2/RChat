@@ -19,6 +19,8 @@ import type { P2pNode, Presence, Status } from '../node'
 import type { Calls, CallView } from '../calls'
 import type { SearchHit, ServerView, Servers } from '../server'
 import type { IdentityScope } from './scope'
+import type { DeviceSchedule } from '../scheduled'
+import type { ScheduledItem } from '../../scheduled'
 
 // The P2P view model. IndexedDB (through the node) is the source of truth; this store only
 // mirrors what the UI shows. One node per signed-in account; guests never get one.
@@ -226,6 +228,10 @@ export interface P2pState {
   badgeError: string | null
   // Goes up whenever the inbox's noted pings change (in this tab or the one that runs P2P).
   pingLog: number
+  // Messages this device sends later, while this tab runs P2P, and the ones that were due while
+  // the app was closed (their keys).
+  scheduled: ScheduledItem[]
+  scheduledMissed: string[]
 }
 
 export interface PendingFile {
@@ -418,6 +424,8 @@ export const initialPeerState = (): P2pState => ({
   badgeBusy: false,
   badgeError: null,
   pingLog: 0,
+  scheduled: [],
+  scheduledMissed: [],
 })
 
 export function createStorePart(scope: IdentityScope) {
@@ -478,6 +486,8 @@ export function createStorePart(scope: IdentityScope) {
 
   let currentLeader: TabLeader | null = null
 
+  let currentScheduled: DeviceSchedule | null = null
+
   let currentUnwatch: (() => void) | null = null
 
   // The limits this account's P2P started with (user_limits.ts).
@@ -523,6 +533,9 @@ export function createStorePart(scope: IdentityScope) {
     },
     leader: (x: TabLeader | null) => {
       currentLeader = x
+    },
+    scheduled: (x: DeviceSchedule | null) => {
+      currentScheduled = x
     },
     unwatch: (x: (() => void) | null) => {
       currentUnwatch = x
@@ -630,6 +643,9 @@ export function createStorePart(scope: IdentityScope) {
     },
     get leader() {
       return currentLeader
+    },
+    get scheduled() {
+      return currentScheduled
     },
     get unwatch() {
       return currentUnwatch

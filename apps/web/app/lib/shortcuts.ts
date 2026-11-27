@@ -15,6 +15,7 @@ export interface Shortcut {
 export const SHORTCUTS: Shortcut[] = [
   { keys: 'Enter', action: 'Send the message', where: 'composer' },
   { keys: 'Shift+Enter', action: 'New line', where: 'composer' },
+  { keys: 'Mod+Shift+Enter', action: 'Send later', where: 'composer' },
   { keys: 'Up', action: 'Edit your last message (empty composer)', where: 'composer' },
   ...FORMATS.flatMap(({ label, keys }): Shortcut[] =>
     keys === null ? [] : [{ keys, action: label, where: 'composer' }]

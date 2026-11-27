@@ -22,7 +22,7 @@ pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 pub const SESSION_IDLE_MIN: i64 = 300;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 123] = [
+const RANGES: [(&str, i64, i64); 124] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -140,6 +140,7 @@ const RANGES: [(&str, i64, i64); 123] = [
     ("RESYNC_JITTER_MS", 0, 600_000),
     ("CATCH_UP_DELAY_MS", 0, 600_000),
     ("SERVERS_PER_ACCOUNT", 0, 1_000_000),
+    ("SCHEDULED_PER_ACCOUNT", 0, 10_000),
     ("SERVER_MEMBERS_MAX", 0, 100_000_000),
     ("SIGNUPS_PER_NETWORK_PER_DAY", 0, 1_000_000),
     ("SERVERS_PER_NETWORK_PER_DAY", 0, 1_000_000),
@@ -371,6 +372,7 @@ pub struct Limits {
     pub resync_jitter_ms: u64,
     pub catch_up_delay_ms: u64,
     pub servers_per_account: i64,
+    pub scheduled_per_account: i64,
     pub server_members_max: i64,
     pub signups_per_network_per_day: u32,
     pub servers_per_network_per_day: u32,
@@ -505,6 +507,7 @@ impl Default for Limits {
             resync_jitter_ms: 10000,
             catch_up_delay_ms: 5000,
             servers_per_account: 1000,
+            scheduled_per_account: 100,
             server_members_max: 0,
             signups_per_network_per_day: 0,
             servers_per_network_per_day: 0,
@@ -813,6 +816,7 @@ impl Limits {
             resync_jitter_ms: e.num("RESYNC_JITTER_MS", d.resync_jitter_ms)?,
             catch_up_delay_ms: e.num("CATCH_UP_DELAY_MS", d.catch_up_delay_ms)?,
             servers_per_account: e.num("SERVERS_PER_ACCOUNT", d.servers_per_account)?,
+            scheduled_per_account: e.num("SCHEDULED_PER_ACCOUNT", d.scheduled_per_account)?,
             server_members_max: e.num("SERVER_MEMBERS_MAX", d.server_members_max)?,
             signups_per_network_per_day: e
                 .num("SIGNUPS_PER_NETWORK_PER_DAY", d.signups_per_network_per_day)?,
@@ -951,6 +955,7 @@ impl Limits {
             resync_jitter_ms,
             catch_up_delay_ms,
             servers_per_account,
+            scheduled_per_account,
             server_members_max,
             signups_per_network_per_day,
             servers_per_network_per_day,
@@ -1129,6 +1134,7 @@ impl Limits {
             ("RESYNC_JITTER_MS", set(resync_jitter_ms)),
             ("CATCH_UP_DELAY_MS", set(catch_up_delay_ms)),
             ("SERVERS_PER_ACCOUNT", set(servers_per_account)),
+            ("SCHEDULED_PER_ACCOUNT", set(scheduled_per_account)),
             ("SERVER_MEMBERS_MAX", set(server_members_max)),
             (
                 "SIGNUPS_PER_NETWORK_PER_DAY",

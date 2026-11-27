@@ -45,6 +45,7 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   client_other_instances: true,
   server_profiles: true,
   docs: true,
+  scheduled_messages: true,
   registration: true,
   upload_expiry_max_days: true,
   server_joining: true,

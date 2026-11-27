@@ -79,6 +79,8 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'dm_list':
     case 'timestamp':
     case 'file':
+    case 'composer':
+    case 'scheduled':
     case 'link':
     case 'inbox':
     case 'thread':
@@ -129,6 +131,8 @@ const memberOf = (s: RChatState, t: Target) => {
       return s.profile?.user ?? null
     case 'voice_guest':
     case 'file':
+    case 'composer':
+    case 'scheduled':
     case 'role':
     case 'p2p_contact':
     case 'p2p_server':
@@ -172,6 +176,8 @@ const listOf = (s: RChatState, t: Target) => {
     case 'dm_list':
     case 'timestamp':
     case 'file':
+    case 'composer':
+    case 'scheduled':
     case 'link':
     case 'inbox':
     case 'thread':
@@ -309,6 +315,8 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'voice_guest':
     case 'sign_in':
       return t
+    case 'composer':
+    case 'scheduled':
     case 'file':
       return t.now() ? t : null
   }

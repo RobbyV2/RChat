@@ -1,5 +1,6 @@
 'use client'
 import { Button, IconButton, ListRow, LinkButton } from '../controls'
+import { localInput } from '../../lib/scheduled'
 import { client } from '../../lib/client/client'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -660,13 +661,6 @@ function DevicesSectionBody() {
 
 type Preview = Awaited<ReturnType<P2pApp['p2pDevices']['preview']>>
 
-// A time as a datetime-local input shows it (local time, to the second).
-const localInput = (ms: number) => {
-  const d = new Date(ms)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
 function LostDeviceDialogBody({ dk }: { dk: string }) {
   const identity = useP2pApp()!
   const { p2p, p2pDevices } = identity
@@ -706,8 +700,8 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
             <input
               type="datetime-local"
               step={1}
-              value={localInput(t)}
-              max={localInput(at)}
+              value={localInput(t, true)}
+              max={localInput(at, true)}
               onChange={e => {
                 const v = new Date(e.target.value).getTime()
                 if (Number.isFinite(v)) setT(Math.min(v, at))

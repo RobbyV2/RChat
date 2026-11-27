@@ -328,6 +328,51 @@ fn server_ban_notice_goes_only_to_the_banned_user() {
     assert!(!wants(&ev, None, false, &none, &set(&["open"])));
 }
 
+fn scheduled_sample() -> crate::api::scheduled::ScheduledMessage {
+    crate::api::scheduled::ScheduledMessage {
+        id: 1,
+        scope: s("c1"),
+        channel_id: Some(1),
+        dm_id: None,
+        thread_root_id: None,
+        reply_to: None,
+        mention_reply: true,
+        content: s("later"),
+        at: 100,
+        next_at: 100,
+        status: crate::api::scheduled::ScheduledStatus::Waiting,
+        error: None,
+        place: None,
+        created_at: 1,
+        updated_at: 1,
+    }
+}
+
+#[test]
+fn scheduled_events_reach_only_the_author() {
+    let all = set(&["open"]);
+    for ev in [
+        WsEvent::ScheduledUpdated {
+            username: s("alice"),
+            scheduled: Box::new(scheduled_sample()),
+        },
+        WsEvent::ScheduledRemoved {
+            username: s("alice"),
+            id: 1,
+            sent_message_id: None,
+        },
+    ] {
+        assert_eq!(
+            crate::fanout::route(&ev),
+            crate::fanout::Route::To(vec![crate::fanout::Target::User("alice")])
+        );
+        assert!(wants(&ev, Some("alice"), false, &all, &all));
+        for (me, staff) in [(Some("bob"), false), (Some("root"), true), (None, false)] {
+            assert!(!wants(&ev, me, staff, &all, &all), "{me:?}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn reports_changed_reaches_only_holders() {
     let (state, path) = crate::api::test_util::temp_state("ws_reports_changed").await;
@@ -643,6 +688,15 @@ fn every_event() -> Vec<WsEvent> {
                         finished_at: None,
                         error: None,
                     },
+                },
+                WsEvent::ScheduledUpdated {
+                    username: s(user),
+                    scheduled: Box::new(scheduled_sample()),
+                },
+                WsEvent::ScheduledRemoved {
+                    username: s(user),
+                    id: 1,
+                    sent_message_id: Some(2),
                 },
                 WsEvent::FriendRequestAdded {
                     username: s(user),

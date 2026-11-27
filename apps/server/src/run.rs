@@ -505,6 +505,18 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
             }
         }
     });
+    let scheduled = state.clone();
+    held.spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            if holds(&scheduled, "scheduled-send", Duration::from_millis(4_500)).await
+                && let Err(e) = crate::api::scheduled::run_due(&scheduled).await
+            {
+                tracing::warn!("sending scheduled messages failed: {e}");
+            }
+        }
+    });
     let voice = state.clone();
     let idle = voice.limits.voice_idle_secs;
     held.spawn(async move {

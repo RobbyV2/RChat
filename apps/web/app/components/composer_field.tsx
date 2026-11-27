@@ -1,16 +1,18 @@
 'use client'
 
 import { useEffect, useRef, useState, type ClipboardEvent, type ReactNode, type Ref } from 'react'
-import { SendHorizontal, Smile } from 'lucide-react'
+import { Smile } from 'lucide-react'
 import { spliceText } from '../lib/autocomplete'
 import { loadEmojiData } from '../lib/emoji'
 import { composing, sendKey } from '../lib/keys'
+import type { ComposerDraft } from '../lib/scheduled'
 import type { Compose } from '../lib/place/composer'
 import { useLive } from '../lib/place/react'
 import { charCount, counterFrom } from '../lib/rules'
 import { clock } from '../lib/slowmode'
 import { useMedia } from './context_menu'
 import { IconButton } from './controls'
+import { SendButton, useSendLater } from './scheduled'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useTextAssist } from './text_assist'
@@ -35,6 +37,7 @@ export function ComposerField({
   tools,
   inputRef: givenRef,
   inputProps,
+  later,
   onSend,
   onPaste,
 }: {
@@ -52,6 +55,8 @@ export function ComposerField({
   tools?: ReactNode
   inputRef?: Ref<HTMLTextAreaElement>
   inputProps?: Record<`data-${string}`, string>
+  // The draft as Send later reads it when one of its rows runs.
+  later: () => ComposerDraft | null
   onSend: () => void
   // Takes what was pasted; true when it took files and the text paste should not happen.
   onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => boolean
@@ -63,6 +68,7 @@ export function ComposerField({
   const ownRef = useRef<HTMLTextAreaElement>(null)
   const emojiRef = useRef<HTMLButtonElement>(null)
   const sel = useRef({ start: 0, end: 0 })
+  const sendLater = useSendLater(later)
   const pickerOpen = pickerFor !== null && pickerFor === key
   const setInput = (el: HTMLTextAreaElement | null) => {
     ownRef.current = el
@@ -149,7 +155,10 @@ export function ComposerField({
           rows={1}
           {...inputProps}
           {...assist.textarea}
-          onFocus={() => setFocused(true)}
+          onFocus={() => {
+            setFocused(true)
+            sendLater.focused()
+          }}
           onBlur={() => {
             assist.textarea.onBlur()
             setFocused(false)
@@ -176,6 +185,7 @@ export function ComposerField({
               compose.cancelReply()
               return
             }
+            if (sendLater.key(e)) return
             if (sendKey(e)) {
               e.preventDefault()
               onSend()
@@ -210,20 +220,18 @@ export function ComposerField({
           onPointerEnter={() => void loadEmojiData().catch(() => {})}
           onClick={openPicker}
         />
-        <IconButton
-          icon={SendHorizontal}
-          label="Send"
-          place="pointer-coarse:-mx-1.5"
-          tooltip={
+        <SendButton
+          buttonRef={sendLater.button}
+          title={
             tooLong
               ? 'Message is too long'
               : slowLeft > 0
                 ? `Slow mode: ${clock(slowLeft)}`
                 : 'Send'
           }
-          tone="filled"
-          onClick={onSend}
           disabled={tooLong || slowLeft > 0 || blocked}
+          onSend={onSend}
+          draft={sendLater.draft}
         />
       </Surface>
     </>

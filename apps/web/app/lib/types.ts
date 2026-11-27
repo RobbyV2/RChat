@@ -512,6 +512,40 @@ export interface BulkJob {
   error: string | null
 }
 
+// Names of a scheduled message's place the owner can open now.
+export interface ScheduledPlace {
+  server: string | null
+  server_name: string | null
+  channel_name: string | null
+  dm_user: UserRef | null
+}
+
+// A message the instance sends later, see `GET /api/me/scheduled`. Times in seconds.
+export interface ScheduledMessage {
+  id: number
+  scope: string
+  channel_id: number | null
+  dm_id: number | null
+  thread_root_id: number | null
+  reply_to: number | null
+  mention_reply: boolean
+  content: string
+  at: number
+  next_at: number
+  status: 'waiting' | 'sending' | 'failed'
+  error: string | null
+  place: ScheduledPlace | null
+  created_at: number
+  updated_at: number
+}
+
+export interface ScheduledPage {
+  items: ScheduledMessage[]
+  next: string | null
+  waiting: number
+  failed: number
+}
+
 export type GroupKind = 'everyone' | 'here' | 'role'
 
 export interface GroupMention {
@@ -764,6 +798,7 @@ export interface SiteSettings {
   client_other_instances: boolean
   server_profiles: boolean
   docs: boolean
+  scheduled_messages: boolean
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number
@@ -1165,6 +1200,8 @@ export type WsEvent =
   | ({ type: 'message_deleted'; id: number; thread_root_id: number | null } & Scoped)
   | ({ type: 'messages_deleted'; ids: number[]; thread_root_id: number | null } & Scoped)
   | { type: 'bulk_delete_progress'; username: string; job: BulkJob }
+  | { type: 'scheduled_updated'; username: string; scheduled: ScheduledMessage }
+  | { type: 'scheduled_removed'; username: string; id: number; sent_message_id: number | null }
   | { type: 'staff_view_opened'; username: string; channel_id: number }
   | { type: 'poll_voted'; username: string; message_id: number }
   | ({

@@ -59,6 +59,7 @@ import { InboxHost, useTotalInboxCount } from '../components/inbox'
 import { PaletteHost } from '../components/palette'
 import { usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
+import { MissedDialog, ScheduledDialog } from '../components/scheduled'
 import { CallBanner, ExpandedCallPane } from '../components/voice_grid'
 import { AnnouncementBanner } from '../components/announcements'
 import { Banners } from '../components/banners'
@@ -307,6 +308,8 @@ function OverlayLayer() {
       <CategoryDialog />
       <AddFriendsDialog />
       <PollVotersDialog />
+      <ScheduledDialog />
+      <MissedDialog />
       <ServerSettings />
       <AuditLogDialog />
       <WebhooksDialog />

@@ -339,8 +339,8 @@ describe('storage', () => {
     await v1.put('meta', 1, 'schema')
     v1.close()
     const store = await Store.create(name)
-    expect(DB_VERSION).toBe(8)
-    expect(store.db.version).toBe(8)
+    expect(DB_VERSION).toBe(9)
+    expect(store.db.version).toBe(9)
     expect([...store.db.objectStoreNames].sort()).toEqual([
       'blob_hashes',
       'blob_parts',
@@ -354,13 +354,14 @@ describe('storage', () => {
       'meta',
       'outbox',
       'rooms',
+      'scheduled',
       'search',
       'self',
     ])
     expect([...store.db.transaction('events').store.indexNames]).toContain('room_sender_sort')
     expect([...store.db.transaction('events').store.indexNames]).toContain('room_thread_sort')
     expect((await store.contact('kept'))?.state).toBe('mutual')
-    expect(await store.meta('schema')).toBe(8)
+    expect(await store.meta('schema')).toBe(9)
     expect(await store.rooms()).toEqual([])
     store.close()
     // Opening again changes nothing.

@@ -266,6 +266,8 @@ pub struct SettingsPatch {
     server_profiles: Option<bool>,
     /// The documentation site at `/docs`.
     docs: Option<bool>,
+    /// Scheduled messages this site sends for people later.
+    scheduled_messages: Option<bool>,
     registration: Option<Registration>,
     upload_expiry_max_days: Option<i64>,
     server_creation: Option<ServerCreation>,
@@ -363,6 +365,7 @@ pub(crate) async fn patch_settings(
         client_other_instances,
         server_profiles,
         docs,
+        scheduled_messages,
         registration,
         upload_expiry_max_days,
         server_creation,
@@ -492,6 +495,7 @@ pub(crate) async fn patch_settings(
         Feature::ClientOtherInstances => client_other_instances,
         Feature::ServerProfiles => server_profiles,
         Feature::Docs => docs,
+        Feature::ScheduledMessages => scheduled_messages,
     };
     let switches = [
         ("profanity_filter", profanity_filter),
@@ -1353,6 +1357,7 @@ pub(crate) async fn hide_user_in(
         "DELETE FROM member_profiles WHERE username = $1",
         "DELETE FROM here_pings WHERE username = $1",
         "DELETE FROM bulk_delete_jobs WHERE username = $1",
+        "DELETE FROM scheduled_messages WHERE username = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
         "UPDATE webhooks SET creator = NULL, creator_mentions = 0 WHERE creator = $1",
         "UPDATE outgoing_webhooks SET creator = NULL WHERE creator = $1",
@@ -1722,6 +1727,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM group_pings_read WHERE username = $1",
         "DELETE FROM here_pings WHERE username = $1",
         "DELETE FROM reactions WHERE username = $1",
+        "DELETE FROM scheduled_messages WHERE username = $1",
         "UPDATE poll_options SET added_by = NULL WHERE added_by = $1",
         "UPDATE polls SET closed_by = NULL WHERE closed_by = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",

@@ -1382,6 +1382,52 @@ async fn sealed_secrets_upgrade_preserves_v59_rows() {
     }).await;
 }
 
+#[tokio::test]
+async fn scheduled_messages_upgrade_preserves_v60_rows() {
+    on_each_database("scheduled_upgrade", |url| async move {
+        let sqlite = !url.starts_with("postgres");
+        let db = super::open(Some(&url)).await.unwrap();
+        for sql in [
+            "DROP TABLE scheduled_messages",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1)",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'Bob', 'x', 'text', 'identicon', 1)",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 1)",
+            "INSERT INTO channels(server, name, created_at) VALUES('den', 'hall', 1)",
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+            "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'kept', 2 FROM channels WHERE server = 'den'",
+            "INSERT INTO messages(dm_id, author, content, created_at) SELECT id, 'bob', 'kept dm', 3 FROM dms",
+            "UPDATE settings SET value='60' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = super::open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM messages WHERE content IN ('kept', 'kept dm')").await, 2);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM channels WHERE server = 'den' AND name = 'hall'").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM dms WHERE user_a = 'alice' AND user_b = 'bob'").await, 1);
+            let indexes = match sqlite {
+                true => "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_scheduled_user', 'idx_scheduled_next', 'idx_scheduled_finished')",
+                false => "SELECT COUNT(*) FROM pg_indexes WHERE indexname IN ('idx_scheduled_user', 'idx_scheduled_next', 'idx_scheduled_finished')",
+            };
+            assert_eq!(count(&db, indexes).await, 3);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM scheduled_messages").await, round);
+            if round == 0 {
+                sqlx::query("INSERT INTO scheduled_messages(username, server, channel_id, content, due_at, next_at, created_at, updated_at) SELECT 'alice', 'den', id, 'later', 100, 100, 5, 5 FROM channels WHERE server = 'den'").execute(&db).await.unwrap();
+            }
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM scheduled_messages WHERE status = 'waiting' AND mention_reply = 1 AND attempts = 0 AND error IS NULL AND claim IS NULL AND sent_message_id IS NULL AND finished_at IS NULL AND dm_id IS NULL AND thread_root_id IS NULL AND reply_to IS NULL AND id > 0").await, 1);
+            if round == 1 {
+                sqlx::query("UPDATE servers SET name = 'lair' WHERE name = 'den'").execute(&db).await.unwrap();
+                assert_eq!(count(&db, "SELECT COUNT(*) FROM scheduled_messages WHERE server = 'lair'").await, 1, "the server key follows a rename");
+                sqlx::query("DELETE FROM servers WHERE name = 'lair'").execute(&db).await.unwrap();
+                assert_eq!(count(&db, "SELECT COUNT(*) FROM scheduled_messages WHERE server IS NULL").await, 1, "a deleted server leaves the row to fail at its time");
+            }
+            close(&db).await;
+        }
+    }).await;
+}
+
 #[test]
 fn column_placeholders_fill_per_database() {
     let filled = |col: &str, sqlite: bool| match sqlite {
@@ -3264,6 +3310,7 @@ async fn stale_rows_are_swept() {
             member_timeouts: 1,
             server_bans: 0,
             bulk_delete_jobs: 1,
+            scheduled_messages: 0,
             webhook_deliveries: 0,
             recovery_challenges: 1,
             sso_pending: 1,

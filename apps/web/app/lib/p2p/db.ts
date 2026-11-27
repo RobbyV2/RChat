@@ -320,6 +320,25 @@ export interface OutboxRecord {
   failed?: boolean
 }
 
+// A message this device sends later, while the app runs here (scheduled.ts). Never moved to
+// another device.
+export interface ScheduledRecord {
+  // 16 random bytes, b64u.
+  id: string
+  // The draft key: room, room/ch, room#thread or room/ch#thread.
+  key: string
+  body: string
+  // An event id.
+  reply?: string
+  at: number
+  next: number
+  created: number
+  state: 'waiting' | 'sending' | 'failed' | 'missed'
+  claim?: string
+  claimedAt?: number
+  error?: string
+}
+
 export interface P2pSchema extends DBSchema {
   self: { key: string; value: SelfRecord }
   contacts: { key: string; value: Contact; indexes: { state: string } }
@@ -353,6 +372,7 @@ export interface P2pSchema extends DBSchema {
   codes: { key: string; value: CodeRecord; indexes: { room: string } }
   dropped: { key: string; value: DroppedRecord; indexes: { room: string } }
   search: { key: SearchKey; value: string }
+  scheduled: { key: string; value: ScheduledRecord; indexes: { key: string; next: number } }
 }
 
 export type P2pDatabase = IDBPDatabase<P2pSchema>
@@ -372,6 +392,7 @@ export type StoreName =
   | 'codes'
   | 'dropped'
   | 'search'
+  | 'scheduled'
 
 // Where the search index rebuild stands (search.ts): `at` is the last event id indexed; the index
 // is complete once `done`.
@@ -441,6 +462,11 @@ export const UPGRADES: Upgrade[] = [
     tx.objectStore('events').createIndex('room_thread_sort', ['room', 'thread', 'sortKey'])
     db.createObjectStore('search')
     void tx.objectStore('meta').put(SEARCH_STALE, SEARCH_META)
+  },
+  db => {
+    const s = db.createObjectStore('scheduled', { keyPath: 'id' })
+    s.createIndex('key', 'key')
+    s.createIndex('next', 'next')
   },
 ]
 

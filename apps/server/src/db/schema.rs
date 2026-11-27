@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS bulk_delete_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT
 CREATE TABLE IF NOT EXISTS webhooks(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, name TEXT NOT NULL, avatar_kind TEXT NOT NULL DEFAULT 'identicon' CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, token_hash TEXT NOT NULL, creator TEXT, creator_mentions INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_used_at INTEGER);
 CREATE TABLE IF NOT EXISTS outgoing_webhooks(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, secret TEXT NOT NULL, creator TEXT, enabled INTEGER NOT NULL DEFAULT 1, failures INTEGER NOT NULL DEFAULT 0, disabled_at INTEGER, disabled_reason TEXT, created_at INTEGER NOT NULL, secret_sealed BLOB);
 CREATE TABLE IF NOT EXISTS webhook_deliveries(id INTEGER PRIMARY KEY AUTOINCREMENT, hook_id INTEGER NOT NULL REFERENCES outgoing_webhooks(id) ON DELETE CASCADE, event TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed')), attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, last_code INTEGER, last_ms INTEGER, last_error TEXT, created_at INTEGER NOT NULL, finished_at INTEGER);
+CREATE TABLE IF NOT EXISTS scheduled_messages(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, server TEXT REFERENCES servers(name) ON DELETE SET NULL ON UPDATE CASCADE, channel_id INTEGER, dm_id INTEGER, thread_root_id INTEGER, reply_to INTEGER, mention_reply INTEGER NOT NULL DEFAULT 1, content TEXT NOT NULL, due_at INTEGER NOT NULL, next_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'waiting', error TEXT, claim TEXT, attempts INTEGER NOT NULL DEFAULT 0, sent_message_id INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, finished_at INTEGER);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_top ON messages(channel_id, id) WHERE thread_root_id IS NULL;
@@ -179,6 +180,9 @@ CREATE INDEX IF NOT EXISTS idx_outgoing_webhooks_server ON outgoing_webhooks(ser
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_at);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(hook_id, id);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_user ON scheduled_messages(username, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_next ON scheduled_messages(status, next_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_finished ON scheduled_messages(finished_at) WHERE finished_at IS NOT NULL;
 ";
 
 pub(super) const POSTGRES_SCHEMA: &str = "
@@ -270,6 +274,7 @@ CREATE TABLE IF NOT EXISTS bulk_delete_jobs(id BIGINT GENERATED ALWAYS AS IDENTI
 CREATE TABLE IF NOT EXISTS webhooks(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, name TEXT NOT NULL, avatar_kind TEXT NOT NULL DEFAULT 'identicon' CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, token_hash TEXT NOT NULL, creator TEXT, creator_mentions BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, last_used_at BIGINT);
 CREATE TABLE IF NOT EXISTS outgoing_webhooks(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, secret TEXT NOT NULL, creator TEXT, enabled BIGINT NOT NULL DEFAULT 1, failures BIGINT NOT NULL DEFAULT 0, disabled_at BIGINT, disabled_reason TEXT, created_at BIGINT NOT NULL, secret_sealed BYTEA);
 CREATE TABLE IF NOT EXISTS webhook_deliveries(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, hook_id BIGINT NOT NULL REFERENCES outgoing_webhooks(id) ON DELETE CASCADE, event TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed')), attempts BIGINT NOT NULL DEFAULT 0, next_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, last_code BIGINT, last_ms BIGINT, last_error TEXT, created_at BIGINT NOT NULL, finished_at BIGINT);
+CREATE TABLE IF NOT EXISTS scheduled_messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username TEXT NOT NULL, server TEXT REFERENCES servers(name) ON DELETE SET NULL ON UPDATE CASCADE, channel_id BIGINT, dm_id BIGINT, thread_root_id BIGINT, reply_to BIGINT, mention_reply BIGINT NOT NULL DEFAULT 1, content TEXT NOT NULL, due_at BIGINT NOT NULL, next_at BIGINT NOT NULL, status TEXT NOT NULL DEFAULT 'waiting', error TEXT, claim TEXT, attempts BIGINT NOT NULL DEFAULT 0, sent_message_id BIGINT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, finished_at BIGINT);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_top ON messages(channel_id, id) WHERE thread_root_id IS NULL;
@@ -358,6 +363,9 @@ CREATE INDEX IF NOT EXISTS idx_outgoing_webhooks_server ON outgoing_webhooks(ser
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_at);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(hook_id, id);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_user ON scheduled_messages(username, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_next ON scheduled_messages(status, next_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_finished ON scheduled_messages(finished_at) WHERE finished_at IS NOT NULL;
 ";
 
 const SQLITE_SEARCH: &[&str] = &[

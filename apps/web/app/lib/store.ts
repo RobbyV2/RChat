@@ -40,6 +40,7 @@ import { menuActions, uiSlice } from './slices/ui'
 
 import { friendsInitial, friendsSlice } from './friends_store'
 import { pollsSlice } from './polls_store'
+import { scheduledInitial, scheduledSlice } from './scheduled_store'
 import { selectionInitial, selectionSlice } from './selection_store'
 import { ANIM_DEFAULT } from './motion/setting'
 import type { BlockedUser, ServerSummaryLite, UserRef, WsEvent } from './types'
@@ -62,6 +63,8 @@ export const IGNORED = [
   'poll_updated',
   'poll_voted',
   'privacy_changed',
+  'scheduled_removed',
+  'scheduled_updated',
   'staff_view_opened',
 ] as const satisfies readonly WsEvent['type'][]
 type Ignored = (typeof IGNORED)[number]
@@ -226,6 +229,8 @@ export function createChatStore(acct: AccountSession) {
       errorText,
     })
 
+    const scheduledHub = scheduledSlice({ acct, set, get, toast, errorText })
+
     const serversHub = serversSlice(set, get, {
       acct,
       act,
@@ -345,6 +350,7 @@ export function createChatStore(acct: AccountSession) {
       saveShowSpoilers,
       saveTypingOn,
       saveAnim,
+      scheduledHub,
       selectionHub,
       serverPager,
       serversHub,
@@ -402,6 +408,7 @@ export function createChatStore(acct: AccountSession) {
       blockList: emptyPage<BlockedUser>(),
       ...friendsInitial(),
       ...selectionInitial(),
+      ...scheduledInitial(),
       dms: [],
       dmsMore: false,
       dmsEdge: NO_DM_EDGE,
@@ -515,6 +522,7 @@ export function createChatStore(acct: AccountSession) {
 
       ...friendsHub.actions,
       ...pollsHub.actions,
+      ...scheduledHub.actions,
       ...selectionHub.actions,
 
       noteTyping: presenceHub.noteTyping,
@@ -537,6 +545,7 @@ export function createChatStore(acct: AccountSession) {
         }
         if (friendsHub.onEvent(ev)) return
         if (pollsHub.onEvent(ev)) return
+        if (scheduledHub.onEvent(ev)) return
         if (selectionHub.onEvent(ev)) return
         routeEvent(ev, tables)
       },

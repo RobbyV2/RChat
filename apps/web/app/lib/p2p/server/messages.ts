@@ -20,7 +20,7 @@ import {
   type Fwd,
   type MsgContent,
 } from '../content'
-import { TOO_BIG_TEXT, slowText } from '../flows'
+import { TOO_BIG_TEXT } from '../flows'
 import { chanFactsOf, isOwner, membersOf, outranks } from '../state'
 import { DmError, mentionsIn } from '../dm'
 import { cleanName } from '../keys'
@@ -28,6 +28,7 @@ import { shownRoomProfile } from '../../profile_reset'
 import type { ServerCtx } from './context'
 import {
   ServerError,
+  SlowModeError,
   THREAD_ROOT_TEXT,
   PIN_TEXT,
   PIN_THREAD_TEXT,
@@ -99,7 +100,7 @@ export function content(cx: ServerCtx, room: string, t: string, c: Record<string
     if (textOnlyChannel(sum.rules, sum.channels[ch]) && richMessage(c))
       throw new ServerError('This channel only accepts text.')
     const wait = await cx.slowLeft(room, ch)
-    if (wait > 0) throw new ServerError(slowText(wait))
+    if (wait > 0) throw new SlowModeError(wait)
     return cx.emitNow(room, t, () => c, { L: 'c' })
   })
 }

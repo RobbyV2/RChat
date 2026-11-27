@@ -6,6 +6,7 @@ import type { createDmsPart } from './dms'
 import type { createInboxPart } from './inbox'
 import type { createMovePart } from './move'
 import type { createRailPart } from './rail'
+import type { createScheduledPart } from './scheduled'
 import type { createServersPart } from './servers'
 import type { createStorePart } from './store'
 import type { createViewingPart } from './viewing'
@@ -21,6 +22,7 @@ export interface P2pParts {
   inbox: ReturnType<typeof createInboxPart>
   move: ReturnType<typeof createMovePart>
   rail: ReturnType<typeof createRailPart>
+  scheduled: ReturnType<typeof createScheduledPart>
   servers: ReturnType<typeof createServersPart>
   viewing: ReturnType<typeof createViewingPart>
 }

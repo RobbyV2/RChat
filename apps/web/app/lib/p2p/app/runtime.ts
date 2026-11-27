@@ -13,6 +13,7 @@ import { createCallsPart } from './calls'
 import { createInboxPart } from './inbox'
 import { createServersPart } from './servers'
 import { createMovePart } from './move'
+import { createScheduledPart } from './scheduled'
 import { createAccountPart } from './account'
 
 function makeParts(scope: IdentityScope): P2pParts {
@@ -29,6 +30,7 @@ function makeParts(scope: IdentityScope): P2pParts {
   parts.inbox = createInboxPart(parts)
   parts.servers = createServersPart(parts, scope)
   parts.move = createMovePart(parts, scope)
+  parts.scheduled = createScheduledPart(parts, scope)
   parts.account = createAccountPart(parts, scope)
   return parts
 }
@@ -45,6 +47,7 @@ function application(parts: P2pParts, scope: IdentityScope, cleanup: () => void)
     ...parts.inbox,
     ...parts.servers,
     ...parts.move,
+    ...parts.scheduled,
     ...parts.account,
     owner: scope.owner,
     localId: scope.localId,

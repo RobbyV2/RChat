@@ -23,6 +23,7 @@ export const FEATURE_KEYS = [
   'client_other_instances',
   'server_profiles',
   'docs',
+  'scheduled_messages',
 ] as const
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number]
@@ -50,6 +51,7 @@ const BEFORE_SWITCHES: Record<FeatureKey, boolean> = {
   client_other_instances: true,
   server_profiles: false,
   docs: false,
+  scheduled_messages: false,
 }
 
 const registrationOf = (value: unknown): Registration => {

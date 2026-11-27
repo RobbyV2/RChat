@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { LoginRequest, PollReq, RegisterRequest, SendOpts } from './api'
 import type { PollTarget } from './polls_store'
+import type { HostedScheduled } from './scheduled_store'
 import type { Selection } from './selection'
 import type { PendingUpload } from './attachments'
 import type { Decision, RelayChoice, RelayPrefs } from './relays'
@@ -179,6 +180,8 @@ export type ActiveDialog =
   | { kind: 'category'; server: string; id?: number }
   | { kind: 'add_friends'; names: string[]; id: number }
   | { kind: 'poll_voters'; message: Message }
+  // This account's scheduled messages, hosted and P2P; `focus`: a row to edit.
+  | { kind: 'scheduled'; focus?: string }
 
 export type Panel =
   { kind: 'thread'; root: Message } | { kind: 'search' } | { kind: 'friends'; tab: FriendsTab }
@@ -313,6 +316,8 @@ export interface RChatState {
   selectAnchor: { scope: string; id: number } | null
   bulkJobs: Record<string, BulkJob>
   selectionBusy: string | null
+  // This account's scheduled messages the instance sends.
+  scheduled: HostedScheduled
   dms: DmSummary[]
   dmsMore: boolean
   // While `dmsMore`, the list shows rows up to here (see `arrangeDms`).
@@ -594,6 +599,18 @@ export interface RChatState {
   forwardSelection: () => void
   exportSelection: (format: 'text' | 'json') => Promise<void>
   cancelBulkJob: (scope: string) => Promise<void>
+  loadScheduled: (scope?: string, more?: boolean) => Promise<void>
+  // Each answers null, or why it was refused.
+  scheduleDraft: (
+    key: string,
+    at: number,
+    shape?: (text: string) => string
+  ) => Promise<string | null>
+  editScheduled: (key: string, content: string) => Promise<string | null>
+  removeScheduledReply: (key: string) => Promise<string | null>
+  rescheduleScheduled: (key: string, at: number) => Promise<string | null>
+  sendScheduledNow: (key: string) => Promise<string | null>
+  deleteScheduled: (key: string) => Promise<string | null>
   reloadLayout: () => void
   noteEmoji: (base: string, picked: string) => void
   setSkinTone: (tone: number) => void

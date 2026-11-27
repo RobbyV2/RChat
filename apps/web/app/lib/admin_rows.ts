@@ -555,6 +555,14 @@ export const ADMIN_ROWS: AdminRow[] = [
     label: 'Documentation',
     line: 'Serves the documentation at /docs.',
   },
+  {
+    key: 'scheduled_messages',
+    env: 'FEATURE_SCHEDULED_MESSAGES',
+    group: 'Messages and files',
+    kind: 'switch',
+    label: 'Scheduled messages',
+    line: 'Lets people schedule messages that this site sends for them later. Turning it off stops new ones; scheduled ones still send.',
+  },
 ]
 
 export const adminRow = (key: string) => ADMIN_ROWS.find(r => r.key === key)

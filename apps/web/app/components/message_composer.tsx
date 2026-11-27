@@ -55,6 +55,8 @@ import { RelayPicker } from './relay_settings'
 import type { RelayChoice } from '../lib/relays'
 import { useInstanceLabel } from './instance_badge'
 import { Dock, Row, Stack, Surface } from './layout'
+import { ScheduledChip, SendLaterDialog, useHostedItems, useHostedOps } from './scheduled'
+import { laterBlocked, type ComposerDraft } from '../lib/scheduled'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -298,6 +300,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sedEdit = useStore(s => s.sedEdit)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [pollOpen, setPollOpen] = useState(false)
+  const [laterOpen, setLaterOpen] = useState(false)
+  const scheduledItems = useHostedItems()
+  const scheduledOps = useHostedOps()
+  const loadScheduled = useStore(s => s.loadScheduled)
+  const scheduledHere = useStore(
+    s =>
+      s.settings.scheduled_messages || !!(s.scheduled.counts?.waiting || s.scheduled.counts?.failed)
+  )
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const focusSeen = useRef(focusAsk?.n ?? 0)
@@ -315,6 +325,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     focusSeen.current = focusAsk.n
     if (focusAsk.key === draftKey) inputRef.current?.focus()
   }, [focusAsk, draftKey])
+
+  useEffect(() => {
+    if (draftKey && scheduledHere) void loadScheduled(draftKey)
+  }, [draftKey, scheduledHere, loadScheduled])
 
   if (!thread && !view) return null
 
@@ -440,6 +454,55 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     setText('')
   }
 
+  // Schedules the draft as written, after the invite code question when it has one.
+  const scheduleAt = async (at: number): Promise<string | null> => {
+    if (!draftKey) return null
+    const key = draftKey
+    const st = account.store.getState()
+    const go = () =>
+      void st
+        .scheduleDraft(key, at, t => outgoing(linkPrefs, t))
+        .then(e => {
+          if (e) account.store.getState().showToast(e)
+        })
+    if (hasInviteCode(draftNow())) {
+      st.askConfirm({
+        title: 'Post Invite Code',
+        body: INVITE_POST_TEXT,
+        confirm: 'Schedule',
+        action: account.lifetime.inSession(go),
+      })
+      return null
+    }
+    return st.scheduleDraft(key, at, t => outgoing(linkPrefs, t))
+  }
+
+  // The draft as Send later reads it when a menu row runs.
+  const laterDraft = (): ComposerDraft | null => {
+    if (!draftKey) return null
+    const st = account.store.getState()
+    const body = st.drafts[draftKey] ?? ''
+    const reply = st.replying[draftKey]
+    return {
+      side: 'hosted',
+      place: draftKey,
+      text: body,
+      reply: reply ? { id: String(reply.message.id), mention: reply.mention } : null,
+      blocked: laterBlocked({
+        text: body,
+        rich: !!st.pending[draftKey] || st.forwardClip !== null || pollOpen,
+        tooLong: charCount(body) > limitsOf(st.instance).message_chars,
+        on: st.settings.scheduled_messages,
+        cap: limitsOf(st.instance).scheduled_per_account,
+        waiting: st.scheduled.counts?.waiting ?? 0,
+      }),
+      schedule: async at => {
+        await scheduleAt(at)
+      },
+      pick: () => setLaterOpen(true),
+    }
+  }
+
   const send = () => {
     if ((!text.trim() && !pending) || tooLong || altError(pending?.alt ?? '')) return
     const sed = pending || !draftKey ? null : parseSed(text)
@@ -480,6 +543,17 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       <PeerCodeButton text={text} />
       {pollOpen && pollTarget && (
         <CreatePollDialog target={pollTarget} onClose={() => setPollOpen(false)} />
+      )}
+      {laterOpen && (
+        <SendLaterDialog
+          side="hosted"
+          onClose={() => setLaterOpen(false)}
+          onPick={async at => {
+            const e = await scheduleAt(at)
+            if (!e) setLaterOpen(false)
+            return e
+          }}
+        />
       )}
       {expiryOpen && !textOnly && (
         <ExpiryDialog
@@ -551,6 +625,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           Slow mode: {clock(slowLeft)}
         </p>
       )}
+      {draftKey && <ScheduledChip place={draftKey} items={scheduledItems} ops={scheduledOps} />}
       {!thread && <SiteFilterNote />}
       <ComposerField
         compose={compose}
@@ -560,6 +635,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         mayEditLast={can.send}
         bar={bar}
         inputRef={inputRef}
+        later={laterDraft}
         onSend={send}
         onPaste={e => {
           if (!canAttach) return false

@@ -51,6 +51,7 @@ pub mod reactions;
 pub mod reauth;
 pub mod recovery;
 pub mod reports;
+pub mod scheduled;
 pub mod scim;
 pub mod sealed;
 pub mod search_limits;
@@ -1388,8 +1389,8 @@ impl ProfanityTargets {
 
 /// Instance-wide feature switches. Changes reach clients through the `settings_changed`
 /// WebSocket event. A switched-off feature's endpoints answer 404, except that uploads, P2P
-/// attachments and outgoing webhooks answer 403, guests get 401 while guest access is off, and
-/// `client_other_instances` gates no endpoint. What `server_creation`, `server_joining` (under
+/// attachments, outgoing webhooks and new scheduled messages answer 403, guests get 401 while
+/// guest access is off, and `client_other_instances` gates no endpoint. What `server_creation`, `server_joining` (under
 /// `nobody`), `server_search`, `dm_creation` and `friend_requests` refuse carries `reason` with
 /// kind `off_site` and the setting's key as `control`; an account that `server_creation: some`
 /// leaves out gets `off_account`.
@@ -1492,6 +1493,11 @@ pub struct Settings {
     /// page that says so.
     #[serde(default = "yes")]
     pub docs: bool,
+    /// Scheduled messages: people may have this site send a message for them at a time they
+    /// pick (`POST /api/v1/me/scheduled`). Off: no new ones (403 with reason `off_site`); those
+    /// already scheduled still send, and can be edited, sent now or deleted.
+    #[serde(default = "yes")]
+    pub scheduled_messages: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1675,6 +1681,7 @@ impl Settings {
         client_other_instances: false,
         server_profiles: false,
         docs: false,
+        scheduled_messages: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
@@ -1756,6 +1763,7 @@ impl Settings {
             client_other_instances: feature(Feature::ClientOtherInstances),
             server_profiles: feature(Feature::ServerProfiles),
             docs: feature(Feature::Docs),
+            scheduled_messages: feature(Feature::ScheduledMessages),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -1844,6 +1852,7 @@ impl Settings {
             client_other_instances,
             server_profiles,
             docs,
+            scheduled_messages,
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
@@ -1881,6 +1890,7 @@ impl Settings {
             Feature::ClientOtherInstances => client_other_instances,
             Feature::ServerProfiles => server_profiles,
             Feature::Docs => docs,
+            Feature::ScheduledMessages => scheduled_messages,
         }
     }
 
@@ -2667,6 +2677,15 @@ fn api_routes(
             "/messages/bulk_delete/jobs/{id}",
             delete(bulk_delete::cancel_job),
         )
+        .route(
+            "/me/scheduled",
+            get(scheduled::list).post(scheduled::create),
+        )
+        .route(
+            "/me/scheduled/{id}",
+            patch(scheduled::patch).delete(scheduled::delete),
+        )
+        .route("/me/scheduled/{id}/send", post(scheduled::send_now))
         .route(
             "/messages/{id}/pin",
             put(pins::pin_message).delete(pins::unpin_message),

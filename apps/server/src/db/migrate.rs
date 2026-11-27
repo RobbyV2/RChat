@@ -298,7 +298,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 58: wrapped data keys for encryption at rest.
 /// 59: category permission rules and channels that copy their category's rules.
 /// 60: sealed instance secrets, outgoing webhook secrets and pending sign-in data.
-pub const SCHEMA_VERSION: i64 = 60;
+/// 61: scheduled messages (`scheduled_messages`).
+pub const SCHEMA_VERSION: i64 = 61;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

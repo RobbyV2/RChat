@@ -140,6 +140,7 @@ placeContract(composer, (kind, world) => {
               placeholder="Message"
               slowLeft={0}
               bar={null}
+              later={() => null}
               onSend={() => {}}
             />
           </PlaceProvider>

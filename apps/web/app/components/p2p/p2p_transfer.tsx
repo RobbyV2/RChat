@@ -126,7 +126,7 @@ function P2pExportOptionBody({
               Encrypted with a passphrase. Anyone with the file and the passphrase can use your P2P
               identity. Sending pauses here after the export, and stops for good once the new device
               has it. Never in share links. This is for moving, not for a lost or stolen device:
-              reset your identity for that.
+              reset your identity for that. Scheduled messages stay on this device.
             </p>
             <input
               type="password"

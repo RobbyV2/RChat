@@ -54,6 +54,7 @@ pub struct Swept {
     pub member_timeouts: u64,
     pub server_bans: u64,
     pub bulk_delete_jobs: u64,
+    pub scheduled_messages: u64,
     pub webhook_deliveries: u64,
     pub recovery_challenges: u64,
     pub sso_pending: u64,
@@ -199,6 +200,18 @@ pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Re
             t - crate::api::bulk_delete::JOB_KEEP,
         )
         .await?,
+        scheduled_messages: delete_batched(
+            db,
+            "DELETE FROM scheduled_messages WHERE id IN (SELECT id FROM scheduled_messages WHERE status = 'sent' AND finished_at < $1 LIMIT $2)",
+            t - crate::api::scheduled::SENT_KEEP,
+        )
+        .await?
+            + delete_batched(
+                db,
+                "DELETE FROM scheduled_messages WHERE id IN (SELECT id FROM scheduled_messages WHERE status = 'failed' AND finished_at < $1 LIMIT $2)",
+                t - crate::api::scheduled::FAILED_KEEP,
+            )
+            .await?,
         webhook_deliveries: delete_batched(
             db,
             "DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE created_at < $1 LIMIT $2)",

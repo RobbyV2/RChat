@@ -1841,6 +1841,12 @@ impl ResolvedChannel {
         Ok(super::allowed(self.send_rights(db).await)?.is_some())
     }
 
+    /// Whether the viewer may schedule a message here for later: `send_gate` without slow mode,
+    /// which applies when the message is sent.
+    pub(crate) async fn schedule_gate(&self, db: &Db) -> Result<(), ApiError> {
+        self.send_rights(db).await.map(|_| ())
+    }
+
     pub async fn send_gate(&self, db: &Db) -> Result<(), ApiError> {
         let user = self.send_rights(db).await?;
         if self.slowmode <= 0 {

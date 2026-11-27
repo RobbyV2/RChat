@@ -42,6 +42,7 @@ describe('instance limits', () => {
       resync_jitter_ms: 10000,
       catch_up_delay_ms: 5000,
       servers_per_account: 0,
+      scheduled_per_account: 0,
       session_max_age_secs: 0,
       session_idle_secs: 0,
       media_retention_secs: 86400,

@@ -48,6 +48,7 @@ const SWITCHES = [
   'client_other_instances',
   'server_profiles',
   'docs',
+  'scheduled_messages',
 ]
 
 describe('feature switches', () => {

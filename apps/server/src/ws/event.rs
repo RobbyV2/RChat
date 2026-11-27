@@ -555,6 +555,19 @@ pub enum WsEvent {
         username: String,
         job: crate::api::bulk_delete::BulkJob,
     },
+    /// `username`'s scheduled message was scheduled, edited, held by slow mode or failed; to
+    /// their own connections only. Its `place` is always null.
+    ScheduledUpdated {
+        username: String,
+        scheduled: Box<crate::api::scheduled::ScheduledMessage>,
+    },
+    /// `username`'s scheduled message `id` is gone: deleted, or sent as `sent_message_id`; to
+    /// their own connections only.
+    ScheduledRemoved {
+        username: String,
+        id: i64,
+        sent_message_id: Option<i64>,
+    },
     /// The site admin `username` confirmed opening channel `channel_id` as staff; to their own
     /// connections only, so they deliver its events until it closes.
     StaffViewOpened {

@@ -94,6 +94,7 @@ import { type Decision, mergeRelays, relaysKey } from '../relays'
 import { cleanBio } from '../rules'
 import { displayNameError } from '../display_name'
 import { selectionInitial, type selectionSlice } from '../selection_store'
+import { scheduledInitial, type scheduledSlice } from '../scheduled_store'
 import { serverNames } from '../selectors'
 import { endsSession, meRetryIn } from '../session'
 import { signupFailure } from '../signup'
@@ -238,6 +239,7 @@ export type SessionDeps = { acct: AccountSession } & Pick<
     messagesHub: Pick<Messages, 'forget' | 'applyEmbeds'>
     serversHub: Pick<Servers, 'forget'>
     pollsHub: { forget: () => void }
+    scheduledHub: Pick<ReturnType<typeof scheduledSlice>, 'loadSummary' | 'reload' | 'forget'>
   }
 
 export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) => {
@@ -339,6 +341,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     saveShowSpoilers,
     saveTypingOn,
     saveAnim,
+    scheduledHub,
     selectionHub,
     serverPager,
     serversHub,
@@ -776,6 +779,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (!same) void loadBlocked()
     if (!same) void friendsHub.loadSummary()
     if (!same) void selectionHub.loadJobs()
+    if (!same) void scheduledHub.loadSummary()
   }
 
   const refetchMe = (background = false) => {
@@ -948,6 +952,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         void friendsHub.loadSummary()
         friendsHub.reloadOpenLists()
         void selectionHub.loadJobs()
+        scheduledHub.reload()
         const { view } = get()
         if (view?.kind === 'channel' && !instanceTarget(get(), view.server, view.channelId)) {
           void get()
@@ -1602,6 +1607,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     presenceHub.forget()
     serversHub.forget()
     pollsHub.forget()
+    scheduledHub.forget()
   }
 
   const actions: Pick<
@@ -2168,6 +2174,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         blockList: emptyPage<BlockedUser>(),
         ...friendsInitial(),
         ...selectionInitial(),
+        ...scheduledInitial(),
         dms: [],
         dmsMore: false,
         dmsEdge: NO_DM_EDGE,

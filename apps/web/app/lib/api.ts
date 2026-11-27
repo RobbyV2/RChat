@@ -19,6 +19,8 @@ import type {
   AuthResponse,
   BlockedUser,
   BulkJob,
+  ScheduledMessage,
+  ScheduledPage,
   Friend,
   FriendRequest,
   FriendSummary,
@@ -197,6 +199,41 @@ const threadsQuery = (q: string) => (q.trim() ? `?q=${seg(q.trim())}` : '')
 export const reasonHeader = (reason?: string): Record<string, string> => {
   const text = reasonOf(reason)
   return text ? { 'X-Audit-Reason': encodeURIComponent(text) } : {}
+}
+
+// Where a scheduled message goes: one of `channel_id`, `dm_id` and `thread_root_id`. `at` in
+// seconds.
+export interface ScheduleReq {
+  channel_id?: number
+  dm_id?: number
+  thread_root_id?: number
+  reply_to?: number
+  mention_reply?: boolean
+  content: string
+  at: number
+}
+
+export interface ScheduledPatch {
+  content?: string
+  at?: number
+  remove_reply?: boolean
+}
+
+export interface ScheduledQuery {
+  scope?: string
+  status?: 'waiting' | 'failed'
+  after?: string | null
+  limit?: number
+}
+
+export const scheduledParams = (q: ScheduledQuery) => {
+  const p = new URLSearchParams()
+  if (q.scope) p.set('scope', q.scope)
+  if (q.status) p.set('status', q.status)
+  if (q.after) p.set('after', q.after)
+  if (q.limit) p.set('limit', String(q.limit))
+  const text = p.toString()
+  return text ? `?${text}` : ''
 }
 
 export interface InboxQuery {
@@ -1042,6 +1079,13 @@ export const endpoints = (c: ApiClient) => ({
   bulkDelete: (req: BulkDeleteReq) => c.req<BulkDeleteResp>('POST', '/messages/bulk_delete', req),
   bulkJobs: () => c.req<BulkJob[]>('GET', '/messages/bulk_delete/jobs'),
   cancelBulkJob: (id: number) => c.req<BulkJob>('DELETE', `/messages/bulk_delete/jobs/${id}`),
+  listScheduled: (q: ScheduledQuery = {}) =>
+    c.req<ScheduledPage>('GET', `/me/scheduled${scheduledParams(q)}`),
+  createScheduled: (req: ScheduleReq) => c.req<ScheduledMessage>('POST', '/me/scheduled', req),
+  patchScheduled: (id: number, patch: ScheduledPatch) =>
+    c.req<ScheduledMessage>('PATCH', `/me/scheduled/${id}`, patch),
+  sendScheduled: (id: number) => c.req<Message>('POST', `/me/scheduled/${id}/send`),
+  deleteScheduled: (id: number) => c.req<unknown>('DELETE', `/me/scheduled/${id}`),
   // `alt`: a new description of the message's image (null removes it); left out keeps it.
   editMessage: (id: number, content: string, alt?: string | null) =>
     c.req<Message>(

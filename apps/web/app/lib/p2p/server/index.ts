@@ -92,6 +92,7 @@ export {
   SYNC_TEXT,
   OLD_GONE_TEXT,
   ServerError,
+  SlowModeError,
   encodeCode,
   parseCode,
   codeHash,

@@ -49,7 +49,7 @@ const pause = (ms: number) => sleep(time(), ms)
 export function createAccountPart(
   parts: Pick<
     P2pParts,
-    'store' | 'badge' | 'calls' | 'dms' | 'servers' | 'inbox' | 'attachments' | 'rail'
+    'store' | 'badge' | 'calls' | 'dms' | 'servers' | 'inbox' | 'attachments' | 'rail' | 'scheduled'
   >,
   scope: IdentityScope
 ) {
@@ -153,6 +153,7 @@ export function createAccountPart(
   }
 
   const stopNode = () => {
+    void parts.scheduled.stopScheduled()
     state.unwatch?.()
     put.unwatch(null)
     if (state.calls) {
@@ -341,6 +342,8 @@ export function createAccountPart(
       },
       resign: async () => {
         term++
+        if (mine !== state.gen || state.leader !== l) return
+        await parts.scheduled.stopScheduled()
         if (mine !== state.gen || state.leader !== l) return
         stopNode()
         if (mine === state.gen) useP2p.setState(nodeless())
@@ -617,6 +620,8 @@ export function createAccountPart(
       await n.start()
       if (state.node !== n) return
       k.start()
+      await parts.scheduled.startScheduled(s, n.ik, () => state.node === n).catch(() => {})
+      if (state.node !== n) return
       void d.blobs.resume().catch(() => {})
       void checkAddress(n, deps.account).catch(() => {})
       void keep(storageManager())

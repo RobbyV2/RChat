@@ -888,6 +888,15 @@ pub(super) fn wants(
             message_id: _,
         }
         | WsEvent::BulkDeleteProgress { username, job: _ }
+        | WsEvent::ScheduledUpdated {
+            username,
+            scheduled: _,
+        }
+        | WsEvent::ScheduledRemoved {
+            username,
+            id: _,
+            sent_message_id: _,
+        }
         | WsEvent::StaffViewOpened {
             username,
             channel_id: _,

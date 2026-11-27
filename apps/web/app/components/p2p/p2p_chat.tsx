@@ -91,6 +91,8 @@ import { DateDivider } from '../date_divider'
 import { UnreadDivider } from '../unread_banner'
 import { p2pUnread, p2pUnreadStart } from '../../lib/unread_banner'
 import { Masked, textBtn } from '../ui'
+import { ScheduledChip, SendLaterDialog, useDeviceItems, useDeviceOps } from '../scheduled'
+import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
@@ -582,6 +584,9 @@ function P2pComposerBody({
   const textOnly = noFiles || siteTextOnly
   const linkPrefs = useStore(s => s.linkPrefs)
   const { getText, setText } = compose
+  const [laterOpen, setLaterOpen] = useState(false)
+  const scheduledItems = useDeviceItems()
+  const scheduledOps = useDeviceOps()
 
   if (disabled) return <>{disabled}</>
   if (unstarted && !held.threads)
@@ -603,6 +608,40 @@ function P2pComposerBody({
     })
     compose.typing(key, false)
   }
+  // Schedules the draft as written for `at`.
+  const scheduleAt = (at: number) => {
+    const st = identity.useP2p.getState()
+    const reply = st.replying?.room === key ? st.replying.id : undefined
+    const draft = getText()
+    return identity.p2pScheduled.add(key, { body: outgoing(linkPrefs, draft), reply, at, draft })
+  }
+
+  // The draft as Send later reads it when a menu row runs.
+  const laterDraft = (): ComposerDraft | null => {
+    const st = identity.useP2p.getState()
+    const body = st.drafts[key] ?? ''
+    const reply = st.replying?.room === key ? st.replying.id : null
+    return {
+      side: 'device',
+      place: key,
+      text: body,
+      reply: reply ? { id: reply, mention: true } : null,
+      blocked: laterBlocked({
+        text: body,
+        rich: (st.attaching[key]?.length ?? 0) > 0 || store.getState().forwardClip !== null,
+        tooLong: !fits(compose, body, max),
+        on: identity.p2pScheduled.here(),
+        cap: 0,
+        waiting: 0,
+      }),
+      schedule: async at => {
+        const e = await scheduleAt(at)
+        if (e) identity.p2pHost.toast(e)
+      },
+      pick: () => setLaterOpen(true),
+    }
+  }
+
   const bar = replyTo ? (
     <ComposerBar onClose={p2pDm.cancelReply} closeLabel="Cancel reply">
       Replying to{' '}
@@ -638,6 +677,17 @@ function P2pComposerBody({
     <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
       <Stack gap="sm" align="start">
         <PeerCodeButton text={text} peer />
+        {laterOpen && (
+          <SendLaterDialog
+            side="device"
+            onClose={() => setLaterOpen(false)}
+            onPick={async at => {
+              const e = await scheduleAt(at)
+              if (!e) setLaterOpen(false)
+              return e
+            }}
+          />
+        )}
         {(!textOnly || files > 0) && <PendingFiles room={key} />}
         <Stack gap="2xs" place="w-full">
           {slowLeft > 0 && (
@@ -648,6 +698,7 @@ function P2pComposerBody({
               </span>
             </Row>
           )}
+          <ScheduledChip place={key} items={scheduledItems} ops={scheduledOps} />
           <Stack gap="none">
             <ComposerField
               compose={compose}
@@ -657,6 +708,7 @@ function P2pComposerBody({
               blocked={noFiles && files > 0}
               bar={bar}
               inputProps={{ 'data-p2p-composer': '' }}
+              later={laterDraft}
               onSend={send}
               onPaste={e => {
                 if (textOnly) return false
