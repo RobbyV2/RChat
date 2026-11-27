@@ -1,4 +1,12 @@
-import { RULES_VERSION, gt, restricts, timedBans, timeouts, type Rank } from '../acl/rules'
+import {
+  RULES_VERSION,
+  everyoneSees,
+  gt,
+  restricts,
+  timedBans,
+  timeouts,
+  type Rank,
+} from '../acl/rules'
 import type { MemberSum, Summary } from '../acl/summary'
 import { cleanName } from '../keys'
 import { roomLock, shownRoomProfile } from '../../profile_reset'
@@ -240,6 +248,7 @@ export function channelViews(
       send: me === 'join' && (p & P.SendMessages) !== 0,
       exempt: (p & (P.ManageChannels | P.ManageMessages)) !== 0,
       over: s.overwrites?.[c.id] ?? {},
+      everyoneSees: everyoneSees(F, c.id),
     })
   }
   return out

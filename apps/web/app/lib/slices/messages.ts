@@ -16,11 +16,12 @@ import {
 import { accountPrompt } from '../features'
 import {
   clipAllowed,
-  locateQuote,
+  locatedQuote,
   quoteSource,
   sourceAccess,
   sourceServer,
 } from '../forward_viewing'
+import { locateOnce, locatedNow } from '../forward_locate'
 import { type ForwardClip, canForward, clipOf, forwardPending } from '../forward'
 import { dropGroupMessage } from '../group_pings'
 import { limitsOf, tooLargeText } from '../instance_limits'
@@ -1531,6 +1532,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     | 'cancelReply'
     | 'copyForward'
     | 'clearForward'
+    | 'setForwardShowSource'
     | 'copyForwardClip'
     | 'alertFrom'
     | 'openPins'
@@ -1696,12 +1698,15 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         toast('Message copied for forwarding')
       }
       const known = quoteSource(state, m)
-      if (!m.forward || known) stage(known)
+      const id = m.forward?.source_id
+      if (!id || known) stage(known)
       else
-        void locateQuote(m.forward.source_id, api)
+        void locateOnce(acct, id)
           .then(
-            inSession(async origin => {
-              if (!origin) return
+            inSession(async () => {
+              const found = locatedNow(acct, id)
+              if (!found) return
+              const origin = locatedQuote(found)
               if (origin.kind === 'channel' && origin.server)
                 await get().discoverChannels(origin.server)
               stage(origin)
@@ -1711,6 +1716,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     },
 
     clearForward: () => saveForward(null),
+
+    setForwardShowSource: (key, on) =>
+      set(s => (s.forwardClip ? { forwardShowSource: { key, on } } : {})),
 
     copyForwardClip: clip => {
       const { me, guest } = get()
@@ -1755,7 +1763,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         setPinned(id, null)
       }),
 
-    sendForward: key => {
+    sendForward: (key, showSource) => {
       const { me, guest, forwardClip: clip } = get()
       if (
         !me ||
@@ -1800,7 +1808,10 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       if (kind !== 't') clearAnchor(key)
       if (detached(key)) void get().jumpToPresent(key)
       const tempId = nextTempId()
-      const opts = { forward_of: clip.id }
+      const opts = {
+        forward_of: clip.id,
+        ...(showSource === undefined ? {} : { show_source: showSource }),
+      }
       enqueue({
         tempId,
         key,

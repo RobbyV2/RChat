@@ -186,6 +186,7 @@ export async function emitOne(
   cx.sync.push(room, id, wire as unknown as Wire)
   cx.sync.announce(room)
   cx.changed(room)
+  cx.aimed([res.rec])
   return id
 }
 

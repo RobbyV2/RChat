@@ -1,6 +1,7 @@
 import type { UploadExpiry } from './upload_expiry'
 import type { TimeoutWire } from './timeouts'
 import type { ProfileChoices, ProfileLevel } from './profile_choice'
+import type { FwdPlace } from './p2p/content'
 
 export type AvatarKind = 'identicon' | 'color'
 
@@ -533,7 +534,11 @@ export interface ForwardRef {
   origin_sensitive?: boolean
   origin_channel?: string | null
   origin_server?: string | null
+  // The channel of origin_server, for a copy from another server whose sender showed it
+  origin_server_channel?: string | null
   dropped: string | null
+  // Client only: what a P2P copy says of where it's from
+  p2p?: FwdPlace
 }
 
 export interface MessageLocation {

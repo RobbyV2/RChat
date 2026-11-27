@@ -453,6 +453,7 @@ export interface SendOpts {
   reply_to?: number
   mention_reply?: boolean
   forward_of?: number
+  show_source?: boolean
   poll?: PollReq
 }
 
@@ -866,10 +867,12 @@ export const endpoints = (c: ApiClient) => ({
   deleteMedia: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/media`),
   messageLocation: (id: number) => c.req<MessageLocation>('GET', `/messages/${id}/location`),
   messagePlace: (id: number) =>
-    c.req<Pick<MessageLocation, 'server' | 'channel_id' | 'dm_id' | 'thread_root_id'>>(
-      'GET',
-      `/messages/${id}/location?preview=false`
-    ),
+    c.req<
+      Pick<MessageLocation, 'server' | 'channel_id' | 'dm_id' | 'thread_root_id'> & {
+        // What a forward of it that shows its source would name; absent from older servers.
+        shown?: { server: string; channel?: string } | null
+      }
+    >('GET', `/messages/${id}/location?preview=false`),
   messageLocations: (ids: number[], expected?: Record<number, string>) =>
     c.req<MessageLocation[]>('POST', '/messages/locations', { ids, expected }),
   pinMessage: (id: number) => c.req<unknown>('PUT', `/messages/${id}/pin`),

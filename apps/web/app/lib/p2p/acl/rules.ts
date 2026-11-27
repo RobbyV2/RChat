@@ -488,6 +488,11 @@ export function channelPerms(F: ChanFacts, P: string, ch: string): number {
 }
 export const canView = (F: ChanFacts, P: string, ch: string) =>
   (channelPerms(F, P, ch) & VIEW) !== 0
+// Whether everyone in the server sees channel `ch`: a member without roles may view it (no key
+// is the empty string), and no overwrite denies ViewChannel to anyone.
+export const everyoneSees = (F: ChanFacts, ch: string) =>
+  canView(F, '', ch) &&
+  ![...(F.overwrites.get(ch)?.values() ?? [])].some(o => ((o.deny ?? 0) & VIEW) !== 0)
 // Sending needs ViewChannel and SendMessages.
 export const canSend = (F: ChanFacts, P: string, ch: string) =>
   (channelPerms(F, P, ch) & (VIEW | SEND)) === (VIEW | SEND)

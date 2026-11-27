@@ -516,6 +516,7 @@ export function createAccountPart(
         parts.servers.scheduleServer(room)
       })
       sv.onArrive(a => parts.servers.serverArrived(a))
+      sv.onAimed(targets => parts.inbox.heldTouched(targets))
       sv.onTyping(room => parts.servers.scheduleServer(room))
       put.calls(c)
       n.use({
@@ -545,6 +546,7 @@ export function createAccountPart(
         parts.calls.scheduleRefresh(room)
       })
       d.onArrive(a => parts.dms.arrived(a))
+      d.onAimed(targets => parts.inbox.heldTouched(targets))
       void d.recheckOutbox().catch(() => {})
       void s
         .meta<PendingCall>(parts.calls.PENDING_CALL)

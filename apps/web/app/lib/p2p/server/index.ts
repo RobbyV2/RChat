@@ -1,7 +1,7 @@
 import { knownRules } from '../acl/rules'
 import { emptySummary, type SumDelta, type Summary } from '../acl/summary'
 import type { Carried, PackedRec, Plan } from '../acl_room'
-import { capped, refitFull, type DevChain, type Inserted, type StoreLimits } from '../dag'
+import { aimedAt, capped, refitFull, type DevChain, type Inserted, type StoreLimits } from '../dag'
 import type { EventRecord, IdentRecord, P2pDatabase, RoomRecord } from '../db'
 import type { PageOpts } from '../jump'
 import type { Attachment, Fwd, MsgContent } from '../content'
@@ -130,6 +130,7 @@ export class Servers {
   private rooms = new Map<string, RoomRecord>()
   private changeFns = new Set<(room: string) => void>()
   private arriveFns = new Set<(a: ServerArrival) => void>()
+  private aimedFns = new Set<(targets: string[]) => void>()
   private redeems = new WeakMap<Session, number>()
   private waiters = new Map<string, (m: Message) => void>()
   private typingFns = new Set<(room: string) => void>()
@@ -425,6 +426,17 @@ export class Servers {
   onArrive(fn: (a: ServerArrival) => void) {
     this.arriveFns.add(fn)
     return () => void this.arriveFns.delete(fn)
+  }
+
+  // Edits and redactions stored here, by the events they are aimed at.
+  onAimed(fn: (targets: string[]) => void) {
+    this.aimedFns.add(fn)
+    return () => void this.aimedFns.delete(fn)
+  }
+
+  private aimed(recs: EventRecord[]) {
+    const targets = aimedAt(recs)
+    if (targets.length) for (const fn of this.aimedFns) fn(targets)
   }
 
   onTyping(fn: (room: string) => void) {

@@ -389,7 +389,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   const saveForward = (clip: ForwardClip | null) => {
     const username = get().me?.username
     if (!username) return
-    set({ forwardClip: clip })
+    set({ forwardClip: clip, forwardShowSource: null })
     writeLocal(home.scoped(forwardKey(username)), forwardValue(clip))
   }
 
@@ -694,7 +694,13 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
 
     reloadForward: () => {
       const username = get().me?.username
-      if (username) set({ forwardClip: readForward(username) })
+      if (!username) return
+      const clip = readForward(username)
+      set(s =>
+        forwardValue(clip) === forwardValue(s.forwardClip)
+          ? {}
+          : { forwardClip: clip, forwardShowSource: null }
+      )
     },
 
     setNotifyLevel: (scope, level) => saveNotify(setLevel(get().notifyPrefs, scope, level)),

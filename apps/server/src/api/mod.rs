@@ -931,10 +931,11 @@ pub struct ForwardRef {
     /// can read it.
     pub source_id: i64,
     /// Where it came from, as a label: `Direct message`, `#channel - Server` when forwarded
-    /// inside the same server, or the server's display name when that server had no password.
-    /// `null` otherwise (a password-protected server's name never leaves it). Kept for older
-    /// clients; use `origin_dm`, `origin_channel` and `origin_server`. Fixed at forward time:
-    /// later renames or password changes do not update it.
+    /// inside the same server, or the server's display name when that server had no password
+    /// or when its sender chose to show it. `null` otherwise (a password-protected server's name
+    /// never leaves it unless its sender chose to show it). Kept for older clients; use
+    /// `origin_dm`, `origin_channel`, `origin_server` and `origin_server_channel`. Fixed at
+    /// forward time: later renames or password changes do not update it.
     #[schema(example = "#general - Rustaceans")]
     pub origin: Option<String>,
     /// Whether it came from a direct message.
@@ -951,11 +952,16 @@ pub struct ForwardRef {
     /// The channel named by `origin_channel_id` carries the shared sensitive-content label.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub origin_sensitive: bool,
-    /// Display name of the server it came from, when forwarded inside the same server or when
-    /// that server had no password; `null` otherwise.
+    /// Display name of the server it came from, when forwarded inside the same server, when
+    /// that server had no password or when its sender chose to show it; `null` otherwise.
     #[serde(default)]
     #[schema(example = "Rustaceans")]
     pub origin_server: Option<String>,
+    /// Name of the channel in `origin_server` it came from, for a copy from another server whose
+    /// sender chose to show where it is from, when everyone in that server may see the channel;
+    /// `null` otherwise. Copies inside one server use `origin_channel`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_server_channel: Option<String>,
     /// File name of an attachment of the original that was not forwarded: a peer-to-peer
     /// attachment, or a file that already travels in 50 messages.
     #[schema(example = "notes.pdf")]
@@ -977,13 +983,13 @@ impl ForwardRef {
             Some(Origin::Channel { id, .. }) => *id,
             _ => None,
         };
-        let (origin_dm, origin_channel, origin_server) = match origin {
-            Some(Origin::Dm) => (true, None, None),
-            Some(Origin::Server { server }) => (false, None, Some(server)),
+        let (origin_dm, origin_channel, origin_server, origin_server_channel) = match origin {
+            Some(Origin::Dm) => (true, None, None, None),
+            Some(Origin::Server { server, channel }) => (false, None, Some(server), channel),
             Some(Origin::Channel {
                 channel, server, ..
-            }) => (false, Some(channel), Some(server)),
-            None => (false, None, None),
+            }) => (false, Some(channel), Some(server), None),
+            None => (false, None, None, None),
         };
         ForwardRef {
             author,
@@ -995,6 +1001,7 @@ impl ForwardRef {
             origin_sensitive: false,
             origin_channel,
             origin_server,
+            origin_server_channel,
             dropped,
         }
     }
@@ -1008,6 +1015,8 @@ pub(crate) enum Origin {
     Dm,
     Server {
         server: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel: Option<String>,
     },
     Channel {
         channel: String,
@@ -1025,7 +1034,7 @@ impl Origin {
     fn label(&self) -> String {
         match self {
             Origin::Dm => "Direct message".to_string(),
-            Origin::Server { server } => server.clone(),
+            Origin::Server { server, channel: _ } => server.clone(),
             Origin::Channel {
                 channel, server, ..
             } => format!("#{channel} - {server}"),
@@ -1050,6 +1059,7 @@ impl Origin {
                 },
                 None => Origin::Server {
                     server: stored.to_string(),
+                    channel: None,
                 },
             },
         }
@@ -4013,6 +4023,33 @@ mod tests {
         );
         let none = ForwardRef::new(None, 1, 2, None, None);
         assert_eq!((none.origin, none.origin_dm), (None, false));
+        let named = Origin::Server {
+            server: "Vault".to_string(),
+            channel: Some("lobby".to_string()),
+        };
+        assert_eq!(Origin::parse(&named.stored()), named);
+        let fwd = ForwardRef::new(None, 1, 2, Some(&named.stored()), None);
+        assert_eq!(
+            (
+                fwd.origin.as_deref(),
+                fwd.origin_channel.as_deref(),
+                fwd.origin_server.as_deref(),
+                fwd.origin_server_channel.as_deref()
+            ),
+            (Some("Vault"), None, Some("Vault"), Some("lobby"))
+        );
+        let bare = Origin::parse(r#"{"kind":"server","server":"Vault"}"#);
+        assert_eq!(
+            bare,
+            Origin::Server {
+                server: "Vault".to_string(),
+                channel: None,
+            }
+        );
+        assert_eq!(bare.stored(), r#"{"kind":"server","server":"Vault"}"#);
+        let json = serde_json::to_value(ForwardRef::new(None, 1, 2, Some(&bare.stored()), None))
+            .expect("json");
+        assert!(json.get("origin_server_channel").is_none(), "{json}");
         for (old, origin) in [
             ("Direct message", Origin::Dm),
             (
@@ -4027,6 +4064,7 @@ mod tests {
                 "Pub Hall",
                 Origin::Server {
                     server: "Pub Hall".to_string(),
+                    channel: None,
                 },
             ),
         ] {

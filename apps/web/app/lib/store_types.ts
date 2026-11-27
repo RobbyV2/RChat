@@ -404,6 +404,8 @@ export interface RChatState {
   drafts: Record<string, string>
   replying: Record<string, Replying>
   forwardClip: ForwardClip | null
+  // "Show where it's from" for the clip in one draft (`key`), else its default. Never stored.
+  forwardShowSource: { key: string; on: boolean } | null
   // Message link cards by message id; null when the viewer can't read the message.
   linkCards: Record<number, MessageLocation | null>
   toast: Toast | null
@@ -602,6 +604,7 @@ export interface RChatState {
   // A toast and desktop notification raised outside the store (P2P conversations).
   alertFrom: (alert: AlertInput) => void
   clearForward: () => void
+  setForwardShowSource: (key: string, on: boolean) => void
   openPins: () => void
   closePins: () => void
   pinMessage: (id: number) => Promise<void>
@@ -625,7 +628,8 @@ export interface RChatState {
   setAnim: (prefs: AnimPrefs) => void
   reloadAnim: () => void
   noteTyping: (scope: string, active: boolean) => void
-  sendForward: (key: string) => void
+  // `showSource`: whether the copy names where the original is; omitted, the server decides.
+  sendForward: (key: string, showSource?: boolean) => void
   openForward: (m: Message) => Promise<void>
   openMessage: (id: number, nav?: Nav, place?: View, thread?: number | null) => Promise<void>
   resolveLinkCard: (id: number, place?: View) => void

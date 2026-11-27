@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64u, concat, utf8 } from './canonical'
 import {
+  aimedAt,
   blankRoom,
   capped,
   insertEvent,
@@ -22,6 +23,7 @@ import { Blobs, type BulkLimits } from './blobs'
 import { buildEvent, isLate, validate, type Invalid, type Wire } from './event_v1'
 import {
   LIMITS as EV,
+  fitForward,
   shownReaction,
   sizeOf,
   CALL_OUTCOMES,
@@ -550,6 +552,7 @@ export class Dms {
   private clock: Clock
   private changeFns = new Set<(room: string) => void>()
   private arriveFns = new Set<(a: Arrival) => void>()
+  private aimedFns = new Set<(targets: string[]) => void>()
   private typers = new Map<string, { until: number; timer: unknown }>()
   // Files that arrived and wait for a click instead of fetching by themselves, and why.
   readonly paused = new Map<string, AutoPause>()
@@ -716,8 +719,19 @@ export class Dms {
     return () => void this.arriveFns.delete(fn)
   }
 
+  // Edits and redactions stored here, by the events they are aimed at.
+  onAimed(fn: (targets: string[]) => void) {
+    this.aimedFns.add(fn)
+    return () => void this.aimedFns.delete(fn)
+  }
+
   private changed(room: string) {
     for (const fn of this.changeFns) fn(room)
+  }
+
+  private aimed(recs: EventRecord[]) {
+    const targets = aimedAt(recs)
+    if (targets.length) for (const fn of this.aimedFns) fn(targets)
   }
 
   private quota(full: boolean) {
@@ -750,6 +764,7 @@ export class Dms {
 
   private stored(room: string, from: string, added: Inserted[]) {
     this.files(added)
+    this.aimed(added.flatMap(a => (a.status === 'new' ? [a.rec] : [])))
     for (const a of added) {
       if (a.status !== 'new') continue
       if (a.rec.sender === this.me) continue
@@ -822,6 +837,7 @@ export class Dms {
     if (res.status === 'invalid') throw new DmError("Couldn't save the message")
     this.quota(false)
     this.files([res])
+    if (res.status === 'new') this.aimed([res.rec])
     this.sync.push(room, id, wire)
     this.sync.announce(room)
     this.changed(room)
@@ -868,7 +884,7 @@ export class Dms {
     if (msg.att?.length) content.att = msg.att
     if (msg.fwd) content.fwd = msg.fwd
     else if (rec && mentionsIn(msg.body, this.mentionNames(rec.peer))) content.mentions = [rec.peer]
-    return this.create(room, 'msg', content)
+    return this.create(room, 'msg', fitForward(content))
   }
 
   // The log row of a call we made.

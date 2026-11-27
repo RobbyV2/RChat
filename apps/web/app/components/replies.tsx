@@ -219,7 +219,7 @@ export function ComposerBar({
   return (
     <div
       data-composer-bar
-      className="flex min-h-9 items-center gap-2 rounded-t-2xl bg-surface-container px-4 py-1 text-sm text-on-surface-variant"
+      className="@container flex min-h-9 items-center gap-2 rounded-t-2xl bg-surface-container px-4 py-1 text-sm text-on-surface-variant"
     >
       <div className="min-w-0 flex-1 truncate">{children}</div>
       {actions}

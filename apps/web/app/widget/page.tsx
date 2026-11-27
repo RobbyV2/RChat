@@ -8,6 +8,7 @@ import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { isNotice } from '../lib/system_messages'
 import { groupPadCls, gutterTimeCls } from '../components/grouped_row'
 import { WidgetForwardAccess, WidgetLinkCards } from '../components/message_link_card'
+import { FrameForwardPill } from '../components/forwards'
 import { WidgetNotice } from '../components/widget_notice'
 import { RevealChannelPreview } from '../components/preview_reveal'
 import { frameCopyTarget } from '../lib/forward_viewing'
@@ -269,7 +270,10 @@ function ChatRow({
             {body.target && <RevealChannelPreview target={body.target} />}
           </p>
         ) : (
-          <MarkdownMessage message={message} />
+          <>
+            <MarkdownMessage message={message} />
+            {message.forward && <FrameForwardPill fwd={message.forward} />}
+          </>
         )}
       </div>
       {canReply && (

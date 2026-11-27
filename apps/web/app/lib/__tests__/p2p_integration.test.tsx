@@ -40,7 +40,9 @@ import { PaletteIndex } from '../palette_index'
 import { p2pKey, type P2pState } from '../p2p/app'
 import { blankRoom } from '../p2p/dag'
 
-import { P2pStore } from '../p2p/db'
+import { P2pStore, type EventRecord } from '../p2p/db'
+import { b64u } from '../p2p/canonical'
+import { p2pPlace, textHash, type HeldOriginal } from '../forward_pill'
 import { createP2pApp } from '../p2p/app/runtime'
 import { home, pinEmptyBook } from './home_instance'
 import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
@@ -173,7 +175,16 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   profileLock: { locked: false },
   system: { ch: CH, join: true, leave: true },
   channels: [
-    { id: CH, name: 'general', kind: 'text', pos: 0, send: true, exempt: false, over: {} },
+    {
+      id: CH,
+      name: 'general',
+      kind: 'text',
+      pos: 0,
+      send: true,
+      exempt: false,
+      over: {},
+      everyoneSees: true,
+    },
   ],
   members: [],
   online: 0,
@@ -735,6 +746,7 @@ describe('personal filter on P2P names', () => {
           send: true,
           exempt: false,
           over: {},
+          everyoneSees: true,
         },
       ],
       members: [
@@ -860,8 +872,26 @@ describe('personal filter on P2P names', () => {
       perms: 0xffff_ffff,
       owner: BOB,
       channels: [
-        { id: CH, name: 'shit-talk', kind: 'text', pos: 0, send: true, exempt: false, over: {} },
-        { id: 'c2', name: 'general', kind: 'text', pos: 1, send: true, exempt: false, over: {} },
+        {
+          id: CH,
+          name: 'shit-talk',
+          kind: 'text',
+          pos: 0,
+          send: true,
+          exempt: false,
+          over: {},
+          everyoneSees: true,
+        },
+        {
+          id: 'c2',
+          name: 'general',
+          kind: 'text',
+          pos: 1,
+          send: true,
+          exempt: false,
+          over: {},
+          everyoneSees: true,
+        },
       ],
     })
     const member = {
@@ -1072,6 +1102,236 @@ describe('forwarding', () => {
     } finally {
       Object.assign(p2pDm, saved)
       Object.assign(g, dom)
+    }
+  })
+})
+
+describe('where a forwarded copy’s original is', () => {
+  // Each test names its events apart: what the identity found stays found.
+  const ids = (base: number) => (n: number) => b64u(new Uint8Array(32).fill(base + n))
+  const rec = (room: string, over: Partial<EventRecord> = {}, c: object = { body: 'plans' }) =>
+    ({
+      room,
+      type: 'msg',
+      sender: ALICE,
+      redacted: false,
+      effTs: 2_500,
+      wire: { ev: { ts: 2_000 }, c, sig: '' },
+      ...over,
+    }) as unknown as EventRecord
+  const att = (n: number) => ({
+    h: b64u(new Uint8Array(32).fill(200 + n)),
+    size: 1,
+    blocks: 1,
+    name: 'f',
+    mime: 'text/plain',
+  })
+  const held = (
+    room: string,
+    ch: string | null,
+    over: Partial<HeldOriginal> = {}
+  ): HeldOriginal => ({
+    room,
+    ch,
+    sender: ALICE,
+    ts: [2_000, 2_500],
+    texts: [textHash('plans')],
+    atts: [],
+    ...over,
+  })
+  const setup = async (records: Record<string, EventRecord>) => {
+    const store = await P2pStore.open(crypto.randomUUID())
+    store.event = async ev => records[ev]
+    p2pState({
+      enabled: true,
+      reader: true,
+      elsewhere: true,
+      me: BOB,
+      contacts: [contact(ALICE, 'Alice')],
+      rooms: { [ROOM]: { id: ROOM, peer: ALICE } } as unknown as P2pState['rooms'],
+      servers: { [SRV]: server() },
+    })
+    peerApp.put.reader({ store, me: BOB })
+    return store
+  }
+
+  test('this identity holds a live message, its author, times, edits and files, where it sees it', async () => {
+    const id = ids(0)
+    const records: Record<string, EventRecord> = {
+      [id(1)]: rec(ROOM),
+      [id(2)]: rec(SRV, { chan: CH }, { body: 'plans', att: [att(1)] }),
+      [id(3)]: rec(ROOM, { redacted: true }),
+      [id(4)]: rec(SRV, { chan: 'hidden' }),
+      [id(5)]: rec('elsewhere'),
+      [id(6)]: rec(ROOM, { type: 'react' }),
+      [id(7)]: rec(SRV, { chan: CH, purged: true }),
+    }
+    const store = await setup(records)
+    const edit = (n: number, sender: string, body: string, redacted = false) =>
+      store.db.put('events', {
+        id: id(n),
+        room: ROOM,
+        target: id(1),
+        type: 'edit',
+        sender,
+        redacted,
+        wire: { ev: { ts: 3_000 }, c: { target: id(1), body }, sig: '' },
+      } as unknown as EventRecord)
+    await edit(20, ALICE, 'plans, edited')
+    await edit(21, CAROL, 'not hers')
+    await edit(22, ALICE, 'taken back', true)
+    try {
+      expect(peerApp.eventPlace(id(2))).toBeUndefined()
+      const found = await Promise.all([1, 2, 3, 4, 5, 6, 7, 8].map(n => peerApp.locateEvent(id(n))))
+      expect(found).toEqual([
+        held(ROOM, null, { texts: [textHash('plans'), textHash('plans, edited')] }),
+        held(SRV, CH, { atts: [att(1)] }),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      ])
+      expect(await peerApp.locateEvent('not an id')).toBeNull()
+      expect(peerApp.heldAuthor(found[1]!).display_name).toBe('Alice')
+      useP2p.setState({ servers: { [SRV]: server({ channels: [] }) } })
+      expect(peerApp.eventPlace(id(2))).toBeNull()
+      useP2p.setState({ rooms: {} })
+      expect(peerApp.eventPlace(id(1))).toBeNull()
+    } finally {
+      peerApp.put.reader(null)
+      store.close()
+    }
+  })
+
+  test('a copy held as an original vouches only through its own original', async () => {
+    const id = ids(40)
+    const copyOf = (inner: number | null, body = 'plans', ts = 2_000) =>
+      rec(
+        SRV,
+        { chan: CH, sender: CAROL },
+        { body: '', fwd: { name: 'Alice', ts, body, ...(inner ? { ev: id(inner) } : {}) } }
+      )
+    const records: Record<string, EventRecord> = {
+      [id(1)]: rec(ROOM, {}, { body: 'plans', att: [att(1)] }),
+      // A true copy, a copy of that copy, and one a level deeper than read.
+      [id(2)]: rec(
+        SRV,
+        { chan: CH, sender: CAROL },
+        {
+          body: '',
+          fwd: { name: 'Alice', ts: 2_000, body: 'plans', ev: id(1), att: [att(1)] },
+        }
+      ),
+      [id(3)]: copyOf(2),
+      [id(4)]: copyOf(3),
+      // Laundering: a copy with no original, or one whose original says otherwise, then a copy
+      // of each.
+      [id(5)]: copyOf(null, 'what Alice never said'),
+      [id(6)]: copyOf(5, 'what Alice never said'),
+      [id(7)]: copyOf(1, 'what Alice never said'),
+      [id(8)]: copyOf(7, 'what Alice never said'),
+      [id(9)]: copyOf(9),
+    }
+    const store = await setup(records)
+    try {
+      const found = await Promise.all([2, 3, 4, 5, 6, 7, 8, 9].map(n => peerApp.locateEvent(id(n))))
+      const viaCopy = held(SRV, CH, { ts: [2_000] })
+      expect(found).toEqual([
+        { ...viaCopy, atts: [att(1)] },
+        viaCopy,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      ])
+      // A copy of the true copy vouches; the laundered one opens nothing.
+      const copy = { ev: id(3), dm: false, rn: null, cn: null, ts: 2_000, atts: [] }
+      expect(p2pPlace({ ...copy, body: 'plans' }, found[1])).toEqual({
+        kind: 'room',
+        room: SRV,
+        ch: CH,
+        ev: id(3),
+      })
+      expect(p2pPlace({ ...copy, ev: id(6), body: 'what Alice never said' }, found[4])).toEqual({
+        kind: 'none',
+      })
+    } finally {
+      peerApp.put.reader(null)
+      store.close()
+    }
+  })
+
+  test('deleting an edit of an original reads it again without that edit', async () => {
+    const id = ids(120)
+    const store = await setup({ [id(1)]: rec(ROOM) })
+    const edit = (redacted: boolean) =>
+      store.db.put('events', {
+        id: id(2),
+        room: ROOM,
+        target: id(1),
+        type: 'edit',
+        sender: ALICE,
+        redacted,
+        wire: { ev: { ts: 3_000 }, c: { target: id(1), body: 'plans, edited' }, sig: '' },
+      } as unknown as EventRecord)
+    const settle = () => new Promise(r => setTimeout(r, 10))
+    try {
+      await edit(false)
+      expect((await peerApp.locateEvent(id(1)))?.texts).toEqual([
+        textHash('plans'),
+        textHash('plans, edited'),
+      ])
+      await edit(true)
+      const rev = peerApp.heldRevision()
+      peerApp.heldTouched([id(2)])
+      for (let i = 0; i < 200 && peerApp.heldRevision() === rev; i++) await settle()
+      expect(peerApp.eventPlace(id(1))?.texts).toEqual([textHash('plans')])
+    } finally {
+      peerApp.put.reader(null)
+      store.close()
+    }
+  })
+
+  test('an edit or a redaction aimed at an original reads it again', async () => {
+    const id = ids(80)
+    const records: Record<string, EventRecord> = {
+      [id(1)]: rec(ROOM),
+      [id(2)]: rec(
+        SRV,
+        { chan: CH, sender: CAROL },
+        {
+          body: '',
+          fwd: { name: 'Alice', ts: 2_000, body: 'plans', ev: id(1) },
+        }
+      ),
+    }
+    const store = await setup(records)
+    let told = 0
+    const off = peerApp.onHeld(() => (told += 1))
+    const settle = () => new Promise(r => setTimeout(r, 10))
+    const until = async (ok: () => boolean) => {
+      for (let i = 0; i < 200 && !ok(); i++) await settle()
+    }
+    try {
+      await peerApp.locateEvent(id(2))
+      expect(peerApp.eventPlace(id(2))?.room).toBe(SRV)
+      const rev = peerApp.heldRevision()
+      peerApp.heldTouched([id(30)])
+      await settle()
+      expect(peerApp.heldRevision()).toBe(rev)
+      records[id(1)] = rec(ROOM, { redacted: true })
+      peerApp.heldTouched([id(1)])
+      await until(() => peerApp.heldRevision() > rev)
+      expect(peerApp.eventPlace(id(2))).toBeNull()
+      expect(told).toBeGreaterThan(0)
+    } finally {
+      off()
+      peerApp.put.reader(null)
+      store.close()
     }
   })
 })
@@ -1797,8 +2057,26 @@ describe('P2P in the palette index', () => {
     const CH2 = 'chan2'
     const v = server({
       channels: [
-        { id: CH, name: 'general', kind: 'text', pos: 0, send: true, exempt: false, over: {} },
-        { id: CH2, name: 'random', kind: 'text', pos: 1, send: true, exempt: false, over: {} },
+        {
+          id: CH,
+          name: 'general',
+          kind: 'text',
+          pos: 0,
+          send: true,
+          exempt: false,
+          over: {},
+          everyoneSees: true,
+        },
+        {
+          id: CH2,
+          name: 'random',
+          kind: 'text',
+          pos: 1,
+          send: true,
+          exempt: false,
+          over: {},
+          everyoneSees: true,
+        },
       ],
       seq: 7,
     })

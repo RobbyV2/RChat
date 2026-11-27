@@ -11,6 +11,7 @@ import {
   Crown,
   Download,
   Eraser,
+  ExternalLink,
   Forward,
   Hash,
   IdCard,
@@ -22,6 +23,7 @@ import {
   PinOff,
   RefreshCw,
   Reply,
+  Server,
   Settings,
   Trash2,
   UserPlus,
@@ -40,6 +42,8 @@ import { P2P_IP_HINT } from '../call_choice'
 import { emptyLayout, type Folder } from '../nav_layout'
 import { EMPTY_NOTIFY, MUTE_CHOICES, setMute, type NotifyPrefs } from '../notify'
 
+import { b64u } from '../p2p/canonical'
+import { textHash, type HeldOriginal } from '../forward_pill'
 import type { Attachment } from '../p2p/content'
 import type { Contact } from '../p2p/contacts'
 import type { P2pMessage } from '../p2p/dm'
@@ -124,6 +128,7 @@ const TEXT = {
   send: true,
   exempt: false,
   over: {},
+  everyoneSees: true,
 }
 const VOICE = {
   id: 'v1',
@@ -133,6 +138,7 @@ const VOICE = {
   send: true,
   exempt: false,
   over: {},
+  everyoneSees: true,
 }
 
 // Book club, owned by Bob; we hold `perms` in it.
@@ -233,6 +239,7 @@ const recorder = () => {
     badge: { ...p2pBadge },
   }
   spy('server', p2pServer, [
+    'open',
     'leave',
     'forget',
     'markAllRead',
@@ -930,10 +937,56 @@ describe("a P2P message's menu", () => {
     const forward = row(onMessage(msg()), 'Forward')!.submenu!
     expect(await run(forward[0])).toEqual([
       ['dm.ensureRoom', BOB],
-      ['dm.forward', 'room-x', { name: 'Bob Own', ts: TS, body: 'hello there' }],
+      ['dm.forward', 'room-x', { name: 'Bob Own', ts: TS, body: 'hello there', src: { dm: true } }],
       ['toast', 'Forwarded to', 'Bob', { local: 'main', name: '', ik: null }],
     ])
     expect(await run(forward[1])).toEqual([['clip', 'hello there', 'Bob Own']])
+  })
+
+  test('a forwarded copy opens its original and its server where this identity holds it', async () => {
+    chatState()
+    shownPeer().useP2p.setState({ servers: { [SRV]: server() } })
+    const ev = b64u(new Uint8Array(32).fill(5))
+    const copy = msg({
+      fwd: { name: 'Zed', ts: TS, body: 'q', ev, src: { rn: 'Old club', cn: 'old' } },
+    })
+    const app = shownPeer()
+    const real = { eventPlace: app.eventPlace, p2pOpenAt: app.p2pOpenAt }
+    const held = (room: string, ch: string | null, body = 'q'): HeldOriginal => ({
+      room,
+      ch,
+      sender: BOB,
+      ts: [TS],
+      texts: [textHash(body)],
+      atts: [],
+    })
+    let found: HeldOriginal | null = null
+    const opened: unknown[][] = []
+    Object.assign(app, {
+      eventPlace: (id: string) => (id === ev ? found : undefined),
+      p2pOpenAt: async (...args: unknown[]) => void opened.push(args),
+    })
+    try {
+      expect(labels(onMessage(copy))).not.toContain('Open original message')
+      found = held(SRV, 'c1', 'not what the copy says')
+      expect(labels(onMessage(copy))).not.toContain('Open original message')
+      found = held(SRV, 'c1')
+      expect(items(onMessage(copy)).map(shape).slice(0, 4)).toEqual([
+        ['Reply', false, Reply],
+        ['Forward', false, Forward],
+        ['Open original message', false, ExternalLink],
+        ['Open server', false, Server],
+      ])
+      expect(await run(row(onMessage(copy), 'Open server'))).toEqual([['server.open', SRV]])
+      expect(await run(row(onMessage(copy), 'Open original message'))).toEqual([])
+      expect(opened).toEqual([[SRV, 'c1', ev]])
+      found = held('dm-room', null)
+      expect(labels(onMessage(copy)).slice(2, 4)).toEqual(['Open original message', 'Copy Text'])
+      found = held(SRV, 'gone')
+      expect(labels(onMessage(copy))).not.toContain('Open original message')
+    } finally {
+      Object.assign(app, real)
+    }
   })
 
   test('without the right to act: forward and copies only, and no header row of reactions', () => {
@@ -1166,6 +1219,6 @@ test('P2P chat rows stay out of the palette', () => {
   const added = allActions()
     .map(a => a.id)
     .filter(id => /^p2p_(message|pin|call|badge)_/.test(id))
-  expect(added.length).toBe(18)
+  expect(added.length).toBe(20)
   expect(added.filter(id => ids.has(id))).toEqual([])
 })

@@ -1,7 +1,14 @@
 import { richMessage, textOnlyChannel } from '../acl/rules'
 import { getEvents } from '../dag'
 import { serverWire, type ChanCounts, type EventRecord } from '../db'
-import { fitContent, LIMITS as EV, type Attachment, type Fwd, type MsgContent } from '../content'
+import {
+  fitContent,
+  fitForward,
+  LIMITS as EV,
+  type Attachment,
+  type Fwd,
+  type MsgContent,
+} from '../content'
 import { TOO_BIG_TEXT, slowText } from '../flows'
 import { can, isOwner, membersOf, outranks, P } from '../state'
 import { DmError, mentionsIn } from '../dm'
@@ -80,7 +87,7 @@ export async function send(
     if (MENTION_EVERYONE.test(msg.body) && can(cx.sumOf(room), cx.me, P.MentionEveryone))
       content.everyone = true
   }
-  const fitted = fitContent(content)
+  const fitted = fitContent(fitForward(content))
   if (!fitted) throw new ServerError(TOO_BIG_TEXT)
   return cx.content(room, 'msg', fitted as unknown as Record<string, unknown>)
 }

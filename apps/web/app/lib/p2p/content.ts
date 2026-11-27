@@ -45,12 +45,33 @@ export interface Attachment {
   thumb?: string
 }
 
-// A forwarded copy: who wrote it, when, and what. No link back to the source.
+// A forwarded copy: who wrote it, when, and what.
 export interface Fwd {
   name: string
   ts: number
   body: string
   att?: Attachment[]
+  // The original's event id: whoever has that event can find it. Nothing for anyone else.
+  ev?: string
+  // Where it's from, as the sender chose to show it.
+  src?: FwdSrc
+}
+
+// A direct message, or a room's (`rn`) or server's name and its channel's (`cn`).
+export type FwdSrc = { dm: true } | { rn: string; cn?: string }
+
+// What a copy says of where it's from, each part null when it is missing or malformed, and what
+// it says of its original (to check against the original before vouching for it). Read without a
+// strike: `ev` and `src` are never part of the content check.
+export interface FwdPlace {
+  ev: string | null
+  dm: boolean
+  rn: string | null
+  cn: string | null
+  ts: number
+  body: string
+  // The files the copy carries, as it describes them; null when one is malformed.
+  atts: Attachment[] | null
 }
 
 export interface MsgContent {
@@ -213,6 +234,42 @@ const isFwd = (x: unknown): x is Fwd =>
   isInt(x.ts) &&
   isBody(x.body) &&
   (x.att === undefined || isAtts(x.att))
+
+const placeName = (x: unknown) =>
+  typeof x === 'string' && x.trim() !== '' && chars(x) <= LIMITS.name ? x : null
+
+export const readFwdSrc = (fwd: unknown): FwdPlace => {
+  const f: Record<string, unknown> = isRecord(fwd) ? fwd : {}
+  const src: Record<string, unknown> = isRecord(f.src) ? f.src : {}
+  const dm = src.dm === true
+  return {
+    ev: isEventId(f.ev) ? f.ev : null,
+    dm,
+    rn: dm ? null : placeName(src.rn),
+    cn: dm ? null : placeName(src.cn),
+    ts: isInt(f.ts) ? f.ts : 0,
+    body: typeof f.body === 'string' ? f.body : '',
+    atts:
+      f.att === undefined
+        ? []
+        : Array.isArray(f.att) && f.att.every(isAttachment)
+          ? (f.att as Attachment[])
+          : null,
+  }
+}
+
+// A message forwarding a copy: when it would be too big, it leaves out where the copy is from,
+// then the original's event id.
+export const fitForward = <T extends { fwd?: Fwd }>(c: T): T => {
+  let out = c
+  for (const drop of ['src', 'ev'] as const) {
+    if (!out.fwd || sizeOf(out) <= contentMax(out)) return out
+    const fwd = { ...out.fwd }
+    delete fwd[drop]
+    out = { ...out, fwd }
+  }
+  return out
+}
 
 // Root hashes of the files a message carries, its own and forwarded ones.
 export const attsOf = (c: Content | null | undefined): string[] => {

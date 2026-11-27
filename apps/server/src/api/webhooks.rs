@@ -1470,6 +1470,7 @@ async fn post(
         reply_to: None,
         mention_reply: false,
         forward_of: None,
+        show_source: None,
         poll,
     };
     let extra = HookPost {

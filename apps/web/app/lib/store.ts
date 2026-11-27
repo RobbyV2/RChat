@@ -6,6 +6,7 @@ import { useStore } from './client/react'
 export { useStore }
 import { defaultViewing, channelTarget, cleanupRemoval, eventRoom } from './viewing'
 import { clearHiddenForward } from './forward_viewing'
+import { forgetLocated } from './forward_locate'
 import { NO_PINGS } from './pings'
 import { NO_GROUP_PINGS } from './group_pings'
 import { EMPTY_NOTIFY } from './notify'
@@ -467,6 +468,7 @@ export function createChatStore(acct: AccountSession) {
       drafts: {},
       replying: {},
       forwardClip: null,
+      forwardShowSource: null,
       linkCards: {},
       toast: null,
       staffAsk: null,
@@ -519,6 +521,7 @@ export function createChatStore(acct: AccountSession) {
       ...sessionHub.actions,
 
       applyWsEvent: ev => {
+        forgetLocated(acct, ev)
         const room = eventRoom(ev)
         const target = room && instanceTarget(get(), room.server, room.id)
         if (room && (target ? !canView(target) : get().channelLabelEpoch > 0)) {

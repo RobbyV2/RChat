@@ -1,5 +1,11 @@
-import { ApiError, type Api } from './api'
-import type { ForwardClip, ForwardSource } from './forward'
+import { locatedNow, type Located } from './forward_locate'
+import {
+  hostedSourceNames,
+  p2pSourceNames,
+  type ForwardClip,
+  type ForwardSource,
+  type SourceNames,
+} from './forward'
 import type { AccountSession } from './client/session'
 import type { RChatState } from './store_types'
 import type { ForwardRef, Message } from './types'
@@ -119,17 +125,25 @@ export const quoteSource = (
   return channel ? { kind: 'channel', server, id: channel.id } : undefined
 }
 
-export const locateQuote = async (
-  id: number,
-  accountApi: Pick<Api, 'messagePlace'>
-): Promise<ForwardSource | undefined> => {
-  try {
-    const place = await accountApi.messagePlace(id)
-    if (place.server && place.channel_id != null)
-      return { kind: 'channel', server: place.server, id: place.channel_id }
-    if (place.dm_id != null) return { kind: 'direct' }
-  } catch (e) {
-    // A delivered snapshot survives the removal of an original or access to it.
-    if (e instanceof ApiError && (e.status === 403 || e.status === 404)) return { kind: 'direct' }
+// A delivered snapshot survives the removal of an original or access to it: a copy that can't
+// be traced reads like one from a direct message.
+export const locatedQuote = (found: Located): ForwardSource =>
+  found.kind === 'channel'
+    ? { kind: 'channel', server: found.server, id: found.id }
+    : { kind: 'direct' }
+
+// Where a clip is from, as its sender sees it now: a P2P room as the identity holds it, an
+// instance channel as the server answered its lookup (null until it has).
+export const clipSourceNames = (
+  account: AccountSession,
+  clip: Pick<ForwardClip, 'source' | 'id'>
+): SourceNames | null => {
+  const source = clip.source
+  if (source?.kind === 'p2p') {
+    const app = account.identities.get(source.identity)
+    return p2pSourceNames(app?.useP2p.getState().servers[source.room], source.ch)
   }
+  if (source?.kind !== 'channel') return null
+  const found = locatedNow(account, clip.id)
+  return found?.kind === 'channel' ? hostedSourceNames(found.shown) : null
 }

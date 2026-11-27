@@ -16,6 +16,7 @@ import {
   Pin,
   PinOff,
   Reply,
+  Server,
   SquareCheckBig,
   Trash2,
   UserCheck,
@@ -27,6 +28,7 @@ import { ctxFor, paletteCtx, refreshCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { messageRights } from '../actions/message'
 import { menuItems, openActionMenu } from '../actions/menu'
+import { locateOnce } from '../forward_locate'
 import { paletteCommands } from '../actions/palette'
 import { allActions, runAction } from '../actions/registry'
 import type { Target } from '../actions/types'
@@ -634,6 +636,65 @@ test('pinned, empty and forwarded messages', () => {
   ])
 })
 
+test('a forwarded copy opens its original and its server once the viewer may', async () => {
+  state()
+  const copy = by(60, 'bob', {
+    forward: {
+      author: user('carol'),
+      created_at: T0,
+      source_id: 50,
+      origin: '#news - Space',
+      origin_channel: 'news',
+      origin_channel_id: 2,
+      origin_server: 'Space',
+      dropped: null,
+    },
+  })
+  const fromDm = by(61, 'bob', {
+    forward: {
+      author: user('carol'),
+      created_at: T0,
+      source_id: 41,
+      origin: 'Direct message',
+      origin_dm: true,
+      dropped: null,
+    },
+  })
+  useStore.setState(s => ({ messages: { ...s.messages, c1: [...s.messages.c1, copy, fromDm] } }))
+  expect(labels(at(copy)).slice(0, 4)).toEqual([
+    'Reply',
+    'Forward',
+    'Open original message',
+    'Open server',
+  ])
+  expect(row(at(copy), 'Open original message')?.icon).toBe(ExternalLink)
+  expect(row(at(copy), 'Open server')?.icon).toBe(Server)
+  expect(
+    await effects([row(at(copy), 'Open original message')!, row(at(copy), 'Open server')!])
+  ).toEqual([
+    ['Open original message', [['openForward', copy]]],
+    ['Open server', [['openServer', 's']]],
+  ])
+  expect(labels(at(fromDm))).not.toContain('Open original message')
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({ server: null, channel_id: null, dm_id: 9, thread_root_id: null }),
+      { status: 200 }
+    )) as unknown as typeof fetch
+  try {
+    await locateOnce(ctxFor(useStore.getState(), at(fromDm), 'menu').acct, 41)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+  expect(labels(at(fromDm)).slice(0, 4)).toEqual([
+    'Reply',
+    'Forward',
+    'Open original message',
+    'Reply in thread',
+  ])
+})
+
 test('friends, blocked people and requests', () => {
   state({ friends: ['bob'] })
   expect(labels(at(bobs)).slice(3, 6)).toEqual(['Direct Message', 'Block', 'Select Message'])
@@ -1150,7 +1211,7 @@ test('message, embed, timestamp and inbox actions stay out of the palette', () =
     .map(a => a.id)
     .filter(id => /^(message|poll|embed|timestamp|inbox)_/.test(id))
   expect(added).toContain('message_pause_guest')
-  expect(added.length).toBe(23)
+  expect(added.length).toBe(25)
   expect(added.filter(id => ids.has(id))).toEqual([])
 })
 

@@ -377,6 +377,27 @@ describe('storage', () => {
     expect(await bodies(c, room, ch)).toEqual([])
   }, 60_000)
 
+  test('edits and deletes tell what they are aimed at, here and where they arrive', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Aimed')
+    const ch = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    const mine: string[] = []
+    const theirs: string[] = []
+    a.servers.onAimed(t => mine.push(...t))
+    b.servers.onAimed(t => theirs.push(...t))
+    const id = (await a.servers.send(room, { ch, body: 'plans' })) as string
+    await a.servers.react(room, id, '👍', true)
+    await a.servers.edit(room, id, 'plans, edited')
+    await a.servers.redact(room, id)
+    expect(mine).toEqual([id, id])
+    await pump(clock, () => theirs.length === 2, 'bob has both')
+    expect(theirs).toEqual([id, id])
+  }, 60_000)
+
   test('only a redaction that counts purges its author’s message', async () => {
     const clock = new ManualClock()
     const hub = new Hub()

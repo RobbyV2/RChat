@@ -84,6 +84,7 @@ beforeEach(() => {
     toast: null,
     activeDialog: null,
     forwardClip: null,
+    forwardShowSource: null,
     view: { kind: 'channel', server: 's', channelId: 77 },
     servers: {
       s: serverDetail('s', {
@@ -114,6 +115,38 @@ describe('sending a forward', () => {
     expect(memoryStorage.getItem(forwardKey('bob'))).toBeNull()
     expect(st().toast?.text).toBe('Forwarded to #general')
     expect(st().messages.c77?.some(m => m.id === 50 && m.forward?.source_id === 40)).toBe(true)
+  })
+
+  test('sends whether the copy names where the original is, when the bar chose', async () => {
+    st().copyForward(source)
+    st().sendForward('c77', false)
+    await tick()
+    st().copyForward(source)
+    st().sendForward('d3', true)
+    await tick()
+    expect(posts).toEqual([
+      {
+        url: '/api/channels/77/messages',
+        body: { content: '', forward_of: 40, show_source: false },
+      },
+      { url: '/api/dms/3/messages', body: { content: '', forward_of: 40, show_source: true } },
+    ])
+  })
+
+  test("the choice of where it's from holds for one clip in one draft", () => {
+    st().setForwardShowSource('c77', true)
+    expect(st().forwardShowSource).toBeNull()
+    st().copyForward(source)
+    st().setForwardShowSource('c77', false)
+    expect(st().forwardShowSource).toEqual({ key: 'c77', on: false })
+    st().setForwardShowSource('d3', true)
+    expect(st().forwardShowSource).toEqual({ key: 'd3', on: true })
+    st().copyForward(msg(41, { channel_id: 77 }))
+    expect(st().forwardShowSource).toBeNull()
+    st().setForwardShowSource('c77', true)
+    st().clearForward()
+    expect(st().forwardShowSource).toBeNull()
+    expect(memoryStorage.getItem(forwardKey('bob'))).toBeNull()
   })
 
   test('a failed forward keeps the clipboard', async () => {

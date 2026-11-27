@@ -236,6 +236,8 @@ export type ChannelView = { id: string } & ChannelContent & {
     send: boolean
     exempt: boolean
     over: Record<string, OverSum>
+    // Every member sees it, so its name may leave the server (acl/rules.ts everyoneSees).
+    everyoneSees: boolean
   }
 
 // A moderation action waiting for a fresh heads exchange.

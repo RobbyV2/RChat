@@ -7,6 +7,7 @@ export interface ServerCtx {
   ackRedactions: Servers['ackRedactions']
   admittedHere: Servers['admittedHere']
   afterState: Servers['afterState']
+  aimed: Servers['aimed']
   answerBundle: Servers['answerBundle']
   applyDelta: Servers['applyDelta']
   archiveKeep: Servers['archiveKeep']

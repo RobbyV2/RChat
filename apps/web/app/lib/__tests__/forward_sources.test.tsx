@@ -4,7 +4,14 @@ import { SearchView } from '../../components/search_panel'
 import { MessageLinkCard } from '../../components/message_link_card'
 import { PreviewLine } from '../../components/invite_card'
 import { ReplyPreview } from '../../components/replies'
-import { frameCopyOpen } from '../forward_viewing'
+import { ForwardBar } from '../../components/forwards'
+import { client } from '../client/client'
+import { clipOf, fwdSource, p2pForward, type ForwardClip } from '../forward'
+import { clipSourceNames, frameCopyOpen } from '../forward_viewing'
+import { locateOnce } from '../forward_locate'
+import { b64u } from '../p2p/canonical'
+import type { ServerView } from '../p2p/server/types'
+import { shownPeer } from './shown_peer'
 import { pinnedPreview } from '../invite'
 import { instanceInbox } from '../inbox_source'
 import { home } from './home_instance'
@@ -267,4 +274,137 @@ test('a closed inbox entry names the room whose choice reveals it', () => {
   expect(instanceInbox.previewTarget?.(entry)?.key).toBe(
     channelTarget('reader', 'instance', 'club', proofroom).key
   )
+})
+
+const answering = async (id: number, place: Record<string, unknown> | Response) => {
+  const real = globalThis.fetch
+  globalThis.fetch = (async () =>
+    place instanceof Response
+      ? place
+      : new Response(JSON.stringify(place), { status: 200 })) as unknown as typeof fetch
+  try {
+    await locateOnce(client.shown(), id)
+  } finally {
+    globalThis.fetch = real
+  }
+}
+
+test('the forward bar offers "Show where it\'s from" and says what the server will name', async () => {
+  signedIn()
+  setBoth({
+    view: { kind: 'channel', server: 'club', channelId: 1 },
+    forwardClip: clipOf(msg(40, { channel_id: 1, content: TEXT }), 'club'),
+    forwardShowSource: null,
+  })
+  const bar = () => renderToStaticMarkup(<ForwardBar draftKey="c1" />)
+  const unknown = bar()
+  expect(unknown).toContain('role="switch" aria-checked="true"')
+  expect(unknown).toContain(
+    'title="Show where it&#x27;s from" aria-label="Show where it&#x27;s from"'
+  )
+  expect(unknown).toContain('Checking where it&#x27;s from')
+  expect(/title="Checking where it&#x27;s from" disabled=""/.test(unknown)).toBe(true)
+  await answering(40, new Response('oops', { status: 500 }))
+  const failed = bar()
+  expect(failed).toContain('Couldn&#x27;t check where it&#x27;s from.')
+  expect(failed).toContain('>Retry</button>')
+  expect(/title="Checking where it&#x27;s from" disabled=""/.test(failed)).toBe(true)
+  const place = { server: 'club', channel_id: 1, dm_id: null, thread_root_id: null }
+  await answering(40, { ...place, shown: { server: 'Book Club', channel: 'general' } })
+  expect(
+    /From <span class="streamer[^"]*">Book Club<\/span> &gt; #<span class="streamer[^"]*">general</.test(
+      bar()
+    )
+  ).toBe(true)
+  setBoth({ forwardShowSource: { key: 'c1', on: false } })
+  const off = bar()
+  expect(off).toContain('aria-checked="false"')
+  expect(off).toContain('Where it&#x27;s from stays hidden')
+  setBoth({ forwardShowSource: { key: 'c2', on: false } })
+  expect(bar()).toContain('aria-checked="true"')
+  setBoth({
+    forwardShowSource: null,
+    forwardClip: clipOf(msg(42, { channel_id: 1, content: TEXT }), 'club'),
+  })
+  await answering(42, { ...place, shown: { server: 'Book Club' } })
+  const restricted = bar()
+  expect(restricted).toContain('Book Club')
+  expect(restricted).not.toContain('&gt; #')
+  setBoth({ forwardClip: clipOf(msg(43, { channel_id: 1, content: TEXT }), 'club') })
+  await answering(43, { ...place, shown: null })
+  expect(bar()).toContain('Where it&#x27;s from stays hidden')
+  setBoth({ forwardClip: clipOf(msg(41, { channel_id: null, dm_id: 3, content: TEXT })) })
+  const fromDm = bar()
+  expect(fromDm).toContain('data-forward-bar')
+  expect(fromDm).not.toContain('role="switch"')
+  expect(fromDm).not.toContain('data-forward-source')
+})
+
+test('a forward into P2P names its original and, when shown, what the sender may name', async () => {
+  const room = b64u(new Uint8Array(32).fill(1))
+  const [beds, hush] = [b64u(new Uint8Array(8).fill(2)), b64u(new Uint8Array(8).fill(3))]
+  const ev = b64u(new Uint8Array(32).fill(4))
+  const peer = shownPeer()
+  const before = peer.useP2p.getState().servers
+  peer.useP2p.setState({
+    servers: {
+      [room]: {
+        id: room,
+        name: 'Garden',
+        me: 'join',
+        seq: 0,
+        chans: {},
+        members: [],
+        channels: [
+          { id: beds, name: 'beds', over: {}, everyoneSees: true },
+          { id: hush, name: 'hush', over: {}, everyoneSees: false },
+        ],
+      } as unknown as ServerView,
+    },
+  })
+  try {
+    const clip = (ch: string): ForwardClip => ({
+      source: { kind: 'p2p', room, ch },
+      id: 3,
+      author: user('bob', { display_name: 'Bob' }),
+      snippet: 'q',
+      has_media: false,
+      created_at: 5,
+      body: 'q',
+      p2p: true,
+      ev,
+    })
+    const send = (c: ForwardClip, show: boolean) =>
+      p2pForward(c, fwdSource(c.source, clipSourceNames(client.shown(), c), show))
+    const base = { name: 'Bob', ts: 5000, body: 'q', ev }
+    expect(send(clip(beds), true)).toEqual({ ...base, src: { rn: 'Garden', cn: 'beds' } })
+    expect(send(clip(hush), true)).toEqual({ ...base, src: { rn: 'Garden' } })
+    expect(send(clip(beds), false)).toEqual(base)
+    const fromDm = { ...clip(beds), source: { kind: 'direct' as const } }
+    expect(send(fromDm, false)).toEqual({ ...base, src: { dm: true } })
+    // An instance message: only what the server answered, nothing before it has.
+    signedIn()
+    const hosted: ForwardClip = {
+      source: { kind: 'channel', id: 1, server: 'club' },
+      id: 50,
+      author: user('bob', { display_name: 'Bob' }),
+      snippet: 'q',
+      has_media: false,
+      created_at: 5,
+      body: 'q',
+    }
+    const plain = { name: 'Bob', ts: 5000, body: 'q' }
+    expect(send(hosted, true)).toEqual(plain)
+    await answering(50, {
+      server: 'club',
+      channel_id: 1,
+      dm_id: null,
+      thread_root_id: null,
+      shown: { server: 'Vault' },
+    })
+    expect(send(hosted, true)).toEqual({ ...plain, src: { rn: 'Vault' } })
+    expect(send(hosted, false)).toEqual(plain)
+  } finally {
+    peer.useP2p.setState({ servers: before })
+  }
 })

@@ -6,6 +6,7 @@ import {
   Clock,
   Copy,
   Download,
+  ExternalLink,
   Forward,
   Hash,
   MessageSquareText,
@@ -14,6 +15,7 @@ import {
   PinOff,
   RefreshCw,
   Reply,
+  Server,
   Trash2,
   X,
   type LucideIcon,
@@ -22,9 +24,16 @@ import { fmtSize } from '../bytes'
 import { P2P_IP_HINT, ROUTE_LABEL } from '../call_choice'
 import type { AccountSession } from '../client/session'
 import { sourceAccess } from '../forward_viewing'
-import type { ForwardClip, ForwardSource } from '../forward'
+import {
+  forwardSourceDefault,
+  fwdSource,
+  p2pSourceNames,
+  type ForwardClip,
+  type ForwardSource,
+} from '../forward'
+import { p2pPill } from '../forward_pill'
 
-import type { Attachment } from '../p2p/content'
+import { isEventId, readFwdSrc, type Attachment, type Fwd } from '../p2p/content'
 import { displayName } from '../p2p/contacts'
 import { messageActs, type P2pMessage } from '../p2p/dm'
 import { sharing } from '../platform'
@@ -100,12 +109,15 @@ export const peerChat = identityActions(identity => {
       body: p.fwd ? p.fwd.body : p.body,
       p2p: true,
       source: sourceOf(draftKey),
+      ...(isEventId(p.id) ? { ev: p.id } : {}),
+      sent_ts: p.fwd ? p.fwd.ts : p.sentTs,
     }
     acct.store.getState().copyForwardClip(clip)
   }
 
   // Forwards straight into a P2P conversation with a contact. `author`: the sender's own profile
-  // name (profileName), never a display string.
+  // name (profileName), never a display string. A forward of a forward keeps its author, time and
+  // text, and names this message and its place as where it's from, by default.
   const forwardTo = async (
     ik: string,
     p: P2pMessage,
@@ -117,14 +129,35 @@ export const peerChat = identityActions(identity => {
     const allowed = () =>
       ownsSource(acct) && sourceAccess(acct.store.getState(), source, undefined, acct) === 'open'
     if (!allowed()) return
-    const fwd = p.fwd ?? {
-      name: author,
-      ts: p.sentTs,
-      body: p.body,
-      ...(p.att.length ? { att: p.att } : {}),
-    }
     const target = await identity().p2pDm.ensureRoom(ik)
-    if (target && allowed() && (await identity().p2pDm.forward(target, fwd)) && allowed()) {
+    if (!target || !allowed()) return
+    const s = acct.store.getState()
+    const show =
+      forwardSourceDefault({ source }, { kind: 'p2p', room: target, ch: null }, s, s.settings) ??
+      false
+    const names =
+      source.kind === 'p2p'
+        ? p2pSourceNames(identity().useP2p.getState().servers[source.room], source.ch)
+        : null
+    const src = fwdSource(source, names, show)
+    const fwd: Fwd = {
+      ...(p.fwd
+        ? {
+            name: p.fwd.name,
+            ts: p.fwd.ts,
+            body: p.fwd.body,
+            ...(p.fwd.att ? { att: p.fwd.att } : {}),
+          }
+        : {
+            name: author,
+            ts: p.sentTs,
+            body: p.body,
+            ...(p.att.length ? { att: p.att } : {}),
+          }),
+      ...(isEventId(p.id) ? { ev: p.id } : {}),
+      ...(src ? { src } : {}),
+    }
+    if ((await identity().p2pDm.forward(target, fwd)) && allowed()) {
       const c = identity()
         .useP2p.getState()
         .contacts.find(x => x.ik === ik)
@@ -203,6 +236,16 @@ export const peerChat = identityActions(identity => {
     return files.length === 1 ? files[0] : null
   }
 
+  // Where a forwarded copy's original is, as this identity holds it.
+  const originOf = (ctx: ActionCtx) => {
+    const t = rowOf(ctx)
+    if (!t?.p.fwd) return null
+    const f = readFwdSrc(t.p.fwd)
+    const at = f.ev ? identity().eventPlace(f.ev) : null
+    const pill = p2pPill(f, at, identity().useP2p.getState().servers)
+    return at && f.ev ? { ev: f.ev, at, pill } : null
+  }
+
   const forwardChoices = (ctx: ActionCtx): ArgChoice[] => {
     const t = rowOf(ctx)
     if (!t) return []
@@ -265,6 +308,33 @@ export const peerChat = identityActions(identity => {
         const author = t.chat.ownName(t.p.sender)
         if (to === COPY) copyForP2p(t.p, t.m, author, t.chat.draftKey, ctx.acct)
         else void forwardTo(to, t.p, author, ctx.acct, t.chat.draftKey)
+      },
+    },
+    {
+      id: 'p2p_message_open_original',
+      title: 'Open original message',
+      icon: ExternalLink,
+      ...onMessage,
+      order: 125,
+      available: ctx => {
+        const pill = originOf(ctx)?.pill
+        return pill?.kind === 'open' || (pill?.kind === 'dm' && pill.open)
+      },
+      run: ctx => {
+        const o = originOf(ctx)
+        if (o) void identity().p2pOpenAt(o.at.room, o.at.ch, o.ev)
+      },
+    },
+    {
+      id: 'p2p_message_open_source_room',
+      title: 'Open server',
+      icon: Server,
+      ...onMessage,
+      order: 126,
+      available: ctx => originOf(ctx)?.pill.kind === 'open',
+      run: ctx => {
+        const o = originOf(ctx)
+        if (o?.pill.kind === 'open') void identity().p2pServer.open(o.at.room)
       },
     },
     {

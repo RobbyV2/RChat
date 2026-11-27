@@ -17,6 +17,7 @@ import {
   Pin,
   PinOff,
   Reply,
+  Server,
   SquareCheckBig,
   Trash2,
   Users,
@@ -24,6 +25,8 @@ import {
 import { guestPostingStatus } from '../guest_chat'
 import { isGuestName } from '../guest_voice'
 import { canForward } from '../forward'
+import { locatedNow } from '../forward_locate'
+import { hostedPill } from '../forward_pill'
 import { messageLinkUrl } from '../message_links'
 import { sharing } from '../platform'
 import { canPin } from '../pins'
@@ -126,6 +129,14 @@ export const copiesAll = (ctx: ActionCtx) => {
 const linkOf = (ctx: ActionCtx, m: Message) =>
   messageLinkUrl(m, messageServer(ctx.s, m), ctx.acct.shareOrigin)
 
+// Where a forwarded copy's original is, as the viewer's lookup answered.
+const originOf = (ctx: ActionCtx) => {
+  const at = onMessage(ctx)
+  const fwd = at?.m.forward
+  if (!at || !fwd) return null
+  return hostedPill(ctx.s, at.m, locatedNow(ctx.acct, fwd.source_id))
+}
+
 // Runs `f` on the target message and its list.
 const withMessage = (f: (m: Message, list: string, ctx: ActionCtx) => void) => (ctx: ActionCtx) => {
   const at = onMessage(ctx)
@@ -191,6 +202,30 @@ export const messageActions: Action[] = [
     order: 120,
     available: ctx => !!rights(ctx)?.forward,
     run: withMessage((m, _list, ctx) => ctx.acct.store.getState().copyForward(m)),
+  },
+  {
+    id: 'message_open_original',
+    title: 'Open original message',
+    icon: ExternalLink,
+    ...message,
+    order: 125,
+    available: ctx => {
+      const pill = originOf(ctx)
+      return pill?.kind === 'open' || (pill?.kind === 'dm' && pill.open)
+    },
+    run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().openForward(m)),
+  },
+  {
+    id: 'message_open_source_server',
+    title: 'Open server',
+    icon: Server,
+    ...message,
+    order: 126,
+    available: ctx => originOf(ctx)?.kind === 'open',
+    run: ctx => {
+      const pill = originOf(ctx)
+      if (pill?.kind === 'open') void ctx.acct.store.getState().openServer(pill.server.key)
+    },
   },
   {
     id: 'message_thread',

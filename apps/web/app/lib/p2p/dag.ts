@@ -51,6 +51,10 @@ export const capped = (dag: DagLimits, c: Caps): DagLimits => ({
 
 export type PingKind = 'mention' | 'reply' | 'reaction'
 
+// The events edits and redactions among `recs` are aimed at.
+export const aimedAt = (recs: readonly Pick<EventRecord, 'type' | 'target'>[]) =>
+  recs.flatMap(r => ((r.type === 'edit' || r.type === 'redact') && r.target ? [r.target] : []))
+
 export type Inserted =
   // `freed`: files of a message this insert redacted (they may be deleted here now).
   | { status: 'new'; rec: EventRecord; ping: PingKind | null; unread: boolean; freed: string[] }

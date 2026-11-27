@@ -7,6 +7,7 @@ import { keyId, newKeyPair, sign, signRevocation, type KeyPair } from '../p2p/ke
 import {
   buildEvent,
   effTsOf,
+  eventId,
   eventIdBytes,
   isLate,
   TAG_SIG,
@@ -219,6 +220,24 @@ describe('event validation', () => {
       () => craft(alice, room, 'msg', { body: '', fwd: { name: 'Z', ts: 1, body: 'q' } }),
       'ok',
     ],
+    [
+      'forward naming its original and where it is from',
+      () =>
+        craft(alice, room, 'msg', {
+          body: '',
+          fwd: { name: 'Z', ts: 1, body: 'q', ev: id64, src: { room: id64, rn: 'R', ch: 'c' } },
+        }),
+      'ok',
+    ],
+    [
+      'forward with a malformed source',
+      () =>
+        craft(alice, room, 'msg', {
+          body: '',
+          fwd: { name: 'Z', ts: 1, body: 'q', ev: 'nope', src: { rn: 5, room: [], dm: 'yes' } },
+        } as unknown as Content),
+      'ok',
+    ],
     ['unknown content key', () => craft(alice, room, 'msg', { body: 'x', y: 1 } as Content), 'ok'],
     [
       'unknown attachment key',
@@ -385,6 +404,21 @@ describe('ordering', () => {
 })
 
 describe('P2P DMs', () => {
+  test('edits and deletes tell what they are aimed at, here and on the other side', async () => {
+    const { a, b, room } = await pair()
+    const mine: string[][] = []
+    const theirs: string[][] = []
+    a.dms.onAimed(t => mine.push(t))
+    b.dms.onAimed(t => theirs.push(t))
+    const m1 = await a.dms.send(room, { body: 'hi bob' })
+    await a.dms.react(room, m1, '👍', true)
+    await a.dms.edit(room, m1, 'hi bob!')
+    await a.dms.redact(room, m1)
+    expect(mine).toEqual([[m1], [m1]])
+    await eventually(async () => theirs.flat().filter(x => x === m1).length === 2, 'aimed at Bob')
+    expect(theirs.flat().every(x => x === m1)).toBe(true)
+  })
+
   test('messages, replies, edits, reactions, pins and deletes both ways', async () => {
     const { a, b, room } = await pair()
     const m1 = await a.dms.send(room, { body: 'hi bob' })
@@ -787,6 +821,14 @@ describe('sync limits', () => {
     await sessA.send({ t: 'push', room, ev: msg })
     await eventually(async () => (await bodies(b, a)).includes('after the vote'), 'message shown')
     expect(await bodies(b, a)).toEqual(['after the vote'])
+    // A forward whose source a newer or broken app wrote in a shape this one can't read.
+    const odd = {
+      body: 'a forward',
+      fwd: { name: 'Zed', ts: 1, body: 'q', ev: 42, src: { rn: { x: 1 }, ch: 'no' } },
+    } as unknown as Content
+    const forward = buildEvent(author, room, 'msg', odd, [eventId(msg.ev)], 2, now)
+    await sessA.send({ t: 'push', room, ev: forward.wire })
+    await eventually(async () => (await bodies(b, a)).includes('a forward'), 'forward shown')
     expect((await b.store.event(vote.id))?.type).toBe('vote')
     expect((await roomOf(b, room)).missing).toEqual([])
     expect(sessB.strikes).toBe(0)

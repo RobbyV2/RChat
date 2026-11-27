@@ -965,6 +965,7 @@ mod tests {
             reply_to: None,
             mention_reply: false,
             forward_of: None,
+            show_source: None,
             poll: None,
         })
     }

@@ -104,6 +104,14 @@ pub struct SendReq {
     #[schema(example = 42)]
     #[serde(default)]
     pub(crate) forward_of: Option<i64>,
+    /// With `forward_of`: whether the copy names where the original is. `true` names its server,
+    /// and its channel when everyone in that server may see the channel; `false` names nothing
+    /// (people who can read the original still find it with
+    /// `GET /api/v1/messages/{id}/location`). Omit for the default: the channel inside its own
+    /// server, another server only when anyone may read it. A direct message is always named as
+    /// one. Ignored without `forward_of`.
+    #[serde(default)]
+    pub(crate) show_source: Option<bool>,
     /// Optional poll: the message becomes a `poll` message whose text is the question
     /// (`content` is ignored). It cannot have an attachment. Ignored with `forward_of`.
     #[serde(default)]
@@ -120,6 +128,7 @@ impl SendReq {
             media_spoiler: None,
             p2p: None,
             forward_of: None,
+            show_source: None,
             poll: None,
         }
     }
@@ -1282,6 +1291,7 @@ pub(crate) async fn insert_message(
         reply_to: _,
         mention_reply: _,
         forward_of: _,
+        show_source: _,
         poll,
     } = req;
     let db = &state.db;
@@ -1447,42 +1457,116 @@ struct Forwarded {
     snapshot: Option<String>,
 }
 
+/// What a forward that shows where it is from may name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ShownSource {
+    /// Display name of the server.
+    #[schema(example = "Rustaceans")]
+    pub server: String,
+    /// Name of the channel, without `#`, when everyone in the server may see it; absent
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "general")]
+    pub channel: Option<String>,
+}
+
+/// What a forward of a message in `channel` names when its sender shows where it is from: the
+/// server, and the channel when everyone in that server may see it. `None` for a server read only
+/// through staff access, whose copies keep the default naming.
+pub(crate) async fn shown_source(
+    db: &Db,
+    channel: &crate::api::access::ResolvedChannel,
+) -> Result<Option<ShownSource>, ApiError> {
+    use crate::api::access::Via;
+    let server = channel.server();
+    match server.via() {
+        Via::Staff => Ok(None),
+        Via::Public | Via::Member | Via::Password | Via::Grant | Via::Joinable | Via::Managed => {
+            Ok(Some(ShownSource {
+                server: server.lite().display_name.clone(),
+                channel: match channel.restricted(db).await? {
+                    true => None,
+                    false => Some(channel.name().to_string()),
+                },
+            }))
+        }
+    }
+}
+
+/// The origin a forward names by default: the channel inside its own server (when everyone there
+/// may see it), another server only when anyone may read it.
+async fn default_origin(
+    db: &Db,
+    channel: &crate::api::access::ResolvedChannel,
+    same: bool,
+) -> Result<Option<Origin>, ApiError> {
+    let server = channel.server();
+    if !same
+        && !crate::api::access::Reading::now(db)
+            .await
+            .reads(server.lite())
+    {
+        return Ok(None);
+    }
+    let name = server.lite().display_name.clone();
+    Ok(Some(match (same, channel.restricted(db).await?) {
+        (true, false) => Origin::Channel {
+            id: Some(channel.id()),
+            channel: channel.name().to_string(),
+            server: name,
+        },
+        (true, true) | (false, _) => Origin::Server {
+            server: name,
+            channel: None,
+        },
+    }))
+}
+
 /// Checks and reads `id` for a forward into `dest` (the destination's server, `None` for a
 /// DM). The sender must be able to read it through the access gate and it must be a `user`
 /// message with something left to forward. Every refusal is the same 400, so it tells nothing
-/// about messages the sender cannot read. The origin label names a channel only inside its own
-/// server (and only when everyone there may see it), and another server only when it has no
-/// password.
+/// about messages the sender cannot read. `show_source` names nothing, or what `shown_source`
+/// allows wherever the copy goes; otherwise, and for staff reads, the default naming applies.
 async fn forwarded(
     db: &Db,
     user: &User,
     id: i64,
     dest: Option<&str>,
+    show_source: Option<bool>,
 ) -> Result<Forwarded, ApiError> {
     let source = allowed(resolve_message(db, id, Some(user), &Proof::none()).await)?
         .ok_or_else(cannot_forward)?;
     let origin = match (source.channel(), source.scope().dm_id) {
         (Some(channel), _) => {
-            let server = channel.server();
-            let server_name = server.lite().display_name.clone();
-            let hidden = !crate::api::access::Reading::now(db)
-                .await
-                .reads(server.lite());
-            match (dest == Some(server.name()), hidden) {
-                (true, _) => match channel.restricted(db).await? {
-                    false => Some(Origin::Channel {
+            let same = dest == Some(channel.server().name());
+            let asked = match show_source {
+                Some(true) => shown_source(db, channel).await?,
+                Some(false) | None => None,
+            };
+            match (show_source, asked) {
+                (Some(false), _) => None,
+                (
+                    Some(true),
+                    Some(ShownSource {
+                        server,
+                        channel: shown,
+                    }),
+                ) => Some(match (same, shown) {
+                    (true, Some(name)) => Origin::Channel {
                         id: Some(channel.id()),
-                        channel: channel.name().to_string(),
-                        server: server_name,
-                    }),
-                    true => Some(Origin::Server {
-                        server: server_name,
-                    }),
-                },
-                (false, false) => Some(Origin::Server {
-                    server: server_name,
+                        channel: name,
+                        server,
+                    },
+                    (true, None) => Origin::Server {
+                        server,
+                        channel: None,
+                    },
+                    (false, shown) => Origin::Server {
+                        server,
+                        channel: shown,
+                    },
                 }),
-                (false, true) => None,
+                (Some(true), None) | (None, _) => default_origin(db, channel, same).await?,
             }
         }
         (None, Some(_)) => Some(Origin::Dm),
@@ -1736,7 +1820,7 @@ async fn deliver(
     let db = &state.db;
     let (message, quote, previews) = match req.forward_of {
         Some(source) => {
-            let fwd = forwarded(db, user, source, server.as_deref()).await?;
+            let fwd = forwarded(db, user, source, server.as_deref(), req.show_source).await?;
             let (message, previews) =
                 insert_forward(db, channel_id, dm_id, thread_root_id, user, fwd).await?;
             (message, None, previews)
@@ -1843,6 +1927,10 @@ pub struct MessagePlace {
     dm_id: Option<i64>,
     /// Root message ID for a thread reply.
     thread_root_id: Option<i64>,
+    /// What a forward of this message with `show_source: true` would name: its server, and its
+    /// channel when everyone in that server may see it. `null` for a direct message and for a
+    /// server you read only through staff access, whose forwards keep the default naming.
+    shown: Option<ShownSource>,
 }
 
 #[derive(Deserialize)]
@@ -1943,7 +2031,8 @@ async fn locate_message(
 /// time, first line), for opening it from a forwarded copy or a message link. Access is checked exactly like reading the message: guests are allowed when
 /// guest access is on (with `X-Guest-Grant` for password-protected servers), signed-in callers
 /// need to be able to read it (a server without a password can be read without joining).
-/// With `preview=false` only the server, channel, DM and thread IDs are returned.
+/// With `preview=false` only the server, channel, DM and thread IDs are returned, with `shown`:
+/// what a forward of the message would name when its sender shows where it is from.
 /// Every refusal is the same `404 Not found` as for an id that does not exist. General
 /// rate-limit bucket.
 #[utoipa::path(get, path = "/api/v1/messages/{id}/location", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("preview" = Option<bool>, Query, description = "Include the message preview (default true)")), responses((status = 200, description = "Where the message is", body = LocationResult), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
@@ -1961,19 +2050,24 @@ pub(crate) async fn message_lookup(
     }
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    let scope = resolve_message(
+    let found = resolve_message(
         db,
         id,
         user.as_ref(),
         &Proof::headers(&headers, &state.limits),
     )
-    .await?
-    .into_scope();
+    .await?;
+    let shown = match found.channel() {
+        Some(channel) => shown_source(db, channel).await?,
+        None => None,
+    };
+    let scope = found.into_scope();
     Ok(Json(LocationResult::Place(MessagePlace {
         server: scope.server,
         channel_id: scope.channel_id,
         dm_id: scope.dm_id,
         thread_root_id: scope.thread_root_id,
+        shown,
     })))
 }
 
@@ -4561,6 +4655,7 @@ mod tests {
                 reply_to: None,
                 mention_reply: true,
                 forward_of: None,
+                show_source: None,
                 poll: None,
             }),
         )
@@ -4607,6 +4702,7 @@ mod tests {
                 reply_to: None,
                 mention_reply: true,
                 forward_of: None,
+                show_source: None,
                 poll: None,
             }),
         )
@@ -4669,6 +4765,7 @@ mod tests {
                 reply_to: None,
                 mention_reply: true,
                 forward_of: None,
+                show_source: None,
                 poll: None,
             }),
         )
@@ -4784,6 +4881,7 @@ mod tests {
             reply_to: None,
             mention_reply: true,
             forward_of: None,
+            show_source: None,
             poll: None,
         }
     }
@@ -5178,6 +5276,7 @@ mod tests {
                     reply_to: None,
                     mention_reply: true,
                     forward_of: None,
+                    show_source: None,
                     poll: None,
                 }),
             )
@@ -5205,6 +5304,7 @@ mod tests {
                     reply_to: None,
                     mention_reply: true,
                     forward_of: None,
+                    show_source: None,
                     poll: None,
                 }),
             )
@@ -9133,6 +9233,7 @@ mod tests {
                         reply_to: None,
                         mention_reply: true,
                         forward_of: None,
+                        show_source: None,
                         poll: None,
                     }),
                 )
@@ -9193,6 +9294,7 @@ mod tests {
             reply_to,
             mention_reply,
             forward_of: None,
+            show_source: None,
             poll: None,
         };
         let user = Authed(mem_user(author, false));
@@ -10423,7 +10525,13 @@ mod tests {
         .expect("place");
         assert_eq!(
             serde_json::to_value(found).expect("serialize"),
-            serde_json::json!({"server":"rchat","channel_id":cid,"dm_id":null,"thread_root_id":null})
+            serde_json::json!({
+                "server": "rchat",
+                "channel_id": cid,
+                "dm_id": null,
+                "thread_root_id": null,
+                "shown": {"server": "RChat", "channel": "general"},
+            })
         );
         for (scope, count) in [(format!("d{cid}"), 0), (format!("c{cid}"), 1)] {
             let Json(cards) = message_locations(
@@ -11830,6 +11938,16 @@ mod tests {
         author: &str,
         source: i64,
     ) -> Result<Message, ApiError> {
+        forward_as(state, to, mem_user(author, false), source, None).await
+    }
+
+    async fn forward_as(
+        state: &AppState,
+        to: (Option<i64>, Option<i64>, Option<i64>),
+        author: User,
+        source: i64,
+        show_source: Option<bool>,
+    ) -> Result<Message, ApiError> {
         let req = SendReq {
             content: "ignored".to_string(),
             media_id: None,
@@ -11838,9 +11956,10 @@ mod tests {
             reply_to: Some(source),
             mention_reply: true,
             forward_of: Some(source),
+            show_source,
             poll: None,
         };
-        let user = Authed(mem_user(author, false));
+        let user = Authed(author);
         let sent = match to {
             (Some(cid), _, _) => {
                 send_channel_message(State(state.clone()), Path(cid), user, Json(req)).await
@@ -11939,6 +12058,545 @@ mod tests {
             .await
             .expect("forward again");
         assert!(again.forward.expect("ref").origin_sensitive);
+        done(state, path).await;
+    }
+
+    async fn server_with_lobby(db: &Db, name: &str, display: &str, password: Option<&str>) -> i64 {
+        sqlx::query("INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES($1, $2, 'alice', $3, 0)")
+            .bind(name)
+            .bind(display)
+            .bind(password)
+            .execute(db)
+            .await
+            .expect("server");
+        server_channel(db, name, "lobby", false).await
+    }
+
+    async fn server_channel(db: &Db, server: &str, name: &str, restricted: bool) -> i64 {
+        sqlx::query("INSERT INTO channels(server, name, restrict_view, created_at) VALUES($1, $2, $3, 0) RETURNING id")
+            .bind(server)
+            .bind(name)
+            .bind(i64::from(restricted))
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id")
+    }
+
+    type Named = (
+        Option<String>,
+        bool,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    );
+
+    fn named(m: &Message) -> Named {
+        let ForwardRef {
+            author: _,
+            created_at: _,
+            source_id: _,
+            origin,
+            origin_dm,
+            origin_channel,
+            origin_channel_id,
+            origin_sensitive: _,
+            origin_server,
+            origin_server_channel,
+            dropped: _,
+        } = m.forward.clone().expect("forward ref");
+        (
+            origin,
+            origin_dm,
+            origin_channel,
+            origin_channel_id,
+            origin_server,
+            origin_server_channel,
+        )
+    }
+
+    fn name(s: &str) -> Option<String> {
+        Some(s.to_string())
+    }
+
+    const NAMES_NOTHING: Named = (None, false, None, None, None, None);
+
+    #[tokio::test]
+    async fn forward_source_names_a_private_server_only_when_asked() {
+        let (state, path) = temp_state("forward_source_private").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for user in ["alice", "bob"] {
+            add_user(db, user, &user.to_uppercase()).await;
+            add_member(db, "rchat", user, 0, 0, 1).await;
+        }
+        let lobby = server_with_lobby(db, "vault", "Vault", Some("x")).await;
+        add_member(db, "vault", "alice", 0, 0, 1).await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let source = post(db, lobby, "alice", "amber folio", 1).await;
+        let alice = || mem_user("alice", false);
+        for to in [(Some(cid), None, None), (None, Some(dm), None)] {
+            for show in [None, Some(false)] {
+                let copy = forward_as(&state, to, alice(), source, show)
+                    .await
+                    .expect("forward");
+                assert_eq!(named(&copy), NAMES_NOTHING, "{show:?}");
+                assert!(
+                    !serde_json::to_string(&copy)
+                        .expect("json")
+                        .contains("Vault"),
+                    "{show:?}"
+                );
+            }
+            let shown = forward_as(&state, to, alice(), source, Some(true))
+                .await
+                .expect("forward");
+            assert_eq!(
+                named(&shown),
+                (
+                    name("Vault"),
+                    false,
+                    None,
+                    None,
+                    name("Vault"),
+                    name("lobby")
+                )
+            );
+            assert_eq!(shown.forward.as_ref().map(|f| f.source_id), Some(source));
+        }
+        let listed = list(&state, cid, Some("bob")).await.expect("list");
+        let mut read: Vec<Named> = listed
+            .iter()
+            .filter(|m| m.forward.is_some())
+            .map(named)
+            .collect();
+        read.sort();
+        assert_eq!(
+            read,
+            vec![
+                NAMES_NOTHING,
+                NAMES_NOTHING,
+                (
+                    name("Vault"),
+                    false,
+                    None,
+                    None,
+                    name("Vault"),
+                    name("lobby")
+                )
+            ]
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn forward_source_never_names_restricted_channels() {
+        let (state, path) = temp_state("forward_source_restricted").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        server_with_lobby(db, "vault", "Vault", Some("x")).await;
+        add_member(db, "vault", "alice", 0, 0, 1).await;
+        let hushroom = server_channel(db, "vault", "hushroom", true).await;
+        perm(db, hushroom, "u:alice", 1).await;
+        let modnook = server_channel(db, "vault", "modnook", false).await;
+        perm(db, modnook, "u:alice", 1).await;
+        let secretden = add_channel(db, "secretden", "text").await;
+        perm(db, secretden, "u:alice", 1).await;
+        for (channel, server) in [
+            (hushroom, "Vault"),
+            (modnook, "Vault"),
+            (secretden, "RChat"),
+        ] {
+            let source = post(db, channel, "alice", "amber folio", 1).await;
+            for show in [None, Some(true)] {
+                let copy = forward_as(
+                    &state,
+                    (Some(cid), None, None),
+                    mem_user("alice", false),
+                    source,
+                    show,
+                )
+                .await
+                .expect("forward");
+                let json = serde_json::to_string(&copy).expect("json");
+                for hidden in ["hushroom", "modnook", "secretden"] {
+                    assert!(!json.contains(hidden), "{hidden} in {json}");
+                }
+                let expected = match (show, server) {
+                    (None, "Vault") => NAMES_NOTHING,
+                    (_, _) => (name(server), false, None, None, name(server), None),
+                };
+                assert_eq!(named(&copy), expected, "{server} {show:?}");
+            }
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn forward_source_off_names_nothing_and_location_answers_readers() {
+        let (state, path) = temp_state("forward_source_off").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for user in ["alice", "bob", "carol"] {
+            add_user(db, user, &user.to_uppercase()).await;
+            add_member(db, "rchat", user, 0, 0, 1).await;
+        }
+        let lobby = server_with_lobby(db, "vault", "Vault", Some("x")).await;
+        add_member(db, "vault", "alice", 0, 0, 1).await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let general = (Some(cid), None, None);
+        let here = say(&state, general, "bob", "amber folio").await;
+        let away = post(db, lobby, "alice", "vault talk", 2).await;
+        for (source, readers, outsiders) in [
+            (here.id, vec!["bob", "carol"], vec![]),
+            (away, vec!["alice"], vec!["bob", "carol"]),
+        ] {
+            let copy = forward_as(
+                &state,
+                general,
+                mem_user("alice", false),
+                source,
+                Some(false),
+            )
+            .await
+            .expect("forward");
+            assert_eq!(named(&copy), NAMES_NOTHING);
+            let found = copy.forward.as_ref().map(|f| f.source_id).expect("source");
+            assert_eq!(found, source);
+            for reader in readers {
+                let at = locate(&state, Some(reader), found).await.expect("readable");
+                assert_eq!(at.id, source);
+                assert!(at.channel_id.is_some());
+            }
+            for outsider in outsiders {
+                let refused = locate(&state, Some(outsider), found)
+                    .await
+                    .err()
+                    .map(|ApiError(c, m, _)| (c, m));
+                assert_eq!(
+                    refused,
+                    Some((StatusCode::NOT_FOUND, "Not found".to_string())),
+                    "{outsider}"
+                );
+            }
+        }
+        let secret = say(&state, (None, Some(dm), None), "bob", "dm talk").await;
+        let copy = forward_as(
+            &state,
+            general,
+            mem_user("alice", false),
+            secret.id,
+            Some(false),
+        )
+        .await
+        .expect("forward");
+        assert_eq!(
+            named(&copy),
+            (name("Direct message"), true, None, None, None, None),
+            "a direct message is always named as one"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn staff_reads_forward_with_the_default_source() {
+        let (state, path) = temp_state("forward_source_staff").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for user in ["alice", "root"] {
+            add_user(db, user, &user.to_uppercase()).await;
+            add_member(db, "rchat", user, 0, 0, 1).await;
+        }
+        let lobby = server_with_lobby(db, "vault", "Vault", Some("x")).await;
+        add_member(db, "vault", "alice", 0, 0, 1).await;
+        let open = server_with_lobby(db, "pub", "Pub Hall", None).await;
+        let hidden = post(db, lobby, "alice", "vault talk", 1).await;
+        let public = post(db, open, "alice", "pub talk", 2).await;
+        let root = || mem_user("root", true);
+        let general = (Some(cid), None, None);
+        let copy = forward_as(&state, general, root(), hidden, Some(true))
+            .await
+            .expect("staff reads it");
+        assert_eq!(named(&copy), NAMES_NOTHING);
+        assert!(
+            !serde_json::to_string(&copy)
+                .expect("json")
+                .contains("Vault")
+        );
+        let copy = forward_as(&state, general, root(), public, Some(true))
+            .await
+            .expect("anyone reads it");
+        assert_eq!(
+            named(&copy),
+            (
+                name("Pub Hall"),
+                false,
+                None,
+                None,
+                name("Pub Hall"),
+                name("lobby")
+            )
+        );
+        done(state, path).await;
+    }
+
+    async fn place_of(
+        state: &AppState,
+        user: Option<User>,
+        id: i64,
+    ) -> Result<MessagePlace, ApiError> {
+        let found = message_lookup(
+            State(state.clone()),
+            MaybeAuthed(user),
+            HeaderMap::new(),
+            Path(id),
+            Query(LocationQuery {
+                preview: Some(false),
+            }),
+        )
+        .await?
+        .0;
+        match found {
+            LocationResult::Place(place) => Ok(place),
+            LocationResult::Preview(_) => panic!("a preview"),
+        }
+    }
+
+    #[tokio::test]
+    async fn locations_say_what_a_shown_source_would_name() {
+        let (state, path) = temp_state("forward_source_location").await;
+        let db = &state.db;
+        for user in ["alice", "bob", "carol", "root"] {
+            add_user(db, user, &user.to_uppercase()).await;
+        }
+        let lobby = server_with_lobby(db, "vault", "Vault", Some("x")).await;
+        for user in ["alice", "carol"] {
+            add_member(db, "vault", user, 0, 0, 1).await;
+        }
+        let modnook = server_channel(db, "vault", "modnook", false).await;
+        perm(db, modnook, "u:alice", 1).await;
+        perm(db, modnook, "u:carol", 0).await;
+        let open = post(db, lobby, "alice", "vault talk", 1).await;
+        let denied = post(db, modnook, "alice", "mods talk", 2).await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let direct = say(&state, (None, Some(dm), None), "bob", "dm talk").await;
+        let alice = || Some(mem_user("alice", false));
+        let shown =
+            |place: MessagePlace| serde_json::to_value(place).expect("json")["shown"].clone();
+        assert_eq!(
+            shown(place_of(&state, alice(), open).await.expect("lobby")),
+            serde_json::json!({"server": "Vault", "channel": "lobby"})
+        );
+        assert_eq!(
+            shown(place_of(&state, alice(), denied).await.expect("modnook")),
+            serde_json::json!({"server": "Vault"}),
+            "a channel some members may not see names only its server"
+        );
+        assert_eq!(
+            shown(place_of(&state, alice(), direct.id).await.expect("dm")),
+            serde_json::Value::Null
+        );
+        let staff = place_of(&state, Some(mem_user("root", true)), open)
+            .await
+            .expect("staff reads it");
+        assert_eq!(staff.channel_id, Some(lobby));
+        assert_eq!(
+            shown(staff),
+            serde_json::Value::Null,
+            "staff reads name nothing"
+        );
+        let refused = |r: Result<MessagePlace, ApiError>| r.err().map(|ApiError(c, m, _)| (c, m));
+        let missing = refused(place_of(&state, alice(), 999_999).await);
+        assert_eq!(
+            missing,
+            Some((StatusCode::NOT_FOUND, "Not found".to_string()))
+        );
+        assert_eq!(
+            refused(place_of(&state, Some(mem_user("bob", false)), open).await),
+            missing
+        );
+        assert_eq!(
+            refused(place_of(&state, Some(mem_user("carol", false)), denied).await),
+            missing
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn thread_forwards_show_their_source_when_asked() {
+        let (state, path) = temp_state("forward_source_thread").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let lobby = server_with_lobby(db, "vault", "Vault", Some("x")).await;
+        add_member(db, "vault", "alice", 0, 0, 1).await;
+        let source = post(db, lobby, "alice", "vault talk", 1).await;
+        let root = say(&state, (Some(cid), None, None), "alice", "a thread").await;
+        let thread = (None, None, Some(root.id));
+        let alice = || mem_user("alice", false);
+        let shown = forward_as(&state, thread, alice(), source, Some(true))
+            .await
+            .expect("forward");
+        assert_eq!(shown.thread_root_id, Some(root.id));
+        assert_eq!(
+            named(&shown),
+            (
+                name("Vault"),
+                false,
+                None,
+                None,
+                name("Vault"),
+                name("lobby")
+            )
+        );
+        for show in [None, Some(false)] {
+            let copy = forward_as(&state, thread, alice(), source, show)
+                .await
+                .expect("forward");
+            assert_eq!(named(&copy), NAMES_NOTHING, "{show:?}");
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_forward_of_a_copy_names_the_copy_place_and_keeps_its_author() {
+        let (state, path) = temp_state("forward_source_again").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for user in ["alice", "bob"] {
+            add_user(db, user, &user.to_uppercase()).await;
+            add_member(db, "rchat", user, 0, 0, 1).await;
+        }
+        let lobby = server_with_lobby(db, "vault", "Vault", Some("x")).await;
+        add_member(db, "vault", "alice", 0, 0, 1).await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let source = post(db, lobby, "alice", "vault talk", 7).await;
+        let copy = forward_as(
+            &state,
+            (Some(cid), None, None),
+            mem_user("alice", false),
+            source,
+            Some(true),
+        )
+        .await
+        .expect("forward");
+        assert_eq!(named(&copy).5, name("lobby"));
+        let again = forward_as(
+            &state,
+            (None, Some(dm), None),
+            mem_user("bob", false),
+            copy.id,
+            Some(true),
+        )
+        .await
+        .expect("bob forwards the copy");
+        let fwd = again.forward.as_ref().expect("ref");
+        assert_eq!(
+            (
+                fwd.author.as_ref().map(|a| a.username.as_str()),
+                fwd.created_at,
+                fwd.source_id
+            ),
+            (Some("alice"), 7, copy.id)
+        );
+        assert_eq!(
+            named(&again),
+            (
+                name("RChat"),
+                false,
+                None,
+                None,
+                name("RChat"),
+                name("general")
+            ),
+            "the copy's place, not the vault"
+        );
+        assert!(
+            !serde_json::to_string(&again)
+                .expect("json")
+                .contains("Vault")
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn forwards_without_show_source_keep_the_default() {
+        let (state, path) = temp_state("forward_source_default").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let open = server_with_lobby(db, "pub", "Pub Hall", None).await;
+        let lobby = server_with_lobby(db, "vault", "Vault", Some("x")).await;
+        add_member(db, "vault", "alice", 0, 0, 1).await;
+        let here = say(&state, (Some(cid), None, None), "alice", "here").await;
+        let public = post(db, open, "alice", "pub talk", 2).await;
+        let hidden = post(db, lobby, "alice", "vault talk", 3).await;
+        let req: SendReq =
+            serde_json::from_value(serde_json::json!({"content": "", "forward_of": here.id}))
+                .expect("send req");
+        assert_eq!(req.show_source, None);
+        let same = send_channel_message(
+            State(state.clone()),
+            Path(cid),
+            Authed(mem_user("alice", false)),
+            Json(req),
+        )
+        .await
+        .expect("forward")
+        .0;
+        assert_eq!(
+            named(&same),
+            (
+                name("#general - RChat"),
+                false,
+                name("general"),
+                Some(cid),
+                name("RChat"),
+                None
+            )
+        );
+        let general = (Some(cid), None, None);
+        let from_pub = forward(&state, general, "alice", public)
+            .await
+            .expect("forward");
+        assert_eq!(
+            named(&from_pub),
+            (name("Pub Hall"), false, None, None, name("Pub Hall"), None)
+        );
+        let from_vault = forward(&state, general, "alice", hidden)
+            .await
+            .expect("forward");
+        assert_eq!(named(&from_vault), NAMES_NOTHING);
         done(state, path).await;
     }
 
@@ -12737,6 +13395,7 @@ mod tests {
             reply_to: None,
             mention_reply: false,
             forward_of: None,
+            show_source: None,
             poll: None,
         };
         send_channel_message(State(state.clone()), Path(cid), Authed(user), Json(req))

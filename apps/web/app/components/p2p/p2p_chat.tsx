@@ -50,7 +50,7 @@ import {
   type P2pMessage,
 } from '../../lib/p2p/dm'
 import { emojiBase } from '../../lib/reactions'
-import { LIMITS as P2P_LIMITS } from '../../lib/p2p/content'
+import { LIMITS as P2P_LIMITS, readFwdSrc } from '../../lib/p2p/content'
 import { charCount, counterFrom } from '../../lib/rules'
 import { clock } from '../../lib/slowmode'
 import { useCountdown } from '../../lib/countdown'
@@ -67,8 +67,15 @@ import { MessageEditor, editAction, type EditBinding } from '../message_editor'
 import { MessageToolbar, type ToolbarAction } from '../message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from '../reactions'
 import { ComposerBar, ReplyPreview } from '../replies'
-import { clipAllowed } from '../../lib/forward_viewing'
-import { ForwardBar, ForwardCard, forwardAction, useForwardClip } from '../forwards'
+import { clipAllowed, clipSourceNames } from '../../lib/forward_viewing'
+import { fwdSource, p2pDestination, p2pForward } from '../../lib/forward'
+import {
+  ForwardBar,
+  ForwardCard,
+  forwardAction,
+  useForwardClip,
+  useVouchedFiles,
+} from '../forwards'
 import { PinLine, PinsPanel, confirmUnpin } from '../pins'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker, SHEET_QUERY } from '../emoji_picker'
@@ -158,6 +165,7 @@ export const asMessage = (
         source_id: 0,
         origin: null,
         dropped: null,
+        p2p: readFwdSrc(m.fwd),
       }
     : null,
   pinned_at: m.pinned !== null ? seconds(m.pinned) : null,
@@ -242,6 +250,7 @@ export const P2pRow = memo(function P2pRow({
   const { p2pDm, p2pThread } = identity
 
   const acct = useAccount()
+  const vouchedAtts = useVouchedFiles(m.forward?.p2p)
 
   const actions: ToolbarAction[] = []
   // From the old copy: read-only here.
@@ -332,7 +341,11 @@ export const P2pRow = memo(function P2pRow({
           />
         )
       )}
-      <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} own={!p.fwd && mine} />
+      <AttachmentList
+        att={vouchedAtts ?? p.fwd?.att ?? p.att}
+        canFetch={canAct}
+        own={!p.fwd && mine}
+      />
       <ReactionBar m={m} canReact={write} canRemove={write} />
       {threads && !!p.replies && !p.archived && (
         <button
@@ -656,23 +669,19 @@ function P2pComposerBody({
   ) : forwardClip ? (
     <ForwardBar
       draftKey={scope}
-      onSend={() => {
-        const clip = store.getState().forwardClip
-        if (clip !== forwardClip || !clipAllowed(store.getState(), clip, account)) return
-        const author = clip.author?.display_name ?? 'Deleted user'
-        void p2pDm
-          .forward(key, {
-            name: author,
-            ts: clip.created_at * 1000,
-            body: clip.body ?? clip.snippet,
+      destination={p2pDestination(key)}
+      onSend={showSource => {
+        const s = store.getState()
+        const clip = s.forwardClip
+        if (clip !== forwardClip || !clipAllowed(s, clip, account)) return
+        const names = clipSourceNames(account, clip)
+        void p2pDm.forward(key, p2pForward(clip, fwdSource(clip.source, names, showSource))).then(
+          identity.inIdentity(ok => {
+            if (!ok) return
+            if (store.getState().forwardClip === clip) store.getState().clearForward()
+            identity.p2pHost.toast('Forwarded to', title)
           })
-          .then(
-            identity.inIdentity(ok => {
-              if (!ok) return
-              if (store.getState().forwardClip === clip) store.getState().clearForward()
-              identity.p2pHost.toast('Forwarded to', title)
-            })
-          )
+        )
       }}
     />
   ) : null

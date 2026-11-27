@@ -486,6 +486,7 @@ export async function learnFrom(cx: ServerCtx, rec: EventRecord) {
 
 // Counts, pings and alerts for stored messages that show, and files.
 export async function stored(cx: ServerCtx, room: string, added: Inserted[]) {
+  cx.aimed(added.flatMap(a => (a.status === 'new' ? [a.rec] : [])))
   if (cx.rt(room)?.mods.length) void cx.runMods(room)
   const r = cx.rooms.get(room)
   const s = cx.sumOf(room)
