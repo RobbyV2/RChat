@@ -89,12 +89,73 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
     use rust_next::api::admin_cli::UserCommand;
+    use serde_json::{Value, json};
 
     use rust_next::crypt::cli::KeysCommand;
 
     use super::{Cli, Command};
+
+    /// The commands, arguments and help texts of `cmd` and its subcommands.
+    fn described(cmd: &clap::Command) -> Value {
+        let args: Vec<Value> = cmd
+            .get_arguments()
+            .filter(|a| !a.is_hide_set() && a.get_id() != "help")
+            .map(|a| {
+                let value = a.get_action().takes_values().then(|| {
+                    a.get_value_names()
+                        .map(|names| names.iter().map(|n| n.to_string()).collect::<Vec<_>>())
+                        .unwrap_or_else(|| vec![a.get_id().as_str().to_uppercase()])
+                        .join(" ")
+                });
+                json!({
+                    "id": a.get_id().as_str(),
+                    "long": a.get_long(),
+                    "short": a.get_short().map(String::from),
+                    "value": value,
+                    "positional": a.is_positional(),
+                    "required": a.is_required_set(),
+                    "help": a.get_help().map(|h| h.to_string()),
+                })
+            })
+            .collect();
+        let commands: Vec<Value> = cmd
+            .get_subcommands()
+            .filter(|c| c.get_name() != "help")
+            .map(described)
+            .collect();
+        json!({
+            "name": cmd.get_name(),
+            "about": cmd.get_about().map(|a| a.to_string()),
+            "usage": cmd.clone().render_usage().to_string().trim_start_matches("Usage: ").to_string(),
+            "args": args,
+            "commands": commands,
+        })
+    }
+
+    /// The command line reference of the docs site is built from `docs/generated/cli.json`,
+    /// which must describe this command line. `RCHAT_DOCS_WRITE=1` writes it
+    /// (`just src docs-refs`).
+    #[test]
+    fn the_docs_site_has_the_current_command_line() {
+        let mut cmd = Cli::command();
+        cmd.build();
+        let json = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&described(&cmd)).expect("json")
+        );
+        let file =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/generated/cli.json");
+        if std::env::var_os("RCHAT_DOCS_WRITE").is_some() {
+            std::fs::write(&file, &json).expect("write");
+        }
+        let committed = std::fs::read_to_string(&file).unwrap_or_default();
+        assert!(
+            committed == json,
+            "docs/generated/cli.json is out of date: run `just src docs-refs`"
+        );
+    }
 
     fn parsed(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(std::iter::once("server").chain(args.iter().copied()))

@@ -547,6 +547,14 @@ export const ADMIN_ROWS: AdminRow[] = [
     label: 'Server profiles',
     line: 'Lets members set a name, avatar, banner and description per server.',
   },
+  {
+    key: 'docs',
+    env: 'FEATURE_DOCS',
+    group: "This site's app",
+    kind: 'switch',
+    label: 'Documentation',
+    line: 'Serves the documentation at /docs.',
+  },
 ]
 
 export const adminRow = (key: string) => ADMIN_ROWS.find(r => r.key === key)

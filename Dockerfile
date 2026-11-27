@@ -26,6 +26,7 @@ WORKDIR /app
 
 COPY package.json bun.lock bunfig.toml ./
 COPY apps/web/package.json ./apps/web/
+COPY docs/package.json ./docs/
 RUN bun install --frozen-lockfile
 
 COPY . ./
@@ -40,6 +41,9 @@ ARG NEXT_PUBLIC_WS_URL
 ARG NEXT_PUBLIC_PEERJS_HOST
 ARG NEXT_PUBLIC_PEERJS_PORT
 RUN bun run build
+# The documentation site the server serves at /docs; --build-arg DOCS_BUILD=off leaves it out.
+ARG DOCS_BUILD=on
+RUN mkdir -p docs/dist && if [ "$DOCS_BUILD" != off ]; then bun run build:docs; fi
 COPY deploy/peer/package.json deploy/peer/bun.lock deploy/peer/server.mjs /peer/
 RUN cd /peer && bun install --frozen-lockfile --production
 
@@ -75,6 +79,7 @@ COPY --from=js-builder /app/apps/web/.next/standalone/node_modules ./node_module
 COPY --from=js-builder /app/apps/web/.next/standalone/apps/web ./
 COPY --from=js-builder /app/apps/web/.next/static ./.next/static
 COPY --from=js-builder /app/apps/web/public ./public
+COPY --from=js-builder /app/docs/dist ./docs/dist
 COPY --from=js-builder /peer /app/peer
 COPY --from=rust-builder /app/target/release/server /app/server
 COPY --chmod=755 deploy/start.sh /app/start.sh

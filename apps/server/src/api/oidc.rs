@@ -158,7 +158,7 @@ pub struct LinkedProvider {
 /// List this account's linked sign-in methods.
 ///
 /// Returns each provider ID, display name, link creation time and current unlink eligibility. DELETE checks eligibility again.
-#[utoipa::path(get,path="/api/v1/me/sso", tag="Account", responses((status=200,description="Linked providers",body=Vec<LinkedProvider>),(status=401,description="Missing or invalid session")),security(("bearer"=[])))]
+#[utoipa::path(get,path="/api/v1/me/sso",operation_id="sso_list", tag="Account", responses((status=200,description="Linked providers",body=Vec<LinkedProvider>),(status=401,description="Missing or invalid session")),security(("bearer"=[])))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Authed(user): Authed,

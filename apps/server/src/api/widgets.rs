@@ -217,7 +217,7 @@ pub struct WidgetListQuery {
 /// List a page of the server's widget configurations, ordered by id.
 ///
 /// Requires permission to manage the server. A read link includes its current read key.
-#[utoipa::path(get, path = "/api/v1/servers/{name}/widgets", tag = "Widgets", params(("name" = String, Path, description = "Server name"), WidgetListQuery), responses((status = 200, description = "Configured widgets", body = Vec<Widget>, headers(("X-Next-Cursor" = String, description = "Cursor for the next page, absent on the last page"))), (status = 400, description = "Invalid cursor or page size"), (status = 404, description = "Server unavailable")), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/servers/{name}/widgets", operation_id = "widget_list", tag = "Widgets", params(("name" = String, Path, description = "Server name"), WidgetListQuery), responses((status = 200, description = "Configured widgets", body = Vec<Widget>, headers(("X-Next-Cursor" = String, description = "Cursor for the next page, absent on the last page"))), (status = 400, description = "Invalid cursor or page size"), (status = 404, description = "Server unavailable")), security(("bearer" = [])))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -258,7 +258,7 @@ pub(crate) async fn list(
 /// Create a chat or voice widget in one channel.
 ///
 /// Requires permission to manage the server. Private and members-only widgets require an explicit list of parent origins.
-#[utoipa::path(post, path = "/api/v1/servers/{name}/widgets", tag = "Widgets", params(("name" = String, Path, description = "Server name")), request_body = WidgetConfig, responses((status = 200, description = "Saved widget configuration", body = Widget)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/servers/{name}/widgets", operation_id = "widget_create", tag = "Widgets", params(("name" = String, Path, description = "Server name")), request_body = WidgetConfig, responses((status = 200, description = "Saved widget configuration", body = Widget)), security(("bearer" = [])))]
 pub(crate) async fn create(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -735,7 +735,7 @@ pub(crate) async fn locations(
 /// Send text through an interactive chat widget.
 ///
 /// Send the same widget session, parent origin and authentication headers as for reading. Guests also present their X-Guest-Session after their first send.
-#[utoipa::path(post, path = "/api/v1/widgets/{id}/messages", tag = "Widgets", params(("id" = String, Path, description = "Widget id")), request_body = guest_chat::GuestText, responses((status = 200, description = "Posted channel message", body = WidgetPost), (status = 401, description = "The supplied account session has expired"), (status = 404, description = "Widget unavailable")), security((), ("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/widgets/{id}/messages", operation_id = "widget_post", tag = "Widgets", params(("id" = String, Path, description = "Widget id")), request_body = guest_chat::GuestText, responses((status = 200, description = "Posted channel message", body = WidgetPost), (status = 401, description = "The supplied account session has expired"), (status = 404, description = "Widget unavailable")), security((), ("bearer" = [])))]
 pub(crate) async fn post(
     State(state): State<AppState>,
     WidgetViewer(user): WidgetViewer,
@@ -783,7 +783,7 @@ pub struct WidgetPost {
 /// Redeem the server password for this voice room.
 ///
 /// Send the widget session and parent origin. An accepted server password has the same expiry and use limits as in the main client.
-#[utoipa::path(post, path = "/api/v1/widgets/{id}/guest-access", tag = "Widgets", params(("id" = String, Path, description = "Widget id")), request_body = servers::GuestAccessReq, responses((status = 200, description = "Server password grant", body = servers::GuestGrant), (status = 404, description = "Widget unavailable")))]
+#[utoipa::path(post, path = "/api/v1/widgets/{id}/guest-access", operation_id = "widget_guest_access", tag = "Widgets", params(("id" = String, Path, description = "Widget id")), request_body = servers::GuestAccessReq, responses((status = 200, description = "Server password grant", body = servers::GuestGrant), (status = 404, description = "Widget unavailable")))]
 pub(crate) async fn guest_access(
     State(state): State<AppState>,
     Path(id): Path<String>,

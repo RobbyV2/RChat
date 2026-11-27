@@ -16,6 +16,15 @@ build-wasm-dev:
 pow-wasm:
   cd {{ROOT}} && sh crates/pow-wasm/build.sh
 
+# Build the documentation site into docs/dist (the server serves it at /docs)
+build-docs: deps
+  cd {{ROOT}} && bun run build:docs
+  @echo "Docs in {{ROOT}}/docs/dist. A running server serves them at http://localhost:${SERVER_PORT:-3000}/docs/."
+
+# Refresh docs/generated (the REST API and command line descriptions) from the server's code
+docs-refs:
+  cd {{ROOT}} && RCHAT_DOCS_WRITE=1 cargo test --workspace {{DESKTOP_CRATES}} -- the_docs_site_has_the_current
+
 # Build the API server binary
 build-api:
   cd {{ROOT}} && cargo build --release --bin server
@@ -40,13 +49,15 @@ build-client: deps build-wasm
   cd {{ROOT}} && STATIC_EXPORT=true NEXT_PUBLIC_CLIENT_ONLY=true bun run build
   cd {{WEB}} && cp out/index.html out/404.html
 
-# Build everything for production (full mode)
+# Build everything for production (full mode); DOCS_BUILD=off skips the docs
 build-all: build-wasm build-api build-frontend
+  cd {{ROOT}} && {{DOTENVX}} bash -c 'if [ "${DOCS_BUILD:-on}" != off ]; then bun run build:docs; fi'
   @echo ""
   @echo "Production build complete!"
   @echo "  API binary:  {{CARGO_TARGET}}/release/server"
   @echo "  WASM:        {{WEB}}/public/wasm/"
   @echo "  Frontend:    {{WEB}}/.next/standalone/"
+  @echo "  Docs:        {{ROOT}}/docs/dist/"
   @echo ""
   @echo "Run with: just src start-prod"
 

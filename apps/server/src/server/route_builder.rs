@@ -56,6 +56,13 @@ pub fn register_routes(
         Some(signaling) => router.merge(signaling),
         None => router,
     };
+    let router = match config.roles.api || config.roles.web {
+        true => router.merge(crate::server::docs::routes(
+            config.docs_dir(),
+            state.clone(),
+        )),
+        false => router,
+    };
     let router = match frontend {
         Some(Frontend::Proxy(url)) => {
             let client: ProxyClient = Client::builder(TokioExecutor::new()).build_http();
@@ -549,6 +556,76 @@ mod tests {
         }
         server.abort();
         frontend.abort();
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_docs_are_served_before_the_frontend_in_both_modes() {
+        let (url, frontend) = echo_frontend().await;
+        let (state, path) = crate::api::test_util::temp_state("frontend_docs").await;
+        let dir = std::env::temp_dir().join(format!("rchat-docs-routes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join("index.html"), "the docs").expect("write");
+        let full = AppConfig {
+            docs_dir: Some(dir.display().to_string()),
+            ..AppConfig::defaults()
+        };
+        let api_only = AppConfig {
+            roles: crate::config::Roles {
+                web: false,
+                ..crate::config::Roles::ALL
+            },
+            ..full.clone()
+        };
+        let gateway = AppConfig {
+            roles: crate::config::Roles {
+                gateway: true,
+                ..crate::config::Roles::NONE
+            },
+            ..full.clone()
+        };
+        let web_only = AppConfig {
+            roles: crate::config::Roles {
+                web: true,
+                ..crate::config::Roles::NONE
+            },
+            ..full.clone()
+        };
+        let service = Router::new().fallback(|| async { "the app" });
+        for (config, frontend, docs) in [
+            (&full, Some(Frontend::Proxy(Arc::from(url.as_str()))), true),
+            (&full, Some(Frontend::Service(service)), true),
+            (
+                &web_only,
+                Some(Frontend::Proxy(Arc::from(url.as_str()))),
+                true,
+            ),
+            (&api_only, None, true),
+            (&gateway, None, false),
+        ] {
+            let app = register_routes(frontend, None, config, state.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind");
+            let base = format!("http://{}", listener.local_addr().expect("addr"));
+            let server = tokio::spawn(async move {
+                let _ = axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await;
+            });
+            let res = reqwest::get(format!("{base}/docs/")).await.expect("get");
+            let status = res.status();
+            let body = res.text().await.expect("body");
+            match docs {
+                true => assert_eq!((status, body.as_str()), (StatusCode::OK, "the docs")),
+                false => assert_eq!(status, StatusCode::NOT_FOUND, "{body}"),
+            }
+            server.abort();
+        }
+        frontend.abort();
+        let _ = std::fs::remove_dir_all(&dir);
         crate::api::test_util::done(state, path).await;
     }
 

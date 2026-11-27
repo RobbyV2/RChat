@@ -2582,6 +2582,7 @@ pub(crate) async fn search_servers(
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/guest_access",
+    operation_id = "server_guest_access",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = GuestAccessReq,

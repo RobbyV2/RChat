@@ -1,0 +1,189 @@
+{
+  "about": "Runs the server, or manages its accounts and keys",
+  "args": [
+    {
+      "help": "Server host",
+      "id": "host",
+      "long": "host",
+      "positional": false,
+      "required": false,
+      "short": "H",
+      "value": "HOST"
+    },
+    {
+      "help": "Server port",
+      "id": "port",
+      "long": "port",
+      "positional": false,
+      "required": false,
+      "short": "p",
+      "value": "PORT"
+    },
+    {
+      "help": "App mode (full, api-only)",
+      "id": "mode",
+      "long": "mode",
+      "positional": false,
+      "required": false,
+      "short": "m",
+      "value": "MODE"
+    },
+    {
+      "help": "Service roles: all, or a comma list of api, gateway, media, search, embeds, jobs, web, relay, sfu",
+      "id": "roles",
+      "long": "roles",
+      "positional": false,
+      "required": false,
+      "short": null,
+      "value": "ROLES"
+    }
+  ],
+  "commands": [
+    {
+      "about": "Manage accounts in the instance's database. Works while the server runs",
+      "args": [],
+      "commands": [
+        {
+          "about": "Create an account with a temporary password. The first account administers the site",
+          "args": [
+            {
+              "help": "The username",
+              "id": "name",
+              "long": null,
+              "positional": true,
+              "required": true,
+              "short": null,
+              "value": "NAME"
+            },
+            {
+              "help": "The name shown for the account; the username when left out",
+              "id": "display_name",
+              "long": "display-name",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "DISPLAY_NAME"
+            }
+          ],
+          "commands": [],
+          "name": "create",
+          "usage": "server user create [OPTIONS] <NAME>"
+        },
+        {
+          "about": "Give an account a new temporary password and end its sessions",
+          "args": [
+            {
+              "help": "The username",
+              "id": "name",
+              "long": null,
+              "positional": true,
+              "required": true,
+              "short": null,
+              "value": "NAME"
+            }
+          ],
+          "commands": [],
+          "name": "reset-password",
+          "usage": "server user reset-password <NAME>"
+        }
+      ],
+      "name": "user",
+      "usage": "server user <COMMAND>"
+    },
+    {
+      "about": "Manage the instance's encryption keys",
+      "args": [],
+      "commands": [
+        {
+          "about": "Print a new key for ENCRYPTION_KEYS. Nothing is stored",
+          "args": [
+            {
+              "help": "The id of the key",
+              "id": "id",
+              "long": "id",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "ID"
+            }
+          ],
+          "commands": [],
+          "name": "new",
+          "usage": "server keys new [OPTIONS]"
+        },
+        {
+          "about": "Show where the keys come from, their fingerprints and the data keys they wrap",
+          "args": [],
+          "commands": [],
+          "name": "status",
+          "usage": "server keys status"
+        },
+        {
+          "about": "Write the keys to a file protected by a passphrase, to keep off the server",
+          "args": [
+            {
+              "help": "The file to write. It must not exist yet",
+              "id": "out",
+              "long": "out",
+              "positional": false,
+              "required": true,
+              "short": null,
+              "value": "OUT"
+            },
+            {
+              "help": "A file holding the passphrase; it is asked for on the terminal when left out",
+              "id": "passphrase_file",
+              "long": "passphrase-file",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "PASSPHRASE_FILE"
+            }
+          ],
+          "commands": [],
+          "name": "export",
+          "usage": "server keys export [OPTIONS] --out <OUT>"
+        },
+        {
+          "about": "Open a file written by `keys export`: print its keys for ENCRYPTION_KEYS, or write them to a new key file",
+          "args": [
+            {
+              "help": "The file `keys export` wrote",
+              "id": "input",
+              "long": "in",
+              "positional": false,
+              "required": true,
+              "short": null,
+              "value": "INPUT"
+            },
+            {
+              "help": "A file holding the passphrase; it is asked for on the terminal when left out",
+              "id": "passphrase_file",
+              "long": "passphrase-file",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "PASSPHRASE_FILE"
+            },
+            {
+              "help": "A key file to write, for ENCRYPTION_KEYS_FILE. It must not exist yet",
+              "id": "out",
+              "long": "out",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "OUT"
+            }
+          ],
+          "commands": [],
+          "name": "import",
+          "usage": "server keys import [OPTIONS] --in <INPUT>"
+        }
+      ],
+      "name": "keys",
+      "usage": "server keys <COMMAND>"
+    }
+  ],
+  "name": "server",
+  "usage": "server [OPTIONS] [COMMAND]"
+}

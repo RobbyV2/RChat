@@ -1,0 +1,54 @@
+---
+import { Icon } from '@astrojs/starlight/components'
+import Select from '@astrojs/starlight/components/Select.astro'
+---
+
+<rchat-theme-select>
+  <Select
+    label={Astro.locals.t('themeSelect.accessibleLabel')}
+    options={[
+      { label: Astro.locals.t('themeSelect.dark'), selected: false, value: 'dark' },
+      { label: Astro.locals.t('themeSelect.light'), selected: false, value: 'light' },
+      { label: Astro.locals.t('themeSelect.auto'), selected: true, value: 'auto' },
+    ]}
+    width="6.25em"
+  >
+    <Fragment slot="icon">
+      <Icon name="moon" class="sl-theme-icon-dark" />
+      <Icon name="sun" class="sl-theme-icon-light" />
+      <Icon name="laptop" class="sl-theme-icon-auto" />
+    </Fragment>
+  </Select>
+</rchat-theme-select>
+
+<script is:inline>
+  (() => {
+    const root = document.documentElement
+    const app = 'appTheme' in root.dataset
+    let own = null
+    try {
+      own = localStorage.getItem('starlight-theme')
+    } catch {}
+    for (const select of document.querySelectorAll('rchat-theme-select select')) {
+      select.value = app ? root.dataset.theme : own || 'auto'
+      const auto = select.querySelector('option[value="auto"]')
+      if (auto) auto.hidden = auto.disabled = app
+    }
+  })()
+</script>
+
+<style>
+  @layer starlight.components {
+    rchat-theme-select:has([value='dark']:not(:checked)) :global(.sl-theme-icon-dark),
+    rchat-theme-select:has([value='light']:not(:checked)) :global(.sl-theme-icon-light),
+    rchat-theme-select:has([value='auto']:not(:checked)) :global(.sl-theme-icon-auto) {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  import { followTheme } from '../theme'
+
+  followTheme()
+</script>

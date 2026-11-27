@@ -47,6 +47,7 @@ const SWITCHES = [
   'p2p',
   'client_other_instances',
   'server_profiles',
+  'docs',
 ]
 
 describe('feature switches', () => {

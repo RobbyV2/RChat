@@ -433,7 +433,10 @@ impl Modify for Bearer {
         super::pings::Ping,
         super::pings::ThreadPings,
         super::pings::GroupMention,
-        super::pings::GroupPing
+        super::pings::GroupPing,
+        super::member_search::MemberSort,
+        super::reports::GroupBy,
+        super::reports::export::Format
     )),
     servers((url = "/", description = "The instance serving this document")),
     modifiers(&Bearer, &Busy, &AuditReason, &ExchangeDiscriminator),
@@ -835,6 +838,70 @@ pub(crate) mod tests {
         if let Ok(out) = std::env::var("RCHAT_OPENAPI_OUT") {
             std::fs::write(out, json).expect("write");
         }
+    }
+
+    /// Every operation has its own `operationId`.
+    #[test]
+    fn operation_ids_are_unique() {
+        let doc: Value = serde_json::to_value(ApiDoc::openapi()).expect("json");
+        let mut seen = std::collections::BTreeMap::<&str, Vec<String>>::new();
+        for (path, item) in doc["paths"].as_object().expect("paths") {
+            for (method, op) in item.as_object().expect("path item") {
+                if let Some(id) = op["operationId"].as_str() {
+                    seen.entry(id).or_default().push(format!("{method} {path}"));
+                }
+            }
+        }
+        let twice: Vec<_> = seen.into_iter().filter(|(_, ops)| ops.len() > 1).collect();
+        assert!(twice.is_empty(), "{twice:?}");
+    }
+
+    /// Every `$ref` of the document names a schema it defines.
+    #[test]
+    fn every_reference_resolves() {
+        fn refs<'a>(value: &'a Value, found: &mut Vec<&'a str>) {
+            match value {
+                Value::Object(map) => {
+                    for (key, inner) in map {
+                        match (key.as_str(), inner) {
+                            ("$ref", Value::String(to)) => found.push(to),
+                            _ => refs(inner, found),
+                        }
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| refs(item, found)),
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+            }
+        }
+        let doc: Value = serde_json::to_value(ApiDoc::openapi()).expect("json");
+        let mut found = Vec::new();
+        refs(&doc, &mut found);
+        assert!(!found.is_empty());
+        let missing: Vec<&str> = found
+            .into_iter()
+            .filter(|to| {
+                to.strip_prefix("#/components/schemas/")
+                    .is_none_or(|name| doc["components"]["schemas"][name].is_null())
+            })
+            .collect();
+        assert!(missing.is_empty(), "{missing:?}");
+    }
+
+    /// The REST reference of the docs site is built from `docs/generated/openapi.json`, which
+    /// must be this document. `RCHAT_DOCS_WRITE=1` writes it (`just src docs-refs`).
+    #[test]
+    fn the_docs_site_has_the_current_document() {
+        let json = format!("{}\n", ApiDoc::openapi().to_pretty_json().expect("json"));
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/generated/openapi.json");
+        if std::env::var_os("RCHAT_DOCS_WRITE").is_some() {
+            std::fs::write(&file, &json).expect("write");
+        }
+        let committed = std::fs::read_to_string(&file).unwrap_or_default();
+        assert!(
+            committed == json,
+            "docs/generated/openapi.json is out of date: run `just src docs-refs`"
+        );
     }
 
     /// Line and text of every non-ASCII character in `text`.

@@ -264,6 +264,8 @@ pub struct SettingsPatch {
     client_other_instances: Option<bool>,
     /// Server profiles: a name, avatar, banner and description per server.
     server_profiles: Option<bool>,
+    /// The documentation site at `/docs`.
+    docs: Option<bool>,
     registration: Option<Registration>,
     upload_expiry_max_days: Option<i64>,
     server_creation: Option<ServerCreation>,
@@ -360,6 +362,7 @@ pub(crate) async fn patch_settings(
         p2p,
         client_other_instances,
         server_profiles,
+        docs,
         registration,
         upload_expiry_max_days,
         server_creation,
@@ -488,6 +491,7 @@ pub(crate) async fn patch_settings(
         Feature::P2p => p2p,
         Feature::ClientOtherInstances => client_other_instances,
         Feature::ServerProfiles => server_profiles,
+        Feature::Docs => docs,
     };
     let switches = [
         ("profanity_filter", profanity_filter),

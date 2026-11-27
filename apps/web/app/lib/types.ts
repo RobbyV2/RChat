@@ -763,6 +763,7 @@ export interface SiteSettings {
   p2p: boolean
   client_other_instances: boolean
   server_profiles: boolean
+  docs: boolean
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number

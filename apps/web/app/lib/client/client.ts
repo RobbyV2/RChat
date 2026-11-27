@@ -9,6 +9,7 @@ import { CallGuard } from './calls'
 import { createInstanceRegistry } from './instance_registry'
 import { ownInstance, writeLocal } from '../instances'
 import type { Theme } from '../types'
+import { keepTheme } from '../theme/device'
 import type { AccountId, AccountSession } from './session'
 
 const closed = {
@@ -62,13 +63,7 @@ function createClient() {
     streamer: false,
     setTheme(theme: Theme) {
       device.theme = theme
-      writeLocal('rchat_theme', theme)
-      if (typeof document !== 'undefined') {
-        document.documentElement.dataset.theme = theme
-        document
-          .querySelector('meta[name="theme-color"]')
-          ?.setAttribute('content', theme === 'dark' ? '#141218' : '#fef7ff')
-      }
+      keepTheme(theme)
       for (const account of live) account.store.setState({ theme })
     },
     setStreamer(streamer: boolean) {

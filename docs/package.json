@@ -1,0 +1,20 @@
+{
+  "name": "@rchat/docs",
+  "description": "RChat documentation site",
+  "version": "0.3.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun scripts/reference.ts && bun scripts/theme.ts && ASTRO_TELEMETRY_DISABLED=1 bun --bun astro build && bun scripts/finish.ts",
+    "dev": "bun scripts/reference.ts && bun scripts/theme.ts && ASTRO_TELEMETRY_DISABLED=1 bun --bun astro dev",
+    "preview": "ASTRO_TELEMETRY_DISABLED=1 bun --bun astro preview"
+  },
+  "dependencies": {
+    "@astrojs/markdown-satteri": "0.4.10",
+    "@astrojs/starlight": "0.43.1",
+    "ajv": "8.20.0",
+    "astro": "7.4.12",
+    "starlight-openapi": "0.27.1"
+  }
+}

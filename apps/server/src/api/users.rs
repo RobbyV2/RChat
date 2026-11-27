@@ -449,6 +449,7 @@ pub const SEARCH_DEFAULT: i64 = 8;
 #[utoipa::path(
     get,
     path = "/api/v1/users/search",
+    operation_id = "search_users",
     tag = "Users",
     params(UserSearchQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of an account, as for `GET /api/v1/users/{username}/card`")),
     responses(

@@ -205,6 +205,8 @@ pub struct AppConfig {
     pub light_commits: crate::db::LightCommits,
     #[serde(skip)]
     pub swagger_ui: Option<String>,
+    /// `DOCS_DIR`.
+    pub docs_dir: Option<String>,
     /// The PeerJS port the web build dials on the page's host (`NEXT_PUBLIC_PEERJS_PORT` without
     /// `NEXT_PUBLIC_PEERJS_HOST`), when this process is told.
     #[serde(skip)]
@@ -781,6 +783,18 @@ impl AppConfig {
 
     pub fn addr(&self) -> String {
         format!("{}:{}", self.host, self.server_port)
+    }
+
+    /// The folder of the built documentation site: `DOCS_DIR`, else `docs/dist` from the folder
+    /// the server starts in.
+    pub fn docs_dir(&self) -> std::path::PathBuf {
+        let dir = self
+            .docs_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+            .unwrap_or(crate::server::docs::DIR);
+        std::path::PathBuf::from(dir)
     }
 
     pub fn proxy_url(&self) -> Option<Arc<str>> {
@@ -1770,6 +1784,20 @@ mod tests {
         }
         assert_eq!(defaults.secrets.password_pepper, None);
         assert_eq!(defaults.swagger_ui, None);
+    }
+
+    #[test]
+    fn the_docs_folder_defaults_to_the_build_in_the_source_tree() {
+        let dir = |pairs: &[(&str, &str)]| AppConfig::from_map(pairs).expect("config").docs_dir();
+        assert_eq!(dir(&[]), std::path::PathBuf::from("docs/dist"));
+        assert_eq!(
+            dir(&[("DOCS_DIR", "  ")]),
+            std::path::PathBuf::from("docs/dist")
+        );
+        assert_eq!(
+            dir(&[("DOCS_DIR", "/srv/rchat/docs")]),
+            std::path::PathBuf::from("/srv/rchat/docs")
+        );
     }
 
     #[test]

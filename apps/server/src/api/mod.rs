@@ -1488,6 +1488,10 @@ pub struct Settings {
     /// response carries a server profile; stored profiles are kept.
     #[serde(default = "yes")]
     pub server_profiles: bool,
+    /// The documentation site at `/docs`. While off, every `/docs` page answers 404 with a
+    /// page that says so.
+    #[serde(default = "yes")]
+    pub docs: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1670,6 +1674,7 @@ impl Settings {
         p2p: false,
         client_other_instances: false,
         server_profiles: false,
+        docs: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
@@ -1750,6 +1755,7 @@ impl Settings {
             p2p: feature(Feature::P2p),
             client_other_instances: feature(Feature::ClientOtherInstances),
             server_profiles: feature(Feature::ServerProfiles),
+            docs: feature(Feature::Docs),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -1837,6 +1843,7 @@ impl Settings {
             p2p,
             client_other_instances,
             server_profiles,
+            docs,
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
@@ -1873,6 +1880,7 @@ impl Settings {
             Feature::P2p => p2p,
             Feature::ClientOtherInstances => client_other_instances,
             Feature::ServerProfiles => server_profiles,
+            Feature::Docs => docs,
         }
     }
 

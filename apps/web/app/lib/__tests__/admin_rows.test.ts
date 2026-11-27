@@ -44,6 +44,7 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   p2p: true,
   client_other_instances: true,
   server_profiles: true,
+  docs: true,
   registration: true,
   upload_expiry_max_days: true,
   server_joining: true,

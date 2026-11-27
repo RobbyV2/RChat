@@ -61,6 +61,12 @@ deploy/k8s/secrets.env
 # WASM build output
 /apps/web/public/wasm/
 
+# Docs build output and generated reference pages
+/docs/dist/
+/docs/.astro/
+/docs/src/content/docs/reference/
+/docs/src/styles/theme.css
+
 # database
 rchat.db*
 

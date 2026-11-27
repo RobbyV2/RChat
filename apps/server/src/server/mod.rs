@@ -11,6 +11,7 @@ use crate::state::AppState;
 
 pub(crate) mod branded;
 pub mod client_ip;
+pub mod docs;
 pub mod route_builder;
 
 const CORS_MAX_AGE: Duration = Duration::from_secs(600);

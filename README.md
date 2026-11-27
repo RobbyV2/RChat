@@ -60,6 +60,8 @@ just src dev
 
 `just src install` installs the JavaScript packages, the WebAssembly Rust target, wasm-pack, wasm-bindgen and the Tauri CLI. Open http://localhost:3000. The first account you register is the site admin. `just --list src` lists the other commands.
 
+Every instance serves the docs at http://localhost:3000/docs/ (`/docs`), built by `just src prod` and the Docker image, or by `bun run build:docs` for `just src dev`.
+
 ## Deployment
 
 - From source: `just src prod` builds and serves it on http://localhost:3000 (`SERVER_PORT`).

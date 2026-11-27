@@ -76,6 +76,8 @@ export default tseslint.config(
       'apps/web/public/wasm/**',
       'apps/web/app/lib/fed/gen/**',
       '**/out/**',
+      'docs/dist/**',
+      'docs/.astro/**',
       '.remember/**',
       '.venv/**',
       '**/*.config.js',

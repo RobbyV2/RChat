@@ -22,6 +22,7 @@ export const FEATURE_KEYS = [
   'p2p',
   'client_other_instances',
   'server_profiles',
+  'docs',
 ] as const
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number]
@@ -48,6 +49,7 @@ const BEFORE_SWITCHES: Record<FeatureKey, boolean> = {
   p2p: true,
   client_other_instances: true,
   server_profiles: false,
+  docs: false,
 }
 
 const registrationOf = (value: unknown): Registration => {

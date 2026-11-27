@@ -10,3 +10,5 @@ target
 .DS_Store
 i.txt
 apps/web/public/wasm
+docs/dist
+docs/.astro

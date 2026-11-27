@@ -1,0 +1,59 @@
+/* Starlight's variables, set from the app's tokens in theme.css. The tokens switch with the theme
+   themselves, so one mapping serves both. */
+:root,
+::backdrop {
+  --sl-font: var(--font-sans);
+  --sl-font-mono: var(--font-mono);
+
+  --sl-color-white: var(--color-on-surface);
+  --sl-color-gray-1: var(--color-on-surface);
+  --sl-color-gray-2: var(--color-on-surface-variant);
+  --sl-color-gray-3: var(--color-outline);
+  --sl-color-gray-4: var(--color-outline-variant);
+  --sl-color-gray-5: var(--color-surface-container-highest);
+  --sl-color-gray-6: var(--color-surface-container-high);
+  --sl-color-gray-7: var(--color-surface-container-low);
+  --sl-color-black: var(--color-surface);
+
+  --sl-color-accent-low: var(--color-primary-container);
+  --sl-color-accent: var(--color-primary);
+  --sl-color-accent-high: var(--color-primary);
+  --sl-color-text-invert: var(--color-on-primary);
+
+  --sl-color-blue-low: var(--color-primary-container);
+  --sl-color-blue: var(--color-primary);
+  --sl-color-blue-high: var(--color-on-primary-container);
+  --sl-color-purple-low: var(--color-tertiary-container);
+  --sl-color-purple: var(--color-tertiary);
+  --sl-color-purple-high: var(--color-on-tertiary-container);
+  --sl-color-red-low: var(--color-error-container);
+  --sl-color-red: var(--color-error);
+  --sl-color-red-high: var(--color-on-error-container);
+  --sl-color-green-low: color-mix(in srgb, var(--color-status-green) 16%, var(--color-surface));
+  --sl-color-green: var(--color-status-green);
+  --sl-color-green-high: var(--color-status-green);
+  --sl-color-orange-low: color-mix(in srgb, var(--color-status-yellow) 16%, var(--color-surface));
+  --sl-color-orange: var(--color-status-yellow);
+  --sl-color-orange-high: var(--color-status-yellow);
+
+  --sl-color-backdrop-overlay: color-mix(in srgb, var(--color-scrim) 50%, transparent);
+  --sl-shadow-sm: var(--shadow-elevation-1);
+  --sl-shadow-md: var(--shadow-elevation-2);
+  --sl-shadow-lg: var(--shadow-elevation-3);
+
+  --sl-text-2xs: var(--text-xs);
+  --sl-text-xs: var(--text-sm);
+  --sl-text-sm: var(--text-sm);
+  --sl-text-base: var(--text-base);
+  --sl-text-lg: var(--text-lg);
+  --sl-text-xl: var(--text-xl);
+  --sl-text-2xl: var(--text-2xl);
+  --sl-text-3xl: var(--text-3xl);
+  --sl-text-4xl: var(--text-4xl);
+  --sl-text-5xl: var(--text-5xl);
+  --sl-text-6xl: var(--text-6xl);
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-high: var(--color-on-primary-container);
+}

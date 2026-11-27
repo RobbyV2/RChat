@@ -275,7 +275,7 @@ async fn holds(
 /// Whether the account has a backup phrase and since when. The key is never returned. Works while
 /// the `backup_phrase` switch of `GET /api/v1/settings` is off. Requires a bearer token; guests
 /// can't call it. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/me/recovery", tag = "Account", responses((status = 200, description = "Whether a backup phrase is set and since when; `fresh_session` is always false", body = RecoveryStatus), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/me/recovery", operation_id = "recovery_status", tag = "Account", responses((status = 200, description = "Whether a backup phrase is set and since when; `fresh_session` is always false", body = RecoveryStatus), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn status(AuthedSession(session): AuthedSession) -> Json<RecoveryStatus> {
     Json(status_of(&session.user))
 }

@@ -1,0 +1,16 @@
+{/* Before the page paints: the app's theme on this device when it keeps one, else the choice made here or the system's. */}
+<script is:inline>
+  (() => {
+    let app = null
+    let own = null
+    try {
+      app = localStorage.getItem('rchat_theme')
+      own = localStorage.getItem('starlight-theme')
+    } catch {}
+    const root = document.documentElement
+    if (app !== null) root.dataset.appTheme = ''
+    const theme =
+      app ?? (own || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'))
+    root.dataset.theme = theme === 'light' ? 'light' : 'dark'
+  })()
+</script>

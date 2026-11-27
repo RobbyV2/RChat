@@ -270,7 +270,7 @@ struct Paging {
 /// List and filter provisioned users.
 ///
 /// Returns a bounded page of live users, optionally matching an equality filter.
-#[utoipa::path(get,path="/scim/v2/Users",params(("filter" = Option<String>, Query, description="Attribute equality filter"),("startIndex" = Option<i64>, Query, description="First item, starting at one"),("count" = Option<i64>, Query, description="Maximum number of items")),tag="scim",security(("scim"=[])),responses((status=401,description="A provisioning token is required"),(status=200,description="List and filter provisioned users.")))]
+#[utoipa::path(get,path="/scim/v2/Users",operation_id="scim_list_users",params(("filter" = Option<String>, Query, description="Attribute equality filter"),("startIndex" = Option<i64>, Query, description="First item, starting at one"),("count" = Option<i64>, Query, description="Maximum number of items")),tag="scim",security(("scim"=[])),responses((status=401,description="A provisioning token is required"),(status=200,description="List and filter provisioned users.")))]
 async fn list(
     State(state): State<AppState>,
     q: std::result::Result<Query<Paging>, QueryRejection>,
@@ -308,7 +308,7 @@ async fn list(
 /// Create or revive a provisioned user.
 ///
 /// Accepts account attributes and returns the resource location.
-#[utoipa::path(post,path="/scim/v2/Users",tag="scim",security(("scim"=[])),request_body(content=Object,content_type="application/scim+json"),responses((status=401,description="A provisioning token is required"),(status=201,description="Create or revive a provisioned user.")))]
+#[utoipa::path(post,path="/scim/v2/Users",operation_id="scim_create_user",tag="scim",security(("scim"=[])),request_body(content=Object,content_type="application/scim+json"),responses((status=401,description="A provisioning token is required"),(status=201,description="Create or revive a provisioned user.")))]
 async fn create(State(state): State<AppState>, b: Body) -> Result<Response> {
     write(state, WriteTarget::Create, replacement(&body(b)?)?).await
 }

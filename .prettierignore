@@ -33,5 +33,8 @@ crates/fed/tests/vectors
 crates/pow/tests/vectors.json
 crates/automation/vectors
 
+# Generated from the server's code (just src docs-refs), kept byte for byte
+docs/generated
+
 # Model vectors, kept byte for byte
 crates/identity/tests/vectors.json

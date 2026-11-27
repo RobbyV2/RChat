@@ -102,7 +102,7 @@ pub(crate) async fn paused_until(
 /// Check this guest's posting pause in a writable channel
 ///
 /// A null value permits posting. Protected servers require X-Guest-Grant. A returning guest can send X-Guest-Session to check an existing moderator pause.
-#[utoipa::path(get, path = "/api/v1/channels/{id}/guest-messages", tag = "Messages", params(("id" = i64, Path, description = "Text channel id")), responses((status = 200, description = "Unix time when guest posting resumes, or null", body = Option<i64>), (status = 404, description = "Posting unavailable")))]
+#[utoipa::path(get, path = "/api/v1/channels/{id}/guest-messages", operation_id = "guest_chat_status", tag = "Messages", params(("id" = i64, Path, description = "Text channel id")), responses((status = 200, description = "Unix time when guest posting resumes, or null", body = Option<i64>), (status = 404, description = "Posting unavailable")))]
 pub(crate) async fn status(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -124,7 +124,7 @@ pub(crate) async fn status(
 /// Private servers also require their live X-Guest-Grant. Guest replies never notify anyone.
 /// Guests hold what everyone holds in the channel: the first reply of a thread needs Start
 /// threads, and without Embed links the message gets no link previews.
-#[utoipa::path(post, path = "/api/v1/channels/{id}/guest-messages", tag = "Messages", params(("id" = i64, Path, description = "Text channel id")), request_body = GuestText, responses((status = 200, description = "Message sent", body = Posted), (status = 400, description = "Invalid text or reply"), (status = 401, description = "Guest session expired"), (status = 403, description = "Guest posting paused"), (status = 404, description = "Channel unavailable, or the first reply of a thread where everyone may not start threads"), (status = 429, description = "Slow mode, the message rate of the client address (`Sending too fast, try again in a moment`, with `Retry-After`) or request limit")))]
+#[utoipa::path(post, path = "/api/v1/channels/{id}/guest-messages", operation_id = "guest_chat_post", tag = "Messages", params(("id" = i64, Path, description = "Text channel id")), request_body = GuestText, responses((status = 200, description = "Message sent", body = Posted), (status = 400, description = "Invalid text or reply"), (status = 401, description = "Guest session expired"), (status = 403, description = "Guest posting paused"), (status = 404, description = "Channel unavailable, or the first reply of a thread where everyone may not start threads"), (status = 429, description = "Slow mode, the message rate of the client address (`Sending too fast, try again in a moment`, with `Retry-After`) or request limit")))]
 pub(crate) async fn post(
     State(state): State<AppState>,
     Path(id): Path<i64>,

@@ -59,6 +59,7 @@ prod mode="ask": deps
     rm -rf apps/web/.next/standalone/apps/web/public apps/web/.next/standalone/apps/web/.next/static
     cp -r apps/web/public apps/web/.next/standalone/apps/web/
     cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/
+    {{DOTENVX}} bash -c 'if [ "${DOCS_BUILD:-on}" != off ]; then echo "Building docs..." && bun run build:docs; fi'
     echo "Building backend..."
     cargo build --release --bin server
     tree_stamp > "$stamp_file"
@@ -92,6 +93,18 @@ frontend: deps
 # Run Next.js production server
 frontend-prod: deps
   cd {{ROOT}} && {{DOTENVX}} bun run start
+
+# Docs
+
+# Usage: just src docs, just src docs 4400
+[doc("Build the documentation site and preview it at http://localhost:4321/docs/")]
+docs port="4321": deps
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cd "{{ROOT}}"
+  bun run build:docs
+  echo "Docs at http://localhost:{{port}}/docs/"
+  bun run --cwd docs preview --host 127.0.0.1 --port {{port}}
 
 # Static mode: frontend only, with a remote api-only server
 
