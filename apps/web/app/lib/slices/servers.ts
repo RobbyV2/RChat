@@ -33,10 +33,10 @@ import { type NotifyPrefs, renameServerRule, resetScope } from '../notify'
 import { forgetProfile, forgetProfiles, profileKey } from '../profile'
 import { lockUntil } from '../profile_reset'
 import { shownParts, showsMore, withLook } from '../server_profile'
-import { myPerms, previewServer } from '../selectors'
+import { memberState, myPerms, previewServer } from '../selectors'
 import { keepMyPerms, withChannel } from '../channel_perms'
 import type { Paged, RChatState } from '../store_types'
-import { groupKey, mapGroups } from '../member_groups'
+import { groupFor, groupKey, mapGroups, regroup, serverGroups } from '../member_groups'
 import { type RolePlaces, placeRoles, withRole, withRoleEvents } from '../role_looks'
 import { localUntil, type TimeoutWire } from '../timeouts'
 import { cleanTopic } from '../topic'
@@ -705,13 +705,18 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       for (const n of batch) pending.add(pendingKey(server, n))
       let found: Member[]
       const since = presenceHub.seq()
+      const rolesSince = roleSeq
       try {
-        found = presenceHub.fresh(
+        found = freshRoles(
           server,
-          await live(api.membersByName(server, batch)).catch(e => {
-            throw banCheck(e, server)
-          }),
-          since
+          presenceHub.fresh(
+            server,
+            await live(api.membersByName(server, batch)).catch(e => {
+              throw banCheck(e, server)
+            }),
+            since
+          ),
+          rolesSince
         )
       } finally {
         for (const n of batch) pending.delete(pendingKey(server, n))
@@ -836,7 +841,48 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       writeMemberInfo(ev.server, [[ev.username, null]])
   }
 
+  // Role changes by server and member, newest last, so rows a request read before a change
+  // arrived take the roles it carries.
+  const ROLE_LOG_MAX = 500
+  let roleSeq = 0
+  const roleLog = new Map<string, Map<string, { seq: number; role_ids: number[] }>>()
+  const noteRoles = (server: string, username: string, role_ids: number[]) => {
+    const log = roleLog.get(server) ?? new Map<string, { seq: number; role_ids: number[] }>()
+    roleLog.set(server, log)
+    log.delete(username)
+    log.set(username, { seq: (roleSeq += 1), role_ids })
+    if (log.size > ROLE_LOG_MAX) log.delete(log.keys().next().value!)
+  }
+  const rolesAfter = (server: string, username: string, since: number) => {
+    const change = roleLog.get(server)?.get(username)
+    return change && change.seq > since ? change.role_ids : null
+  }
+  const freshRoles = (server: string, rows: Member[], since: number) =>
+    rows.map(m => {
+      const role_ids = rolesAfter(server, m.username, since)
+      return role_ids ? { ...m, role_ids } : m
+    })
+
+  // Moves `username` to the loaded page of the group they show in now. False when that page is
+  // loaded and their row is not known anywhere.
+  const regroupMember = (server: string, username: string, roleIds: number[]) => {
+    const s = get()
+    const pages = s.hoisted[server]
+    if (!pages) return true
+    const groups = serverGroups(s.servers[server]?.roles)
+    const row =
+      Object.values(pages)
+        .flatMap(p => p.list)
+        .find(m => m.username === username) ??
+      memberState(s, server, username) ??
+      undefined
+    const next = regroup(pages, groups, username, row)
+    if (next !== pages) set(st => ({ hoisted: { ...st.hoisted, [server]: next } }))
+    return row !== undefined || !pages[groupFor(groups, roleIds)]
+  }
+
   const forget = () => {
+    roleLog.clear()
     memberPending = new Set()
     bannedHere.clear()
     listSince.clear()
@@ -1200,6 +1246,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           writeMembers(server),
           async cursor => {
             const since = presenceHub.seq()
+            const rolesSince = roleSeq
             if (cursor === null) listSince.set(server, since)
             const page = await live(api.listMembers(server, cursor)).catch(e => {
               throw banCheck(e, server)
@@ -1209,7 +1256,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
             noteMemberTimeouts(server, page.items)
             return {
               ...page,
-              items: presenceHub.fresh(server, page.items, since),
+              items: freshRoles(server, presenceHub.fresh(server, page.items, since), rolesSince),
             }
           },
           m => m.username,
@@ -1230,13 +1277,21 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
             })),
           async cursor => {
             const since = presenceHub.seq()
+            const rolesSince = roleSeq
             const page = await live(
               api.listGroup(server, group, cursor, cursor === null ? limit : PAGE)
             ).catch(e => {
               throw banCheck(e, server)
             })
             noteMemberTimeouts(server, page.items)
-            return { ...page, items: presenceHub.fresh(server, page.items, since) }
+            // A member whose roles changed while the page loaded may show in another group now.
+            const groups = serverGroups(get().servers[server]?.roles)
+            const items = presenceHub.fresh(server, page.items, since).flatMap(m => {
+              const role_ids = rolesAfter(server, m.username, rolesSince)
+              if (!role_ids) return [m]
+              return groupFor(groups, role_ids) === key ? [{ ...m, role_ids }] : []
+            })
+            return { ...page, items }
           },
           m => m.username,
           '',
@@ -1576,6 +1631,31 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       if (
         [Perm.ManageRoles, Perm.AssignRoles].some(perm => hasPerm(myPerms(get(), ev.server), perm))
       )
+        refetchServer(ev.server)
+    },
+    member_roles_changed: ev => {
+      const { me, servers } = get()
+      const self = me?.username === ev.username
+      if (self) dropLinkCards()
+      noteRoles(ev.server, ev.username, ev.role_ids)
+      const roles = (m: Member) => ({ ...m, role_ids: ev.role_ids })
+      patchMembers(ev.server, list => mapWhere(list, m => m.username === ev.username, roles))
+      patchMemberInfo(ev.server, ev.username, roles)
+      if (!regroupMember(ev.server, ev.username, ev.role_ids)) {
+        const at = sessionMark()
+        void get()
+          .ensureMembers(ev.server, [ev.username])
+          .then(() => {
+            if (at === sessionMark()) regroupMember(ev.server, ev.username, ev.role_ids)
+          })
+      }
+      const detail = servers[ev.server]
+      // Your own roles decide what you hold; while the role order is unconfirmed, who holds a
+      // role decides which roles managers may change.
+      const manages = [Perm.ManageRoles, Perm.AssignRoles].some(perm =>
+        hasPerm(myPerms(get(), ev.server), perm)
+      )
+      if (detail && (self || (detail.roles_order_confirmed === false && manages)))
         refetchServer(ev.server)
     },
     channel_perms_changed: ev => {

@@ -294,7 +294,7 @@ async fn post_commit_notification_error_preserves_login_and_role_event() {
         assert_eq!(count(&state, "SELECT COUNT(*) FROM sso_grants").await, 2);
         let mut changed = false;
         while let Ok(event) = events.try_recv() {
-            changed |= matches!(event, WsEvent::RolesChanged{server} if server=="eng");
+            changed |= matches!(event, WsEvent::MemberRolesChanged{server, username, ..} if server=="eng" && username=="alice");
         }
         assert!(changed);
         temp.done(state).await;
@@ -399,11 +399,11 @@ async fn membership_limit_commits_withdrawals_and_announces_them() {
                 {
                     left = true
                 }
-                WsEvent::RolesChanged { server } if server == "eng" => roles = true,
+                WsEvent::MemberRolesChanged { server, .. } if server == "eng" => roles = true,
                 _ => {}
             }
         }
-        assert!(left && roles);
+        assert!(left && !roles, "the member left: no role event about them");
         temp.done(state).await;
     }
 }

@@ -349,6 +349,26 @@ async fn reposted_role_events_read_the_roles_as_they_are() {
         Some(WsEvent::RolesReordered { order, display, .. }) if order == [id] && display == [Some(5)]
     ));
     assert!(current(&state, reordered("gone")).await.is_none());
+    crate::db::NewUser::plain("bob").add(db).await;
+    crate::api::test_util::add_member(db, "rchat", "bob", 0, 0, 0).await;
+    sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'bob', $1)")
+        .bind(id)
+        .execute(db)
+        .await
+        .unwrap();
+    let held = |username: &str| WsEvent::MemberRolesChanged {
+        server: s("rchat"),
+        username: s(username),
+        role_ids: Vec::new(),
+    };
+    assert!(matches!(
+        current(&state, held("bob")).await,
+        Some(WsEvent::MemberRolesChanged { role_ids, .. }) if role_ids == [id]
+    ));
+    assert!(
+        current(&state, held("zed")).await.is_none(),
+        "nothing is reposted about someone who is not a member"
+    );
     sqlx::query("DELETE FROM roles WHERE id = $1")
         .bind(id)
         .execute(db)

@@ -956,6 +956,11 @@ async fn outsiders_get_none_of_the_members(state: AppState) {
             is_admin: true,
             perms: 0,
         },
+        WsEvent::MemberRolesChanged {
+            server: s("vault"),
+            username: s("bob"),
+            role_ids: vec![1],
+        },
         WsEvent::UserUpdated {
             user: UserRef {
                 username: s("bob"),

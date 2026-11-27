@@ -88,21 +88,54 @@ const TYPING_SCOPE_MAX: usize = 24;
 
 pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id: Option<i64>) {
     for (cid, users) in state.hub.rooms_in(server, channel_id) {
-        if let Ok(Some((owner, _))) = ws_channel_now(&state.read(), cid).await
-            && owner != server
-        {
+        if moved_away(state, server, cid).await {
             continue;
         }
         for user in users {
-            // A guest's own connection takes it out when it stops following the server.
-            let open = is_guest(&user)
-                || ws_server_open(&state.read(), server, Some(&user), false, &Proof::none())
-                    .await
-                    .unwrap_or(false);
-            if !open || !ws_voice_viewable(&state.read(), server, cid, &user).await {
+            if !may_stay(state, server, cid, &user).await {
                 state.hub.evict_voice(&user, cid);
             }
         }
+    }
+}
+
+/// Whether voice channel `cid` belongs to a server other than `server` now.
+async fn moved_away(state: &AppState, server: &str, cid: i64) -> bool {
+    matches!(ws_channel_now(&state.read(), cid).await, Ok(Some((owner, _))) if owner != server)
+}
+
+/// Whether `user` may stay in voice channel `cid` of `server`.
+async fn may_stay(state: &AppState, server: &str, cid: i64, user: &str) -> bool {
+    // A guest's own connection takes it out when it stops following the server.
+    let open = is_guest(user)
+        || ws_server_open(&state.read(), server, Some(user), false, &Proof::none())
+            .await
+            .unwrap_or(false);
+    open && ws_voice_viewable(&state.read(), server, cid, user).await
+}
+
+/// After `username`'s roles in `server` changed: takes them out of its voice when they may no
+/// longer be there, else tells their room whether they are muted now.
+pub(crate) async fn member_voice_changed(state: &AppState, server: &str, username: &str) {
+    for (cid, users) in state.hub.rooms_in(server, None) {
+        if !users.iter().any(|u| u == username) || moved_away(state, server, cid).await {
+            continue;
+        }
+        if !may_stay(state, server, cid, username).await {
+            state.hub.evict_voice(username, cid);
+            continue;
+        }
+        let one = [username.to_string()];
+        let Ok(silenced) = ws_voice_silenced(&state.read(), server, cid, &one).await else {
+            continue;
+        };
+        state.hub.broadcast(WsEvent::VoiceMuted {
+            server: server.to_string(),
+            channel_id: cid,
+            muted: silenced.contains(username),
+            username: username.to_string(),
+            staff: false,
+        });
     }
 }
 

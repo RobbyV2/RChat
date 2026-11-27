@@ -373,6 +373,21 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 version,
             })
         }
+        WsEvent::MemberRolesChanged {
+            server,
+            username,
+            role_ids: _,
+        } => {
+            let role_ids = crate::api::servers::member_role_ids(db, &server, &username)
+                .await
+                .ok()
+                .flatten()?;
+            Some(WsEvent::MemberRolesChanged {
+                server,
+                username,
+                role_ids,
+            })
+        }
         WsEvent::AdminChanged {
             server,
             username,

@@ -1006,6 +1006,69 @@ async fn voice_follows_connect_speak_and_video() {
     crate::api::test_util::done(state, path).await;
 }
 
+#[tokio::test]
+async fn a_member_whose_roles_changed_is_checked_alone() {
+    use crate::api::access::perms::held;
+    let (state, path) = crate::api::test_util::temp_state("voice_member_roles").await;
+    let db = &state.db;
+    for name in ["alice", "carol"] {
+        add_user_row(db, name).await;
+        crate::api::test_util::add_member(db, "rchat", name, 0, 0, 0).await;
+    }
+    let cid = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let deny = async |bits: u64| {
+        for sql in [
+            format!("DELETE FROM channel_perms WHERE channel_id = {cid}"),
+            format!(
+                "INSERT INTO channel_perms(channel_id, subject, allow, deny) VALUES({cid}, 'u:carol', 0, {bits})"
+            ),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(db)
+                .await
+                .expect("rule");
+        }
+    };
+    let join = |user| {
+        voice_msg(
+            &state,
+            user,
+            1,
+            ClientMsg::VoiceJoin {
+                channel_id: cid,
+                muted: false,
+                deafened: false,
+            },
+        )
+    };
+    join("alice").await.expect("alice joins");
+    join("carol").await.expect("carol joins");
+    let mut rx = state.hub.subscribe();
+    deny(held::SPEAK).await;
+    crate::ws::member_voice_changed(&state, "rchat", "carol").await;
+    assert_eq!(
+        mutes(&mut rx),
+        vec![(s("carol"), true)],
+        "only the member is told about"
+    );
+    crate::ws::member_voice_changed(&state, "rchat", "alice").await;
+    assert_eq!(mutes(&mut rx), vec![(s("alice"), false)]);
+    deny(held::CONNECT).await;
+    crate::ws::member_voice_changed(&state, "rchat", "carol").await;
+    for _ in 0..50 {
+        if state.hub.rooms_in("rchat", None) == vec![(cid, vec![s("alice")])] {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        state.hub.rooms_in("rchat", None),
+        vec![(cid, vec![s("alice")])],
+        "losing Connect takes the member out"
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
 #[test]
 fn calls_name_only_plain_peer_ids() {
     assert_eq!(call_peer_id(None), Ok(None));

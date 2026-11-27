@@ -764,6 +764,11 @@ impl Access {
                 is_admin: _,
                 perms: _,
             }
+            | WsEvent::MemberRolesChanged {
+                server,
+                username,
+                role_ids: _,
+            }
             | WsEvent::PresenceChanged {
                 server,
                 username,

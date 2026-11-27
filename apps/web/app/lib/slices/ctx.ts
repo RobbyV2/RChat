@@ -116,7 +116,8 @@ export const readScoped =
   }
 
 // Loads a paged list; a page that arrives after the list was reset or searched again, or after
-// its session ended, is dropped.
+// its session ended, is dropped. A page joins the list as it is when the page arrives, so rows
+// changed or removed meanwhile stay that way.
 export const pageLoader = (epochs: Record<string, number>, sessionMark: () => object) => {
   const pageKeys = new WeakMap<unknown[], Set<Key>>()
 
@@ -148,14 +149,15 @@ export const pageLoader = (epochs: Record<string, number>, sessionMark: () => ob
       throw e
     }
     if (!current()) return
-    const seen = pageKeys.get(base.list) ?? new Set<Key>(base.list.map(keyOf))
+    const now = read().list
+    const seen = pageKeys.get(now) ?? new Set<Key>(now.map(keyOf))
     const added = page.items.filter(item => {
       const key = keyOf(item)
       if (seen.has(key)) return false
       seen.add(key)
       return true
     })
-    const list = added.length ? [...base.list, ...added] : base.list
+    const list = added.length ? [...now, ...added] : now
     pageKeys.set(list, seen)
     write({ ...base, list, hasMore: page.next !== null, cursor: page.next, loading: false })
   }

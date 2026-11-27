@@ -436,8 +436,9 @@ export function createPaletteIndexer(acct: AccountSession) {
         break
       case 'roles_changed':
       case 'admin_changed':
+      case 'member_roles_changed':
         // Roles can hide channels: servers that are only checked, not loaded, are checked again.
-        if (ev.type === 'admin_changed' && ev.username !== me) return
+        if (ev.type !== 'roles_changed' && ev.username !== me) return
         if (!store.getState().servers[ev.server] && verified.has(ev.server))
           void verifyServer(ev.server, gen)
         return

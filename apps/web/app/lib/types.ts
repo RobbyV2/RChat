@@ -1206,6 +1206,7 @@ export type WsEvent =
       display: (number | null)[]
       version: number
     }
+  | { type: 'member_roles_changed'; server: string; username: string; role_ids: number[] }
   | { type: 'upload_expiry_changed'; server: string }
   | { type: 'channel_perms_changed'; server: string; channel_id: number }
   | { type: 'layout_changed'; server: string; layout: ChannelLayout }

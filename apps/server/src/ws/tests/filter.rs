@@ -578,6 +578,11 @@ fn every_event() -> Vec<WsEvent> {
                     is_admin: true,
                     perms: 1,
                 },
+                WsEvent::MemberRolesChanged {
+                    server: s(server),
+                    username: s(user),
+                    role_ids: vec![1, 2],
+                },
                 WsEvent::ServerCreated {
                     server: ServerSummaryLite {
                         creator: Some(s(user)),
@@ -993,6 +998,23 @@ async fn shared_channel_cache_follows_permission_events() {
         bob.viewable.len(),
         1,
         "a new role order changes no channel access"
+    );
+    let roles_of = |username: &str| WsEvent::MemberRolesChanged {
+        server: s("rchat"),
+        username: s(username),
+        role_ids: vec![1],
+    };
+    track(&roles_of("carol"), &mut bob);
+    assert_eq!(
+        bob.viewable.len(),
+        1,
+        "another member's roles change nothing this connection can see"
+    );
+    track(&roles_of("bob"), &mut bob);
+    assert!(bob.viewable.is_empty(), "its own roles do");
+    assert_eq!(
+        channel_gate(&state, &mut bob, "rchat", text).await,
+        Some(false)
     );
     track(&WsEvent::RolesChanged { server: s("rchat") }, &mut bob);
     assert!(bob.viewable.is_empty());

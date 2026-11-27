@@ -270,6 +270,11 @@ pub(super) fn track(ev: &WsEvent, access: &mut Access) {
             username,
             is_admin: _,
             perms: _,
+        }
+        | WsEvent::MemberRolesChanged {
+            server,
+            username,
+            role_ids: _,
         } => {
             if Some(username.as_str()) == me {
                 forget_server(access, server);
@@ -788,6 +793,11 @@ pub(super) fn wants(
             display: _,
             version: _,
         } => in_server(server),
+        WsEvent::MemberRolesChanged {
+            server,
+            username,
+            role_ids: _,
+        } => in_server(server) || Some(username.as_str()) == me,
         WsEvent::ChannelPermsChanged {
             server,
             channel_id: _,

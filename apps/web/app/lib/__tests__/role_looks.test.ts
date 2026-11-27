@@ -13,7 +13,7 @@ import {
   withRole,
   withRoleEvents,
 } from '../role_looks'
-import { FIRST_GROUPS, groupParts, mapGroups, serverGroups } from '../member_groups'
+import { FIRST_GROUPS, groupParts, mapGroups, regroup, serverGroups } from '../member_groups'
 import { displayOrderOf, hoistGroupsOf } from '../perms'
 import type { Member, Role } from '../types'
 import { loadPerms } from './helpers/perms'
@@ -196,6 +196,37 @@ describe('the groups of the member list', () => {
     const all = mapGroups(pages, null, drop)
     expect(all.b.rest.list).toEqual([])
     expect(mapGroups(pages, null, list => list)).toBe(pages)
+  })
+
+  test('a member whose roles changed moves to the loaded page of the group they show in', () => {
+    const m = (username: string, role_ids: number[] = []) => ({ ...member(username), role_ids })
+    const groups = serverGroups([
+      role(1, 3, { hoist: true }),
+      role(2, 2, { hoist: true }),
+      role(3, 1),
+    ])
+    const pages = {
+      '1': page([m('amy', [1])]),
+      '2': page([m('bob', [2])]),
+      rest: page([m('cat')]),
+    }
+    const lists = (out: Record<string, { list: Member[] }>) =>
+      Object.fromEntries(Object.entries(out).map(([k, p]) => [k, p.list.map(x => x.username)]))
+    expect(lists(regroup(pages, groups, 'bob', m('bob', [1, 2])))).toEqual({
+      '1': ['amy', 'bob'],
+      '2': [],
+      rest: ['cat'],
+    })
+    expect(lists(regroup(pages, groups, 'amy', m('amy', [3])))).toEqual({
+      '1': [],
+      '2': ['bob'],
+      rest: ['cat', 'amy'],
+    })
+    const same = regroup(pages, groups, 'bob', m('bob', [2, 3]))
+    expect(same['2'].list[0].role_ids).toEqual([2, 3])
+    expect(same['1']).toBe(pages['1'])
+    expect(regroup({ rest: pages.rest }, groups, 'cat', m('cat', [1]))).toEqual({ rest: page([]) })
+    expect(regroup(pages, groups, 'zed', undefined)).toBe(pages)
   })
 
   test('online members first, each by name', () => {

@@ -131,6 +131,9 @@ impl Seat<'_> {
             | WsEvent::AdminChanged {
                 server, username, ..
             }
+            | WsEvent::MemberRolesChanged {
+                server, username, ..
+            }
             | WsEvent::MemberTimeout {
                 server, username, ..
             } => ours(server) && me(username),

@@ -337,6 +337,11 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username,
             is_admin: _,
             perms: _,
+        }
+        | WsEvent::MemberRolesChanged {
+            server,
+            username,
+            role_ids: _,
         } => to(vec![Target::Server(server), Target::User(username)]),
         WsEvent::MembersPurged { server, usernames } => {
             let mut targets = vec![Target::Server(server)];

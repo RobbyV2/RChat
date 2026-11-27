@@ -1,5 +1,5 @@
 import type { MemberGroup } from './api'
-import { hoistGroups, hostedShown, onlineFirst, type Shown } from './role_looks'
+import { groupOf, hoistGroups, hostedShown, onlineFirst, type Shown } from './role_looks'
 import type { Paged } from './store_types'
 import type { Member, Role } from './types'
 
@@ -12,6 +12,10 @@ export const FIRST_GROUPS = 3
 export const FIRST_ROWS = 20
 
 export const groupKey = (group: MemberGroup) => String(group)
+
+// The key of the group a member holding `roleIds` shows in.
+export const groupFor = (groups: readonly Shown<number>[], roleIds: readonly number[]) =>
+  groupKey(groupOf(groups, roleIds) ?? 'rest')
 
 // Every loaded group page of `server` (of every server when null) through `fn`.
 export const mapGroups = (
@@ -30,6 +34,32 @@ export const mapGroups = (
       next[key] = { ...page, list }
     }
     if (next) (out ??= { ...pages })[name] = next
+  }
+  return out ?? pages
+}
+
+// The loaded group pages of a server once `username` holds other roles: they leave every page but
+// the one of the group they show in now, and `member` (their row with those roles, when known)
+// takes its place there when that page is loaded.
+export const regroup = (
+  pages: Record<string, Paged<Member>>,
+  groups: readonly Shown<number>[],
+  username: string,
+  member: Member | undefined
+): Record<string, Paged<Member>> => {
+  const to = member && groupFor(groups, member.role_ids)
+  let out: Record<string, Paged<Member>> | null = null
+  for (const [key, page] of Object.entries(pages)) {
+    const at = page.list.findIndex(m => m.username === username)
+    const list =
+      key !== to
+        ? at < 0
+          ? page.list
+          : page.list.filter((_, i) => i !== at)
+        : at < 0
+          ? [...page.list, member!]
+          : page.list.map((m, i) => (i === at ? member! : m))
+    if (list !== page.list) (out ??= { ...pages })[key] = { ...page, list }
   }
   return out ?? pages
 }

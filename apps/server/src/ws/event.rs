@@ -309,6 +309,12 @@ pub enum WsEvent {
         display: Vec<Option<i64>>,
         version: i64,
     },
+    /// A member was given or lost a role: `role_ids` are the roles they hold now.
+    MemberRolesChanged {
+        server: String,
+        username: String,
+        role_ids: Vec<i64>,
+    },
     /// The server's upload expiry changed; clients load the server again.
     UploadExpiryChanged {
         server: String,

@@ -967,18 +967,9 @@ fn announce_kick(hub: &Hub, server: &str, username: &str, banned: bool) {
 }
 
 async fn role_ids(db: &Db, server: &str, username: &str) -> Result<Vec<i64>, ApiError> {
-    let rows = sqlx::query(
-        "SELECT role_id FROM user_roles WHERE server = $1 AND username = $2 ORDER BY role_id",
-    )
-    .bind(server)
-    .bind(username)
-    .fetch_all(db)
-    .await?;
-    let ids = rows
-        .iter()
-        .map(|r| r.try_get(0))
-        .collect::<sqlx::Result<Vec<_>>>()?;
-    Ok(ids)
+    Ok(member_role_ids(db, server, username)
+        .await?
+        .unwrap_or_default())
 }
 
 pub(crate) async fn role_ids_of(
@@ -6190,9 +6181,9 @@ pub(crate) async fn delete_role(
 /// changes. The role must rank below your highest role, and its permissions must be a subset
 /// of yours (equal is fine). The channel permission rules that name the role must not allow
 /// anything you don't have in that channel (see `role_limits.channel_grants` in the server
-/// detail). Requires
-/// the Assign roles server permission. Emits `roles_changed` to the server and removes users
-/// from voice channels they can no longer view. General rate-limit bucket.
+/// detail). Requires the Assign roles server permission. Emits `member_roles_changed` (the
+/// member's roles now) to the server and the member when the member gains the role, and takes
+/// them out of voice channels they can no longer be in. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/roles/{id}/assign",
@@ -6314,7 +6305,9 @@ pub(crate) async fn assign_role(
         .await?;
     }
     tx.commit().await?;
-    announce_roles_changed(&state, &key).await;
+    if added > 0 {
+        announce_member_roles(&state, &key, &target).await;
+    }
     Ok(ok())
 }
 
@@ -6325,9 +6318,9 @@ pub(crate) async fn assign_role(
 /// `ServerDetail.roles_order_confirmed`); the role's own permissions don't matter. If one of the role's channel rules denies something its channel gives
 /// everyone who views it (see `role_limits.channel_denies`), removing it would widen
 /// access, so you also need Manage channels, even for yourself. Requires the Assign roles server
-/// permission.
-/// Emits `roles_changed` to the server and removes users from voice channels they can no longer
-/// view. General rate-limit bucket.
+/// permission. Emits `member_roles_changed` (the member's roles now) to the server and the
+/// member, and takes them out of voice channels they can no longer be in. General rate-limit
+/// bucket.
 #[utoipa::path(
     delete,
     path = "/api/v1/servers/{name}/roles/{id}/assign/{username}",
@@ -6405,7 +6398,7 @@ pub(crate) async fn unassign_role(
     match removed {
         0 => Err(not_found("Not assigned")),
         _ => {
-            announce_roles_changed(&state, &key).await;
+            announce_member_roles(&state, &key, &target).await;
             Ok(ok())
         }
     }
@@ -6451,11 +6444,44 @@ pub(crate) async fn revoke_role(
     )
 }
 
-pub(crate) async fn announce_roles_changed(state: &AppState, server: &str) {
-    state.hub.broadcast(WsEvent::RolesChanged {
-        server: server.to_owned(),
-    });
-    voice_rules_changed(state, server, None).await;
+/// Tells the server and `username` which roles they hold now (the whole server reloads its
+/// roles when they can't be read), and checks their voice.
+pub(crate) async fn announce_member_roles(state: &AppState, server: &str, username: &str) {
+    match member_role_ids(&state.db, server, username).await {
+        Ok(Some(role_ids)) => state.hub.broadcast(WsEvent::MemberRolesChanged {
+            server: server.to_owned(),
+            username: username.to_owned(),
+            role_ids,
+        }),
+        Ok(None) => {}
+        Err(_) => state.hub.broadcast(WsEvent::RolesChanged {
+            server: server.to_owned(),
+        }),
+    }
+    crate::ws::member_voice_changed(state, server, username).await;
+}
+
+/// The roles `username` holds in `server`, lowest id first; `None` for a non-member.
+pub(crate) async fn member_role_ids(
+    db: &Db,
+    server: &str,
+    username: &str,
+) -> Result<Option<Vec<i64>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT r.role_id FROM members m LEFT JOIN user_roles r ON r.server = m.server AND r.username = m.username WHERE m.server = $1 AND m.username = $2 ORDER BY r.role_id",
+    )
+    .bind(server)
+    .bind(username)
+    .fetch_all(db)
+    .await?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let ids = rows
+        .iter()
+        .map(|r| r.try_get::<Option<i64>, _>(0))
+        .collect::<sqlx::Result<Vec<_>>>()?;
+    Ok(Some(ids.into_iter().flatten().collect()))
 }
 
 /// A channel rule subject for the audit log: `{kind: "user", name}` or `{kind: "role", id,
@@ -7768,6 +7794,8 @@ pub(crate) async fn set_everyone_perms(
 
 #[cfg(test)]
 mod looks_tests;
+#[cfg(test)]
+mod member_roles_tests;
 
 #[cfg(test)]
 mod tests {

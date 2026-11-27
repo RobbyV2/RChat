@@ -388,7 +388,7 @@ async fn reconcile_after_lookup(
         .map(|(s, _)| s)
         .collect::<BTreeSet<_>>()
     {
-        servers::announce_roles_changed(state, server).await;
+        servers::announce_member_roles(state, server, username).await;
     }
     admission_error.map_or(Ok(result), Err)
 }
