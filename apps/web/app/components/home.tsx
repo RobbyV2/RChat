@@ -69,7 +69,8 @@ import { TypingEllipsis, useHostedTypers } from './typing_indicator'
 import { ServerGlyph } from './server_rail'
 import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
-import { Masked, fieldCls, filledBtn, textBtn, useOwnServer } from './ui'
+import { Button, IconButton, ListRow, LinkButton } from './controls'
+import { Masked, fieldCls, useOwnServer } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { type P2pState } from '../lib/p2p/app'
 import type { P2pDialog } from '../lib/p2p/app/store'
@@ -101,9 +102,6 @@ function showOwner(account: AccountSession, peer?: P2pApp | null) {
 }
 
 const card = 'flex min-w-0 flex-col gap-1 rounded-3xl bg-surface-container-low p-4'
-
-const rowCls =
-  'group flex w-full min-w-0 items-center gap-3 rounded-xl px-2 py-1.5 text-left hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary'
 
 function Card({
   title,
@@ -207,15 +205,13 @@ function Tips() {
         >
           <Lightbulb size={16} className="shrink-0" />
           <span className="min-w-0 flex-1">{t.text}</span>
-          <button
-            type="button"
-            title="Dismiss tip"
-            aria-label="Dismiss tip"
+          <IconButton
+            icon={X}
+            label="Dismiss tip"
+            tone="inherit"
+            size="sm"
             onClick={() => acct.home.hideTip(t.id)}
-            className="shrink-0 rounded-full p-1.5 hover:bg-on-tertiary-container/10"
-          >
-            <X size={16} />
-          </button>
+          />
         </li>
       ))}
     </ul>
@@ -414,13 +410,9 @@ function QuickActions({
         <p role="alert">
           {problem.error}{' '}
           {canAdd && problem.host && (
-            <button
-              type="button"
-              className={textBtn}
-              onClick={() => openDialog({ kind: 'add_instance', origin: problem.host })}
-            >
-              Add {problem.host}
-            </button>
+            <LinkButton onClick={() => openDialog({ kind: 'add_instance', origin: problem.host })}>
+              Add <span className="streamer">{problem.host}</span>
+            </LinkButton>
           )}
         </p>
       )}
@@ -450,9 +442,9 @@ function QuickActions({
             placeholder="username or username@host"
             className={fieldCls}
           />
-          <button type="submit" disabled={!name.trim()} className={filledBtn}>
+          <Button type="submit" variant="filled" size="md" disabled={!name.trim()}>
             Message
-          </button>
+          </Button>
         </form>
       )}
     </section>
@@ -507,8 +499,7 @@ function RecentItem({
   }
 
   return (
-    <button
-      type="button"
+    <ListRow
       data-recent={id}
       onClick={navigate}
       title={title}
@@ -522,22 +513,21 @@ function RecentItem({
           p2p ? identity : undefined
         )
       )}
-      className={rowCls}
-    >
-      {glyph}
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span
-          className={`streamer truncate text-sm ${unread || pings ? 'font-semibold text-on-surface' : 'text-on-surface'}`}
-        >
+      leading={glyph}
+      streamer
+      label={
+        <span className={unread || pings ? 'font-semibold' : undefined}>
           <Masked text={label} own={own} />
         </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-on-surface-variant">
+      }
+      description={
+        <span className="flex min-w-0 items-center gap-1.5">
           <span className="streamer truncate">{where}</span>
           {p2p && <P2pBadge />}
         </span>
-      </span>
-      <UnreadMark unread={unread} pings={pings} />
-    </button>
+      }
+      trailing={<UnreadMark unread={unread} pings={pings} />}
+    />
   )
 }
 
@@ -830,36 +820,22 @@ function UnreadRow({
           p2p ? identity : undefined
         )
       )}
-      className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-surface-container-high"
+      className="flex min-w-0 items-center gap-1"
     >
-      <button
-        type="button"
+      <ListRow
         onClick={navigate}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-primary"
-      >
-        {glyph}
-        <span className="flex min-w-0 flex-1 flex-col">
+        leading={glyph}
+        label={
           <span className="flex min-w-0 items-center gap-1.5">
-            <span
-              className={`truncate text-sm font-semibold text-on-surface ${streamer ? 'streamer' : ''}`}
-            >
-              {name}
-            </span>
+            <span className={`truncate font-semibold ${streamer ? 'streamer' : ''}`}>{name}</span>
             {p2p && <P2pBadge />}
           </span>
-          <span className="truncate text-xs text-on-surface-variant">{detail}</span>
-        </span>
-        <PingBadge count={pings} className="ml-auto" />
-      </button>
-      <button
-        type="button"
-        title="Mark as read"
-        aria-label={markLabel}
-        onClick={mark}
-        className="shrink-0 rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-      >
-        <CheckCheck size={18} />
-      </button>
+        }
+        description={detail}
+        trailing={<PingBadge count={pings} className="ml-auto" />}
+        place="flex-1"
+      />
+      <IconButton icon={CheckCheck} label={markLabel} tooltip="Mark as read" onClick={mark} />
     </div>
   )
 }
@@ -1037,15 +1013,11 @@ function UnreadSummary() {
       icon={<Bell size={18} />}
       action={
         any && (
-          <button
-            type="button"
-            title="Mark all as read"
-            aria-label="Mark all as read"
+          <IconButton
+            icon={CheckCheck}
+            label="Mark all as read"
             onClick={() => askMarkAllRead(p2pMarkAll?.())}
-            className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-          >
-            <CheckCheck size={18} />
-          </button>
+          />
         )
       }
     >
@@ -1059,13 +1031,9 @@ function UnreadSummary() {
           {p2pDms && <P2pDmUnreadRow pings={p2pRows.dms.pings} />}
           {rows}
           {servers.length > UNREAD_SHOWN && (
-            <button
-              type="button"
-              onClick={() => setAll(a => !a)}
-              className={`${textBtn} self-start`}
-            >
+            <Button onClick={() => setAll(a => !a)} place="self-start">
               {all ? 'Show less' : `Show ${servers.length - UNREAD_SHOWN} more`}
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -1084,8 +1052,7 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
   const streamer = useStore(s => s.streamer)
   const mask = useMask(dm.is_self)
   return (
-    <button
-      type="button"
+    <ListRow
       data-pinned-dm={dm.id}
       title={streamer ? 'Direct message' : mask(dm.other.display_name)}
       onClick={() => {
@@ -1101,26 +1068,27 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
           onDrop: ({ index }) => placeDm(dm.id, 'pinned', index),
         }
       )}
-      className={rowCls}
-    >
-      <UserAvatar
-        username={dm.other.username}
-        avatarKind={dm.other.avatar_kind}
-        avatarColor={dm.other.avatar_color}
-        size={32}
-      />
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span
-          className={`streamer truncate text-sm text-on-surface ${unread || pings ? 'font-semibold' : ''}`}
-        >
+      leading={
+        <UserAvatar
+          username={dm.other.username}
+          avatarKind={dm.other.avatar_kind}
+          avatarColor={dm.other.avatar_color}
+          size={32}
+        />
+      }
+      streamer
+      label={
+        <span className={unread || pings ? 'font-semibold' : undefined}>
           <Masked text={dm.other.display_name} own={dm.is_self} />
         </span>
-        <span className="streamer truncate text-xs text-on-surface-variant">
+      }
+      description={
+        <span className="streamer">
           {dm.is_self ? 'Notes to yourself' : `@${dm.other.username}`}
         </span>
-      </span>
-      <DmEnd id={dm.id} unread={unread} pings={pings} />
-    </button>
+      }
+      trailing={<DmEnd id={dm.id} unread={unread} pings={pings} />}
+    />
   )
 }
 
@@ -1186,13 +1154,9 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
           {actor ? <AccountTag row={actor.row} name={actor.instance} /> : 'Peer-to-peer'}
         </h2>
         <P2pBadge />
-        <button
-          type="button"
-          onClick={() => p2p?.openHome()}
-          className={`${textBtn} ml-auto shrink-0`}
-        >
+        <Button onClick={() => p2p?.openHome()} place="ml-auto shrink-0">
           Open
-        </button>
+        </Button>
       </div>
       {card.state === 'off' ? (
         <>
@@ -1204,13 +1168,14 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
               <LabelText text={error} />
             </p>
           )}
-          <button
-            type="button"
+          <Button
+            variant="filled"
+            size="md"
             onClick={() => p2p?.openDialog({ kind: 'enable' })}
-            className={`${filledBtn} mx-2 mt-2 self-start`}
+            place="mx-2 mt-2 self-start"
           >
             Turn on P2P
-          </button>
+          </Button>
         </>
       ) : card.state === 'elsewhere' ? (
         <ElsewhereNotice />
@@ -1233,20 +1198,17 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
           {cardRows(card).map(row => {
             const Icon = P2P_ROW_ICONS[row.id]
             return (
-              <button
+              <ListRow
                 key={row.id}
-                type="button"
                 data-p2p-home-row={row.id}
                 onClick={() => p2p?.openHome()}
-                className={rowCls}
-              >
-                <PlaceGlyph p2p>
-                  <Icon size={16} className="text-on-surface" />
-                </PlaceGlyph>
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-on-surface">
-                  {row.text}
-                </span>
-              </button>
+                leading={
+                  <PlaceGlyph p2p>
+                    <Icon size={16} className="text-on-surface" />
+                  </PlaceGlyph>
+                }
+                label={<span className="font-semibold">{row.text}</span>}
+              />
             )
           })}
           {card.top.length > 0 && (
@@ -1276,36 +1238,27 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
           )}
           {card.state !== 'starting' && (
             <div className="flex flex-wrap gap-2 px-2 pt-2">
-              <button
-                type="button"
+              <Button
+                icon={UserPlus}
                 data-peer-code
                 onClick={() =>
                   identity && openPeerLink(acct, { kind: 'contact' }, identity, client.shown())
                 }
-                className={`${textBtn} flex items-center gap-1.5`}
               >
-                <UserPlus size={16} />
                 Add contact
-              </button>
-              <button
-                type="button"
-                onClick={() => p2p?.openDialog({ kind: 'add', tab: 'mine' })}
-                className={`${textBtn} flex items-center gap-1.5`}
-              >
-                <QrCode size={16} />
+              </Button>
+              <Button icon={QrCode} onClick={() => p2p?.openDialog({ kind: 'add', tab: 'mine' })}>
                 Show my code
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                icon={Waypoints}
                 data-peer-code
                 onClick={() =>
                   identity && openPeerLink(acct, { kind: 'invite' }, identity, client.shown())
                 }
-                className={`${textBtn} flex items-center gap-1.5`}
               >
-                <Waypoints size={16} />
                 Join P2P server
-              </button>
+              </Button>
             </div>
           )}
         </>
@@ -1323,23 +1276,19 @@ function GetStarted({ className = '' }: { className?: string }) {
         Join a server to start chatting, or add a friend to message them.
       </p>
       <div className="flex flex-wrap gap-2 px-2 pt-2">
-        <button
-          type="button"
+        <Button
+          variant="filled"
+          size="md"
           onClick={() => openDialog({ kind: 'add_server', tab: 'join' })}
-          className={filledBtn}
         >
           Join a server
-        </button>
-        <button
-          type="button"
-          onClick={() => openDialog({ kind: 'add_server', tab: 'create' })}
-          className={textBtn}
-        >
+        </Button>
+        <Button size="md" onClick={() => openDialog({ kind: 'add_server', tab: 'create' })}>
           Create a server
-        </button>
-        <button type="button" onClick={() => openFriends('add')} className={textBtn}>
+        </Button>
+        <Button size="md" onClick={() => openFriends('add')}>
           Add a friend
-        </button>
+        </Button>
       </div>
     </Card>
   )
@@ -1363,29 +1312,31 @@ function GuestHome() {
           <p className="px-2 text-sm text-on-surface-variant">
             Enter a server name to open it. The name is the invite code.
           </p>
-          <button
-            type="button"
+          <Button
+            variant="filled"
+            size="md"
             onClick={() => openDialog({ kind: 'add_server', tab: 'join' })}
-            className={`${filledBtn} mx-2 mt-2 self-start`}
+            place="mx-2 mt-2 self-start"
           >
             Find a server
-          </button>
+          </Button>
         </Card>
         <Card title={signup ? 'Create an account' : 'Log in'} icon={<LogIn size={18} />}>
           <p className="px-2 text-sm text-on-surface-variant">
             {signup ? 'Sign up' : 'Log in'} to {benefits}
           </p>
-          <button
-            type="button"
+          <Button
+            variant="filled"
+            size="md"
             onClick={() => {
               if (!client.show(loginAccount, 'none')) return
               logoutForLogin(loginAccount)
               router.replace(signup ? '/login?mode=register' : '/login')
             }}
-            className={`${filledBtn} mx-2 mt-2 self-start`}
+            place="mx-2 mt-2 self-start"
           >
             {signup ? 'Sign up' : 'Log in'}
-          </button>
+          </Button>
         </Card>
       </div>
     </div>
@@ -1429,7 +1380,7 @@ function ActorChips({
           type="button"
           aria-pressed={actor === active}
           onClick={() => onPick(actor.key)}
-          className="flex items-center gap-1 rounded-full px-2 py-1 aria-pressed:bg-secondary-container"
+          className="flex items-center gap-1 rounded-full px-2 py-1 outline-offset-2 hover-idle:bg-on-surface/8 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container pointer-coarse:min-h-11"
         >
           <HomeActorLabel actor={actor} />
         </button>
@@ -1451,11 +1402,11 @@ function GroupUnread({ actor }: { actor: HomeActor }) {
     <section data-home-unread-owner={actor.key}>
       <h3 className="flex items-center gap-1 px-2 py-1">
         <HomeActorLabel actor={actor} />
-        <button
-          type="button"
-          className="ml-auto rounded-full p-1.5"
-          aria-label="Mark all as read"
-          title="Mark all as read"
+        <IconButton
+          icon={CheckCheck}
+          label="Mark all as read"
+          size="sm"
+          place="ml-auto"
           onClick={() => {
             const state = actor.account.store.getState()
             if (!actor.peer) state.askMarkAllRead()
@@ -1470,9 +1421,7 @@ function GroupUnread({ actor }: { actor: HomeActor }) {
                 })
             }
           }}
-        >
-          <CheckCheck size={16} />
-        </button>
+        />
       </h3>
       {(direct.pings > 0 || direct.unread) &&
         (actor.peer ? (
@@ -1482,9 +1431,7 @@ function GroupUnread({ actor }: { actor: HomeActor }) {
         ))}
       {all ? servers : servers.slice(0, UNREAD_SHOWN)}
       {servers.length > UNREAD_SHOWN && (
-        <button type="button" className={textBtn} onClick={() => setAll(!all)}>
-          {all ? 'Show less' : 'Show more'}
-        </button>
+        <Button onClick={() => setAll(!all)}>{all ? 'Show less' : 'Show more'}</Button>
       )}
     </section>
   )
@@ -1567,7 +1514,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
             key={a.key}
             aria-pressed={a.row.active}
             onClick={() => void switchActor(a.row, shown)}
-            className="flex shrink-0 flex-col gap-1 rounded-xl bg-surface-container-low p-2 text-left aria-pressed:bg-secondary-container"
+            className="flex shrink-0 flex-col gap-1 rounded-xl bg-surface-container-low p-2 text-left outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container"
           >
             <span className="flex items-center gap-1">
               <HomeActorLabel actor={a} />
@@ -1578,12 +1525,9 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
           </button>
         ))}
         {canAdd && (
-          <button
-            className={textBtn}
-            onClick={() => shown.store.getState().openDialog({ kind: 'add_instance' })}
-          >
+          <Button onClick={() => shown.store.getState().openDialog({ kind: 'add_instance' })}>
             Add an instance
-          </button>
+          </Button>
         )}
       </div>
       <AccountProvider session={actor.account} key={actor.key}>
@@ -1723,18 +1667,18 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
   return (
     <main data-home className="relative flex h-full min-w-0 flex-1 flex-col bg-surface">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4 max-[360px]:has-[[data-view-actor]]:gap-1 max-[360px]:has-[[data-view-actor]]:px-2">
-        <button
-          title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
-          aria-label="Menu"
+        <IconButton
+          icon={Menu}
+          label="Menu"
+          tooltip={menuPings ? `Menu, ${pingLabel(menuPings)}` : undefined}
           onClick={onMenu}
-          className="relative rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
+          place="md:hidden"
         >
-          <Menu size={20} />
           <PingBadge
             count={menuPings}
             className="absolute -top-1 -right-1.5 border-2 border-surface"
           />
-        </button>
+        </IconButton>
         <span className="flex items-center gap-2 font-medium">
           <House size={18} className="text-on-surface-variant" />
           Home

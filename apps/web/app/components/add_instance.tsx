@@ -27,13 +27,11 @@ import {
 import { passwordSignup, siteSettings } from '../lib/features'
 import { shellInfo } from '../lib/platform'
 import type { InstanceInfo, SiteSettings } from '../lib/types'
+import { Button } from './controls'
 import { Dialog } from './ui'
 import { SignInStep } from './sign_in_step'
 export { SignInStep } from './sign_in_step'
 
-const primary =
-  'rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary disabled:opacity-50'
-const secondary = 'rounded-full border border-outline px-4 py-2 text-sm text-primary'
 export function useAddingAllowed() {
   return useSyncExternalStore(watchHostedPolicy, canAddInstance, () => true)
 }
@@ -79,12 +77,12 @@ export function TrustNotice({
         )}
       </p>
       <div className="flex justify-end gap-2">
-        <button className={secondary} onClick={onCancel}>
+        <Button size="md" onClick={onCancel}>
           Cancel
-        </button>
-        <button autoFocus className={primary} onClick={onTrust}>
+        </Button>
+        <Button variant="filled" size="md" autoFocus onClick={onTrust}>
           I trust this app
-        </button>
+        </Button>
       </div>
     </section>
   )
@@ -256,30 +254,29 @@ export function AddInstanceFlow({
               {knownInstances()
                 .filter(i => allowed || i.origin === ownInstance()?.origin)
                 .map(({ origin, info }) => (
-                  <button
-                    type="button"
+                  <Button
+                    size="md"
                     key={origin}
                     disabled={busy}
-                    className={secondary}
                     onClick={() => {
                       setAddress(origin)
                       void probe(origin)
                     }}
                   >
                     {info.name} · {new URL(origin).host}
-                  </button>
+                  </Button>
                 ))}
             </div>
           )}
           <div className="flex justify-end gap-2">
             {onCancel && (
-              <button type="button" onClick={onCancel} className={secondary}>
+              <Button size="md" onClick={onCancel}>
                 Cancel
-              </button>
+              </Button>
             )}
-            <button className={primary} disabled={busy || !address.trim()}>
+            <Button type="submit" variant="filled" size="md" disabled={busy || !address.trim()}>
               {busy ? 'Checking…' : 'Connect'}
-            </button>
+            </Button>
           </div>
         </form>
       )}
@@ -323,19 +320,19 @@ export function AddInstanceFlow({
                 You're signed in on <span className="streamer">{target.conn.host}</span> as{' '}
                 <span className="streamer">{a.username}</span>.
               </p>
-              <button className={secondary} onClick={() => useExisting(a.username)}>
+              <Button size="md" onClick={() => useExisting(a.username)}>
                 Switch
-              </button>
+              </Button>
             </div>
           ))}
           {guest && (
-            <button className={secondary} onClick={() => useExisting(null)}>
+            <Button size="md" onClick={() => useExisting(null)}>
               Switch to guest
-            </button>
+            </Button>
           )}
-          <button className={primary} onClick={() => authenticate(target)}>
+          <Button variant="filled" size="md" onClick={() => authenticate(target)}>
             Add another account on <span className="streamer">{target.conn.host}</span>
-          </button>
+          </Button>
         </>
       )}
       {step === 'signin' &&
@@ -346,12 +343,12 @@ export function AddInstanceFlow({
             <p role="status" className="streamer">
               {alreadySignedIn(duplicate ?? 'guest', target.conn.host)}
             </p>
-            <button className={primary} onClick={() => useExisting(duplicate)}>
+            <Button variant="filled" size="md" onClick={() => useExisting(duplicate)}>
               Switch
-            </button>
-            <button className={secondary} onClick={() => setDuplicate(undefined)}>
+            </Button>
+            <Button size="md" onClick={() => setDuplicate(undefined)}>
               Use a different account
-            </button>
+            </Button>
           </>
         ) : (
           <AccountProvider session={session}>
@@ -390,20 +387,20 @@ export function AddInstanceFlow({
           </AccountProvider>
         ))}
       {!linkTarget && (step === 'known' || step === 'signin') && (
-        <button className={secondary} onClick={back}>
+        <Button size="md" onClick={back}>
           Change instance
-        </button>
+        </Button>
       )}
       {step === 'done' && session && (
         <>
           <p>Added. Switch now?</p>
           <div className="flex gap-2">
-            <button className={primary} onClick={() => onDone(session)}>
+            <Button variant="filled" size="md" onClick={() => onDone(session)}>
               Switch
-            </button>
-            <button className={secondary} onClick={onCancel}>
+            </Button>
+            <Button size="md" onClick={onCancel}>
               Later
-            </button>
+            </Button>
           </div>
         </>
       )}

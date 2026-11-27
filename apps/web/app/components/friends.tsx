@@ -14,7 +14,16 @@ import {
 import { AccountTag } from './account_tag'
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { Check, MessageCircle, MoreVertical, UserMinus, UserPlus, Users, X } from 'lucide-react'
+import {
+  Check,
+  MessageCircle,
+  MoreVertical,
+  UserMinus,
+  UserPlus,
+  Users,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import { ApiError } from '../lib/api'
 import { messageFriend } from '../lib/actions/member'
 import { openActionMenu } from '../lib/actions/menu'
@@ -44,18 +53,8 @@ import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { PingBadge } from './ping_badge'
-import {
-  Dialog,
-  fieldCls,
-  FieldError,
-  filledBtn,
-  iconBtn,
-  Masked,
-  PanelHeader,
-  Sentinel,
-  textBtn,
-  useEscape,
-} from './ui'
+import { Button, IconButton, ListRow, Chip, Tab, LinkButton } from './controls'
+import { Dialog, fieldCls, FieldError, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { RowsSkeleton } from './skeletons'
 
 // The unseen friend pings (requests and accepted requests), for badges.
@@ -100,8 +99,7 @@ function Name({ user, sub }: { user: UserRef; sub?: string }) {
   )
 }
 
-const rowCls =
-  'group flex min-h-12 items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-surface-container-high'
+const rowCls = 'group flex min-h-12 items-center gap-3 rounded-lg px-3 py-2 hover:bg-on-surface/8'
 
 const friendAt = (user: UserRef): Target => ({
   kind: 'member',
@@ -134,25 +132,23 @@ export function FriendRow({ friend }: { friend: Friend }) {
         <Avatar user={user} online={online} />
         <Name user={user} sub={online ? 'Online' : 'Offline'} />
       </div>
-      <button
-        title="Message"
-        aria-label={`Message ${user.display_name}`}
+      <IconButton
+        icon={MessageCircle}
+        label={`Message ${user.display_name}`}
+        tooltip="Message"
+        size="lg"
         onClick={() => messageFriend(user, acct)}
-        className={iconBtn}
-      >
-        <MessageCircle size={18} />
-      </button>
-      <button
-        title="More"
-        aria-label={`More for ${user.display_name}`}
+      />
+      <IconButton
+        icon={MoreVertical}
+        label={`More for ${user.display_name}`}
+        tooltip="More"
+        size="lg"
         onClick={e => {
           const r = e.currentTarget.getBoundingClientRect()
           openActionMenu(r.left, r.bottom, friendAt(user), undefined, acct)
         }}
-        className={iconBtn}
-      >
-        <MoreVertical size={18} />
-      </button>
+      />
     </div>
   )
 }
@@ -194,32 +190,31 @@ export function RequestRow({ request }: { request: FriendRequest }) {
       </div>
       {incoming ? (
         <>
-          <button
-            title="Accept"
-            aria-label={`Accept ${user.display_name}`}
+          <IconButton
+            icon={Check}
+            label={`Accept ${user.display_name}`}
+            tooltip="Accept"
+            tone="primary"
+            size="lg"
             onClick={() => void acceptFriend(user)}
-            className="rounded-full p-2 text-primary hover:bg-surface-container-highest"
-          >
-            <Check size={18} />
-          </button>
-          <button
-            title="Deny"
-            aria-label={`Deny ${user.display_name}`}
+          />
+          <IconButton
+            icon={X}
+            label={`Deny ${user.display_name}`}
+            tooltip="Deny"
+            tone="error"
+            size="lg"
             onClick={() => void denyFriend(user.username)}
-            className="rounded-full p-2 text-error hover:bg-surface-container-highest"
-          >
-            <X size={18} />
-          </button>
+          />
         </>
       ) : (
-        <button
-          title="Cancel request"
-          aria-label={`Cancel request to ${user.display_name}`}
+        <IconButton
+          icon={X}
+          label={`Cancel request to ${user.display_name}`}
+          tooltip="Cancel request"
+          size="lg"
           onClick={() => void cancelFriendRequest(user.username)}
-          className={iconBtn}
-        >
-          <X size={18} />
-        </button>
+        />
       )}
     </div>
   )
@@ -271,12 +266,7 @@ function FriendList({ online, add }: { online: boolean; add?: () => void }) {
         ) : (
           <Empty>
             {online ? 'No friends are online.' : 'No friends yet.'}{' '}
-            <button
-              onClick={add ?? (() => setTab('add'))}
-              className="font-medium text-primary hover:underline"
-            >
-              Add friend
-            </button>
+            <LinkButton onClick={add ?? (() => setTab('add'))}>Add friend</LinkButton>
           </Empty>
         ))}
     </>
@@ -393,15 +383,13 @@ export function AddFriendBox({
         <p role="alert" className="text-sm text-on-surface-variant">
           {hint}{' '}
           {unknown && allowed && (
-            <button
-              type="button"
-              className={textBtn}
+            <LinkButton
               onClick={() =>
                 shown.store.getState().openDialog({ kind: 'add_instance', origin: unknown })
               }
             >
-              Add {unknown}
-            </button>
+              Add <span className="streamer">{unknown}</span>
+            </LinkButton>
           )}
         </p>
       )}
@@ -424,9 +412,9 @@ export function AddFriendBox({
           spellCheck={false}
           className={fieldCls}
         />
-        <button type="submit" disabled={!text.trim() || !account} className={filledBtn}>
+        <Button type="submit" variant="filled" size="md" disabled={!text.trim() || !account}>
           Next
-        </button>
+        </Button>
       </div>
     </form>
   )
@@ -457,24 +445,10 @@ function Tabs({ tab, entries }: { tab: FriendsTab; entries: FriendAccount[] }) {
       className="flex shrink-0 gap-1 overflow-x-auto px-2 py-2"
     >
       {FRIEND_TABS.map(t => (
-        <button
-          key={t.tab}
-          role="tab"
-          aria-selected={tab === t.tab}
-          onClick={() => setTab(t.tab)}
-          className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-medium ${
-            tab === t.tab
-              ? t.tab === 'add'
-                ? 'bg-primary text-on-primary'
-                : 'bg-secondary-container text-on-secondary-container'
-              : t.tab === 'add'
-                ? 'text-primary hover:bg-surface-container-high'
-                : 'text-on-surface-variant hover:bg-surface-container-high'
-          }`}
-        >
+        <Tab key={t.tab} selected={tab === t.tab} onClick={() => setTab(t.tab)} place="shrink-0">
           {t.label}
           {t.tab === 'pending' && <PingBadge count={incoming} />}
-        </button>
+        </Tab>
       ))}
     </div>
   )
@@ -515,23 +489,18 @@ export default function FriendsPanel() {
           aria-label="Filter by account"
           className="flex shrink-0 flex-wrap gap-1 px-2 pb-2"
         >
-          <button
-            className={textBtn + ' aria-pressed:bg-secondary-container'}
-            aria-pressed={activeFilter === null}
-            onClick={() => setFilter(null)}
-          >
+          <Chip on={activeFilter === null} onClick={() => setFilter(null)}>
             All
-          </button>
+          </Chip>
           {entries.map(e => (
-            <button
+            <Chip
               key={e.account.renderKey}
-              className={textBtn + ' aria-pressed:bg-secondary-container'}
-              aria-pressed={activeFilter === e.account.renderKey}
+              on={activeFilter === e.account.renderKey}
               aria-label={e.row.username + ' on ' + e.name}
               onClick={() => setFilter(e.account.renderKey)}
             >
               <AccountTag row={e.row} name={e.name} />
-            </button>
+            </Chip>
           ))}
         </div>
       )}
@@ -645,24 +614,22 @@ function AccountFriendsSection({ max }: { max: number }) {
         friends.map(f => <FriendRow key={f.user.username} friend={f} />)
       )}
       <div className="flex flex-wrap gap-1">
-        <button
+        <Button
           onClick={() => {
             if (client.shown() !== account) client.show(account)
             openFriends()
           }}
-          className={textBtn}
         >
           All friends
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={() => {
             if (client.shown() !== account) client.show(account)
             openFriends('add')
           }}
-          className={textBtn}
         >
           Add friend
-        </button>
+        </Button>
       </div>
     </section>
   )
@@ -811,17 +778,18 @@ function AddFriends({ dialog }: { dialog: Extract<ActiveDialog, { kind: 'add_fri
         <FieldError message="There is no one to send a request to." />
       )}
       <div className="mt-6 flex justify-end gap-2">
-        <button onClick={closeDialog} className={textBtn}>
+        <Button size="md" onClick={closeDialog}>
           {results ? 'Done' : 'Cancel'}
-        </button>
+        </Button>
         {!results && (
-          <button
+          <Button
+            variant="filled"
+            size="md"
             onClick={() => void send()}
             disabled={!ready || !targets.length || busy}
-            className={filledBtn}
           >
             {confirm}
-          </button>
+          </Button>
         )}
       </div>
     </Dialog>
@@ -829,15 +797,7 @@ function AddFriends({ dialog }: { dialog: Extract<ActiveDialog, { kind: 'add_fri
 }
 
 // The friend row for a profile card: Add friend, Accept, Cancel request or Remove friend.
-export function ProfileFriendButton({
-  user,
-  className,
-  onDone,
-}: {
-  user: UserRef
-  className: string
-  onDone: () => void
-}) {
+export function ProfileFriendButton({ user, onDone }: { user: UserRef; onDone: () => void }) {
   const { api, store } = useAccount()
   const [relation, setRelation] = useState<Relation | null>(null)
   const rev = useStore(
@@ -860,40 +820,24 @@ export function ProfileFriendButton({
   }, [user.username, rev])
   if (relation === null) return null
   const s = store.getState()
-  const [label, icon, run, danger]: [string, ReactNode, () => void, boolean] =
+  const [label, icon, run, danger]: [string, LucideIcon, () => void, boolean] =
     relation === 'friend'
-      ? ['Remove friend', <UserMinus key="i" size={16} />, () => s.askRemoveFriend(user), true]
+      ? ['Remove friend', UserMinus, () => s.askRemoveFriend(user), true]
       : relation === 'incoming'
-        ? [
-            'Accept friend request',
-            <Check key="i" size={16} />,
-            () => void s.acceptFriend(user),
-            false,
-          ]
+        ? ['Accept friend request', Check, () => void s.acceptFriend(user), false]
         : relation === 'outgoing'
-          ? [
-              'Cancel friend request',
-              <X key="i" size={16} />,
-              () => void s.cancelFriendRequest(user.username),
-              false,
-            ]
-          : [
-              'Add friend',
-              <UserPlus key="i" size={16} />,
-              () => s.askAddFriends([user.username]),
-              false,
-            ]
+          ? ['Cancel friend request', X, () => void s.cancelFriendRequest(user.username), false]
+          : ['Add friend', UserPlus, () => s.askAddFriends([user.username]), false]
   return (
-    <button
+    <ListRow
       onClick={() => {
         if (relation === 'friend' || relation === 'none') onDone()
         run()
       }}
-      className={`${className} ${danger ? 'text-error' : 'text-on-surface'}`}
-    >
-      <span className="shrink-0">{icon}</span>
-      {label}
-    </button>
+      tone={danger ? 'danger' : 'plain'}
+      icon={icon}
+      label={label}
+    />
   )
 }
 
@@ -913,20 +857,15 @@ export function Choice<T extends string>({
       <p className="text-sm text-on-surface">{label}</p>
       <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
         {options.map(o => (
-          <button
+          <Chip
             key={o.value}
-            role="radio"
-            aria-checked={value === o.value}
+            radio
+            on={value === o.value}
             disabled={value === undefined}
             onClick={() => onChange(o.value)}
-            className={`rounded-full border px-3 py-1.5 text-sm ${
-              value === o.value
-                ? 'border-transparent bg-secondary-container text-on-secondary-container'
-                : 'border-outline text-on-surface-variant hover:bg-surface-container-high'
-            }`}
           >
             {o.label}
-          </button>
+          </Chip>
         ))}
       </div>
     </div>

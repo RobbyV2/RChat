@@ -1,4 +1,5 @@
 'use client'
+import { Button } from './controls'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { useAccount, useStore } from '../lib/client/react'
@@ -161,10 +162,10 @@ export function SignInStep({
         setError(null)
         setNameError(null)
       }}
-      className={`flex-1 rounded-full py-2 text-sm font-medium transition-colors ${
+      className={`flex-1 rounded-full py-2 text-sm font-medium outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11 ${
         mode === value
           ? 'bg-primary-container text-on-primary-container'
-          : 'text-on-surface-variant hover:bg-surface-container-high'
+          : 'text-on-surface-variant hover-idle:bg-on-surface/8'
       }`}
     >
       {label}
@@ -245,18 +246,14 @@ export function SignInStep({
               {error}
             </p>
           )}
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-full bg-primary py-2.5 text-sm font-medium text-on-primary transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
+          <Button type="submit" variant="filled" size="md" disabled={busy}>
             {mode === 'login' ? 'Log in' : 'Create account'}
-          </button>
+          </Button>
         </form>
       )}
       {(!owner || owner.username === null) && guestsEnabled && !missing && (
-        <button
-          type="button"
+        <Button
+          size="md"
           disabled={busy}
           onClick={async () => {
             const target = selectAccount ? selectAccount(null, 'guest') : account
@@ -267,10 +264,9 @@ export function SignInStep({
             setBusy(false)
             if (target.store.getState().guest) onSuccess(target)
           }}
-          className="flex flex-wrap items-center justify-center gap-x-1 rounded-full px-3 py-2 text-sm text-primary hover:bg-surface-container-high"
         >
           {adding ? 'Browse as a guest' : 'Continue as a guest'} <ArrowRight size={16} />
-        </button>
+        </Button>
       )}
     </>
   )

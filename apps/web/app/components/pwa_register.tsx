@@ -1,5 +1,6 @@
 'use client'
 
+import { Button, IconButton } from './controls'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Download } from 'lucide-react'
 import { shellInfo } from '../lib/platform'
@@ -40,23 +41,16 @@ export function InstallButton({ compact = false }: { compact?: boolean }) {
     () => null
   )
   if (!prompt) return null
-  return (
-    <button
-      type="button"
-      title="Install app"
-      onClick={() => {
-        void prompt.prompt()
-        setDeferred(null)
-      }}
-      className={
-        compact
-          ? 'flex h-10 w-10 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-          : 'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-      }
-    >
-      <Download size={compact ? 18 : 16} />
-      {!compact && 'Install app'}
-    </button>
+  const install = () => {
+    void prompt.prompt()
+    setDeferred(null)
+  }
+  return compact ? (
+    <IconButton icon={Download} label="Install app" size="lg" onClick={install} />
+  ) : (
+    <Button icon={Download} size="md" onClick={install}>
+      Install app
+    </Button>
   )
 }
 

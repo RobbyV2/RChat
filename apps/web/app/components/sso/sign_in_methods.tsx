@@ -10,7 +10,8 @@ import { longPress } from '../context_menu'
 import { ReAuthPrompt } from '../backup_phrase/reauth_prompt'
 import { useConfirmation } from './use_confirmation'
 import { tabWrap } from '../../lib/settings_page'
-import { CloseButton, useBackdrop, FieldError, dangerBtn, filledBtn, textBtn } from '../ui'
+import { Button } from '../controls'
+import { CloseButton, useBackdrop, FieldError } from '../ui'
 
 type Provider = { id: string; name: string }
 export function useSignInLinks() {
@@ -86,9 +87,7 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
       {list.error && (
         <>
           <FieldError message={list.error} />
-          <button className={textBtn} onClick={list.refresh}>
-            Retry
-          </button>
+          <Button onClick={list.refresh}>Retry</Button>
         </>
       )}
       {links?.map(l => {
@@ -118,21 +117,21 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
                 Linked {new Date(l.linked_at * 1000).toLocaleDateString()}
               </p>
             </div>
-            <button
-              className={dangerBtn}
+            <Button
+              variant="danger"
               disabled={!allowed}
               title={allowed ? undefined : 'Add a password or another sign-in first'}
               onClick={e => unlink(e.currentTarget)}
             >
               Unlink
-            </button>
+            </Button>
           </div>
         )
       })}
       {available.map(p => (
-        <button key={p.id} className={textBtn} onClick={e => pick('link', p, e.currentTarget)}>
+        <Button key={p.id} onClick={e => pick('link', p, e.currentTarget)}>
           Link {p.name}
-        </button>
+        </Button>
       ))}
       {op && links && (op.type !== 'link' || available.some(p => p.id === op.p.id)) && (
         <ProviderDialog
@@ -154,8 +153,9 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
             <>
               <p className="mb-3">You will no longer be able to sign in with {op.p.name}.</p>
               <FieldError message={error} />
-              <button
-                className={filledBtn}
+              <Button
+                variant="filled"
+                size="md"
                 disabled={busy || !canUnlink(me, links, op.p.id)}
                 onClick={async () => {
                   if (!current()) return
@@ -175,7 +175,7 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
                 }}
               >
                 Unlink
-              </button>
+              </Button>
             </>
           )}
         </ProviderDialog>

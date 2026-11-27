@@ -25,11 +25,12 @@ const TONES: IconButtonTone[] = [
   'inherit',
   'primary',
   'danger',
+  'error',
   'filled',
   'filled-danger',
   'overlay',
 ]
-const ICON_SIZES: IconButtonSize[] = ['sm', 'md', 'lg']
+const ICON_SIZES: IconButtonSize[] = ['xs', 'sm', 'md', 'lg']
 
 const classes = (s: string) => s.split(/\s+/).filter(Boolean)
 
@@ -94,7 +95,7 @@ describe('button looks', () => {
 
 describe('icon button looks', () => {
   test('every size is a fixed square that grows to 44 px on a coarse pointer', () => {
-    const box = { sm: 'size-7', md: 'size-8', lg: 'size-9' }
+    const box = { xs: 'size-5', sm: 'size-7', md: 'size-8', lg: 'size-9' }
     for (const t of TONES)
       for (const s of ICON_SIZES) {
         const c = classes(iconButtonLook(t, s))
@@ -102,6 +103,11 @@ describe('icon button looks', () => {
         expect(c).toContain('pointer-coarse:size-11')
         expect(c).toContain('shrink-0')
       }
+  })
+
+  test('the one inside a chip grows into its margin on a coarse pointer, so the chip keeps its size', () => {
+    has(iconButtonLook('plain', 'xs'), 'size-5', 'pointer-coarse:size-11', 'pointer-coarse:-m-3')
+    expect(classes(iconButtonLook('plain', 'sm'))).not.toContain('pointer-coarse:-m-3')
   })
 
   test('pressed and open states follow the ARIA attributes', () => {
@@ -124,10 +130,12 @@ describe('rows, chips, badges', () => {
     has(
       rowLook('plain'),
       'current:bg-secondary-container',
+      'selected:bg-secondary-container',
       'pointer-coarse:min-h-11',
       'text-on-surface'
     )
     expect(classes(rowLook('danger'))).toContain('text-error')
+    expect(classes(rowLook('primary'))).toContain('text-primary')
   })
 
   test('a chip is 44 px on a coarse pointer and shows the chosen one filled', () => {

@@ -53,7 +53,8 @@ import { ServerGlyph } from './server_rail'
 import { openMessageLink } from '../lib/link_open'
 import { AboutLine } from './server_about'
 import { aboutText } from '../lib/server_about'
-import { Dialog, fieldCls, FieldError, filledBtn, LinkPage, Masked, textBtn, useOwn } from './ui'
+import { Button } from './controls'
+import { Dialog, fieldCls, FieldError, LinkPage, Masked, useOwn } from './ui'
 import { SpoilerLine } from './replies'
 import { PreviewFilename, RevealChannelPreview } from './preview_reveal'
 import { NameWithUsername } from './display_name'
@@ -300,12 +301,12 @@ function PasswordDialog({
           />
           <FieldError message={error} />
           <div className="mt-5 flex justify-end gap-2">
-            <button type="button" onClick={onClose} className={textBtn}>
+            <Button size="md" onClick={onClose}>
               Cancel
-            </button>
-            <button disabled={busy || !password.trim()} className={filledBtn}>
+            </Button>
+            <Button type="submit" variant="filled" size="md" disabled={busy || !password.trim()}>
               {unlock ? (busy ? 'Checking…' : 'Continue') : busy ? 'Joining…' : 'Join'}
-            </button>
+            </Button>
           </div>
         </form>
       </Dialog>
@@ -544,13 +545,9 @@ function Preview({
   if (!target || !preview_channel) return null
   if (!allowed)
     return (
-      <button
-        type="button"
-        className={textBtn + ' min-h-11 cursor-pointer'}
-        onClick={() => void requestViewing(target)}
-      >
+      <Button size="md" onClick={() => void requestViewing(target)}>
         Open channel preview
-      </button>
+      </Button>
     )
   if (!loaded || loaded.key !== key || loaded.access !== access) return null
   const preview = loaded.data
@@ -828,7 +825,7 @@ export function InviteCard({
     else void join(guest)
   })
 
-  const btn = big ? 'w-full py-2.5' : 'shrink-0'
+  const btn = big ? 'w-full' : 'shrink-0'
   const fit = big ? 'break-words' : 'truncate'
   const errorCode = error instanceof ApiError ? error.status : null
   const ticketEnds = data?.password_expires_at ?? null
@@ -855,13 +852,13 @@ export function InviteCard({
         ),
         actions: (
           <>
-            <button onClick={() => setUnlocking(null)} className={`${filledBtn} ${btn}`}>
+            <Button variant="filled" size="md" onClick={() => setUnlocking(null)} place={btn}>
               Enter password
-            </button>
+            </Button>
             {!authed && (
-              <button onClick={() => logIn(true)} className={`${textBtn} ${btn}`}>
+              <Button size="md" onClick={() => logIn(true)} place={btn}>
                 Log in
-              </button>
+              </Button>
             )}
           </>
         ),
@@ -885,12 +882,14 @@ export function InviteCard({
           </p>
         ),
         actions: big && (
-          <button
+          <Button
+            variant="filled"
+            size="md"
             onClick={() => (authed ? owner.store.getState().closeInvite() : logIn(false))}
-            className={`${filledBtn} ${btn}`}
+            place={btn}
           >
             {authed ? 'Continue to RChat' : 'Log in'}
-          </button>
+          </Button>
         ),
       }
     if (locked)
@@ -907,9 +906,9 @@ export function InviteCard({
         title: code ? label : <span className={`streamer min-w-0 ${fit}`}>{server}</span>,
         sub: <p className="text-xs text-on-surface-variant">Log in to see who&apos;s here.</p>,
         actions: (
-          <button onClick={() => logIn(true)} className={`${filledBtn} ${btn}`}>
+          <Button variant="filled" size="md" onClick={() => logIn(true)} place={btn}>
             Log in to join
-          </button>
+          </Button>
         ),
       }
     if (error !== null)
@@ -922,9 +921,9 @@ export function InviteCard({
         title: "Couldn't load this invite",
         sub: <p className="text-xs text-on-surface-variant">{errorText(error)}</p>,
         actions: (
-          <button onClick={reload} className={`${textBtn} ${btn}`}>
+          <Button size="md" onClick={reload} place={btn}>
             Retry
-          </button>
+          </Button>
         ),
       }
     if (!data || !status) return null
@@ -956,39 +955,43 @@ export function InviteCard({
       ),
       actions: !authed ? (
         <>
-          <button onClick={() => logIn(true)} className={`${filledBtn} ${btn}`}>
+          <Button variant="filled" size="md" onClick={() => logIn(true)} place={btn}>
             Log in to join
-          </button>
+          </Button>
           {guestsEnabled && (
-            <button onClick={() => void continueAsGuest()} className={`${textBtn} ${btn}`}>
+            <Button size="md" onClick={() => void continueAsGuest()} place={btn}>
               Continue as guest
-            </button>
+            </Button>
           )}
         </>
       ) : status === 'member' ? (
-        <button
-          onClick={go}
-          title="You're already a member"
-          className={`rounded-full bg-secondary-container px-4 py-2 text-sm font-medium text-on-secondary-container hover:opacity-90 ${btn}`}
-        >
+        <Button variant="tonal" size="md" onClick={go} title="You're already a member" place={btn}>
           Go to server
-        </button>
+        </Button>
       ) : status === 'banned' ? (
-        <button
+        <Button
+          variant="tonal"
+          size="md"
           disabled
           title="You are banned from this server"
-          className={`rounded-full bg-on-surface/10 px-4 py-2 text-sm font-medium text-on-surface/50 ${btn}`}
+          place={btn}
         >
           Banned
-        </button>
+        </Button>
       ) : status === 'readable' && !guest ? (
-        <button onClick={go} className={`${filledBtn} ${btn}`}>
+        <Button variant="filled" size="md" onClick={go} place={btn}>
           Open
-        </button>
+        </Button>
       ) : (
-        <button disabled={busy} onClick={() => void join(guest)} className={`${filledBtn} ${btn}`}>
+        <Button
+          variant="filled"
+          size="md"
+          disabled={busy}
+          onClick={() => void join(guest)}
+          place={btn}
+        >
           {busy ? 'Joining…' : 'Join'}
-        </button>
+        </Button>
       ),
       extra: (
         <>
@@ -1018,8 +1021,9 @@ export function InviteCard({
     const { choice } = linkChoice(owner, owner.conn.origin)
     if (choice.kind !== 'open' || choice.owner !== me?.username)
       view.actions = (
-        <button
-          className={filledBtn}
+        <Button
+          variant="filled"
+          size="md"
           onClick={() =>
             void routeInstanceLink(owner, {
               origin: owner.conn.origin,
@@ -1030,7 +1034,7 @@ export function InviteCard({
           }
         >
           Open invite
-        </button>
+        </Button>
       )
   }
   return (
@@ -1163,7 +1167,9 @@ export function RemoteInviteCard({
       ? void routeInstanceLink(owner, { origin: invite.origin, path })
       : openMessageLink(owner, remoteInviteUrl(invite), null, false)
   const openBtn = (
-    <button
+    <Button
+      variant="filled"
+      size="md"
       onClick={open}
       title={
         internal
@@ -1172,13 +1178,13 @@ export function RemoteInviteCard({
             ? 'Opens the invite in a new tab'
             : `Opens ${host} in a new tab`
       }
-      className={`${filledBtn} inline-flex max-w-full min-w-0 items-center gap-1.5`}
+      place="max-w-full min-w-0"
     >
       <span className="min-w-0 truncate">
         Open on <span className="streamer">{host}</span>
       </span>
       {!internal && <ExternalLink size={14} className="shrink-0" />}
-    </button>
+    </Button>
   )
   const hidden = needsPassword(error) || deniedAccess(error)
   const invalid = error instanceof ApiError && error.status === 404 && !hidden
@@ -1204,15 +1210,17 @@ export function RemoteInviteCard({
         actions: (
           <>
             {internal && openBtn}
-            <button
+            <Button
+              variant="filled"
+              size="md"
               onClick={load}
               title={
                 streamer ? 'Fetch this invite from its site' : `Fetch this invite from ${host}`
               }
-              className={`${filledBtn} shrink-0`}
+              place="shrink-0"
             >
               Load preview
-            </button>
+            </Button>
           </>
         ),
       }
@@ -1269,9 +1277,9 @@ export function RemoteInviteCard({
           invalid || !rchat ? (
             openBtn
           ) : (
-            <button onClick={reload} className={`${textBtn} shrink-0`}>
+            <Button onClick={reload} place="shrink-0">
               Retry
-            </button>
+            </Button>
           ),
       }
     if (!data) return null

@@ -35,6 +35,7 @@ import { hostedLockMessage } from '../lib/client/hosted_policy'
 import { useAddingAllowed } from './add_instance'
 import { longPress } from './context_menu'
 import { RailInstance } from './instance_badge'
+import { Button, IconButton, ListRow } from './controls'
 import { Masked, SheetGrip, useEscape } from './ui'
 
 function useRows() {
@@ -42,8 +43,6 @@ function useRows() {
   return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
 }
 const keyOf = (row: SwitcherRow) => JSON.stringify([row.origin, row.username, row.local])
-const actionClass =
-  'rounded-lg px-3 py-2 text-left text-sm text-primary hover:bg-surface-container-highest focus-visible:outline-2'
 const smallButton =
   'inline-flex size-9 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container-highest disabled:opacity-35'
 
@@ -194,24 +193,24 @@ function OrderHandle({
       >
         <GripVertical size={16} />
       </button>
-      <button
-        type="button"
-        aria-label={'Move ' + label + ' up'}
+      <IconButton
+        icon={ArrowUp}
+        label={'Move ' + label + ' up'}
+        tooltip="Move up"
+        size="lg"
+        shape="square"
         disabled={index === 0}
-        className={smallButton}
         onClick={() => reorder(target, order[index - 1])}
-      >
-        <ArrowUp size={14} />
-      </button>
-      <button
-        type="button"
-        aria-label={'Move ' + label + ' down'}
+      />
+      <IconButton
+        icon={ArrowDown}
+        label={'Move ' + label + ' down'}
+        tooltip="Move down"
+        size="lg"
+        shape="square"
         disabled={index === order.length - 1}
-        className={smallButton}
         onClick={() => reorder(target, order[index + 1])}
-      >
-        <ArrowDown size={14} />
-      </button>
+      />
     </span>
   )
 }
@@ -410,23 +409,24 @@ function AccountList({
                         />
                       )}
                       {(manage || opened) && (
-                        <button
-                          className={smallButton}
-                          title="Account actions"
+                        <IconButton
+                          icon={MoreHorizontal}
+                          label="Account actions"
+                          size="lg"
+                          shape="square"
                           aria-expanded={opened}
                           onClick={() => setActions(opened ? null : key)}
-                        >
-                          <MoreHorizontal size={18} />
-                        </button>
+                        />
                       )}
                     </div>
                     {opened && (
                       <div className="mx-2 mb-2 flex flex-wrap gap-1 rounded-xl bg-surface-container-high p-1">
                         {own && (
-                          <button
-                            className={actionClass}
+                          <ListRow
+                            tone="primary"
                             role="switch"
                             aria-checked={r.background}
+                            label={r.local ? 'Run in the background' : 'Keep connected'}
                             onClick={() =>
                               void client.updateBook(b =>
                                 r.local
@@ -440,32 +440,29 @@ function AccountList({
                                   : setConnected(b, r.origin, r.username!, !r.background)
                               )
                             }
-                          >
-                            {r.local ? 'Run in the background' : 'Keep connected'}
-                          </button>
+                          />
                         )}
                         {r.local ? (
-                          <button className={actionClass} onClick={() => removePeer(r)}>
-                            Remove identity
-                          </button>
+                          <ListRow
+                            tone="primary"
+                            label="Remove identity"
+                            onClick={() => removePeer(r)}
+                          />
                         ) : (
                           <>
                             {own &&
                               switcherSession(r)?.store.getState().settings.p2p &&
                               r.status !== 'Signed out' && (
-                                <button
-                                  className={actionClass}
+                                <ListRow
+                                  tone="primary"
+                                  label="Add a P2P identity"
                                   onClick={() => {
                                     setAdding(r)
                                   }}
-                                >
-                                  Add a P2P identity
-                                </button>
+                                />
                               )}
                             {r.status !== 'Signed out' && (
-                              <button className={actionClass} onClick={() => signOut(r)}>
-                                Sign out
-                              </button>
+                              <ListRow tone="primary" label="Sign out" onClick={() => signOut(r)} />
                             )}
                           </>
                         )}
@@ -474,44 +471,47 @@ function AccountList({
                   </div>
                 )
               })}
-              <button
-                className={actionClass + ' mx-1 flex items-center gap-2'}
-                onClick={() =>
-                  owner.store.getState().openDialog({ kind: 'add_instance', origin: g.origin })
-                }
-              >
-                <Plus size={15} />
-                Add an account on{' '}
-                <span className="streamer">
-                  <Masked text={g.name} />
-                </span>
-              </button>
+              <div className="px-1">
+                <ListRow
+                  tone="primary"
+                  icon={Plus}
+                  onClick={() =>
+                    owner.store.getState().openDialog({ kind: 'add_instance', origin: g.origin })
+                  }
+                  label={
+                    <>
+                      Add an account on{' '}
+                      <span className="streamer">
+                        <Masked text={g.name} />
+                      </span>
+                    </>
+                  }
+                />
+              </div>
             </section>
           )
         })}
       </div>
       {manage && !canAdd && <p className="px-3 text-sm">{hostedLockMessage()}</p>}
-      <footer className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-outline-variant p-2">
+      <footer className="flex shrink-0 flex-wrap justify-between gap-1 border-t border-outline-variant p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {canAdd && (
-          <button
-            className={actionClass + ' flex items-center gap-2'}
+          <Button
+            icon={Plus}
             onClick={() => owner.store.getState().openDialog({ kind: 'add_instance' })}
           >
-            <Plus size={16} />
             Add an instance
-          </button>
+          </Button>
         )}
         {modeChange && (
-          <button
-            className={actionClass + ' flex items-center gap-2'}
+          <Button
+            icon={manage ? ChevronLeft : Settings}
             onClick={() => {
               modeChange(!manage)
               setActions(null)
             }}
           >
-            {manage ? <ChevronLeft size={16} /> : <Settings size={16} />}{' '}
             {manage ? 'Back to accounts' : 'Manage accounts'}
-          </button>
+          </Button>
         )}
       </footer>
     </div>
@@ -563,9 +563,13 @@ export function SwitcherDialog({ initialManage }: { initialManage: boolean }) {
               'Switch account'
             )}
           </h2>
-          <button title="Close account switcher" className={smallButton} onClick={close}>
-            <X size={18} />
-          </button>
+          <IconButton
+            icon={X}
+            label="Close account switcher"
+            size="lg"
+            shape="square"
+            onClick={close}
+          />
         </header>
         <AccountList manage={manage} modeChange={setManage} />
       </section>

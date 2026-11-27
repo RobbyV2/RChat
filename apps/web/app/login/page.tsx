@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../components/controls'
 import { watchPagePolicy } from '../lib/client/hosted_policy'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -124,13 +125,9 @@ function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) 
               </span>
             </div>
             {!owner && allowed && (
-              <button
-                type="button"
-                onClick={() => setAdding(true)}
-                className="self-start text-sm text-primary"
-              >
+              <Button onClick={() => setAdding(true)} place="self-start">
                 Use another instance
-              </button>
+              </Button>
             )}
             <SignInStep
               back={next}

@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../controls'
 import { useEffect, useRef, useState } from 'react'
 import type { AccountSession } from '../../lib/client/session'
 import type { AuthInfo } from '../../lib/types'
@@ -112,26 +113,26 @@ export function ProviderButtons({
       {providers
         .filter(p => p.id === confirmProvider)
         .map(p => (
-          <button
+          <Button
             key={p.id}
-            type="button"
-            className="rounded-full border border-outline px-4 py-2 text-primary"
+            variant="tonal"
+            size="md"
             disabled={busy}
             onClick={() => void start(p.id, true)}
           >
             Sign in again to confirm with {p.name}
-          </button>
+          </Button>
         ))}
       {providers.map(p => (
-        <button
+        <Button
           key={p.id}
-          type="button"
-          className="rounded-full border border-outline px-4 py-2 text-primary"
+          variant="tonal"
+          size="md"
           disabled={busy}
           onClick={() => void start(p.id, false)}
         >
           Continue with {p.name}
-        </button>
+        </Button>
       ))}
       {error && <p role="alert">{error}</p>}
       {divider && <p className="text-center text-sm text-on-surface-variant">or</p>}

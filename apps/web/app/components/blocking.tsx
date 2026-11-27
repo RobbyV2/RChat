@@ -8,7 +8,8 @@ import { dayLines } from '../lib/date_dividers'
 import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { DateDivider } from './date_divider'
-import { fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
+import { Button, LinkButton } from './controls'
+import { fieldCls, FieldError, Masked, Sentinel } from './ui'
 
 // Collapsed runs of blocked users' messages. A run opens with Show, or by itself when a jump
 // targets one of its messages.
@@ -59,13 +60,9 @@ export function BlockedRow({
         <UserX size={14} aria-hidden className="shrink-0" />
         <span>{blockedLabel(count)}</span>
         <span aria-hidden>·</span>
-        <button
-          onClick={onToggle}
-          aria-expanded={open}
-          className="rounded-sm font-medium text-primary outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
-        >
+        <LinkButton onClick={onToggle} aria-expanded={open}>
           {open ? 'Hide' : 'Show'}
-        </button>
+        </LinkButton>
       </div>
     </div>
   )
@@ -81,16 +78,14 @@ export function BlockedQuote({ onShow }: { onShow: () => void }) {
       <UserX size={14} aria-hidden className="shrink-0" />
       <span className="truncate italic">Blocked message</span>
       <span aria-hidden>·</span>
-      <button
-        type="button"
+      <LinkButton
         onClick={e => {
           e.stopPropagation()
           onShow()
         }}
-        className="shrink-0 rounded-sm font-medium text-primary outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-8"
       >
         Show
-      </button>
+      </LinkButton>
     </div>
   )
 }
@@ -183,12 +178,7 @@ export function BlockedComposer({ user }: { user: UserRef }) {
     <div className="flex items-center gap-3 border-t border-outline-variant px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm text-on-surface-variant">
       <UserX size={16} aria-hidden className="shrink-0" />
       <span className="min-w-0 flex-1">You blocked this user.</span>
-      <button
-        onClick={() => void unblockUser(user.username, user.display_name)}
-        className={textBtn}
-      >
-        Unblock
-      </button>
+      <Button onClick={() => void unblockUser(user.username, user.display_name)}>Unblock</Button>
     </div>
   )
 }
@@ -229,9 +219,9 @@ function BlockByName() {
           spellCheck={false}
           className={fieldCls}
         />
-        <button type="submit" disabled={!name.trim() || busy} className={filledBtn}>
+        <Button type="submit" variant="filled" size="md" disabled={!name.trim() || busy}>
           Block
-        </button>
+        </Button>
       </div>
       <FieldError message={error} />
     </form>
@@ -281,9 +271,7 @@ export function BlockedUsersSection() {
               </span>{' '}
               <span className="streamer text-on-surface-variant">@{user.username}</span>
             </span>
-            <button onClick={() => void unblockUser(user.username)} className={textBtn}>
-              Unblock
-            </button>
+            <Button onClick={() => void unblockUser(user.username)}>Unblock</Button>
           </div>
         ))}
         {page.hasMore && <Sentinel key={page.list.length} onVisible={more} />}

@@ -1,5 +1,6 @@
 'use client'
 
+import { ListRow } from './controls'
 import type { ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { embedColor, fieldRows, safeLink, webhookIdOf } from '../lib/webhooks'
@@ -141,13 +142,12 @@ export function WebhookProfile({
           Posted by an app or service through a webhook. It is not a member and cannot get messages.
         </p>
         {id !== null && (
-          <button
+          <ListRow
+            icon={copied ? Check : Copy}
+            label={copied ? 'Copied' : 'Copy Webhook ID'}
             onClick={() => void sharing().copyText(String(id)).then(flash)}
-            className={`mt-2 flex w-full items-center gap-3 rounded-lg px-2.5 text-left text-sm text-on-surface hover:bg-surface-container-highest ${sheet ? 'min-h-11' : 'py-1.5'}`}
-          >
-            <span className="shrink-0">{copied ? <Check size={16} /> : <Copy size={16} />}</span>
-            {copied ? 'Copied' : 'Copy Webhook ID'}
-          </button>
+            place="mt-2"
+          />
         )}
       </div>
     </>

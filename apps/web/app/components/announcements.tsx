@@ -1,4 +1,5 @@
 'use client'
+import { IconButton } from './controls'
 import { useAccount, useStoreApi, useConn } from '../lib/client/react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { X } from 'lucide-react'
@@ -153,14 +154,13 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
           className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-1 text-sm"
         >
           <span className="min-w-0 break-words">{a.message}</span>
-          <button
-            title="Dismiss announcement"
-            aria-label="Dismiss announcement"
+          <IconButton
+            icon={X}
+            label="Dismiss announcement"
+            tone="inherit"
+            size="lg"
             onClick={() => void dismiss(a)}
-            className="grid size-11 shrink-0 place-items-center rounded-full hover:bg-on-secondary-container/10"
-          >
-            <X size={18} />
-          </button>
+          />
         </div>
       ))}
     </section>

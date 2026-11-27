@@ -8,10 +8,10 @@
 export type ButtonVariant = 'filled' | 'tonal' | 'text' | 'danger' | 'filled-danger'
 export type ButtonSize = 'sm' | 'md'
 export type IconButtonTone =
-  'plain' | 'inherit' | 'primary' | 'danger' | 'filled' | 'filled-danger' | 'overlay'
-export type IconButtonSize = 'sm' | 'md' | 'lg'
+  'plain' | 'inherit' | 'primary' | 'danger' | 'error' | 'filled' | 'filled-danger' | 'overlay'
+export type IconButtonSize = 'xs' | 'sm' | 'md' | 'lg'
 export type IconButtonShape = 'round' | 'square'
-export type RowTone = 'plain' | 'muted' | 'danger'
+export type RowTone = 'plain' | 'muted' | 'primary' | 'danger'
 export type RowVariant = 'plain' | 'card'
 export type BadgeTone = 'danger' | 'primary' | 'tertiary' | 'neutral' | 'outline'
 
@@ -136,32 +136,42 @@ const ICON_TONE: Record<IconButtonTone, string> = {
   inherit: HOVER,
   primary: `text-primary ${HOVER}`,
   danger: `text-on-surface-variant ${HOVER} hover-idle:text-error`,
+  error: `text-error ${HOVER}`,
   filled: 'bg-primary text-on-primary hover-idle:opacity-90',
   'filled-danger': 'bg-error text-on-error hover-idle:opacity-90',
   overlay: 'bg-scrim/70 text-on-scrim hover-idle:bg-scrim/85',
 }
 
 const ICON_BOX: Record<IconButtonSize, string> = {
+  xs: 'size-5',
   sm: 'size-7',
   md: 'size-8',
   lg: 'size-9',
 }
 
-export const ICON_SIZE: Record<IconButtonSize, number> = { sm: 16, md: 18, lg: 20 }
+export const ICON_SIZE: Record<IconButtonSize, number> = { xs: 12, sm: 16, md: 18, lg: 20 }
 
-// An icon only button: a 28, 32 or 36 px circle (or rounded square) with its icon in the middle.
-// `aria-pressed` shows it on, `aria-expanded` on a button with a popup shows the popup open (the
-// `pressed:` and `expanded:` variants of globals.css).
+// The box an icon button has with a mouse: what sits over the icon (a badge) is placed in it, so
+// it stays by the icon when the button grows on a coarse pointer.
+export const iconBoxLook = (size: IconButtonSize) =>
+  `${ICON_BOX[size]} relative flex items-center justify-center`
+
+// An icon only button: a 20 (inside a chip), 28, 32 or 36 px circle (or rounded square) with its
+// icon in the middle. On a coarse pointer it grows to 44 px; the one inside a chip grows into the
+// chip's margin, so the chip keeps its size. `aria-pressed` shows it on, `aria-expanded` on
+// a button with a popup shows the popup open (the `pressed:` and `expanded:` variants of
+// globals.css).
 export const iconButtonLook = (
   tone: IconButtonTone,
   size: IconButtonSize,
   shape: IconButtonShape = 'round'
 ) =>
-  `${ICON_BOX[size]} shrink-0 items-center justify-center ${shape === 'round' ? 'rounded-full' : 'rounded-lg'} ${ICON_TONE[tone]} ${FOCUS} expanded:bg-on-surface/8 pressed:bg-secondary-container pressed:text-on-secondary-container disabled:opacity-40 pointer-coarse:size-11`
+  `${ICON_BOX[size]} shrink-0 items-center justify-center ${shape === 'round' ? 'rounded-full' : 'rounded-lg'} ${ICON_TONE[tone]} ${FOCUS} expanded:bg-on-surface/8 pressed:bg-secondary-container pressed:text-on-secondary-container disabled:opacity-40 pointer-coarse:size-11${size === 'xs' ? ' pointer-coarse:-m-3' : ''}`
 
 const ROW_TONE: Record<RowTone, string> = {
   plain: 'text-on-surface',
   muted: 'text-on-surface-variant hover-idle:text-on-surface',
+  primary: 'text-primary',
   danger: 'text-error',
 }
 
@@ -173,6 +183,10 @@ export const rowLook = (tone: RowTone, variant: RowVariant = 'plain') =>
       ? 'min-h-11 rounded-xl bg-surface-container hover-idle:bg-surface-container-highest'
       : `rounded-lg ${HOVER}`
   } ${FOCUS} current:bg-secondary-container current:text-on-secondary-container selected:bg-secondary-container selected:text-on-secondary-container disabled:opacity-40 pointer-coarse:min-h-11`
+
+// A button inside a line of text (with an icon before its words, if any): it reads as a link and
+// keeps the line's height; on a coarse pointer it is 44 px to tap, grown into its margins.
+export const linkLook = `inline-flex items-center gap-1 rounded-sm font-medium text-primary underline-offset-2 hover-idle:underline ${FOCUS} disabled:opacity-40 pointer-coarse:-my-3.5 pointer-coarse:min-w-11 pointer-coarse:justify-center pointer-coarse:py-3.5`
 
 // One choice of a few, as a chip: the chosen one is filled.
 export const chipLook = (on: boolean) =>

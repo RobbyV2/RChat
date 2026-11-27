@@ -4,11 +4,7 @@ import { ActorLabel, useActorSuffix, useViewActor } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactNode,
-} from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import {
   ArrowRightLeft,
   Ban,
@@ -27,6 +23,7 @@ import {
   UserMinus,
   UserX,
   X,
+  type LucideIcon,
 } from 'lucide-react'
 import { ApiError } from '../lib/api'
 import { formatQualified, isHomeHost } from '../lib/qualified'
@@ -71,6 +68,7 @@ import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { useLook } from './shown_user'
 import { UserAvatar } from './user_avatar'
+import { Button, IconButton, LinkButton, ListRow } from './controls'
 import { Masked, useCopied, useOwnServer } from './ui'
 import { dmPlaceholder } from '../lib/display_name'
 import { ProfileFriendButton } from './friends'
@@ -167,17 +165,17 @@ const fmtDate = (ts: number) =>
     day: 'numeric',
   })
 
-const ACTIONS: Record<ProfileAction, { label: string; icon: ReactNode; danger?: boolean }> = {
-  kick: { label: 'Kick', icon: <UserMinus size={16} />, danger: true },
-  server_ban: { label: 'Ban from server', icon: <Ban size={16} />, danger: true },
-  timeout: { label: 'Time out', icon: <Timer size={16} />, danger: true },
-  untimeout: { label: 'Remove timeout', icon: <TimerOff size={16} /> },
-  profile_reset: { label: 'Reset server profile', icon: <Eraser size={16} />, danger: true },
-  profile_unlock: { label: 'Unlock server profile', icon: <LockOpen size={16} /> },
-  promote: { label: 'Promote to Admin', icon: <ShieldPlus size={16} /> },
-  revoke: { label: 'Revoke Admin', icon: <ShieldMinus size={16} />, danger: true },
-  transfer: { label: 'Transfer Admin', icon: <ArrowRightLeft size={16} />, danger: true },
-  site_ban: { label: 'Ban site-wide', icon: <Gavel size={16} />, danger: true },
+const ACTIONS: Record<ProfileAction, { label: string; icon: LucideIcon; danger?: boolean }> = {
+  kick: { label: 'Kick', icon: UserMinus, danger: true },
+  server_ban: { label: 'Ban from server', icon: Ban, danger: true },
+  timeout: { label: 'Time out', icon: Timer, danger: true },
+  untimeout: { label: 'Remove timeout', icon: TimerOff },
+  profile_reset: { label: 'Reset server profile', icon: Eraser, danger: true },
+  profile_unlock: { label: 'Unlock server profile', icon: LockOpen },
+  promote: { label: 'Promote to Admin', icon: ShieldPlus },
+  revoke: { label: 'Revoke Admin', icon: ShieldMinus, danger: true },
+  transfer: { label: 'Transfer Admin', icon: ArrowRightLeft, danger: true },
+  site_ban: { label: 'Ban site-wide', icon: Gavel, danger: true },
 }
 
 // As in the member menu: Change timeout, on someone timed out already, is not danger.
@@ -185,11 +183,6 @@ export const cardDanger = (a: ProfileAction, timedOut: boolean) =>
   !!ACTIONS[a].danger && !(a === 'timeout' && timedOut)
 
 const labelCls = 'text-[11px] font-semibold tracking-wide text-on-surface-variant uppercase'
-const rowCls = (sheet: boolean) =>
-  `flex w-full items-center gap-3 rounded-lg px-2.5 text-left text-sm hover:bg-surface-container-highest active:bg-surface-container-highest ${
-    sheet ? 'min-h-11' : 'py-1.5'
-  }`
-
 // The account's handle, never masked: the card is where you check who an account is.
 export function ProfileHandle({
   user,
@@ -594,26 +587,28 @@ function Card({ target }: { target: ProfileTarget }) {
             </p>
           )}
           {self && me && !guest && (
-            <button
-              onClick={() => {
-                close()
-                store.getState().openDialog({ kind: 'settings', focus: 'bio' })
-              }}
-              className="mt-1 text-xs font-medium text-primary hover:underline"
-            >
-              {bio ? 'Edit description' : 'Add a description'}
-            </button>
+            <span className="mt-1 inline-block text-xs">
+              <LinkButton
+                onClick={() => {
+                  close()
+                  store.getState().openDialog({ kind: 'settings', focus: 'bio' })
+                }}
+              >
+                {bio ? 'Edit description' : 'Add a description'}
+              </LinkButton>
+            </span>
           )}
           {self && server && editsProfile && (
-            <button
-              onClick={() => {
-                close()
-                store.getState().openDialog({ kind: 'server_profile', server })
-              }}
-              className="mt-1 ml-3 text-xs font-medium text-primary hover:underline"
-            >
-              Edit server profile
-            </button>
+            <span className="mt-1 ml-3 inline-block text-xs">
+              <LinkButton
+                onClick={() => {
+                  close()
+                  store.getState().openDialog({ kind: 'server_profile', server })
+                }}
+              >
+                Edit server profile
+              </LinkButton>
+            </span>
           )}
         </div>
         {hidden && member === null ? (
@@ -681,19 +676,20 @@ function Card({ target }: { target: ProfileTarget }) {
                         <Masked text={r.name} own={ownServer} />
                       </span>
                       {editRoles && roleEditable(input, r, true) && (
-                        <button
-                          title={`Remove ${r.name}`}
+                        <IconButton
+                          icon={X}
+                          label={`Remove ${r.name}`}
+                          tone="danger"
+                          size="xs"
                           onClick={() => roleChange(r, false)}
-                          className="shrink-0 rounded-full p-0.5 text-on-surface-variant hover:bg-surface-container-high hover:text-error"
-                        >
-                          <X size={12} />
-                        </button>
+                        />
                       )}
                     </span>
                   ))}
                   {addable.length > 0 && (
                     <button
                       title="Add role"
+                      aria-label="Add role"
                       aria-expanded={adding}
                       onClick={() => setAdding(a => !a)}
                       className={`flex h-6 w-6 items-center justify-center rounded-full border border-dashed text-on-surface-variant hover:border-primary hover:text-primary ${
@@ -707,20 +703,18 @@ function Card({ target }: { target: ProfileTarget }) {
                 {adding && addable.length > 0 && (
                   <div className="mt-2 flex max-h-44 flex-col overflow-y-auto rounded-lg bg-surface-container-high p-1">
                     {addable.map(r => (
-                      <button
+                      <ListRow
                         key={r.id}
                         onClick={() => roleChange(r, true)}
-                        className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-surface-container-highest"
-                      >
-                        <span
-                          aria-hidden
-                          style={{ background: r.color }}
-                          className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        />
-                        <span className="truncate">
-                          <Masked text={r.name} own={ownServer} />
-                        </span>
-                      </button>
+                        leading={
+                          <span
+                            aria-hidden
+                            style={{ background: r.color }}
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          />
+                        }
+                        label={<Masked text={r.name} own={ownServer} />}
+                      />
                     ))}
                   </div>
                 )}
@@ -733,25 +727,25 @@ function Card({ target }: { target: ProfileTarget }) {
             const { icon } = ACTIONS[a]
             const label = a === 'timeout' && timeout ? 'Change timeout' : ACTIONS[a].label
             return (
-              <button
+              <ListRow
                 key={a}
                 onClick={() => run(a)}
-                className={`${rowCls(sheet)} ${cardDanger(a, !!timeout) ? 'text-error' : 'text-on-surface'}`}
-              >
-                <span className="shrink-0">{icon}</span>
-                {label}
-              </button>
+                tone={cardDanger(a, !!timeout) ? 'danger' : 'plain'}
+                icon={icon}
+                label={label}
+              />
             )
           })}
-          <button onClick={copyId} className={`${rowCls(sheet)} text-on-surface`}>
-            <span className="shrink-0">{copied ? <Check size={16} /> : <Copy size={16} />}</span>
-            {copied ? 'Copied' : 'Copy User ID'}
-          </button>
+          <ListRow
+            onClick={copyId}
+            icon={copied ? Check : Copy}
+            label={copied ? 'Copied' : 'Copy User ID'}
+          />
           {me && !guest && !self && !remote && !isBlocked && (
-            <ProfileFriendButton user={user} className={rowCls(sheet)} onDone={close} />
+            <ProfileFriendButton user={user} onDone={close} />
           )}
           {me && !guest && !self && !remote && (
-            <button
+            <ListRow
               onClick={() => {
                 const s = store.getState()
                 if (isBlocked) void s.unblockUser(username, user.display_name)
@@ -760,28 +754,27 @@ function Card({ target }: { target: ProfileTarget }) {
                   s.askBlock(user)
                 }
               }}
-              className={`${rowCls(sheet)} ${isBlocked ? 'text-on-surface' : 'text-error'}`}
-            >
-              <span className="shrink-0">
-                {isBlocked ? <UserCheck size={16} /> : <UserX size={16} />}
-              </span>
-              {isBlocked ? 'Unblock' : 'Block'}
-            </button>
+              tone={isBlocked ? 'plain' : 'danger'}
+              icon={isBlocked ? UserCheck : UserX}
+              label={isBlocked ? 'Unblock' : 'Block'}
+            />
           )}
         </div>
         {me && !guest && (
           <div className="mt-2">
             {self ? (
-              <button
+              <Button
+                variant="tonal"
+                size="md"
+                icon={Pencil}
                 onClick={() => {
                   close()
                   store.getState().openDialog({ kind: 'settings' })
                 }}
-                className="flex w-full items-center justify-center gap-2 rounded-full bg-secondary-container px-4 py-2 text-sm font-medium text-on-secondary-container hover:opacity-90"
+                place="w-full"
               >
-                <Pencil size={14} />
                 Edit profile
-              </button>
+              </Button>
             ) : isBlocked ? (
               <p className="rounded-xl bg-surface-container-low px-3 py-2 text-sm text-on-surface-variant">
                 You blocked this user.

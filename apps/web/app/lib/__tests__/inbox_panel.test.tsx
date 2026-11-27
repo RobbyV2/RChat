@@ -21,7 +21,9 @@ describe('inbox markup', () => {
     const panel = /<div id="([^"]+)" role="tabpanel" aria-labelledby="([^"]+)"/.exec(html)
     expect(panel === null).toBe(false)
     const [, panelId, labelledBy] = panel ?? []
-    expect(html).toContain(`id="${labelledBy}" type="button" role="tab" aria-selected="true"`)
+    const tab = new RegExp(`<button[^>]*id="${labelledBy}"[^>]*>`).exec(html)?.[0] ?? ''
+    expect(tab).toContain('role="tab"')
+    expect(tab).toContain('aria-selected="true"')
     expect(html.match(new RegExp(`aria-controls="${panelId}"`, 'g'))).toHaveLength(2)
     expect(html).toContain('tabindex="-1"')
   })

@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../controls'
 import { useEffect, useRef, useState } from 'react'
 import { CLIENT_SSO, decideClientConsent, type ConsentResult } from '../../lib/client_sso'
 import { errorText, parseReturn } from '../../lib/sso'
@@ -93,16 +94,17 @@ export function ClientConsent({ fragment }: { fragment: string }) {
           </h1>
           <p>This app will be able to read and send messages as your account.</p>
           <div className="flex justify-end gap-3">
-            <button disabled={busy} onClick={() => void decide(false)}>
+            <Button size="md" disabled={busy} onClick={() => void decide(false)}>
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="filled"
+              size="md"
               disabled={!ready || busy}
               onClick={() => void decide(true)}
-              className="rounded-full bg-primary px-4 py-2 text-on-primary"
             >
               Allow
-            </button>
+            </Button>
           </div>
         </>
       ) : (

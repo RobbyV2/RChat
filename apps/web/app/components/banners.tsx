@@ -28,7 +28,7 @@ function TemporaryPassword() {
       <span className="min-w-0">{temporaryNotice(temporary, Math.floor(Date.now() / 1000))}</span>
       <button
         onClick={() => openDialog({ kind: 'settings', section: 'profile' })}
-        className="min-h-11 cursor-pointer rounded-full px-3 font-medium underline md:min-h-0"
+        className="rounded-full px-3 font-medium underline outline-offset-2 focus-visible:outline-2 focus-visible:outline-current pointer-coarse:min-h-11"
       >
         Change it
       </button>

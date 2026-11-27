@@ -9,7 +9,9 @@ import {
   buttonLook,
   chipLook,
   coverLook,
+  iconBoxLook,
   iconButtonLook,
+  linkLook,
   pillLook,
   placed,
   rowLook,
@@ -134,14 +136,16 @@ export function IconButton<const S extends string = never>({
       title={tooltip ?? label}
       aria-label={label}
       aria-pressed={pressed}
-      className={placed(
-        over ? 'inline-flex relative' : 'inline-flex',
-        iconButtonLook(tone, size, shape),
-        place
-      )}
+      className={placed('inline-flex', iconButtonLook(tone, size, shape), place)}
     >
-      <Icon size={ICON_SIZE[size]} aria-hidden />
-      {children}
+      {over ? (
+        <span className={iconBoxLook(size)}>
+          <Icon size={ICON_SIZE[size]} aria-hidden />
+          {children}
+        </span>
+      ) : (
+        <Icon size={ICON_SIZE[size]} aria-hidden />
+      )}
     </button>
   )
 }
@@ -210,6 +214,21 @@ export function ListRow<const S extends string = never>({
           className={`shrink-0 ${chevron === 'narrow' ? 'md:hidden' : 'text-on-surface-variant'}`}
         />
       )}
+    </button>
+  )
+}
+
+// A button inside a line of text ("No friends yet. Add friend"): it reads as a link and keeps the
+// line's height.
+export function LinkButton({
+  type = 'button',
+  ref,
+  children,
+  ...rest
+}: NativeButton & { ref?: Ref<HTMLButtonElement>; children: ReactNode }) {
+  return (
+    <button type={type} {...rest} ref={ref} className={linkLook}>
+      {children}
     </button>
   )
 }

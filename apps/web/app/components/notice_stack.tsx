@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
 import { User, X } from 'lucide-react'
 import { openAccountNotice } from '../lib/client/notice_owner'
@@ -114,14 +115,13 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
           )}
         </span>
       </button>
-      <button
-        title="Dismiss"
-        aria-label="Dismiss"
+      <IconButton
+        icon={X}
+        label="Dismiss"
+        size="sm"
         onClick={close}
-        className="absolute top-2 right-2 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary"
-      >
-        <X size={16} />
-      </button>
+        place="absolute top-2 right-2"
+      />
       <TimeBar key={notice.gen} notice={notice} paused={paused} />
     </div>
   )

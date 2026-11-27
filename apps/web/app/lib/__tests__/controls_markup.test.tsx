@@ -6,6 +6,7 @@ import {
   Button,
   Chip,
   IconButton,
+  LinkButton,
   ListRow,
   Pill,
   SectionHeading,
@@ -21,7 +22,14 @@ import {
   sectionCls,
   textBtn,
 } from '../../components/ui'
-import { buttonLook, chipLook, iconButtonLook, rowLook, sectionHeadingLook } from '../controls'
+import {
+  buttonLook,
+  chipLook,
+  iconBoxLook,
+  iconButtonLook,
+  rowLook,
+  sectionHeadingLook,
+} from '../controls'
 
 const attr = (html: string, name: string) => new RegExp(`${name}="([^"]*)"`).exec(html)?.[1]
 
@@ -92,13 +100,14 @@ describe('IconButton', () => {
     )
   })
 
-  test('something over the icon makes room for it, unless the placement sets the position', () => {
+  test('something over the icon sits in the mouse-sized box, so it stays by the icon on touch', () => {
     const over = renderToStaticMarkup(
       <IconButton icon={Pin} label="Pins">
         <Badge>3</Badge>
       </IconButton>
     )
-    expect(attr(over, 'class')?.split(' ')).toContain('relative')
+    expect(over).toContain(`<span class="${iconBoxLook('md')}"><svg`)
+    expect(attr(over, 'class')?.split(' ')).not.toContain('relative')
     const placed = renderToStaticMarkup(
       <IconButton icon={Pin} label="Pins" place="absolute top-2 right-2">
         <Badge>3</Badge>
@@ -173,6 +182,18 @@ describe('ListRow, SectionHeading, Badge, Pill', () => {
     expect(renderToStaticMarkup(<Pill tone="tertiary">P2P</Pill>)).toContain(
       'bg-tertiary-container'
     )
+  })
+})
+
+describe('LinkButton', () => {
+  test('a button inside a sentence reads as a link and is 44 px to tap on a coarse pointer', () => {
+    const html = renderToStaticMarkup(<LinkButton>Add friend</LinkButton>)
+    expect(attr(html, 'type')).toBe('button')
+    expect(attr(html, 'class')?.split(' ')).toContain('inline-flex')
+    const cls = attr(html, 'class')?.split(' ') ?? []
+    expect(cls).toContain('pointer-coarse:py-3.5')
+    expect(cls).toContain('pointer-coarse:-my-3.5')
+    expect(html).toContain('>Add friend</button>')
   })
 })
 

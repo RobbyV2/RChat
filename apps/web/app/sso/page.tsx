@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../components/controls'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { acceptRecentConfirmation, confirmationLoginGuard } from '../lib/provider_confirmation'
@@ -232,14 +233,17 @@ function LocalReturn() {
               className="block rounded border p-2"
             />
           </label>
-          <button disabled={busy || !name.trim()}>Continue</button>
+          <Button type="submit" variant="filled" size="md" disabled={busy || !name.trim()}>
+            Continue
+          </Button>
         </form>
       ) : (
         !error && <p>Signing in…</p>
       )}
       {error && <p role="alert">{error}</p>}
       {retry && (
-        <button
+        <Button
+          size="md"
           disabled={busy}
           onClick={async () => {
             const owner = createSavedSession(retry.origin, retry.username ?? undefined)
@@ -278,7 +282,7 @@ function LocalReturn() {
           }}
         >
           Restart sign-in as {retry.username}
-        </button>
+        </Button>
       )}
       {(error || picker) && (
         <a

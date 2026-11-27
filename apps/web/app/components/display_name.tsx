@@ -1,4 +1,5 @@
 'use client'
+import { Button } from './controls'
 import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useRef, useState, type HTMLAttributes } from 'react'
 import { displayNameError, maskedName, showsUsername } from '../lib/display_name'
@@ -11,7 +12,6 @@ import {
   MaskedTogether,
   RevealScope,
   fieldCls,
-  filledBtn,
   useOwn,
   useRevealed,
 } from './ui'
@@ -158,13 +158,15 @@ export function DisplayNameField({ focus }: { focus: boolean }) {
             error !== null ? 'border-error' : 'border-outline focus:border-primary'
           }`}
         />
-        <button
+        <Button
           type="submit"
+          variant="filled"
+          size="md"
           disabled={busy || text.trim() === saved}
-          className={`${filledBtn} shrink-0`}
+          place="shrink-0"
         >
           Save
-        </button>
+        </Button>
       </div>
       <p id={`${id}-hint`} className="text-xs text-on-surface-variant">
         You still sign in and get mentioned as <span className="streamer">@{username}</span>.

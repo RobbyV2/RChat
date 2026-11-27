@@ -45,26 +45,13 @@ import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MessageTime } from './timestamp'
-import { Masked, Sentinel, SheetGrip, textBtn as textBtnCls, useEscape, useOwnServer } from './ui'
+import { Button, Chip, IconButton, ListRow, Tab } from './controls'
+import { Masked, Sentinel, SheetGrip, useEscape, useOwnServer } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
 import { INSTANCE_INBOX } from '../lib/inbox_source'
 import { longPress, useMedia } from './context_menu'
-
-const chipCls = (on: boolean) =>
-  `shrink-0 rounded-full border px-3 py-1 text-xs font-medium ${
-    on
-      ? 'border-primary bg-primary-container text-on-primary-container'
-      : 'border-outline text-on-surface-variant hover:bg-surface-container-high'
-  }`
-
-const tabCls = (on: boolean) =>
-  `rounded-full px-3 py-1.5 text-sm font-medium ${
-    on
-      ? 'bg-secondary-container text-on-secondary-container'
-      : 'text-on-surface-variant hover:bg-surface-container-high'
-  }`
 
 const freshSources = (adapters: InboxAdapter[]): Record<string, SourceState> =>
   Object.fromEntries(adapters.map(a => [a.id, freshSource()]))
@@ -339,13 +326,16 @@ function Row({
   if (adapter.canPreview?.(entry) === false) {
     const target = adapter.previewTarget?.(entry)
     return (
-      <li className="flex min-w-0 flex-wrap items-center gap-x-1 rounded-xl hover:bg-surface-container-high">
-        <button
-          className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-xl px-3 py-2 text-left"
+      <li className="flex min-w-0 flex-wrap items-center gap-x-1">
+        <ListRow
           onClick={() => onOpen(entry)}
-        >
-          Open channel · <Place entry={entry} />
-        </button>
+          label={
+            <>
+              Open channel · <Place entry={entry} />
+            </>
+          }
+          place="flex-1"
+        />
         {target && <RevealChannelPreview target={target} />}
       </li>
     )
@@ -423,15 +413,13 @@ function Row({
         </span>
       </PreviewRow>
       {entry.unread && (
-        <button
-          type="button"
-          title="Mark as read"
-          aria-label="Mark as read"
+        <IconButton
+          icon={Check}
+          label="Mark as read"
+          size="sm"
           onClick={() => onRead(entry)}
-          className="absolute top-2 right-2 rounded-full p-1.5 text-on-surface-variant opacity-100 hover:bg-surface-container-highest hover:text-on-surface focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
-        >
-          <Check size={16} />
-        </button>
+          place="absolute top-2 right-2 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 pointer-coarse:opacity-100"
+        />
       )}
     </li>
   )
@@ -461,27 +449,14 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
         <Bell size={18} className="text-on-surface-variant" />
         <span className="font-medium">Inbox</span>
         <ViewActorTag header />
-        <button
-          type="button"
-          title="Mark all as read"
-          aria-label="Mark all as read"
+        <IconButton
+          icon={CheckCheck}
+          label="Mark all as read"
           disabled={!anyUnread}
           onClick={readAll}
-          className="ml-auto rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high disabled:opacity-40 disabled:hover:bg-transparent"
-        >
-          <CheckCheck size={18} />
-        </button>
-        {onClose && (
-          <button
-            type="button"
-            title="Close inbox"
-            aria-label="Close inbox"
-            onClick={() => onClose(false)}
-            className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high"
-          >
-            <X size={18} />
-          </button>
-        )}
+          place="ml-auto"
+        />
+        {onClose && <IconButton icon={X} label="Close inbox" onClick={() => onClose(false)} />}
       </header>
       <div className="flex shrink-0 flex-col gap-2 border-b border-outline-variant px-3 py-2">
         <div
@@ -502,20 +477,17 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
               [false, 'All'],
             ] as const
           ).map(([unread, label]) => (
-            <button
+            <Tab
               key={label}
               id={tabId(unread)}
-              type="button"
-              role="tab"
-              aria-selected={view.unread === unread}
+              selected={view.unread === unread}
               aria-controls={panelId}
               tabIndex={view.unread === unread ? 0 : -1}
               data-inbox-tab={view.unread === unread ? 'active' : undefined}
               onClick={() => set({ unread })}
-              className={tabCls(view.unread === unread)}
             >
               {label}
-            </button>
+            </Tab>
           ))}
         </div>
         <div
@@ -524,15 +496,14 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
           className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5"
         >
           {KIND_FILTERS.map(f => (
-            <button
+            <Chip
               key={f.label}
-              type="button"
-              aria-pressed={view.kind === f.value}
+              on={view.kind === f.value}
               onClick={() => set({ kind: f.value })}
-              className={chipCls(view.kind === f.value)}
+              place="shrink-0"
             >
               {f.label}
-            </button>
+            </Chip>
           ))}
         </div>
         {!streamer && (
@@ -569,13 +540,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
         {failed && (
           <div className="flex flex-col items-center gap-2 px-6 py-6 text-center text-sm text-on-surface-variant">
             <span>Couldn&apos;t load notifications.</span>
-            <button
-              type="button"
-              onClick={reload}
-              className="rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest"
-            >
-              Try again
-            </button>
+            <Button onClick={reload}>Try again</Button>
           </div>
         )}
         <ul aria-label={view.unread ? 'Unread notifications' : 'All notifications'}>
@@ -609,9 +574,7 @@ export function InboxPreview({ max = 5, beforeOpen }: { max?: number; beforeOpen
       {failed ? (
         <div className="flex items-center gap-2 px-2 py-3 text-sm text-on-surface-variant">
           <span>Couldn&apos;t load notifications.</span>
-          <button type="button" onClick={reload} className={textBtnCls}>
-            Try again
-          </button>
+          <Button onClick={reload}>Try again</Button>
         </div>
       ) : (loading || more) && shown.length === 0 ? (
         <RowsSkeleton rows={2} label="Loading notifications" />
@@ -636,42 +599,36 @@ export function InboxPreview({ max = 5, beforeOpen }: { max?: number; beforeOpen
           ))}
         </ul>
       )}
-      <button
-        type="button"
+      <Button
         onClick={() => {
           beforeOpen?.()
           setOpen(true)
         }}
-        className={`${textBtnCls} self-start`}
+        place="self-start"
       >
         Open inbox
-      </button>
+      </Button>
     </div>
   )
 }
 
 // The bell: opens the inbox. Its badge is the same count as the tab title.
-export function InboxButton({ className = '' }: { className?: string }) {
+export function InboxButton() {
   const count = useInboxCount()
   const open = useStore(s => s.inboxOpen)
   const setOpen = useStore(s => s.setInboxOpen)
   const label = count ? `Inbox, ${pingLabel(count)}` : 'Inbox'
   return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
+    <IconButton
+      icon={Bell}
+      label={label}
       aria-expanded={open}
       aria-haspopup="dialog"
       data-inbox-button
       onClick={() => setOpen(!open)}
-      className={`relative rounded-full p-1.5 hover:bg-surface-container-high ${
-        open ? 'bg-surface-container-high' : ''
-      } ${className}`}
     >
-      <Bell size={20} />
       <PingBadge count={count} className="absolute -top-1 -right-1.5 border-2 border-surface" />
-    </button>
+    </IconButton>
   )
 }
 

@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../controls'
 import { useEffect, useRef, useState } from 'react'
 import { clientLogin } from '../../lib/client_sso'
 import { createSavedSession } from '../../lib/client/saved_session'
@@ -148,28 +149,30 @@ export function ClientLogin({
           />
         </label>
         {error && <p role="alert">{error}</p>}
-        <button disabled={busy || !name.trim()}>Continue</button>
+        <Button type="submit" variant="filled" size="md" disabled={busy || !name.trim()}>
+          Continue
+        </Button>
       </form>
     )
   return (
     <>
       {restart && username && (
-        <button type="button" disabled={busy} onClick={() => void submit(restart)}>
+        <Button size="md" disabled={busy} onClick={() => void submit(restart)}>
           Restart sign-in as {username}
-        </button>
+        </Button>
       )}
       {providers
         .filter(p => p.id !== restart)
         .map(p => (
-          <button
+          <Button
             key={p.id}
-            type="button"
-            className="rounded-full border border-outline px-4 py-2 text-primary"
+            variant="tonal"
+            size="md"
             disabled={busy}
             onClick={() => void submit(p.id)}
           >
             Continue with {p.name}
-          </button>
+          </Button>
         ))}
       {error && <p role="alert">{error}</p>}
       {divider && <p className="text-center text-sm text-on-surface-variant">or</p>}

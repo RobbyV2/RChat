@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { useAccount } from '../lib/client/react'
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
@@ -27,14 +28,12 @@ export function ThemeToggle() {
     restoreTheme(account)
   }, [account])
   return (
-    <button
-      title="Toggle theme"
-      aria-label="Toggle theme"
+    <IconButton
+      icon={theme === 'light' ? Moon : Sun}
+      label="Toggle theme"
+      size="lg"
       onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-      className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-    >
-      {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
-    </button>
+    />
   )
 }
 
