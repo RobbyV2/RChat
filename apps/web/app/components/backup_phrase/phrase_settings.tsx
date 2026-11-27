@@ -6,7 +6,8 @@ import { b64u } from '../../lib/p2p/canonical'
 import { publicOf } from '../../lib/p2p/keys'
 import type { LinkedProvider } from '../../lib/types'
 import { useConfirmation } from '../sso/use_confirmation'
-import { Dialog, filledBtn, textBtn } from '../ui'
+import { Button } from '../controls'
+import { Dialog } from '../ui'
 import { PhraseWords } from './phrase_words'
 import { ReAuthPrompt } from './reauth_prompt'
 import { WordCheck } from './word_check'
@@ -16,16 +17,14 @@ export function PhraseSettings({ links }: { links: LinkedProvider[] }) {
   const [saved, setSaved] = useState(false)
   return (
     <div>
-      <button
-        type="button"
-        className={textBtn}
+      <Button
         onClick={() => {
           setSaved(false)
           setWords(generate())
         }}
       >
         Set or reset backup phrase
-      </button>
+      </Button>
       {saved && <p role="status">Backup phrase saved</p>}
       {words && (
         <PhraseDialog
@@ -72,9 +71,9 @@ function PhraseDialog({
             other sessions.
           </p>
           <PhraseWords words={words} />
-          <button className={filledBtn} onClick={() => setStep('check')}>
+          <Button variant="filled" size="md" onClick={() => setStep('check')}>
             I saved the words
-          </button>
+          </Button>
         </>
       ) : step === 'check' ? (
         <WordCheck

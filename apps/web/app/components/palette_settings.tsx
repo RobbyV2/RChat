@@ -10,7 +10,8 @@ import { useIndexStatus } from '../lib/palette_sync'
 import { useStore } from '../lib/store'
 import { useAccount } from '../lib/client/react'
 import { Choice } from './friends'
-import { dangerBtn, sectionCls, textBtn } from './ui'
+import { Button } from './controls'
+import { sectionCls } from './ui'
 
 const MODES: { value: IndexMode; label: string }[] = [
   { value: 'off', label: 'Off' },
@@ -95,15 +96,14 @@ export function PaletteSettingsSection() {
             </p>
           )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
+            <Button
+              variant="danger"
               onClick={() =>
                 void indexer.clearIndex().then(lifetime.inSession(() => setCleared(true)))
               }
-              className={dangerBtn}
             >
               Clear index
-            </button>
+            </Button>
             {cleared && <span className="text-xs text-on-surface-variant">Cleared</span>}
           </div>
         </div>
@@ -116,22 +116,12 @@ export function PaletteSettingsSection() {
             tokens or secret fields.
           </p>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={!used}
-              onClick={palettePrefs.clearUsage}
-              className={`${textBtn} disabled:opacity-40`}
-            >
+            <Button disabled={!used} onClick={palettePrefs.clearUsage}>
               Forget recent commands
-            </button>
-            <button
-              type="button"
-              disabled={!requests}
-              onClick={apiDoc.clearApiHistory}
-              className={`${textBtn} disabled:opacity-40`}
-            >
+            </Button>
+            <Button disabled={!requests} onClick={apiDoc.clearApiHistory}>
               Clear request history
-            </button>
+            </Button>
           </div>
         </div>
       </section>

@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { desktopInfo, inShell } from '../lib/platform'
 import { shell, shellError, type FoundUpdate, type ShellSettings } from '../lib/platform/desktop'
 import { SettingSwitch } from './settings_fields'
-import { filledBtn, sectionCls, textBtn } from './ui'
+import { Button } from './controls'
+import { sectionCls } from './ui'
 
 type Check =
   | { kind: 'idle' }
@@ -60,18 +61,13 @@ function Updates({
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3 px-2">
         {check.kind === 'found' ? (
-          <button type="button" onClick={() => void install()} className={filledBtn}>
+          <Button variant="filled" size="md" onClick={() => void install()}>
             Install {check.update.version} and restart
-          </button>
+          </Button>
         ) : (
-          <button
-            type="button"
-            disabled={check.kind === 'busy'}
-            onClick={() => void run()}
-            className={`${textBtn} disabled:opacity-50`}
-          >
+          <Button disabled={check.kind === 'busy'} onClick={() => void run()}>
             Check for updates
-          </button>
+          </Button>
         )}
         <span role="status" className="text-xs text-on-surface-variant">
           {check.kind === 'busy' || check.kind === 'done' ? check.text : null}

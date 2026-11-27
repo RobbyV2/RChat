@@ -8,7 +8,8 @@ import { readIntent, deliverReturn } from '../lib/sso'
 import { deepLinkTarget, confirmGate, openDeepLink, type LinkEnv } from '../lib/deep_links'
 import { inShell, mobileOs } from '../lib/platform'
 import { listen, shell } from '../lib/platform/desktop'
-import { Dialog, filledBtn, textBtn } from './ui'
+import { Button } from './controls'
+import { Dialog } from './ui'
 
 interface Ask {
   host: string
@@ -144,12 +145,12 @@ export default function DesktopBridge() {
         Open <span className="font-medium break-all text-on-surface">{ask.host}</span>?
       </p>
       <div className="mt-6 flex justify-end gap-2">
-        <button type="button" autoFocus onClick={() => ask.answer(false)} className={textBtn}>
+        <Button size="md" autoFocus onClick={() => ask.answer(false)}>
           Cancel
-        </button>
-        <button type="button" onClick={() => ask.answer(true)} className={filledBtn}>
+        </Button>
+        <Button variant="filled" size="md" onClick={() => ask.answer(true)}>
           Open
-        </button>
+        </Button>
       </div>
     </Dialog>
   )

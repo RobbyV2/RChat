@@ -3,7 +3,18 @@
 import { useAccount } from '../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, ChevronDown, Copy, KeyRound, Pencil, Plus, Power, Send, Trash2 } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  KeyRound,
+  Pencil,
+  Plus,
+  Power,
+  Send,
+  Trash2,
+} from 'lucide-react'
 import { errorText, useStore } from '../lib/store'
 import { sharing } from '../lib/platform'
 import { fullTimeOf, relativeTime } from '../lib/timestamps'
@@ -30,17 +41,8 @@ import {
 import { AvatarPicker } from './avatar_picker'
 import { UserAvatar } from './user_avatar'
 import { NameWithUsername } from './display_name'
-import {
-  Dialog,
-  FieldError,
-  fieldCls,
-  filledBtn,
-  iconBtn,
-  Masked,
-  sectionCls,
-  textBtn,
-  useCopied,
-} from './ui'
+import { Button, IconButton, Tab } from './controls'
+import { Dialog, FieldError, fieldCls, Masked, sectionCls, useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
 
 // Who made a webhook, on its own line under its details.
@@ -70,31 +72,15 @@ function Webhooks({ server }: { server: string }) {
   const openDialog = useStore(s => s.openDialog)
   const [tab, setTab] = useState<Tab>('incoming')
   const back = () => openDialog({ kind: 'server_settings', server, section: 'integrations' })
-  const tabCls = (on: boolean) =>
-    `flex-1 rounded-full px-3 py-1.5 text-sm font-medium ${
-      on
-        ? 'bg-secondary-container text-on-secondary-container'
-        : 'text-on-surface-variant hover:bg-surface-container-highest'
-    }`
   return (
     <Dialog full title="Webhooks" onClose={back}>
       <div role="tablist" className="mb-4 flex gap-1 rounded-full bg-surface-container p-1">
-        <button
-          role="tab"
-          aria-selected={tab === 'incoming'}
-          onClick={() => setTab('incoming')}
-          className={tabCls(tab === 'incoming')}
-        >
+        <Tab selected={tab === 'incoming'} onClick={() => setTab('incoming')} place="flex-1">
           Incoming
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'outgoing'}
-          onClick={() => setTab('outgoing')}
-          className={tabCls(tab === 'outgoing')}
-        >
+        </Tab>
+        <Tab selected={tab === 'outgoing'} onClick={() => setTab('outgoing')} place="flex-1">
           Outgoing
-        </button>
+        </Tab>
       </div>
       {tab === 'incoming' ? <Incoming server={server} /> : <Outgoing server={server} />}
     </Dialog>
@@ -120,20 +106,15 @@ function SecretBox({
         <code className="streamer min-w-0 flex-1 rounded-lg bg-surface-container-highest px-2 py-1.5 font-mono text-xs break-all text-on-surface select-all">
           {value}
         </code>
-        <button
-          title={copied ? 'Copied' : 'Copy'}
-          aria-label={copied ? 'Copied' : 'Copy'}
+        <IconButton
+          icon={copied ? Check : Copy}
+          label={copied ? 'Copied' : 'Copy'}
           onClick={() => void sharing().copyText(value).then(flash)}
-          className={iconBtn}
-        >
-          {copied ? <Check size={16} /> : <Copy size={16} />}
-        </button>
+        />
       </div>
       <p className="mt-2 text-xs text-on-surface-variant">{note}</p>
       <div className="mt-2 flex justify-end">
-        <button onClick={onDone} className={textBtn}>
-          Done
-        </button>
+        <Button onClick={onDone}>Done</Button>
       </div>
     </div>
   )
@@ -228,17 +209,18 @@ function HookEditor({
       <FieldError message={error} />
       <div className="flex justify-end gap-2">
         {onCancel && (
-          <button onClick={onCancel} className={textBtn}>
+          <Button size="md" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         )}
-        <button
+        <Button
+          variant="filled"
+          size="md"
           disabled={busy || form.channel === null}
           onClick={() => void save()}
-          className={filledBtn}
         >
           {submitLabel}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -377,14 +359,15 @@ function Incoming({ server }: { server: string }) {
           onCancel={() => setCreating(false)}
         />
       ) : (
-        <button
+        <Button
+          variant="filled"
+          size="md"
+          icon={Plus}
           onClick={() => setCreating(true)}
           disabled={channels.length === 0}
-          className={`${filledBtn} flex items-center gap-1.5`}
         >
-          <Plus size={16} />
           New webhook
-        </button>
+        </Button>
       )}
       <p className={sectionCls + ' mt-4'}>Webhooks</p>
       {list === null ? (
@@ -415,30 +398,25 @@ function Incoming({ server }: { server: string }) {
                   </p>
                   {h.creator && <CreatorNote creator={h.creator} />}
                 </div>
-                <button
-                  title="Edit"
-                  aria-label={`Edit ${h.name}`}
+                <IconButton
+                  icon={Pencil}
+                  label={`Edit ${h.name}`}
+                  tooltip="Edit"
                   onClick={() => setEditing(editing === h.id ? null : h.id)}
-                  className={iconBtn}
-                >
-                  <Pencil size={16} />
-                </button>
-                <button
-                  title="New URL"
-                  aria-label={`New URL for ${h.name}`}
+                />
+                <IconButton
+                  icon={KeyRound}
+                  label={`New URL for ${h.name}`}
+                  tooltip="New URL"
                   onClick={() => resetUrl(h)}
-                  className={iconBtn}
-                >
-                  <KeyRound size={16} />
-                </button>
-                <button
-                  title="Delete"
-                  aria-label={`Delete ${h.name}`}
+                />
+                <IconButton
+                  icon={Trash2}
+                  label={`Delete ${h.name}`}
+                  tooltip="Delete"
+                  tone="danger"
                   onClick={() => remove(h)}
-                  className={`${iconBtn} hover:text-error`}
-                >
-                  <Trash2 size={16} />
-                </button>
+                />
               </div>
               {editing === h.id && (
                 <div className="mt-2">
@@ -556,12 +534,12 @@ function OutEditor({
       </p>
       <FieldError message={error} />
       <div className="flex justify-end gap-2">
-        <button onClick={onCancel} className={textBtn}>
+        <Button size="md" onClick={onCancel}>
           Cancel
-        </button>
-        <button disabled={busy} onClick={() => void save()} className={filledBtn}>
+        </Button>
+        <Button variant="filled" size="md" disabled={busy} onClick={() => void save()}>
           {submitLabel}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -620,12 +598,12 @@ function TakeoverForm({
       </label>
       <FieldError message={error} />
       <div className="flex justify-end gap-2">
-        <button onClick={onCancel} className={textBtn}>
+        <Button size="md" onClick={onCancel}>
           Cancel
-        </button>
-        <button disabled={busy} onClick={() => void go()} className={filledBtn}>
+        </Button>
+        <Button variant="filled" size="md" disabled={busy} onClick={() => void go()}>
           {kind === 'on' ? 'Turn on' : 'Make new secret'}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -852,15 +830,16 @@ function Outgoing({ server }: { server: string }) {
             onCancel={() => setCreating(false)}
           />
         ) : (
-          <button
+          <Button
+            variant="filled"
+            size="md"
+            icon={Plus}
             onClick={() => setCreating(true)}
             disabled={data.webhooks.length >= OUTGOING_MAX}
             title={data.webhooks.length >= OUTGOING_MAX ? 'At most 10 per server' : undefined}
-            className={`${filledBtn} flex items-center gap-1.5`}
           >
-            <Plus size={16} />
             New outgoing webhook
-          </button>
+          </Button>
         ))}
       <p className={sectionCls + ' mt-4'}>Outgoing webhooks</p>
       {data.webhooks.length === 0 ? (
@@ -886,49 +865,40 @@ function Outgoing({ server }: { server: string }) {
                   </p>
                   {h.creator && <CreatorNote creator={h.creator} />}
                 </div>
-                <button
-                  title={h.enabled ? 'Turn off' : 'Turn on'}
-                  aria-label={h.enabled ? `Turn off ${h.name}` : `Turn on ${h.name}`}
-                  aria-pressed={h.enabled}
+                <IconButton
+                  icon={Power}
+                  label={h.enabled ? `Turn off ${h.name}` : `Turn on ${h.name}`}
+                  tooltip={h.enabled ? 'Turn off' : 'Turn on'}
+                  pressed={h.enabled}
                   disabled={busy || (!h.enabled && !data.available)}
                   onClick={() => toggle(h)}
-                  className={`${iconBtn} disabled:opacity-40`}
-                >
-                  <Power size={16} />
-                </button>
-                <button
-                  title="Send test event"
-                  aria-label={`Send a test event to ${h.name}`}
+                />
+                <IconButton
+                  icon={Send}
+                  label={`Send a test event to ${h.name}`}
+                  tooltip="Send test event"
                   disabled={busy || !h.enabled || !data.available}
                   onClick={() => test(h)}
-                  className={`${iconBtn} disabled:opacity-40`}
-                >
-                  <Send size={16} />
-                </button>
-                <button
-                  title="Edit"
-                  aria-label={`Edit ${h.name}`}
+                />
+                <IconButton
+                  icon={Pencil}
+                  label={`Edit ${h.name}`}
+                  tooltip="Edit"
                   onClick={() => setEditing(editing === h.id ? null : h.id)}
-                  className={iconBtn}
-                >
-                  <Pencil size={16} />
-                </button>
-                <button
-                  title="New secret"
-                  aria-label={`New secret for ${h.name}`}
+                />
+                <IconButton
+                  icon={KeyRound}
+                  label={`New secret for ${h.name}`}
+                  tooltip="New secret"
                   onClick={() => newSecret(h)}
-                  className={iconBtn}
-                >
-                  <KeyRound size={16} />
-                </button>
-                <button
-                  title="Delete"
-                  aria-label={`Delete ${h.name}`}
+                />
+                <IconButton
+                  icon={Trash2}
+                  label={`Delete ${h.name}`}
+                  tooltip="Delete"
+                  tone="danger"
                   onClick={() => remove(h)}
-                  className={`${iconBtn} hover:text-error`}
-                >
-                  <Trash2 size={16} />
-                </button>
+                />
               </div>
               {h.disabled_at !== null && !h.enabled && (
                 <p className="mt-1.5 rounded-lg bg-error-container px-2.5 py-1.5 text-xs text-on-error-container">
@@ -959,17 +929,14 @@ function Outgoing({ server }: { server: string }) {
                   />
                 </div>
               )}
-              <button
+              <Button
+                icon={log === h.id ? ChevronUp : ChevronDown}
                 onClick={() => setLog(log === h.id ? null : h.id)}
                 aria-expanded={log === h.id}
-                className={`${textBtn} mt-1 flex items-center gap-1 px-2 py-1 text-xs`}
+                place="mt-1"
               >
-                <ChevronDown
-                  size={14}
-                  className={`transition-transform ${log === h.id ? 'rotate-180' : ''}`}
-                />
                 Recent deliveries
-              </button>
+              </Button>
               {log === h.id && <DeliveryLog server={server} hook={h.id} />}
             </li>
           ))}

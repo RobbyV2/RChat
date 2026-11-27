@@ -11,7 +11,8 @@ import {
 import { useAccount, useStore } from '../lib/client/react'
 import type { LinkedProvider } from '../lib/types'
 import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
-import { Dialog, dangerBtn, textBtn } from './ui'
+import { Button } from './controls'
+import { Dialog } from './ui'
 
 // Settings > Account: asks the instance to delete the account after its wait.
 export function DeleteAccount({ links }: { links: LinkedProvider[] }) {
@@ -24,21 +25,14 @@ export function DeleteAccount({ links }: { links: LinkedProvider[] }) {
         <p role="status" className="text-sm text-on-surface-variant">
           {deletionNotice(pending, Math.floor(Date.now() / 1000))}
         </p>
-        <button type="button" className={textBtn} onClick={() => void keep()}>
-          Keep account
-        </button>
+        <Button onClick={() => void keep()}>Keep account</Button>
       </div>
     )
   return (
     <>
-      <button
-        type="button"
-        data-account-deletion="ask"
-        className={dangerBtn}
-        onClick={() => setOpen(true)}
-      >
+      <Button variant="danger" data-account-deletion="ask" onClick={() => setOpen(true)}>
         Delete account
-      </button>
+      </Button>
       {open && <DeleteDialog links={links} close={() => setOpen(false)} />}
     </>
   )
@@ -97,7 +91,7 @@ export function DeletionBanner({ className }: { className: string }) {
       <button
         type="button"
         onClick={() => void keep()}
-        className="min-h-11 cursor-pointer rounded-full px-3 font-medium underline md:min-h-0"
+        className="rounded-full px-3 font-medium underline outline-offset-2 focus-visible:outline-2 focus-visible:outline-current pointer-coarse:min-h-11"
       >
         Keep account
       </button>

@@ -1,6 +1,6 @@
 'use client'
 
-import { textBtn } from '../ui'
+import { Button } from '../controls'
 import { useReveal } from './reveal'
 
 // The words in order. In streamer mode they stay covered until Show, and again each time streamer
@@ -11,9 +11,7 @@ export function PhraseWords({ words }: { words: string[] }) {
     return (
       <div className="flex min-h-32 flex-col items-center justify-center gap-1 rounded-2xl border border-dashed border-outline-variant p-4 text-center text-sm text-on-surface-variant">
         Hidden in streamer mode
-        <button type="button" onClick={reveal.show} className={textBtn}>
-          Show
-        </button>
+        <Button onClick={reveal.show}>Show</Button>
       </div>
     )
   return (
@@ -29,9 +27,9 @@ export function PhraseWords({ words }: { words: string[] }) {
         ))}
       </ol>
       {reveal.streamer && (
-        <button type="button" onClick={reveal.hide} className={`${textBtn} self-start`}>
+        <Button onClick={reveal.hide} place="self-start">
           Hide
-        </button>
+        </Button>
       )}
     </div>
   )

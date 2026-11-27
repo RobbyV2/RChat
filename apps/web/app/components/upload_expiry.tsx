@@ -24,7 +24,8 @@ import {
   type ExpiryUnit,
   type UploadExpiryState,
 } from '../lib/upload_expiry'
-import { Chips, FieldError, fieldCls, filledBtn, sectionCls, textBtn } from './ui'
+import { Button } from './controls'
+import { Chips, FieldError, fieldCls, sectionCls } from './ui'
 import { useInstanceLabel } from './instance_badge'
 
 // Seconds a file posted now in `server` stays (null: until removed); DMs use the default.
@@ -156,9 +157,9 @@ export function ServerUploadExpiry({ server }: { server: string }) {
                 options={UNITS}
                 onChange={unit => setForm({ ...form, unit })}
               />
-              <button disabled={saving} className={`${filledBtn} cursor-pointer`}>
+              <Button type="submit" variant="filled" size="md" disabled={saving}>
                 Save
-              </button>
+              </Button>
             </form>
           )}
           <p data-upload-expiry-now className="text-xs text-on-surface-variant">
@@ -191,16 +192,14 @@ export function ServerUploadExpiry({ server }: { server: string }) {
       ) : failed ? (
         <p className="flex items-center gap-2 text-sm text-on-surface-variant">
           Couldn&apos;t load this setting.
-          <button
-            type="button"
+          <Button
             onClick={() => {
               setFailed(false)
               setTick(t => t + 1)
             }}
-            className={`${textBtn} cursor-pointer`}
           >
             Retry
-          </button>
+          </Button>
         </p>
       ) : (
         <p className="text-sm text-on-surface-variant">Loading…</p>

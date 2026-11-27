@@ -131,7 +131,9 @@ test('the page names itself, lists every section and marks the open one', () => 
   expect(html).toContain('Demo settings')
   expect(html).toContain('People body')
   expect(html).not.toContain('General body')
-  expect(/aria-current="page"[^>]*>(<svg[^>]*>.*?<\/svg>)?<span[^>]*>People/.test(html)).toBe(true)
+  expect(/aria-current="page"[^>]*>(<svg[^>]*>.*?<\/svg>)?(<span[^>]*>)+People/.test(html)).toBe(
+    true
+  )
   expect(html.match(/aria-current="page"/g)).toHaveLength(1)
 })
 
@@ -244,9 +246,9 @@ test('the shown section lists its parts under it in the nav, with a fold button'
   const html = groupedPage('two')
   const parts = [...html.matchAll(/data-settings-part="([a-z_]+)"/g)].map(m => m[1])
   expect(parts).toEqual(['two_a', 'two_b'])
-  expect(html).toContain(
-    'title="Hide the parts of Two" aria-label="Hide the parts of Two" aria-expanded="true"'
-  )
+  const fold = /<button[^>]*title="Hide the parts of Two"[^>]*>/.exec(html)?.[0] ?? ''
+  expect(fold).toContain('aria-label="Hide the parts of Two"')
+  expect(fold).toContain('aria-expanded="true"')
   expect(html.indexOf('data-settings-section="two"')).toBeLessThan(html.indexOf('two_a'))
   expect(html.indexOf('two_b')).toBeLessThan(html.indexOf('data-settings-section="three"'))
 })

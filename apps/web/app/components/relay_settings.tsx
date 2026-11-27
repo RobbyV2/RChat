@@ -19,16 +19,8 @@ import {
   type RelayPrefs,
 } from '../lib/relays'
 import { SettingSwitch } from './settings_fields'
-import {
-  CloseButton,
-  useBackdrop,
-  FieldError,
-  fieldCls,
-  filledBtn,
-  iconBtn,
-  sectionCls,
-  textBtn,
-} from './ui'
+import { Button, IconButton } from './controls'
+import { CloseButton, useBackdrop, FieldError, fieldCls, sectionCls } from './ui'
 
 const relayLabel = (url: string) => displayHost(hostOf(url) ?? url)
 
@@ -142,9 +134,9 @@ function AddRelay({ prefs }: { prefs: RelayPrefs }) {
         <span className="text-xs text-on-surface-variant">
           {full ? `Up to ${RELAYS_MAX} relays.` : 'Logins stay on this device.'}
         </span>
-        <button type="submit" disabled={full || !url.trim()} className={filledBtn}>
+        <Button type="submit" variant="filled" size="md" disabled={full || !url.trim()}>
           Add relay
-        </button>
+        </Button>
       </div>
     </form>
   )
@@ -183,15 +175,13 @@ export function RelaySection() {
               {r.username !== undefined && (
                 <span className="shrink-0 text-xs text-on-surface-variant">Login saved</span>
               )}
-              <button
-                type="button"
-                title="Remove relay"
-                aria-label={`Remove relay ${relayLabel(r.url)}`}
+              <IconButton
+                icon={X}
+                label={`Remove relay ${relayLabel(r.url)}`}
+                tooltip="Remove relay"
+                size="sm"
                 onClick={() => remove(r.url)}
-                className={`${iconBtn} p-1`}
-              >
-                <X size={14} />
-              </button>
+              />
             </li>
           ))}
         </ul>
@@ -231,15 +221,13 @@ export function RelaySection() {
               className="flex items-center gap-2 rounded-xl bg-surface-container px-3 py-1.5"
             >
               <span className="min-w-0 flex-1 truncate font-mono text-xs">{displayHost(host)}</span>
-              <button
-                type="button"
-                title="Remove from allowed"
-                aria-label={`Remove ${displayHost(host)} from allowed`}
+              <IconButton
+                icon={X}
+                label={`Remove ${displayHost(host)} from allowed`}
+                tooltip="Remove from allowed"
+                size="sm"
                 onClick={() => forget(host)}
-                className={`${iconBtn} p-1`}
-              >
-                <X size={14} />
-              </button>
+              />
             </li>
           ))}
         </ul>
@@ -297,15 +285,15 @@ function RelayConsent({ host }: { host: string }) {
         {owner !== client.shown() && <AccountLabel />}
         <p className="text-sm break-words text-on-surface-variant">{promptText(host)}</p>
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <button ref={denyButton} type="button" onClick={deny} className={textBtn}>
+          <Button ref={denyButton} size="md" onClick={deny}>
             Deny
-          </button>
-          <button type="button" onClick={() => answer('once')} className={textBtn}>
+          </Button>
+          <Button size="md" onClick={() => answer('once')}>
             Allow once
-          </button>
-          <button type="button" onClick={() => answer('always')} className={filledBtn}>
+          </Button>
+          <Button variant="filled" size="md" onClick={() => answer('always')}>
             Always allow
-          </button>
+          </Button>
         </div>
       </div>
     </dialog>

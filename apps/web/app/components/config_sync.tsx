@@ -15,7 +15,7 @@ import {
 } from 'react'
 import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
-import { Check, Copy, Eye, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
+import { Check, Copy, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
 import { encode } from 'uqr'
 import { client } from '../lib/client/client'
 import { useAccount } from '../lib/client/react'
@@ -49,7 +49,8 @@ import {
   type ConfigSource,
   type SectionKey,
 } from '../lib/config_transfer'
-import { FieldError, LinkPage, fieldCls, filledBtn, sectionCls, textBtn, useCopied } from './ui'
+import { Button, Cover, IconButton } from './controls'
+import { FieldError, LinkPage, fieldCls, sectionCls, useCopied } from './ui'
 import { fmtSize } from '../lib/bytes'
 import { type FilesPart } from '../lib/p2p/app'
 import {
@@ -65,9 +66,6 @@ import { p2pTrustText } from '../lib/add_instance'
 import { shellInfo } from '../lib/platform'
 import { P2pExportOption, P2pImport, SlowNote, type PassState } from './p2p/p2p_transfer'
 import { useInstanceLabel } from './instance_badge'
-
-const iconBtn =
-  'rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface disabled:pointer-events-none disabled:opacity-40'
 
 const areaCls = `${fieldCls} w-full resize-none font-mono text-xs break-all md:text-xs`
 
@@ -86,17 +84,14 @@ function StreamerCover({
   const [open, setOpen] = useState(false)
   if ((!streamer && !always) || open) return <>{children}</>
   return (
-    <button
-      type="button"
-      title={`Show ${what}`}
-      aria-label={`Show ${what}`}
+    <Cover
       data-streamer-cover
+      aria-label={`Show ${what}`}
       onClick={() => setOpen(true)}
-      className="flex min-h-12 w-full flex-1 items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+      place="flex-1"
     >
-      <Eye size={16} />
       {streamer ? `Hidden in streamer mode. Show ${what}` : `Show ${what}`}
-    </button>
+    </Cover>
   )
 }
 
@@ -138,19 +133,17 @@ export function QrCode({
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, flashCopied] = useCopied()
   return (
-    <button
-      type="button"
-      title={copied ? 'Copied' : label}
-      aria-label={label}
+    <IconButton
+      icon={copied ? Check : Copy}
+      label={label}
+      tooltip={copied ? 'Copied' : label}
+      size="sm"
       onClick={() =>
         void sharing()
           .copyText(text)
           .then(ok => ok && flashCopied())
       }
-      className={iconBtn}
-    >
-      {copied ? <Check size={16} /> : <Copy size={16} />}
-    </button>
+    />
   )
 }
 
@@ -269,14 +262,14 @@ function ImportPreview({
         Servers and DMs this account isn&apos;t in are skipped.
       </p>
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
+        <Button
+          variant="filled"
+          size="md"
           disabled={busy || picked.size === 0}
           onClick={() => void apply()}
-          className={filledBtn}
         >
           {later ? 'Apply and log in' : 'Apply'}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -501,22 +494,22 @@ function ExportBlock({
     <div className="flex flex-col gap-2">
       {p2p !== false && !text && (
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
+          <Button
+            variant="filled"
+            size="md"
             disabled={p2p === null || busy}
             onClick={() => p2p && void create(p2p)}
-            className={filledBtn}
           >
             {!busy
               ? 'Create export'
               : part === null
                 ? 'Encrypting…'
                 : `Encrypting ${percent(part)}`}
-          </button>
+          </Button>
           {busy && part !== null && part < 1 && (
-            <button type="button" onClick={() => stop.current?.abort()} className={textBtn}>
+            <Button size="md" onClick={() => stop.current?.abort()}>
               Cancel
-            </button>
+            </Button>
           )}
           {busy && part !== null && late && (
             <div className="w-full">
@@ -555,14 +548,14 @@ function ExportBlock({
       <FieldError message={error} />
       {(p2p === false || text) && (
         <div>
-          <button
-            type="button"
+          <Button
+            variant={fileOnly ? 'filled' : 'text'}
+            size="md"
             disabled={!text || writing !== null}
             onClick={() => void save()}
-            className={fileOnly ? filledBtn : textBtn}
           >
             {writing !== null ? `Writing files ${Math.floor(writing * 100)}%` : 'Download file'}
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -645,14 +638,9 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
             ))}
           </select>
         </label>
-        <button
-          type="button"
-          disabled={busy || empty}
-          onClick={() => void create()}
-          className={filledBtn}
-        >
+        <Button variant="filled" size="md" disabled={busy || empty} onClick={() => void create()}>
           Create link
-        </button>
+        </Button>
       </div>
       <p className="text-xs text-on-surface-variant">
         Anyone with the link can see the included settings, like the servers you are in and who you
@@ -685,15 +673,12 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
             )}
             <CopyButton text={shownUrl} label="Copy link" />
             {sharing().canShare() && (
-              <button
-                type="button"
-                title="Share link"
-                aria-label="Share link"
+              <IconButton
+                icon={Share2}
+                label="Share link"
+                size="sm"
                 onClick={() => void sharing().share({ title: 'Config', url: shownUrl })}
-                className={iconBtn}
-              >
-                <Share2 size={16} />
-              </button>
+              />
             )}
           </div>
         </div>
@@ -715,26 +700,21 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
                     Active {untilText(l.expires_at * 1000, now)}
                   </span>
                 </span>
-                <button
-                  type="button"
-                  title={shown === l.id ? 'Hide QR code' : 'Show QR code'}
-                  aria-label={shown === l.id ? 'Hide QR code' : 'Show QR code'}
-                  aria-pressed={shown === l.id}
+                <IconButton
+                  icon={QrIcon}
+                  label={shown === l.id ? 'Hide QR code' : 'Show QR code'}
+                  size="sm"
+                  pressed={shown === l.id}
                   onClick={() => setShown(shown === l.id ? null : l.id)}
-                  className={iconBtn}
-                >
-                  <QrIcon size={16} />
-                </button>
+                />
                 <CopyButton text={configUrl(l.id, shareOrigin)} label="Copy link" />
-                <button
-                  type="button"
-                  title="Revoke link"
-                  aria-label="Revoke link"
+                <IconButton
+                  icon={Trash2}
+                  label="Revoke link"
+                  size="sm"
+                  tone="danger"
                   onClick={() => void revoke(l.id)}
-                  className={`${iconBtn} hover:text-error`}
-                >
-                  <Trash2 size={16} />
-                </button>
+                />
               </li>
             ))}
           </ul>
@@ -826,17 +806,17 @@ function ImportBlock() {
         className={areaCls}
       />
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
+        <Button
+          variant="filled"
+          size="md"
           disabled={!text.trim()}
           onClick={() => void preview(text, ++latest.current)}
-          className={filledBtn}
         >
           Preview
-        </button>
-        <button type="button" onClick={() => void openFile()} className={textBtn}>
+        </Button>
+        <Button size="md" onClick={() => void openFile()}>
           Import file
-        </button>
+        </Button>
       </div>
       <FieldError message={error} />
       {done && (
@@ -906,23 +886,21 @@ function ImportSections({
                 {account.store.getState().me?.username}@{new URL(account.conn.origin).host}
               </span>
             </p>
-            <button className={filledBtn} onClick={() => setTrusted(true)}>
+            <Button variant="filled" size="md" onClick={() => setTrusted(true)}>
               I trust this app
-            </button>
-            <button className={textBtn} onClick={() => setImportMode('choose')}>
+            </Button>
+            <Button size="md" onClick={() => setImportMode('choose')}>
               Cancel
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
             {identity?.p2p.hasData(account.store.getState().me?.username ?? '') && (
-              <button className={textBtn} onClick={() => setImportMode('existing')}>
+              <Button onClick={() => setImportMode('existing')}>
                 Import into the selected identity
-              </button>
+              </Button>
             )}
-            <button className={textBtn} onClick={() => setImportMode('new')}>
-              Attach as a new P2P identity
-            </button>
+            <Button onClick={() => setImportMode('new')}>Attach as a new P2P identity</Button>
           </div>
         ))}
       {(!doc.p2p || !p2pOn || presentSections(doc).length > 0) && (
@@ -1106,16 +1084,8 @@ function LinkCard({ id }: { id: string }) {
         </>
       )}
       <div className="flex flex-wrap gap-2 pt-5">
-        {!authed && (
-          <button type="button" onClick={logIn} className={textBtn}>
-            Log in
-          </button>
-        )}
-        {authed && (
-          <button type="button" onClick={closeConfigLink} className={textBtn}>
-            Close
-          </button>
-        )}
+        {!authed && <Button onClick={logIn}>Log in</Button>}
+        {authed && <Button onClick={closeConfigLink}>Close</Button>}
       </div>
     </div>
   )

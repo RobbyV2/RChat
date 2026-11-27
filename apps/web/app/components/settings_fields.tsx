@@ -5,7 +5,8 @@ import { SLOWMODE_MAX } from '../lib/rules'
 import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '../lib/slowmode'
 import { restrictionItems, type RestrictKey } from '../lib/channel_access'
 import { hasBit, maskXor } from '../lib/perms'
-import { fieldCls, textBtn } from './ui'
+import { Button } from './controls'
+import { fieldCls } from './ui'
 
 // Settings controls shared across the app: an on or off row, permission checks, a role's color,
 // name and creation, slow mode, and a channel's restrictions. Callers pass their own actions.
@@ -33,7 +34,7 @@ export function SettingSwitch({
       title={label}
       disabled={disabled}
       onClick={() => onChange(!value)}
-      className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left enabled:hover:bg-surface-container disabled:opacity-50"
+      className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left outline-offset-2 enabled:hover:bg-surface-container focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50 pointer-coarse:min-h-11"
     >
       {hint ? (
         <span className="flex min-w-0 flex-col">
@@ -166,12 +167,9 @@ export function RoleNameForm({
         disabled={!!locked}
         className={`${fieldCls} disabled:opacity-60`}
       />
-      <button
-        disabled={!!locked}
-        className={`${textBtn} disabled:opacity-60 disabled:hover:bg-transparent`}
-      >
+      <Button type="submit" disabled={!!locked}>
         Rename
-      </button>
+      </Button>
     </form>
   )
 }
@@ -212,7 +210,7 @@ export function RoleCreateForm({
         aria-label="New role name"
         className={fieldCls}
       />
-      <button className={textBtn}>Add</button>
+      <Button type="submit">Add</Button>
     </form>
   )
 }
@@ -280,7 +278,7 @@ export function SlowmodeField({
             title={`1 to ${SLOWMODE_MAX} seconds`}
             className="w-20 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
           />
-          <button className={textBtn}>Set</button>
+          <Button type="submit">Set</Button>
         </form>
       )}
       {error && <p className="basis-full text-xs text-error">{error}</p>}

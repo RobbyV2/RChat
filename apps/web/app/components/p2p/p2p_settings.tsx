@@ -25,7 +25,8 @@ import {
 import { iceOffer } from '../../lib/ice'
 import { fmtSize } from '../../lib/bytes'
 import { SettingSwitch } from '../settings_fields'
-import { dangerBtn, fieldCls, filledBtn, Masked, sectionCls, textBtn } from '../ui'
+import { Button } from '../controls'
+import { fieldCls, Masked, sectionCls } from '../ui'
 import { ServerProfileList, ServerProfileRow } from '../server_profile_list'
 import { editsRoomProfile } from '../../lib/server_profile_editor'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
@@ -58,13 +59,9 @@ function NameField() {
         aria-label="P2P display name"
         className={`${fieldCls} streamer`}
       />
-      <button
-        onClick={() => void p2p.setName(value)}
-        disabled={!clean || clean === name}
-        className={textBtn}
-      >
+      <Button onClick={() => void p2p.setName(value)} disabled={!clean || clean === name}>
         Save
-      </button>
+      </Button>
     </div>
   )
 }
@@ -312,9 +309,9 @@ function FilesSettings() {
           Clear downloaded attachments older than
         </span>
         {CLEAR_DAYS.map(d => (
-          <button key={d} onClick={() => clear(d)} className={textBtn}>
+          <Button key={d} onClick={() => clear(d)}>
             {d} days
-          </button>
+          </Button>
         ))}
       </div>
     </div>
@@ -380,14 +377,13 @@ function AdvancedLimits() {
       {select('hiddenPauseMs', 'Keep syncing in the background on phones')}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-on-surface-variant">{LIMITS_LATER}</p>
-        <button
+        <Button
           data-p2p-limits-reset
           onClick={() => save(null)}
           disabled={Object.keys(user).length < 2}
-          className={`${textBtn} disabled:opacity-40`}
         >
           Reset to defaults
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -433,7 +429,7 @@ export function P2pOffSection() {
             </p>
           ))}
         {data.map(slot => (
-          <button key={slot.id} onClick={() => remove(slot)} className={dangerBtn}>
+          <Button key={slot.id} variant="danger" onClick={() => remove(slot)}>
             {slot.id === 'main' ? (
               'Remove P2P data from this browser'
             ) : (
@@ -442,7 +438,7 @@ export function P2pOffSection() {
                 browser
               </>
             )}
-          </button>
+          </Button>
         ))}
       </div>
     </section>
@@ -502,15 +498,16 @@ function P2pSectionBody() {
               <LabelText text={error} />
             </p>
           )}
-          <button
+          <Button
+            variant="filled"
+            size="md"
             onClick={() => {
               account.identities.show(identity)
               p2p.openDialog({ kind: 'enable' })
             }}
-            className={filledBtn}
           >
             Turn on P2P
-          </button>
+          </Button>
         </div>
       ) : elsewhere || loading || status === 'moved' ? (
         <div className="flex flex-col gap-4">
@@ -591,12 +588,10 @@ function P2pSectionBody() {
           <AdvancedLimits />
           <DevicesSection />
           <div className="flex flex-wrap gap-2 px-1">
-            <button onClick={() => confirmResetFor(identity)(ask)} className={textBtn}>
-              Reset identity
-            </button>
-            <button onClick={remove} className={dangerBtn}>
+            <Button onClick={() => confirmResetFor(identity)(ask)}>Reset identity</Button>
+            <Button variant="danger" onClick={remove}>
               Remove P2P data from this browser
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -623,12 +618,9 @@ export function P2pSection() {
           <IdentitySettings />
         </P2pProvider>
       ))}
-      <button
-        className={textBtn}
-        onClick={() => account.identities.viewed()?.p2p.openDialog({ kind: 'enable' })}
-      >
+      <Button onClick={() => account.identities.viewed()?.p2p.openDialog({ kind: 'enable' })}>
         Add a P2P identity
-      </button>
+      </Button>
     </>
   )
 }

@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, Search, X, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Search, X, type LucideIcon } from 'lucide-react'
 import {
   currentEntry,
   focusesSearch,
@@ -24,6 +24,7 @@ import {
 import { searchRows, type SearchHit, type SearchRow } from '../lib/settings_search'
 import type { EscapeLayer } from '../lib/escape_layers'
 import { useMotionPlays } from '../lib/motion/use_motion'
+import { IconButton, ListRow } from './controls'
 import { Dialog } from './ui'
 
 export interface PageSection {
@@ -38,9 +39,6 @@ export interface PageSection {
   outline?: boolean
   render: () => ReactNode
 }
-
-const barBtn =
-  'flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
@@ -138,16 +136,14 @@ function SearchField({
         className="h-11 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant md:h-9 md:text-sm [&::-webkit-search-cancel-button]:hidden"
       />
       {query !== '' && (
-        <button
-          type="button"
+        <IconButton
+          icon={X}
+          label="Clear search"
+          size="sm"
           data-icon-only
-          title="Clear search"
-          aria-label="Clear search"
           onClick={() => setQuery('')}
-          className="-mr-2.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high md:-mr-1.5 md:h-7 md:w-7"
-        >
-          <X size={16} />
-        </button>
+          place="-mr-1.5 pointer-coarse:-mr-2.5"
+        />
       )}
     </div>
   )
@@ -164,17 +160,13 @@ function Results({ hits, onPick }: { hits: SearchHit[]; onPick: (hit: SearchHit)
             : `${hits.length} results`}
       </p>
       {hits.map(hit => (
-        <button
+        <ListRow
           key={`${hit.row.section}/${hit.row.id}`}
-          type="button"
+          wrap
           onClick={() => onPick(hit)}
-          className="flex min-h-11 w-full min-w-0 flex-col justify-center rounded-xl px-3 py-1.5 text-left hover:bg-surface-container-high"
-        >
-          <span className="max-w-full text-sm break-words">{hit.row.label}</span>
-          <span className="max-w-full text-xs break-words text-on-surface-variant">
-            {hit.trail.slice(0, -1).join(' › ')}
-          </span>
-        </button>
+          label={hit.row.label}
+          description={hit.trail.slice(0, -1).join(' › ')}
+        />
       ))}
     </div>
   )
@@ -366,32 +358,20 @@ export function SettingsPage({
   }, [row, shown, jumps])
 
   const searchButton = search && (
-    <button
-      type="button"
+    <IconButton
+      icon={Search}
+      label="Search settings"
+      size="lg"
       data-icon-only
-      title="Search settings"
-      aria-label="Search settings"
-      aria-pressed={searching}
+      pressed={searching}
       onClick={() => {
         if (searching) setQuery('')
         setSearching(!searching)
       }}
-      className={barBtn}
-    >
-      <Search size={20} />
-    </button>
+    />
   )
-  const closeButton = (className: string) => (
-    <button
-      type="button"
-      data-icon-only
-      title={closeTitle}
-      aria-label={closeTitle}
-      onClick={onClose}
-      className={className}
-    >
-      <X size={20} />
-    </button>
+  const closeButton = (
+    <IconButton icon={X} label={closeTitle} size="lg" data-icon-only onClick={onClose} />
   )
   const results = query.trim() !== '' && <Results hits={hits} onPick={pick} />
   const named = heading !== undefined && headingName ? 'streamer' : ''
@@ -416,7 +396,7 @@ export function SettingsPage({
           className={`${active === null ? 'flex' : 'hidden'} min-h-0 flex-1 flex-col md:flex md:w-64 md:flex-none md:border-r md:border-outline-variant md:bg-surface-container-low`}
         >
           <div className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-2 md:hidden">
-            {closeButton(barBtn)}
+            {closeButton}
             <span className="min-w-0 flex-1 truncate px-1 font-medium">{title}</span>
             {actor}
             {searchButton}
@@ -476,23 +456,16 @@ export function SettingsPage({
                   const parts = outline && shown === id ? (rows ?? []) : []
                   const open = parts.length > 1 && folded !== id
                   const entry = (
-                    <button
-                      type="button"
+                    <ListRow
                       data-settings-section={id}
-                      aria-current={currentEntry(id, { shown, active, wide }) ? 'page' : undefined}
+                      tone="muted"
+                      icon={Icon}
+                      label={label}
+                      chevron="narrow"
+                      current={currentEntry(id, { shown, active, wide }) && 'page'}
                       onClick={() => onSection(id)}
-                      className={`flex min-h-11 w-full min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm md:min-h-0 ${
-                        active === id
-                          ? 'bg-secondary-container text-on-secondary-container'
-                          : shown === id
-                            ? 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface md:bg-secondary-container md:text-on-secondary-container'
-                            : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-                      }`}
-                    >
-                      <Icon size={18} className="shrink-0" />
-                      <span className="min-w-0 flex-1 truncate">{label}</span>
-                      <ChevronRight size={18} className="shrink-0 md:hidden" />
-                    </button>
+                      place="flex-1"
+                    />
                   )
                   const fold = open ? `Hide the parts of ${label}` : `Show the parts of ${label}`
                   return (
@@ -505,17 +478,14 @@ export function SettingsPage({
                       {parts.length > 1 ? (
                         <div className="flex min-w-0 items-center gap-1">
                           {entry}
-                          <button
-                            type="button"
+                          <IconButton
+                            icon={open ? ChevronUp : ChevronDown}
+                            label={fold}
                             data-icon-only
-                            title={fold}
-                            aria-label={fold}
                             aria-expanded={open}
                             onClick={() => setFolded(open ? id : null)}
-                            className="hidden size-8 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface md:flex"
-                          >
-                            <ChevronDown size={16} className={open ? 'rotate-180' : ''} />
-                          </button>
+                            place="hidden md:inline-flex"
+                          />
                         </div>
                       ) : (
                         entry
@@ -523,15 +493,13 @@ export function SettingsPage({
                       {open && (
                         <div className="ml-5 hidden min-w-0 flex-col gap-0.5 border-l border-outline-variant py-1 pl-2 md:flex">
                           {parts.map(part => (
-                            <button
+                            <ListRow
                               key={part.id}
-                              type="button"
                               data-settings-part={part.id}
+                              tone="muted"
+                              label={part.label}
                               onClick={() => jump(id, part.id)}
-                              className="min-w-0 truncate rounded-lg px-3 py-1.5 text-left text-sm text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-                            >
-                              {part.label}
-                            </button>
+                            />
                           ))}
                         </div>
                       )}
@@ -547,24 +515,21 @@ export function SettingsPage({
         >
           <div className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-2 md:hidden">
             {(onBack || !single) && (
-              <button
+              <IconButton
                 ref={back}
-                type="button"
+                icon={ArrowLeft}
+                label="Back"
+                size="lg"
                 data-icon-only
-                title="Back"
-                aria-label="Back"
                 onClick={onBack ?? (() => onSection(null))}
-                className={barBtn}
-              >
-                <ArrowLeft size={20} />
-              </button>
+              />
             )}
             <span className={`min-w-0 flex-1 truncate px-1 font-medium ${named}`}>
               {heading ?? section?.label}
             </span>
             {actor}
             {searchButton}
-            {closeButton(barBtn)}
+            {closeButton}
           </div>
           {search && searching && (
             <SearchField
@@ -580,9 +545,7 @@ export function SettingsPage({
               {heading ?? section?.label}
             </h1>
             {actor}
-            {closeButton(
-              'flex size-10 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-            )}
+            {closeButton}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-6 md:pt-6 md:pb-10 lg:px-10">
             <div className="mx-auto max-w-3xl">

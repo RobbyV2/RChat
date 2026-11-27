@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useStoreApi } from '../../lib/client/react'
 import { useStore } from '../../lib/store'
-import { textBtn } from '../ui'
+import { Button } from '../controls'
 
 // Blurs the phrase in streamer mode, with no hover or tap reveal, until the user presses Show.
 // Turning streamer mode on again covers it again.
@@ -34,12 +34,8 @@ export type Reveal = ReturnType<typeof useReveal>
 export function RevealToggle({ reveal }: { reveal: Reveal }) {
   if (!reveal.streamer) return null
   return (
-    <button
-      type="button"
-      onClick={reveal.hidden ? reveal.show : reveal.hide}
-      className={`${textBtn} self-start`}
-    >
+    <Button onClick={reveal.hidden ? reveal.show : reveal.hide} place="self-start">
       {reveal.hidden ? 'Show words' : 'Hide words'}
-    </button>
+    </Button>
   )
 }

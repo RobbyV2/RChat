@@ -4,9 +4,7 @@ import { useId, useState } from 'react'
 import { Check } from 'lucide-react'
 import { validColor } from '../lib/profile'
 import { onColor } from '../lib/server_colors'
-
-const textBtn =
-  'rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest'
+import { Button } from './controls'
 
 interface ColorPreset {
   color: string
@@ -94,9 +92,7 @@ export function ColorField({
         {value === null ? (
           <span className="text-xs">{defaultNote}</span>
         ) : (
-          <button type="button" onClick={() => onChange(null)} className={textBtn}>
-            {resetLabel}
-          </button>
+          <Button onClick={() => onChange(null)}>{resetLabel}</Button>
         )}
       </div>
     </div>

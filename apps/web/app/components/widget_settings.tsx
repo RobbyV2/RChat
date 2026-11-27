@@ -13,7 +13,8 @@ import {
   type WidgetConfig,
   type WidgetMode,
 } from '../lib/widgets'
-import { fieldCls, filledBtn, textBtn } from './ui'
+import { Button } from './controls'
+import { fieldCls } from './ui'
 
 const labels: Record<WidgetMode, string> = {
   public_read: 'Public read-only',
@@ -85,14 +86,9 @@ function WidgetPicker({ server, channels }: WidgetSettingsProps) {
         </select>
       </label>
       {(next || error) && (
-        <button
-          className={textBtn + ' cursor-pointer'}
-          type="button"
-          disabled={request !== null}
-          onClick={() => setRequest({ cursor: next })}
-        >
+        <Button disabled={request !== null} onClick={() => setRequest({ cursor: next })}>
           {error ? 'Retry loading widgets' : 'Load more widgets'}
-        </button>
+        </Button>
       )}
       {error && <p role="alert">{error}</p>}
       <WidgetForm
@@ -206,9 +202,9 @@ function WidgetForm({
           </label>
         )}
       </div>
-      <button
-        type="button"
-        className={filledBtn + ' cursor-pointer'}
+      <Button
+        variant="filled"
+        size="md"
         disabled={!channel || busy}
         onClick={async () => {
           setBusy(true)
@@ -234,7 +230,7 @@ function WidgetForm({
         }}
       >
         Save widget
-      </button>
+      </Button>
       {widget?.enabled && (
         <>
           <label className="block text-sm">
@@ -248,9 +244,7 @@ function WidgetForm({
             />
           </label>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={textBtn + ' cursor-pointer'}
+            <Button
               onClick={async () =>
                 setMessage(
                   (await sharing().copyText(code)) ? 'Copied' : 'Select the embed code to copy it.'
@@ -258,14 +252,10 @@ function WidgetForm({
               }
             >
               Copy embed code
-            </button>
-            <button
-              type="button"
-              className={textBtn + ' cursor-pointer'}
-              onClick={() => setPreview(v => !v)}
-            >
+            </Button>
+            <Button onClick={() => setPreview(v => !v)}>
               {preview ? 'Close preview' : 'Preview widget'}
-            </button>
+            </Button>
           </div>
           {preview && (
             <iframe

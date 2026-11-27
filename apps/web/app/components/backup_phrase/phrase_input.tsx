@@ -13,7 +13,8 @@ import {
   typeInto,
 } from '../../lib/backup_phrase'
 import { QrScan } from '../p2p/qr_scan'
-import { FieldError, textBtn } from '../ui'
+import { Button } from '../controls'
+import { FieldError } from '../ui'
 import { RevealToggle, SECRET, useReveal } from './reveal'
 
 const EMPTY: string[] = Array(PHRASE_LENGTH).fill('')
@@ -35,7 +36,7 @@ export function PhraseHints({
           type="button"
           onMouseDown={e => e.preventDefault()}
           onClick={() => onPick(w)}
-          className={`${secret ? SECRET : ''} rounded-full bg-secondary-container px-3 py-1 font-mono text-sm text-on-secondary-container hover:opacity-90`}
+          className={`${secret ? SECRET : ''} rounded-full bg-secondary-container px-3 py-1 font-mono text-sm text-on-secondary-container hover:opacity-90 pointer-coarse:min-h-11`}
         >
           {w}
         </button>
@@ -183,11 +184,7 @@ export function PhraseInput({
         <QrScan onCode={onScan} label="Backup phrase QR code" />
         <div className="flex gap-1">
           <RevealToggle reveal={reveal} />
-          {slots.some(Boolean) && (
-            <button type="button" onClick={() => update(EMPTY)} className={textBtn}>
-              Clear
-            </button>
-          )}
+          {slots.some(Boolean) && <Button onClick={() => update(EMPTY)}>Clear</Button>}
         </div>
       </div>
       {scanNote && <p className="text-xs text-error">{scanNote}</p>}

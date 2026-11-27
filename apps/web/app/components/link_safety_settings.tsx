@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { forgetHost } from '../lib/link_safety'
 import { SettingSwitch } from './settings_fields'
+import { IconButton } from './controls'
 import { sectionCls } from './ui'
 
 // Settings > Privacy: the external link warning, tracking parameters, and trusted domains.
@@ -42,15 +43,11 @@ export function LinkSafetySection() {
               <span className="min-w-0 flex-1 truncate font-mono text-sm text-on-surface">
                 {host}
               </span>
-              <button
-                type="button"
-                title={`Remove ${host}`}
-                aria-label={`Remove ${host}`}
+              <IconButton
+                icon={X}
+                label={`Remove ${host}`}
                 onClick={() => setLinkPrefs(forgetHost(prefs, host))}
-                className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-              >
-                <X size={16} />
-              </button>
+              />
             </li>
           ))}
         </ul>

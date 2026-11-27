@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { Download, FileDown, Printer } from 'lucide-react'
+import { Button } from '../controls'
+import { buttonLook } from '../../lib/controls'
 import {
   KEY_DOT,
   KEY_PATH,
@@ -14,7 +16,6 @@ import {
 import { useAccount } from '../../lib/client/react'
 import { sharing } from '../../lib/platform'
 import { useStore } from '../../lib/store'
-import { textBtn } from '../ui'
 
 export const PNG_NAME = 'rchat-backup-phrase.png'
 export const SVG_NAME = 'rchat-backup-phrase.svg'
@@ -213,49 +214,37 @@ export function PhraseExport({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap gap-1">
-        <button
-          type="button"
-          onClick={() => void savePng()}
-          className={`${textBtn} flex items-center gap-1.5`}
-        >
-          <Download size={16} />
+        <Button icon={Download} onClick={() => void savePng()}>
           Save PNG
-        </button>
-        <button
-          type="button"
-          onClick={() => void saveSvg()}
-          className={`${textBtn} flex items-center gap-1.5`}
-        >
-          <Download size={16} />
+        </Button>
+        <Button icon={Download} onClick={() => void saveSvg()}>
           Save SVG
-        </button>
+        </Button>
         <span className="grid">
           <span
             aria-hidden="true"
-            className={`${textBtn} invisible col-start-1 row-start-1 flex items-center gap-1.5`}
+            className={`invisible col-start-1 row-start-1 flex items-center gap-1.5 ${buttonLook('text', 'sm')}`}
           >
             <FileDown size={16} />
             Save sheet
           </span>
           {action === 'print' && (
-            <button
-              type="button"
+            <Button
+              icon={Printer}
               onClick={() => void print()}
-              className={`${textBtn} col-start-1 row-start-1 flex items-center gap-1.5 justify-self-start`}
+              place="col-start-1 row-start-1 justify-self-start"
             >
-              <Printer size={16} />
               Print
-            </button>
+            </Button>
           )}
           {action === 'save' && (
-            <button
-              type="button"
+            <Button
+              icon={FileDown}
               onClick={() => void saveSheet()}
-              className={`${textBtn} col-start-1 row-start-1 flex items-center gap-1.5 justify-self-start`}
+              place="col-start-1 row-start-1 justify-self-start"
             >
-              <FileDown size={16} />
               Save sheet
-            </button>
+            </Button>
           )}
         </span>
       </div>

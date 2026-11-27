@@ -9,7 +9,8 @@ import { ruleSummary, type NotifyScope, type Rule } from '../lib/notify'
 import { p2pOverride } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
 import { SettingSwitch } from './settings_fields'
-import { Masked, sectionCls, textBtn } from './ui'
+import { Button } from './controls'
+import { Masked, sectionCls } from './ui'
 
 interface Override {
   key: string
@@ -105,9 +106,9 @@ function OverrideRow({ o, now }: { o: Override; now: number }) {
         </span>
         <span className="truncate text-xs text-on-surface-variant">{ruleSummary(o.rule, now)}</span>
       </span>
-      <button className={`${textBtn} shrink-0`} onClick={() => reset(o.scope)}>
+      <Button onClick={() => reset(o.scope)} place="shrink-0">
         Reset
-      </button>
+      </Button>
     </li>
   )
 }
@@ -203,9 +204,9 @@ export function NotificationsSection() {
         <div className="flex items-center justify-between gap-2">
           <p className={sectionCls}>Custom settings</p>
           {any && (
-            <button className={`${textBtn} -mt-2`} onClick={resetAll}>
+            <Button onClick={resetAll} place="-mt-2">
               Reset all
-            </button>
+            </Button>
           )}
         </div>
         <p className="px-2 text-xs text-on-surface-variant">

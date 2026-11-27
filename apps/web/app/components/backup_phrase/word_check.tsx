@@ -2,7 +2,8 @@
 
 import { useState, type FormEvent } from 'react'
 import { checkAnswers, pickCheck } from '../../lib/backup_phrase'
-import { FieldError, filledBtn, textBtn } from '../ui'
+import { Button } from '../controls'
+import { FieldError } from '../ui'
 import { RevealToggle, SECRET, useReveal } from './reveal'
 
 // Asks for 3 words of the phrase by position. Every check is reported; after a miss the form stays
@@ -60,12 +61,12 @@ export function WordCheck({
         <span className="mr-auto">
           <RevealToggle reveal={reveal} />
         </span>
-        <button type="button" onClick={onSkip} className={textBtn}>
+        <Button size="md" onClick={onSkip}>
           Skip
-        </button>
-        <button type="submit" disabled={answers.some(a => !a.trim())} className={filledBtn}>
+        </Button>
+        <Button type="submit" variant="filled" size="md" disabled={answers.some(a => !a.trim())}>
           Check
-        </button>
+        </Button>
       </div>
     </form>
   )

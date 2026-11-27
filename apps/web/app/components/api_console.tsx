@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useId, useState, type ReactNode } from 'react'
-import { ArrowLeft, Check, Copy, Eye, Plus, Send, TriangleAlert, X } from 'lucide-react'
+import { ArrowLeft, Check, Copy, Plus, Send, TriangleAlert, X } from 'lucide-react'
 import { useAccount } from '../lib/client/react'
 import { useApiDoc, type ApiResponse } from '../lib/api_console'
 import {
@@ -27,7 +27,8 @@ import { sharing } from '../lib/platform'
 import { useStore } from '../lib/store'
 import { CodeBlock } from './code_block'
 import { SettingSwitch } from './settings_fields'
-import { dangerBtn, filledBtn, filledDangerBtn, iconBtn, textBtn, useCopied } from './ui'
+import { Button, Cover, IconButton } from './controls'
+import { useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
 
 const METHOD_CLS: Record<Method, string> = {
@@ -160,24 +161,21 @@ function FieldInput({
                   onChange={next => onChange(list.map((x, j) => (j === i ? next : x)))}
                 />
               </div>
-              <button
-                type="button"
-                title="Remove item"
-                aria-label="Remove item"
+              <IconButton
+                icon={X}
+                label="Remove item"
+                size="sm"
                 onClick={() => onChange(list.filter((_, j) => j !== i))}
-                className={iconBtn}
-              >
-                <X size={14} />
-              </button>
+              />
             </div>
           ))}
-          <button
-            type="button"
+          <Button
+            icon={Plus}
             onClick={() => onChange([...list, emptyValue(item)])}
-            className={`${textBtn} flex items-center gap-1 self-start`}
+            place="self-start"
           >
-            <Plus size={14} /> Add item
-          </button>
+            Add item
+          </Button>
         </div>
       )
     } else if (field.kind === 'boolean' || field.kind === 'enum') {
@@ -276,15 +274,9 @@ function ResponseView({ res }: { res: ApiResponse }) {
         <span className="text-xs text-on-surface-variant">{res.size} bytes</span>
       </div>
       {covered ? (
-        <button
-          type="button"
-          data-streamer-cover
-          onClick={() => setShown(res)}
-          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-        >
-          <Eye size={16} />
+        <Cover data-streamer-cover onClick={() => setShown(res)}>
           Hidden in streamer mode. Show response
-        </button>
+        </Cover>
       ) : (
         <ResponseBody res={res} />
       )}
@@ -338,15 +330,9 @@ function CurlButton({ op, values }: { op: Operation; values: Values }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={copy}
-          disabled={!built.ok}
-          className={`${textBtn} flex items-center gap-1.5 disabled:opacity-40`}
-        >
-          {copied ? <Check size={14} /> : <Copy size={14} />}
+        <Button icon={copied ? Check : Copy} onClick={copy} disabled={!built.ok}>
           {copied ? 'Copied' : 'Copy as curl'}
-        </button>
+        </Button>
         {!guest && (
           <div className="min-w-56 flex-1">
             <SettingSwitch
@@ -447,15 +433,7 @@ export function ApiConsole({
   return (
     <div data-api-console className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-outline-variant px-3 py-2">
-        <button
-          type="button"
-          title="Back to the list"
-          aria-label="Back to the list"
-          onClick={onBack}
-          className={iconBtn}
-        >
-          <ArrowLeft size={18} />
-        </button>
+        <IconButton icon={ArrowLeft} label="Back to the list" size="lg" onClick={onBack} />
         <MethodBadge method={op.method} />
         <span className="min-w-0 truncate font-mono text-sm">{op.path}</span>
       </div>
@@ -534,38 +512,34 @@ export function ApiConsole({
                 Send it?
               </p>
               <div className="flex justify-end gap-2">
-                <button type="button" onClick={() => setPending(null)} className={textBtn}>
+                <Button size="md" onClick={() => setPending(null)}>
                   Cancel
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant={danger ? 'filled-danger' : 'filled'}
+                  size="md"
                   data-api-confirm
                   onClick={() => void send(pending)}
-                  className={danger ? filledDangerBtn : filledBtn}
                 >
                   Send {op.method}
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => setValues(emptyValues(op))}
-                className={dangerBtn}
-              >
+              <Button variant="danger" onClick={() => setValues(emptyValues(op))}>
                 Clear
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="filled"
+                size="md"
+                icon={Send}
                 data-api-send
                 onClick={ask}
                 disabled={busy || blocked}
-                className={`${filledBtn} flex items-center gap-1.5`}
               >
-                <Send size={14} />
                 {busy ? 'Sending' : 'Send'}
-              </button>
+              </Button>
             </div>
           )}
           <CurlButton op={op} values={values} />
@@ -598,9 +572,7 @@ export function ApiConsoleFor({
         <p>
           That operation is not in the API of <span className="streamer">{label}</span>.
         </p>
-        <button type="button" onClick={onBack} className={textBtn}>
-          Back
-        </button>
+        <Button onClick={onBack}>Back</Button>
       </div>
     )
   return <ApiConsole key={opId} op={op} initial={initial} onBack={onBack} />
