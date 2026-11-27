@@ -35,6 +35,7 @@ import {
   type Slot,
 } from './negotiation'
 import type { RtcPayload, VoiceMsg } from './types'
+import { cause, label, logError } from './log'
 
 export type RtcTarget =
   | { channelId: number; dmId?: undefined; p2pRoom?: undefined; ch?: undefined }
@@ -413,7 +414,7 @@ export class RtcManager {
 
   private failed(user: string, peer: Peer, what: string) {
     return (e: unknown) => {
-      if (this.current(user, peer)) console.error(what, e)
+      if (this.current(user, peer)) logError('rtc step', label(what), cause(e))
     }
   }
 
@@ -743,7 +744,7 @@ export class RtcManager {
     try {
       await peer.pc.addIceCandidate(candidate)
     } catch (e) {
-      if (!peer.ignoreOffer && peer.pc.signalingState !== 'closed') console.error('rtc ice', e)
+      if (!peer.ignoreOffer && peer.pc.signalingState !== 'closed') logError('rtc ice', cause(e))
     }
   }
 }

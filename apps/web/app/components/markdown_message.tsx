@@ -114,6 +114,7 @@ import { hostedVideo } from '../lib/video_attachment'
 import { useNearView, VideoAttachment, VideoPlaceholder } from './video_attachment'
 import { ViewableImage } from './media_lightbox'
 import { altText } from '../lib/alt_text'
+import { cause, logError } from '../lib/log'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -686,7 +687,7 @@ export function P2pFile({
         if (text === CANCELED || at !== sessionMark()) return
         setFailed(text)
         if (save) p2p.onError(text)
-        else console.error('p2p fetch', e)
+        else logError('p2p fetch', cause(e))
       })
       .finally(() => {
         if (ctl.current === job) ctl.current = null

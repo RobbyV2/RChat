@@ -19,6 +19,7 @@ import { SELF_AUDIO_IDLE, type SelfAudio, toggleDeafenAudio, toggleMicAudio } fr
 import type { SeatAudio } from '../voice_status'
 import { defaultViewing } from '../viewing'
 import { type GetState, type Handlers, type SetState } from './ctx'
+import { cause, logError } from '../log'
 
 export interface RtcDeps {
   acct: AccountSession
@@ -912,7 +913,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
       if (voiceSelf(get()) === ev.to)
         rtc
           .onSignal(ev.from, ev.payload, { channelId: ev.channel_id, dmId: ev.dm_id })
-          .catch((e: unknown) => console.error('rtc signal', e))
+          .catch((e: unknown) => logError('rtc signal', cause(e)))
     },
 
     voice_ended: ev => {

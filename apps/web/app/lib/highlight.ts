@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Lang } from './code'
+import { cause, logError } from './log'
 
 // Syntax trees from lowlight (hast): spans with `hljs-*` classes around plain text. They are
 // turned into React elements, never into an HTML string.
@@ -61,7 +62,7 @@ export const useHighlight = (code: string, lang: Lang | null, enabled = true, fe
     let live = true
     loadHighlighter().then(
       m => live && setData(m),
-      (e: unknown) => console.error('highlighter', e)
+      (e: unknown) => logError('highlighter', cause(e))
     )
     return () => {
       live = false

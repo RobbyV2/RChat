@@ -2,6 +2,7 @@
 // (ctx.ts binds it), so a page without the app can still define actions.
 
 import type { Action, ActionCtx, Args, Scope } from './types'
+import { cause, label, logError } from '../log'
 
 const identities = new WeakMap<Action, (identity: NonNullable<ActionCtx['identity']>) => Action>()
 export const bindIdentityAction = (
@@ -42,7 +43,7 @@ const changed = () => {
     try {
       cb()
     } catch (e) {
-      console.error('action listener', e)
+      logError('action listener', cause(e))
     }
 }
 
@@ -61,12 +62,12 @@ export const defineAction = <A extends Args = Args>(a: Action<A>): (() => void) 
     !ID.test(a.id) ||
     a.id.startsWith('core.')
   ) {
-    console.error('bad action id', a.id)
+    logError('bad action id', label(a.id))
     return () => {}
   }
   const key = qualifiedId(a.id)
   if (entries.has(key)) {
-    console.error('duplicate action', a.id)
+    logError('duplicate action', label(a.id))
     return () => {}
   }
   const entry = { action }
@@ -111,7 +112,7 @@ export const guardAction = <T>(a: Action, f: () => T, fallback: T): T => {
     const key = qualifiedId(a.id)
     if (!failed.has(key)) {
       failed.add(key)
-      console.error('action', a.id, e)
+      logError('action', label(a.id), cause(e))
     }
     return fallback
   }

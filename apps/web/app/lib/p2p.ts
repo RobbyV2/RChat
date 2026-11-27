@@ -22,6 +22,7 @@ import { mediaError } from './rules'
 import type { VoiceMsg, WsEvent } from './types'
 import { slotLayout, videoPlan, type Slot } from './negotiation'
 import { captureScreen, nextShareId, syncStream, tuneScreen, type ScreenCapture } from './screen'
+import { cause, logError } from './log'
 
 export interface StoredFile {
   name: string
@@ -1014,7 +1015,7 @@ export class P2pManager {
     peer.on('error', err => {
       if (this.peer !== peer) return
       if (err.type === 'unavailable-id') this.taken(peer)
-      else console.error('peer', err)
+      else logError('peer', cause(err))
     })
     this.peer = peer
   }

@@ -3,6 +3,7 @@ import { DEFAULT_LIMITS } from './instance_limits'
 import type { VoiceMsg, WsEvent, WsStatus } from './types'
 import type { TypingMsg } from './typing'
 import { TO_REQUEST, type Secret } from './secret'
+import { cause, label, logError } from './log'
 
 const secure = (protocol: string) => protocol === 'https:' || protocol === 'wss:'
 
@@ -31,7 +32,7 @@ export const wsText = (msg: unknown): string | null => {
   const text = JSON.stringify(msg)
   const big = text.length * 3 > WS_MESSAGE_MAX && new TextEncoder().encode(text).length
   if (big && big >= WS_MESSAGE_MAX) {
-    console.error(`not sent: a ${(msg as { type?: unknown }).type} message of ${big} bytes`)
+    logError('not sent: message too large', label((msg as { type?: unknown }).type), big)
     return null
   }
   return text
@@ -215,7 +216,7 @@ export class WsClient {
       try {
         this.onEvent(JSON.parse(e.data as string) as WsEvent)
       } catch (err) {
-        console.error('ws parse', err)
+        logError('ws parse', cause(err))
       }
     }
     ws.onclose = e => {

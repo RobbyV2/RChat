@@ -138,6 +138,7 @@ import type { rtcSlice } from './rtc'
 import type { serversSlice } from './servers'
 import type { uiSlice } from './ui'
 import { ANIM_DEFAULT } from '../motion/setting'
+import { cause, logError } from '../log'
 
 // Waits before opening the URL again after a boot left nothing open because of 429s. Exported
 // so tests can shorten them.
@@ -883,7 +884,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     } catch (e) {
       if (e instanceof Ended) return
       if (view.kind === 'channel' && lockedOut(e)) guestLocked(view.server)
-      else console.error('degraded poll', e)
+      else logError('degraded poll', cause(e))
     }
   }
 

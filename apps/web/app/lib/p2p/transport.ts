@@ -8,6 +8,7 @@ import { LOCAL, type Local } from './limits'
 import { RateWindow } from './rate'
 import { TransportError, type Listener, type OfferGuard, type Transport } from './node'
 import type { Pipe } from './session'
+import { logError } from '../log'
 
 // The PeerJS side of P2P messaging: our own Peer on the instance's PeerServer (never the one P2P
 // files use), configured only from the shared ICE seam. Every connection is a reliable binary
@@ -197,7 +198,7 @@ export class PeerTransport implements Transport {
       })
       this.peer = peer
       const hooked = this.hookOffers(peer)
-      if (!hooked) console.error('P2P offers cannot be checked: connecting through relays only')
+      if (!hooked) logError('P2P offers cannot be checked: connecting through relays only')
       const refresh = () => {
         if (!peer.destroyed) peer.options.config = answerConfig(hooked, this.owner.relays)
       }

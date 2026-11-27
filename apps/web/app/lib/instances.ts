@@ -12,6 +12,7 @@ import { Secret, TO_REQUEST } from './secret'
 
 import { DEFAULT_INSTANCE_NAME } from './instance_label'
 import { limitsOf } from './instance_limits'
+import { cause, logWarn } from './log'
 
 export { DEFAULT_INSTANCE_NAME }
 
@@ -434,7 +435,7 @@ function write(store: () => StorageLike | null, key: string, value: string | nul
     else to?.setItem(key, value)
     return true
   } catch (e) {
-    if (warn) console.warn('localStorage write failed', key, e)
+    if (warn) logWarn('localStorage write failed', cause(e))
     return false
   }
 }

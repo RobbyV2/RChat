@@ -129,6 +129,11 @@ export default tseslint.config(
     ignores: [...REQUEST_SINKS, ...STORE_SINKS, ...SCREEN_SINKS, ...TEST_FILES],
     rules: sinkRule([]),
   },
+  {
+    files: ['apps/web/app/**/*.{ts,tsx}'],
+    ignores: ['apps/web/app/lib/log.ts', ...TEST_FILES],
+    rules: { 'no-console': 'error' },
+  },
   { files: REQUEST_SINKS, rules: sinkRule(['TO_REQUEST']) },
   { files: STORE_SINKS, rules: sinkRule(['TO_STORE']) },
   { files: SCREEN_SINKS, ignores: TEST_FILES, rules: sinkRule(['TO_SCREEN']) },
