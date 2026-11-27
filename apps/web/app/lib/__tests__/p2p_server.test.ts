@@ -116,6 +116,28 @@ describe('P2P servers', () => {
     )
   })
 
+  test('a gap fill the store closes under rejects nothing', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('One')
+    await joinWithCode(clock, a, room, b)
+    expect(b.servers.sync.linksOf(room).length).toBeGreaterThan(0)
+    const unhandled: unknown[] = []
+    const note = (e: unknown) => unhandled.push(e)
+    process.on('unhandledRejection', note)
+    try {
+      b.servers.sync.retryGaps(room)
+      b.servers.sync.loadOlder(room)
+      b.store.close()
+      await new Promise(resolve => setTimeout(resolve, 100))
+    } finally {
+      process.off('unhandledRejection', note)
+    }
+    expect(unhandled).toEqual([])
+  })
+
   test('a stopped startup cannot restart timers after a later valid start', async () => {
     const { servers, store } = await makeMember(new Hub(), 'Alice', new ManualClock())
     await servers.indexing

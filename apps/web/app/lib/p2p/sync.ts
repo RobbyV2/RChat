@@ -524,7 +524,7 @@ export class Sync {
   retryGaps(room: string) {
     for (const link of this.linksOf(room)) {
       link.unavailable.clear()
-      void this.fillGaps(link)
+      void this.fillGaps(link).catch(() => {})
     }
   }
 
@@ -533,7 +533,7 @@ export class Sync {
     for (const link of this.linksOf(room)) {
       link.pulled = 0
       link.unavailable.clear()
-      void this.fillGaps(link)
+      void this.fillGaps(link).catch(() => {})
     }
   }
 
