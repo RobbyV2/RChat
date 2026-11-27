@@ -85,7 +85,7 @@ import { historyKey } from '../openapi'
 import { secretsKey } from '../passwords'
 import { NO_PINGS } from '../pings'
 import { clearProfiles } from '../profile'
-import { retrySeconds, tooManyText } from '../rate_limit'
+import { tooManyText } from '../rate_limit'
 import { type Decision, mergeRelays, relaysKey } from '../relays'
 import { cleanBio } from '../rules'
 import { displayNameError } from '../display_name'
@@ -365,18 +365,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   const authRequest = async (path: string, body: LoginRequest | RegisterRequest) => {
-    const res = await api.send('POST', path, body)
-    if (res.ok) return (await res.json()) as AuthResponse
-    const text = await res.text().catch(() => '')
-    if (res.status === 429)
-      throw new ApiError(tooManyText(retrySeconds(res.headers.get('Retry-After'), text)), 429)
-    let message: string
     try {
-      message = (JSON.parse(text) as { error?: string }).error || res.statusText
-    } catch {
-      message = res.statusText
+      return await api.req<AuthResponse>('POST', path, body)
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 429)
+        throw new ApiError(tooManyText(e.retryAfter), 429, e.data, e.retryAfter)
+      throw e
     }
-    throw new ApiError(message || `HTTP ${res.status}`, res.status)
   }
 
   // The relay consent prompt: one host at a time, answered by answerRelayPrompt.

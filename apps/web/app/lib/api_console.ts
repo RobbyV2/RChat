@@ -133,7 +133,9 @@ export function createApiDoc(acct: AccountSession) {
     const path = requestPath(r)
     if (path === null) throw new ApiError('Only API paths can be called', 0)
     const started = performance.now()
-    const res = await acct.lifetime.live(api.send(r.method, path, r.body, r.headers))
+    const res = await acct.lifetime.live(
+      api.send(r.method, path, r.body, { headers: r.headers, retry: false })
+    )
     if (disposed || mark !== sessionMark()) throw new Ended()
     const type = res.headers.get('content-type')
     let raw = ''

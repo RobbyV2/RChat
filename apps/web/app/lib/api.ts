@@ -79,6 +79,7 @@ import type { ServerIconKind } from './server_about'
 import type { LayoutOrder } from './categories'
 import type { Page } from './lists'
 import type { UnreadCount } from './unread_banner'
+import { retrySeconds } from './rate_limit'
 import type { Privacy, Relation, RequestStatus } from './friends'
 import type { Secret } from './password'
 import type {
@@ -106,16 +107,68 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public data?: unknown
+    public data?: unknown,
+    // Seconds the server asked to wait, on a 429 or 503 that says so.
+    public retryAfter: number | null = null
   ) {
     super(message)
     this.name = 'ApiError'
   }
 }
 
+const WAITS = new Set([429, 503])
+
 async function failed(response: Response): Promise<never> {
   const error = await response.json().catch(() => ({ error: response.statusText }))
-  throw new ApiError(error.error || response.statusText, response.status, error)
+  const message = error?.error || response.statusText || `HTTP ${response.status}`
+  const wait = WAITS.has(response.status)
+    ? retrySeconds(response.headers.get('Retry-After'), String(message))
+    : null
+  throw new ApiError(message, response.status, error, wait)
+}
+
+// How the client waits between attempts. Tests pass their own.
+export interface Pace {
+  wait: (ms: number, signal?: AbortSignal) => Promise<void>
+}
+
+const realPace: Pace = {
+  wait: (ms, signal) =>
+    new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason)
+      const stop = () => {
+        clearTimeout(timer)
+        reject(signal?.reason)
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', stop)
+        resolve()
+      }, ms)
+      signal?.addEventListener('abort', stop, { once: true })
+    }),
+}
+
+// Waits before a request that changes nothing is sent again after the network failed.
+export const RETRY_AFTER_MS: readonly number[] = [250, 1000]
+// The longest wait a 429 or 503 answer may ask for that the client sits out itself.
+export const RETRY_WAIT_MAX_S = 5
+
+export interface SendOptions {
+  headers?: Record<string, string>
+  keepalive?: boolean
+  timeoutMs?: number
+  signal?: AbortSignal
+  // Whose credentials go along: the session's (the token, or every guest grant), a file's (the
+  // token, or the guest grant for one server, and no cookie beside a token), or nobody's.
+  as?: 'session' | 'nobody' | { file: string | undefined }
+  // Below the versioned base, or the unversioned root every version serves.
+  under?: 'base' | 'root'
+  cookies?: RequestCredentials
+  redirect?: RequestRedirect
+  cache?: RequestCache
+  referrerPolicy?: ReferrerPolicy
+  // False for a request that must answer or fail at once.
+  retry?: boolean
 }
 
 export const isJson = (res: Response) =>
@@ -165,7 +218,8 @@ export class ApiClient {
 
   constructor(
     base: string,
-    private readonly cookieMode: RequestCredentials = 'same-origin'
+    private readonly cookieMode: RequestCredentials = 'same-origin',
+    private readonly pace: Pace = realPace
   ) {
     this.setBase(base)
   }
@@ -181,11 +235,10 @@ export class ApiClient {
   async ssoExchange(body: ExchangeRequest): Promise<ExchangeResponse> {
     const confirmation = body.confirm_as !== undefined
     const path = confirmation ? '/auth/oidc/exchange/confirmation' : '/auth/oidc/exchange'
-    const response = await fetch(this.root + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      credentials: 'omit',
+    const response = await this.send('POST', path, body, {
+      under: 'root',
+      as: 'nobody',
+      cookies: 'omit',
       redirect: 'error',
       cache: 'no-store',
     })
@@ -204,18 +257,15 @@ export class ApiClient {
   // answer counts; a redirect (into the web app on older instances) is not followed. The boot
   // waits for it, so it gives up after 3 s.
   async discovery(timeoutMs = 3000, cache?: RequestCache): Promise<InstanceInfo> {
-    let res: Response
-    try {
-      res = await fetch(`${this.root}/instance`, {
-        headers: { Accept: 'application/json' },
-        credentials: this.cookieMode,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(timeoutMs),
-        cache,
-      })
-    } catch {
-      throw new ApiError("Can't reach the server", 0)
-    }
+    const res = await this.send('GET', '/instance', undefined, {
+      under: 'root',
+      as: 'nobody',
+      headers: { Accept: 'application/json' },
+      redirect: 'manual',
+      timeoutMs,
+      cache,
+      retry: false,
+    })
     if (!isJson(res)) throw new ApiError('No instance document', res.status)
     return handleResponse<InstanceInfo>(res)
   }
@@ -232,28 +282,39 @@ export class ApiClient {
     return new URL(this.base, href).origin
   }
 
+  private credentials(as: SendOptions['as'] = 'session'): Record<string, string> {
+    if (as === 'nobody') return {}
+    if (this.token) return { Authorization: `Bearer ${this.token}` }
+    if (as === 'session') {
+      const grants = Object.values(this.grants)
+      return grants.length ? { 'X-Guest-Grant': grants.join(',') } : {}
+    }
+    const grant = as.file === undefined ? undefined : this.grants[as.file]
+    return grant ? { 'X-Guest-Grant': grant } : {}
+  }
+
+  // Every request to this instance leaves here. A GET is sent again after a network failure, and
+  // once after a 429 or 503 that asks for a short wait.
   async send(
     method: string,
     path: string,
     body?: unknown,
-    extra: Record<string, string> = {},
-    keepalive = false,
-    timeoutMs = 0,
-    signal?: AbortSignal
+    opts: SendOptions = {}
   ): Promise<Response> {
-    const headers: Record<string, string> = { ...extra }
-    if (headers.Authorization === undefined && this.token) {
-      headers.Authorization = `Bearer ${this.token}`
-    } else if (headers.Authorization === undefined) {
-      const grants = Object.values(this.grants)
-      if (grants.length) headers['X-Guest-Grant'] = grants.join(',')
-    }
+    const { as = 'session', under = 'base', keepalive = false, timeoutMs = 0 } = opts
+    const headers: Record<string, string> = { ...opts.headers }
+    if (headers.Authorization === undefined) Object.assign(headers, this.credentials(as))
     const init: RequestInit = keepalive ? { method, headers, keepalive } : { method, headers }
-    init.credentials = this.cookieMode
-    const stops = [signal, timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined].filter(
+    const file = typeof as === 'object'
+    init.credentials = opts.cookies ?? (file && this.token ? 'omit' : this.cookieMode)
+    if (opts.redirect) init.redirect = opts.redirect
+    if (opts.cache) init.cache = opts.cache
+    if (opts.referrerPolicy) init.referrerPolicy = opts.referrerPolicy
+    const stops = [opts.signal, timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined].filter(
       s => s !== undefined
     )
-    if (stops.length) init.signal = stops.length === 1 ? stops[0] : AbortSignal.any(stops)
+    const stop = stops.length > 1 ? AbortSignal.any(stops) : stops[0]
+    if (stop) init.signal = stop
     if (body instanceof FormData) {
       init.body = body
     } else if (body instanceof Blob) {
@@ -263,10 +324,35 @@ export class ApiClient {
       headers['Content-Type'] = 'application/json'
       init.body = JSON.stringify(body)
     }
-    try {
-      return await fetch(`${this.base}${path}`, init)
-    } catch {
-      throw new ApiError("Can't reach the server", 0)
+    const url = `${under === 'root' ? this.root : this.base}${path}`
+    // A request that refuses redirects fails like the network does when it meets one.
+    const again =
+      method === 'GET' &&
+      body === undefined &&
+      !keepalive &&
+      opts.retry !== false &&
+      opts.redirect !== 'error'
+    const unreachable = () => new ApiError("Can't reach the server", 0)
+    let waited = false
+    for (let attempt = 0; ; attempt += 1) {
+      let response: Response
+      try {
+        response = await fetch(url, init)
+      } catch {
+        if (!again || stop?.aborted || attempt >= RETRY_AFTER_MS.length) throw unreachable()
+        await this.pace.wait(RETRY_AFTER_MS[attempt], stop).catch(() => {
+          throw unreachable()
+        })
+        continue
+      }
+      if (!again || waited || !WAITS.has(response.status)) return response
+      const wait = retrySeconds(response.headers.get('Retry-After'))
+      if (wait === null || wait > RETRY_WAIT_MAX_S) return response
+      waited = true
+      await response.body?.cancel().catch(() => {})
+      await this.pace.wait(wait * 1000, stop).catch(() => {
+        throw unreachable()
+      })
     }
   }
 
@@ -280,12 +366,12 @@ export class ApiClient {
     signal?: AbortSignal
   ): Promise<T> {
     return handleResponse<T>(
-      await this.send(method, path, body, extra, keepalive, timeoutMs, signal)
+      await this.send(method, path, body, { headers: extra, keepalive, timeoutMs, signal })
     )
   }
 
   async page<T>(path: string, signal?: AbortSignal): Promise<Page<T>> {
-    const response = await this.send('GET', path, undefined, {}, false, 0, signal)
+    const response = await this.send('GET', path, undefined, { signal })
     if (!response.ok) return failed(response)
     const items = (await response.json()) as T[]
     return { items, next: response.headers.get(NEXT_CURSOR) || null }
@@ -322,7 +408,11 @@ export class ApiClient {
       const at = new URL(url, page)
       const root = new URL(`${this.root}/`, page)
       if (at.origin !== root.origin || !at.pathname.startsWith(root.pathname)) return null
-      return { path: at.pathname.slice(root.pathname.length), plain: !at.search && !at.hash }
+      return {
+        path: at.pathname.slice(root.pathname.length),
+        search: at.search,
+        plain: !at.search && !at.hash,
+      }
     } catch {
       return null
     }
@@ -339,12 +429,6 @@ export class ApiClient {
     }
   }
 
-  private credentials(server?: string): Record<string, string> {
-    if (this.token) return { Authorization: `Bearer ${this.token}` }
-    const grant = server === undefined ? undefined : this.grants[server]
-    return grant ? { 'X-Guest-Grant': grant } : {}
-  }
-
   async mediaBlob(id: string, server?: string, signal?: AbortSignal) {
     return this.authedBlob(this.mediaUrl(id), server, signal)
   }
@@ -353,29 +437,36 @@ export class ApiClient {
   // in a header. An address outside the API is refused and a redirect is never followed, so
   // neither is ever sent anywhere else.
   async authedBlob(url: string, server?: string, signal?: AbortSignal) {
-    if (!this.below(url)) throw new ApiError('Could not load the file', 0)
-    const headers = this.credentials(server)
-    const res = await fetch(url, {
-      credentials: this.token ? 'omit' : this.cookieMode,
-      headers,
-      signal,
-      redirect: 'error',
-      referrerPolicy: 'no-referrer',
-    })
+    const at = this.below(url)
+    if (!at) throw new ApiError('Could not load the file', 0)
+    const res = await this.file(`/${at.path}${at.search}`, server, signal, 'root')
     if (!res.ok) throw new ApiError('Could not load the file', res.status)
     return res.blob()
+  }
+
+  private async file(
+    path: string,
+    server: string | undefined,
+    signal: AbortSignal | undefined,
+    under: 'base' | 'root'
+  ) {
+    try {
+      return await this.send('GET', path, undefined, {
+        under,
+        as: { file: server },
+        signal,
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+      })
+    } catch {
+      throw new ApiError('Could not load the file', 0)
+    }
   }
 
   // The first `max` bytes of a file, for a text preview; the rest is never downloaded. `cut` is
   // true when the file goes on past them; `total` is its full size when the server says.
   async mediaStart(id: string, server: string | undefined, max: number, signal?: AbortSignal) {
-    const headers = this.credentials(server)
-    const res = await fetch(this.mediaUrl(id), {
-      headers,
-      signal,
-      redirect: 'error',
-      credentials: this.token ? 'omit' : this.cookieMode,
-    })
+    const res = await this.file(`/media/${seg(id)}`, server, signal, 'base')
     if (!res.ok || !res.body) throw new ApiError('Could not load the file', res.status)
     const length = Number(res.headers.get('content-length'))
     const total = Number.isSafeInteger(length) && length > 0 ? length : null
@@ -1077,8 +1168,8 @@ export const endpoints = (c: ApiClient) => ({
 
 export type Api = ApiClient & ReturnType<typeof endpoints>
 
-export const createApi = (base: string, cookieMode?: RequestCredentials): Api => {
-  const client = new ApiClient(base, cookieMode)
+export const createApi = (base: string, cookieMode?: RequestCredentials, pace?: Pace): Api => {
+  const client = new ApiClient(base, cookieMode, pace)
   return Object.assign(client, endpoints(client))
 }
 
