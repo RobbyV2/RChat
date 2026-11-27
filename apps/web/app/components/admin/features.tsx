@@ -70,11 +70,18 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
       {row.list ? (
         <Stack role="radiogroup" aria-label={row.label} gap="2xs">
           {options.map(o => (
-            <label
+            <Surface
+              as="label"
               key={o.value}
-              className={`flex min-w-0 items-start gap-3 rounded-xl px-2 py-1.5 pointer-coarse:min-h-11 ${
-                pinned ? 'cursor-not-allowed opacity-60' : 'hover:bg-surface-container'
-              }`}
+              pad="sm"
+              inset="bar"
+              gap="md"
+              row
+              tone="plain"
+              radius="lg"
+              align="start"
+              look={`pointer-coarse:min-h-11 ${pinned ? 'cursor-not-allowed opacity-60' : 'hover:bg-surface-container'}`}
+              place="min-w-0"
             >
               <input
                 type="radio"
@@ -88,7 +95,7 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
                 <span className="text-sm">{o.label}</span>
                 {o.line && <span className="text-xs text-on-surface-variant">{o.line}</span>}
               </Stack>
-            </label>
+            </Surface>
           ))}
         </Stack>
       ) : (

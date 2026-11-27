@@ -250,10 +250,8 @@ describe('layering', () => {
     for (const name of ['components_view', 'only_you_row', 'automation_chip']) {
       const entry = `apps/web/app/components/automations/${name}.tsx`
       expect([name, [...importsOf(entry)].filter(f => !BOXES.includes(f))]).toEqual([name, []])
-      expect([name, [...packagesOf(entry)].sort()]).toEqual([
-        name,
-        name === 'components_view' ? ['lucide-react', 'react'] : [],
-      ])
+      const packages = [...packagesOf(entry)].filter(p => p !== 'react').sort()
+      expect([name, packages]).toEqual([name, name === 'components_view' ? ['lucide-react'] : []])
     }
   })
 })

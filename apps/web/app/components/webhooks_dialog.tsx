@@ -536,7 +536,7 @@ function OutEditor({
         <legend className="mb-1 text-sm text-on-surface-variant">Events</legend>
         <Grid cols={{ base: 1, sm: 2 }} gap="2xs">
           {OUTGOING_EVENTS.map(e => (
-            <label key={e.key} className="flex min-h-9 items-center gap-2 text-sm text-on-surface">
+            <Row as="label" key={e.key} gap="sm" text="sm" ink="strong" look="min-h-9">
               <input
                 type="checkbox"
                 checked={form.events.includes(e.key)}
@@ -544,7 +544,7 @@ function OutEditor({
                 className="h-4 w-4 accent-primary"
               />
               {e.label}
-            </label>
+            </Row>
           ))}
         </Grid>
       </Stack>

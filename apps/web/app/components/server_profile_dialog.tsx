@@ -89,13 +89,13 @@ function Preview({ source, draft }: { source: ProfileEditorSource; draft: Profil
   )
   return (
     <Grid data-profile-preview aria-label="Preview" role="group" cols={{ base: 1, sm: 2 }} gap="md">
-      <div className="flex min-w-0 gap-3 rounded-2xl bg-surface p-3">
+      <Surface pad="md" gap="md" row tone="plain" align="stretch" look="bg-surface" place="min-w-0">
         <span className="shrink-0 pt-0.5">{source.avatar(user, 36)}</span>
         <div className="min-w-0">
           <p className="streamer truncate text-sm font-medium text-on-surface">{name}</p>
           <p className="text-sm text-on-surface-variant">How you look in messages here</p>
         </div>
-      </div>
+      </Surface>
       <div className="min-w-0 overflow-hidden rounded-2xl bg-surface">
         <div aria-hidden style={{ background: banner }} className="h-10" />
         <div className="-mt-5 flex min-w-0 items-end gap-2 px-3">

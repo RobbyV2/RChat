@@ -101,7 +101,6 @@ const HAND_SPACED = [
   'apps/web/app/components/p2p/p2p_server_roles.tsx',
   'apps/web/app/components/p2p/p2p_server_settings.tsx',
   'apps/web/app/components/p2p/p2p_server_view.tsx',
-  'apps/web/app/components/p2p/p2p_settings.tsx',
   'apps/web/app/components/palette.tsx',
   'apps/web/app/components/palette_settings.tsx',
   'apps/web/app/components/perm_groups.tsx',

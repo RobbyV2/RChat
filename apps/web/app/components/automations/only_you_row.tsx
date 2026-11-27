@@ -1,3 +1,4 @@
+import { Row } from '../layout'
 const actionCls =
   'cursor-pointer rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest'
 
@@ -19,7 +20,7 @@ export function OnlyYouRow({
       aria-label="Only you can see this"
       className="mx-4 my-1 rounded-xl border border-dashed border-outline-variant bg-surface-container-high px-3 py-2"
     >
-      <div className="flex min-h-8 flex-wrap items-center gap-x-2">
+      <Row gap="sm" wrap look="min-h-8">
         <span className="flex-1 text-xs font-medium whitespace-nowrap text-on-surface-variant">
           Only you can see this
         </span>
@@ -35,7 +36,7 @@ export function OnlyYouRow({
             </button>
           )}
         </div>
-      </div>
+      </Row>
       <p
         className={`text-sm break-words whitespace-pre-wrap ${kind === 'error' ? 'text-error' : 'text-on-surface'}`}
       >

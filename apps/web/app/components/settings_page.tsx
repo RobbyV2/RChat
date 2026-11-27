@@ -121,7 +121,15 @@ function SearchField({
   fieldRef: React.Ref<HTMLInputElement>
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-outline px-3 focus-within:border-primary">
+    <Surface
+      pad="md"
+      inset="sides"
+      gap="sm"
+      row
+      tone="plain"
+      radius="lg"
+      look="focus-within:border-primary border border-outline"
+    >
       <Search size={16} className="shrink-0 text-on-surface-variant" />
       <input
         ref={fieldRef}
@@ -144,7 +152,7 @@ function SearchField({
           onClick={() => setQuery('')}
         />
       )}
-    </div>
+    </Surface>
   )
 }
 

@@ -349,7 +349,7 @@ function Rating({
             </p>
             <p className="text-xs text-on-surface-variant">average of {scale}</p>
           </div>
-          <div className="flex h-16 min-w-0 flex-1 items-end gap-1" aria-label="Scores">
+          <Row aria-label="Scores" gap="2xs" align="end" look="h-16" place="min-w-0 flex-1">
             {r.distribution.map((n, i) => (
               <Stack key={i} gap="3xs" align="center" place="flex-1">
                 <div
@@ -362,7 +362,7 @@ function Rating({
                 <span className="text-3xs text-on-surface-variant tabular-nums">{i + 1}</span>
               </Stack>
             ))}
-          </div>
+          </Row>
         </div>
       )}
     </div>
@@ -603,10 +603,10 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
         className="mt-1 max-w-120 min-w-0 rounded-2xl border border-outline-variant bg-surface-container p-3"
       >
         <Row gap="sm" wrap lineGap="3xs" text="xs" ink="muted">
-          <span className="flex items-center gap-1 font-medium text-primary">
+          <Row as="span" gap="2xs" ink="primary" look="font-medium">
             <ChartColumn size={14} />
             {KIND_LABELS[poll.kind]}
-          </span>
+          </Row>
           {poll.anonymous && (
             <Row as="span" gap="2xs">
               <EyeOff size={12} />

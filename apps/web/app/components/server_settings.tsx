@@ -1267,7 +1267,17 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
                       : 'border-outline-variant hover:bg-surface-container-highest'
                   }`}
                 >
-                  <label className="flex cursor-pointer gap-3 px-3 py-2.5">
+                  <Surface
+                    as="label"
+                    pad="md"
+                    inset="bar"
+                    gap="md"
+                    row
+                    tone="plain"
+                    radius="none"
+                    align="stretch"
+                    look="cursor-pointer"
+                  >
                     <input
                       type="radio"
                       name={name}
@@ -1282,7 +1292,7 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
                         {c.detail}
                       </span>
                     </span>
-                  </label>
+                  </Surface>
                   {c.option && c.value === choice && (
                     <label className="flex cursor-pointer gap-3 border-t border-outline-variant py-2.5 pr-3 pl-9">
                       <input

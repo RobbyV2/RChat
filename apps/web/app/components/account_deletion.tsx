@@ -50,7 +50,14 @@ function DeleteDialog({ links, close }: { links: LinkedProvider[]; close(): void
         <p className="text-sm text-on-surface-variant">{DELETION_TEXT}</p>
         {held && (
           <Stack gap="2xs">
-            <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-on-surface md:min-h-0">
+            <Row
+              as="label"
+              gap="md"
+              text="sm"
+              ink="strong"
+              look="min-h-11 cursor-pointer"
+              place="md:min-h-0"
+            >
               <input
                 type="checkbox"
                 data-account-deletion="p2p"
@@ -58,7 +65,7 @@ function DeleteDialog({ links, close }: { links: LinkedProvider[]; close(): void
                 onChange={e => setRemoveP2p(e.target.checked)}
               />
               {DELETION_P2P_LABEL}
-            </label>
+            </Row>
             <p className="text-xs text-on-surface-variant">
               {removeP2p
                 ? 'They leave every P2P server and are deleted from this browser with their device keys.'

@@ -974,7 +974,13 @@ export function LightboxView({
             </Row>
             {tools}
           </div>
-          <div className="flex min-w-0 shrink items-center gap-2 text-xs text-on-surface-variant tabular-nums max-md:hidden">
+          <Row
+            gap="sm"
+            text="xs"
+            ink="muted"
+            look="shrink tabular-nums"
+            place="min-w-0 max-md:hidden"
+          >
             <Row as="span" gap="sm" aria-live="polite">
               {counter && <span className="shrink-0">{counter}</span>}
               <span className="max-w-60 min-w-0 truncate text-on-surface" title={shown}>
@@ -982,7 +988,7 @@ export function LightboxView({
               </span>
             </Row>
             <span className="shrink-0">{detail}</span>
-          </div>
+          </Row>
         </div>
       </div>
     </>

@@ -105,6 +105,35 @@ export type Place<S extends string> = S & Tokens<S, PlaceUtility>
 // one side); the space around it comes from its parent's gap.
 export type LayoutPlace<S extends string> = S & Tokens<S, LayoutUtility>
 
+type SpacingUtility =
+  `${Sign}${'p' | 'px' | 'py' | 'pt' | 'pb' | 'pl' | 'pr' | 'ps' | 'pe' | Margin | 'gap' | 'gap-x' | 'gap-y' | 'space-x' | 'space-y'}-${string}`
+// What a layout box decides itself: how its children line up.
+type FlowUtility =
+  | `items-${string}`
+  | `justify-${'start' | 'center' | 'end' | 'between' | 'around' | 'evenly'}`
+  | `flex-${'col' | 'row' | 'wrap' | 'nowrap'}`
+  | `flex-${'col' | 'row'}-reverse`
+
+// One word of a look: any class but spacing, an arbitrary value or one the box sets itself.
+type LookWord<W extends string> = string extends W
+  ? never
+  : W extends `${infer V}:${infer Rest}`
+    ? `${V}:${LookWord<Rest>}`
+    : W extends SpacingUtility | FlowUtility | `${string}[${string}` | `${string}(--${string}`
+      ? never
+      : W
+
+type LookTokens<S extends string> = string extends S
+  ? never
+  : S extends `${infer Head} ${infer Rest}`
+    ? `${LookWord<Head>} ${LookTokens<Rest>}`
+    : LookWord<S>
+
+// The classes a screen may give a layout box besides its placement: color, type, border, size on
+// the size scale, state. A padding, margin or gap, an arbitrary value (`w-[13rem]`) or a computed
+// string does not type check: the space in and around a box comes only from its props.
+export type Look<S extends string> = S & LookTokens<S>
+
 const words = (s: string) => s.split(/\s+/).filter(Boolean)
 
 const DISPLAY: readonly string[] = ['hidden', 'flex', 'inline-flex', 'inline-block']

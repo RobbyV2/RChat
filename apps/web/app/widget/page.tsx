@@ -607,7 +607,7 @@ export default function WidgetPage() {
             <summary className="w-fit cursor-pointer py-1 text-on-surface-variant">
               Viewing options
             </summary>
-            <label className="flex min-h-8 w-fit cursor-pointer items-center gap-2">
+            <Row as="label" gap="sm" look="min-h-8 cursor-pointer" place="w-fit">
               <input
                 type="checkbox"
                 className="cursor-pointer"
@@ -618,7 +618,7 @@ export default function WidgetPage() {
                 }}
               />
               Mark sensitive on this device
-            </label>
+            </Row>
             {room && needsWarning(target) && (
               <button
                 className={textBtn + ' cursor-pointer'}

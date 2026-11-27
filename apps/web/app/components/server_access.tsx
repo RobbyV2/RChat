@@ -203,12 +203,21 @@ function Radio({
   icon: ReactNode
 }) {
   return (
-    <label
-      className={`flex min-w-0 flex-1 cursor-pointer gap-3 rounded-xl border px-3 py-2.5 ${
+    <Surface
+      as="label"
+      pad="md"
+      inset="bar"
+      gap="md"
+      row
+      tone="plain"
+      radius="lg"
+      align="stretch"
+      look={`cursor-pointer border ${
         checked
           ? 'border-primary bg-surface-container-highest'
           : 'border-outline-variant hover:bg-surface-container-highest'
       }`}
+      place="min-w-0 flex-1"
     >
       <input
         type="radio"
@@ -218,13 +227,13 @@ function Radio({
         className="mt-0.5 shrink-0 accent-primary"
       />
       <span className="min-w-0">
-        <span className="flex items-center gap-1.5 text-sm font-medium text-on-surface">
+        <Row as="span" gap="xs" text="sm" ink="strong" look="font-medium">
           {icon}
           {title}
-        </span>
+        </Row>
         <span className="block pt-0.5 text-xs text-on-surface-variant">{detail}</span>
       </span>
-    </label>
+    </Surface>
   )
 }
 

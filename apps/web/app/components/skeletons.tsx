@@ -128,7 +128,16 @@ export function MemberListSkeleton({ seed, className = '' }: { seed: string; cla
             <Blob className={`h-2.5 w-20 rounded-full ${soft}`} />
           </div>
           {rows.map((m, j) => (
-            <div key={j} className="flex h-10 items-center gap-2 px-2">
+            <Surface
+              key={j}
+              pad="sm"
+              inset="sides"
+              gap="sm"
+              row
+              tone="plain"
+              radius="none"
+              look="h-10"
+            >
               <Blob className={`size-8 shrink-0 rounded-full ${strong}`} />
               <span className="flex min-w-0 flex-1">
                 <Blob className={`h-3 rounded-full ${strong}`} style={pct(m.name)} />
@@ -136,7 +145,7 @@ export function MemberListSkeleton({ seed, className = '' }: { seed: string; cla
               {m.pill !== null && (
                 <Blob className={`h-4 shrink-0 rounded-full ${soft}`} style={{ width: m.pill }} />
               )}
-            </div>
+            </Surface>
           ))}
         </div>
       ))}
@@ -158,17 +167,26 @@ export function ChannelListSkeleton({
   return (
     <Frame kind="channels" label="Loading channels" className={`flex flex-col ${className}`}>
       {header && (
-        <div className="flex h-14 shrink-0 items-center border-b border-outline-variant px-4">
+        <Surface
+          pad="lg"
+          inset="sides"
+          row
+          tone="plain"
+          radius="none"
+          border="bottom"
+          look="h-14"
+          place="shrink-0"
+        >
           <Blob className={`h-3.5 w-28 rounded-full ${strong}`} />
-        </div>
+        </Surface>
       )}
       <div className="flex min-h-0 flex-col overflow-hidden pb-3">
         {channelShapes(seed).map((g, i) => (
           <div key={i} className="flex flex-col pt-3">
             {g.header && (
-              <div className="flex h-6 items-center px-4">
+              <Surface pad="lg" inset="sides" row tone="plain" radius="none" look="h-6">
                 <Blob className={`h-2.5 w-24 rounded-full ${soft}`} />
-              </div>
+              </Surface>
             )}
             {g.rows.map((w, j) => (
               <div key={j} className="mx-2 flex h-8 items-center gap-2 px-2">
@@ -200,7 +218,17 @@ export function DmListSkeleton({
   return (
     <Frame kind="dms" label={label} className={`flex flex-col ${className}`}>
       {dmShapes(seed, rows).map((d, i) => (
-        <div key={i} className="flex h-12 shrink-0 items-center gap-3 px-2">
+        <Surface
+          key={i}
+          pad="sm"
+          inset="sides"
+          gap="md"
+          row
+          tone="plain"
+          radius="none"
+          look="h-12"
+          place="shrink-0"
+        >
           <Blob className={`size-8 shrink-0 rounded-full ${strong}`} />
           <Stack as="span" gap="xs" place="flex-1">
             <Blob className={`h-3 rounded-full ${strong}`} style={pct(d.name)} />
@@ -208,7 +236,7 @@ export function DmListSkeleton({
               <Blob className={`h-2.5 rounded-full ${soft}`} style={pct(d.preview)} />
             )}
           </Stack>
-        </div>
+        </Surface>
       ))}
     </Frame>
   )

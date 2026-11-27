@@ -538,10 +538,10 @@ function P2pSectionBody() {
         </Stack>
       ) : (
         <Stack gap="lg">
-          <div className="flex flex-col gap-3 px-2 empty:hidden">
+          <Surface pad="sm" inset="sides" gap="md" tone="plain" radius="none" look="empty:hidden">
             <IdentityAlert />
             <MovingBanner />
-          </div>
+          </Surface>
           {error && (
             <Surface pad="sm" inset="bar" tone="plain" radius="none">
               <p role="alert" className="text-xs text-error">

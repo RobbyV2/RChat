@@ -365,9 +365,14 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
   const ready = p.hashed !== null && p.preview !== null
   const thumb = useThumb(p.preview?.thumb)
   return (
-    <div
+    <Surface
       data-pending-file
-      className="relative flex h-24 w-40 shrink-0 flex-col justify-between rounded-xl border border-dashed border-tertiary/60 bg-surface-container p-2"
+      pad="sm"
+      tone="base"
+      radius="lg"
+      justify="between"
+      look="h-24 w-40 border-tertiary/60 border-dashed border"
+      place="relative shrink-0"
     >
       <button
         title="Remove file"
@@ -414,7 +419,7 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
               : `Preparing ${Math.floor(p.progress * 100)}%`}
         </span>
       </Row>
-    </div>
+    </Surface>
   )
 }
 

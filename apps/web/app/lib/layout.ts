@@ -174,8 +174,9 @@ export type SurfaceTone =
 export type SurfaceRadius = 'none' | 'md' | 'lg' | 'xl' | 'group' | 'hero' | 'full'
 export type Elevation = 0 | 1 | 2 | 3
 // How a surface pads its content: `even` the same on all four sides; `bar` (a header, footer or
-// toolbar line) one step less above and below than at the sides.
-export type SurfaceInset = 'even' | 'bar'
+// toolbar line) one step less above and below than at the sides; `sides` only at the sides (a line
+// of a list, whose height is its content's).
+export type SurfaceInset = 'even' | 'bar' | 'sides'
 // A line along every side, or only along the top or bottom (a header or footer of a panel), or a
 // dashed one (a place something can go, or a draft).
 export type SurfaceBorder = boolean | 'top' | 'bottom' | 'dashed'
@@ -249,8 +250,12 @@ export const surfaceLook = ({
 }) =>
   [
     row ? 'min-w-0 flex-row' : 'min-w-0 flex-col',
-    inset === 'even' ? PAD[pad] : `${PAD_X[pad]} ${PAD_Y[smaller(pad)]}`,
-    safe ? PAD_SAFE_BOTTOM[inset === 'even' ? pad : smaller(pad)] : '',
+    inset === 'even'
+      ? PAD[pad]
+      : inset === 'bar'
+        ? `${PAD_X[pad]} ${PAD_Y[smaller(pad)]}`
+        : PAD_X[pad],
+    safe ? PAD_SAFE_BOTTOM[inset === 'even' ? pad : inset === 'bar' ? smaller(pad) : 'none'] : '',
     GAP[gap],
     ITEMS[align],
     JUSTIFY[justify],

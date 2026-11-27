@@ -613,7 +613,16 @@ const PickerBody = memo(function PickerBody({
   return (
     <>
       <div className={`flex shrink-0 items-center gap-2 ${sheet ? 'px-3 pb-2' : 'p-3 pb-2'}`}>
-        <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-surface-container-highest px-3 focus-within:ring-2 focus-within:ring-primary">
+        <Surface
+          pad="md"
+          inset="sides"
+          gap="sm"
+          row
+          tone="highest"
+          radius="full"
+          look="h-10 focus-within:ring-2 focus-within:ring-primary"
+          place="min-w-0 flex-1"
+        >
           <Search size={16} className="shrink-0 text-on-surface-variant" />
           <input
             ref={searchRef}
@@ -648,7 +657,7 @@ const PickerBody = memo(function PickerBody({
               }}
             />
           )}
-        </div>
+        </Surface>
         <div className="relative shrink-0">
           <button
             type="button"

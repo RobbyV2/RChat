@@ -608,10 +608,10 @@ export function ForwardCard({
   const author = origin.author ?? fwd.author
   const when = fullTimeOf(fwd.created_at)
   const head = (
-    <div className="flex items-center gap-1 text-xs text-on-surface-variant italic">
+    <Row gap="2xs" text="xs" ink="muted" look="italic">
       <Forward size={12} className="shrink-0" />
       Forwarded
-    </div>
+    </Row>
   )
   if (blocked && !shown)
     return (

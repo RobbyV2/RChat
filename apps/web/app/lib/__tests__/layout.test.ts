@@ -154,3 +154,9 @@ test('a safe surface pads its lower edge by its own step or the home indicator, 
   )
   expect(surface().includes('safe-area')).toBe(false)
 })
+
+test('a surface inset at its sides only sets no padding above or below', () => {
+  const look = surface({ pad: 'lg', inset: 'sides' }).split(' ')
+  expect(look).toContain('px-(--space-lg)')
+  expect(look.some(w => /^(p|py|pt|pb)-/.test(w))).toBe(false)
+})

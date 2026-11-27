@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import { checkAnswers, pickCheck } from '../../lib/backup_phrase'
 import { Button } from '../controls'
-import { Grid, Row, Stack } from '../layout'
+import { Grid, Row, Stack, Surface } from '../layout'
 import { FieldError } from '../ui'
 import { RevealToggle, SECRET, useReveal } from './reveal'
 
@@ -39,7 +39,16 @@ export function WordCheck({
         {picks.map((p, i) => (
           <Stack as="label" key={p} gap="2xs">
             <span className="text-xs text-on-surface-variant">{`Word ${p + 1}`}</span>
-            <span className="flex rounded-xl border border-outline px-3 focus-within:border-primary">
+            <Surface
+              as="span"
+              pad="md"
+              inset="sides"
+              row
+              tone="plain"
+              radius="lg"
+              align="stretch"
+              look="focus-within:border-primary border border-outline"
+            >
               <input
                 aria-label={`Word ${p + 1}`}
                 autoComplete="off"
@@ -53,7 +62,7 @@ export function WordCheck({
                 }}
                 className={`${reveal.hidden ? SECRET : ''} min-w-0 flex-1 bg-transparent py-2 font-mono text-base text-on-surface outline-none md:text-sm`}
               />
-            </span>
+            </Surface>
           </Stack>
         ))}
       </Grid>

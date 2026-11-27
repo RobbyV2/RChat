@@ -1,5 +1,5 @@
 import { createElement, type AllHTMLAttributes, type ReactNode, type Ref } from 'react'
-import { placed, type LayoutPlace } from '../lib/controls'
+import { placed, type LayoutPlace, type Look } from '../lib/controls'
 import {
   dockLook,
   firstLineLook,
@@ -26,7 +26,8 @@ import {
 // The boxes every screen is laid out with. Their spacing and alignment come only from their props
 // (the scale and choices of `lib/layout.ts`); they take no class names or styles, so a screen
 // cannot add space of its own. `place` puts a box in its parent (see `LayoutPlace`); `text` and
-// `ink` set the type step and color its text inherits.
+// `ink` set the type step and color its text inherits; `look` takes the classes that are neither
+// (a color, a border, a size, a state), and no spacing (see `Look`).
 
 type Tag =
   | 'div'
@@ -47,40 +48,38 @@ type Tag =
   | 'span'
   | 'p'
 
-type Box<S extends string> = Omit<
+type Box<S extends string, L extends string> = Omit<
   AllHTMLAttributes<HTMLElement>,
   'className' | 'style' | 'as' | 'wrap' | 'cols'
 > & {
   as?: Tag
   place?: LayoutPlace<S>
+  look?: Look<L>
   text?: BoxText
   ink?: BoxInk
   ref?: Ref<HTMLElement>
   children?: ReactNode
 }
 
-function render<S extends string>(
+function render<S extends string, L extends string>(
   display: string,
-  look: string,
-  { as = 'div', place, text, ink, ...rest }: Box<S>
+  box: string,
+  { as = 'div', place, look, text, ink, ...rest }: Box<S, L>
 ) {
-  const type = typeLook(text, ink)
-  return createElement(as, {
-    ...rest,
-    className: placed(display, type ? `${look} ${type}` : look, place),
-  })
+  const own = [box, typeLook(text, ink), look].filter(Boolean).join(' ')
+  return createElement(as, { ...rest, className: placed(display, own, place) })
 }
 
 // Children one under the other, `gap` apart; `divided` draws a line between them; `rowFrom`
 // puts them side by side, centered, from that width on.
-export function Stack<const S extends string = never>({
+export function Stack<const S extends string = never, const L extends string = never>({
   gap,
   align,
   justify,
   divided,
   rowFrom,
   ...box
-}: Box<S> & {
+}: Box<S, L> & {
   gap: Space
   align?: StackAlign
   justify?: Justify
@@ -92,14 +91,14 @@ export function Stack<const S extends string = never>({
 
 // Children side by side on one line (center, or text baseline), `gap` apart; `wrap` continues a
 // full line under itself, `lineGap` below it (`gap` unless given).
-export function Row<const S extends string = never>({
+export function Row<const S extends string = never, const L extends string = never>({
   gap,
   align,
   justify,
   wrap,
   lineGap,
   ...box
-}: Box<S> & {
+}: Box<S, L> & {
   gap: Space
   align?: RowAlign
   justify?: Justify
@@ -115,7 +114,7 @@ export function Row<const S extends string = never>({
 // `border="bottom"` (or `top`) lines one edge, as a panel's header or footer. A `row` surface lays
 // its children side by side, centered; `elevation` lifts it (a popover); a `safe` one at the
 // lower edge of the screen keeps its content above the home indicator.
-export function Surface<const S extends string = never>({
+export function Surface<const S extends string = never, const L extends string = never>({
   pad,
   gap = 'none',
   tone = 'high',
@@ -129,7 +128,7 @@ export function Surface<const S extends string = never>({
   justify,
   safe = false,
   ...box
-}: Box<S> & {
+}: Box<S, L> & {
   pad: Space
   gap?: Space
   tone?: SurfaceTone
@@ -164,13 +163,13 @@ export function Surface<const S extends string = never>({
 }
 
 // Equal columns, `gap` apart (rows `lineGap` apart when given).
-export function Grid<const S extends string = never>({
+export function Grid<const S extends string = never, const L extends string = never>({
   cols,
   gap,
   align,
   lineGap,
   ...box
-}: Box<S> & { cols: GridColumns; gap: Space; align?: RowAlign; lineGap?: Space }) {
+}: Box<S, L> & { cols: GridColumns; gap: Space; align?: RowAlign; lineGap?: Space }) {
   return render('grid', gridLook(cols, gap, align, lineGap), box)
 }
 

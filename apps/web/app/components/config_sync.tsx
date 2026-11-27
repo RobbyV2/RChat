@@ -237,8 +237,16 @@ function ImportPreview({
                 : null
           return (
             <li key={c.key}>
-              <label
-                className={`flex items-start gap-3 rounded-xl px-3 py-2 hover:bg-surface-container-high ${ok ? '' : 'opacity-60'}`}
+              <Surface
+                as="label"
+                pad="md"
+                inset="bar"
+                gap="md"
+                row
+                tone="plain"
+                radius="lg"
+                align="start"
+                look={`hover:bg-surface-container-high ${ok ? '' : 'opacity-60'}`}
               >
                 <input
                   type="checkbox"
@@ -254,7 +262,7 @@ function ImportPreview({
                     {note && ` · ${note}`}
                   </span>
                 </span>
-              </label>
+              </Surface>
             </li>
           )
         })}

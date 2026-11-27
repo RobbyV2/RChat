@@ -14,7 +14,7 @@ import {
 } from '../../lib/backup_phrase'
 import { QrScan } from '../p2p/qr_scan'
 import { Button } from '../controls'
-import { Grid, Row, Stack } from '../layout'
+import { Grid, Row, Stack, Surface } from '../layout'
 import { FieldError } from '../ui'
 import { RevealToggle, SECRET, useReveal } from './reveal'
 
@@ -145,11 +145,17 @@ export function PhraseInput({
         {slots.map((s, i) => {
           const bad = !!s && focus !== i && expand(s) === null
           return (
-            <label
+            <Surface
+              as="label"
               key={i}
-              className={`flex min-w-0 items-center gap-1.5 rounded-xl border px-2 focus-within:border-primary ${
-                bad ? 'border-error' : 'border-outline'
-              }`}
+              pad="sm"
+              inset="sides"
+              gap="xs"
+              row
+              tone="plain"
+              radius="lg"
+              look={`focus-within:border-primary border ${bad ? 'border-error' : 'border-outline'}`}
+              place="min-w-0"
             >
               <span className="w-5 shrink-0 text-right text-xs text-on-surface-variant tabular-nums">
                 {i + 1}
@@ -173,7 +179,7 @@ export function PhraseInput({
                 onKeyDown={e => onKey(i, e)}
                 className={`${secret} min-w-0 flex-1 bg-transparent py-2 font-mono text-base text-on-surface outline-none md:text-sm`}
               />
-            </label>
+            </Surface>
           )
         })}
       </Grid>

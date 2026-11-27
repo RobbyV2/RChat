@@ -322,19 +322,23 @@ function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
           place="min-h-0 flex-1 overflow-y-auto"
         >
           {shown.map((c, i) => (
-            <div
+            <Surface
               key={c.value}
               id={`${listId}-${i}`}
               role="option"
               aria-selected={i === active}
               onClick={() => finish(c.value)}
               onMouseMove={() => setActive(i)}
-              className={`flex min-h-11 cursor-pointer items-center rounded-xl px-3 text-sm ${
-                i === active ? 'bg-secondary-container text-on-secondary-container' : ''
-              }`}
+              pad="md"
+              inset="sides"
+              row
+              tone="plain"
+              radius="lg"
+              text="sm"
+              look={`min-h-11 cursor-pointer ${i === active ? 'bg-secondary-container text-on-secondary-container' : ''}`}
             >
               {c.label}
-            </div>
+            </Surface>
           ))}
         </Surface>
       )}

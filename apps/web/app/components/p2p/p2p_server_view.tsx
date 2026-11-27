@@ -421,7 +421,17 @@ function ServerHead({ v }: { v: ServerView }) {
   const open = (x: number, y: number) =>
     openActionMenu(x, y, { kind: 'p2p_server', v, folder: null, at: 0 }, undefined, acct, identity)
   return (
-    <div className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-3">
+    <Surface
+      pad="md"
+      inset="sides"
+      gap="sm"
+      row
+      tone="plain"
+      radius="none"
+      border="bottom"
+      look="h-14"
+      place="shrink-0"
+    >
       <button
         {...longPress(open)}
         onClick={e => {
@@ -450,7 +460,7 @@ function ServerHead({ v }: { v: ServerView }) {
           <UserPlus size={18} />
         </button>
       )}
-    </div>
+    </Surface>
   )
 }
 

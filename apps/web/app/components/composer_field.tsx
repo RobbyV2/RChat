@@ -14,6 +14,7 @@ import { IconButton } from './controls'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useTextAssist } from './text_assist'
+import { Surface } from './layout'
 
 // Whether `text` can be sent as far as its size goes.
 export const fits = (compose: Compose, text: string, max: number) =>
@@ -128,8 +129,16 @@ export function ComposerField({
         <EmojiPicker anchor={emojiRef.current} onPick={insertEmoji} onClose={closePicker} />
       )}
       {bar}
-      <div
-        className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
+      <Surface
+        pad="md"
+        inset="bar"
+        gap="sm"
+        row
+        tone="high"
+        radius="none"
+        align="end"
+        look={`${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
+        place="relative"
       >
         {assist.popups}
         <FormatToolbar open={formatting.selected} onFormat={formatting.apply} />
@@ -215,7 +224,7 @@ export function ComposerField({
           onClick={onSend}
           disabled={tooLong || slowLeft > 0 || blocked}
         />
-      </div>
+      </Surface>
     </>
   )
 }

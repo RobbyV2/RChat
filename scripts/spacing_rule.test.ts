@@ -24,6 +24,7 @@ tester.run('spacing', rule, {
     { code: '<div className="flex min-w-0 items-center text-sm" />' },
     { code: '<p className={on ? "text-primary" : "text-on-surface"} />' },
     { code: '<Row gap="sm" place="ml-auto" />' },
+    { code: '<Row gap="sm" look="text-sm font-medium hover:bg-primary" />' },
   ],
   invalid: [
     { code: '<div className="flex gap-2" />', errors: [{ messageId: 'hand' }] },
@@ -32,5 +33,6 @@ tester.run('spacing', rule, {
       errors: [{ messageId: 'hand' }, { messageId: 'hand' }],
     },
     { code: '<span className={["py-0.5", cls].join(" ")} />', errors: [{ messageId: 'hand' }] },
+    { code: '<Row gap="sm" look="text-sm mt-2" />', errors: [{ messageId: 'hand' }] },
   ],
 })

@@ -15,6 +15,7 @@ import {
   type ButtonVariant,
   type IconButtonSize,
   type IconButtonTone,
+  type Look,
   type Place,
 } from '../controls'
 
@@ -178,6 +179,27 @@ describe('placement', () => {
       'inline-flex look absolute top-2 right-2'
     )
     expect(placed('flex', 'look', 'md:hidden')).toBe('flex look md:hidden')
+  })
+
+  test('a look takes any class but spacing, flow and arbitrary values', () => {
+    const look = <S extends string>(s: Look<S>) => s
+    look('text-sm font-medium text-on-surface-variant truncate')
+    look('border-primary hover:bg-on-surface/8 w-72 data-[flash]:bg-primary')
+    const on = Math.random() > 2
+    look(on ? 'text-primary' : 'text-on-surface')
+    // @ts-expect-error: padding comes from the box
+    look('text-sm px-3')
+    // @ts-expect-error: a margin comes from the parent's gap
+    look('mt-1')
+    // @ts-expect-error: also behind a variant
+    look('md:gap-2')
+    // @ts-expect-error: an arbitrary value is off the scales
+    look('w-[13rem]')
+    // @ts-expect-error: how the children line up is the box's own choice
+    look('items-start')
+    const computed: string = 'text-sm'
+    // @ts-expect-error: a computed string cannot be checked
+    look(computed)
   })
 
   test('only layout classes type check as a placement', () => {

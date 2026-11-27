@@ -1,4 +1,4 @@
-// Flags spacing written by hand in a class name: padding, margin (other than auto), gap and
+// Flags spacing written by hand in a class name or in the look of a layout box: padding, margin (other than auto), gap and
 // space-between classes, and arbitrary values. Screens get their spacing from the layout boxes of
 // components/layout.tsx, which carry the spacing scale, and their controls' fixed padding.
 
@@ -77,7 +77,8 @@ export default {
   create(context) {
     return {
       JSXAttribute(attr) {
-        if (attr.name.type !== 'JSXIdentifier' || attr.name.name !== 'className') return
+        if (attr.name.type !== 'JSXIdentifier') return
+        if (attr.name.name !== 'className' && attr.name.name !== 'look') return
         for (const [node, text] of strings(attr.value))
           for (const word of handSpacing(text))
             context.report({ node, messageId: 'hand', data: { word } })

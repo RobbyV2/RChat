@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { keepDismissal, scrollToShow } from '../lib/autocomplete'
 import { composing } from '../lib/keys'
+import { Surface } from './layout'
 
 interface Autocomplete<T> {
   open: boolean
@@ -119,21 +120,28 @@ export function AutocompletePopup<T>({
         className="relative max-h-72 overflow-y-auto overscroll-contain px-2"
       >
         {ac.items.map((item, i) => (
-          <div
+          <Surface
             key={keyOf(item)}
             id={`${id}-${i}`}
             role="option"
             aria-selected={i === ac.active}
             onMouseMove={() => i !== ac.active && ac.setActive(i)}
             onClick={() => ac.accept(item)}
-            className={`flex min-h-10 cursor-pointer items-center gap-3 rounded-xl px-2 py-1.5 text-sm ${
+            pad="sm"
+            inset="bar"
+            gap="md"
+            row
+            tone="plain"
+            radius="lg"
+            text="sm"
+            look={`min-h-10 cursor-pointer ${
               i === ac.active
                 ? 'bg-secondary-container text-on-secondary-container'
                 : 'text-on-surface'
             }`}
           >
             {render(item, i === ac.active)}
-          </div>
+          </Surface>
         ))}
       </div>
     </div>

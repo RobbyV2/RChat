@@ -251,7 +251,15 @@ export function ThreadsPanel({
       onClose={onClose}
     >
       <Surface pad="md" tone="plain" radius="none" place="shrink-0">
-        <div className="flex items-center gap-2 rounded-full border border-outline px-3 focus-within:border-primary">
+        <Surface
+          pad="md"
+          inset="sides"
+          gap="sm"
+          row
+          tone="plain"
+          radius="full"
+          look="focus-within:border-primary border border-outline"
+        >
           <Search size={16} className="shrink-0 text-on-surface-variant" />
           <input
             type="search"
@@ -265,7 +273,7 @@ export function ThreadsPanel({
           {query !== '' && (
             <IconButton icon={X} label="Clear search" size="sm" onClick={() => search('')} />
           )}
-        </div>
+        </Surface>
       </Surface>
       <Surface
         pad="md"

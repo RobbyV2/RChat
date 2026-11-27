@@ -582,12 +582,23 @@ function DmList() {
   const list = conversations(contacts, lastTsOf(rooms, me))
   return (
     <aside className="hidden w-72 shrink-0 flex-col border-r border-outline-variant bg-surface-container-low md:flex">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
+      <Surface
+        as="header"
+        pad="lg"
+        inset="sides"
+        gap="sm"
+        row
+        tone="plain"
+        radius="none"
+        border="bottom"
+        look="h-14"
+        place="shrink-0"
+      >
         <button onClick={p2pDm.closeDm} className="font-medium hover:underline">
           Contacts
         </button>
         <P2pBadge />
-      </header>
+      </Surface>
       {loading && !list.length ? (
         <Surface pad="sm" tone="plain" radius="none" place="min-h-0 flex-1 overflow-hidden">
           <DmListSkeleton seed={identity.localId} label="Loading contacts" className="flex-1" />

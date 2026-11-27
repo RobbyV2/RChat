@@ -22,13 +22,10 @@ import { Row } from './layout'
 // A small marker for forwarded messages where only a line of them is shown (search, quotes).
 export function ForwardedTag() {
   return (
-    <span
-      data-forwarded-tag
-      className="flex shrink-0 items-center gap-0.5 text-on-surface-variant italic"
-    >
+    <Row as="span" data-forwarded-tag gap="3xs" ink="muted" look="italic" place="shrink-0">
       <Forward size={11} className="shrink-0" />
       Forwarded
-    </span>
+    </Row>
   )
 }
 
