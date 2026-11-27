@@ -3464,7 +3464,6 @@ mod tests {
     #[tokio::test]
     async fn sweep_skips_p2p() {
         let path = crate::db::temp_db_path("sweep");
-        let _ = std::fs::remove_file(&path);
         let db = open(path.to_str()).await.expect("open db");
         let old = now() - 90000;
         sqlx::query("INSERT INTO media(id, filename, mime, size, data, uploaded_at) VALUES($1, 'a.txt', 'text/plain', 1, $2, $3)")
@@ -3504,7 +3503,6 @@ mod tests {
             .expect("read media");
         assert!(blobs.is_empty());
         db.close().await;
-        let _ = std::fs::remove_file(&path);
     }
 
     async fn general(db: &crate::db::Db) -> i64 {

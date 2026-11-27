@@ -333,7 +333,6 @@ async fn the_commands_print_the_password_once_with_its_lifetime() {
 #[tokio::test]
 async fn the_tool_leaves_the_settings_and_their_config_records_alone() {
     let path = crate::db::temp_db_path("cli_records");
-    let _ = std::fs::remove_file(&path);
     let url = path.to_str().expect("path").to_string();
     let server = crate::config::AppConfig::from_map(&[
         ("DATABASE_URL", url.as_str()),
@@ -391,7 +390,4 @@ async fn the_tool_leaves_the_settings_and_their_config_records_alone() {
         1
     );
     crate::db::close(&db).await;
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
 }

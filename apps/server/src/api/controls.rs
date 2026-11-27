@@ -1439,8 +1439,5 @@ mod tests {
             assert!(rx.try_recv().is_err(), "once");
             crate::db::close(&state.db).await;
         }
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
     }
 }

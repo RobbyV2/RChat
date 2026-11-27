@@ -8981,9 +8981,6 @@ mod tests {
             assert!(trace.len() > 4, "{}", trace.len());
             traces.push(trace);
             crate::db::close(&state.db).await;
-            for suffix in ["", "-wal", "-shm"] {
-                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-            }
         }
         assert_eq!(traces[0], traces[1]);
     }
@@ -9365,9 +9362,6 @@ mod tests {
             .collect();
         assert_eq!(through, want, "the channel index holds every message");
         crate::db::close(&state.db).await;
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
     }
 
     #[tokio::test]

@@ -197,7 +197,9 @@ pub fn is_sqlite(db: &Db) -> bool {
 }
 
 /// A temp database path no other test in any process uses at the same time: the process id,
-/// the test's name and a counter.
+/// the test's name and a counter. It starts empty, and the calling thread (the test's own) owns
+/// it: when the thread ends, passed or panicked, the file and every file named after it (`-wal`,
+/// `-shm`, files kept beside it) are removed.
 #[cfg(test)]
 pub(crate) fn temp_db_path(tag: &str) -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -208,7 +210,51 @@ pub(crate) fn temp_db_path(tag: &str) -> std::path::PathBuf {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    std::env::temp_dir().join(format!("rchat_{tag}_{}_{test}_{n}.db", std::process::id()))
+    let path =
+        std::env::temp_dir().join(format!("rchat_{tag}_{}_{test}_{n}.db", std::process::id()));
+    remove_named_after(&path);
+    OWNED_DBS.with(|owned| owned.borrow_mut().0.push(path.clone()));
+    path
+}
+
+#[cfg(test)]
+thread_local! {
+    static OWNED_DBS: std::cell::RefCell<OwnedDbs> = const { std::cell::RefCell::new(OwnedDbs(Vec::new())) };
+}
+
+/// The temp databases a thread made, removed when the thread ends.
+#[cfg(test)]
+struct OwnedDbs(Vec<std::path::PathBuf>);
+
+#[cfg(test)]
+impl Drop for OwnedDbs {
+    fn drop(&mut self) {
+        let OwnedDbs(paths) = self;
+        for path in paths.drain(..) {
+            remove_named_after(&path);
+        }
+    }
+}
+
+/// Removes `path` and every file and folder beside it whose name starts with its name.
+#[cfg(test)]
+fn remove_named_after(path: &std::path::Path) {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let name = name.as_encoded_bytes();
+    for entry in entries.flatten() {
+        if !entry.file_name().as_encoded_bytes().starts_with(name) {
+            continue;
+        }
+        let _ = match entry.file_type().is_ok_and(|t| t.is_dir()) {
+            true => std::fs::remove_dir_all(entry.path()),
+            false => std::fs::remove_file(entry.path()),
+        };
+    }
 }
 
 /// The URL `DATABASE_URL` stands for: itself when it is a URL, else a SQLite file at that path.

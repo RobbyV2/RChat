@@ -723,8 +723,6 @@ pub(crate) mod tests {
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_restart");
         let other = crate::db::temp_db_path("run_taken");
-        wipe(&path);
-        wipe(&other);
         let tasks = || {
             tokio::runtime::Handle::current()
                 .metrics()
@@ -798,8 +796,6 @@ pub(crate) mod tests {
             again.shutdown().await;
             settled("every task the server started ended", || tasks() == 0).await;
         }
-        wipe(&path);
-        wipe(&other);
     }
 
     #[tokio::test]
@@ -807,7 +803,6 @@ pub(crate) mod tests {
         use tokio::io::AsyncWriteExt;
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_held");
-        wipe(&path);
         let running = start(config(&path, 0, &[]), RunOptions::default())
             .await
             .expect("start");
@@ -830,7 +825,6 @@ pub(crate) mod tests {
         assert!(reader.is_closed());
         assert!(crate::db::reader(&db).is_closed());
         drop(held);
-        wipe(&path);
     }
 
     fn free_udp_port() -> u16 {
@@ -848,7 +842,6 @@ pub(crate) mod tests {
     async fn a_second_start_uses_its_own_settings() {
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_settings");
-        wipe(&path);
         let mib = 1024 * 1024;
         let own_hosts = || crate::api::webhooks::previews_policy().own_hosts;
         let relay_port = free_udp_port();
@@ -955,14 +948,12 @@ pub(crate) mod tests {
 
         crate::api::media::configure(crate::api::media::UploadLimits::default());
         crate::api::webhooks::configure(crate::api::webhooks::Outbound::default());
-        wipe(&path);
     }
 
     #[tokio::test]
     async fn a_frontend_service_answers_outside_the_api() {
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_frontend");
-        wipe(&path);
         let web = Router::new()
             .route("/", get(|| async { "web app" }))
             .fallback(|uri: Uri| async move { (StatusCode::NOT_FOUND, format!("no page {uri}")) });
@@ -1003,7 +994,6 @@ pub(crate) mod tests {
             .expect("post");
         assert_eq!(posted.text().await.expect("body"), "no page /login");
         running.shutdown().await;
-        wipe(&path);
     }
 
     async fn advertised(addr: SocketAddr) -> String {
@@ -1039,7 +1029,6 @@ pub(crate) mod tests {
         use tokio_tungstenite::tungstenite::{Error, Message};
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_peerjs");
-        wipe(&path);
         let plain = start(config(&path, 0, &[]), RunOptions::default())
             .await
             .expect("start");
@@ -1083,7 +1072,6 @@ pub(crate) mod tests {
             other => panic!("PEERJS_PEERS_PER_IP was not applied: {:?}", other.is_ok()),
         }
         capped.shutdown().await;
-        wipe(&path);
     }
 
     #[tokio::test]
@@ -1091,7 +1079,6 @@ pub(crate) mod tests {
         use tokio_tungstenite::tungstenite::Error;
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_peerjs_own");
-        wipe(&path);
 
         // An instance from before the built-in signaling that had PEERJS_PORT set.
         let ported = start(
@@ -1159,7 +1146,6 @@ pub(crate) mod tests {
             off.shutdown().await;
         }
         crate::api::webhooks::configure(crate::api::webhooks::Outbound::default());
-        wipe(&path);
     }
 
     /// A frontend that answers every request with its request target.
@@ -1189,7 +1175,6 @@ pub(crate) mod tests {
     async fn the_web_role_proxies_to_the_frontend() {
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_proxy");
-        wipe(&path);
         let (url, frontend) = echo_frontend().await;
         let running = start(
             config(
@@ -1214,14 +1199,12 @@ pub(crate) mod tests {
         );
         running.shutdown().await;
         frontend.abort();
-        wipe(&path);
     }
 
     #[tokio::test]
     async fn accounts_show_once_someone_registers() {
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_accounts");
-        wipe(&path);
         let running = start(config(&path, 0, &[]), RunOptions::default())
             .await
             .expect("start");
@@ -1243,7 +1226,6 @@ pub(crate) mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         assert!(running.has_accounts().await.expect("one"));
         running.shutdown().await;
-        wipe(&path);
     }
 
     #[tokio::test]
@@ -1253,7 +1235,6 @@ pub(crate) mod tests {
         const OFF: &str = "P2P is turned off on this instance";
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_peerjs_switch");
-        wipe(&path);
         let on = [("PEERJS_BUILTIN", "on")];
         let running = start(config(&path, 0, &on), RunOptions::default())
             .await
@@ -1385,6 +1366,5 @@ pub(crate) mod tests {
             .expect("start with one switch on");
         assert_eq!(fetch(half.addr, "/peerjs").await.0, StatusCode::OK);
         half.shutdown().await;
-        wipe(&path);
     }
 }

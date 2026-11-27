@@ -323,12 +323,6 @@ async fn the_sweep_fixes_wrong_member_counts() {
 #[tokio::test]
 async fn member_count_triggers_are_dropped_from_an_old_database() {
     let path = crate::db::temp_db_path("count_triggers");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     old_member_counts(&db, true).await;
     close(&db).await;
@@ -337,7 +331,6 @@ async fn member_count_triggers_are_dropped_from_an_old_database() {
         upgraded_member_counts(&db, true, round).await;
         close(&db).await;
     }
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("count_triggers").await {
         let db = open(Some(pg.url.as_str())).await.expect("open postgres");
         old_member_counts(&db, false).await;
@@ -354,9 +347,6 @@ async fn member_count_triggers_are_dropped_from_an_old_database() {
 #[tokio::test]
 async fn new_columns_are_backfilled_on_existing_databases() {
     let path = crate::db::temp_db_path("backfill");
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP TRIGGER messages_dm_latest_insert",
@@ -393,20 +383,11 @@ async fn new_columns_are_backfilled_on_existing_databases() {
         3
     );
     close(&db).await;
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
 }
 
 #[tokio::test]
 async fn existing_users_get_a_presence_seq_column() {
     let path = crate::db::temp_db_path("presence_seq");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE users DROP COLUMN presence_seq",
@@ -434,18 +415,11 @@ async fn existing_users_get_a_presence_seq_column() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_channels_get_an_empty_topic_column() {
     let path = crate::db::temp_db_path("topic_col");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE channels DROP COLUMN topic",
@@ -504,18 +478,11 @@ async fn existing_channels_get_an_empty_topic_column() {
         1
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_channels_keep_their_order_after_categories() {
     let path = crate::db::temp_db_path("layout_col");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_channel_categories_server",
@@ -601,18 +568,11 @@ async fn existing_channels_keep_their_order_after_categories() {
         1
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_dms_start_open() {
     let path = crate::db::temp_db_path("dm_closed");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE dms DROP COLUMN closed_a",
@@ -667,18 +627,11 @@ async fn existing_dms_start_open() {
         1
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_databases_get_the_preview_image_cache() {
     let path = crate::db::temp_db_path("preview_images");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_preview_images_fetched",
@@ -718,18 +671,11 @@ async fn existing_databases_get_the_preview_image_cache() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_databases_get_blocks() {
     let path = crate::db::temp_db_path("blocks");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_blocks_recent",
@@ -789,18 +735,11 @@ async fn existing_databases_get_blocks() {
         "one row per pair"
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_databases_get_friends() {
     let path = crate::db::temp_db_path("friends");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_friends_friend",
@@ -896,18 +835,11 @@ async fn existing_databases_get_friends() {
         "one request per pair"
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_databases_get_polls() {
     let path = crate::db::temp_db_path("polls");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_polls_due",
@@ -1014,18 +946,11 @@ async fn existing_databases_get_polls() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_databases_get_bulk_delete_jobs() {
     let path = crate::db::temp_db_path("bulk_jobs_migration");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_bulk_delete_jobs_running",
@@ -1117,15 +1042,11 @@ async fn existing_databases_get_bulk_delete_jobs() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn existing_users_get_an_empty_bio_column() {
     let path = crate::db::temp_db_path("bio_col");
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE users DROP COLUMN bio",
@@ -1150,17 +1071,11 @@ async fn existing_users_get_an_empty_bio_column() {
     let old = get_user(&db, "old").await.expect("load").expect("old");
     assert_eq!(old.bio.as_deref(), Some("hi"));
     close(&db).await;
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
 }
 
 #[tokio::test]
 async fn existing_servers_get_empty_color_columns() {
     let path = crate::db::temp_db_path("server_colors");
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE servers DROP COLUMN banner_color",
@@ -1190,20 +1105,11 @@ async fn existing_servers_get_empty_color_columns() {
     .await
     .expect("write colors");
     close(&db).await;
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
 }
 
 #[tokio::test]
 async fn an_interrupted_migration_backfills_on_the_next_boot() {
     let path = crate::db::temp_db_path("migrate");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP TRIGGER messages_dm_latest_insert",
@@ -1243,7 +1149,6 @@ async fn an_interrupted_migration_backfills_on_the_next_boot() {
         1
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
@@ -1554,7 +1459,6 @@ async fn sso_tables_migrate_onto_an_old_database() {
         );
         close(&db).await;
     }
-    std::fs::remove_file(path).unwrap();
 }
 
 #[tokio::test]
@@ -1590,12 +1494,6 @@ async fn sso_grant_groups_migrate_onto_an_old_database() {
 #[tokio::test]
 async fn guest_grant_networks_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("grant_network_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_guest_grants_network",
@@ -1618,18 +1516,11 @@ async fn guest_grant_networks_migrate_onto_an_old_database() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn call_log_kinds_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("call_kind_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE messages DROP COLUMN call_kind",
@@ -1662,18 +1553,11 @@ async fn call_log_kinds_migrate_onto_an_old_database() {
         2
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
 async fn server_passwords_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("pw_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_guest_grants_password",
@@ -1748,18 +1632,11 @@ async fn server_passwords_migrate_onto_an_old_database() {
         relays[0], relays[1],
         "the relay and P2P secrets are inserted once"
     );
-    wipe();
 }
 
 #[tokio::test]
 async fn config_shares_table_is_added_to_an_old_database() {
     let path = crate::db::temp_db_path("share_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_config_shares_owner",
@@ -1822,18 +1699,11 @@ async fn config_shares_table_is_added_to_an_old_database() {
             .expect("clear");
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn group_mentions_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("group_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_group_pings_channel",
@@ -1916,18 +1786,11 @@ async fn group_mentions_are_added_to_an_old_database() {
         assert_eq!(count(&db, "SELECT COUNT(*) FROM here_pings").await, 0);
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn group_pings_read_replaces_the_inbox_markers() {
     let path = crate::db::temp_db_path("group_read");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_group_pings_read_message",
@@ -1992,18 +1855,11 @@ async fn group_pings_read_replaces_the_inbox_markers() {
         }
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn audit_log_is_added_to_an_old_database() {
     let path = crate::db::temp_db_path("audit_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_audit_log_server",
@@ -2101,18 +1957,11 @@ async fn audit_log_is_added_to_an_old_database() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn timeouts_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("timeout_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_member_timeouts_until",
@@ -2187,18 +2036,11 @@ async fn timeouts_are_added_to_an_old_database() {
             .expect("clear");
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn webhooks_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("webhook_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_webhooks_server",
@@ -2325,18 +2167,11 @@ async fn webhooks_are_added_to_an_old_database() {
             .expect("clear");
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn pings_table_is_added_to_an_old_database() {
     let path = crate::db::temp_db_path("ping_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_pings_user",
@@ -2416,18 +2251,11 @@ async fn pings_table_is_added_to_an_old_database() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn edited_at_is_added_to_an_old_database() {
     let path = crate::db::temp_db_path("edit_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE messages DROP COLUMN edited_at",
@@ -2493,18 +2321,11 @@ async fn edited_at_is_added_to_an_old_database() {
         }
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn forward_columns_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("fwd_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let cols = "('fwd_author', 'fwd_created_at', 'fwd_source_id', 'fwd_origin', 'fwd_dropped')";
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
@@ -2576,18 +2397,11 @@ async fn forward_columns_are_added_to_an_old_database() {
         assert_eq!(fwd.origin_server.as_deref(), Some("RChat"));
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn pin_columns_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("pin_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let cols = "('pinned_at', 'pinned_by', 'pin_message_id')";
     let indexes = "('idx_messages_channel_pins', 'idx_messages_dm_pins')";
     let db = open(path.to_str()).await.expect("open");
@@ -2661,18 +2475,11 @@ async fn pin_columns_are_added_to_an_old_database() {
         assert_eq!(notice.pin_message_id, Some(old));
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn system_message_columns_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("system_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let cols = "('system_channel_id', 'join_messages', 'leave_messages')";
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
@@ -2729,18 +2536,11 @@ async fn system_message_columns_are_added_to_an_old_database() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn channel_restrictions_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("restrict_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let cols = "('restrict_view', 'restrict_send')";
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
@@ -2837,18 +2637,11 @@ async fn channel_restrictions_are_added_to_an_old_database() {
         }
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn p2p_hashes_and_the_p2p_switch_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("p2p_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE messages DROP COLUMN media_sha256",
@@ -2882,18 +2675,11 @@ async fn p2p_hashes_and_the_p2p_switch_are_added_to_an_old_database() {
         assert!(settings.p2p_attachments && !settings.asset_uploads && !settings.text_only());
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn restrict_backfill_survives_an_interrupted_upgrade() {
     let path = crate::db::temp_db_path("restrict_marker");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let marker = "SELECT COUNT(*) FROM settings WHERE key = 'restrict_backfill_v1'";
     let private = "SELECT restrict_view FROM channels WHERE name = 'private'";
     let db = open(path.to_str()).await.expect("open");
@@ -2935,18 +2721,11 @@ async fn restrict_backfill_survives_an_interrupted_upgrade() {
         assert_eq!(count(&db, marker).await, 1);
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn the_sweep_keeps_the_newest_seen_pings_of_recipients_above_the_cap() {
     let path = crate::db::temp_db_path("pings_kept");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     let t = now();
     let mid = count(&db, "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'hi', 1 FROM channels WHERE server = 'rchat' RETURNING id").await;
@@ -2982,18 +2761,11 @@ async fn the_sweep_keeps_the_newest_seen_pings_of_recipients_above_the_cap() {
         0
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
 async fn rules_from_an_older_binary_restrict_their_channel_on_the_next_start() {
     let path = crate::db::temp_db_path("restrict_set");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let view = |name: &str| format!("SELECT restrict_view FROM channels WHERE name = '{name}'");
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
@@ -3046,18 +2818,11 @@ async fn rules_from_an_older_binary_restrict_their_channel_on_the_next_start() {
         assert_eq!(count(&db, &view("opened")).await, 0);
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn restrict_marks_are_added_to_a_database_that_was_already_upgraded() {
     let path = crate::db::temp_db_path("restrict_mark");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE channel_perms DROP COLUMN restrict_set",
@@ -3098,18 +2863,11 @@ async fn restrict_marks_are_added_to_a_database_that_was_already_upgraded() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn reply_columns_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("reply_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "ALTER TABLE messages DROP COLUMN reply_mention",
@@ -3171,18 +2929,11 @@ async fn reply_columns_are_added_to_an_old_database() {
             .expect("clear");
         close(&db).await;
     }
-    wipe();
 }
 
 #[tokio::test]
 async fn reactions_table_is_added_to_an_old_database() {
     let path = crate::db::temp_db_path("reaction_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_reactions_agg",
@@ -3251,7 +3002,6 @@ async fn reactions_table_is_added_to_an_old_database() {
         "cascade"
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
@@ -3599,12 +3349,6 @@ async fn interaction_touches_are_coalesced() {
 #[tokio::test]
 async fn secrets_are_hashed_in_place_and_newer_databases_are_refused() {
     let path = crate::db::temp_db_path("secret_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in late_indexes(true) {
         let name = stmt
@@ -3675,18 +3419,11 @@ async fn secrets_are_hashed_in_place_and_newer_databases_are_refused() {
         .map(|_| ())
         .expect_err("older build");
     assert!(refused.to_string().contains("schema version"), "{refused}");
-    wipe();
 }
 
 #[tokio::test]
 async fn file_names_stored_before_the_upload_limits_are_cleaned_once() {
     let path = crate::db::temp_db_path("file_name_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     let long = format!("{}\u{202e}gnp.exe", "a".repeat(300));
     for (name, kind) in [
@@ -3729,7 +3466,6 @@ async fn file_names_stored_before_the_upload_limits_are_cleaned_once() {
         );
         close(&db).await;
     }
-    wipe();
 }
 
 async fn old_report_perms(db: &Db) {
@@ -3823,14 +3559,7 @@ async fn report_perms_upgrade(url: &str) {
 #[tokio::test]
 async fn manage_reports_is_granted_on_upgrade() {
     let path = crate::db::temp_db_path("reports_perm_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     report_perms_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("reports_perm").await {
         report_perms_upgrade(&pg.url).await;
         drop(pg);
@@ -3929,14 +3658,7 @@ async fn recovery_upgrade(url: &str) {
 #[tokio::test]
 async fn recovery_columns_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("recovery_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     recovery_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("recovery_upgrade").await {
         recovery_upgrade(&pg.url).await;
         drop(pg);
@@ -4067,14 +3789,7 @@ async fn instance_audit_upgrade(url: &str) {
 async fn instance_audit_is_added_to_an_old_database() {
     const { assert!(SCHEMA_VERSION >= 20) };
     let path = crate::db::temp_db_path("instance_audit_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     instance_audit_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("instance_audit_upgrade").await {
         instance_audit_upgrade(&pg.url).await;
         drop(pg);
@@ -4380,14 +4095,7 @@ async fn username_keys_are_added_to_an_old_database() {
     const { assert!(SCHEMA_VERSION >= 23) };
     const { assert!(crate::api::names::KEY_VERSION >= 3) };
     let path = crate::db::temp_db_path("username_keys_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     username_keys_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("username_keys_upgrade").await {
         username_keys_upgrade(&pg.url).await;
         drop(pg);
@@ -4675,14 +4383,7 @@ async fn banned_keys_upgrade(url: &str) {
 async fn banned_name_keys_are_added_to_an_old_database() {
     const { assert!(SCHEMA_VERSION >= 33) };
     let path = crate::db::temp_db_path("banned_keys_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     banned_keys_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("banned_keys_upgrade").await {
         banned_keys_upgrade(&pg.url).await;
         drop(pg);
@@ -4791,14 +4492,7 @@ async fn p2p_backups_upgrade(url: &str) {
 async fn p2p_backups_tables_are_added_to_an_old_database() {
     const { assert!(SCHEMA_VERSION >= 28) };
     let path = crate::db::temp_db_path("p2p_backups_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     p2p_backups_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("p2p_backups_upgrade").await {
         p2p_backups_upgrade(&pg.url).await;
         drop(pg);
@@ -4896,14 +4590,7 @@ async fn p2p_identities_upgrade(url: &str) {
 async fn the_p2p_identities_table_is_added_to_an_old_database() {
     const { assert!(SCHEMA_VERSION >= 31) };
     let path = crate::db::temp_db_path("p2p_identities_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     p2p_identities_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("p2p_identities_upgrade").await {
         p2p_identities_upgrade(&pg.url).await;
         drop(pg);
@@ -4954,7 +4641,6 @@ async fn open_with_uses_the_configured_options() {
     assert_eq!(pepper(&db).await.expect("pepper"), stored.into_bytes());
     assert!(!setting_on(&db, "guests_enabled").await.expect("kept"));
     close(&db).await;
-    let _ = std::fs::remove_file(&path);
 }
 
 /// An old database: no feature switch rows and no env records yet, older switches set away from
@@ -5051,12 +4737,6 @@ async fn new_switches_take_the_env_on_an_old_database_and_older_ones_stay() {
         ("UPLOAD_EXPIRY_MAX_DAYS", "30"),
     ]);
     let path = temp_db_path("feature_seeds");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     old_feature_settings(&db).await;
     close(&db).await;
@@ -5066,7 +4746,6 @@ async fn new_switches_take_the_env_on_an_old_database_and_older_ones_stay() {
         assert_eq!(take_config_start(&db).changes, [], "start {round}");
         close(&db).await;
     }
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("feature_seeds").await {
         let db = open(Some(pg.url.as_str())).await.expect("open postgres");
         old_feature_settings(&db).await;
@@ -5174,17 +4853,8 @@ async fn the_other_instances_switch_is_seeded_on_new_and_old_databases() {
         "other_instances_old",
     ]
     .map(crate::db::temp_db_path);
-    let wipe = || {
-        for path in &paths {
-            for suffix in ["", "-wal", "-shm"] {
-                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-            }
-        }
-    };
-    wipe();
     let [fresh, off, old] = &paths;
     other_instances_upgrade(fresh.to_str(), off.to_str(), old.to_str()).await;
-    wipe();
     let pg = |tag| crate::api::test_util::pg_temp(tag);
     if let (Some(fresh), Some(off), Some(old)) = (
         pg("other_instances_fresh").await,
@@ -5341,14 +5011,7 @@ async fn upload_expiry_upgrade(url: &str) {
 #[tokio::test]
 async fn upload_expiry_columns_are_added_to_an_old_database() {
     let path = crate::db::temp_db_path("upload_expiry_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     upload_expiry_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("upload_expiry_upgrade").await {
         upload_expiry_upgrade(&pg.url).await;
         drop(pg);
@@ -5412,14 +5075,7 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     let path = temp_db_path(tag);
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     body(path.to_str().expect("path").to_string()).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp(tag).await {
         body(pg.url.clone()).await;
         drop(pg);
@@ -6156,12 +5812,6 @@ async fn stored_versions(url: &str) {
 async fn the_stored_schema_version_is_read_without_creating_a_database() {
     let path = crate::db::temp_db_path("stored_version");
     let files = || ["", "-wal", "-shm"].map(|suffix| format!("{}{suffix}", path.display()));
-    let wipe = || {
-        for file in files() {
-            let _ = std::fs::remove_file(file);
-        }
-    };
-    wipe();
     let plain = path.to_str().expect("path");
     let url = format!("sqlite://{plain}?mode=rwc");
     for asked in [plain, url.as_str()] {
@@ -6179,7 +5829,7 @@ async fn the_stored_schema_version_is_read_without_creating_a_database() {
         None
     );
     assert_eq!(std::fs::metadata(&path).expect("kept").len(), 0);
-    wipe();
+    std::fs::remove_file(&path).expect("remove the empty file");
     assert_eq!(
         stored_schema_version(Some("sqlite::memory:"))
             .await
@@ -6195,7 +5845,6 @@ async fn the_stored_schema_version_is_read_without_creating_a_database() {
     assert_eq!(std::fs::read(&path).expect("database file"), before);
     std::fs::write(&path, b"not a database, just some text in a file").expect("garbage");
     assert!(stored_schema_version(Some(plain)).await.is_err());
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("stored_version").await {
         assert_eq!(
             stored_schema_version(Some(&pg.url)).await.expect("empty"),
@@ -6221,12 +5870,6 @@ async fn an_instance_has_accounts_once_one_exists() {
 #[tokio::test]
 async fn a_stopped_database_is_forgotten() {
     let path = crate::db::temp_db_path("db_forget");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let last_at = |db: Db| async move {
         count(
             &db,
@@ -6266,7 +5909,6 @@ async fn a_stopped_database_is_forgotten() {
         "the database that is open now gets the touch"
     );
     close(&again).await;
-    wipe();
 }
 
 /// A database from before a deleted account took its name off the servers it made: `gone` made
@@ -6415,14 +6057,7 @@ async fn stale_creators_cleared(url: &str) {
 #[tokio::test]
 async fn stale_creators_are_cleared_once_on_an_old_database() {
     let path = crate::db::temp_db_path("creator_cleanup");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     stale_creators_cleared(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("creator_cleanup").await {
         stale_creators_cleared(&pg.url).await;
         drop(pg);
@@ -6710,14 +6345,7 @@ async fn kept_upgrade(url: &str) {
 #[tokio::test]
 async fn kept_files_are_charged_to_their_server_on_an_old_database() {
     let path = crate::db::temp_db_path("kept_upgrade");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     kept_upgrade(path.to_str().expect("path")).await;
-    wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("kept_upgrade").await {
         kept_upgrade(&pg.url).await;
         drop(pg);

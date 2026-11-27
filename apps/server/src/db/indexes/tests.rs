@@ -301,12 +301,6 @@ async fn small_tables_get_online_indexes_inline() {
 #[tokio::test]
 async fn sqlite_builds_online_indexes_inline() {
     let path = temp_db_path("online_sqlite");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open_started(path.to_str()).await.expect("open");
     run(
         &db,
@@ -353,7 +347,6 @@ async fn sqlite_builds_online_indexes_inline() {
         Built::default()
     );
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
@@ -430,14 +423,7 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     let path = temp_db_path(tag);
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     body(path.to_str().expect("path").to_string()).await;
-    wipe();
     if let Some(pg) = pg_temp(tag).await {
         body(pg.url.clone()).await;
         drop(pg);

@@ -119,7 +119,6 @@ mod tests {
         drop(held);
         db.close().await;
         assert!(!db_ready(&db).await, "closed");
-        let _ = std::fs::remove_file(&path);
         let refused = pool(Duration::from_millis(500))
             .connect_lazy("postgres://rchat:pw@127.0.0.1:1/rchat")
             .expect("lazy pool");

@@ -458,7 +458,7 @@ mod tests {
     #[tokio::test]
     async fn authorization_codes_bind_verifier_client_and_redirect() {
         let idp = FakeIdp::start(Alg::EdDsa).await;
-        let (state, path) = crate::api::test_util::temp_state("oidc_callback").await;
+        let (state, _path) = crate::api::test_util::temp_state("oidc_callback").await;
         let (addr, api) = serve(state).await;
         let callback = format!("http://{addr}/callback");
         let verifier = random_id();
@@ -534,7 +534,6 @@ mod tests {
         }
         api.abort();
         api.await.unwrap_err();
-        std::fs::remove_file(path).unwrap();
     }
 
     #[tokio::test]

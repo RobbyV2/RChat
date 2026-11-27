@@ -57,12 +57,6 @@ async fn light_writes_skip_the_flush_on_postgres() {
 async fn light_commits_do_nothing_on_sqlite() {
     for mode in [LightCommits::Async, LightCommits::Sync] {
         let path = temp_db_path("light_commits");
-        let wipe = || {
-            for suffix in ["", "-wal", "-shm"] {
-                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-            }
-        };
-        wipe();
         let opts = DbOptions {
             light_commits: mode,
             ..DbOptions::default()
@@ -82,7 +76,6 @@ async fn light_commits_do_nothing_on_sqlite() {
             .get(0);
         assert_eq!(kept, 7);
         close(&db).await;
-        wipe();
     }
 }
 
@@ -301,12 +294,6 @@ async fn a_statement_over_the_limit_fails_on_postgres() {
 #[tokio::test]
 async fn database_errors_never_reach_the_body() {
     let path = temp_db_path("generic_500");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let db = open(path.to_str()).await.expect("open");
     let twice = || async {
         sqlx::query("INSERT INTO banned_usernames(username) VALUES('secret_name')")
@@ -332,18 +319,11 @@ async fn database_errors_never_reach_the_body() {
     let other: crate::api::ApiError = anyhow::anyhow!("not the database").into();
     assert_eq!(other.1, "Something went wrong");
     close(&db).await;
-    wipe();
 }
 
 #[tokio::test]
 async fn pool_timeouts_answer_503() {
     let path = temp_db_path("pool_timeout");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
     let opts = DbOptions {
         limits: Limits {
             database_acquire_timeout_secs: Some(1),
@@ -368,7 +348,6 @@ async fn pool_timeouts_answer_503() {
     );
     drop(held);
     close(&db).await;
-    wipe();
 }
 
 async fn statement_limit(conn: &mut AnyConnection) -> String {
@@ -447,12 +426,6 @@ async fn acquire_timeout_defaults_to_10_s() {
     assert!(example.contains("\n# DATABASE_ACQUIRE_TIMEOUT_SECS=10\n"));
     for (set, secs) in [(None, 10), (Some(3), 3)] {
         let path = temp_db_path("acquire_timeout");
-        let wipe = || {
-            for suffix in ["", "-wal", "-shm"] {
-                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-            }
-        };
-        wipe();
         let opts = DbOptions {
             limits: Limits {
                 database_acquire_timeout_secs: set,
@@ -468,7 +441,6 @@ async fn acquire_timeout_defaults_to_10_s() {
             );
         }
         close(&db).await;
-        wipe();
     }
 }
 
@@ -529,13 +501,9 @@ async fn connection_budget_names_the_numbers() {
     assert_eq!(budget(8, 97, 57).room(), 4);
     assert_eq!(budget(50, 97, 90).room(), 0);
     let path = temp_db_path("budget");
-    let _ = std::fs::remove_file(&path);
     let db = open(path.to_str()).await.expect("open");
     assert_eq!(connection_budget(&db).await.expect("sqlite"), None);
     close(&db).await;
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
     let Some(pg) = pg_temp("budget").await else {
         return;
     };
@@ -578,4 +546,64 @@ fn bad_guard_rail_values_name_the_variable() {
         .expect("no limit");
     assert_eq!(config.limits.database_statement_timeout_secs, 0);
     assert_eq!(Limits::default().database_statement_timeout_secs, 60);
+}
+
+/// Every file named after a temp database, in the temp dir.
+fn files_named_after(path: &std::path::Path) -> Vec<String> {
+    let name = path
+        .file_name()
+        .expect("name")
+        .to_string_lossy()
+        .into_owned();
+    std::fs::read_dir(path.parent().expect("dir"))
+        .expect("temp dir")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|file| file.starts_with(&name))
+        .collect()
+}
+
+#[test]
+fn a_temp_database_goes_with_the_thread_that_made_it() {
+    let mine = temp_db_path("owned");
+    std::fs::write(&mine, "this thread's").expect("this thread's database");
+    for panics in [false, true] {
+        let (sent, made) = std::sync::mpsc::channel();
+        let ended = std::thread::spawn(move || {
+            let path = temp_db_path("owned");
+            sent.send(path.clone()).expect("send");
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(async {
+                    let db = open_started(path.to_str()).await.expect("open");
+                    sqlx::query("INSERT INTO settings(key, value) VALUES('owned', '1')")
+                        .execute(&db)
+                        .await
+                        .expect("write");
+                });
+            std::fs::write(format!("{}.kept", path.display()), "beside").expect("kept file");
+            std::fs::create_dir_all(format!("{}.dir/inner", path.display())).expect("kept dir");
+            assert!(
+                files_named_after(&path).len() >= 3,
+                "{:?}",
+                files_named_after(&path)
+            );
+            assert!(!panics, "the test fails");
+        })
+        .join();
+        assert_eq!(ended.is_err(), panics);
+        let path = made.recv().expect("path");
+        assert_eq!(
+            files_named_after(&path),
+            Vec::<String>::new(),
+            "panics: {panics}"
+        );
+        assert_eq!(
+            files_named_after(&mine).len(),
+            1,
+            "another thread's database stays"
+        );
+    }
 }

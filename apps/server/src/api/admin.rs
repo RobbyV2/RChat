@@ -3954,12 +3954,6 @@ mod tests {
         use crate::instance::{Instance, InstanceConfig};
         let bus = crate::hub::tests::MemBus::new();
         let path = crate::db::temp_db_path("settings_bus");
-        let wipe = || {
-            for suffix in ["", "-wal", "-shm"] {
-                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-            }
-        };
-        wipe();
         let a_db = crate::db::open_started(Some(&format!("sqlite://{}?mode=rwc", path.display())))
             .await
             .expect("one copy");
@@ -4000,7 +3994,6 @@ mod tests {
         );
         crate::db::close(&a.db).await;
         crate::db::close(&b.db).await;
-        wipe();
     }
 
     #[tokio::test]

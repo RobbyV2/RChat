@@ -333,9 +333,6 @@ async fn the_index_is_built_in_batches_and_resumes_after_a_restart() {
     let db = open_started(path.to_str()).await.expect("restart complete");
     assert!(has_channel_index(&db).await.expect("readiness"));
     close(&db).await;
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
 }
 
 #[tokio::test]
@@ -373,9 +370,6 @@ async fn the_background_build_ends_with_its_batches_merged() {
     assert_eq!(hits(&db, "batch note", general).await.len(), 150);
     integrity(&db).await;
     close(&db).await;
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
 }
 
 #[tokio::test]
@@ -472,7 +466,4 @@ async fn the_build_and_live_writes_make_the_same_streams() {
     assert_eq!(hits(&db, "weekly notes", channel).await.len(), 140);
     integrity(&db).await;
     close(&db).await;
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
 }

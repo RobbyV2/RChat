@@ -2810,7 +2810,6 @@ pub(crate) mod test_util {
 
     pub(crate) async fn temp_state(tag: &str) -> (AppState, PathBuf) {
         let path = crate::db::temp_db_path(tag);
-        let _ = std::fs::remove_file(&path);
         let db = open_started(path.to_str()).await.expect("open db");
         let instance = Instance::load(&db, &InstanceConfig::default())
             .await
@@ -2821,7 +2820,6 @@ pub(crate) mod test_util {
     /// `temp_state` on a database started with the env `pairs`.
     pub(crate) async fn temp_state_env(tag: &str, pairs: &[(&str, &str)]) -> (AppState, PathBuf) {
         let path = crate::db::temp_db_path(tag);
-        let _ = std::fs::remove_file(&path);
         let opts = crate::db::DbOptions {
             ring: Some(Arc::default()),
             ..crate::config::AppConfig::from_map(pairs)
@@ -2876,11 +2874,9 @@ pub(crate) mod test_util {
         crate::api::Settings::forget(db);
     }
 
-    pub(crate) async fn done(state: AppState, path: PathBuf) {
+    /// Closes the state's database early. The test's thread owns the file (`temp_db_path`).
+    pub(crate) async fn done(state: AppState, _path: PathBuf) {
         crate::db::close(&state.db).await;
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
     }
 
     /// An empty database of its own on the Postgres server `TEST_POSTGRES_URL` points to, dropped
@@ -2958,7 +2954,8 @@ pub(crate) mod test_util {
         drop(temp);
     }
 
-    /// The database behind a state of `each_db`, removed by `done`.
+    /// The database behind a state of `each_db`, closed by `done`. A SQLite file goes with the
+    /// test's thread (`temp_db_path`), a Postgres database when this is dropped.
     pub(crate) enum TempDb {
         Sqlite(PathBuf),
         Postgres(PgTemp),

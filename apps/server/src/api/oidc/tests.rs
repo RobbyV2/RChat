@@ -14,7 +14,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::{Client, Response, StatusCode, header};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use tokio::{net::TcpListener, task::JoinHandle};
 use url::Url;
 
@@ -27,14 +27,10 @@ struct Fixture {
     verifier: String,
     name: String,
     task: JoinHandle<()>,
-    path: Option<PathBuf>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.task.abort();
-        if let Some(path) = &self.path {
-            let _ = std::fs::remove_file(path);
-        }
     }
 }
 impl Fixture {
@@ -46,12 +42,11 @@ impl Fixture {
         policy: impl FnOnce(&mut SsoConfig),
         web: Option<&std::path::Path>,
     ) -> Self {
-        let (state, path) = crate::api::test_util::temp_state("oidc_sign_in").await;
-        Self::with_state(state, Some(path), configure, policy, web).await
+        let (state, _path) = crate::api::test_util::temp_state("oidc_sign_in").await;
+        Self::with_state(state, configure, policy, web).await
     }
     async fn with_state(
         state: AppState,
-        path: Option<PathBuf>,
         configure: impl FnOnce(&FakeIdp, &mut ProviderConfig),
         policy: impl FnOnce(&mut SsoConfig),
         web: Option<&std::path::Path>,
@@ -129,7 +124,6 @@ impl Fixture {
             verifier: new_token(),
             name,
             task,
-            path,
         }
     }
     async fn get(&self, url: &str) -> Response {
@@ -610,7 +604,7 @@ impl Fixture {
 #[tokio::test]
 async fn fresh_idp_reauth_round_trip() {
     for (state, db) in crate::api::test_util::each_db("oidc_fresh_reauth").await {
-        let fixture = Fixture::with_state(state.clone(), None, |_, _| {}, |_| {}, None).await;
+        let fixture = Fixture::with_state(state.clone(), |_, _| {}, |_| {}, None).await;
         exercise_fresh(&fixture).await;
         drop(fixture);
         db.done(state).await;
@@ -949,7 +943,7 @@ async fn concurrent_unlinks_keep_one_method_and_sessions() {
 #[tokio::test]
 async fn client_login_requires_instance_consent_and_bound_verifier() {
     for (state, db) in crate::api::test_util::each_db("oidc_client_consent").await {
-        let fixture = Fixture::with_state(state.clone(), None, |_, _| {}, |_| {}, None).await;
+        let fixture = Fixture::with_state(state.clone(), |_, _| {}, |_| {}, None).await;
         exercise_client_consent(&fixture).await;
         drop(fixture);
         db.done(state).await;
@@ -1287,7 +1281,7 @@ async fn ordinary_and_confirmation_login_codes_require_their_own_exchange_route(
 async fn saved_account_confirmation_survives_session_rotation() {
     use crate::api::reauth::{Purpose, ReAuth, Session, check};
     for (state, db) in crate::api::test_util::each_db("oidc_confirm").await {
-        let f = Fixture::with_state(state.clone(), None, |_, _| {}, |_| {}, None).await;
+        let f = Fixture::with_state(state.clone(), |_, _| {}, |_| {}, None).await;
         let old = f.login_session("fake", "first").await;
         let auth_time = crate::db::now() - 30;
         f.idp
@@ -1407,7 +1401,6 @@ async fn subject_logout_scopes_shared_identity_to_the_session_provider() {
     for (state, db) in crate::api::test_util::each_db("oidc_shared_issuer").await {
         let f = Fixture::with_state(
             state.clone(),
-            None,
             |_, provider| provider.id = "first".into(),
             |config| {
                 config.providers[1] = ProviderConfig {

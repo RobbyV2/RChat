@@ -822,16 +822,9 @@ mod tests {
         Fut: std::future::Future<Output = ()>,
     {
         let path = crate::db::temp_db_path(tag);
-        let wipe = || {
-            for suffix in ["", "-wal", "-shm"] {
-                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-            }
-        };
-        wipe();
         let db = open_started(path.to_str()).await.expect("open");
         body(db.clone()).await;
         close(&db).await;
-        wipe();
         if let Some(pg) = crate::api::test_util::pg_temp(tag).await {
             let db = open_started(Some(&pg.url)).await.expect("open");
             body(db.clone()).await;

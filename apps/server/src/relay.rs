@@ -2566,18 +2566,14 @@ mod tests {
 
         async fn temp_db(tag: &str) -> (crate::db::Db, std::path::PathBuf) {
             let path = crate::db::temp_db_path(&format!("relay_{tag}"));
-            let _ = std::fs::remove_file(&path);
             let db = crate::db::open_started(path.to_str())
                 .await
                 .expect("open db");
             (db, path)
         }
 
-        async fn drop_db(db: crate::db::Db, path: std::path::PathBuf) {
+        async fn drop_db(db: crate::db::Db, _path: std::path::PathBuf) {
             crate::db::close(&db).await;
-            for suffix in ["", "-wal", "-shm"] {
-                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-            }
         }
 
         async fn add_user(db: &crate::db::Db, name: &str) {
