@@ -22,7 +22,7 @@ export const linkable = (auth: AuthInfo, links: LinkedProvider[]) =>
   auth.providers.filter(p => !links.some(link => link.provider === p.id))
 
 export const SSO_KEY = 'rchat_sso'
-export const SSO_LOGOUT_KEY = 'rchat_sso_logout'
+export { SSO_LOGOUT_KEY } from './client/keys'
 export function parseLogoutFlag(raw: string | null): boolean {
   try {
     const flag = JSON.parse(raw ?? 'null')

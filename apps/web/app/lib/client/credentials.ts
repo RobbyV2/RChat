@@ -1,8 +1,7 @@
 import { clientOnly, localKeys, readLocal, writeLocal, type InstanceConnection } from '../instances'
 import { accountUsername } from '../qualified'
-import { accountStorage, peerStorage } from './keys'
+import { accountStorage, peerStorage, SSO_LOGOUT_KEY } from './keys'
 import { addInstance, addAccount, addIdentity, type Book, type BookAccount } from './book'
-import { SSO_LOGOUT_KEY } from '../sso'
 import type { Me } from '../types'
 
 export function storedCredential(conn: InstanceConnection, book: Book, target?: string | null) {

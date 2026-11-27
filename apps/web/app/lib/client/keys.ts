@@ -106,6 +106,9 @@ function namespace(
   return 'origin'
 }
 
+// The local flag an SSO sign-out leaves for an account, `<key>:<username>`.
+export const SSO_LOGOUT_KEY = 'rchat_sso_logout'
+
 export function peerStorage(conn: InstanceConnection, username: string | null, local = 'main') {
   const origin = new URL(conn.origin).origin
   const slot = local === 'main' ? '' : `~${local}`
