@@ -33,6 +33,7 @@ import {
 import { EDITABLE } from '../lib/follow'
 import { withActionElement } from '../lib/masked_reveal'
 import { dnd, type DragSpec } from './drag'
+import { IconButton } from './controls'
 import { SheetGrip } from './ui'
 
 let press = idlePress
@@ -612,14 +613,7 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
           <SheetGrip />
           {top ? (
             <div className="flex items-center gap-1 border-b border-outline-variant px-2 pb-2">
-              <button
-                title="Back"
-                aria-label="Back"
-                onClick={back}
-                className="rounded-full p-3 text-on-surface-variant active:bg-surface-container-highest"
-              >
-                <ChevronLeft size={20} />
-              </button>
+              <IconButton icon={ChevronLeft} label="Back" size="lg" onClick={back} />
               <span className="truncate text-base font-medium text-on-surface">{top.label}</span>
             </div>
           ) : (

@@ -238,6 +238,7 @@ export function LinkButton({
 export function Chip<const S extends string = never>({
   on,
   radio = false,
+  title,
   type = 'button',
   place,
   ref,
@@ -247,6 +248,7 @@ export function Chip<const S extends string = never>({
   Placed<S> & {
     on: boolean
     radio?: boolean
+    title?: string
     ref?: Ref<HTMLButtonElement>
     children: ReactNode
   }) {
@@ -255,6 +257,7 @@ export function Chip<const S extends string = never>({
       type={type}
       {...rest}
       ref={ref}
+      title={title}
       role={radio ? 'radio' : undefined}
       aria-checked={radio ? on : undefined}
       aria-pressed={radio ? undefined : on}

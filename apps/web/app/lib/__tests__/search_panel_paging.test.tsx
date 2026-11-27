@@ -52,7 +52,7 @@ describe('search panel paging', () => {
   })
 
   test('short text offers older messages at the end of the list', () => {
-    const offer = new RegExp(`<button[^>]*cursor-pointer[^>]*>${OLDER}</button>`)
+    const offer = new RegExp(`<button type="button"[^>]*>${OLDER}</button>`)
     expect(offer.test(view('we'))).toBe(true)
   })
 

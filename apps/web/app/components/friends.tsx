@@ -555,7 +555,7 @@ export function FriendsEntry({ incomingTotal }: { incomingTotal?: number } = {})
     <button
       onClick={() => (active ? closePanel() : openFriends(incoming > 0 ? 'pending' : 'online'))}
       aria-pressed={active}
-      className={`mx-2 mt-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+      className={`mx-2 mt-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11 ${
         active
           ? 'bg-secondary-container text-on-secondary-container'
           : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'

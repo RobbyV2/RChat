@@ -61,7 +61,8 @@ import { InstallButton } from './pwa_register'
 import { AccountSwitcherTile } from './account_switcher'
 import { ThemeToggle } from './status_clock'
 import { PaletteButton } from './palette'
-import { Sentinel, iconBtn, useOwnServer } from './ui'
+import { IconButton } from './controls'
+import { Sentinel, useOwnServer } from './ui'
 import { ServerRailSkeleton } from './skeletons'
 import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon } from './notify_menu'
@@ -774,28 +775,28 @@ export function ServerRail() {
           : p2pOn && <P2pServerRail />}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-2 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <PaletteButton className={iconBtn} />
+        <PaletteButton rail />
         <ThemeToggle />
         <InstallButton compact />
-        <button
-          title="Settings"
+        <IconButton
+          icon={Settings}
+          label="Settings"
+          size="lg"
           onClick={() => openDialog({ kind: 'settings' })}
-          className={iconBtn}
-        >
-          <Settings size={20} />
-        </button>
+        />
         {me?.is_site_admin && (
-          <button
-            title="Site administration"
-            aria-label="Site administration"
+          <IconButton
+            icon={Shield}
+            label="Site administration"
+            size="lg"
             onClick={() => openAdmin()}
-            className={iconBtn}
-          >
-            <Shield size={20} />
-          </button>
+          />
         )}
-        <button
-          title={
+        <IconButton
+          icon={LogOut}
+          size="lg"
+          tone="danger"
+          label={
             me
               ? model.accountCount > 1 && !streamer
                 ? 'Log out of ' + me.username + ' on ' + loginAccount.conn.name
@@ -810,10 +811,7 @@ export function ServerRail() {
             logoutForLogin(loginAccount)
             router.replace('/login')
           }}
-          className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-error"
-        >
-          <LogOut size={20} />
-        </button>
+        />
       </div>
     </nav>
   )

@@ -49,7 +49,8 @@ import { useMask, useStore } from '../lib/store'
 import { ApiConsoleFor } from './api_console'
 import { useMedia } from './context_menu'
 import { CreatePollDialog } from './poll_dialog'
-import { Masked, MaskedText, SheetGrip, iconBtn, textBtn } from './ui'
+import { Button, Chip, IconButton } from './controls'
+import { Masked, MaskedText, SheetGrip } from './ui'
 
 const SHEET = '(max-width: 767px)'
 
@@ -115,26 +116,22 @@ export function PaletteHost() {
 }
 
 // Opens the palette from a header (the only way on touch screens).
-export function PaletteButton({
-  className = 'rounded-full p-1.5 hover:bg-surface-container-high md:hidden',
-}: {
-  className?: string
-}) {
+// `rail`: the button at the foot of the server rail; otherwise the one in a narrow header.
+export function PaletteButton({ rail = false }: { rail?: boolean }) {
   const acct = useAccount()
   const open = usePalette(s => s.open)
   if (!open) return null
   const label = `Command palette (${paletteShortcut(isMac())})`
   return (
-    <button
-      type="button"
-      title={label}
-      aria-label="Command palette"
+    <IconButton
+      icon={Command}
+      label="Command palette"
+      tooltip={label}
+      size={rail ? 'lg' : 'md'}
       data-palette-button
       onClick={() => open(acct)}
-      className={className}
-    >
-      <Command size={20} />
-    </button>
+      place={rail ? undefined : 'md:hidden'}
+    />
   )
 }
 
@@ -279,9 +276,7 @@ function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-outline-variant px-3 py-2">
-        <button type="button" title="Back" aria-label="Back" onClick={onBack} className={iconBtn}>
-          <ArrowLeft size={18} />
-        </button>
+        <IconButton icon={ArrowLeft} label="Back" size="lg" onClick={onBack} />
         <span className="min-w-0 truncate text-sm font-medium">{item.title}</span>
       </div>
       <div className="flex items-center gap-2 px-4 py-3">
@@ -305,11 +300,7 @@ function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
           spellCheck={false}
           className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant md:text-sm"
         />
-        {!choices && (
-          <button type="button" title="Run" aria-label="Run" onClick={submit} className={iconBtn}>
-            <CornerDownLeft size={16} />
-          </button>
-        )}
+        {!choices && <IconButton icon={CornerDownLeft} label="Run" size="lg" onClick={submit} />}
       </div>
       {error && (
         <p role="alert" className="px-4 pb-2 text-xs text-error">
@@ -476,21 +467,15 @@ function ListView() {
         {prefixes.map(p => {
           const on = mode === p.mode
           return (
-            <button
+            <Chip
               key={p.prefix}
-              type="button"
-              aria-pressed={on}
+              on={on}
               title={`${p.label} (${p.prefix})`}
               onClick={() => setMode(on ? '' : p.prefix)}
-              className={`flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${
-                on
-                  ? 'border-transparent bg-secondary-container text-on-secondary-container'
-                  : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-high'
-              }`}
+              place="shrink-0"
             >
-              <span className="font-mono font-semibold">{p.prefix}</span>
-              {p.label}
-            </button>
+              <span className="font-mono font-semibold">{p.prefix}</span> {p.label}
+            </Chip>
           )
         })}
       </div>
@@ -545,13 +530,7 @@ function ListView() {
         {apiMode && apiError && (
           <div className="flex items-center gap-2 px-3 py-4 text-sm text-on-surface-variant">
             <span>{apiError}</span>
-            <button
-              type="button"
-              onClick={() => void acct.apiDoc.loadApiDoc(true)}
-              className={textBtn}
-            >
-              Try again
-            </button>
+            <Button onClick={() => void acct.apiDoc.loadApiDoc(true)}>Try again</Button>
           </div>
         )}
         {!items.length && !(apiMode && (apiLoading || apiError)) && (

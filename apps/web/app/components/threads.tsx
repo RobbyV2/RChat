@@ -26,6 +26,7 @@ import { SpoilerLine } from './replies'
 import { ShownAvatar, ShownName } from './shown_user'
 import { MessageTime } from './timestamp'
 import { KeyAvatar } from './p2p/p2p_badge'
+import { Button, IconButton } from './controls'
 import { Masked, Sentinel, useOwn } from './ui'
 
 // The header button. `toggle` binds it to another list (a P2P conversation's).
@@ -265,15 +266,13 @@ export function ThreadsPanel({
             className="h-11 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant md:h-9 md:text-sm [&::-webkit-search-cancel-button]:hidden"
           />
           {query !== '' && (
-            <button
-              type="button"
-              title="Clear search"
-              aria-label="Clear search"
+            <IconButton
+              icon={X}
+              label="Clear search"
+              size="sm"
               onClick={() => search('')}
-              className="-mr-2.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest md:-mr-1.5 md:h-7 md:w-7"
-            >
-              <X size={16} />
-            </button>
+              place="-mr-1.5 pointer-coarse:-mr-2.5"
+            />
           )}
         </div>
       </div>
@@ -284,13 +283,7 @@ export function ThreadsPanel({
         {rows === null && failed && (
           <div className="flex flex-col items-center gap-2 py-6 text-sm text-on-surface-variant">
             <span>Couldn&apos;t load threads.</span>
-            <button
-              type="button"
-              onClick={retry}
-              className="rounded-full px-3 py-1.5 font-medium text-primary hover:bg-surface-container-highest"
-            >
-              Retry
-            </button>
+            <Button onClick={retry}>Retry</Button>
           </div>
         )}
         {rows !== null && rows.length === 0 && (

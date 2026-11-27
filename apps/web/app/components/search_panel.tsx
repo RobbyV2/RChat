@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { FileText, Hash, Search } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, endOfList, shortSearch, type SearchArgs } from '../lib/search'
+import { Button, Chip } from './controls'
 import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { MessageListSkeleton } from './skeletons'
 import { ShownAvatar, ShownName } from './shown_user'
@@ -19,13 +20,6 @@ import { spoilerParts } from '../lib/spoilers'
 import { useForwardAccess } from '../lib/forward_access'
 import type { ViewingTarget } from '../lib/viewing'
 import type { Message, SearchResult } from '../lib/types'
-
-const chipCls = (on: boolean) =>
-  `rounded-full border px-3 py-1 text-xs font-medium ${
-    on
-      ? 'border-primary bg-primary-container text-on-primary-container'
-      : 'border-outline text-on-surface-variant hover:bg-surface-container-high'
-  }`
 
 // What the search panel lists, whichever source found it (the instance, or P2P servers stored
 // here): where it is, who wrote it (`avatar` and `name` as the source shows people), and what.
@@ -242,13 +236,9 @@ export function SearchView({
               ))}
             </select>
           )}
-          <button
-            title="Only messages with a file"
-            onClick={() => setHasFile(v => !v)}
-            className={chipCls(hasFile)}
-          >
+          <Chip on={hasFile} title="Only messages with a file" onClick={() => setHasFile(v => !v)}>
             has:file
-          </button>
+          </Chip>
           {dateField('before', before, setBefore)}
           {dateField('after', after, setAfter)}
         </div>
@@ -295,17 +285,11 @@ export function SearchView({
         ))}
         {active && hasMore && <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />}
         {stepped && !first && (hasMore || loading) && (
-          <div className="flex h-9 items-end justify-center">
+          <div className="flex min-h-9 items-end justify-center">
             {loading ? (
               <p className="py-2 text-xs text-on-surface-variant">Searching</p>
             ) : (
-              <button
-                type="button"
-                onClick={more}
-                className="cursor-pointer rounded-full px-4 py-2 text-xs font-medium text-primary hover:bg-surface-container-high"
-              >
-                Search older messages
-              </button>
+              <Button onClick={more}>Search older messages</Button>
             )}
           </div>
         )}

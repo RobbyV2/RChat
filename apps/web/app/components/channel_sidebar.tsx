@@ -70,6 +70,7 @@ import { FriendsEntry } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
+import { Button, IconButton, LinkButton } from './controls'
 import { Masked, Sentinel, useOwnServer } from './ui'
 import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
@@ -128,7 +129,7 @@ export function DmRow({
             placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index, shown?.()),
         }
       )}
-      className={`mx-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+      className={`mx-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11 ${
         active
           ? 'bg-secondary-container text-on-secondary-container'
           : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
@@ -245,7 +246,7 @@ function VoiceChannelRow({
         if (!locked) onJoin()
       }}
       {...longPress(menu, drag)}
-      className={`group mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] ${
+      className={`group mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] pointer-coarse:min-h-11 ${
         active
           ? 'bg-secondary-container text-on-secondary-container'
           : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
@@ -348,9 +349,11 @@ function DmListControl({ prefs }: { prefs: DmListPrefs }) {
     ? `Sort and filter, ${on === 1 ? '1 filter' : `${on} filters`} on`
     : 'Sort and filter'
   return (
-    <button
-      title={label}
-      aria-label={label}
+    <IconButton
+      icon={ListFilter}
+      label={label}
+      tone={on ? 'primary' : 'plain'}
+      size="sm"
       aria-haspopup="menu"
       aria-expanded={open}
       onClick={e => {
@@ -368,11 +371,7 @@ function DmListControl({ prefs }: { prefs: DmListPrefs }) {
           acct
         )
       }}
-      className={`relative rounded-full p-1 hover:bg-surface-container-high hover:text-on-surface ${
-        on || open ? 'text-primary' : 'text-on-surface-variant'
-      }`}
     >
-      <ListFilter size={16} />
       {on > 0 && (
         <span
           aria-hidden
@@ -380,7 +379,7 @@ function DmListControl({ prefs }: { prefs: DmListPrefs }) {
           className="absolute top-0 right-0 size-2 rounded-full bg-primary ring-2 ring-surface-container-low"
         />
       )}
-    </button>
+    </IconButton>
   )
 }
 
@@ -446,17 +445,15 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
         )}
         <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
         {adds && (
-          <button
-            title="Add contact"
-            aria-label="Add contact"
+          <IconButton
+            icon={UserPlus}
+            label="Add contact"
+            size="sm"
             onClick={() => {
               selectIdentity()
               p2p?.openDialog({ kind: 'add' })
             }}
-            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-          >
-            <UserPlus size={16} />
-          </button>
+          />
         )}
       </div>
       {loading && section && !section.rows.length && (
@@ -490,7 +487,7 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
             selectIdentity()
             p2p?.openRequests()
           }}
-          className="mx-2 shrink-0 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-primary hover:bg-surface-container"
+          className="mx-2 shrink-0 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-primary hover:bg-surface-container pointer-coarse:min-h-11"
         >
           Message requests ({section.requests})
         </button>
@@ -639,25 +636,24 @@ export function DmBlock({
           {label && (
             <div className="flex items-center px-3 pt-2">
               <button
-                className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium"
+                className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium pointer-coarse:min-h-11"
                 aria-expanded={!collapsed}
                 onClick={() => collapse(!collapsed)}
               >
                 {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 <span className="streamer truncate">{label}</span>
               </button>
-              <button
-                aria-label="New direct message"
-                className="rounded-full p-1"
+              <IconButton
+                icon={Plus}
+                label="New direct message"
+                size="sm"
                 onClick={() => {
                   collapse(false)
                   settled.current = false
                   setAs(acct)
                   setDmInput('')
                 }}
-              >
-                <Plus size={16} />
-              </button>
+              />
             </div>
           )}
           {!collapsed && (
@@ -700,18 +696,16 @@ export function DmBlock({
                     </span>
                     <DmListControl prefs={prefs} />
                     {!label && (
-                      <button
-                        title="New direct message"
-                        aria-label="New direct message"
+                      <IconButton
+                        icon={Plus}
+                        label="New direct message"
+                        size="sm"
                         onClick={() => {
                           settled.current = false
                           setAs(acct)
                           setDmInput('')
                         }}
-                        className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-                      >
-                        <Plus size={16} />
-                      </button>
+                      />
                     )}
                   </div>
                 )}
@@ -753,9 +747,9 @@ export function DmBlock({
                     className="mx-2 my-0.5 shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
                   />
                   {accounts.length > 1 && (
-                    <button className="text-sm text-primary" onClick={submitDm}>
+                    <Button onClick={submitDm} place="mx-2 self-start">
                       Start message
-                    </button>
+                    </Button>
                   )}
                 </>
               )}
@@ -784,12 +778,9 @@ export function DmBlock({
                       className="mx-4 my-2 flex flex-wrap items-baseline gap-x-2 text-sm text-on-surface-variant"
                     >
                       <span>No conversations match</span>
-                      <button
-                        onClick={() => setDmList(clearDmFilters(prefs))}
-                        className="rounded font-medium text-primary hover:underline"
-                      >
+                      <LinkButton onClick={() => setDmList(clearDmFilters(prefs))}>
                         Clear filters
-                      </button>
+                      </LinkButton>
                     </p>
                   )}
                 {paging && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
@@ -1053,32 +1044,24 @@ export function ChannelSidebar() {
         }}
       >
         <span className="flex shrink-0 gap-0.5 pl-2">
-          <button
-            title="Text channel"
-            aria-label="Text channel"
+          <IconButton
+            icon={Hash}
+            label="Text channel"
+            size="sm"
+            shape="square"
+            pressed={editingHere.kind === 'text'}
             onMouseDown={e => e.preventDefault()}
             onClick={() => acct.channelEdit.getState().setKind('text')}
-            className={`rounded-lg p-1.5 ${
-              editingHere.kind === 'text'
-                ? 'bg-secondary-container text-on-secondary-container'
-                : 'text-on-surface-variant hover:bg-surface-container'
-            }`}
-          >
-            <Hash size={14} />
-          </button>
-          <button
-            title="Voice channel"
-            aria-label="Voice channel"
+          />
+          <IconButton
+            icon={Volume2}
+            label="Voice channel"
+            size="sm"
+            shape="square"
+            pressed={editingHere.kind === 'voice'}
             onMouseDown={e => e.preventDefault()}
             onClick={() => acct.channelEdit.getState().setKind('voice')}
-            className={`rounded-lg p-1.5 ${
-              editingHere.kind === 'voice'
-                ? 'bg-secondary-container text-on-secondary-container'
-                : 'text-on-surface-variant hover:bg-surface-container'
-            }`}
-          >
-            <Volume2 size={14} />
-          </button>
+          />
         </span>
         {editInput}
         {editingHere.kind === 'text' && (
@@ -1103,7 +1086,7 @@ export function ChannelSidebar() {
       key={c.id}
       onClick={() => void openChannel(server, c.id)}
       {...longPress(channelMenu(c), channelDragSpec(c))}
-      className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
+      className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11 ${
         activeId === c.id
           ? 'bg-secondary-container text-on-secondary-container'
           : `text-on-surface-variant hover:bg-surface-container hover:text-on-surface ${
@@ -1191,7 +1174,7 @@ export function ChannelSidebar() {
             aria-expanded={open}
             onClick={() => setCategoriesCollapsed(server, [category.id], open)}
             {...longPress(categoryMenu(category), categoryDragSpec(category))}
-            className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase outline-offset-[-2px] hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary"
+            className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase outline-offset-[-2px] hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
           >
             {open ? (
               <ChevronDown size={14} className="shrink-0" />
@@ -1213,14 +1196,14 @@ export function ChannelSidebar() {
             )}
           </button>
           {canManage && (
-            <button
-              title={`Create channel in ${category.name}`}
-              aria-label={`Create channel in ${category.name}`}
+            <IconButton
+              icon={Plus}
+              label={`Create channel in ${category.name}`}
+              tooltip="Create channel"
+              size="sm"
               onClick={() => createIn(category.id)}
-              className="shrink-0 rounded-full p-1 text-on-surface-variant opacity-100 hover:bg-surface-container-high hover:text-on-surface focus-visible:opacity-100 md:opacity-0 md:group-hover/cat:opacity-100"
-            >
-              <Plus size={14} />
-            </button>
+              place="md:opacity-0 md:group-hover/cat:opacity-100 md:focus-visible:opacity-100 pointer-coarse:opacity-100"
+            />
           )}
         </div>
         <div
@@ -1255,22 +1238,18 @@ export function ChannelSidebar() {
         </span>
         {canManage && (
           <span className="flex items-center gap-0.5">
-            <button
-              title="Create category"
-              aria-label="Create category"
+            <IconButton
+              icon={FolderPlus}
+              label="Create category"
+              size="sm"
               onClick={() => openDialog({ kind: 'category', server })}
-              className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-            >
-              <FolderPlus size={16} />
-            </button>
-            <button
-              title="Create channel"
-              aria-label="Create channel"
+            />
+            <IconButton
+              icon={Plus}
+              label="Create channel"
+              size="sm"
               onClick={() => createIn(null)}
-              className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-            >
-              <Plus size={16} />
-            </button>
+            />
           </span>
         )}
       </div>
