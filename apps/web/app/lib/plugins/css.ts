@@ -29,6 +29,7 @@ export const APP_VARIABLES = [
   '--folder-',
   '--notice-',
   '--motion-',
+  '--space-',
   '--text-',
   '--radius-',
   '--z-',

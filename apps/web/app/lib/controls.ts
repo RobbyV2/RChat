@@ -21,7 +21,7 @@ type Margin = 'm' | 'mx' | 'my' | 'mt' | 'mr' | 'mb' | 'ml' | 'ms' | 'me'
 type Length = `${number}` | `${number}/${number}` | 'px' | 'full' | 'auto' | 'app' | `[${string}]`
 type Layer = 'raised' | 'float' | 'popover' | 'page' | 'top' | 'banner' | 'drag' | 'chrome'
 type Display = 'hidden' | 'flex' | 'inline-flex'
-type PlaceUtility =
+type LayoutUtility =
   | 'absolute'
   | 'relative'
   | 'fixed'
@@ -29,7 +29,7 @@ type PlaceUtility =
   | `${Sign}${Edge}-${Length}`
   | `${Sign}translate-${'x' | 'y'}-${Length}`
   | `z-${Layer}`
-  | `${Sign}${Margin}-${Length}`
+  | `${Margin}-auto`
   | Display
   | 'invisible'
   | 'visible'
@@ -55,6 +55,7 @@ type PlaceUtility =
   | 'group'
   | `group/${string}`
   | 'peer'
+type PlaceUtility = LayoutUtility | `${Sign}${Margin}-${Length}`
 type Breakpoint = 'sm' | 'md' | 'lg' | 'xl' | '2xl'
 type Variant =
   | Breakpoint
@@ -72,21 +73,25 @@ type Variant =
   | `data-${string}`
 
 // One word: variants (`md:`, `group-hover/x:`) in front of a placement utility.
-type Word<W extends string> = W extends `${infer V}:${infer Rest}`
+type Word<W extends string, U extends string> = W extends `${infer V}:${infer Rest}`
   ? V extends Variant
-    ? `${V}:${Word<Rest>}`
+    ? `${V}:${Word<Rest, U>}`
     : never
-  : W extends PlaceUtility
+  : W extends U
     ? W
     : never
 
-type Tokens<S extends string> = S extends `${infer Head} ${infer Rest}`
-  ? `${Word<Head>} ${Tokens<Rest>}`
-  : Word<S>
+type Tokens<S extends string, U extends string> = S extends `${infer Head} ${infer Rest}`
+  ? `${Word<Head, U>} ${Tokens<Rest, U>}`
+  : Word<S, U>
 
 // Space separated placement classes, checked word by word: `place="ml-auto shrink-0"`. A word that
 // sets a look (spacing inside, color, type, size) does not type check, nor does a computed string.
-export type Place<S extends string> = S & Tokens<S>
+export type Place<S extends string> = S & Tokens<S, PlaceUtility>
+
+// Placement of a layout box in its parent: as `Place`, but the only margin is `auto` (pushing it to
+// one side); the space around it comes from its parent's gap.
+export type LayoutPlace<S extends string> = S & Tokens<S, LayoutUtility>
 
 const words = (s: string) => s.split(/\s+/).filter(Boolean)
 
