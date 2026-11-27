@@ -22,7 +22,9 @@ import {
   rememberLastDm,
   instanceDescriptor,
   storedCredential,
+  readGrants,
   readToken,
+  writeGrants,
 } from '../client/credentials'
 import { sameSecret, Secret } from '../secret'
 import { accountStorage } from '../client/keys'
@@ -1131,14 +1133,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       persistGuestNames({ ...get().guestNames, [name]: display })
   }
 
-  const persistGrants = (grants: Record<string, string>) => {
+  const persistGrants = (grants: Record<string, Secret>) => {
     dropLinkCards()
-    writeLocal(LS.guestGrants, JSON.stringify(grants))
-    const sealed = Object.fromEntries(
-      Object.entries(grants).map(([server, grant]) => [server, Secret.of(grant)])
-    )
-    api.setGrants(sealed)
-    home.ws.setGrants(sealed)
+    writeGrants(LS.guestGrants, grants)
+    api.setGrants(grants)
+    home.ws.setGrants(grants)
     set({ guestGrants: grants })
   }
 
@@ -1939,7 +1938,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         if (restorePage) await bootUrl()
       } else if (guest) {
         recordGuest(true)
-        persistGrants(readJson<Record<string, string>>(LS.guestGrants, {}))
+        persistGrants(readGrants(LS.guestGrants))
         set({
           guest: true,
           guestServers,
@@ -2281,7 +2280,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
       if (!(await viaGrant())) {
         const { grant } = await live(api.guestAccess(id, password))
-        if (grant) persistGrants({ ...get().guestGrants, [id]: grant })
+        if (grant) persistGrants({ ...get().guestGrants, [id]: Secret.of(grant) })
         await fetchServer(id)
       }
       const list = get().guestServers

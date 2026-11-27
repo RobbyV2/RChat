@@ -4,6 +4,13 @@ import { emptyLayout, type Folder, type Layout } from '../nav_layout'
 import { home } from './home_instance'
 import type { DmSummary, ServerSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
+import { Secret } from '../secret'
+import { plain } from './helpers/secret'
+
+const grants = () =>
+  Object.fromEntries(
+    Object.entries(useStore.getState().guestGrants).map(([server, grant]) => [server, plain(grant)])
+  )
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -388,12 +395,12 @@ describe('guest grants', () => {
   test('a password change keeps the grant and a rename moves it', () => {
     serve(serverDetail('club'))
     useStore.setState({ me: null, guest: true, guestServers: ['rchat', 'club'] })
-    useStore.setState({ guestGrants: { club: 'g1' } })
+    useStore.setState({ guestGrants: { club: Secret.of('g1') } })
     dispatch(renamed('club', 'club'))
-    expect(st().guestGrants).toEqual({ club: 'g1' })
+    expect(grants()).toEqual({ club: 'g1' })
     expect(storage.get('rchat_guest_grants') ?? null).toBeNull()
     dispatch(renamed('club', 'den'))
-    expect(st().guestGrants).toEqual({ den: 'g1' })
+    expect(grants()).toEqual({ den: 'g1' })
     expect(JSON.parse(storage.get('rchat_guest_grants') ?? '{}')).toEqual({ den: 'g1' })
     expect(st().guestServers).toEqual(['rchat', 'den'])
   })
@@ -409,7 +416,7 @@ describe('guest access', () => {
       me: null,
       guest: true,
       guestServers: ['rchat', 'club'],
-      guestGrants: { club: 'g1' },
+      guestGrants: { club: Secret.of('g1') },
       servers: { club: serverDetail('club', { display_name: 'Club' }) },
       notices: [],
     })

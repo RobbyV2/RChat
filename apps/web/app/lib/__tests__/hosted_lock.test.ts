@@ -128,7 +128,7 @@ test('a locked account relinquishes its live session and call while own accounts
     remote.api.setGrants({ garden: Secret.of('fixture-grant') })
     remote.store.setState({
       token: Secret.of('fixture-login'),
-      guestGrants: { garden: 'fixture-grant' },
+      guestGrants: { garden: Secret.of('fixture-grant') },
     })
 
     expect(client.show(remote, 'none')).toBe(true)

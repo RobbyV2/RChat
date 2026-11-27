@@ -4,12 +4,36 @@ import { accountStorage, peerStorage, SSO_LOGOUT_KEY } from './keys'
 import { addInstance, addAccount, addIdentity, type Book, type BookAccount } from './book'
 import type { Me } from '../types'
 import { sameSecret, Secret, TO_STORE } from '../secret'
+import { parseJson, record, str } from '../schema'
 import { time } from '../platform/time'
 
 // A saved session token, read from and written to this device's storage.
 export const readToken = (key: string): Secret | null => Secret.from(readLocal(key))
 export const writeToken = (key: string, token: Secret | null) =>
   writeLocal(key, token ? token.reveal(TO_STORE) : null)
+
+const GRANTS = record(str())
+
+// The saved guest grants by server; an unreadable value holds none.
+export const readGrants = (key: string): Record<string, Secret> => {
+  const parsed = parseJson(readLocal(key) ?? '{}', GRANTS)
+  if (!parsed.ok) return {}
+  return Object.fromEntries(
+    Object.entries(parsed.value).flatMap(([server, grant]): [string, Secret][] => {
+      const sealed = Secret.from(grant)
+      return sealed ? [[server, sealed]] : []
+    })
+  )
+}
+export const writeGrants = (key: string, grants: Record<string, Secret>) =>
+  writeLocal(
+    key,
+    JSON.stringify(
+      Object.fromEntries(
+        Object.entries(grants).map(([server, grant]) => [server, grant.reveal(TO_STORE)])
+      )
+    )
+  )
 
 export function storedCredential(conn: InstanceConnection, book: Book, target?: string | null) {
   const keys = accountStorage(conn)

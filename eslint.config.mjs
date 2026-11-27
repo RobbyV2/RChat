@@ -173,6 +173,7 @@ const REQUEST_SINKS = [
   'apps/web/app/lib/api/**',
   'apps/web/app/lib/ws.ts',
   'apps/web/app/lib/instances.ts',
+  'apps/web/app/lib/widget_connection.ts',
 ]
 const STORE_SINKS = ['apps/web/app/lib/client/credentials.ts']
 const SCREEN_SINKS = ['apps/web/app/components/**', 'apps/web/app/**/page.tsx']

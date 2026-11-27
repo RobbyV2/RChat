@@ -76,6 +76,7 @@ import {
 } from './ctx'
 import type { presenceSlice } from './presence'
 import { withoutVoiceRooms } from './rtc'
+import type { Secret } from '../secret'
 
 export interface ServersDeps {
   acct: AccountSession
@@ -112,7 +113,7 @@ export interface ServersDeps {
     fn: (list: Message[], key: string) => Message[]
   ) => Record<string, Message[]>
   mapTails: (fn: (list: Message[]) => Message[]) => void
-  persistGrants: (grants: Record<string, string>) => void
+  persistGrants: (grants: Record<string, Secret>) => void
   persistGuestNames: (names: Record<string, string>) => void
   persistGuestServers: (list: string[]) => void
   presenceHub: Pick<

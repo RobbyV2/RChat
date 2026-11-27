@@ -7,7 +7,8 @@ import { RtcManager, JoinAborted } from './rtc'
 import { voiceStatus, voiceStatusText, type SeatAudio } from './voice_status'
 import type { MessageLocation, VoiceMsg, WsEvent } from './types'
 import { parentOrigin, type WidgetMode, type WidgetRoom, type WidgetRoomMetadata } from './widgets'
-import { Secret } from './secret'
+import { sameSecret, Secret, TO_REQUEST } from './secret'
+import { readToken, writeToken } from './client/credentials'
 import { time } from './platform/time'
 import type { Cancel } from './clock'
 
@@ -31,8 +32,8 @@ export class WidgetConnection {
   private ticket = ''
   private parent = parentOrigin()
   private readonly storageKey: string
-  private token: string | null
-  private grant: string | null
+  private token: Secret | null
+  private grant: Secret | null
   private draftChannel: number | null = null
   private heldDraft: {
     channel: number
@@ -73,8 +74,8 @@ export class WidgetConnection {
     this.rtc.onChange = redraw
     this.rtc.heardMuted = user => this.audio[user]?.muted === true
     this.storageKey = 'rchat_widget:' + id + ':' + this.parent
-    this.token = readLocal(this.storageKey)
-    this.grant = readLocal(this.storageKey + ':grant')
+    this.token = readToken(this.storageKey)
+    this.grant = readToken(this.storageKey + ':grant')
     const storageKey = 'rchat_widget_storage'
     this.storage = writeLocal(storageKey, '1') && readLocal(storageKey) === '1'
     if (this.storage) writeLocal(storageKey, null)
@@ -111,8 +112,8 @@ export class WidgetConnection {
       if (this.stopped) return
       this.ticket = session.ticket
       this.mode = session.mode
-      this.api.setToken(Secret.from(this.token))
-      this.api.setGrants(this.grant ? { widget: Secret.of(this.grant) } : {})
+      this.api.setToken(this.token)
+      this.api.setGrants(this.grant ? { widget: this.grant } : {})
       await this.refresh()
       if (!this.stopped) this.interval = time().every(30000, () => void this.refresh())
     } catch {
@@ -279,8 +280,8 @@ export class WidgetConnection {
         JSON.stringify({
           ticket: this.ticket,
           parent: this.parent,
-          token: this.token,
-          grant: this.token ? null : this.grant,
+          token: this.token?.reveal(TO_REQUEST) ?? null,
+          grant: this.token ? null : (this.grant?.reveal(TO_REQUEST) ?? null),
         })
       )
     }
@@ -491,7 +492,7 @@ export class WidgetConnection {
       this.expired(token, error)
       throw error
     } finally {
-      if (this.token === token && !this.stopped) await this.refresh()
+      if (sameSecret(this.token, token) && !this.stopped) await this.refresh()
     }
   }
   async unlock(password: string) {
@@ -501,50 +502,51 @@ export class WidgetConnection {
       { password },
       this.headers
     )
-    this.grant = grant
-    writeLocal(this.storageKey + ':grant', grant)
-    this.api.setGrants(grant ? { widget: Secret.of(grant) } : {})
+    this.grant = Secret.from(grant)
+    writeToken(this.storageKey + ':grant', this.grant)
+    this.api.setGrants(this.grant ? { widget: this.grant } : {})
     await this.refresh()
   }
   async login(username: string, password: string) {
     const previous = this.token
-    const { token, user } = await this.api.login({ username, password })
-    if (this.stopped || this.token !== previous) return
-    writeLocal(this.storageKey, token)
+    const { token: issued, user } = await this.api.login({ username, password })
+    if (this.stopped || !sameSecret(this.token, previous)) return
+    const token = Secret.of(issued)
+    writeToken(this.storageKey, token)
     if (!this.mayRestore(user.username)) this.heldDraft = null
     await this.useSession(token, user.username)
   }
   logout() {
     const token = this.token
     this.heldDraft = null
-    if (readLocal(this.storageKey) === token) writeLocal(this.storageKey, null)
+    if (sameSecret(readToken(this.storageKey), token)) writeToken(this.storageKey, null)
     void this.useSession(null, null)
-    if (token) void this.api.logout(Secret.of(token)).catch(() => {})
+    if (token) void this.api.logout(token).catch(() => {})
   }
   // Other copies of this widget under the same embedding origin share its saved sign-in.
   syncLogin = (event: StorageEvent) => {
     if (!this.storage || (event.key !== this.storageKey && event.key !== null)) return
-    const saved = readLocal(this.storageKey)
-    if (this.stopped || saved === this.token) return
+    const saved = readToken(this.storageKey)
+    if (this.stopped || sameSecret(saved, this.token)) return
     if (event.key === null) this.heldDraft = null
     else this.holdDraft(false)
     return this.useSession(saved, null)
   }
-  private expired(token: string | null, error: unknown) {
+  private expired(token: Secret | null, error: unknown) {
     if (
       !token ||
       this.stopped ||
-      this.token !== token ||
+      !token.same(this.token) ||
       !(error instanceof ApiError && error.status === 401 && error.message === 'Unauthorized')
     )
       return false
-    const saved = readLocal(this.storageKey)
+    const saved = readToken(this.storageKey)
     this.holdDraft(true)
-    if (saved && saved !== token) {
+    if (saved && !saved.same(token)) {
       void this.useSession(saved, null)
       return true
     }
-    if (saved === token) writeLocal(this.storageKey, null)
+    if (token.same(saved)) writeToken(this.storageKey, null)
     void this.useSession(null, null)
     return true
   }
@@ -588,13 +590,13 @@ export class WidgetConnection {
     this.heldDraft = null
     this.changed()
   }
-  private useSession(token: string | null, account: string | null) {
+  private useSession(token: Secret | null, account: string | null) {
     this.token = token
     this.account = account
     // A queued guest send keeps the credentials it started with.
     this.api = createApi(location.origin + '/api', 'omit')
-    this.api.setToken(Secret.from(token))
-    this.api.setGrants(this.grant ? { widget: Secret.of(this.grant) } : {})
+    this.api.setToken(token)
+    this.api.setGrants(this.grant ? { widget: this.grant } : {})
     this.metadata = null
     this.hideContent()
     if (this.ticket) return this.refresh()

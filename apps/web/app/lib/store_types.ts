@@ -278,7 +278,7 @@ export interface RChatState {
   guest: boolean
   guestPosting: Record<number, 'ready' | 'paused' | 'unavailable'>
   guestServers: string[]
-  guestGrants: Record<string, string>
+  guestGrants: Record<string, Sealed>
   guestNames: Record<string, string>
   // The name this guest tab's connection has in voice rooms, from the server.
   guestVoiceName: string | null
