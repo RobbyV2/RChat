@@ -45,7 +45,7 @@ import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
 import { useChannelCan } from '../lib/place/use_rights'
-import { useHostedServer } from '../lib/place/react'
+import { useHostedServer, useLive } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
 import { messageRights, replyAccess } from '../lib/actions/message'
@@ -70,7 +70,7 @@ import type { CallLog, Member, Message, UserRef } from '../lib/types'
 import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
-import { UnreadBanner, UnreadDivider } from './unread_banner'
+import { UnreadDivider } from './unread_banner'
 import { hostedUnread, type UnreadCount } from '../lib/unread_banner'
 import { DateDivider } from './date_divider'
 import { WebhookBadge } from './webhooks'
@@ -86,16 +86,8 @@ import { profileTrigger } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
 import { ChannelTopic } from './channel_topic'
 import { CallButtons, CallDuration, DirectBadge } from './call_buttons'
-import {
-  EdgeSentinel,
-  OlderLoading,
-  PresentBar,
-  useChatScroll,
-  useFocusMessage,
-  useScrollAnchor,
-} from './viewport_height'
+import { useChatScroll, useFocusMessage, useScrollAnchor } from './viewport_height'
 import { Masked, useEscape, useOwnServer } from './ui'
-import { LightboxList } from './media_lightbox'
 import { FitName, NameWithUsername } from './display_name'
 import { showsUsername } from '../lib/display_name'
 import { PingBadge, pingLabel } from './ping_badge'
@@ -107,6 +99,8 @@ import { MessageEditor, editAction } from './message_editor'
 import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction } from './forwards'
+import { MessageList, NewerOnSight } from './message_list'
+import { useMessages } from '../lib/place/use_messages'
 import { PinNotice, PinsButton, PinsWindow, useCanPin } from './pins'
 import { ThreadsButton, ThreadsWindow } from './threads'
 import { PollCard } from './poll_card'
@@ -118,7 +112,6 @@ import { RoleIcon } from './role_icon'
 import { MessageTime, ShortTime } from './timestamp'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
-import { MessageListSkeleton } from './skeletons'
 import { Row, Stack, Surface } from './layout'
 import {
   BulkJobBar,
@@ -896,26 +889,21 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const outgoing = useStore(s => (s.view ? s.outbox[viewKey(s.view)] : undefined)) ?? EMPTY_OUT
   const outCount = outgoing.length
   const anchor = useStore(s => (s.view ? s.unreadAnchor[viewKey(s.view)] : undefined))
-  const older = useStore(s => (s.view ? s.older[viewKey(s.view)] : undefined))
-  const newer = useStore(s => (s.view ? s.newer[viewKey(s.view)] : undefined))
+  const list = useMessages()
+  const listState = useLive(list.state)
+  const { older, newer } = listState
   const stale = useStore(s => (s.view ? s.stale[viewKey(s.view)] === true : false))
   const focus = useStore(s => (s.view ? s.focus[viewKey(s.view)] : undefined))
-  const markRead = useStore(s => s.markRead)
   const menuPings = useStore(allPings)
   const memberServer = view?.kind === 'channel' ? view.server : null
   const memberFor = useMemberLookup(memberServer)
   useAuthorMembers(memberServer, usePeopleKey(messages, me ? [me.username] : []))
-  const loadOlder = useStore(s => s.loadOlder)
-  const loadNewer = useStore(s => s.loadNewer)
-  const jumpToUnread = useStore(s => s.jumpToUnread)
-  const jumpToPresent = useStore(s => s.jumpToPresent)
   const jumpTo = useStore(s => s.jumpTo)
   const startReply = useStore(s => s.startReply)
   const startEdit = useStore(s => s.startEdit)
   const editingId = useStore(s =>
     s.editing && s.view && s.editing.key === viewKey(s.view) ? s.editing.id : null
   )
-  const dismissUnread = useStore(s => s.dismissUnread)
   const askMarkAllRead = useStore(s => s.askMarkAllRead)
   const openSearch = useStore(s => s.openSearch)
   const uploadFile = useStore(s => s.uploadFile)
@@ -937,12 +925,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const channelName = channel?.name
   const isVoice = channel?.kind === 'voice'
   const scope = view && !isVoice ? viewKey(view) : null
-  const detached = newer?.more === true
-  const snapEdge = useScrollAnchor(
-    listRef,
-    messages[0]?.id,
-    older?.loading === true || newer?.loading === true
-  )
+  const detached = newer.more
+  const snapEdge = useScrollAnchor(listRef, messages[0]?.id, older.loading || newer.loading)
   const ids = useMemo(() => messages.map(m => m.id), [messages])
   const myName = me?.username
   const groupIds = useStore(s =>
@@ -960,7 +944,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     [messages, myName, groupIds]
   )
   const ownLast = lastOwn(messages, me?.username)
-  const mark = unreadMark(ids, anchor, older?.more !== false, ownLast)
+  const mark = unreadMark(ids, anchor, older.more, ownLast)
   const dividerIndex = mark.divider
   // Opened in older history: every loaded message is at or before the read marker.
   const below =
@@ -998,7 +982,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     outCount,
     onBottom: () => {
       const last = messages[messages.length - 1]
-      if (last && scope) markRead(scope, last.id)
+      if (last) list.markRead(String(last.id))
     },
   })
   const positioned = scroll.positioned
@@ -1018,7 +1002,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     }
     if (guest || !escapeMarksRead(e)) return
     if (e.shiftKey) askMarkAllRead(p2pMarkAll?.())
-    else if (scope) dismissUnread(scope)
+    else list.dismissUnread()
   }, 'stage')
 
   const otherBlocked = useStore(s => (dm ? s.blocked[dm.other.username] === true : false))
@@ -1028,19 +1012,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
 
   const onScroll = () => {
     scroll.onScroll()
-    if (older?.loading || newer?.loading) snapEdge()
-  }
-
-  const onTop = () => {
-    if (older?.loading || older?.more === false || !messages.length) return
-    snapEdge()
-    void loadOlder()
-  }
-
-  const onBottom = () => {
-    if (newer?.loading) return
-    snapEdge()
-    void loadNewer()
+    if (older.loading || newer.loading) snapEdge()
   }
 
   const messageMenu = (msg: Message, x: number, y: number) => {
@@ -1262,143 +1234,133 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           )}
           {wide && <SelectionBar scope={scope} sheet={false} />}
           <BulkJobBar scope={scope} />
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            {loading && scope && <MessageListSkeleton seed={scope} className="absolute inset-0" />}
-            {older?.loading && <OlderLoading lower={bannered} />}
-            {bannered && scope && (
-              <UnreadBanner
-                unread={unread}
-                onJump={() => {
-                  const line = listRef.current?.querySelector('[data-divider]')
-                  if (dividerIndex >= 0 && line) line.scrollIntoView({ block: 'center' })
-                  else void jumpToUnread()
-                }}
-                onMarkRead={() => dismissUnread(scope)}
-              />
-            )}
-            {newer?.loading && <OlderLoading newer />}
-            {detached && !newer?.loading && scope && (
-              <PresentBar onJump={() => void jumpToPresent(scope)} />
-            )}
-            {!detached && positioned && fresh > 0 && (
-              <PresentBar count={fresh} onJump={scroll.toBottom} />
-            )}
-            <div
-              ref={listRef}
-              onScroll={onScroll}
-              className={`flex-1 overflow-y-auto py-3 ${loading ? 'invisible' : ''}`}
-            >
-              {!view && (
+          <MessageList
+            list={list}
+            state={listState}
+            listRef={listRef}
+            contentRef={contentRef}
+            onScroll={onScroll}
+            loading={loading}
+            positioned={positioned}
+            ends={
+              messages.length
+                ? { first: messages[0].id, last: messages[messages.length - 1].id }
+                : null
+            }
+            banner={
+              bannered
+                ? {
+                    unread,
+                    onJump: () => {
+                      const line = listRef.current?.querySelector('[data-divider]')
+                      if (dividerIndex >= 0 && line) line.scrollIntoView({ block: 'center' })
+                      else list.toUnread()
+                    },
+                  }
+                : null
+            }
+            fresh={fresh}
+            toBottom={scroll.toBottom}
+            beforePage={snapEdge}
+            empty={
+              !view ? (
                 <Stack gap="md" align="center" justify="center" place="h-full">
                   <MessagesSquare size={40} className="text-on-surface-variant" />
                   <span className="text-on-surface-variant">Select a conversation</span>
                 </Stack>
+              ) : messages.length > 0 ? null : dm?.is_self ? (
+                <SelfDmEmpty />
+              ) : (
+                <Surface tone="plain" radius="none" pad="xl" place="h-full">
+                  <Stack gap="2xs" align="center" justify="center" place="flex-1">
+                    <span className="text-center text-2xl font-semibold text-on-surface-variant opacity-70">
+                      No messages here yet
+                    </span>
+                    <span className="text-center text-sm text-on-surface-variant opacity-70">
+                      Be the first to say something.
+                    </span>
+                  </Stack>
+                </Surface>
+              )
+            }
+            lightbox={{
+              rows: () => ({ ids: messages.map(m => m.id), places }),
+              forward: id => {
+                const m = messages.find(x => x.id === id)
+                return m && scope
+                  ? actionPress(
+                      'message_forward',
+                      { kind: 'message', message: m, list: scope },
+                      acct
+                    )
+                  : null
+              },
+            }}
+          >
+            <BlockedList
+              messages={messages}
+              focusId={focus?.id ?? null}
+              dividerAt={dividerIndex}
+              divider={unreadDivider}
+              row={(m, i) => (
+                <Selectable m={m} scope={scope}>
+                  <MessageRow
+                    m={m}
+                    first={places[i]?.first ?? true}
+                    last={places[i]?.last ?? true}
+                    mentioned={mentionedIds.has(m.id)}
+                    divider={i === dividerIndex}
+                    flash={flash === m.id}
+                    canDelete={canDelete(m)}
+                    canReact={canReact}
+                    canVote={canWrite}
+                    canUnreact={canUnreact}
+                    canReply={replies.quote}
+                    canThread={replies.thread}
+                    canEdit={canEdit(m)}
+                    canForward={forwardable(m)}
+                    editing={editingId === m.id}
+                    server={memberServer}
+                    {...authorLook(
+                      roleLook(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])
+                    )}
+                    quoteColor={
+                      m.reply_to?.author
+                        ? roleColor(
+                            detail?.roles,
+                            memberFor(m.reply_to.author.username)?.role_ids ?? []
+                          )
+                        : undefined
+                    }
+                    onMenu={rowMenu}
+                    onReply={rowReply}
+                    onEdit={rowEdit}
+                    onJump={rowJump}
+                  />
+                </Selectable>
               )}
-              {view &&
-                messages.length === 0 &&
-                (dm?.is_self ? (
-                  <SelfDmEmpty />
-                ) : (
-                  <Surface tone="plain" radius="none" pad="xl" place="h-full">
-                    <Stack gap="2xs" align="center" justify="center" place="flex-1">
-                      <span className="text-center text-2xl font-semibold text-on-surface-variant opacity-70">
-                        No messages here yet
-                      </span>
-                      <span className="text-center text-sm text-on-surface-variant opacity-70">
-                        Be the first to say something.
-                      </span>
-                    </Stack>
-                  </Surface>
-                ))}
-              <LightboxList
-                rows={() => ({ ids: messages.map(m => m.id), places })}
-                forward={id => {
-                  const m = messages.find(x => x.id === id)
-                  return m && scope
-                    ? actionPress(
-                        'message_forward',
-                        { kind: 'message', message: m, list: scope },
-                        acct
-                      )
-                    : null
-                }}
-              >
-                <div ref={contentRef}>
-                  {positioned && messages.length > 0 && older?.more !== false && (
-                    <EdgeSentinel
-                      key={messages[0].id}
-                      root={listRef}
-                      edge="top"
-                      onVisible={onTop}
+              tail={lastShownAt => (
+                <>
+                  <NewerOnSight
+                    list={list}
+                    state={listState}
+                    listRef={listRef}
+                    positioned={positioned}
+                    last={messages.at(-1)?.id}
+                    beforePage={snapEdge}
+                  />
+                  {view && (
+                    <OutboxRows
+                      msgKey={viewKey(view)}
+                      outgoing={outgoing}
+                      places={places.slice(messages.length)}
+                      dayAbove={lastShownAt}
                     />
                   )}
-                  <BlockedList
-                    messages={messages}
-                    focusId={focus?.id ?? null}
-                    dividerAt={dividerIndex}
-                    divider={unreadDivider}
-                    row={(m, i) => (
-                      <Selectable m={m} scope={scope}>
-                        <MessageRow
-                          m={m}
-                          first={places[i]?.first ?? true}
-                          last={places[i]?.last ?? true}
-                          mentioned={mentionedIds.has(m.id)}
-                          divider={i === dividerIndex}
-                          flash={flash === m.id}
-                          canDelete={canDelete(m)}
-                          canReact={canReact}
-                          canVote={canWrite}
-                          canUnreact={canUnreact}
-                          canReply={replies.quote}
-                          canThread={replies.thread}
-                          canEdit={canEdit(m)}
-                          canForward={forwardable(m)}
-                          editing={editingId === m.id}
-                          server={memberServer}
-                          {...authorLook(
-                            roleLook(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])
-                          )}
-                          quoteColor={
-                            m.reply_to?.author
-                              ? roleColor(
-                                  detail?.roles,
-                                  memberFor(m.reply_to.author.username)?.role_ids ?? []
-                                )
-                              : undefined
-                          }
-                          onMenu={rowMenu}
-                          onReply={rowReply}
-                          onEdit={rowEdit}
-                          onJump={rowJump}
-                        />
-                      </Selectable>
-                    )}
-                    tail={lastShownAt => (
-                      <>
-                        {positioned && detached && messages.length > 0 && (
-                          <EdgeSentinel
-                            key={`n${messages[messages.length - 1].id}`}
-                            root={listRef}
-                            edge="bottom"
-                            onVisible={onBottom}
-                          />
-                        )}
-                        {view && (
-                          <OutboxRows
-                            msgKey={viewKey(view)}
-                            outgoing={outgoing}
-                            places={places.slice(messages.length)}
-                            dayAbove={lastShownAt}
-                          />
-                        )}
-                      </>
-                    )}
-                  />
-                </div>
-              </LightboxList>
-            </div>
-          </div>
+                </>
+              )}
+            />
+          </MessageList>
           <div className="relative shrink-0">
             <TypingIndicator
               scope={view ? viewKey(view) : null}

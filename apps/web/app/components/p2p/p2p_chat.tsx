@@ -66,7 +66,9 @@ import { newSince } from '../../lib/lists'
 import { systemParts } from '../../lib/system_messages'
 import type { Message, UserRef } from '../../lib/types'
 import { P2pDm, P2pRoom, type P2pList } from '../../lib/place/place'
-import { PlaceProvider } from '../../lib/place/react'
+import { PlaceProvider, useLive } from '../../lib/place/react'
+import { messagesAt } from '../../lib/place/use_messages'
+import { MessageList } from '../message_list'
 import { chat as chatFeature } from '../../lib/place/chat'
 import { featureAt, isUnsupported } from '../../lib/place/feature'
 import { MarkdownMessage } from '../markdown_message'
@@ -91,18 +93,16 @@ import { EmojiPicker, SHEET_QUERY } from '../emoji_picker'
 import { longPress, useMedia } from '../context_menu'
 import { useTextAssist } from '../text_assist'
 import { MessageTime } from '../timestamp'
-import { PresentBar, useChatScroll, useFocusMessage } from '../viewport_height'
+import { useChatScroll, useFocusMessage } from '../viewport_height'
 import { GroupedRow, groupPadCls, mentionRowCls } from '../message_pane'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
-import { UnreadBanner, UnreadDivider } from '../unread_banner'
-import { MessageListSkeleton } from '../skeletons'
+import { UnreadDivider } from '../unread_banner'
 import { p2pUnread, p2pUnreadStart } from '../../lib/unread_banner'
 import { Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
-import { LightboxList } from '../media_lightbox'
 import { namePasted } from '../message_composer'
 import { FormatToolbar, useFormatting } from '../format_toolbar'
 import { P2pCallRow } from './p2p_call'
@@ -1172,6 +1172,10 @@ function IdentityChatBody(props: ChatBodyProps) {
   const dragDepth = useRef(0)
 
   const messages = chat.messages ?? EMPTY
+  const list = messagesAt(
+    chat.ch ? P2pRoom.open(identity, chat.room) : P2pDm.open(identity, chat.room)
+  )
+  const listState = useLive(list.state)
   const scope = identityScopeKey(identity.localId, chatScope(chat.room, chat.ch))
   const ownRoom = chat.ch ? chat.room : undefined
   const ownName = useCallback((ik: string) => profileName(ik, ownRoom), [ownRoom])
@@ -1224,12 +1228,8 @@ function IdentityChatBody(props: ChatBodyProps) {
     detached: false,
     outCount: ownCount,
     onBottom: () => {
-      if (
-        typeof document !== 'undefined' &&
-        document.visibilityState === 'visible' &&
-        !identity.useP2p.getState().chat?.newer
-      )
-        p2pDm.markRead(key)
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible')
+        list.markRead(messages[messages.length - 1]?.id ?? '')
     },
   })
   const fresh = newSince(shared, scroll.leftAt, me ?? undefined)
@@ -1273,9 +1273,9 @@ function IdentityChatBody(props: ChatBodyProps) {
   const rowJump = useCallback(
     (n: number) => {
       const id = idOf(n)
-      if (id) void p2pDm.jumpTo(id)
+      if (id) list.jump(id)
     },
-    [idOf]
+    [idOf, list]
   )
 
   const gapNote = props.gap && !chat.more && (
@@ -1324,26 +1324,36 @@ function IdentityChatBody(props: ChatBodyProps) {
       >
         {props.header}
         {props.above}
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          {first && <MessageListSkeleton seed={scope} className="absolute inset-0" />}
-          {(divider >= 0 || above) && (
-            <UnreadBanner
-              unread={unread}
-              onJump={() => {
-                const id = divider >= 0 ? messages[divider].id : firstUnread?.id
-                if (id) void p2pDm.jumpTo(id)
-              }}
-              onMarkRead={() => p2pDm.dismissUnread(key)}
-            />
-          )}
-          {scroll.positioned && fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />}
-          <div
-            ref={listRef}
-            onScroll={scroll.onScroll}
-            className={`flex-1 overflow-y-auto py-3 ${first ? 'invisible' : ''}`}
-          >
-            {props.intro}
-            {!chat.loading && messages.length === 0 && (
+        <MessageList
+          list={list}
+          state={listState}
+          listRef={listRef}
+          contentRef={contentRef}
+          onScroll={scroll.onScroll}
+          loading={first}
+          positioned={scroll.positioned}
+          ends={
+            messages.length
+              ? { first: messages[0].id, last: messages[messages.length - 1].id }
+              : null
+          }
+          banner={
+            divider >= 0 || above
+              ? {
+                  unread,
+                  onJump: () => {
+                    const id = divider >= 0 ? messages[divider].id : firstUnread?.id
+                    if (id) list.jump(id)
+                  },
+                }
+              : null
+          }
+          fresh={fresh}
+          toBottom={scroll.toBottom}
+          intro={props.intro}
+          empty={
+            !chat.loading &&
+            messages.length === 0 && (
               <div className="h-full text-center text-on-surface-variant opacity-70">
                 <Surface pad="xl" tone="plain" radius="none" place="h-full">
                   <Stack gap="2xs" align="center" justify="center" place="flex-1">
@@ -1351,88 +1361,56 @@ function IdentityChatBody(props: ChatBodyProps) {
                   </Stack>
                 </Surface>
               </div>
-            )}
-            <LightboxList
-              rows={() => ({ ids: messages.map(p => p.id), places })}
-              forward={forwardRow}
-            >
-              <div ref={contentRef}>
-                {chat.more && (
-                  <Surface pad="sm" tone="plain" radius="none" align="center">
-                    <button onClick={() => void p2pDm.loadOlderPage()} className={textBtn}>
-                      Show older messages
-                    </button>
-                  </Surface>
-                )}
-                {gapNote}
-                {rows.map(({ p, m }, i) => (
-                  <Fragment key={p.id}>
-                    {days.has(i) && <DateDivider at={m.created_at} />}
-                    {p.system?.kind === 'pin' ? (
-                      <P2pPinRow
-                        p={p}
-                        m={m}
-                        divider={i === divider}
-                        place={chat.ch ? 'channel' : 'conversation'}
-                        onMenu={(row, x, y) => rowMenu(row, m, x, y)}
-                      />
-                    ) : p.system ? (
-                      <P2pSystemRow m={m} divider={i === divider} />
-                    ) : p.removed ? (
-                      <P2pHiddenRow m={m} divider={i === divider} />
-                    ) : p.slowHidden ? (
-                      <P2pSlowRow m={m} divider={i === divider} />
-                    ) : p.call ? (
-                      <P2pCallRow p={p} me={me} />
-                    ) : (
-                      <P2pRow
-                        p={p}
-                        m={m}
-                        first={places[i]?.first ?? true}
-                        last={places[i]?.last ?? true}
-                        mine={p.sender === me}
-                        pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
-                        mentioned={pingsMe(p, me)}
-                        divider={i === divider}
-                        flash={flash === m.id}
-                        canAct={canAct && !p.archived}
-                        timedOut={timedOut}
-                        canDelete={mayDelete(p)}
-                        editing={editing && editingState?.id === p.id ? editing : null}
-                        draftKey={key}
-                        threads
-                        onMenu={rowMenu}
-                        onCopy={copyRow}
-                        onJump={rowJump}
-                        {...rowLook(props.lookOf?.(p.sender))}
-                      />
-                    )}
-                  </Fragment>
-                ))}
-                {chat.newer && (
-                  <Surface data-p2p-newer pad="lg" tone="plain" radius="none">
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                      <History size={14} className="text-on-surface-variant" />
-                      <span className="text-xs text-on-surface-variant">
-                        Newer messages aren&apos;t shown.
-                      </span>
-                      <button
-                        onClick={() => void p2pDm.loadNewerPage()}
-                        disabled={chat.loading}
-                        className={textBtn}
-                      >
-                        Show newer
-                      </button>
-                      <button onClick={() => void p2pDm.toPresent()} className={textBtn}>
-                        Jump to present
-                      </button>
-                    </div>
-                  </Surface>
-                )}
-              </div>
-            </LightboxList>
-          </div>
-        </div>
+            )
+          }
+          lightbox={{ rows: () => ({ ids: messages.map(p => p.id), places }), forward: forwardRow }}
+          head={gapNote}
+        >
+          {rows.map(({ p, m }, i) => (
+            <Fragment key={p.id}>
+              {days.has(i) && <DateDivider at={m.created_at} />}
+              {p.system?.kind === 'pin' ? (
+                <P2pPinRow
+                  p={p}
+                  m={m}
+                  divider={i === divider}
+                  place={chat.ch ? 'channel' : 'conversation'}
+                  onMenu={(row, x, y) => rowMenu(row, m, x, y)}
+                />
+              ) : p.system ? (
+                <P2pSystemRow m={m} divider={i === divider} />
+              ) : p.removed ? (
+                <P2pHiddenRow m={m} divider={i === divider} />
+              ) : p.slowHidden ? (
+                <P2pSlowRow m={m} divider={i === divider} />
+              ) : p.call ? (
+                <P2pCallRow p={p} me={me} />
+              ) : (
+                <P2pRow
+                  p={p}
+                  m={m}
+                  first={places[i]?.first ?? true}
+                  last={places[i]?.last ?? true}
+                  mine={p.sender === me}
+                  pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
+                  mentioned={pingsMe(p, me)}
+                  divider={i === divider}
+                  flash={flash === m.id}
+                  canAct={canAct && !p.archived}
+                  timedOut={timedOut}
+                  canDelete={mayDelete(p)}
+                  editing={editing && editingState?.id === p.id ? editing : null}
+                  draftKey={key}
+                  threads
+                  onMenu={rowMenu}
+                  onCopy={copyRow}
+                  onJump={rowJump}
+                  {...rowLook(props.lookOf?.(p.sender))}
+                />
+              )}
+            </Fragment>
+          ))}
+        </MessageList>
         <div className="relative shrink-0">
           <TypingIndicator scope={null} bg="bg-surface" names={typingNames} />
           {!disabled && (storageFull || props.peerFull) && (
