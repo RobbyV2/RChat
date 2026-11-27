@@ -1,3 +1,4 @@
+import { time } from './platform/time'
 export type CategoryId =
   | 'recent'
   | 'people'
@@ -352,7 +353,7 @@ export const boostFor =
     return u ? frecency(u, now) : 0
   }
 
-export function topEmojis(n: number, prefs: EmojiPrefs = EMPTY_PREFS, now = Date.now()) {
+export function topEmojis(n: number, prefs: EmojiPrefs = EMPTY_PREFS, now = time().now()) {
   const top = ranked(prefs, now).slice(0, n)
   const out = top.map(([, u]) => u.last)
   for (const d of DEFAULT_TOP) {

@@ -1,4 +1,5 @@
 import { inCode } from './autocomplete'
+import { time } from './platform/time'
 
 // Discord-style timestamp tokens: `<t:SECONDS>` or `<t:SECONDS:STYLE>`, shown in the reader's
 // locale and time zone.
@@ -136,7 +137,7 @@ export function messageTime(ms: number, now: number, o: FormatOptions = {}) {
 
 // Message text with each timestamp outside code replaced by its formatted text, for snippets,
 // search results and notifications.
-export const plainStamps = (text: string, now: number = Date.now(), o: FormatOptions = {}) => {
+export const plainStamps = (text: string, now: number = time().now(), o: FormatOptions = {}) => {
   if (!text.includes('<t:')) return text
   let at = 0
   return splitStamps(text)

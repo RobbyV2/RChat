@@ -9,6 +9,7 @@ import {
   type JWTVerifyGetKey,
 } from 'jose'
 import { normalizeHost, privateHost } from './qualified'
+import { time } from './platform/time'
 
 export const ASSERTION_MAX_TTL = 300
 // P2P identity bindings (the account badge): who `sub` is, vouched for by the instance, for the
@@ -234,7 +235,7 @@ export async function verifyAssertion(
     new TextEncoder().encode(claims.jti).length > JTI_MAX
   )
     throw new AssertionError('malformed')
-  const at = Math.floor((now ?? new Date()).getTime() / 1000)
+  const at = Math.floor((now ?? new Date(time().now())).getTime() / 1000)
   if (claims.iat > at + LEEWAY || claims.exp - claims.iat > ASSERTION_MAX_TTL)
     throw new AssertionError('lifetime')
   if (nonce !== undefined && claims.nonce !== nonce) throw new AssertionError('nonce')
@@ -277,7 +278,7 @@ export async function verifyBinding(
   } catch (e) {
     throw new AssertionError(failure(e))
   }
-  const at = Math.floor((now ?? new Date()).getTime() / 1000)
+  const at = Math.floor((now ?? new Date(time().now())).getTime() / 1000)
   if (claims.iat > at + LEEWAY || claims.exp - claims.iat > BINDING_MAX_TTL)
     throw new AssertionError('lifetime')
   if (claims.aud !== BINDING_AUD) throw new AssertionError('audience')

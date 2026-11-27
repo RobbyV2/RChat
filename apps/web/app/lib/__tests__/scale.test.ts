@@ -7,6 +7,7 @@ import {
   due,
   nextAttempt,
 } from '../backoff'
+import { ManualTime } from '../clock'
 import { createReadQueue } from '../reads'
 import {
   createLru,
@@ -64,28 +65,7 @@ describe('backoff', () => {
   })
 })
 
-const fakeClock = () => {
-  let now = 0
-  let seq = 0
-  const timers = new Map<number, { at: number; fn: () => void }>()
-  return {
-    now: () => now,
-    setTimer: (fn: () => void, ms: number) => {
-      seq += 1
-      timers.set(seq, { at: now + ms, fn })
-      return seq as unknown as ReturnType<typeof setTimeout>
-    },
-    clearTimer: (t: ReturnType<typeof setTimeout>) => void timers.delete(t as unknown as number),
-    advance: (ms: number) => {
-      now += ms
-      for (const [id, t] of [...timers].sort((a, b) => a[1].at - b[1].at)) {
-        if (t.at > now) continue
-        timers.delete(id)
-        t.fn()
-      }
-    },
-  }
-}
+const fakeClock = () => new ManualTime(0)
 
 describe('read coalescing', () => {
   const setup = (fail = false) => {
@@ -98,9 +78,7 @@ describe('read coalescing', () => {
       },
       delay: 2_000,
       maxWait: 5_000,
-      now: clock.now,
-      setTimer: clock.setTimer,
-      clearTimer: clock.clearTimer,
+      time: clock,
     })
     return { clock, posts, q }
   }
@@ -173,9 +151,7 @@ describe('read coalescing', () => {
         }
         return Promise.resolve()
       },
-      now: clock.now,
-      setTimer: clock.setTimer,
-      clearTimer: clock.clearTimer,
+      time: clock,
       retryDelay: attempt => 1_000 * 2 ** attempt,
     })
     const settle = async () => {
@@ -214,9 +190,7 @@ describe('read coalescing', () => {
         posts.push([scope, id])
         return fail ? Promise.reject(new Error('down')) : Promise.resolve()
       },
-      now: clock.now,
-      setTimer: clock.setTimer,
-      clearTimer: clock.clearTimer,
+      time: clock,
       retryDelay: () => 1_000,
     })
     q.mark('c1', 5)
@@ -243,9 +217,7 @@ describe('read coalescing', () => {
         posts.push([scope, id])
         return Promise.reject(Object.assign(new Error('nope'), { status: status[scope] }))
       },
-      now: clock.now,
-      setTimer: clock.setTimer,
-      clearTimer: clock.clearTimer,
+      time: clock,
       retryDelay: () => 1_000,
     })
     for (const scope of Object.keys(status)) q.mark(scope, 7)

@@ -8,6 +8,8 @@ import { voiceStatus, voiceStatusText, type SeatAudio } from './voice_status'
 import type { MessageLocation, VoiceMsg, WsEvent } from './types'
 import { parentOrigin, type WidgetMode, type WidgetRoom, type WidgetRoomMetadata } from './widgets'
 import { Secret } from './secret'
+import { time } from './platform/time'
+import type { Cancel } from './clock'
 
 type Event =
   | WsEvent
@@ -42,7 +44,7 @@ export class WidgetConnection {
   account: string | null = null
   private stopped = false
   private sequence = 0
-  private interval: ReturnType<typeof setInterval> | null = null
+  private interval: Cancel | null = null
   private ice: RTCConfiguration = { iceServers: [] }
   readonly rtc = new RtcManager({ send: msg => this.signal(msg), ice: () => this.ice })
   readonly hideSend = new URLSearchParams(location.search).get('send') === 'off'
@@ -112,7 +114,7 @@ export class WidgetConnection {
       this.api.setToken(Secret.from(this.token))
       this.api.setGrants(this.grant ? { widget: Secret.of(this.grant) } : {})
       await this.refresh()
-      if (!this.stopped) this.interval = setInterval(() => void this.refresh(), 30000)
+      if (!this.stopped) this.interval = time().every(30000, () => void this.refresh())
     } catch {
       if (!this.stopped) {
         this.loaded = true
@@ -599,7 +601,7 @@ export class WidgetConnection {
   }
   destroy() {
     this.stopped = true
-    if (this.interval) clearInterval(this.interval)
+    this.interval?.()
     this.rtc.onChange = () => {}
     this.closeSocket()
     this.release()

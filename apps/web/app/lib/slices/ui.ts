@@ -102,6 +102,7 @@ import {
 } from './ctx'
 import { isSelfDm } from './messages'
 import type { StoreApi } from 'zustand'
+import type { Cancel } from '../clock'
 
 export function menuActions(
   store: Pick<StoreApi<RChatState>, 'getState' | 'setState'>,
@@ -207,8 +208,8 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   // When the last 429 was seen; a boot that hit one and opened nothing is retried.
   let limitedAt = 0
 
-  let errorTimer: ReturnType<typeof setTimeout> | undefined
-  let toastTimer: ReturnType<typeof setTimeout> | undefined
+  let errorTimer: Cancel | undefined
+  let toastTimer: Cancel | undefined
   const fail = (e: unknown) => {
     if (e instanceof Banned || e instanceof Ended) return
     const staff = staffViewChannel(e)
@@ -216,13 +217,13 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
       set(s => staffAsked(s, staff))
       return
     }
-    if (e instanceof ApiError && e.status === 429) limitedAt = Date.now()
+    if (e instanceof ApiError && e.status === 429) limitedAt = acct.time.now()
     const message = errorText(e)
     set({ error: message })
-    clearTimeout(errorTimer)
-    errorTimer = setTimeout(() => {
+    errorTimer?.()
+    errorTimer = acct.time.after(5000, () => {
       if (get().error === message) set({ error: null })
-    }, 5000)
+    })
   }
 
   const act = async (fn: () => Promise<void>) => {
@@ -319,22 +320,19 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     if (!on) forgetTyping(true)
   }
 
-  let expiryTimer: ReturnType<typeof setTimeout> | null = null
+  let expiryTimer: Cancel | null = null
 
   // One timer, set for the next mute to end; it prunes and sets itself for the one after.
   const armExpiry = () => {
-    if (expiryTimer !== null) clearTimeout(expiryTimer)
+    expiryTimer?.()
     expiryTimer = null
-    const now = Date.now()
+    const now = acct.time.now()
     const next = nextExpiry(get().notifyPrefs, now)
     if (next === null) return
-    expiryTimer = setTimeout(
-      () => {
-        expiryTimer = null
-        get().pruneNotify()
-      },
-      Math.min(next - now + 50, 2 ** 31 - 1)
-    )
+    expiryTimer = acct.time.after(Math.min(next - now + 50, 2 ** 31 - 1), () => {
+      expiryTimer = null
+      get().pruneNotify()
+    })
   }
 
   const useNotify = (prefs: NotifyPrefs) => {
@@ -343,7 +341,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   }
 
   const saveNotify = (next: NotifyPrefs) => {
-    const pruned = pruneNotify(next, Date.now())
+    const pruned = pruneNotify(next, acct.time.now())
     if (pruned === get().notifyPrefs) return
     useNotify(pruned)
     const owner = notifyOwner()
@@ -375,10 +373,10 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     toastSeq += 1
     const id = toastSeq
     set({ toast: { id, text, name, peer } })
-    clearTimeout(toastTimer)
-    toastTimer = setTimeout(() => {
+    toastTimer?.()
+    toastTimer = acct.time.after(4000, () => {
       if (get().toast?.id === id) set({ toast: null })
-    }, 4000)
+    })
   }
 
   const saveEmoji = (next: EmojiPrefs) => {
@@ -406,23 +404,23 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   }
 
   let noticeId = 0
-  let noticeTimer: ReturnType<typeof setTimeout> | null = null
+  let noticeTimer: Cancel | null = null
   const scheduleNotices = () => {
-    if (noticeTimer !== null) clearTimeout(noticeTimer)
+    noticeTimer?.()
     noticeTimer = null
-    const wait = nextNoticeEnd(get().notices, Date.now())
+    const wait = nextNoticeEnd(get().notices, acct.time.now())
     if (wait === null) return
-    noticeTimer = setTimeout(() => {
+    noticeTimer = acct.time.after(wait + 20, () => {
       noticeTimer = null
-      set(s => ({ notices: liveNotices(s.notices, Date.now()) }))
+      set(s => ({ notices: liveNotices(s.notices, acct.time.now()) }))
       scheduleNotices()
-    }, wait + 20)
+    })
   }
 
   const notify = (alert: AlertInput) => {
     noticeId += 1
     const id = noticeId
-    set(s => ({ notices: addNotice(s.notices, alert, id, Date.now(), s.noticesPaused) }))
+    set(s => ({ notices: addNotice(s.notices, alert, id, acct.time.now(), s.noticesPaused) }))
     scheduleNotices()
     return get().notices.find(n => n.key === alert.key && (alert.lead === undefined || n.id === id))
   }
@@ -498,12 +496,12 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   }
 
   const forget = () => {
-    clearTimeout(errorTimer)
-    clearTimeout(toastTimer)
+    errorTimer?.()
+    toastTimer?.()
     limitedAt = 0
-    if (noticeTimer !== null) clearTimeout(noticeTimer)
+    noticeTimer?.()
     noticeTimer = null
-    if (expiryTimer !== null) clearTimeout(expiryTimer)
+    expiryTimer?.()
     expiryTimer = null
   }
 
@@ -581,7 +579,10 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
 
     pauseNotices: paused => {
       if (get().noticesPaused === paused) return
-      set(s => ({ noticesPaused: paused, notices: pauseNotices(s.notices, paused, Date.now()) }))
+      set(s => ({
+        noticesPaused: paused,
+        notices: pauseNotices(s.notices, paused, acct.time.now()),
+      }))
       scheduleNotices()
     },
 
@@ -662,7 +663,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
       if (me && dmAsk(layout) !== dmAsk(was)) void get().loadMoreDms()
     },
 
-    noteEmoji: (base, picked) => saveEmoji(noteUse(get().emoji, base, picked, Date.now())),
+    noteEmoji: (base, picked) => saveEmoji(noteUse(get().emoji, base, picked, acct.time.now())),
     setSkinTone: tone => saveEmoji(setTone(get().emoji, tone)),
     reloadEmoji: () => {
       const username = get().me?.username
@@ -688,7 +689,9 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
       saveNotify(
         names.reduce((p, name) => {
           const scope = { kind: 'server', name } as const
-          return until === null ? setMute(p, scope, null) : extendMute(p, scope, until, Date.now())
+          return until === null
+            ? setMute(p, scope, null)
+            : extendMute(p, scope, until, acct.time.now())
         }, get().notifyPrefs)
       ),
     resetNotify: scope => saveNotify(resetScope(get().notifyPrefs, scope)),

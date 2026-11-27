@@ -1,3 +1,4 @@
+import { time } from './platform/time'
 // Lengths and message windows of moderation actions, shared by hosted servers and P2P rooms.
 
 export const BAN_MIN = 60
@@ -124,7 +125,7 @@ const sameDay = (a: Date, b: Date) =>
   a.getDate() === b.getDate()
 
 // When something ends in the reader's locale: the time today, otherwise date and time.
-export function endsText(ends: number, now = Date.now(), locale?: string): string {
+export function endsText(ends: number, now = time().now(), locale?: string): string {
   const at = new Date(ends)
   const time = at.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' })
   if (sameDay(at, new Date(now))) return time

@@ -2,8 +2,8 @@ import { backoffDelay } from './backoff'
 import type { ReadMark } from './lists'
 import { clearPings, pingCount, type Pings } from './pings'
 import type { Unread } from './types'
-
-type Timer = ReturnType<typeof setTimeout>
+import { time } from './platform/time'
+import type { Cancel, Time } from './clock'
 
 export interface ReadQueue {
   mark: (scope: string, id: number) => void
@@ -27,22 +27,19 @@ export const createReadQueue = (opts: {
   send: (scope: string, id: number) => Promise<unknown>
   delay?: number
   maxWait?: number
-  now?: () => number
-  setTimer?: (fn: () => void, ms: number) => Timer
-  clearTimer?: (t: Timer) => void
+  time?: Pick<Time, 'now' | 'after'>
   retryDelay?: (attempt: number) => number
 }): ReadQueue => {
   const delay = opts.delay ?? READ_DELAY
   const maxWait = opts.maxWait ?? READ_MAX_WAIT
-  const now = opts.now ?? Date.now
-  const setTimer = opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
-  const clearTimer = opts.clearTimer ?? (t => clearTimeout(t))
+  const clock = opts.time ?? time()
+  const now = () => clock.now()
   const retryDelay =
     opts.retryDelay ?? (attempt => backoffDelay(attempt, Math.random, 1_000, READ_RETRY_CAP))
   const sent = new Map<string, number>()
   const queue = new Map<string, { id: number; since: number; at?: number }>()
   const failures = new Map<string, number>()
-  let timer: Timer | null = null
+  let timer: Cancel | null = null
   let gen = 0
 
   const send = (scope: string, id: number) => {
@@ -79,7 +76,7 @@ export const createReadQueue = (opts: {
       if (q.id > (sent.get(s) ?? 0)) sending.push(send(s, q.id))
     }
     if (timer !== null && queue.size === 0) {
-      clearTimer(timer)
+      timer()
       timer = null
     }
     return Promise.all(sending).then(() => {})
@@ -92,19 +89,16 @@ export const createReadQueue = (opts: {
   }
 
   const schedule = () => {
-    if (timer !== null) clearTimer(timer)
+    timer?.()
     timer = null
     if (!queue.size) return
     let next = Infinity
     for (const q of queue.values())
       next = Math.min(next, q.at ?? Math.min(now() + delay, q.since + maxWait))
-    timer = setTimer(
-      () => {
-        timer = null
-        flushDue()
-      },
-      Math.max(0, next - now())
-    )
+    timer = clock.after(Math.max(0, next - now()), () => {
+      timer = null
+      flushDue()
+    })
   }
 
   return {
@@ -125,7 +119,7 @@ export const createReadQueue = (opts: {
     flush,
     clear: () => {
       gen += 1
-      if (timer !== null) clearTimer(timer)
+      timer?.()
       timer = null
       queue.clear()
       sent.clear()

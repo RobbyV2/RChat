@@ -4,6 +4,8 @@ import type { VoiceMsg, WsEvent, WsStatus } from './types'
 import type { TypingMsg } from './typing'
 import { TO_REQUEST, type Secret } from './secret'
 import { cause, label, logError } from './log'
+import { time } from './platform/time'
+import type { Cancel } from './clock'
 
 const secure = (protocol: string) => protocol === 'https:' || protocol === 'wss:'
 
@@ -71,8 +73,8 @@ export class WsClient {
   private subs = new Set<string>()
   private grants: Record<string, Secret> = {}
   private stopped = true
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private connectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectTimer: Cancel | null = null
+  private connectTimer: Cancel | null = null
   private attempt = 0
   private openedAt: number | null = null
   private failedAt: number | null = null
@@ -101,8 +103,8 @@ export class WsClient {
     this.finishGap(false)
     this.stopped = true
     this.token = null
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    if (this.connectTimer) clearTimeout(this.connectTimer)
+    this.reconnectTimer?.()
+    this.connectTimer?.()
     this.reconnectTimer = null
     this.connectTimer = null
     this.attempt = 0
@@ -140,8 +142,8 @@ export class WsClient {
     const rs = this.ws?.readyState
     if (rs === OPEN || rs === CONNECTING) return
     if (this.reconnectTimer) {
-      if (!mayConnectEarly(this.failedAt, Date.now(), this.limited)) return
-      clearTimeout(this.reconnectTimer)
+      if (!mayConnectEarly(this.failedAt, time().now(), this.limited)) return
+      this.reconnectTimer?.()
       this.reconnectTimer = null
     }
     this.connect()
@@ -196,14 +198,14 @@ export class WsClient {
     if (this.stopped) return
     const ws = this.endpoints.open()
     this.ws = ws
-    this.connectTimer = setTimeout(() => {
+    this.connectTimer = time().after(5_000, () => {
       if (this.ws === ws && ws.readyState !== OPEN) ws.close()
-    }, 5_000)
+    })
     ws.onopen = () => {
       if (this.ws !== ws) return
-      if (this.connectTimer) clearTimeout(this.connectTimer)
+      this.connectTimer?.()
       this.connectTimer = null
-      this.openedAt = Date.now()
+      this.openedAt = time().now()
       this.limited = false
       this.send({ type: 'auth', token: this.token?.reveal(TO_REQUEST) ?? null })
       if (this.token) this.send({ type: 'viewing', server: this.viewing })
@@ -222,7 +224,7 @@ export class WsClient {
     ws.onclose = e => {
       if (this.ws !== ws || this.stopped) return
       this.finishGap(false)
-      if (this.connectTimer) clearTimeout(this.connectTimer)
+      this.connectTimer?.()
       this.connectTimer = null
       if (reconnectsAfter(e.code)) {
         this.dropped(e.code === CLOSE_TOO_OFTEN)
@@ -239,19 +241,19 @@ export class WsClient {
   }
 
   private dropped(limited: boolean) {
-    const openFor = this.openedAt === null ? null : Date.now() - this.openedAt
+    const openFor = this.openedAt === null ? null : time().now() - this.openedAt
     this.openedAt = null
-    this.failedAt = Date.now()
+    this.failedAt = time().now()
     this.limited = limited
     this.attempt = nextAttempt(this.attempt, openFor)
     if (limited) this.attempt = Math.max(this.attempt, LIMITED_ATTEMPT)
     void this.probe()
-    this.reconnectTimer = setTimeout(
+    this.reconnectTimer = time().after(
+      reconnectDelay(this.attempt - 1, this.endpoints.timings?.() ?? DEFAULT_LIMITS),
       () => {
         this.reconnectTimer = null
         this.connect()
-      },
-      reconnectDelay(this.attempt - 1, this.endpoints.timings?.() ?? DEFAULT_LIMITS)
+      }
     )
   }
 

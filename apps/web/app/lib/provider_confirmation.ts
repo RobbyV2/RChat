@@ -3,6 +3,7 @@ import { client } from './client/client'
 import type { AccountSession } from './client/session'
 import type { ProviderConfirmation } from './types'
 import { sameSecret, Secret } from './secret'
+import { time } from './platform/time'
 
 // The expired popup supplies only a login hint. Its verifier, code and Settings
 // operation are discarded before the next sign-in can start.
@@ -34,7 +35,7 @@ export function watchProviderConfirmation(
         username: me.username,
         provider,
         foreground: client.shownVersion(),
-        until: Date.now() + 300_000,
+        until: time().now() + 300_000,
       })
     }
     abort?.()
@@ -62,7 +63,7 @@ export function confirmationHint(account: AccountSession) {
     hint.foreground === client.shownVersion() &&
     client.canWritePage(account) &&
     !account.store.getState().token &&
-    hint.until > Date.now()
+    hint.until > time().now()
   )
     return hint
 }
@@ -116,7 +117,7 @@ export function acceptRecentConfirmation(
     typeof proof.code !== 'string' ||
     !proof.code ||
     !Number.isFinite(proof.expires_at) ||
-    proof.expires_at <= Date.now() / 1000
+    proof.expires_at <= time().now() / 1000
   )
     return
   account.store.setState({
@@ -135,7 +136,7 @@ export function recentConfirmation(account: AccountSession, provider: string) {
   const saved = state.providerConfirmation
   return saved &&
     saved.proof.provider === provider &&
-    saved.proof.expires_at > Date.now() / 1000 &&
+    saved.proof.expires_at > time().now() / 1000 &&
     sameSecret(state.token, Secret.from(saved.token)) &&
     state.me?.username === saved.username &&
     saved.mark === account.lifetime.sessionMark() &&

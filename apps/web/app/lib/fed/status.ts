@@ -1,3 +1,4 @@
+import { time } from '../platform/time'
 export type FedService = 'letters' | 'invites' | 'profiles' | 'reports' | 'directory'
 
 export type HostStatus = {
@@ -53,17 +54,17 @@ export type OutboxEvent = { host: string; reachable?: boolean }
 export const statusCache = () => {
   const rows = new Map<string, { at: number; status: HostStatus }>()
   return {
-    get(host: string, now = Date.now()) {
+    get(host: string, now = time().now()) {
       const hit = rows.get(host)
       return hit && now - hit.at < STATUS_TTL ? hit.status : undefined
     },
-    put(status: HostStatus, now = Date.now()) {
+    put(status: HostStatus, now = time().now()) {
       rows.delete(status.host)
       rows.set(status.host, { at: now, status })
       const oldest = rows.keys().next().value
       if (rows.size > STATUS_MAX && oldest !== undefined) rows.delete(oldest)
     },
-    outbox({ host, reachable }: OutboxEvent, now = Date.now()) {
+    outbox({ host, reachable }: OutboxEvent, now = time().now()) {
       const hit = rows.get(host)
       if (!hit) return
       if (reachable === undefined) rows.delete(host)

@@ -1,6 +1,8 @@
 // Timeouts: a moderator stops a member from chatting in a server for a while.
 
 import { TIMEOUT_PRESETS } from './durations'
+import { time } from './platform/time'
+import type { Cancel } from './clock'
 
 export {
   TIMEOUT_MAX,
@@ -23,13 +25,13 @@ export interface TimeoutWire {
 }
 
 // The device time a timeout ends at, from the seconds left the server sent (clock skew safe).
-export const fromWire = (t: TimeoutWire, now = Date.now()): Timeout => ({
+export const fromWire = (t: TimeoutWire, now = time().now()): Timeout => ({
   ends: now + Math.max(0, t.remaining) * 1000,
   reason: t.reason,
 })
 
 // Your own timeout's end in unix seconds on this device's clock, from the seconds left.
-export const localUntil = (remaining: number, now = Date.now()) =>
+export const localUntil = (remaining: number, now = time().now()) =>
   now / 1000 + Math.max(0, remaining)
 
 export const TIMED_OUT_MIC = 'Muted while you are timed out'
@@ -49,20 +51,20 @@ export const shownMedia = (
   screen: !silenced && (media?.screenOn ?? false),
 })
 
-export const running = (t: Timeout | undefined, now = Date.now()): t is Timeout =>
+export const running = (t: Timeout | undefined, now = time().now()): t is Timeout =>
   t !== undefined && t.ends > now
 
 // The members of a P2P room whose timeout runs at `now`.
 export const timedOutIn = (
   members: readonly { ik: string; timeoutUntil?: number }[] | undefined,
-  now = Date.now()
+  now = time().now()
 ): string[] =>
   (members ?? []).filter(m => m.timeoutUntil !== undefined && m.timeoutUntil > now).map(m => m.ik)
 
 // A P2P member's running timeout as the badge and the dialog read it.
 export const peerTimeout = (
   m: { timeoutUntil?: number; timeoutReason?: string } | undefined,
-  now = Date.now()
+  now = time().now()
 ): Timeout | null =>
   m?.timeoutUntil !== undefined && m.timeoutUntil > now
     ? { ends: m.timeoutUntil, reason: m.timeoutReason ?? null }
@@ -74,10 +76,10 @@ const TIMER_MAX = 2 ** 31 - 1
 // Watches an end time (ms, null while none runs) that `read` gives: `changed` runs when it
 // changes on `sync`, and when it passes by the clock.
 export function endWatch(read: () => number | null, changed: () => void) {
-  let timer: ReturnType<typeof setTimeout> | null = null
+  let timer: Cancel | null = null
   let ends: number | null = null
   const stop = () => {
-    if (timer !== null) clearTimeout(timer)
+    timer?.()
     timer = null
   }
   const sync = () => {
@@ -87,13 +89,10 @@ export function endWatch(read: () => number | null, changed: () => void) {
     ends = next
     stop()
     if (next !== null)
-      timer = setTimeout(
-        () => {
-          timer = null
-          sync()
-        },
-        Math.min(Math.max(0, next - Date.now()) + 50, TIMER_MAX)
-      )
+      timer = time().after(Math.min(Math.max(0, next - time().now()) + 50, TIMER_MAX), () => {
+        timer = null
+        sync()
+      })
     if (moved) changed()
   }
   return { sync, stop }
@@ -130,7 +129,7 @@ const sameDay = (a: Date, b: Date) =>
   a.getDate() === b.getDate()
 
 // When a timeout ends in the reader's locale: the time today, otherwise date and time.
-export function untilText(ends: number, now = Date.now(), locale?: string): string {
+export function untilText(ends: number, now = time().now(), locale?: string): string {
   const at = new Date(ends)
   const opts: Intl.DateTimeFormatOptions = sameDay(at, new Date(now))
     ? { timeStyle: 'short' }
@@ -138,7 +137,7 @@ export function untilText(ends: number, now = Date.now(), locale?: string): stri
   return new Intl.DateTimeFormat(locale, opts).format(at)
 }
 
-export const timedOutLine = (ends: number, now = Date.now(), locale?: string) =>
+export const timedOutLine = (ends: number, now = time().now(), locale?: string) =>
   `You are timed out until ${untilText(ends, now, locale)}.`
 
 // A duration in seconds in words, for the audit log: "10 minutes", "1 day 2 hours" (its two

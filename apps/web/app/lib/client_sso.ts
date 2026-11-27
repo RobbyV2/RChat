@@ -3,6 +3,7 @@ import { apiRoot } from './api_version'
 import { challengeOf, errorText, INTENT_TTL_MS, newVerifier, parseReturn } from './sso'
 import { allowsAccountOrigin } from './client/hosted_policy'
 import type { AccountSession } from './client/session'
+import { time } from './platform/time'
 
 export const CLIENT_SSO = 'rchat-client-sso'
 export function clientLogin(owner: AccountSession, provider: string, signal: AbortSignal) {
@@ -18,8 +19,8 @@ export function clientLogin(owner: AccountSession, provider: string, signal: Abo
     const finish = (code?: string, message = errorText('denied')) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
-      clearInterval(closed)
+      timer()
+      closed()
       window.removeEventListener('message', onMessage)
       signal.removeEventListener('abort', abort)
       if (!popup.closed) popup.close()
@@ -48,10 +49,10 @@ export function clientLogin(owner: AccountSession, provider: string, signal: Abo
       if (typeof event.data.code === 'string' && /^[a-f0-9]{64}$/.test(event.data.code))
         finish(event.data.code)
     }
-    const closed = setInterval(() => {
+    const closed = time().every(300, () => {
       if (popup.closed) finish()
-    }, 300)
-    const timer = setTimeout(abort, INTENT_TTL_MS)
+    })
+    const timer = time().after(INTENT_TTL_MS, abort)
     window.addEventListener('message', onMessage)
     signal.addEventListener('abort', abort, { once: true })
     void challengeOf(verifier)

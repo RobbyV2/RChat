@@ -1,4 +1,5 @@
 import { getBasePath } from '../basePath'
+import { time } from '../platform/time'
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -56,7 +57,7 @@ export class PublicRequest {
     if (body !== undefined) init.body = body
     if (sameOrigin) init.mode = 'same-origin'
     if (noStore) init.cache = 'no-store'
-    if (timeoutMs) init.signal = AbortSignal.timeout(timeoutMs)
+    if (timeoutMs) init.signal = time().deadline(timeoutMs)
     return fetcher(url, init)
   }
 }

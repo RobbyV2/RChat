@@ -1,4 +1,5 @@
 import { CHUNK, jsChunk, wire, type Progress, type Solved } from './solve_js'
+import { time } from '../platform/time'
 
 // Solving with runners: each runner tries chunks of nonces for one puzzle, in a worker (wasm or
 // JavaScript) or in this realm. Runner `j` searches from `j * 2^56`; the first winner of a
@@ -47,7 +48,7 @@ export const solveWith = async (
   const used = runners.slice(0, Math.max(1, opts.threads ?? runners.length))
   if (used.length === 0 && k > 0) throw new Error('No solver runner')
   const size = opts.chunk ?? CHUNK
-  const started = performance.now()
+  const started = time().elapsed()
   const nonces: bigint[] = []
   let tries = 0
   let failed = false
@@ -79,7 +80,7 @@ export const solveWith = async (
   return {
     nonces: wire(nonces),
     tries,
-    elapsedMs: performance.now() - started,
+    elapsedMs: time().elapsed() - started,
     threads: Math.max(1, used.length),
   }
 }
@@ -97,7 +98,7 @@ export const nextSlice = (tries: number, ms: number, sliceMs: number): number =>
 const breath = (): Promise<void> =>
   new Promise(resolve => {
     if (typeof MessageChannel !== 'function') {
-      setTimeout(resolve, 0)
+      time().after(0, resolve)
       return
     }
     const channel = new MessageChannel()
@@ -120,7 +121,7 @@ export interface JsRunnerOpts {
 // the main thread stays live.
 export const jsRunner = (seed: Uint8Array, target: bigint, opts: JsRunnerOpts = {}): Runner => {
   const { sliceMs, signal } = opts
-  const now = opts.now ?? (() => performance.now())
+  const now = opts.now ?? (() => time().elapsed())
   const pause = opts.pause ?? breath
   let size = SLICE_START
   return {
@@ -208,17 +209,17 @@ export const bootWorker = (
 ): Promise<{ wasm: boolean }> =>
   new Promise((resolve, reject) => {
     const l = link(worker)
-    const timer = setTimeout(() => {
+    const timer = time().after(timeoutMs, () => {
       l.boot = null
       reject(new PathFailed('The solver worker did not start'))
-    }, timeoutMs)
+    })
     l.boot = {
       resolve: ran => {
-        clearTimeout(timer)
+        timer?.()
         resolve({ wasm: ran })
       },
       reject: e => {
-        clearTimeout(timer)
+        timer?.()
         reject(e)
       },
     }
@@ -255,9 +256,9 @@ export const workerRunner = (
         if (signal?.aborted) return reject(new SolveAborted())
         if (l.dead) return reject(l.dead)
         const id = (l.id += 1)
-        const began = performance.now()
+        const began = time().elapsed()
         const done = () => {
-          clearTimeout(timer)
+          timer?.()
           signal?.removeEventListener('abort', cancel)
           l.jobs.delete(id)
         }
@@ -265,18 +266,15 @@ export const workerRunner = (
           done()
           reject(new SolveAborted())
         }
-        const timer = setTimeout(
-          () => {
-            done()
-            reject(stop(l, 'The solver worker stopped answering'))
-          },
-          opts.timeoutMs ?? chunkTimeout(longest)
-        )
+        const timer = time().after(opts.timeoutMs ?? chunkTimeout(longest), () => {
+          done()
+          reject(stop(l, 'The solver worker stopped answering'))
+        })
         signal?.addEventListener('abort', cancel, { once: true })
         l.jobs.set(id, {
           resolve: hit => {
             done()
-            longest = Math.max(longest, performance.now() - began)
+            longest = Math.max(longest, time().elapsed() - began)
             resolve(hit)
           },
           reject: e => {

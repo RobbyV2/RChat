@@ -36,6 +36,8 @@ import {
 } from './negotiation'
 import type { RtcPayload, VoiceMsg } from './types'
 import { cause, label, logError } from './log'
+import { time } from './platform/time'
+import type { Cancel } from './clock'
 
 export type RtcTarget =
   | { channelId: number; dmId?: undefined; p2pRoom?: undefined; ch?: undefined }
@@ -70,7 +72,7 @@ export class JoinAborted extends Error {
   }
 }
 
-type Timer = ReturnType<typeof setTimeout>
+type Timer = Cancel
 
 interface Peer {
   pc: RTCPeerConnection
@@ -419,8 +421,8 @@ export class RtcManager {
   }
 
   private stopTimers(peer: Peer) {
-    if (peer.watchdog) clearTimeout(peer.watchdog)
-    if (peer.grace) clearTimeout(peer.grace)
+    peer.watchdog?.()
+    peer.grace?.()
     peer.watchdog = null
     peer.grace = null
   }
@@ -539,7 +541,7 @@ export class RtcManager {
     try {
       if (iceRestart) await pc.setLocalDescription(await pc.createOffer({ iceRestart }))
       else await pc.setLocalDescription()
-      peer.offeredAt = Date.now()
+      peer.offeredAt = time().now()
       const desc = pc.localDescription
       if (desc?.type === 'offer') peer.send({ description: desc })
     } finally {
@@ -549,21 +551,21 @@ export class RtcManager {
 
   // Starts (or restarts) the timer that recovers a peer that doesn't connect.
   private arm(user: string, peer: Peer) {
-    if (peer.watchdog) clearTimeout(peer.watchdog)
-    peer.watchdog = setTimeout(() => {
+    peer.watchdog?.()
+    peer.watchdog = time().after(this.connectTimeoutMs, () => {
       peer.watchdog = null
       this.recover(user, peer)
-    }, this.connectTimeoutMs)
+    })
   }
 
   private watch(user: string, peer: Peer) {
     const state = peer.pc.connectionState
     if (state === 'connected' || state === 'closed') this.stopTimers(peer)
     else if ((state === 'failed' || state === 'disconnected') && !peer.grace) {
-      peer.grace = setTimeout(() => {
+      peer.grace = time().after(this.graceMs, () => {
         peer.grace = null
         this.recover(user, peer)
-      }, this.graceMs)
+      })
     }
   }
 
@@ -578,7 +580,7 @@ export class RtcManager {
   }
 
   private restart(user: string, peer: Peer) {
-    peer.offeredAt = Date.now()
+    peer.offeredAt = time().now()
     this.arm(user, peer)
     void peer.steps
       .run(async () => {
@@ -698,7 +700,7 @@ export class RtcManager {
       this.status(peer, status)
       this.onChange()
     }
-    if (restart && !peer.polite && Date.now() - peer.offeredAt > this.restartDebounceMs)
+    if (restart && !peer.polite && time().now() - peer.offeredAt > this.restartDebounceMs)
       this.restart(from, peer)
     if (!negotiating) return
     const p = peer

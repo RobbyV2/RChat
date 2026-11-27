@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { isRecord, plural } from './bytes'
 import { expiryText } from './rules'
 import type { PasswordStatus, ServerPassword, ServerPasswords } from './types'
+import { time } from './platform/time'
 
 export const EXPIRY_PRESETS: { label: string; seconds: number }[] = [
   { label: '30 minutes', seconds: 30 * 60 },
@@ -130,14 +131,14 @@ export const keepSecrets = (book: SecretBook, server: string, live: number[]): S
 export const secretFor = (book: SecretBook, server: string, id: number) =>
   book.servers[server]?.[String(id)] ?? null
 
-const nowSeconds = () => Math.floor(Date.now() / 1000)
+const nowSeconds = () => Math.floor(time().now() / 1000)
 
 export function useNow(ms: number) {
   const [now, setNow] = useState(nowSeconds)
   useEffect(() => {
     setNow(nowSeconds())
-    const id = window.setInterval(() => setNow(nowSeconds()), ms)
-    return () => window.clearInterval(id)
+    const id = time().every(ms, () => setNow(nowSeconds()))
+    return () => id()
   }, [ms])
   return now
 }

@@ -13,6 +13,7 @@ import { startP2pIndex } from '../p2p/palette_source'
 import { removeP2pDb } from '../p2p/db'
 import { viewKey } from '../view'
 import type { AccountSession } from './session'
+import { time } from '../platform/time'
 
 const MAX_IDENTITIES = 8
 const validId = (id: unknown): id is string =>
@@ -243,7 +244,7 @@ export class P2pIdentities {
       if (now.servers !== before.servers) clearHiddenForward(account)
       if (this.viewed() === app && coversInstance(before) && !coversInstance(now))
         instanceUncovered(account)
-      account.home.noteP2pVisit(now, before, Date.now(), localId)
+      account.home.noteP2pVisit(now, before, time().now(), localId)
     })
     const inbox = createP2pInbox(account, app, live)
     const stopIndex = startP2pIndex(account, { app })

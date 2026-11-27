@@ -9,6 +9,7 @@ import { openActionMenu } from './menu'
 import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
 import { identityActions } from './identity'
+import { time } from '../platform/time'
 export const peerContact = identityActions(identity => {
   // The contact as it is now; none once it is gone.
   const contactOf = ({ target }: ActionCtx): Contact | null =>
@@ -37,7 +38,7 @@ export const peerContact = identityActions(identity => {
 
   const mutedUntil = (ctx: ActionCtx) => {
     const scope = dmScope(ctx)
-    return scope ? muteEnd(ctx.s.notifyPrefs, scope, Date.now()) : null
+    return scope ? muteEnd(ctx.s.notifyPrefs, scope, time().now()) : null
   }
 
   const asked = (verb: string, c: Contact, acct = identity().owner) =>
@@ -79,7 +80,7 @@ export const peerContact = identityActions(identity => {
       order: 120,
       subtitle: ctx => {
         const end = mutedUntil(ctx)
-        return end === null ? undefined : mutedText(end, Date.now())
+        return end === null ? undefined : mutedText(end, time().now())
       },
       available: ctx => mutedUntil(ctx) !== null,
       run: ctx => {

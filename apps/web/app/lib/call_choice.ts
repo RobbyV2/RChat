@@ -1,5 +1,6 @@
 import type { CallLog } from './types'
 import { callTone } from './voice_layout'
+import { time } from './platform/time'
 
 // How a DM call connects: through the server (WebRTC via the instance) or direct (PeerJS).
 export type CallRoute = 'server' | 'p2p'
@@ -96,5 +97,5 @@ export const callLogInfo = (call: CallLog, me: string | null): CallLogInfo => {
 
 const P2P_FAIL_TTL = 10 * 60 * 1000
 
-export const recentlyFailed = (at: number | undefined, now = Date.now()) =>
+export const recentlyFailed = (at: number | undefined, now = time().now()) =>
   at !== undefined && now - at < P2P_FAIL_TTL

@@ -13,6 +13,7 @@ import type {
   LogUndo,
   LogVia,
 } from './types'
+import { time } from '../platform/time'
 
 export const WRITE_MS = 250
 const LIVE_UNDOS = 200
@@ -116,9 +117,9 @@ const apiTitle = (method: string, path: string) => {
 export const recorder = ({
   table,
   prefs,
-  now = Date.now,
+  now = () => time().now(),
   id = randomId,
-  later = (run, ms) => void setTimeout(run, ms),
+  later = (run, ms) => void time().after(ms, run),
 }: RecorderDeps) => {
   let queue: LogEntry[] = []
   let waiting = false

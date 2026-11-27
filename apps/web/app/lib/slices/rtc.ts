@@ -20,6 +20,8 @@ import type { SeatAudio } from '../voice_status'
 import { defaultViewing } from '../viewing'
 import { type GetState, type Handlers, type SetState } from './ctx'
 import { cause, logError } from '../log'
+import { time } from '../platform/time'
+import type { Cancel } from '../clock'
 
 export interface RtcDeps {
   acct: AccountSession
@@ -194,7 +196,7 @@ export const applyCallState = (
         ? ev.answered_at
         : prev?.dmId === ev.dm_id && prev.since !== null
           ? prev.since
-          : Math.floor(Date.now() / 1000)
+          : Math.floor(time().now() / 1000)
   return {
     call: {
       dmId: ev.dm_id,
@@ -226,7 +228,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     if (!p2p.mediaActive() || !mine || mine.peer_id !== p2p.peerId()) return
     const other = ev.peers?.find(p => p.user !== me)
     if (!other || !ev.call_id) {
-      set(s => ({ p2pCallFailed: { ...s.p2pCallFailed, [ev.dm_id]: Date.now() } }))
+      set(s => ({ p2pCallFailed: { ...s.p2pCallFailed, [ev.dm_id]: acct.time.now() } }))
       fail(new Error('This P2P call cannot connect: the other side uses an older app'))
       return
     }
@@ -433,7 +435,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   // Our own mic and sound against what the room's roster says about our seat. While the server
   // lists us, a difference is told once (`audioAsked`), and again only once the room or what it
   // says about us changed. A change here waits a moment first, so a burst of toggles goes as one.
-  let audioTimer: ReturnType<typeof setTimeout> | null = null
+  let audioTimer: Cancel | null = null
   let audioAsked: SeatAudio | null = null
   const seatAudio = (): SeatAudio => {
     const { muted, deafened } = get().selfAudio
@@ -452,10 +454,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   const queueAudio = () => {
     audioAsked = null
     if (audioTimer === null && get().voice)
-      audioTimer = setTimeout(() => {
+      audioTimer = acct.time.after(AUDIO_SEND_MS, () => {
         audioTimer = null
         reconcileAudio()
-      }, AUDIO_SEND_MS)
+      })
   }
 
   // P2P server voice says it in its own frames.

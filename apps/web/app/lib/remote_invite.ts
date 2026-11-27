@@ -1,3 +1,4 @@
+import { time } from './platform/time'
 import { allowsAccountOrigin } from './client/hosted_policy'
 import { client } from './client/client'
 import type { AccountSession } from './client/session'
@@ -26,7 +27,7 @@ export const bounded = <T>(
   key: string,
   ttl: number,
   load: () => Promise<T>,
-  now: () => number = Date.now
+  now: () => number = () => time().now()
 ) => {
   const hit = cache.get(key)
   if (hit && now() - hit.at < Math.min(ttl, hit.ttl)) return hit.promise

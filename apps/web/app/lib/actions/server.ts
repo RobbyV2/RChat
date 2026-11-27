@@ -11,6 +11,7 @@ import { Perm, hasPerm } from '../types'
 import { signedIn } from './global'
 import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
+import { time } from '../platform/time'
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -28,7 +29,7 @@ const folderOf = ({ target }: ActionCtx) =>
 
 // The folder's servers, each with its own mute end (null: not muted).
 const folderMutes = (s: RChatState, servers: string[]) => {
-  const now = Date.now()
+  const now = time().now()
   return servers.map(name => muteEnd(s.notifyPrefs, { kind: 'server', name }, now))
 }
 
@@ -183,7 +184,7 @@ export const serverActions: Action[] = [
       const ends = folderMutes(ctx.s, folderOf(ctx)?.servers ?? [])
       const [first] = ends
       return first != null && ends.every(e => e === first)
-        ? mutedText(first, Date.now())
+        ? mutedText(first, time().now())
         : undefined
     },
     available: allMuted,

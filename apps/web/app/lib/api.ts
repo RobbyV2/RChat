@@ -92,6 +92,7 @@ import type {
   Webhook,
   WebhookSecret,
 } from './webhooks'
+import { time } from './platform/time'
 
 // The API root (`.../api`); clients call it through `versionedBase` (see `api_version.ts`).
 export function resolveApiBase(
@@ -139,13 +140,13 @@ const realPace: Pace = {
     new Promise((resolve, reject) => {
       if (signal?.aborted) return reject(signal.reason)
       const stop = () => {
-        clearTimeout(timer)
+        timer()
         reject(signal?.reason)
       }
-      const timer = setTimeout(() => {
+      const timer = time().after(ms, () => {
         signal?.removeEventListener('abort', stop)
         resolve()
-      }, ms)
+      })
       signal?.addEventListener('abort', stop, { once: true })
     }),
 }
@@ -328,7 +329,7 @@ export class ApiClient {
     if (opts.redirect) init.redirect = opts.redirect
     if (opts.cache) init.cache = opts.cache
     if (opts.referrerPolicy) init.referrerPolicy = opts.referrerPolicy
-    const stops = [opts.signal, timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined].filter(
+    const stops = [opts.signal, timeoutMs ? time().deadline(timeoutMs) : undefined].filter(
       s => s !== undefined
     )
     const stop = stops.length > 1 ? AbortSignal.any(stops) : stops[0]
@@ -1199,7 +1200,7 @@ export interface Assertion {
 }
 
 // Your own timeouts end on this device's clock, counted from the seconds left the server sent.
-export const localSummary = (s: ServerSummary, now = Date.now()): ServerSummary =>
+export const localSummary = (s: ServerSummary, now = time().now()): ServerSummary =>
   s.timed_out_remaining === undefined
     ? s
     : { ...s, timed_out_until: localUntil(s.timed_out_remaining, now) }

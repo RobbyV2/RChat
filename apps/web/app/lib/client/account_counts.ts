@@ -11,6 +11,7 @@ import { client } from './client'
 import { accountStorage } from './keys'
 import type { AccountSession } from './session'
 import { readToken } from './credentials'
+import { time } from '../platform/time'
 
 interface Counts {
   incoming: number
@@ -66,7 +67,7 @@ function readCounts(key: string): Counts | null {
 }
 
 function unreadCount(state: RChatState) {
-  const now = Date.now()
+  const now = time().now()
   return Object.entries(state.reads).filter(
     ([scope, mark]) =>
       mark.latest > mark.lastRead && unreadShown(state.notifyPrefs, scope, mark.server ?? null, now)

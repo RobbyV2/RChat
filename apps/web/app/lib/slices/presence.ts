@@ -30,6 +30,7 @@ import {
 import { mapWhere } from '../window'
 import { mapGroups } from '../member_groups'
 import { pageVisible, type GetState, type Handlers, type SetState } from './ctx'
+import type { Cancel } from '../clock'
 
 export type PresenceChange = {
   server: string
@@ -169,9 +170,8 @@ export const presenceSlice = (set: SetState, get: GetState, { acct }: { acct: Ac
     presence.push({ server, username, online, online_count, seq: presenceSeq })
     if (presenceFrame) return
     presenceFrame = true
-    if (typeof requestAnimationFrame === 'function' && pageVisible())
-      requestAnimationFrame(flushPresence)
-    else setTimeout(flushPresence, 16)
+    if (pageVisible()) acct.time.frame(flushPresence)
+    else acct.time.after(16, flushPresence)
   }
 
   // Member rows fetched since `since`, with the presence noted while they were in flight.
@@ -210,31 +210,28 @@ export const presenceSlice = (set: SetState, get: GetState, { acct }: { acct: Ac
   }
 
   let outgoing: TypingOut = IDLE
-  let typingTimer: ReturnType<typeof setTimeout> | null = null
+  let typingTimer: Cancel | null = null
 
   const sendTyping = (msgs: TypingMsg[]) => {
     for (const msg of msgs) home.ws.sendTyping(msg)
   }
 
   const armTyping = () => {
-    if (typingTimer !== null) clearTimeout(typingTimer)
+    typingTimer?.()
     typingTimer = null
     const next = nextTypingExpiry(get().typing)
     if (next === null) return
-    typingTimer = setTimeout(
-      () => {
-        typingTimer = null
-        set(s => ({ typing: pruneTypers(s.typing, Date.now()) }))
-        armTyping()
-      },
-      Math.max(next - Date.now() + 50, 50)
-    )
+    typingTimer = acct.time.after(Math.max(next - acct.time.now() + 50, 50), () => {
+      typingTimer = null
+      set(s => ({ typing: pruneTypers(s.typing, acct.time.now()) }))
+      armTyping()
+    })
   }
 
   const forgetTyping = (sendStop: boolean) => {
     if (sendStop) sendTyping(stopTyping(outgoing))
     outgoing = IDLE
-    if (typingTimer !== null) clearTimeout(typingTimer)
+    typingTimer?.()
     typingTimer = null
     set({ typing: {} })
   }
@@ -245,7 +242,7 @@ export const presenceSlice = (set: SetState, get: GetState, { acct }: { acct: Ac
       typing,
       scope,
       username,
-      on ? { name, until: Date.now() + TYPING_TTL_MS } : null
+      on ? { name, until: acct.time.now() + TYPING_TTL_MS } : null
     )
     if (next === typing) return
     set({ typing: next })
@@ -257,7 +254,7 @@ export const presenceSlice = (set: SetState, get: GetState, { acct }: { acct: Ac
     if (!typingOn || !me || guest) return
     // The instance thread panel can remain open alongside the peer conversation.
     const visible = scope.startsWith('t') || !acct.identities.coversView()
-    const { next, send } = nextTyping(outgoing, scope, active && visible, Date.now())
+    const { next, send } = nextTyping(outgoing, scope, active && visible, acct.time.now())
     outgoing = next
     sendTyping(send)
   }

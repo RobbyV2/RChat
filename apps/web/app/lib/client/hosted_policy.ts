@@ -2,6 +2,7 @@ import { publicSettings } from '../api/public'
 import { ownInstance, readLocal, writeLocal } from '../instances'
 import { shellInfo } from '../platform/desktop'
 import type { Book } from './book'
+import { time } from '../platform/time'
 
 // Only the instance serving this web app can set its connection policy.
 const own = () => (shellInfo() ? null : ownInstance())
@@ -98,11 +99,11 @@ export function createHostedPolicy() {
     }
     window.addEventListener('storage', storage)
     window.addEventListener('focus', refresh)
-    const timer = own() ? setInterval(refresh, 30000) : undefined
+    const timer = own() ? time().every(30000, refresh) : undefined
     return () => {
       active = false
       off()
-      clearInterval(timer)
+      timer?.()
       window.removeEventListener('popstate', pop)
       window.removeEventListener('focus', refresh)
       window.removeEventListener('storage', storage)

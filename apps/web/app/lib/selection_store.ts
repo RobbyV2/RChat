@@ -34,6 +34,8 @@ import {
 } from './selection'
 import type { RChatState } from './store_types'
 import type { BulkJob, Message, WsEvent } from './types'
+import { time } from './platform/time'
+import { sleep } from './clock'
 
 type SetState = (partial: Partial<RChatState> | ((s: RChatState) => Partial<RChatState>)) => void
 
@@ -136,7 +138,7 @@ export const pickedMessages = (s: RChatState): Message[] =>
 
 const stamp = (ts: number) => new Date(ts * 1000).toLocaleString()
 
-const day = () => new Date().toISOString().slice(0, 10)
+const day = () => new Date(time().now()).toISOString().slice(0, 10)
 
 const fileName = (scope: string, ext: string) => `messages-${scope}-${day()}.${ext}`
 
@@ -168,7 +170,7 @@ export const selectionSlice = (d: SelectionDeps) => {
         return await live(fetchPage(scope, after))
       } catch (e) {
         if (!(e instanceof ApiError) || e.status !== 429 || tries >= 5) throw e
-        await new Promise(r => setTimeout(r, exportBackoff.ms * 2 ** tries))
+        await sleep(acct.time, exportBackoff.ms * 2 ** tries)
       }
     }
   }
@@ -237,7 +239,7 @@ export const selectionSlice = (d: SelectionDeps) => {
     const at = sessionMark()
     if (format === 'json')
       parts.push(
-        `{"version":${EXPORT_VERSION},"scope":${JSON.stringify(sel.scope)},"exported_at":${Math.floor(Date.now() / 1000)},"messages":[`
+        `{"version":${EXPORT_VERSION},"scope":${JSON.stringify(sel.scope)},"exported_at":${Math.floor(acct.time.now() / 1000)},"messages":[`
       )
     for (;;) {
       const visible = () => {
@@ -475,7 +477,7 @@ export const selectionSlice = (d: SelectionDeps) => {
             ? JSON.stringify({
                 version: EXPORT_VERSION,
                 scope: sel.scope,
-                exported_at: Math.floor(Date.now() / 1000),
+                exported_at: Math.floor(acct.time.now() / 1000),
                 messages: picked.map(exported),
               })
             : plainText(picked, stamp)

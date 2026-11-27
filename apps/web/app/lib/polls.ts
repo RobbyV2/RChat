@@ -3,13 +3,14 @@
 import type { PollReq } from './api'
 import { plural } from './bytes'
 import type { Poll, PollKind, PollOption, ShowResults } from './types'
+import { time } from './platform/time'
 
 // The voter list is open: a live poll, not anonymous, with results you can see and votes.
 export const votersShown = (p: Poll | null | undefined) =>
   !!p && !p.snapshot && !p.anonymous && p.results !== null && p.voters > 0
 
 // Closed by hand or by its end time.
-export const pollClosed = (p: Poll, nowSec = Date.now() / 1000) =>
+export const pollClosed = (p: Poll, nowSec = time().now() / 1000) =>
   p.closed || (p.closes_at !== null && p.closes_at <= nowSec)
 
 export const POLL_QUESTION_MAX = 300

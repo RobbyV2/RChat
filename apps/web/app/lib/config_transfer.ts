@@ -45,6 +45,7 @@ import { isShowSpoilers, type ShowSpoilers } from './spoilers'
 import { cleanP2pSection, type P2pSection } from './p2p/section'
 import { plainCopy } from './stable_key'
 import { anything, arr, num, obj, parseJson } from './schema'
+import { time } from './platform/time'
 
 const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
@@ -354,7 +355,7 @@ export const NEWER = 'This config is from a newer version. Update and try again'
 export const NOT_CONFIG = 'Not a config string'
 
 // Validates and clamps every field; unknown sections and fields are dropped.
-export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
+export const sanitizeConfig = (data: unknown, now = time().now()): Decoded => {
   if (!isRecord(data)) return { ok: false, error: DAMAGED }
   const {
     v,
@@ -454,7 +455,7 @@ export const FILE_LIMITS: DecodeLimits = { text: FILE_MAX, json: FILE_JSON_MAX }
 
 export const decodeConfig = async (
   text: string,
-  now = Date.now(),
+  now = time().now(),
   limits: DecodeLimits = { text: TEXT_MAX, json: JSON_MAX }
 ): Promise<Decoded> => {
   const trimmed = text.replace(/\s+/g, '')
@@ -475,7 +476,7 @@ export const decodeConfig = async (
 }
 
 // A config from a share link: only the sections a link may carry, whatever the blob holds.
-export const decodeLink = async (blob: string, now = Date.now()): Promise<Decoded> => {
+export const decodeLink = async (blob: string, now = time().now()): Promise<Decoded> => {
   const decoded = await decodeConfig(blob, now)
   return decoded.ok ? { ok: true, doc: linkDoc(decoded.doc) } : decoded
 }
@@ -625,14 +626,14 @@ export const stashConfig = (
   doc: ConfigDoc,
   keys: SectionKey[],
   store: StorageLike,
-  now = Date.now()
+  now = time().now()
 ) => store.setItem(STASH, JSON.stringify({ at: now, doc, keys }))
 
 const STASHED = obj({ at: num(), doc: anything, keys: arr(anything) })
 
 export const takeStashedConfig = (
   store: StorageLike,
-  now = Date.now()
+  now = time().now()
 ): { doc: ConfigDoc; keys: SectionKey[] } | null => {
   const raw = store.getItem(STASH)
   if (raw === null) return null

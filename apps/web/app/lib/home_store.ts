@@ -80,7 +80,7 @@ export function createHomeStore(acct: AccountSession) {
   const hideTip = (id: string) => save(dismissTip(useHome.getState().prefs, id))
 
   // Records the open channel or DM as the latest visit. Previewed servers are not recorded.
-  const noteVisit = (s: RChatState, now = Date.now()) => {
+  const noteVisit = (s: RChatState, now = acct.time.now()) => {
     const view = s.view
     if (!view || !s.me || useHome.getState().owner !== s.me.username) return
     if (previewServer(s) !== null) return
@@ -99,7 +99,7 @@ export function createHomeStore(acct: AccountSession) {
   }
 
   // Records a P2P conversation or channel when it opens.
-  const noteP2pVisit = (st: P2pState, prev: P2pState, now = Date.now(), local = 'main') => {
+  const noteP2pVisit = (st: P2pState, prev: P2pState, now = acct.time.now(), local = 'main') => {
     const c = st.chat
     if (!c || (c.room === prev.chat?.room && (c.ch ?? null) === (prev.chat?.ch ?? null))) return
     const owner = store.getState().me?.username

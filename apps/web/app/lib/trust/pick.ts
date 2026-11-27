@@ -9,6 +9,7 @@ import {
   type WorkerLike,
 } from './pool'
 import { seedOf, type Puzzle, type Solved } from './solve_js'
+import { time } from '../platform/time'
 
 // Which solver a device uses. The paths, best first: the shell's native command, wasm in
 // workers, JavaScript in workers, JavaScript on the main thread in short slices. The choice is
@@ -120,7 +121,7 @@ export class Solver {
   constructor(
     private candidates: readonly Candidate[],
     private onPick?: (path: SolverPath, origin: string) => void,
-    private now: () => number = () => Date.now()
+    private now: () => number = () => time().now()
   ) {}
 
   path(origin: string): SolverPath | null {

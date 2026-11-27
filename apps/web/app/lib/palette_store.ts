@@ -98,7 +98,7 @@ export function createPalettePrefs(acct: AccountSession) {
 
   const reloadPalettePrefs = () => loadPalettePrefs(usePaletteUi.getState().owner)
 
-  const noteUsed = (id: string, now = Date.now()) =>
+  const noteUsed = (id: string, now = acct.time.now()) =>
     save(noteUse(usePaletteUi.getState().prefs, id, now))
 
   const clearUsage = () => save({ ...usePaletteUi.getState().prefs, used: {} })

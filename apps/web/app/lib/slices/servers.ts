@@ -1157,7 +1157,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         await live(api.resetMemberProfile(server, username, fields, secs, reason))
         forgetProfile(profileKey(username, server), sessionMark())
         if (secs !== null)
-          get().noteProfileLock(server, username, lockUntil(secs, Math.floor(Date.now() / 1000)))
+          get().noteProfileLock(
+            server,
+            username,
+            lockUntil(secs, Math.floor(acct.time.now() / 1000))
+          )
         return null
       } catch (e) {
         return errorText(e)

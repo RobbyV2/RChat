@@ -44,6 +44,7 @@ import type { ConfirmRequest } from '../store_types'
 import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx, ArgChoice, Target } from './types'
 import { identityActions } from './identity'
+import { time } from '../platform/time'
 export const peerServer = identityActions(identity => {
   const copy = (text: string) => void sharing().copyText(text)
 
@@ -79,7 +80,7 @@ export const peerServer = identityActions(identity => {
     of: (ctx: ActionCtx) => NotifyScope | null
   ): Action[] => {
     const end = (ctx: ActionCtx, scope: NotifyScope | null) =>
-      scope && muteEnd(ctx.s.notifyPrefs, scope, Date.now())
+      scope && muteEnd(ctx.s.notifyPrefs, scope, time().now())
     return [
       {
         id: `p2p_${key}_mute`,
@@ -92,7 +93,7 @@ export const peerServer = identityActions(identity => {
         subtitle: ctx => {
           const scope = of(ctx)
           const server = end(ctx, scope && parentScope(scope))
-          return server ? `Server muted ${untilText(server, Date.now())}` : undefined
+          return server ? `Server muted ${untilText(server, time().now())}` : undefined
         },
         available: ctx => of(ctx) !== null && end(ctx, of(ctx)) === null,
         run: (ctx, { value }) => {
@@ -109,7 +110,7 @@ export const peerServer = identityActions(identity => {
         order: 120,
         subtitle: ctx => {
           const until = end(ctx, of(ctx))
-          return until ? mutedText(until, Date.now()) : undefined
+          return until ? mutedText(until, time().now()) : undefined
         },
         available: ctx => !!end(ctx, of(ctx)),
         run: ctx => {

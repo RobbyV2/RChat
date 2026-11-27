@@ -36,6 +36,7 @@ import type { P2pState } from './p2p/app/store'
 import { ALL_PERMS, Perm } from './types'
 import type { Member, Message, Role, ServerSummary, UserRef } from './types'
 import { hostedShown, lookOf, type Look } from './role_looks'
+import { time } from './platform/time'
 
 const nameIndex = new WeakMap<readonly UserRef[], Map<string, UserRef>>()
 
@@ -212,15 +213,15 @@ export const dmView = (s: RChatState) => dmSections(s.dms, s.layout)
 
 // Mutes are pruned by a timer when they end, so `notifyPrefs` changes whenever the answer does.
 export const scopeMuted = (s: RChatState, scope: NotifyScope) =>
-  mutedOf(s.notifyPrefs, scope, Date.now())
+  mutedOf(s.notifyPrefs, scope, time().now())
 
 export const scopeRule = (s: RChatState, scope: NotifyScope) =>
-  resolveNotify(s.notifyPrefs, scope, Date.now())
+  resolveNotify(s.notifyPrefs, scope, time().now())
 
 // Unread dots: a muted channel, DM or server shows none.
 export const scopeUnread = (s: RChatState, scope: string): boolean =>
   isUnread(s, scope) &&
-  unreadShown(s.notifyPrefs, scope, s.reads[scope]?.server ?? null, Date.now())
+  unreadShown(s.notifyPrefs, scope, s.reads[scope]?.server ?? null, time().now())
 
 let unreadMemo: {
   reads: RChatState['reads']
@@ -229,7 +230,7 @@ let unreadMemo: {
 } | null = null
 
 export const serverUnread = (s: RChatState, name: string): boolean => {
-  const now = Date.now()
+  const now = time().now()
   const prefs = s.notifyPrefs
   if (mutedOf(prefs, { kind: 'server', name }, now)) return false
   const detail = s.servers[name]
@@ -253,7 +254,7 @@ let dmUnreadMemo: { reads: RChatState['reads']; prefs: NotifyPrefs; unread: bool
 export const dmsUnread = (s: RChatState): boolean => {
   const prefs = s.notifyPrefs
   if (dmUnreadMemo?.reads !== s.reads || dmUnreadMemo.prefs !== prefs) {
-    const now = Date.now()
+    const now = time().now()
     dmUnreadMemo = {
       reads: s.reads,
       prefs,
@@ -506,7 +507,7 @@ export const changeableRoles = (s: RChatState, server: string, username: string)
 export const myTimeoutEnds = (
   s: Pick<RChatState, 'me'>,
   server: string | null | undefined,
-  now = Date.now()
+  now = time().now()
 ): number | null => {
   if (!server || !s.me) return null
   const until = s.me.servers.find(x => x.name === server)?.timed_out_until
@@ -518,7 +519,7 @@ export const memberTimeout = (
   s: Pick<RChatState, 'timeouts'>,
   server: string | null | undefined,
   username: string,
-  now = Date.now()
+  now = time().now()
 ): Timeout | null => {
   const t = server ? s.timeouts[server]?.[username] : undefined
   return running(t, now) ? t : null
@@ -552,5 +553,5 @@ export const profileLockedFor = (
   s: Pick<RChatState, 'profileLocks'>,
   server: string,
   username: string,
-  now = Date.now()
+  now = time().now()
 ) => lockState(s.profileLocks[server]?.[username], Math.floor(now / 1000)).locked

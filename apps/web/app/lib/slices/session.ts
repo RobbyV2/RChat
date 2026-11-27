@@ -139,6 +139,7 @@ import type { serversSlice } from './servers'
 import type { uiSlice } from './ui'
 import { ANIM_DEFAULT } from '../motion/setting'
 import { cause, logError } from '../log'
+import { sleep, type Cancel } from '../clock'
 
 // Waits before opening the URL again after a boot left nothing open because of 429s. Exported
 // so tests can shorten them.
@@ -794,7 +795,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       })
   }
 
-  let meRetry: ReturnType<typeof setTimeout> | null = null
+  let meRetry: Cancel | null = null
   let meAttempt = 0
   let recovering = false
 
@@ -806,11 +807,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     }
     meAttempt += 1
     set({ bootError: errorText(e) })
-    meRetry = setTimeout(() => void recoverMe(), wait)
+    meRetry = acct.time.after(wait, () => void recoverMe())
   }
 
   const recoverMe = async () => {
-    if (meRetry) clearTimeout(meRetry)
+    meRetry?.()
     meRetry = null
     if (recovering || get().me || !get().token) return
     recovering = true
@@ -923,11 +924,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     catchUpLists()
   }
 
-  let resyncTimer: ReturnType<typeof setTimeout> | null = null
+  let resyncTimer: Cancel | null = null
 
   const resync = () => {
     if (resyncTimer) return
-    resyncTimer = setTimeout(
+    resyncTimer = acct.time.after(
+      250 + Math.random() * limitsOf(get().instance).resync_jitter_ms,
       () => {
         resyncTimer = null
         set({
@@ -953,40 +955,39 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         const { pins } = get()
         if (pins) loadPins(pins.key)
         catchUp()
-      },
-      250 + Math.random() * limitsOf(get().instance).resync_jitter_ms
+      }
     )
   }
 
   let downSince: number | null = null
-  let viewTimer: ReturnType<typeof setTimeout> | null = null
-  let catchUpTimer: ReturnType<typeof setTimeout> | null = null
+  let viewTimer: Cancel | null = null
+  let catchUpTimer: Cancel | null = null
   let polledMe: number | null = null
   let polledSettings: number | null = null
 
   const stopCatchUp = () => {
-    if (viewTimer) clearTimeout(viewTimer)
-    if (catchUpTimer) clearTimeout(catchUpTimer)
+    viewTimer?.()
+    catchUpTimer?.()
     viewTimer = null
     catchUpTimer = null
   }
 
   const scheduleCatchUp = (outage: number) => {
     stopCatchUp()
-    viewTimer = setTimeout(
+    viewTimer = acct.time.after(
+      catchUpDelay(outage, Math.random, limitsOf(get().instance).catch_up_delay_ms),
       () => {
         viewTimer = null
         void refreshView()
-      },
-      catchUpDelay(outage, Math.random, limitsOf(get().instance).catch_up_delay_ms)
+      }
     )
-    catchUpTimer = setTimeout(
+    catchUpTimer = acct.time.after(
+      catchUpDelay(outage, Math.random, limitsOf(get().instance).reconnect_cap_ms),
       () => {
         catchUpTimer = null
         refreshMe(true)
         catchUpLists()
-      },
-      catchUpDelay(outage, Math.random, limitsOf(get().instance).reconnect_cap_ms)
+      }
     )
   }
 
@@ -1072,11 +1073,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (wsStatus !== 'green') {
         if (get().guestVoiceName !== null) set({ guestVoiceName: null })
         forgetTyping(false)
-        if (downSince === null) downSince = Date.now()
+        if (downSince === null) downSince = acct.time.now()
         endRtc()
         return
       }
-      const outage = downSince === null ? 0 : Date.now() - downSince
+      const outage = downSince === null ? 0 : acct.time.now() - downSince
       downSince = null
       set({
         p2pAvailability: {},
@@ -1099,7 +1100,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     }
     home.ws.onPoll = () => {
       void refreshView()
-      const now = Date.now()
+      const now = acct.time.now()
       if (due(polledMe, now, POLL_EVERY)) {
         polledMe = now
         refreshMe(true)
@@ -1391,9 +1392,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Opens what the URL asks for at load. Rate limited requests (many tabs or a busy network) can
   // leave nothing open; then it tries again a few times, unless the user went somewhere else.
-  let bootRetry: ReturnType<typeof setTimeout> | undefined
+  let bootRetry: Cancel | undefined
   const bootUrl = async (attempt = 0): Promise<void> => {
-    const started = Date.now()
+    const started = acct.time.now()
     const at = sessionMark()
     await resolveUrl('replace', attempt < BOOT_RETRY_MS.length)
     if (!ownsPage() || at !== sessionMark()) return
@@ -1401,11 +1402,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     const stuck = !s.view && !s.home && !s.invite && !s.configLink && (!!s.me || s.guest)
     if (!stuck || limitedAt() < started || attempt >= BOOT_RETRY_MS.length) return
     const path = window.location.pathname
-    clearTimeout(bootRetry)
-    bootRetry = setTimeout(() => {
+    bootRetry?.()
+    bootRetry = acct.time.after(BOOT_RETRY_MS[attempt], () => {
       const now = get()
       if (window.location.pathname === path && !now.view && !now.home) void bootUrl(attempt + 1)
-    }, BOOT_RETRY_MS[attempt])
+    })
   }
 
   // A session can be retargeted while its issued token waits for admission. Logout must use
@@ -1584,13 +1585,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     beginNavigation()
     endViewing(get().guest)
     endSession()
-    clearTimeout(bootRetry)
-    if (resyncTimer) clearTimeout(resyncTimer)
+    bootRetry?.()
+    resyncTimer?.()
     resyncTimer = null
     downSince = polledMe = polledSettings = null
     dropLinkCards()
     uiHub.forget()
-    if (meRetry) clearTimeout(meRetry)
+    meRetry?.()
     meRetry = null
     meAttempt = 0
     notifySynced = false
@@ -2104,12 +2105,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         token.same(readToken(credentialKey)) &&
         parseLogoutFlag(readLocal(keys.key(SSO_LOGOUT_KEY + ':' + username)))
       const shown = client.shownVersion()
-      const deadline = Date.now() + 3000
+      const deadline = acct.time.now() + 3000
       const revoke = issuedTokenCleanup()
       const flushed = readQueue.flush()
       forgetSession()
       const origin = home.origin
-      const timeout = token ? new Promise<void>(resolve => setTimeout(resolve, 3000)) : undefined
+      const timeout = token ? sleep(acct.time, 3000) : undefined
       const completed =
         token &&
         Promise.race([flushed, timeout])
@@ -2233,7 +2234,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         const result = await Promise.race([completed, timeout])
         if (
           !result?.end_session_url ||
-          Date.now() > deadline ||
+          acct.time.now() > deadline ||
           !ownsPage() ||
           client.shownVersion() !== shown ||
           sessionMark() !== mark ||
@@ -2609,7 +2610,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         }
       } else {
         stopCatchUp()
-        clearTimeout(resyncTimer ?? undefined)
+        resyncTimer?.()
         resyncTimer = null
         home.ws.stop()
         set({

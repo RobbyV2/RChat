@@ -1,4 +1,9 @@
-export const retrySeconds = (header: string | null, text = '', now = Date.now()): number | null => {
+import { time } from './platform/time'
+export const retrySeconds = (
+  header: string | null,
+  text = '',
+  now = time().now()
+): number | null => {
   const raw = header?.trim()
   if (raw) {
     if (/^\d+$/.test(raw)) return Math.max(1, Number(raw))

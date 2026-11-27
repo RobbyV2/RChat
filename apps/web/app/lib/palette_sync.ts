@@ -27,6 +27,7 @@ import {
 } from './palette_index'
 import type { RChatState } from './store_types'
 import type { Channel, Member, Message, UserRef, WsEvent } from './types'
+import { sleep, type Cancel } from './clock'
 
 export interface IndexSource {
   id: string
@@ -171,7 +172,7 @@ export function createPaletteIndexer(acct: AccountSession) {
   let seenMembers = new Map<string, unknown>()
   // Channel ids of servers that are not loaded in the store, checked with the server.
   const verified = new Map<string, Map<number, Channel>>()
-  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  let saveTimer: Cancel | null = null
 
   const paletteIndex = () => index
 
@@ -191,10 +192,10 @@ export function createPaletteIndexer(acct: AccountSession) {
 
   const scheduleSave = () => {
     if (mode !== 'full' || !owner || saveTimer) return
-    saveTimer = setTimeout(() => {
+    saveTimer = acct.time.after(1500, () => {
       saveTimer = null
       void flush()
-    }, 1500)
+    })
   }
 
   const flush = () => {
@@ -491,7 +492,7 @@ export function createPaletteIndexer(acct: AccountSession) {
   const REFILL_MS = 12 * 3_600_000
   const BACKFILL_GAP_MS = 400
 
-  const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
+  const wait = (ms: number) => sleep(acct.time, ms)
 
   // Recent history of every text channel and DM, newest page only, while there is room.
   const backfill = async (g: number) => {
@@ -536,7 +537,7 @@ export function createPaletteIndexer(acct: AccountSession) {
     for (const dm of s.dms)
       if (!dm.closed && !Object.hasOwn(s.blocked, dm.other.username))
         jobs.push({ bucket: `d${dm.id}`, load: () => api.dmMessages(dm.id) })
-    const now = Date.now()
+    const now = acct.time.now()
     const todo = jobs.filter(j => !index || now - (index.filled[j.bucket] ?? 0) > REFILL_MS)
     report({ state: 'backfilling', done: 0, total: todo.length })
     let done = 0
@@ -554,7 +555,7 @@ export function createPaletteIndexer(acct: AccountSession) {
         // What is loaded right now (older history scrolled to, for one) stays.
         const loaded = st.messages[job.bucket]
         if (loaded) index.add(docsFor(st, job.bucket, loaded, map))
-        index.filled[job.bucket] = Date.now()
+        index.filled[job.bucket] = acct.time.now()
       } catch {
         // Gone or not readable: nothing to index.
       }
@@ -595,7 +596,7 @@ export function createPaletteIndexer(acct: AccountSession) {
 
   const reset = () => {
     gen += 1
-    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer?.()
     saveTimer = null
     index = null
     seenMessages = new Map()

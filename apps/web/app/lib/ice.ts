@@ -1,5 +1,7 @@
+import type { Cancel } from './clock'
 import { sessionStore, type InstanceConnection } from './instances'
 import type { IceServers, InstanceIce } from './types'
+import { time } from './platform/time'
 
 // The only source of ICE servers. Without it, PeerJS uses its own public STUN and TURN servers,
 // so every Peer and RTCPeerConnection gets its config from its owner. The instance supplies the
@@ -18,8 +20,8 @@ export interface Timers {
 }
 
 const realTimers: Timers = {
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  set: (fn, ms) => time().after(ms, fn),
+  clear: handle => (handle as Cancel)(),
 }
 
 const REFRESH_SHARE = 0.8
@@ -242,7 +244,7 @@ export function createIceCache(conn: InstanceConnection) {
   const cache = new IceCache({
     info: () => conn.info?.ice,
     fetch: () => conn.api.p2pIce(),
-    now: () => Date.now(),
+    now: () => time().now(),
   })
   cache.policy = forcedPolicy()
   return cache
@@ -276,11 +278,11 @@ export const probeRelay = (server: RTCIceServer, timeoutMs = 8000): Promise<bool
     const finish = (ok: boolean) => {
       if (done) return
       done = true
-      clearTimeout(timer)
+      timer?.()
       pc.close()
       resolve(ok)
     }
-    const timer = setTimeout(() => finish(false), timeoutMs)
+    const timer = time().after(timeoutMs, () => finish(false))
     pc.onicecandidate = e => {
       if (e.candidate === null) finish(false)
       else if (e.candidate.type === 'relay' || / typ relay/.test(e.candidate.candidate))
@@ -312,11 +314,11 @@ export const probeAddress = (
     const finish = (seen: 'shown' | 'hidden' | 'unknown') => {
       if (done) return
       done = true
-      clearTimeout(timer)
+      timer?.()
       pc.close()
       resolve(seen)
     }
-    const timer = setTimeout(() => finish('hidden'), timeoutMs)
+    const timer = time().after(timeoutMs, () => finish('hidden'))
     pc.onicecandidate = e => {
       if (e.candidate === null) finish('hidden')
       else if (e.candidate.candidate) finish('shown')

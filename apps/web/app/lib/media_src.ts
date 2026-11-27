@@ -7,6 +7,7 @@ import { headOf } from './p2p'
 import { sharing } from './platform'
 import { downloadName, NEUTRAL_TYPE, sniff, type PreviewKind } from './sniff'
 import { failureMemory } from './video_attachment'
+import { time } from './platform/time'
 
 // Media a URL can't load is fetched with the credential in a header and shown from a `blob:`
 // URL: a guest's grant never lands in a link, the address bar or history, and an account on an
@@ -246,14 +247,14 @@ export function createMediaSrc(account: AccountSession) {
       window.addEventListener(MEDIA_COOKIE_CHANGE, changed)
       // Cookie replacement need not emit a CookieStore change event. Check once
       // per mounted home session, including writes by tabs on other page ports.
-      const timer = window.setInterval(() => {
+      const timer = time().every(1000, () => {
         if (!api.signedIn()) return
         const current = ownsMediaCookie(conn)
         if (current !== owned) changed()
-      }, 1000)
+      })
       unwatch = () => {
         stopStore()
-        window.clearInterval(timer)
+        timer()
         window.removeEventListener('storage', changed)
         window.removeEventListener('focus', changed)
         window.removeEventListener(MEDIA_COOKIE_CHANGE, changed)

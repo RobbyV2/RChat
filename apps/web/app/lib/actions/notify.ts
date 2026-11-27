@@ -17,6 +17,7 @@ import {
   type Suppress,
 } from '../notify'
 import type { Action, ActionCtx, ArgChoice, ArgStep, Scope, Target } from './types'
+import { time } from '../platform/time'
 
 const SUPPRESS: Suppress[] = ['everyone', 'roles']
 
@@ -29,7 +30,7 @@ export const muteStep: ArgStep = {
 }
 
 export const muteUntil = (value: string): MuteUntil =>
-  value === 'forever' ? 'forever' : muteUntilFor(Number(value), Date.now())
+  value === 'forever' ? 'forever' : muteUntilFor(Number(value), time().now())
 
 // A channel inherits its server's level until it has its own.
 const inherits = (scope: NotifyScope) => scope.kind === 'channel' || scope.kind === 'p2pc'

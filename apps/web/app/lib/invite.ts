@@ -1,6 +1,7 @@
 import type { StorageLike } from './instances'
 import { replaceSpoilers, spoilerParts } from './spoilers'
 import type { Invite, InviteLinkInfo, InviteStatus, JoinMode } from './types'
+import { time } from './platform/time'
 
 // An invite by name (`server`, with `password` when the link has one), or by an invite code
 // (`code`, with `server` empty until the code is looked up).
@@ -279,7 +280,7 @@ export const handoffFor = (
 }
 
 export const stashInvite = (target: InviteTarget, store: StorageLike) =>
-  store.setItem(STASH, JSON.stringify({ ...target, at: Date.now() }))
+  store.setItem(STASH, JSON.stringify({ ...target, at: time().now() }))
 
 export const takeStashedInvite = (
   server: string | null,
@@ -288,7 +289,7 @@ export const takeStashedInvite = (
 ) => {
   const raw = store.getItem(STASH)
   if (raw !== null) store.removeItem(STASH)
-  return server === null ? null : handoffFor(raw, server, Date.now(), code)
+  return server === null ? null : handoffFor(raw, server, time().now(), code)
 }
 
 export const dropStashedInvite = (store: StorageLike) => store.removeItem(STASH)

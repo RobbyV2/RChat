@@ -132,6 +132,7 @@ import {
   settled,
   shownView,
 } from './ctx'
+import { sleep, type Cancel } from '../clock'
 
 export interface MessagesDeps {
   acct: AccountSession
@@ -913,10 +914,10 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     set(s => ({ older: { ...s.older, [key]: state } }))
 
   // When each channel the site admin opened as staff closes again.
-  const staffEnds = new Map<number, ReturnType<typeof setTimeout>>()
+  const staffEnds = new Map<number, Cancel>()
 
   const endStaffView = (channel: number, seconds: number) => {
-    clearTimeout(staffEnds.get(channel))
+    staffEnds.get(channel)?.()
     const ended = inSession(() => {
       staffEnds.delete(channel)
       const shut = staffEnded(get(), channel)
@@ -927,7 +928,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         panel.root.channel_id === channel
       set(thread ? { ...shut, panel: null } : shut)
     })
-    staffEnds.set(channel, setTimeout(ended, seconds * 1000))
+    staffEnds.set(channel, acct.time.after(seconds * 1000, ended))
   }
 
   const fetchPage = async (key: string, page: PageOpts): Promise<Message[]> => {
@@ -1113,7 +1114,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   const linkOrder = new Set<number>()
   const linkQueue = new Map<number, View | undefined>()
   const linkLoads = new Set<number>()
-  let linkTimer: ReturnType<typeof setTimeout> | null = null
+  let linkTimer: Cancel | null = null
   let linkFlights = 0
   let linkGen = 0
 
@@ -1162,7 +1163,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
   const queueLinkCards = () => {
     if (linkTimer === null && linkQueue.size && linkFlights < LINK_BATCH_FLIGHTS)
-      linkTimer = setTimeout(flushLinkCards, LINK_BATCH_DELAY)
+      linkTimer = acct.time.after(LINK_BATCH_DELAY, flushLinkCards)
   }
 
   // Visible message links resolve in batches of up to 50, at most two batches at a time.
@@ -1286,7 +1287,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   }
 
   const p2pExpiry = (expiresIn: number | null | undefined) =>
-    expiresIn == null ? null : Math.floor(Date.now() / 1000) + expiresIn
+    expiresIn == null ? null : Math.floor(acct.time.now() / 1000) + expiresIn
 
   const buildSendOpts = async (
     pending: PendingUpload | null,
@@ -1329,7 +1330,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   // Per session: how far the server's clock runs ahead of this device, from sends it answered
   // quickly, so a send on its way shows the time the server will give it.
   let clock: number[] = []
-  const serverSeconds = () => Math.floor((Date.now() + offsetOf(clock)) / 1000)
+  const serverSeconds = () => Math.floor((acct.time.now() + offsetOf(clock)) / 1000)
 
   // Per session: views where a send of mine waits for its answer. My messages arriving live there
   // meanwhile wait in the tail, so a confirmed send never shows beside its outbox row.
@@ -1415,7 +1416,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           if (head.pending) stampOutgoing(key, head.tempId)
           const { opts } = built
           let { p2pId } = built
-          sentAt = Date.now()
+          sentAt = acct.time.now()
           sends.add(key)
           try {
             try {
@@ -1456,7 +1457,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           break
         }
         if (mine !== draining) return
-        const sample = clockSample(sentAt, Date.now(), real.created_at)
+        const sample = clockSample(sentAt, acct.time.now(), real.created_at)
         if (sample !== null) clock = pushOffset(clock, sample)
         if (holding(key)) holdTail(key, real)
         const shown = [real, ...heldBack(key)]
@@ -1489,7 +1490,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     const seconds = detail?.channels.find(c => c.id === channelId)?.slowmode_seconds ?? 0
     const exempt = detail && channelCan(s, detail.name, channelId).bypassSlowmode
     if (wait === null && (!detail || seconds <= 0 || exempt)) return
-    const until = Date.now() + (wait ?? seconds) * 1000
+    const until = acct.time.now() + (wait ?? seconds) * 1000
     set(st => ({ slowUntil: { ...st.slowUntil, [channelId]: until } }))
   }
 
@@ -1502,7 +1503,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     const mine = get().me?.username === ev.username
     const key = reactorKey(ev.message_id, ev.emoji)
     const added = ev.type === 'reaction_added'
-    const at = Math.floor(Date.now() / 1000)
+    const at = Math.floor(acct.time.now() / 1000)
     forgetReactors(key)
     patchReactions(ev.message_id, m => {
       if (!mine || !reactionQueue.has(key) || ev.count === undefined)
@@ -1777,7 +1778,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     pinMessage: id =>
       act(async () => {
         await live(api.pinMessage(id))
-        patchReactions(id, m => (m.pinned_at ? m : withPinnedAt(m, Math.floor(Date.now() / 1000))))
+        patchReactions(id, m =>
+          m.pinned_at ? m : withPinnedAt(m, Math.floor(acct.time.now() / 1000))
+        )
       }),
 
     openPinned: (key, id) =>
@@ -1966,7 +1969,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           : undefined
       get().cancelEdit(refocus)
       if (text === m.content && alt === undefined) return
-      const edited_at = Math.floor(Date.now() / 1000)
+      const edited_at = Math.floor(acct.time.now() / 1000)
       patchReactions(m.id, x => ({ ...x, content: text, edited_at }))
       live(api.editMessage(m.id, text, alt))
         .then(saved => {
@@ -2265,7 +2268,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           } catch (e) {
             const wait = searchRetryAfter(e)
             if (wait === null || !current()) throw e
-            await new Promise(resolve => setTimeout(resolve, wait * 1000))
+            await sleep(acct.time, wait * 1000)
             if (!current()) throw e
             return api.search(params, request.signal)
           }
@@ -2333,7 +2336,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const apply = (added: boolean) => {
         forgetReactors(key)
         patchReactions(m.id, x =>
-          withReaction(x, emoji, added, true, Math.floor(Date.now() / 1000))
+          withReaction(x, emoji, added, true, Math.floor(acct.time.now() / 1000))
         )
       }
       apply(adding)

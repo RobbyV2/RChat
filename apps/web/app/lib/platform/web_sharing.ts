@@ -1,4 +1,5 @@
 import type { ShareData, ShareResult, Sharing } from './sharing'
+import { time } from './time'
 
 const nav = (): Navigator | null => (typeof navigator === 'undefined' ? null : navigator)
 
@@ -83,7 +84,7 @@ const saveBlob = (name: string, blob: Blob) => {
   document.body.appendChild(a)
   a.click()
   a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  time().after(60_000, () => URL.revokeObjectURL(url))
   return true
 }
 
@@ -142,7 +143,7 @@ const print = (html: string) =>
           return resolve(false)
         }
         win.addEventListener('afterprint', drop, { once: true })
-        setTimeout(drop, PRINT_FRAME_MS)
+        time().after(PRINT_FRAME_MS, drop)
         try {
           win.focus()
           win.print()

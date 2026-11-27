@@ -58,6 +58,7 @@ import { signedIn, username, usernameStep } from './global'
 import { muteStep, muteUntil } from './notify'
 import { railServer } from './server'
 import type { Action, ActionCtx, ArgChoice, ArgStep, Scope, Target } from './types'
+import { time } from '../platform/time'
 
 const copy = (text: string, done: string, acct = client.shown()) =>
   void sharing()
@@ -105,7 +106,7 @@ const notifyServer = (ctx: ActionCtx): NotifyScope | null => {
 
 const mutedNow = (s: RChatState, scope: NotifyScope) => {
   const until = ownRule(s.notifyPrefs, scope)?.muteUntil
-  return until === 'forever' || (typeof until === 'number' && until > Date.now())
+  return until === 'forever' || (typeof until === 'number' && until > time().now())
 }
 
 const levelChoices: ArgChoice[] = [
@@ -150,7 +151,7 @@ const notifyActions = (p: NotifyPlace): Action[] => [
     subtitle: ctx => {
       const scope = p.menu && ctx.via === 'menu' ? p.of(ctx) : null
       const parent = scope && parentScope(scope)
-      const now = Date.now()
+      const now = time().now()
       const end = parent && muteEnd(ctx.s.notifyPrefs, parent, now)
       return end ? `Server muted ${untilText(end, now)}` : undefined
     },
@@ -172,7 +173,7 @@ const notifyActions = (p: NotifyPlace): Action[] => [
     keywords: ['notifications'],
     subtitle: ctx => {
       const scope = p.menu && ctx.via === 'menu' ? p.of(ctx) : null
-      const now = Date.now()
+      const now = time().now()
       const end = scope && muteEnd(ctx.s.notifyPrefs, scope, now)
       return end ? mutedText(end, now) : undefined
     },

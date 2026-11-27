@@ -1,3 +1,4 @@
+import { time } from '../platform/time'
 // One call of a hook point: before handlers, then the winning replace or the original wrapped by
 // around handlers, then after handlers. Each kind runs by priority, then install order. A
 // handler that throws, returns an invalid value, cancels where it may not, or misses its
@@ -142,14 +143,14 @@ const TIMEOUT = Symbol('timeout')
 
 const within = <V>(p: Promise<V>, ms: number): Promise<V | typeof TIMEOUT> =>
   new Promise((resolve, reject) => {
-    const t = setTimeout(() => resolve(TIMEOUT), ms)
+    const t = time().after(ms, () => resolve(TIMEOUT))
     p.then(
       v => {
-        clearTimeout(t)
+        t()
         resolve(v)
       },
       e => {
-        clearTimeout(t)
+        t()
         reject(e)
       }
     )

@@ -1,5 +1,6 @@
 import { readLocal, writeLocal } from '../instances'
 import type { AccountSession } from './session'
+import { time } from '../platform/time'
 
 function accountKey(origin: string, username: string | null, prefix: string) {
   // A historical AccountId can be identical for different schemes on the same host.
@@ -124,7 +125,7 @@ export class AccountTabLock {
       })
     } else {
       const record = JSON.parse(readLocal(key) ?? 'null')
-      if (!record || !(record.until > Date.now())) action()
+      if (!record || !(record.until > time().now())) action()
     }
   }
 
@@ -143,7 +144,7 @@ export class AccountTabLock {
     const read = (): Record | null => JSON.parse(readLocal(lease.key) ?? 'null')
     const owns = () => {
       const record = read()
-      return record?.token === token && record.until > Date.now()
+      return record?.token === token && record.until > time().now()
     }
     lease.owns = () => {
       try {
@@ -155,7 +156,7 @@ export class AccountTabLock {
     const tick = () => {
       if (this.lease !== lease) return
       try {
-        const now = Date.now()
+        const now = time().now()
         const record = read()
         if (!record || record.token === token || !(record.until > now)) {
           const value = JSON.stringify({ token, until: now + expiry })
@@ -174,10 +175,10 @@ export class AccountTabLock {
     const changed = (e: StorageEvent) => {
       if (e.key === lease.key || e.key === null) tick()
     }
-    const timer = setInterval(tick, heartbeat)
+    const timer = time().every(heartbeat, tick)
     page.addEventListener?.('storage', changed)
     lease.stop = () => {
-      clearInterval(timer)
+      timer()
       page.removeEventListener?.('storage', changed)
       try {
         if (read()?.token === token) writeLocal(lease.key, null)

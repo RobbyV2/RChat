@@ -13,6 +13,8 @@ import { Secret, TO_REQUEST } from './secret'
 import { DEFAULT_INSTANCE_NAME } from './instance_label'
 import { limitsOf } from './instance_limits'
 import { cause, logWarn } from './log'
+import { time } from './platform/time'
+import { sleep } from './clock'
 
 export { DEFAULT_INSTANCE_NAME }
 
@@ -566,8 +568,7 @@ export const lookup = () => {
   })
   return {
     done: () => finish(),
-    settled: (ms: number) =>
-      Promise.race([looked, new Promise<void>(resolve => setTimeout(resolve, ms))]),
+    settled: (ms: number) => Promise.race([looked, sleep(time(), ms)]),
   }
 }
 

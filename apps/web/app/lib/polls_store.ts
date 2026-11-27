@@ -7,6 +7,7 @@ import { mergePoll } from './polls'
 
 import type { RChatState } from './store_types'
 import type { Message, Poll, WsEvent } from './types'
+import type { Cancel } from './clock'
 
 // Where a new poll goes.
 export type PollTarget =
@@ -34,12 +35,12 @@ export const pollsSlice = (d: PollsDeps) => {
   const { act, patch } = d
   const setPoll = (id: number, poll: Poll) =>
     patch(id, m => (m.kind === 'poll' ? { ...m, poll } : m))
-  const waiting = new Map<number, ReturnType<typeof setTimeout>>()
+  const waiting = new Map<number, Cancel>()
   const fetchSoon = (id: number) => {
     if (waiting.has(id)) return
     waiting.set(
       id,
-      setTimeout(() => {
+      acct.time.after(POLL_FETCH_MS, () => {
         waiting.delete(id)
         const at = sessionMark()
         api.poll(id).then(
@@ -48,7 +49,7 @@ export const pollsSlice = (d: PollsDeps) => {
           },
           () => {}
         )
-      }, POLL_FETCH_MS)
+      })
     )
   }
   const run = (id: number, call: () => Promise<Poll>) =>
@@ -93,7 +94,7 @@ export const pollsSlice = (d: PollsDeps) => {
 
   // The refetches the ended session asked for are never sent.
   const forget = () => {
-    for (const timer of waiting.values()) clearTimeout(timer)
+    for (const timer of waiting.values()) timer?.()
     waiting.clear()
   }
 

@@ -22,6 +22,9 @@ export interface Scheduler {
 
 export interface Time extends Clock, Scheduler {}
 
+// Resolves once `ms` passed on `on`.
+export const sleep = (on: Scheduler, ms: number) => new Promise<void>(done => on.after(ms, done))
+
 export const FRAME_MS = 16
 
 type Due = { at: number; seq: number; fn: (at: number) => void; every: number | null }

@@ -19,6 +19,7 @@ import type { Timeout } from '../timeouts'
 import type { Member, UserRef } from '../types'
 import { defineFeature, notInDms } from './feature'
 import { derived, fromStore, type Live } from './live'
+import { time } from '../platform/time'
 
 type Shield = ReturnType<typeof shieldOf> | 'unverified'
 
@@ -343,7 +344,7 @@ const peer = ({
   const build = (count: number): MemberList => {
     const [v, me, contacts, badges, loading] = parts.get()
     if (!v) return { ...plain(loading ? 'loading' : 'none', room), byIdentity: true }
-    const now = Date.now()
+    const now = time().now()
     const sees = (v.perms & P.TimeoutMembers) !== 0
     const paged = pageGroups(memberGroups(v.members, v.roles, me), count)
     const items: MemberItem[] = []

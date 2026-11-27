@@ -2,6 +2,7 @@ import { ApiError, type Api } from './api'
 import type { AccountSession } from './client/session'
 import type { RChatState } from './store_types'
 import type { WsEvent } from './types'
+import { time } from './platform/time'
 
 // What a forward of a message names when its sender shows where it's from, as the server
 // decides it: the server, and the channel when everyone there may see it.
@@ -69,7 +70,7 @@ export const membersOf = (s: State) =>
 const holds = (entry: Lookup, s: State) => {
   if (entry.members !== membersOf(s)) return false
   const value = entry.value
-  if (value?.kind === 'none') return Date.now() - entry.at <= NONE_TTL_MS
+  if (value?.kind === 'none') return time().now() - entry.at <= NONE_TTL_MS
   if (value?.kind !== 'channel') return true
   const detail = s.servers[value.server]
   if (!entry.channels) {
@@ -114,7 +115,7 @@ export const locateOnce = (owner: AccountSession, id: number): Promise<void> => 
   const entry = all.get(key)
   if (entry?.pending && entry.members === members) return entry.pending
   if (entry?.value && holds(entry, s)) return Promise.resolve()
-  const fresh: Lookup = { id, members, at: Date.now() }
+  const fresh: Lookup = { id, members, at: time().now() }
   all.delete(key)
   if (all.size >= LOOKUPS_MAX) all.delete(all.keys().next().value!)
   all.set(key, fresh)
@@ -127,7 +128,7 @@ export const locateOnce = (owner: AccountSession, id: number): Promise<void> => 
       return
     }
     fresh.value = found
-    fresh.at = Date.now()
+    fresh.at = time().now()
     if (found.kind !== 'channel') return
     const detail = owner.store.getState().servers[found.server]
     fresh.channels = detail?.channels

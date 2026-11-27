@@ -4,6 +4,7 @@
 // mutes are ignored and pruned.
 
 import type { GroupKind } from './types'
+import { time } from './platform/time'
 
 export type Level = 'all' | 'mentions' | 'nothing'
 export type MuteUntil = number | 'forever'
@@ -123,7 +124,7 @@ const isIdKey = (k: string) => /^[1-9]\d{0,15}$/.test(k)
 // A P2P room ("{room}") or a P2P server channel ("{room}/{channel}").
 const isRoomKey = (k: string) => /^[A-Za-z0-9_-]{43}(\/[A-Za-z0-9_-]{11})?$/.test(k)
 
-export const parseNotify = (raw: string | null, now = Date.now()): NotifyPrefs => {
+export const parseNotify = (raw: string | null, now = time().now()): NotifyPrefs => {
   let data: unknown
   try {
     data = raw ? JSON.parse(raw) : null

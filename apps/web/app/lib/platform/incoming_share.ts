@@ -1,5 +1,6 @@
 import type { SharedContent } from '../client/share_target'
 import type { Invoke } from './desktop'
+import { time } from './time'
 
 type NativeShare = {
   text: string
@@ -52,13 +53,13 @@ export function watchIncomingShares(
       }
     }
   }
-  const timer = setTimeout(take, 0)
+  const timer = time().after(0, take)
   document.addEventListener('visibilitychange', take)
   window.addEventListener('focus', take)
   window.addEventListener('rchat-incoming-share', take)
   return () => {
     live = false
-    clearTimeout(timer)
+    timer()
     document.removeEventListener('visibilitychange', take)
     window.removeEventListener('focus', take)
     window.removeEventListener('rchat-incoming-share', take)

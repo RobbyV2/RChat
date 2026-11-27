@@ -3,6 +3,7 @@ import { createSavedSession, savedConnection } from './saved_session'
 import type { Book } from './book'
 import type { AccountSession } from './session'
 import { accountStorage } from './keys'
+import { time } from '../platform/time'
 
 const FIVE_MINUTES = 5 * 60_000
 const BUDGET_KEY = 'rchat_live_budget'
@@ -81,7 +82,7 @@ export class AccountManager {
       }
       readBudget()
       const stop = this.ports.watch(this.schedule)
-      const timer = setInterval(() => this.reconcile(), 30_000)
+      const timer = time().every(30_000, () => this.reconcile())
       const storage = (event: StorageEvent) => {
         if (event.key === null || event.key === BUDGET_KEY) readBudget()
         if (
@@ -95,7 +96,7 @@ export class AccountManager {
       const page = window
       page.addEventListener('storage', storage)
       this.release = () => {
-        clearInterval(timer)
+        timer()
         stop()
         page.removeEventListener('storage', storage)
       }
@@ -138,7 +139,7 @@ export class AccountManager {
   private apply() {
     const { ports } = this
     const shown = ports.shown()
-    const now = Date.now()
+    const now = time().now()
     const wanted = new Map<
       string,
       { origin: string; username: string | null; connect: boolean; credential: string }

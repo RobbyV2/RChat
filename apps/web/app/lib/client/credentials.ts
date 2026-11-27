@@ -4,6 +4,7 @@ import { accountStorage, peerStorage, SSO_LOGOUT_KEY } from './keys'
 import { addInstance, addAccount, addIdentity, type Book, type BookAccount } from './book'
 import type { Me } from '../types'
 import { sameSecret, Secret, TO_STORE } from '../secret'
+import { time } from '../platform/time'
 
 // A saved session token, read from and written to this device's storage.
 export const readToken = (key: string): Secret | null => Secret.from(readLocal(key))
@@ -115,7 +116,7 @@ export function instanceDescriptor(conn: InstanceConnection) {
 export function accountUpdate(conn: InstanceConnection, me: Me) {
   const instance = instanceDescriptor(conn)
   const own = conn.isDefault ? instance.origin : null
-  const added = Date.now()
+  const added = time().now()
   const flag = peerStorage(conn, me.username).scoped('rchat_p2p:' + me.username)
   let main = false
   try {

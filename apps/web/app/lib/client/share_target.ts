@@ -10,6 +10,7 @@ import { readOnly } from '../reactions'
 import { sourceAccess } from '../forward_viewing'
 import { client } from './client'
 import { allowsAccountOrigin } from './hosted_policy'
+import { time } from '../platform/time'
 
 // Keep a one-use worker ticket through the normal signed-out startup redirect.
 export function shareLoginHref(href: string, search: string) {
@@ -68,7 +69,7 @@ export function shareRooms(
         )
     for (const member of s.me.servers) {
       const detail = s.servers[member.name]
-      if (!detail || (member.timed_out_until ?? 0) * 1000 > Date.now()) continue
+      if (!detail || (member.timed_out_until ?? 0) * 1000 > time().now()) continue
       for (const c of detail.channels)
         if (
           c.kind === 'text' &&

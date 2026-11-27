@@ -1,3 +1,5 @@
+import type { Cancel } from './clock'
+import { time } from './platform/time'
 const THRESHOLD = 0.02
 const HOLD_FRAMES = 12
 
@@ -13,7 +15,7 @@ interface Watched {
 export class SpeakingDetector {
   private ctx: AudioContext | null = null
   private watched = new Map<string, Watched>()
-  private raf: number | null = null
+  private raf: Cancel | null = null
   onSpeak: (id: string, speaking: boolean) => void = () => {}
 
   watch(id: string, stream: MediaStream) {
@@ -77,7 +79,7 @@ export class SpeakingDetector {
   }
 
   private stop() {
-    if (this.raf !== null) cancelAnimationFrame(this.raf)
+    this.raf?.()
     this.raf = null
   }
 
@@ -97,8 +99,8 @@ export class SpeakingDetector {
           this.onSpeak(id, speaking)
         }
       }
-      this.raf = this.watched.size > 0 ? requestAnimationFrame(tick) : null
+      this.raf = this.watched.size > 0 ? time().frame(tick) : null
     }
-    this.raf = requestAnimationFrame(tick)
+    this.raf = time().frame(tick)
   }
 }

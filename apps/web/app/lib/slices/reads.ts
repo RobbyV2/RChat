@@ -43,6 +43,7 @@ import type { RChatState } from '../store_types'
 import type { Message, Unread, WsEvent } from '../types'
 import { viewKey } from '../view'
 import { pageVisible, shownKey, type GetState, type Handlers, type SetState } from './ctx'
+import type { Cancel } from '../clock'
 
 export interface ReadsDeps {
   acct: AccountSession
@@ -96,6 +97,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
   }
 
   const readQueue = createReadQueue({
+    time: acct.time,
     send: (scope, id) => {
       const s = get()
       const server = s.reads[scope]?.server
@@ -196,13 +198,13 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     set(s => (s.unreadAnchor[key] ? { unreadAnchor: { ...s.unreadAnchor, [key]: 0 } } : {}))
   }
 
-  let groupReload: ReturnType<typeof setTimeout> | null = null
+  let groupReload: Cancel | null = null
   const reloadGroups = () => {
     if (groupReload !== null) return
-    groupReload = setTimeout(() => {
+    groupReload = acct.time.after(2000, () => {
       groupReload = null
       if (get().me) void loadUnreads()
-    }, 2000)
+    })
   }
 
   // A live channel message with @everyone, @here or role mentions. When it addresses you, it is

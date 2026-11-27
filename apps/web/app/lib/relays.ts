@@ -1,5 +1,6 @@
 import { probeRelay, type IceCache } from './ice'
 import { device } from './platform'
+import { time } from './platform/time'
 
 // The user's own STUN and TURN relays, on top of what the instance offers, for P2P files and
 // P2P calls. They live on this device only (credentials included) and are never sent to the
@@ -392,7 +393,7 @@ export class RelayBook {
   // Shows the prompt for one host; without a UI every unknown relay is refused.
   prompt: (host: string) => Promise<Decision> = () => Promise.resolve('deny')
   probe: (server: RTCIceServer) => Promise<boolean> = s => probeRelay(s)
-  now: () => number = () => Date.now()
+  now: () => number = () => time().now()
 
   private version = 0
   private cancelPrompt: (() => void) | null = null

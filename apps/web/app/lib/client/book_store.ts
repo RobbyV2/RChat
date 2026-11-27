@@ -7,6 +7,7 @@ import {
   writeLocal,
 } from '../instances'
 import { migrateBook, parseBook, type Book } from './book'
+import { time } from '../platform/time'
 
 type Edit = (current: Book) => Book
 export const BOOK_COORDINATION_ERROR =
@@ -21,18 +22,18 @@ function withBookTransaction(factory: IDBFactory, commit: () => Book): Promise<B
     let abandoned = false
     const unavailable = () => {
       abandoned = true
-      clearTimeout(timeout)
+      timeout()
       reject(new Error(BOOK_COORDINATION_ERROR))
     }
     // Opening can wait behind a pending delete without receiving "blocked".
-    const timeout = setTimeout(unavailable, 3000)
+    const timeout = time().after(3000, unavailable)
     request.onerror = request.onblocked = unavailable
     request.onupgradeneeded = () => {
       if (abandoned) request.transaction?.abort()
       else request.result.createObjectStore('writers')
     }
     request.onsuccess = () => {
-      clearTimeout(timeout)
+      timeout()
       const db = request.result
       if (abandoned) {
         db.close()

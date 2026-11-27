@@ -6,6 +6,7 @@ import { readLocal, writeLocal, sessionStore } from './instances'
 import { apiRoot } from './api_version'
 import { safeNext } from './invite'
 import type { AuthInfo, LinkedProvider, Me } from './types'
+import { time } from './platform/time'
 
 export const canUnlink = (
   me: Pick<Me, 'has_password'>,
@@ -125,7 +126,7 @@ const loginSlot = (i: SsoIntent) => activeLogin + ':' + JSON.stringify([i.origin
 function nativeLogin() {
   const slot = readLocal(activeLogin)
   if (!slot?.startsWith(activeLogin + ':')) return null
-  const intent = parseIntent(readLocal(slot), Date.now())
+  const intent = parseIntent(readLocal(slot), time().now())
   if (intent?.purpose === 'login' && slot === loginSlot(intent)) return intent
   writeLocal(slot, null)
   writeLocal(activeLogin, null)
@@ -138,7 +139,7 @@ export function readIntent() {
     if (persisted) return persisted
   }
   const raw = sessionStore.getItem(SSO_KEY)
-  const parsed = parseIntent(raw, Date.now())
+  const parsed = parseIntent(raw, time().now())
   if (raw && !parsed) sessionStore.removeItem(SSO_KEY)
   return parsed
 }
@@ -147,7 +148,7 @@ export function clearIntent(i: SsoIntent) {
     writeLocal(loginSlot(i), null)
     writeLocal(activeLogin, null)
   }
-  if (parseIntent(sessionStore.getItem(SSO_KEY), Date.now())?.verifier === i.verifier)
+  if (parseIntent(sessionStore.getItem(SSO_KEY), time().now())?.verifier === i.verifier)
     sessionStore.removeItem(SSO_KEY)
 }
 
@@ -194,7 +195,7 @@ async function begin(
     ...(confirm ? { confirm: true as const } : {}),
     back: safeNext(back) ?? '/',
     verifier: newVerifier(),
-    at: Date.now(),
+    at: time().now(),
   }
   saveIntent(intent)
   const challenge = await challengeOf(intent.verifier)
@@ -266,8 +267,8 @@ export async function beginPopup(
   return new Promise<{ code: string; verifier: string }>((resolve, reject) => {
     const done = (error?: SsoErrorCode, code?: string) => {
       unwatch?.()
-      clearInterval(poll)
-      clearTimeout(timer)
+      poll()
+      timer()
       window.removeEventListener('message', message)
       window.removeEventListener('rchat-sso-return', check)
       clearIntent(intent)
@@ -307,11 +308,11 @@ export async function beginPopup(
             () => done('expired')
           )
         : undefined
-    const poll = setInterval(() => {
+    const poll = time().every(300, () => {
       if (!current()) done('expired')
       else if (popup?.closed) done('denied')
-    }, 300)
-    const timer = setTimeout(() => done('expired'), INTENT_TTL_MS)
+    })
+    const timer = time().after(INTENT_TTL_MS, () => done('expired'))
     window.addEventListener('message', message)
     window.addEventListener('rchat-sso-return', check)
     Promise.resolve(authBrowser().popup(url)).then(

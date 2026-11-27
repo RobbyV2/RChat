@@ -132,7 +132,7 @@ export function createApiDoc(acct: AccountSession) {
     const mark = sessionMark()
     const path = requestPath(r)
     if (path === null) throw new ApiError('Only API paths can be called', 0)
-    const started = performance.now()
+    const started = acct.time.elapsed()
     const res = await acct.lifetime.live(
       api.send(r.method, path, r.body, { headers: r.headers, retry: false })
     )
@@ -153,7 +153,7 @@ export function createApiDoc(acct: AccountSession) {
       status: res.status,
       statusText: res.statusText,
       headers: [...res.headers.entries()],
-      ms: Math.round(performance.now() - started),
+      ms: Math.round(acct.time.elapsed() - started),
       text: shown.text,
       json: shown.json && !cut,
       cut: cut || shown.cut,

@@ -7,6 +7,7 @@ import { readLocal } from '../instances'
 import { CHANGED } from '../p2p/transfer'
 import { cleanName } from '../p2p/keys'
 import { sameSecret } from '../secret'
+import { time } from '../platform/time'
 
 export function identityRecords(book: Book, origin: string, username: string) {
   return book.instances.find(i => i.origin === origin)?.accounts.find(a => a.username === username)
@@ -48,7 +49,7 @@ export async function reserveIdentity(account: AccountSession, name: string) {
   const main = account.identities.get()
   if (!main || !cleanName(name)) throw Error('Enter an identity name')
   const other = crypto.randomUUID()
-  const added = Date.now()
+  const added = time().now()
   let local = ''
   const manifest = account.keys.local('rchat_p2p_identities')
   let flag = ''
