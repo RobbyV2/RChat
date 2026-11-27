@@ -16,7 +16,7 @@ import { buildSummary, emptySummary, type Summary } from '../p2p/acl/summary'
 import type { RoomRecord } from '../p2p/db'
 import { actParts, CANT_TEXT, effectHolds, refusalText, TIMED_OUT_TEXT } from '../p2p/flows'
 import { LOCAL } from '../p2p/limits'
-import { permItems } from '../p2p/roles'
+import { everyoneItems, permItems } from '../perm_source'
 import { serverView } from '../p2p/server/views'
 import { RESIGN_ACL } from '../p2p/server/types'
 import {
@@ -340,16 +340,20 @@ describe('the view of a room with timeouts', () => {
     const { w } = room(false)
     const v = viewOf(summary(w), 'O')
     expect(v.timeouts).toBeUndefined()
-    expect(permItems(v).some(i => i.bit === P.TimeoutMembers)).toBe(false)
+    expect(permItems(v.rules).some(i => i.bit === P.TimeoutMembers)).toBe(false)
     expect(viewOf({ ...emptySummary(), rules: RULES_VERSION }, 'O').timeouts).toBeUndefined()
   })
 
   test('the permission is offered for roles and @everyone where timeouts are read', () => {
-    const v = { timeouts: true as const }
-    expect(permItems(v).at(-1)).toMatchObject({ label: 'Timeout members', bit: 16777216 })
-    const everyone = permItems(v, true).map(i => i.label)
-    expect(everyone.slice(-3)).toEqual(['Timeout members', 'View channels', 'Send messages'])
-    expect(permItems({}, true).map(i => i.label)).not.toContain('Timeout members')
+    const v = viewOf(summary(room().w), 'O')
+    expect(v.timeouts).toBe(true)
+    expect(permItems(v.rules).find(i => i.bit === P.TimeoutMembers)).toMatchObject({
+      name: 'TimeoutMembers',
+      bit: 16777216,
+      hint: 'Stop members from chatting for a while',
+    })
+    expect(everyoneItems(v.rules).some(i => i.bit === P.TimeoutMembers)).toBe(true)
+    expect(everyoneItems(RULES_VERSION).some(i => i.bit === P.TimeoutMembers)).toBe(false)
   })
 })
 

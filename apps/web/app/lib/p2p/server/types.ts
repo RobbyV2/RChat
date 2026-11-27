@@ -295,6 +295,8 @@ export interface ServerView {
   timeouts?: true
   // When our own timeout here ends (ms).
   timedOutUntil?: number
+  // The rules version permissions are decided under.
+  rules: number
   id: string
   name: string
   color: number | null

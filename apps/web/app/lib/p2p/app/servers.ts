@@ -10,7 +10,7 @@ import { BanExpiry } from '../ban_expiry'
 import type { P2pStore, RoomRecord, ServerCache } from '../db'
 import { loadDmThread, loadDmThreadAround, loadDmThreads, type P2pMessage } from '../dm'
 import { cacheKey } from '../dag'
-import { knownRules } from '../acl/rules'
+import { knownRules, rulesOf } from '../acl/rules'
 import { cachedSummary } from '../server/load'
 import { categoryViews, channelViews } from '../server/views'
 import { keyId } from '../keys'
@@ -96,6 +96,7 @@ export function createServersPart(
       color: null,
       about: p2pAbout(sum?.about ?? null),
       awaitingAcl: !r.legacy && sum?.rules == null,
+      rules: rulesOf(sum?.rules),
       me,
       joining: false,
       owner: null,

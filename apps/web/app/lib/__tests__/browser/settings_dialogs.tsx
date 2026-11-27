@@ -122,6 +122,7 @@ const view: ServerView = {
     },
   ],
   categories: [],
+  rules: 4,
   members: [],
   online: 0,
   joined: 1,

@@ -18,18 +18,38 @@ import { itemFor, menuItems, openActionMenu } from '../../lib/actions/menu'
 import { peerServer } from '../../lib/actions/p2p_server'
 import type { Target } from '../../lib/actions/types'
 import {
-  ALLOW_BOTH,
-  permItems,
   ROLE_LOCKED,
   fromHex,
   hex,
   mayTakeRole,
   mayWriteRow,
   nameColor,
-  overBits,
-  overFlags,
   placeRole,
+  shownOrder,
+  subjectName,
 } from '../../lib/p2p/roles'
+import { RULES_NEXT } from '../../lib/p2p/acl/rules'
+import { fromWire } from '../../lib/perms'
+import {
+  NO_GRANT,
+  bitsBlock,
+  everyoneItems,
+  p2pMaskIn,
+  permItems,
+  type RuleSource,
+} from '../../lib/perm_source'
+import { subjectNames, syncConfirmText } from '../../lib/categories'
+import { usePermissionRules } from '../use_permission_rules'
+import { RuleEditor } from '../rule_editor'
+import { PermGroups } from '../perm_groups'
+import {
+  FollowButton,
+  RoleTabs,
+  ShownRow,
+  keyMoves,
+  type RolesTab as RolesTabKind,
+} from '../role_order_tools'
+import { PeerActorTag } from '../view_actor'
 import { EVERYONE, P } from '../../lib/p2p/state'
 import { shownBanner, shownBio } from '../../lib/server_profile'
 import type {
@@ -45,13 +65,12 @@ import { longPress } from '../context_menu'
 import { dragScope } from '../drag'
 import {
   ColorSwatch,
-  PermChecks,
   RestrictionToggles,
   RoleCreateForm,
   RoleNameForm,
   SlowmodeField,
 } from '../settings_fields'
-import { dangerBtn, fieldCls, Masked, textBtn } from '../ui'
+import { dangerBtn, Dialog, fieldCls, Masked, textBtn } from '../ui'
 import { PeerTimeoutBadge } from '../timeout_dialog'
 import { MemberAvatar } from './p2p_badge'
 import { RoleLooksFields } from '../role_looks_fields'
@@ -78,12 +97,20 @@ const swatch = (c: number | null) => ({ backgroundColor: hex(c) ?? 'var(--color-
 const stop = (e: SyntheticEvent) => e.stopPropagation()
 const keepPress = { onPointerDown: stop, onTouchStart: stop, onContextMenu: stop }
 
-// Toggles of a role's bits: a turned-on bit needs it ourselves (role_bits).
-const bitChecks = (identity: P2pApp) => (v: ServerView, role: string, value: number) => {
+// A role's or @everyone's permission switches: a turned-on bit needs it ourselves (role_bits),
+// from rules 5 as the shared rules check it.
+const bitSwitches = (identity: P2pApp) => (v: ServerView, role: string, value: number) => {
   const { p2pServer } = identity
+  const rules = v.rules
+  const own = ownsP2pServer(v, identity.useP2p.getState().me)
   return {
     value,
-    allowed: (next: number) => (next & ~value & ~v.perms) === 0,
+    blockOf: (next: number) =>
+      rules >= RULES_NEXT
+        ? bitsBlock(fromWire(v.perms, rules), own, fromWire(value, rules), fromWire(next, rules))
+        : (next & ~value & ~v.perms) === 0
+          ? null
+          : NO_GRANT,
     onChange: (next: number) => {
       const bit = next ^ value
       void p2pServer.setRoleBit(v.id, role, bit, (next & bit) !== 0)
@@ -98,6 +125,21 @@ const rows = (
 ) => {
   registerAppActions()
   return menuItems(ctxFor(acct.store.getState(), target, 'menu', acct, identity))
+}
+
+// What a row of a role's menu does, when the row is there.
+const roleAction = (
+  id: string,
+  v: ServerView,
+  r: RoleView,
+  acct = client.shown(),
+  identity = acct.identities.viewed() ?? null
+) => {
+  registerAppActions()
+  return itemFor(
+    id,
+    ctxFor(acct.store.getState(), { kind: 'p2p_role', v, r }, 'menu', acct, identity)
+  )?.action
 }
 
 // A role's menu (right-click, long-press): move it a step, or delete it.
@@ -116,6 +158,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
 
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const mask = useMask(own)
+  const [open, setOpen] = useState(false)
   const edit = can(v, P.ManageRoles) && r.below
   const locked = !can(v, P.ManageRoles) ? 'Needs Manage roles' : r.below ? null : ROLE_LOCKED
   const fixed = v.roles.filter(x => !x.below).length
@@ -136,11 +179,17 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
             ),
       })
     : longPress(menu)
+  const items = permItems(v.rules)
   return (
     <div
       data-drag-box
       data-p2p-role={r.name}
-      className="space-y-1.5 rounded-xl bg-surface-container p-2"
+      aria-label={mask(r.name)}
+      {...keyMoves(
+        () => roleAction('p2p_role_up', v, r, acct, identity),
+        () => roleAction('p2p_role_down', v, r, acct, identity)
+      )}
+      className="space-y-1.5 rounded-xl bg-surface-container p-2 outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
       <div {...handle} className="flex min-h-9 items-center gap-2">
         {edit && (
@@ -185,10 +234,25 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
           </button>
         )}
       </div>
-      <p className="text-xs text-on-surface-variant">
-        {r.holders} {r.holders === 1 ? 'member' : 'members'}
-      </p>
-      <PermChecks items={permItems(v)} locked={locked} {...bitChecks(identity)(v, r.id, r.bits)} />
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 text-xs text-on-surface-variant">
+          {r.holders} {r.holders === 1 ? 'member' : 'members'}
+        </p>
+        <button
+          type="button"
+          {...keepPress}
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          className={textBtn}
+        >
+          {open ? 'Hide permissions' : 'Permissions'}
+        </button>
+      </div>
+      {open && (
+        <span {...keepPress} className="block">
+          <PermGroups items={items} locked={locked} {...bitSwitches(identity)(v, r.id, r.bits)} />
+        </span>
+      )}
       <span {...keepPress} className="block">
         <RoleLooksFields
           name={mask(r.name)}
@@ -206,48 +270,108 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
 
 function RolesTabBody({ v }: { v: ServerView }) {
   const identity = useP2pApp()!
-  const { p2p, p2pServer } = identity
-
+  const { p2p, p2pServer, memberName } = identity
+  const acct = useAccount()
+  const ready = usePermissionRules()
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const mask = useMask(own)
+  const [tab, setTab] = useState<RolesTabKind>('rank')
   const edit = can(v, P.ManageRoles)
   const fixed = v.roles.filter(r => !edit || !r.below)
   const movable = edit ? v.roles.filter(r => r.below) : []
   // @everyone ranks lowest: anyone ranked with Manage roles may change it.
   const everyoneLocked = !edit ? 'Needs Manage roles' : v.rank[0] > -1 ? null : ROLE_LOCKED
+  if (!ready) return null
+  const rules = v.rules
+  const owners = v.owners.length ? v.owners : v.owner ? [v.owner] : []
+  const shown = shownOrder(v.roles).flatMap(id => v.roles.find(r => r.id === id) ?? [])
+  const anyRole = v.roles[0]
   return (
     <div className="flex flex-col gap-2">
-      {fixed.map(r => (
-        <RoleRow key={r.id} v={v} r={r} />
-      ))}
-      <div ref={dragScope}>
-        <div data-drop-zone="p2p-roles" className="flex flex-col gap-2">
-          {movable.map(r => (
+      <RoleTabs tab={tab} onTab={setTab} />
+      {owners.length > 0 && (
+        <div
+          data-p2p-owners
+          className="flex min-h-9 items-center gap-2 rounded-xl bg-surface-container p-2"
+        >
+          <span title="Owners" aria-hidden className="flex shrink-0 text-tertiary">
+            <Crown size={16} />
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="text-sm font-medium">Owners</span>
+            <span className="streamer truncate text-xs text-on-surface-variant">
+              {owners.map(ik => memberName(v.id, ik)).join(', ')}
+            </span>
+          </span>
+          <span className="shrink-0 text-xs text-on-surface-variant">Every permission</span>
+        </div>
+      )}
+      {tab === 'rank' ? (
+        <>
+          {fixed.map(r => (
             <RoleRow key={r.id} v={v} r={r} />
           ))}
-        </div>
-      </div>
-      <div data-p2p-role="@everyone" className="space-y-1.5 rounded-xl bg-surface-container p-2">
-        <div className="flex min-h-9 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">@everyone</span>
-          <span className="shrink-0 text-xs text-on-surface-variant">Every member</span>
-        </div>
-        <PermChecks
-          items={permItems(v, true)}
-          locked={everyoneLocked}
-          {...bitChecks(identity)(v, EVERYONE, v.everyone)}
-        />
-      </div>
-      {edit && (
+          <div ref={dragScope}>
+            <div data-drop-zone="p2p-roles" className="flex flex-col gap-2">
+              {movable.map(r => (
+                <RoleRow key={r.id} v={v} r={r} />
+              ))}
+            </div>
+          </div>
+          <div
+            data-p2p-role="@everyone"
+            className="space-y-1.5 rounded-xl bg-surface-container p-2"
+          >
+            <div className="flex min-h-9 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">@everyone</span>
+              <span className="shrink-0 text-xs text-on-surface-variant">Every member</span>
+            </div>
+            <PermGroups
+              items={everyoneItems(rules)}
+              locked={everyoneLocked}
+              {...bitSwitches(identity)(v, EVERYONE, v.everyone)}
+            />
+          </div>
+          {edit && (
+            <>
+              <RoleCreateForm
+                maxLength={p2p.limits().server.roleNameMax}
+                onCreate={(name, color) =>
+                  p2pServer.createRole(v.id, { name, color: fromHex(color), bits: 0 })
+                }
+              />
+              <Note>
+                Members get the permissions of all their roles; their highest role decides who they
+                can act on. You can only change roles below your highest one. Drag a role, or press
+                Alt+Up and Alt+Down on it, to move it.
+              </Note>
+            </>
+          )}
+        </>
+      ) : (
         <>
-          <RoleCreateForm
-            maxLength={p2p.limits().server.roleNameMax}
-            onCreate={(name, color) =>
-              p2pServer.createRole(v.id, { name, color: fromHex(color), bits: 0 })
-            }
-          />
-          <Note>
-            Members get the permissions of all their roles; their highest role decides who they can
-            act on. You can only change roles below your highest one.
-          </Note>
+          {anyRole && (
+            <FollowButton run={roleAction('p2p_role_show_ranked', v, anyRole, acct, identity)} />
+          )}
+          {shown.map(r => (
+            <ShownRow
+              key={r.id}
+              name={<Masked text={r.name} own={own} />}
+              swatch={hex(r.color)}
+              up={{
+                text: `Show ${mask(r.name)} higher`,
+                run: roleAction('p2p_role_show_up', v, r, acct, identity),
+              }}
+              down={{
+                text: `Show ${mask(r.name)} lower`,
+                run: roleAction('p2p_role_show_down', v, r, acct, identity),
+              }}
+              menu={longPress((x, y) =>
+                openActionMenu(x, y, { kind: 'p2p_role', v, r }, undefined, acct, identity)
+              )}
+            />
+          ))}
+          <Note>The member list shows roles in this order. Role order still decides rank.</Note>
         </>
       )}
     </div>
@@ -377,8 +501,6 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
 
 // ----- A channel's permissions -----
 
-const mayWrite = mayWriteRow
-
 // A subject's name as text (labels): @everyone, the role's (`maskRole`) or the member's (`mask`,
 // never your own).
 const subjectText =
@@ -492,8 +614,8 @@ function MemberPickerBody({
   )
 }
 
-// A channel's overwrites and switches, or a category's overwrites (which reach the channels
-// synced with it).
+// A channel's overwrites, switches and slow mode, or a category's overwrites (which reach the
+// channels synced with it), in the shared rule editor.
 function ChannelAccessBody({
   v,
   c: channel,
@@ -505,160 +627,192 @@ function ChannelAccessBody({
 }) {
   const identity = useP2pApp()!
   const { p2pServer } = identity
-
-  const [role, setRole] = useState('')
+  const acct = useAccount()
+  const ready = usePermissionRules()
   const streamer = useStore(s => s.streamer)
   const [picking, setPicking] = useState(false)
   const me = useP2p(s => s.me)
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const maskRole = useMask(own)
   const mask = useMask()
-  const c = channel ?? {
-    id: cat?.id ?? '',
-    kind: 'text' as const,
-    over: cat?.over ?? ({} as ChannelView['over']),
-    restrict_view: false,
-    restrict_send: false,
-    slow: 0,
-  }
+  if (!ready) return null
+  const over = (channel ?? cat)?.over ?? ({} as ChannelView['over'])
+  const id = channel?.id ?? cat?.id ?? ''
+  const rules = v.rules
+  const voice = channel?.kind === 'voice'
   const write = (subj: string, o: { allow: number; deny: number }) =>
-    void (channel
-      ? p2pServer.setOverwrite(v.id, c.id, subj, o)
-      : p2pServer.setCategoryOverwrite(v.id, c.id, subj, o))
-  const rows = Object.entries(c.over).filter(
-    ([subj]) => subj.startsWith('r:') || subj.startsWith('u:')
-  )
-  const listed = (subj: string) => rows.some(([s]) => s === subj)
-  const allow = (subj: string) => write(subj, ALLOW_BOTH)
-  // A voice channel is only joined or not (View channels): no send rules, no slow mode.
-  const voice = c.kind === 'voice'
-  const restricted = !!c.restrict_view || (!voice && !!c.restrict_send)
-  const roles = v.roles.filter(r => r.below && !listed(`r:${r.id}`))
+    channel
+      ? p2pServer.setOverwrite(v.id, id, subj, o)
+      : p2pServer.setCategoryOverwrite(v.id, id, subj, o)
+  const everyone = `r:${EVERYONE}`
+  const held = v.members.find(m => m.ik === me)?.roles ?? []
+  const maskIn = (o: ChannelView['over'], c: ChannelView | undefined) =>
+    p2pMaskIn(
+      v.perms,
+      own,
+      held,
+      me ?? '',
+      o,
+      { restrictView: c?.restrict_view === true, restrictSend: c?.restrict_send === true },
+      rules
+    )
+  const src: RuleSource = {
+    ruleset: rules,
+    place: channel ? (voice ? 'voice' : 'text') : 'category',
+    everyone,
+    rows: Object.entries(over)
+      .filter(([subj]) => subj.startsWith('r:') || subj.startsWith('u:'))
+      .map(([subject, o]) => ({ subject, allow: o.allow, deny: o.deny, merge: false })),
+    canonical: bits => fromWire(bits, rules),
+    mine: maskIn(over, channel),
+    also: cat ? v.channels.filter(c => c.cat === cat.id && c.sync).map(c => maskIn(c.over, c)) : [],
+    exempt: rules < RULES_NEXT || own,
+    subjectOk: subj => mayWriteRow(v, subj),
+    lock: subj => (mayWriteRow(v, subj) ? null : ROLE_LOCKED),
+    merges: false,
+    write: (subj, o) => write(subj, o),
+    clear: subj => write(subj, { allow: 0, deny: 0 }),
+    everyoneBits: v.everyone ?? 0,
+    roleBits: Object.fromEntries((v.roles ?? []).map(r => [`r:${r.id}`, r.bits])),
+    memberRoles: subj =>
+      (v.members.find(m => `u:${m.ik}` === subj)?.roles ?? []).map(r => `r:${r}`),
+    memberWho: subj =>
+      v.members.find(m => `u:${m.ik}` === subj)?.owner ? { kind: 'owner' } : undefined,
+    restrictView: channel?.restrict_view === true,
+    restrictSend: channel?.restrict_send === true,
+  }
+  const listed = (subj: string) => src.rows.some(r => r.subject === subj)
+  const label = (subj: string) => subjectText(identity)(streamer, v, subj, me, maskRole, mask)
   const people = v.members
     .filter(m => m.m === 'join' && m.below && !m.owner && !listed(`u:${m.ik}`))
     .sort((a, b) => a.name.localeCompare(b.name))
+  const restricted = !!channel?.restrict_view || (!voice && !!channel?.restrict_send)
   const toggle = (key: RestrictKey) =>
     channel &&
     void p2pServer.editChannel(
       v.id,
-      c.id,
+      id,
       key === 'restrict_view'
-        ? { restrict_view: !c.restrict_view }
-        : { restrict_send: !c.restrict_send }
+        ? { restrict_view: !channel.restrict_view }
+        : { restrict_send: !channel.restrict_send }
     )
+  const category = channel && v.categories.find(x => x.id === channel.cat)
+  const syncNow = async () => {
+    if (!channel || !category) return
+    const widens = await p2pServer.syncWidens(v.id, id)
+    if (widens === null) return
+    const go = () => void p2pServer.syncChannel(v.id, id)
+    if (!widens.length) return go()
+    acct.store.getState().askConfirm({
+      title: 'Sync Permissions',
+      body: syncConfirmText(
+        category.name,
+        `#${channel.name}`,
+        subjectNames(widens, subj => subjectName(v, subj, mask, streamer))
+      ),
+      confirm: 'Sync',
+      action: go,
+    })
+  }
+  const synced = cat ? v.channels.filter(c => c.cat === cat.id && c.sync).length : 0
   return (
-    <div data-p2p-channel-access className="space-y-2 rounded-xl bg-surface-container-low p-2">
-      {channel ? (
-        <>
-          <RestrictionToggles nobody={NOBODY} value={c} onToggle={toggle} send={!voice} />
-          <p className="pt-1 text-xs font-medium text-on-surface-variant">
-            {allowListTitle(restricted)}
-          </p>
-          {rows.length === 0 && (
-            <Note>{emptyAllowText(!!c.restrict_view, !voice && !!c.restrict_send, NOBODY)}</Note>
-          )}
-        </>
-      ) : (
-        <Note>These rules reach the channels synced with this category.</Note>
-      )}
-      {rows.map(([subj, o]) => {
-        const f = overFlags(o)
-        const off = !mayWrite(v, subj)
-        const set = (view: boolean, send: boolean) => write(subj, overBits(view, send))
-        const name = subjectText(identity)(streamer, v, subj, me, maskRole, mask)
-        return (
-          <div
-            key={subj}
-            data-p2p-over={subj}
-            title={off ? ROLE_LOCKED : undefined}
-            className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${off ? 'opacity-60' : ''}`}
-          >
-            <SubjectName v={v} subj={subj} />
-            <label className="flex items-center gap-1 text-xs">
-              <input
-                type="checkbox"
-                checked={f.view}
-                disabled={off}
-                onChange={() => set(!f.view, f.send)}
-                className="accent-primary"
-              />
-              View
-            </label>
-            {!voice && (
-              <label className="flex items-center gap-1 text-xs">
-                <input
-                  type="checkbox"
-                  checked={f.send}
-                  disabled={off}
-                  onChange={() => set(f.view, !f.send)}
-                  className="accent-primary"
+    <div data-p2p-channel-access className="space-y-2">
+      <RuleEditor
+        src={src}
+        label={label}
+        render={subj => <SubjectName v={v} subj={subj} />}
+        roleOrder={v.roles.map(r => `r:${r.id}`)}
+        addable={[
+          ...(mayWriteRow(v, everyone) ? [{ subject: everyone, label: '@everyone' }] : []),
+          ...v.roles
+            .filter(r => r.below)
+            .map(r => ({ subject: `r:${r.id}`, label: maskRole(r.name) })),
+        ]}
+        memberPicker={pick =>
+          people.length > 0 && (
+            <div className="flex w-full flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setPicking(p => !p)}
+                aria-expanded={picking}
+                className={`${textBtn} self-start`}
+              >
+                Add member
+              </button>
+              {picking && (
+                <MemberPicker
+                  people={people}
+                  onPick={m => {
+                    pick(`u:${m.ik}`)
+                    setPicking(false)
+                  }}
                 />
-                Send
-              </label>
+              )}
+            </div>
+          )
+        }
+        empty={
+          channel
+            ? emptyAllowText(!!channel.restrict_view, !voice && !!channel.restrict_send, NOBODY)
+            : undefined
+        }
+      >
+        {channel ? (
+          <>
+            {category && (
+              <div
+                data-p2p-sync
+                className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant"
+              >
+                <span className="min-w-0 flex-1">
+                  {channel.sync
+                    ? `Synced with ${category.name}. Changing a rule here stops it.`
+                    : `Not synced with ${category.name}.`}
+                </span>
+                {!channel.sync && (
+                  <button type="button" onClick={() => void syncNow()} className={textBtn}>
+                    Sync now
+                  </button>
+                )}
+              </div>
             )}
-            <button
-              onClick={() => write(subj, { allow: 0, deny: 0 })}
-              disabled={off}
-              aria-label={`Remove ${name}`}
-              title={`Remove ${name}`}
-              className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-error disabled:pointer-events-none"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )
-      })}
-      <div className="flex flex-wrap gap-2">
-        {roles.length > 0 && (
-          <span className="flex min-w-0 flex-1 gap-2">
-            <select
-              value={role}
-              onChange={e => setRole(e.target.value)}
-              title="Add role"
-              aria-label="Add role"
-              className={fieldCls}
-            >
-              <option value="">Add role…</option>
-              {roles.map(r => (
-                <option key={r.id} value={`r:${r.id}`}>
-                  {maskRole(r.name)}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => {
-                if (!role || listed(role)) return
-                allow(role)
-                setRole('')
-              }}
-              className={textBtn}
-            >
-              Add
-            </button>
-          </span>
+            <RestrictionToggles nobody={NOBODY} value={channel} onToggle={toggle} send={!voice} />
+            <p className="pt-1 text-xs font-medium text-on-surface-variant">
+              {allowListTitle(restricted)}
+            </p>
+          </>
+        ) : (
+          <Note>
+            {synced === 1
+              ? 'Applies to 1 synced channel.'
+              : `Applies to ${synced} synced channels.`}
+          </Note>
         )}
-        {people.length > 0 && (
-          <button onClick={() => setPicking(p => !p)} aria-expanded={picking} className={textBtn}>
-            Add member
-          </button>
-        )}
-      </div>
-      {picking && people.length > 0 && (
-        <MemberPicker
-          people={people}
-          onPick={m => {
-            allow(`u:${m.ik}`)
-            setPicking(false)
-          }}
-        />
-      )}
+      </RuleEditor>
       {channel && !voice && (
         <SlowmodeField
-          current={c.slow ?? 0}
-          onApply={n => void p2pServer.editChannel(v.id, c.id, { slow: n })}
+          current={channel.slow ?? 0}
+          onApply={n => void p2pServer.editChannel(v.id, id, { slow: n })}
         />
       )}
     </div>
+  )
+}
+
+// A channel's or category's permissions as a dialog, from its menu.
+function PermsDialogBody({ room, ch, cat }: { room: string; ch?: string; cat?: string }) {
+  const identity = useP2pApp()!
+  const v = useP2p(s => s.servers[room])
+  const c = ch ? v?.channels.find(x => x.id === ch) : undefined
+  const g = cat ? v?.categories.find(x => x.id === cat) : undefined
+  if (!v || (!c && !g)) return null
+  const title = c
+    ? `${c.kind === 'voice' ? c.name : `#${c.name}`} permissions`
+    : `${g!.name} permissions`
+  return (
+    <Dialog actor={<PeerActorTag header />} full title={title} onClose={identity.p2p.closeDialog}>
+      <ChannelAccess v={v} {...(c ? { c } : { cat: g })} />
+    </Dialog>
   )
 }
 
@@ -666,3 +820,4 @@ export const RolesTab = withP2pIdentity(RolesTabBody)
 export const MemberCard = withP2pIdentity(MemberCardBody)
 export const MemberPicker = withP2pIdentity(MemberPickerBody)
 export const ChannelAccess = withP2pIdentity(ChannelAccessBody)
+export const PermsDialog = withP2pIdentity(PermsDialogBody)

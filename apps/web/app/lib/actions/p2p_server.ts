@@ -506,6 +506,17 @@ export const peerServer = identityActions(identity => {
       },
     },
     {
+      id: 'p2p_channel_permissions',
+      title: 'Permissions',
+      ...onChannel,
+      order: 302,
+      available: ctx => managed(ctx) !== null,
+      run: ctx => {
+        const t = managed(ctx)
+        if (t) identity().p2p.openDialog({ kind: 'perms', room: t.v.id, ch: t.ch.id })
+      },
+    },
+    {
       id: 'p2p_channel_delete',
       title: 'Delete Channel',
       danger: true,
@@ -906,7 +917,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => managedCategory(ctx) !== null,
       run: ctx => {
         const t = managedCategory(ctx)
-        if (t) identity().p2p.openDialog({ kind: 'server_settings', room: t.v.id, tab: 'channels' })
+        if (t) identity().p2p.openDialog({ kind: 'perms', room: t.v.id, cat: t.cat.id })
       },
     },
     {

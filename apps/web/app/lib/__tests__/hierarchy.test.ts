@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { STAFF, memberRank, outranks, outranksKnown, roleRank, stepRole } from '../hierarchy'
+import {
+  STAFF,
+  droppedOrder,
+  memberRank,
+  outranks,
+  outranksKnown,
+  roleRank,
+  stepRole,
+} from '../hierarchy'
 import {
   canChangeRole,
   canModerate,
@@ -154,6 +162,27 @@ describe('moving a role one step', () => {
               step,
               next,
             ])
+        }
+    }
+  })
+
+  test('a dragged role lands among the roles you may move; the others stay', () => {
+    const order = [1, 2, 3, 4, 5]
+    expect(droppedOrder(order, [2, 3, 4, 5], 5, 0)).toEqual([1, 5, 2, 3, 4])
+    expect(droppedOrder(order, [2, 4, 5], 2, 2)).toEqual([1, 4, 3, 5, 2])
+    expect(droppedOrder(order, [2, 4, 5], 2, 0)).toBeNull()
+    expect(droppedOrder(order, [2, 4], 1, 0)).toBeNull()
+  })
+
+  test('every drop keeps the roles you may not move where the server keeps them', async () => {
+    await loadPerms()
+    const order = [5, 4, 3, 2, 1]
+    for (let set = 0; set < 32; set++) {
+      const movable = order.filter((_, i) => (set & (1 << i)) !== 0)
+      for (const id of movable)
+        for (let index = 0; index < movable.length; index++) {
+          const next = droppedOrder(order, movable, id, index)
+          if (next) expect(reorder(order, next, movable)).toEqual(next)
         }
     }
   })

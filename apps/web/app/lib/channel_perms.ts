@@ -1,12 +1,5 @@
-import { hasBit, maskAnd, maskNot, maskOr } from './perms'
-import {
-  ChannelPermBit,
-  Perm,
-  type Channel,
-  type ChannelPerm,
-  type ChannelPermInput,
-  type ServerDetail,
-} from './types'
+import { hasBit, maskOr } from './perms'
+import { ChannelPermBit, Perm, type Channel, type ServerDetail } from './types'
 
 // A channel as an event or an update answer carries it has no `my_perms`: what you hold there
 // only comes with the server's details, so the known value stays until they load again.
@@ -18,35 +11,6 @@ export const keepMyPerms = (known: Channel | undefined, next: Channel): Channel 
 // `channels` with `next` in place of the channel it updates.
 export const withChannel = (channels: Channel[], next: Channel): Channel[] =>
   channels.map(c => (c.id === next.id ? keepMyPerms(c, next) : c))
-
-export type RuleFlag = 'can_view' | 'can_send' | 'can_read_history'
-
-// A rule as listed with one flag turned over. It keeps the masks and mode it was listed with, so
-// the server changes only that flag's permissions and refuses it if the rule changed meanwhile.
-export const toggledRule = (perm: ChannelPerm, flag: RuleFlag): ChannelPermInput => ({
-  ...perm,
-  [flag]: !perm[flag],
-})
-
-// The masks of a rule with one flag set: on allows the flag's permissions and stops denying
-// them, off denies them and stops allowing them. Every other bit stays.
-export const flaggedMasks = (
-  rule: { allow: number; deny: number },
-  flag: RuleFlag,
-  on: boolean
-): { allow: number; deny: number } => {
-  const group = maskOf(
-    flag === 'can_view'
-      ? [ChannelPermBit.ViewChannels]
-      : flag === 'can_read_history'
-        ? [ChannelPermBit.ReadHistory]
-        : SEND_BITS
-  )
-  const keep = (mask: number) => maskAnd(mask, maskNot(group))
-  return on
-    ? { allow: maskOr(rule.allow, group), deny: keep(rule.deny) }
-    : { allow: keep(rule.allow), deny: maskOr(rule.deny, group) }
-}
 
 // The composer's answer to a first thread reply without Start threads.
 export const NO_THREADS_TEXT = 'You do not have permission to start threads in this channel.'

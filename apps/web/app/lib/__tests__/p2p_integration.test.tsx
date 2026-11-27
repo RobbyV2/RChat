@@ -164,6 +164,7 @@ const contact = (ik: string, name: string, state: Contact['state'] = 'mutual'): 
 
 const server = (over: Partial<ServerView> = {}): ServerView => ({
   id: SRV,
+  rules: 4,
   name: 'Book club',
   color: null,
   about: NO_ABOUT,

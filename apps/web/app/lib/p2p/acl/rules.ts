@@ -596,17 +596,42 @@ function maskIn(
   rules: number
 ): number {
   const c = chan.channel(ch)
-  const row = (o: AclContent | undefined) =>
+  return maskUnder(
+    permsQ(F, P),
+    F.owners.has(P),
+    {
+      everyone: chan.overwrite(ch, `r:${EVERYONE}`),
+      roles: [...(F.holds.get(P) ?? [])].flatMap(R => chan.overwrite(ch, `r:${R}`) ?? []),
+      member: chan.overwrite(ch, `u:${P}`),
+    },
+    { restrictView: c?.restrict_view === true, restrictSend: c?.restrict_send === true },
+    rules
+  )
+}
+
+type WireRow = { allow?: number; deny?: number } | undefined
+
+// What a member holding `bits` (wire; an owner holds every bit) has in a channel or category
+// under its rules for @everyone, the member's roles and the member (wire rows), as admission
+// reads it and as the editors check a rule change before it is made.
+export const maskUnder = (
+  bits: number,
+  owner: boolean,
+  rows: { everyone: WireRow; roles: WireRow[]; member: WireRow },
+  place: { restrictView: boolean; restrictSend: boolean },
+  rules: number
+): number => {
+  const row = (o: WireRow) =>
     o && { allow: fromWire(o.allow ?? 0, rules), deny: fromWire(o.deny ?? 0, rules) }
   return channelMask(
-    F.owners.has(P) ? { kind: 'owner' } : { kind: 'member', roles: fromWire(permsQ(F, P), rules) },
+    owner ? { kind: 'owner' } : { kind: 'member', roles: fromWire(bits, rules) },
     0,
     {
-      everyone: row(chan.overwrite(ch, `r:${EVERYONE}`)),
-      restrictView: c?.restrict_view === true,
-      restrictSend: c?.restrict_send === true,
-      roles: [...(F.holds.get(P) ?? [])].flatMap(R => row(chan.overwrite(ch, `r:${R}`)) ?? []),
-      member: row(chan.overwrite(ch, `u:${P}`)),
+      everyone: row(rows.everyone),
+      restrictView: place.restrictView,
+      restrictSend: place.restrictSend,
+      roles: rows.roles.flatMap(o => row(o) ?? []),
+      member: row(rows.member),
     },
     rules
   )

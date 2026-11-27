@@ -947,6 +947,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'deleteRole'
     | 'setRoleOrder'
     | 'setRoleDisplay'
+    | 'setEveryonePerms'
+    | 'confirmRoleOrder'
     | 'assignRole'
     | 'unassignRole'
     | 'setChannelPerm'
@@ -1227,6 +1229,10 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         if (order === null) await api.followRoleOrder(server, version)
         else await api.setRoleDisplay(server, order, version)
       }),
+    setEveryonePerms: (server, perms, mask) =>
+      act(async () => void (await api.setEveryonePerms(server, perms, mask))),
+    confirmRoleOrder: (server, version) =>
+      act(async () => void (await api.confirmRoleOrder(server, version))),
     assignRole: (server, id, username) =>
       act(async () => void (await api.assignRole(server, id, username))),
     unassignRole: (server, id, username) =>

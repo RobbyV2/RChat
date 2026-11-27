@@ -37,7 +37,7 @@ import {
 import { fullTimeOf, relativeTime } from '../lib/timestamps'
 import type { AuditEntry, UserRef } from '../lib/types'
 import { nameWithUsername } from '../lib/display_name'
-import { useMemberSearch } from './server_settings'
+import { useMemberSearch } from './member_search'
 import { UserAvatar } from './user_avatar'
 import { Dialog, Masked, Sentinel, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'

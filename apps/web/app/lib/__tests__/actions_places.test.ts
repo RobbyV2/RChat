@@ -406,6 +406,7 @@ test('a text and a voice channel, as a member and as a manager', () => {
     'Enable text only',
     'Copy Channel ID',
     'Rename Channel',
+    'Permissions',
     'Delete Channel',
   ])
   expect(labels(channelAt(talk))).toEqual([
@@ -413,6 +414,7 @@ test('a text and a voice channel, as a member and as a manager', () => {
     'Mark sensitive for everyone',
     'Copy Channel ID',
     'Rename Channel',
+    'Permissions',
     'Delete Channel',
   ])
   expect(row(channelAt(talk), 'Delete Channel')?.danger).toBe(true)
@@ -438,6 +440,7 @@ test('channel rows: mark read, copy, rename and delete', async () => {
     ['Enable text only', [['setChannelTextOnly', 's', 1, true]]],
     ['Copy Channel ID', [['copy', '1']]],
     ['Rename Channel', []],
+    ['Permissions', [['openDialog', { kind: 'perms', server: 's', channel: 1 }]]],
     [
       'Delete Channel',
       [
@@ -486,6 +489,7 @@ test('a channel row acts on its own channel, not the open one', async () => {
     ['Enable text only', [['setChannelTextOnly', 's', 2, true]]],
     ['Copy Channel ID', [['copy', '2']]],
     ['Rename Channel', []],
+    ['Permissions', [['openDialog', { kind: 'perms', server: 's', channel: 2 }]]],
     ['Sync Permissions', [['syncChannelPerms', 's', 2]]],
     [
       'Delete Channel',
@@ -528,7 +532,7 @@ test('a category, as a member and as a manager', async () => {
   expect(await effects(items(categoryAt))).toEqual([
     ['Create channel here', [['setCategoriesCollapsed', 's', [7], false]]],
     ['Rename category', [['openDialog', { kind: 'category', server: 's', id: 7 }]]],
-    ['Permissions', [['openDialog', { kind: 'server_settings', server: 's' }]]],
+    ['Permissions', [['openDialog', { kind: 'perms', server: 's', category: 7 }]]],
     [
       'Delete category',
       [

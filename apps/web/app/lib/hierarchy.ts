@@ -74,3 +74,18 @@ export const stepRole = <Id>(
   next[to] = id
   return next
 }
+
+// The role order with `id` dropped at `index` of the roles you may move (without it): the others
+// keep their places.
+export const droppedOrder = <Id>(
+  order: readonly Id[],
+  movable: readonly Id[],
+  id: Id,
+  index: number
+): Id[] | null => {
+  if (!movable.includes(id)) return null
+  const rest = order.filter(r => r !== id && movable.includes(r))
+  const moved = [...rest.slice(0, index), id, ...rest.slice(index)]
+  const next = order.map(r => (movable.includes(r) ? moved.shift()! : r))
+  return next.every((r, i) => r === order[i]) ? null : next
+}

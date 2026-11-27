@@ -1,5 +1,4 @@
 import { cmp, EVERYONE, P, type Rank } from './acl/rules'
-import type { OverSum } from './acl/summary'
 import { actParts, roleMoveWarns } from './flows'
 import { type MemberView, type RoleView, type ServerView } from './server'
 import { LOCAL, type Local } from './limits'
@@ -72,21 +71,6 @@ export const EVERYONE_ITEMS = [
   ...PERM_ITEMS,
   { label: 'View channels', bit: P.ViewChannel },
   { label: 'Send messages', bit: P.SendMessages },
-]
-
-// The permissions of a room, with those only its rules read: a role's, or @everyone's.
-export const permItems = (v: Pick<ServerView, 'timeouts'>, everyone = false) => [
-  ...PERM_ITEMS,
-  ...(v.timeouts
-    ? [
-        {
-          label: 'Timeout members',
-          bit: P.TimeoutMembers,
-          hint: 'Stop members from chatting for a while',
-        },
-      ]
-    : []),
-  ...(everyone ? EVERYONE_ITEMS.slice(PERM_ITEMS.length) : []),
 ]
 
 export { ROLE_NOT_BELOW as ROLE_LOCKED } from '../rules'
@@ -302,18 +286,3 @@ export const fromHex = (h: string): number | null => {
   const m = /^#([0-9a-f]{6})$/i.exec(h)
   return m ? parseInt(m[1], 16) : null
 }
-
-// A channel overwrite as an allow-list row: may they view and send there.
-export const overFlags = (o: OverSum) => ({
-  view: (o.allow & P.ViewChannel) !== 0,
-  send: (o.allow & P.SendMessages) !== 0,
-})
-
-// A row's flags as an overwrite: what's ticked is allowed, what isn't is denied.
-export const overBits = (view: boolean, send: boolean): OverSum => ({
-  allow: (view ? P.ViewChannel : 0) | (send ? P.SendMessages : 0),
-  deny: (view ? 0 : P.ViewChannel) | (send ? 0 : P.SendMessages),
-})
-
-// A new row allows both.
-export const ALLOW_BOTH = overBits(true, true)

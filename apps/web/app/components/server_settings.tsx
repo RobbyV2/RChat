@@ -14,6 +14,7 @@ import {
 } from 'react'
 import {
   Ban,
+  GripVertical,
   Hash,
   IdCard,
   KeyRound,
@@ -30,15 +31,24 @@ import {
   Users,
   Volume2,
   Webhook,
-  X,
   type LucideIcon,
 } from 'lucide-react'
-import type { Page } from '../lib/lists'
 import { registerAppActions } from '../lib/actions'
-import { openActionMenu, openChoiceMenu } from '../lib/actions/menu'
+import { itemFor, openActionMenu, openChoiceMenu } from '../lib/actions/menu'
+import { ctxFor } from '../lib/actions/ctx'
+import type { Target } from '../lib/actions/types'
+import { baseBits, maskXor } from '../lib/perms'
+import { droppedOrder } from '../lib/hierarchy'
+import { HOSTED } from '../lib/perms'
+import { NO_GRANT, bitsBlock, everyoneItems, permItems } from '../lib/perm_source'
+import { PermGroups } from './perm_groups'
+import { FollowButton, RoleTabs, ShownRow, keyMoves, type RolesTab } from './role_order_tools'
+import { dragScope } from './drag'
+import { usePermissionRules } from './use_permission_rules'
 import {
   changeableRoles,
   errorText,
+  memberState,
   myRank,
   serverAdminPerms,
   useStore,
@@ -56,11 +66,8 @@ import {
   canRevoke,
   passwordDone,
   passwordPrompt,
-  EVERYONE_SUBJECT,
-  ROLE_DENY_HINT,
   movableRoles,
   roleDeleteBlock,
-  roleDenyEscapes,
   roleEditBlock,
   rolePerms,
 } from '../lib/rules'
@@ -70,15 +77,11 @@ import { goingPublic, protectedDetail, publicDetail } from '../lib/joining'
 import { readableNow, type PublicRead } from '../lib/public_reading'
 import { parseMembersVisible } from '../lib/profile_choice'
 import { enterKey } from '../lib/keys'
-import { allowListTitle, emptyAllowText } from '../lib/channel_access'
-import { flaggedMasks, toggledRule, type RuleFlag } from '../lib/channel_perms'
 import { hasBit } from '../lib/perms'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type {
   Category,
   Channel,
-  ChannelPerm,
-  ChannelPermInput,
   ConfirmChoice,
   Member,
   Role,
@@ -90,7 +93,6 @@ import { longPress } from './context_menu'
 import {
   ColorSwatch,
   PermChecks,
-  RestrictionToggles,
   RoleCreateForm,
   RoleNameForm,
   SlowmodeField,
@@ -98,11 +100,12 @@ import {
 import { GuestParticipation, ServerAccessSection, passwordName } from './server_access'
 import { HostedMembers, MEMBER_SEARCH_PERMS } from './server_members'
 import { WidgetSettings } from './widget_settings'
+import { HostedRules } from './perm_dialog'
+import { MemberSearchField, useMemberSearch } from './member_search'
 import { ColorField } from './color_field'
 import { AboutEditor } from './server_about'
 import { hostedAbout, hostedAboutPatch } from '../lib/server_about'
 import { ServerHeader } from './server_header'
-import { usePermissionRules } from './use_permission_rules'
 import { ServerSystemMessages } from './system_messages'
 import { ProfilesModeField } from './server_profile_dialog'
 import { NameWithUsername } from './display_name'
@@ -134,7 +137,6 @@ import {
 } from './ui'
 import { LabelText } from './instance_badge'
 import { endsText } from '../lib/durations'
-import { staffChange, staffViewChannel } from '../lib/staff_view'
 import { SettingsPage, type PageSection } from './settings_page'
 import {
   SERVER_SECTION_LABELS,
@@ -142,168 +144,6 @@ import {
   serverSettingsSections,
   type ServerSettingsSection,
 } from '../lib/server_settings_sections'
-
-const SEARCH_DEBOUNCE = 250
-const PICKER_HITS = 8
-const PICKER_PAGES = 4
-
-interface MemberSearch {
-  list: Member[]
-  next: string | null
-  loading: boolean
-}
-
-export function useMemberSearch(server: string, q: string, admins = false, enabled = true) {
-  const {
-    api,
-    lifetime: { inSession },
-  } = useAccount()
-  const needle = q.trim()
-  const active = enabled && (needle !== '' || admins)
-  const [state, setState] = useState<MemberSearch>({ list: [], next: null, loading: false })
-  const [tick, setTick] = useState(0)
-  const epoch = useRef(0)
-  const setError = useStore(s => s.setError)
-
-  const fetchFrom = useCallback(
-    async (cursor: string | null, mine: number) => {
-      const showError = inSession(setError)
-      setState(s => ({ ...s, loading: true }))
-      try {
-        const page = await api.listMembers(server, cursor, {
-          q: needle || undefined,
-          admins,
-        })
-        if (epoch.current !== mine) return
-        setState(s => {
-          const base = cursor === null ? [] : s.list
-          const seen = new Set(base.map(m => m.username))
-          return {
-            list: [...base, ...page.items.filter(m => !seen.has(m.username))],
-            next: page.next,
-            loading: false,
-          }
-        })
-      } catch (e) {
-        if (epoch.current !== mine) return
-        setState(s => ({ ...s, loading: false }))
-        showError(errorText(e))
-      }
-    },
-    [server, needle, admins, setError]
-  )
-
-  useEffect(() => {
-    const mine = ++epoch.current
-    if (!active) {
-      setState({ list: [], next: null, loading: false })
-      return
-    }
-    const t = setTimeout(() => void fetchFrom(null, mine), needle ? SEARCH_DEBOUNCE : 0)
-    return () => clearTimeout(t)
-  }, [active, needle, fetchFrom, tick])
-
-  const more = useCallback(() => {
-    if (state.loading || state.next === null) return
-    void fetchFrom(state.next, epoch.current)
-  }, [state, fetchFrom])
-  const reload = useCallback(() => setTick(t => t + 1), [])
-  return {
-    active,
-    list: state.list,
-    loading: state.loading,
-    more,
-    hasMore: state.next !== null,
-    reload,
-  }
-}
-
-export function MemberSearchField({
-  value,
-  onChange,
-  placeholder = 'Search members',
-}: {
-  value: string
-  onChange: (v: string) => void
-  placeholder?: string
-}) {
-  return (
-    <div className="mb-2 flex">
-      <input
-        type="search"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className={fieldCls}
-      />
-    </div>
-  )
-}
-
-function MemberPicker({
-  server,
-  onPick,
-  exclude,
-}: {
-  server: string
-  onPick: (m: Member) => void
-  exclude?: (m: Member) => boolean
-}) {
-  const [q, setQ] = useState('')
-  const found = useMemberSearch(server, q)
-  const matching = found.list.filter(m => !exclude?.(m))
-  const hits = matching.slice(0, PICKER_HITS)
-  const pages = useRef({ q: '', count: 0 })
-  const { active, loading, hasMore, more } = found
-  useEffect(() => {
-    if (pages.current.q !== q) pages.current = { q, count: 0 }
-    if (!active || loading || !hasMore || matching.length >= PICKER_HITS) return
-    if (pages.current.count >= PICKER_PAGES) return
-    pages.current.count += 1
-    more()
-  }, [q, active, loading, hasMore, more, matching.length])
-  return (
-    <div className="min-w-0 flex-1">
-      <input
-        type="search"
-        value={q}
-        onChange={e => setQ(e.target.value)}
-        placeholder="Add member…"
-        title="Search members to add"
-        className={`${fieldCls} w-full`}
-      />
-      {found.active && (
-        <div className="mt-1 space-y-0.5">
-          {hits.map(m => (
-            <button
-              key={m.username}
-              onClick={() => {
-                onPick(m)
-                setQ('')
-              }}
-              className="flex w-full items-center gap-2 rounded-xl px-2 py-1 text-left hover:bg-surface-container-highest"
-            >
-              <UserAvatar
-                username={m.username}
-                avatarKind={m.avatar_kind}
-                avatarColor={m.avatar_color}
-                size={20}
-              />
-              <span className="streamer min-w-0 flex-1 truncate text-sm">
-                <Masked text={m.display_name} by={m.username} />
-              </span>
-            </button>
-          ))}
-          {!found.loading && hits.length === 0 && (
-            <p className="px-2 py-1 text-xs text-on-surface-variant">
-              {found.hasMore ? 'Keep typing to narrow the search.' : 'No matching members.'}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 
 function LockedNote() {
   return (
@@ -317,6 +157,40 @@ function LockedNote() {
 // Keeps a press on a field of a role row from opening the row's menu.
 const stop = (e: SyntheticEvent) => e.stopPropagation()
 const keepPress = { onPointerDown: stop, onTouchStart: stop, onContextMenu: stop }
+
+// A role row's menu target: its place in the role order and in the display order, and the
+// roles you may move.
+const roleTarget = (
+  acct: ReturnType<typeof useAccount>,
+  server: string,
+  role: Role,
+  roles: Role[],
+  version: number,
+  limit: number | undefined,
+  limits: RoleLimits | undefined,
+  after: () => void
+): Target => {
+  const s = acct.store.getState()
+  const confirmed = s.servers[server]?.roles_order_confirmed === true
+  const movable = movableRoles(roles, limit, limits, myRank(s, server), confirmed)
+  return {
+    kind: 'role',
+    server,
+    role,
+    order: roles.map(r => r.id),
+    display: hostedShown(roles).map(r => r.id),
+    follows: roles.every(r => r.display_position === null || r.display_position === undefined),
+    movable,
+    version,
+    after,
+  }
+}
+
+const roleRun = (acct: ReturnType<typeof useAccount>, id: string, target: Target | null) => {
+  if (!target) return undefined
+  registerAppActions()
+  return itemFor(id, ctxFor(acct.store.getState(), target, 'menu', acct))?.action
+}
 
 function RoleRow({
   server,
@@ -341,25 +215,19 @@ function RoleRow({
   } = acct
   const updateRole = useStore(s => s.updateRole)
   const deleteRole = useStore(s => s.deleteRole)
+  const setRoleOrder = useStore(s => s.setRoleOrder)
+  const [open, setOpen] = useState(false)
   const after = () => refresh?.()
   const confirmed = useStore(s => s.servers[server]?.roles_order_confirmed === true)
+  const target = () =>
+    version === undefined
+      ? null
+      : roleTarget(acct, server, role, roles, version, limit, limits, after)
   const menu = (x: number, y: number) => {
-    if (version === undefined) return
+    const t = target()
+    if (!t) return
     registerAppActions()
-    const rank = myRank(acct.store.getState(), server)
-    const movable = movableRoles(roles, limit, limits, rank, confirmed)
-    const order = roles.map(r => r.id)
-    const display = hostedShown(roles).map(r => r.id)
-    const follows = roles.every(
-      r => r.display_position === null || r.display_position === undefined
-    )
-    openActionMenu(
-      x,
-      y,
-      { kind: 'role', server, role, order, display, follows, movable, version, after },
-      undefined,
-      acct
-    )
+    openActionMenu(x, y, t, undefined, acct)
   }
   const locked = useStore(s =>
     limit === undefined
@@ -371,11 +239,48 @@ function RoleRow({
       ? null
       : roleDeleteBlock(limit, false, role, limits, myRank(s, server), confirmed)
   )
+  const movable = useStore(
+    s =>
+      version !== undefined &&
+      movableRoles(roles, limit, limits, myRank(s, server), confirmed).includes(role.id)
+  )
   const noMention =
     !role.mentionable && limit !== undefined && !hasPerm(limit, Perm.MentionEveryone)
+  const press = movable
+    ? longPress(menu, {
+        group: 'roles',
+        key: String(role.id),
+        zones: z => z === 'roles',
+        onDrop: ({ index }) => {
+          const t = target()
+          if (!t || t.kind !== 'role') return
+          const next = droppedOrder(t.order, t.movable, role.id, index)
+          if (next) void setRoleOrder(server, next, t.version).then(inSession(after))
+        },
+      })
+    : longPress(menu)
   return (
-    <div {...longPress(menu)} className="space-y-1.5 rounded-xl bg-surface-container p-2">
+    <div
+      {...press}
+      data-drag-box
+      data-role={role.name}
+      aria-label={role.name}
+      {...keyMoves(
+        () => roleRun(acct, 'role_up', target()),
+        () => roleRun(acct, 'role_down', target())
+      )}
+      className="space-y-1.5 rounded-xl bg-surface-container p-2 outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
       <div className="flex items-center gap-2">
+        {movable && (
+          <span
+            title="Drag to reorder"
+            aria-hidden
+            className="flex shrink-0 cursor-grab text-on-surface-variant"
+          >
+            <GripVertical size={16} />
+          </span>
+        )}
         <span {...keepPress} className="flex min-w-0 flex-1 items-center gap-2">
           <ColorSwatch
             initial={role.color}
@@ -400,37 +305,53 @@ function RoleRow({
           </button>
         </span>
       </div>
-      <PermChecks
-        items={PERM_ITEMS}
-        value={role.perms}
-        locked={locked}
-        allowed={
-          limit === undefined ? undefined : v => canSetRoleBits(limit, role.perms, v, confirmed)
-        }
-        onChange={v => void updateRole(server, role.id, { perms: v }).then(inSession(after))}
-      />
-      <label
-        title={
-          locked ??
-          (noMention
-            ? 'Needs the Mention everyone and roles permission'
-            : 'Members without Mention everyone and roles can mention it too')
-        }
-        className={`flex items-center gap-1.5 text-sm ${locked || noMention ? 'opacity-60' : ''}`}
-      >
-        <input
-          type="checkbox"
-          checked={!!role.mentionable}
-          disabled={!!locked || noMention}
-          onChange={() =>
-            void updateRole(server, role.id, { mentionable: !role.mentionable }).then(
-              inSession(after)
-            )
+      <div {...keepPress} className="flex flex-wrap items-center gap-2">
+        <label
+          title={
+            locked ??
+            (noMention
+              ? 'Needs the Mention everyone and roles permission'
+              : 'Members without Mention everyone and roles can mention it too')
           }
-          className="accent-primary"
-        />
-        Allow anyone to mention this role
-      </label>
+          className={`flex min-w-0 flex-1 items-center gap-1.5 text-sm ${locked || noMention ? 'opacity-60' : ''}`}
+        >
+          <input
+            type="checkbox"
+            checked={!!role.mentionable}
+            disabled={!!locked || noMention}
+            onChange={() =>
+              void updateRole(server, role.id, { mentionable: !role.mentionable }).then(
+                inSession(after)
+              )
+            }
+            className="accent-primary"
+          />
+          Allow anyone to mention this role
+        </label>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          className={textBtn}
+        >
+          {open ? 'Hide permissions' : 'Permissions'}
+        </button>
+      </div>
+      {open && (
+        <span {...keepPress} className="block">
+          <PermGroups
+            items={permItems(HOSTED)}
+            value={role.perms}
+            locked={locked}
+            blockOf={
+              limit === undefined
+                ? undefined
+                : v => (canSetRoleBits(limit, role.perms, v, confirmed) ? null : NO_GRANT)
+            }
+            onChange={v => void updateRole(server, role.id, { perms: v }).then(inSession(after))}
+          />
+        </span>
+      )}
       <span {...keepPress} className="block">
         <RoleLooksFields
           name={role.name}
@@ -454,6 +375,49 @@ function RoleRow({
   )
 }
 
+// What every member holds, last on the Roles page.
+function EveryoneRow({ server, limit }: { server: string; limit?: number }) {
+  const {
+    lifetime: { inSession },
+  } = useAccount()
+  const everyone = useStore(s => s.servers[server]?.everyone_perms)
+  const mine = useStore(s => s.servers[server]?.my_perms)
+  const exempt = useStore(s => {
+    const me = s.me
+    const m = me ? memberState(s, server, me.username) : null
+    return limit === undefined || (m?.is_admin === true && m.perms === 0)
+  })
+  const setEveryonePerms = useStore(s => s.setEveryonePerms)
+  const [open, setOpen] = useState(false)
+  const value = everyone ?? baseBits()
+  return (
+    <div data-role="@everyone" className="space-y-1.5 rounded-xl bg-surface-container p-2">
+      <div className="flex min-h-9 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">@everyone</span>
+        <span className="shrink-0 text-xs text-on-surface-variant">Every member</span>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          className={textBtn}
+        >
+          {open ? 'Hide permissions' : 'Permissions'}
+        </button>
+      </div>
+      {open && (
+        <PermGroups
+          items={everyoneItems(HOSTED)}
+          value={value}
+          blockOf={next => bitsBlock(mine ?? limit ?? 0, exempt, value, next)}
+          onChange={next =>
+            void setEveryonePerms(server, next, maskXor(value, next)).then(inSession(() => {}))
+          }
+        />
+      )}
+    </div>
+  )
+}
+
 export function RolesEditor({
   server,
   roles,
@@ -469,21 +433,96 @@ export function RolesEditor({
   limit?: number
   limits?: RoleLimits
 }) {
+  const acct = useAccount()
+  const ready = usePermissionRules()
+  const [tab, setTab] = useState<RolesTab>('rank')
+  const confirmed = useStore(s => s.servers[server]?.roles_order_confirmed === true)
+  const confirmRoleOrder = useStore(s => s.confirmRoleOrder)
+  const after = () => refresh?.()
+  if (!ready) return null
+  const guarded = version !== undefined && !confirmed
+  const first = roles[0]
+  const target = (r: Role) =>
+    version === undefined ? null : roleTarget(acct, server, r, roles, version, limit, limits, after)
   return (
     <div className="space-y-2">
-      {roles.map(r => (
-        <RoleRow
-          key={r.id}
-          server={server}
-          role={r}
-          roles={roles}
-          version={version}
-          refresh={refresh}
-          limit={limit}
-          limits={limits}
-        />
-      ))}
-      <RoleCreate server={server} refresh={refresh} />
+      {guarded && (
+        <div
+          data-order-notice
+          className="flex flex-wrap items-center gap-2 rounded-xl bg-secondary-container px-3 py-2 text-sm text-on-secondary-container"
+        >
+          <span className="min-w-0 flex-1">
+            Role order now decides who can moderate whom. Check the order, then confirm it.
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              void confirmRoleOrder(server, version).then(acct.lifetime.inSession(after))
+            }
+            className={textBtn}
+          >
+            Confirm
+          </button>
+        </div>
+      )}
+      {version !== undefined && <RoleTabs tab={tab} onTab={setTab} />}
+      {tab === 'rank' ? (
+        <>
+          <div ref={dragScope}>
+            <div data-drop-zone="roles" className="space-y-2">
+              {roles.map(r => (
+                <RoleRow
+                  key={r.id}
+                  server={server}
+                  role={r}
+                  roles={roles}
+                  version={version}
+                  refresh={refresh}
+                  limit={limit}
+                  limits={limits}
+                />
+              ))}
+            </div>
+          </div>
+          {version !== undefined && <EveryoneRow server={server} limit={limit} />}
+          <RoleCreate server={server} refresh={refresh} />
+          {version !== undefined && (
+            <p className="text-xs text-on-surface-variant">
+              Drag a role, or press Alt+Up and Alt+Down on it, to move it.
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          {first && <FollowButton run={roleRun(acct, 'role_show_ranked', target(first))} />}
+          {hostedShown(roles)
+            .flatMap(x => roles.find(r => r.id === x.id) ?? [])
+            .map(r => (
+              <ShownRow
+                key={r.id}
+                name={r.name}
+                swatch={r.color || undefined}
+                up={{
+                  text: `Show ${r.name} higher`,
+                  run: roleRun(acct, 'role_show_up', target(r)),
+                }}
+                down={{
+                  text: `Show ${r.name} lower`,
+                  run: roleRun(acct, 'role_show_down', target(r)),
+                }}
+                menu={longPress((x, y) => {
+                  const t = target(r)
+                  if (!t) return
+                  registerAppActions()
+                  openActionMenu(x, y, t, undefined, acct)
+                })}
+              />
+            ))}
+          <p className="text-xs text-on-surface-variant">
+            The member list shows roles in this order. Role order still decides rank.
+          </p>
+        </>
+      )}
     </div>
   )
 }
@@ -502,375 +541,13 @@ function RoleCreate({ server, refresh }: { server: string; refresh?: () => void 
   )
 }
 
-function ChannelPermsEditor({
-  channel,
-  server,
-  roles,
-  refresh,
-}: {
-  channel: Channel
-  server: string
-  roles: Role[]
-  refresh?: () => void
-}) {
-  const {
-    api,
-    lifetime: { inSession },
-  } = useAccount()
-  const channelId = channel.id
-  const setChannelPerm = useStore(s => s.setChannelPerm)
-  const clearChannelPerm = useStore(s => s.clearChannelPerm)
-  const setChannelRestrict = useStore(s => s.setChannelRestrict)
-  const setError = useStore(s => s.setError)
-  const askStaffView = useStore(s => s.askStaffView)
-  const staffOpen = useStore(s => s.staffOpen.includes(channelId))
-  const me = useStore(s => s.me?.username ?? null)
-  const everyone = useStore(s => s.servers[server]?.everyone_perms)
-  const categories = useStore(s => s.servers[server]?.categories)
-  const syncChannelPerms = useStore(s => s.syncChannelPerms)
-  const rulesLoaded = usePermissionRules()
-  const [rows, setRows] = useState<ChannelPerm[]>([])
-  const [shut, setShut] = useState(false)
-  const [subject, setSubject] = useState('')
-
-  const reload = useCallback(async () => {
-    const showError = inSession(setError)
-    const ask = inSession(askStaffView)
-    try {
-      const all: ChannelPerm[] = []
-      let cursor: string | null = null
-      do {
-        const page: Page<ChannelPerm> = await api.channelPerms(channelId, cursor)
-        all.push(...page.items)
-        cursor = page.next
-      } while (cursor !== null)
-      setRows(all)
-      setShut(false)
-    } catch (e) {
-      const staff = staffViewChannel(e)
-      if (staff === null) {
-        showError(errorText(e))
-        return
-      }
-      setRows([])
-      setShut(true)
-      ask(staff)
-    }
-  }, [channelId, setError, askStaffView])
-  useEffect(() => {
-    void reload()
-  }, [reload])
-  const opened = useRef(staffOpen)
-  useEffect(() => {
-    const change = staffChange(opened.current, staffOpen)
-    opened.current = staffOpen
-    if (change === 'read') void reload()
-    if (change === 'close') {
-      setRows([])
-      setShut(true)
-    }
-  }, [staffOpen, reload])
-
-  const save = (perm: ChannelPermInput) =>
-    void setChannelPerm(channelId, perm).then(inSession(reload))
-  const allow = (subj: string) =>
-    save({ subject: subj, can_view: true, can_send: true, can_read_history: true })
-  const listed = (subj: string) => rows.some(r => r.subject === subj)
-  const label = (subj: string) =>
-    subj === EVERYONE_SUBJECT
-      ? '@everyone'
-      : subj.startsWith('u:')
-        ? subj.slice(2)
-        : (roles.find(r => `r:${r.id}` === subj)?.name ?? subj)
-  const restricted = !!channel.restrict_view || !!channel.restrict_send
-  const flag = (perm: ChannelPerm, key: RuleFlag, text: string) => (
-    <label className="flex items-center gap-1 text-xs">
-      <input
-        type="checkbox"
-        checked={perm[key]}
-        onChange={() => save(toggledRule(perm, key))}
-        className="accent-primary"
-      />
-      {text}
-    </label>
-  )
-
-  const category = categories?.find(c => c.id === channel.category_id)
-  if (shut)
-    return (
-      <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-xl bg-surface-container-low p-2">
-        <Lock size={14} className="shrink-0 text-on-surface-variant" />
-        <span className="min-w-0 flex-1 text-xs text-on-surface-variant">
-          Confirm to open this channel
-        </span>
-        <button onClick={() => askStaffView(channelId)} className={textBtn}>
-          Open channel
-        </button>
-      </div>
-    )
-
-  return (
-    <div className="mt-1.5 space-y-2 rounded-xl bg-surface-container-low p-2">
-      {category && (
-        <div
-          data-sync
-          className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant"
-        >
-          <span className="min-w-0 flex-1">
-            {channel.perm_sync
-              ? `Synced with ${category.name}. Changing a rule here stops it.`
-              : `Not synced with ${category.name}.`}
-          </span>
-          {!channel.perm_sync && (
-            <button
-              onClick={() =>
-                void syncChannelPerms(server, channelId).then(
-                  inSession(() => {
-                    void reload()
-                    refresh?.()
-                  })
-                )
-              }
-              className={textBtn}
-            >
-              Sync now
-            </button>
-          )}
-        </div>
-      )}
-      <RestrictionToggles
-        nobody="admins"
-        value={channel}
-        send={channel.kind === 'text'}
-        onToggle={key =>
-          void setChannelRestrict(channelId, { [key]: !channel[key] }).then(
-            inSession(() => refresh?.())
-          )
-        }
-      />
-      <p className="pt-1 text-xs font-medium text-on-surface-variant">
-        {allowListTitle(restricted)}
-      </p>
-      {rows.length === 0 && (
-        <p className="text-xs text-on-surface-variant">
-          {emptyAllowText(!!channel.restrict_view, !!channel.restrict_send, 'admins')}
-        </p>
-      )}
-      {rows.map(perm => (
-        <div key={perm.subject} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="streamer min-w-0 flex-1 truncate text-sm">{label(perm.subject)}</span>
-          {flag(perm, 'can_view', 'View')}
-          {channel.kind === 'text' && flag(perm, 'can_send', 'Send')}
-          {channel.kind === 'text' && flag(perm, 'can_read_history', 'History')}
-          <button
-            onClick={() => void clearChannelPerm(channelId, perm.subject).then(inSession(reload))}
-            aria-label={`Remove ${label(perm.subject)}`}
-            title="Remove"
-            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-error"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ))}
-      {rulesLoaded && roleDenyEscapes(channel, rows, everyone) && (
-        <p className="text-xs text-on-surface-variant">{ROLE_DENY_HINT}</p>
-      )}
-      {roles.length > 0 && (
-        <div className="flex gap-2">
-          <select
-            value={subject}
-            onChange={e => setSubject(e.target.value)}
-            title="Add role"
-            className={fieldCls}
-          >
-            <option value="">Add role…</option>
-            {roles
-              .filter(r => !listed(`r:${r.id}`))
-              .map(r => (
-                <option key={r.id} value={`r:${r.id}`}>
-                  {r.name}
-                </option>
-              ))}
-          </select>
-          <button
-            onClick={() => {
-              if (!subject || listed(subject)) return
-              allow(subject)
-              setSubject('')
-            }}
-            className={textBtn}
-          >
-            Add
-          </button>
-        </div>
-      )}
-      <div className="flex items-start gap-2">
-        <MemberPicker
-          server={server}
-          exclude={m => listed(`u:${m.username}`)}
-          onPick={m => allow(`u:${m.username}`)}
-        />
-        {me && !listed(`u:${me}`) && (
-          <button onClick={() => allow(`u:${me}`)} className={`${textBtn} shrink-0`}>
-            Add me
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-const RULE_FLAGS: [RuleFlag, string][] = [
-  ['can_view', 'View'],
-  ['can_send', 'Send'],
-  ['can_read_history', 'History'],
-]
-
-// A category's permission rules: they reach the channels synced with it.
-function CategoryPermsEditor({
-  server,
-  category,
-  roles,
-}: {
-  server: string
-  category: Category
-  roles: Role[]
-}) {
-  const {
-    api,
-    lifetime: { inSession },
-  } = useAccount()
-  const id = category.id
-  const setCategoryPerm = useStore(s => s.setCategoryPerm)
-  const clearCategoryPerm = useStore(s => s.clearCategoryPerm)
-  const setError = useStore(s => s.setError)
-  const me = useStore(s => s.me?.username ?? null)
-  const [rows, setRows] = useState<ChannelPerm[]>([])
-  const [subject, setSubject] = useState('')
-  const reload = useCallback(async () => {
-    const showError = inSession(setError)
-    try {
-      const all: ChannelPerm[] = []
-      let cursor: string | null = null
-      do {
-        const page: Page<ChannelPerm> = await api.categoryPerms(id, cursor)
-        all.push(...page.items)
-        cursor = page.next
-      } while (cursor !== null)
-      setRows(all)
-    } catch (e) {
-      showError(errorText(e))
-    }
-  }, [id, setError])
-  useEffect(() => {
-    void reload()
-  }, [reload])
-  const save = (subj: string, masks: { allow: number; deny: number }) =>
-    void setCategoryPerm(id, { subject: subj, ...masks }).then(inSession(reload))
-  const allow = (subj: string) =>
-    save(
-      subj,
-      RULE_FLAGS.reduce((m, [flag]) => flaggedMasks(m, flag, true), { allow: 0, deny: 0 })
-    )
-  const listed = (subj: string) => rows.some(r => r.subject === subj)
-  const label = (subj: string) =>
-    subj === EVERYONE_SUBJECT
-      ? '@everyone'
-      : subj.startsWith('u:')
-        ? subj.slice(2)
-        : (roles.find(r => `r:${r.id}` === subj)?.name ?? subj)
-  return (
-    <div data-category-perms className="mt-1.5 space-y-2 rounded-xl bg-surface-container-low p-2">
-      <p className="text-xs text-on-surface-variant">
-        These rules reach the channels synced with this category.
-      </p>
-      {rows.map(perm => (
-        <div key={perm.subject} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="streamer min-w-0 flex-1 truncate text-sm">{label(perm.subject)}</span>
-          {RULE_FLAGS.map(([flag, text]) => (
-            <label key={flag} className="flex items-center gap-1 text-xs">
-              <input
-                type="checkbox"
-                checked={perm[flag]}
-                onChange={() =>
-                  save(
-                    perm.subject,
-                    flaggedMasks(
-                      { allow: perm.allow ?? 0, deny: perm.deny ?? 0 },
-                      flag,
-                      !perm[flag]
-                    )
-                  )
-                }
-                className="accent-primary"
-              />
-              {text}
-            </label>
-          ))}
-          <button
-            onClick={() => void clearCategoryPerm(id, perm.subject).then(inSession(reload))}
-            aria-label={`Remove ${label(perm.subject)}`}
-            title={`Remove ${label(perm.subject)}`}
-            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-error"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ))}
-      <div className="flex flex-wrap gap-2">
-        <select
-          value={subject}
-          onChange={e => setSubject(e.target.value)}
-          title="Add role"
-          aria-label="Add role"
-          className={fieldCls}
-        >
-          <option value="">Add role…</option>
-          {!listed(EVERYONE_SUBJECT) && <option value={EVERYONE_SUBJECT}>@everyone</option>}
-          {roles
-            .filter(r => !listed(`r:${r.id}`))
-            .map(r => (
-              <option key={r.id} value={`r:${r.id}`}>
-                {r.name}
-              </option>
-            ))}
-        </select>
-        <button
-          onClick={() => {
-            if (!subject || listed(subject)) return
-            allow(subject)
-            setSubject('')
-          }}
-          className={textBtn}
-        >
-          Add
-        </button>
-      </div>
-      <div className="flex items-start gap-2">
-        <MemberPicker
-          server={server}
-          exclude={m => listed(`u:${m.username}`)}
-          onPick={m => allow(`u:${m.username}`)}
-        />
-        {me && !listed(`u:${me}`) && (
-          <button onClick={() => allow(`u:${me}`)} className={`${textBtn} shrink-0`}>
-            Add me
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
 function CategoryControls({
   server,
   category,
-  roles,
   synced,
 }: {
   server: string
   category: Category
-  roles: Role[]
   synced: number
 }) {
   const [open, setOpen] = useState(false)
@@ -885,7 +562,7 @@ function CategoryControls({
           {open ? 'Hide permissions' : 'Permissions'}
         </button>
       </div>
-      {open && <CategoryPermsEditor server={server} category={category} roles={roles} />}
+      {open && <HostedRules server={server} target={{ category }} />}
     </div>
   )
 }
@@ -935,13 +612,11 @@ function CategoryCreator({ server }: { server: string }) {
 export function ChannelControls({
   server,
   channel,
-  roles,
   refresh,
   lead,
 }: {
   server: string
   channel: Channel
-  roles: Role[]
   refresh?: () => void
   lead?: ReactNode
 }) {
@@ -1017,9 +692,7 @@ export function ChannelControls({
         </button>
       </div>
       {topicOpen && <TopicEditor server={server} channel={channel} refresh={refresh} />}
-      {open && (
-        <ChannelPermsEditor channel={channel} server={server} roles={roles} refresh={refresh} />
-      )}
+      {open && <HostedRules server={server} target={{ channel }} refresh={refresh} />}
     </div>
   )
 }
@@ -1874,12 +1547,11 @@ function Settings({ server, section }: { server: string; section: ServerSettings
             key={cat.id}
             server={server}
             category={cat}
-            roles={detail.roles}
             synced={detail.channels.filter(c => c.category_id === cat.id && c.perm_sync).length}
           />
         ))}
         {detail.channels.map(c => (
-          <ChannelControls key={c.id} server={server} channel={c} roles={detail.roles} />
+          <ChannelControls key={c.id} server={server} channel={c} />
         ))}
       </>
     ),

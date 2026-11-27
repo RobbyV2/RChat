@@ -37,8 +37,7 @@ import {
 import { P } from '../../lib/p2p/state'
 import { fieldMax } from '../../lib/p2p/event_v2'
 import { voiceNotice } from '../../lib/p2p/voice'
-import type { CategoryView, ChannelView, MemberView, ServerView } from '../../lib/p2p/server'
-import { subjectNames, syncConfirmText } from '../../lib/categories'
+import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { fieldCls, filledBtn, Masked, Sentinel, textBtn } from '../ui'
 import { SettingsPage, type PageSection } from '../settings_page'
@@ -52,7 +51,7 @@ import { ChannelAccess, MemberCard, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
 import { banStateText, timedBan } from '../../lib/p2p/ban_expiry'
 import { PeerTimeoutBadge, useNow } from '../timeout_dialog'
-import { hex, nameColor, subjectName } from '../../lib/p2p/roles'
+import { hex, nameColor } from '../../lib/p2p/roles'
 import { openActionMenu } from '../../lib/actions/menu'
 import {
   NO_FILTERS,
@@ -199,23 +198,6 @@ function Channels({ v }: { v: ServerView }) {
   const texts = v.channels.filter(c => c.kind === 'text')
   const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
   const [openCat, setOpenCat] = useState<string | null>(null)
-  const streamer = useStore(s => s.streamer)
-  const syncNow = async (c: ChannelView, cat: CategoryView) => {
-    const widens = await p2pServer.syncWidens(v.id, c.id)
-    if (widens === null) return
-    const go = () => void p2pServer.syncChannel(v.id, c.id)
-    if (!widens.length) return go()
-    ownerAccount.store.getState().askConfirm({
-      title: 'Sync Permissions',
-      body: syncConfirmText(
-        cat.name,
-        `#${c.name}`,
-        subjectNames(widens, subj => subjectName(v, subj, mask, streamer))
-      ),
-      confirm: 'Sync',
-      action: go,
-    })
-  }
   return (
     <div className="flex flex-col gap-3">
       {edit &&
@@ -378,32 +360,7 @@ function Channels({ v }: { v: ServerView }) {
                 onChange={value => void p2pServer.editChannel(v.id, c.id, { text_only: value })}
               />
             )}
-            {edit && open === c.id && (
-              <>
-                {(() => {
-                  const cat = v.categories.find(x => x.id === c.cat)
-                  if (!cat) return null
-                  return (
-                    <div
-                      data-p2p-sync
-                      className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant"
-                    >
-                      <span className="min-w-0 flex-1">
-                        {c.sync
-                          ? `Synced with ${cat.name}. Changing a rule here stops it.`
-                          : `Not synced with ${cat.name}.`}
-                      </span>
-                      {!c.sync && (
-                        <button onClick={() => void syncNow(c, cat)} className={textBtn}>
-                          Sync now
-                        </button>
-                      )}
-                    </div>
-                  )
-                })()}
-                <ChannelAccess v={v} c={c} />
-              </>
-            )}
+            {edit && open === c.id && <ChannelAccess v={v} c={c} />}
           </div>
         )
       })}

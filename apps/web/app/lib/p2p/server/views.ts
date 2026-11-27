@@ -4,6 +4,7 @@ import {
   RULES_VERSION,
   everyoneSees,
   restricts,
+  rulesOf,
   skipsSlowMode,
   tiered,
   timedBans,
@@ -189,6 +190,7 @@ export function serverView(
     ...(me === 'join' && mine?.timeoutUntil !== undefined
       ? { timedOutUntil: mine.timeoutUntil }
       : {}),
+    rules: rulesOf(s.rules),
     name: n?.name ?? r.name ?? 'P2P server',
     color: n?.color ?? null,
     about: p2pAbout(s.about),

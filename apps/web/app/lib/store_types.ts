@@ -164,6 +164,7 @@ export type ActiveDialog =
   | { kind: 'app_preview'; server: string }
   | { kind: 'server_settings'; server: string; section?: ServerSettingsSection }
   | { kind: 'audit_log'; server: string }
+  | { kind: 'perms'; server: string; channel?: number; category?: number }
   | { kind: 'webhooks'; server: string }
   | { kind: 'timeout'; server: string; user: UserRef }
   | { kind: 'server_profile'; server: string }
@@ -778,6 +779,9 @@ export interface RChatState {
   setRoleOrder: (server: string, order: number[], version: number) => Promise<void>
   // `order`: every role id, the one shown highest first; null shows roles in role order.
   setRoleDisplay: (server: string, order: number[] | null, version: number) => Promise<void>
+  // Changes only the bits of `mask` that everyone holds.
+  setEveryonePerms: (server: string, perms: number, mask: number) => Promise<void>
+  confirmRoleOrder: (server: string, version: number) => Promise<void>
   assignRole: (server: string, id: number, username: string) => Promise<void>
   unassignRole: (server: string, id: number, username: string) => Promise<void>
   setChannelPerm: (id: number, perm: ChannelPermInput) => Promise<void>

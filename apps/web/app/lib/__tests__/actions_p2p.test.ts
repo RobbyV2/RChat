@@ -478,12 +478,16 @@ describe("a P2P channel's menu", () => {
       'Mute Channel',
       'Notification settings',
       'Edit Channel',
+      'Permissions',
       'Delete Channel',
       'Copy Channel ID',
     ])
     expect(row(t, 'Delete Channel')?.danger).toBe(true)
     expect(await run(row(t, 'Edit Channel'))).toEqual([
       ['p2p.openDialog', { kind: 'server_settings', room: SRV, tab: 'channels' }],
+    ])
+    expect(await run(row(t, 'Permissions'))).toEqual([
+      ['p2p.openDialog', { kind: 'perms', room: SRV, ch: 'c1' }],
     ])
     expect(await run(row(t, 'Delete Channel'))).toEqual([
       [
@@ -516,7 +520,13 @@ describe("a P2P channel's menu", () => {
     const v = server({ perms: P.ManageChannels })
     const t = onChannel(v, VOICE)
     expect(labels(onChannel(server(), VOICE))).toEqual(['Join Voice', 'Copy Channel ID'])
-    expect(labels(t)).toEqual(['Join Voice', 'Edit Channel', 'Delete Channel', 'Copy Channel ID'])
+    expect(labels(t)).toEqual([
+      'Join Voice',
+      'Edit Channel',
+      'Permissions',
+      'Delete Channel',
+      'Copy Channel ID',
+    ])
     expect(row(t, 'Join Voice')?.icon).toBe(Volume2)
     expect(await run(row(t, 'Join Voice'))).toEqual([['voice.join', SRV, 'v1']])
     expect((await run(row(t, 'Delete Channel')))[0]).toEqual([
@@ -1300,7 +1310,7 @@ describe('categories', () => {
   const onCategory = (v: ServerView): Target => ({ kind: 'p2p_category', v, cat: CAT })
   const IN = { ...TEXT, cat: 'k1', sync: false }
 
-  test('only those who manage channels see the category and sync rows', () => {
+  test('only those who manage channels see the category and sync rows', async () => {
     state()
     const plain = server({ categories: [CAT] })
     expect(labels(onCategory(plain))).toEqual([])
@@ -1315,6 +1325,9 @@ describe('categories', () => {
     expect(labels(onChannel(v, IN)).filter(l => /Category|Sync/.test(l))).toEqual([
       'Move to Category',
       'Sync Permissions',
+    ])
+    expect(await run(row(onCategory(v), 'Permissions'))).toEqual([
+      ['p2p.openDialog', { kind: 'perms', room: SRV, cat: 'k1' }],
     ])
     expect(labels(onChannel(v, { ...IN, sync: true }))).not.toContain('Sync Permissions')
     expect(labels(onChannel(v, { ...IN, cat: null }))).not.toContain('Sync Permissions')

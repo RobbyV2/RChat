@@ -557,6 +557,7 @@ describe('in messages', () => {
     const view = (owner: string) =>
       ({
         id: 'room',
+        rules: 4,
         owner,
         owners: [],
         rank: [0],
@@ -566,6 +567,7 @@ describe('in messages', () => {
         ],
         members: people,
         channels: [],
+        categories: [],
         chans: {},
       }) as unknown as ServerView
     const none = { allow: 0, deny: 0 }

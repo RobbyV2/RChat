@@ -111,6 +111,23 @@ export const channelActions: Action[] = [
     },
   },
   {
+    id: 'channel_permissions',
+    title: 'Permissions',
+    ...onChannel,
+    order: 912,
+    available: ctx => {
+      const at = channelOf(ctx)
+      return at !== null && manages(ctx, at.server)
+    },
+    run: ctx => {
+      const at = channelOf(ctx)
+      if (at)
+        ctx.acct.store
+          .getState()
+          .openDialog({ kind: 'perms', server: at.server, channel: at.channel.id })
+    },
+  },
+  {
     id: 'channel_perm_sync',
     title: 'Sync Permissions',
     subtitle: () => 'With its category',
@@ -210,7 +227,10 @@ export const channelActions: Action[] = [
     },
     run: ctx => {
       const at = categoryOf(ctx)
-      if (at) ctx.acct.store.getState().openDialog({ kind: 'server_settings', server: at.server })
+      if (at)
+        ctx.acct.store
+          .getState()
+          .openDialog({ kind: 'perms', server: at.server, category: at.category.id })
     },
   },
   {

@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import { EVERYONE, P } from '../p2p/acl/rules'
 import {
   reapplyLine,
-  ALLOW_BOTH,
   fromHex,
   mayTakeRole,
   mayWriteRow,
@@ -10,8 +9,6 @@ import {
   memberGroups,
   movesWarn,
   nameColor,
-  overBits,
-  overFlags,
   placeRole,
   slowChanged,
   displayMoves,
@@ -289,21 +286,6 @@ describe('the order roles show in', () => {
     ]
     expect(displayMoves(roles, ['a', 'c', 'b'], r => r.below, 1000)).toBeNull()
     expect(displayMoves(roles, ['a', 'b', 'c'], r => r.below, 1000)).toEqual([])
-  })
-})
-
-describe('channel allow lists', () => {
-  test('a row allows what is ticked and denies the rest', () => {
-    expect(ALLOW_BOTH).toEqual({ allow: P.ViewChannel | P.SendMessages, deny: 0 })
-    expect(overBits(true, false)).toEqual({ allow: P.ViewChannel, deny: P.SendMessages })
-    expect(overBits(false, false)).toEqual({ allow: 0, deny: P.ViewChannel | P.SendMessages })
-    for (const [v, s] of [
-      [true, true],
-      [true, false],
-      [false, true],
-      [false, false],
-    ])
-      expect(overFlags(overBits(v, s))).toEqual({ view: v, send: s })
   })
 })
 

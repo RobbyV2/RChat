@@ -63,6 +63,7 @@ import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
 import { ProfileResetDialog, ServerProfileDialog } from './p2p_server_profile'
 import { ServerSettingsDialog } from './p2p_server_settings'
+import { PermsDialog } from './p2p_server_roles'
 import { ServerInviteRows } from './p2p_server_view'
 import { CoOwnerAsks, LostDeviceDialog, RecoverDialog, TransferAsks } from './p2p_server_flows'
 import {
@@ -996,6 +997,15 @@ function P2pDialogsBody() {
           key={`${dialog.room}\n${dialog.ik}`}
           room={dialog.room}
           ik={dialog.ik}
+        />
+      )
+    case 'perms':
+      return (
+        <PermsDialog
+          key={`${dialog.room}:${dialog.ch ?? dialog.cat}`}
+          room={dialog.room}
+          ch={dialog.ch}
+          cat={dialog.cat}
         />
       )
     case 'p2p_folder':

@@ -40,6 +40,7 @@ import { AdminHost, AdminDialogHost } from '../components/admin/admin_host'
 import ServerSettings, { ConfirmDialog } from '../components/server_settings'
 import AuditLogDialog from '../components/audit_log'
 import WebhooksDialog from '../components/webhooks_dialog'
+import PermsDialog from '../components/perm_dialog'
 import TimeoutDialog from '../components/timeout_dialog'
 import ServerProfileDialog from '../components/server_profile_dialog'
 import BanDialog from '../components/ban_dialog'
@@ -305,6 +306,7 @@ function OverlayLayer() {
       <ServerSettings />
       <AuditLogDialog />
       <WebhooksDialog />
+      <PermsDialog />
       <TimeoutDialog />
       <ServerProfileDialog />
       <BanDialog />

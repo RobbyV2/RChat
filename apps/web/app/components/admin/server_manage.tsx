@@ -11,12 +11,11 @@ import {
   AdminPermsEditor,
   BanList,
   ChannelControls,
-  MemberSearchField,
   RolesEditor,
   ServerAppearance,
   ServerPasswordField,
-  useMemberSearch,
 } from '../server_settings'
+import { MemberSearchField, useMemberSearch } from '../member_search'
 import { Sentinel, sectionCls } from '../ui'
 import { dangerBtn, fieldCls, textBtn } from './touch'
 
@@ -148,7 +147,6 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
             key={c.id}
             server={name}
             channel={c}
-            roles={detail.roles}
             refresh={refresh}
             lead={
               <div className="flex w-full min-w-0 items-center gap-2">
