@@ -447,7 +447,8 @@ describe('runtime instance resolution', () => {
     const said = await quietly(() =>
       rememberInstance('https://a.example', at('https://a.example'), store)
     )
-    expect(said.map(a => a.slice(0, 2))).toEqual([['localStorage write failed', 'rchat_instances']])
+    expect(said.map(a => a[0])).toEqual(['localStorage write failed'])
+    expect(said.flat()).not.toContain('rchat_instances')
   })
 
   test('a local write reports false when storage throws or cannot be reached', async () => {
@@ -461,9 +462,10 @@ describe('runtime instance resolution', () => {
         expect(writeLocal('rchat_theme', null)).toBe(false)
       })
     })
-    expect(said.map(a => a.slice(0, 2))).toEqual(
-      Array.from({ length: 4 }, () => ['localStorage write failed', 'rchat_theme'])
+    expect(said.map(a => a[0])).toEqual(
+      Array.from({ length: 4 }, () => 'localStorage write failed')
     )
+    expect(said.flat()).not.toContain('rchat_theme')
     const store = memory()
     await withGlobal('localStorage', store, () => {
       expect(writeLocal('rchat_theme', 'light')).toBe(true)
