@@ -21,6 +21,7 @@ import { errorText, useStore } from '../../lib/store'
 import type { ServerSummaryLite } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { Button, IconButton, ListRow } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { FieldError, Sentinel, fieldCls } from '../ui'
 import { useControl } from './config_state'
 import { ServerManage } from './server_manage'
@@ -49,13 +50,14 @@ export function ServerPage({ name }: { name: string }) {
   const defaults = useControl('default_servers')
   const kept = builtin && listOf(defaults?.value).includes(name)
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-2 pb-2">
-        <Button onClick={() => openAdmin('servers')} place="-ml-3 hidden md:inline-flex">
+    <Stack gap="sm">
+      <Row gap="sm" wrap>
+        <Button onClick={() => openAdmin('servers')} place="hidden md:inline-flex">
           Back to servers
         </Button>
-        <span className="flex-1" />
-        <Button onClick={() => void openServer(name)}>Open</Button>
+        <Button onClick={() => void openServer(name)} place="ml-auto">
+          Open
+        </Button>
         <Button
           variant="danger"
           disabled={kept}
@@ -70,16 +72,16 @@ export function ServerPage({ name }: { name: string }) {
         >
           Delete server
         </Button>
-      </div>
+      </Row>
       {kept && (
-        <p className="pb-2 text-xs text-on-surface-variant">
+        <p className="text-xs text-on-surface-variant">
           This is the built-in server. Take it off the default servers to delete it.
         </p>
       )}
-      <div className="rounded-xl bg-surface-container">
+      <Surface tone="base" radius="lg" pad="none">
         <ServerManage name={name} onCollapse={() => openAdmin('servers')} />
-      </div>
-    </div>
+      </Surface>
+    </Stack>
   )
 }
 
@@ -125,117 +127,120 @@ function DefaultServers() {
     save(edit.list)
   }
   return (
-    <PageRow id="default_servers" className="flex flex-col gap-2 bg-surface-container px-3 py-3">
-      <p className="text-sm text-on-surface-variant">
-        New accounts join these, in order. Guests start in the ones anyone can read.
-      </p>
-      {control === null ? (
-        <p className="text-sm text-on-surface-variant">Loading</p>
-      ) : (
-        <>
-          {list.length === 0 && <p className="text-sm">New accounts join no server.</p>}
-          <ol className="flex flex-col gap-1">
-            {list.map((name, i) => (
-              <li key={name} className="flex min-w-0 items-center gap-1">
-                <span className="w-5 shrink-0 text-right text-xs text-on-surface-variant">
-                  {i + 1}
-                </span>
-                <span className="streamer min-w-0 flex-1 truncate px-2 text-sm">{name}</span>
-                <IconButton
-                  icon={ChevronUp}
-                  label="Move up"
-                  size="lg"
-                  data-icon-only
-                  disabled={pinned || i === 0}
-                  onClick={() => save(moveEntry(list, i, -1))}
-                />
-                <IconButton
-                  icon={ChevronDown}
-                  label="Move down"
-                  size="lg"
-                  data-icon-only
-                  disabled={pinned || i === list.length - 1}
-                  onClick={() => save(moveEntry(list, i, 1))}
-                />
-                <IconButton
-                  icon={X}
-                  label="Remove from the list"
-                  size="lg"
-                  data-icon-only
-                  disabled={pinned}
-                  onClick={() => save(removeEntry(list, i))}
-                />
-              </li>
-            ))}
-          </ol>
-          <form
-            key={ownerSession.renderKey}
-            onSubmit={e => {
-              e.preventDefault()
-              const form = e.currentTarget
-              const mark = ownerSession.lifetime.sessionMark()
-              const active = () => form.isConnected && mark === ownerSession.lifetime.sessionMark()
-              const typed = q
-              void addTypedServer(
-                () => listOf(defaultControl(ownerSession)?.value),
-                typed,
-                key => serverExists(ownerSession.api, key)
-              )
-                .then(edit => {
-                  const current = defaultControl(ownerSession)
-                  if (!active() || !current || current.pinned) return
-                  setWrong(edit.error)
-                  if (edit.error !== null) return
-                  setQ(now => (now === typed ? '' : now))
-                  save(edit.list)
-                })
-                .catch((error: unknown) => {
-                  if (active()) setError(errorText(error))
-                })
-            }}
-            className="flex gap-2"
-          >
-            <input
-              value={q}
-              disabled={pinned || full}
-              onChange={e => {
-                setWrong(null)
-                setQ(e.target.value)
-              }}
-              placeholder={full ? 'The list is full' : 'Add a server by name'}
-              aria-label="Add a default server"
-              className={`${fieldCls} streamer disabled:opacity-50`}
-            />
-            <Button type="submit" disabled={pinned || full} place="shrink-0">
-              Add
-            </Button>
-          </form>
-          {found.length > 0 && (
-            <div className="flex flex-col gap-1">
-              {found.map(sv => (
-                <ListRow
-                  key={sv.name}
-                  disabled={pinned || full || list.includes(sv.name)}
-                  onClick={() => add(sv.name)}
-                  streamer
-                  label={
-                    <>
-                      {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-                    </>
-                  }
-                  trailing={<span className="shrink-0 text-primary">Add</span>}
-                />
+    <PageRow id="default_servers" className="bg-surface-container">
+      <Surface tone="plain" pad="md" gap="sm">
+        <p className="text-sm text-on-surface-variant">
+          New accounts join these, in order. Guests start in the ones anyone can read.
+        </p>
+        {control === null ? (
+          <p className="text-sm text-on-surface-variant">Loading</p>
+        ) : (
+          <>
+            {list.length === 0 && <p className="text-sm">New accounts join no server.</p>}
+            <Stack as="ol" gap="2xs">
+              {list.map((name, i) => (
+                <Row as="li" key={name} gap="md">
+                  <span className="w-5 shrink-0 text-right text-xs text-on-surface-variant">
+                    {i + 1}
+                  </span>
+                  <span className="streamer min-w-0 flex-1 truncate text-sm">{name}</span>
+                  <Row gap="2xs">
+                    <IconButton
+                      icon={ChevronUp}
+                      label="Move up"
+                      size="lg"
+                      data-icon-only
+                      disabled={pinned || i === 0}
+                      onClick={() => save(moveEntry(list, i, -1))}
+                    />
+                    <IconButton
+                      icon={ChevronDown}
+                      label="Move down"
+                      size="lg"
+                      data-icon-only
+                      disabled={pinned || i === list.length - 1}
+                      onClick={() => save(moveEntry(list, i, 1))}
+                    />
+                    <IconButton
+                      icon={X}
+                      label="Remove from the list"
+                      size="lg"
+                      data-icon-only
+                      disabled={pinned}
+                      onClick={() => save(removeEntry(list, i))}
+                    />
+                  </Row>
+                </Row>
               ))}
-            </div>
-          )}
-          <FieldError message={wrong} />
-        </>
-      )}
-      {row && (
-        <div className="-mx-2">
-          <SourceNote row={row} />
-        </div>
-      )}
+            </Stack>
+            <Row
+              as="form"
+              key={ownerSession.renderKey}
+              onSubmit={e => {
+                e.preventDefault()
+                const form = e.currentTarget
+                const mark = ownerSession.lifetime.sessionMark()
+                const active = () =>
+                  form.isConnected && mark === ownerSession.lifetime.sessionMark()
+                const typed = q
+                void addTypedServer(
+                  () => listOf(defaultControl(ownerSession)?.value),
+                  typed,
+                  key => serverExists(ownerSession.api, key)
+                )
+                  .then(edit => {
+                    const current = defaultControl(ownerSession)
+                    if (!active() || !current || current.pinned) return
+                    setWrong(edit.error)
+                    if (edit.error !== null) return
+                    setQ(now => (now === typed ? '' : now))
+                    save(edit.list)
+                  })
+                  .catch((error: unknown) => {
+                    if (active()) setError(errorText(error))
+                  })
+              }}
+              gap="sm"
+            >
+              <input
+                value={q}
+                disabled={pinned || full}
+                onChange={e => {
+                  setWrong(null)
+                  setQ(e.target.value)
+                }}
+                placeholder={full ? 'The list is full' : 'Add a server by name'}
+                aria-label="Add a default server"
+                className={`${fieldCls} streamer disabled:opacity-50`}
+              />
+              <Button type="submit" disabled={pinned || full} place="shrink-0">
+                Add
+              </Button>
+            </Row>
+            {found.length > 0 && (
+              <Stack gap="2xs">
+                {found.map(sv => (
+                  <ListRow
+                    key={sv.name}
+                    disabled={pinned || full || list.includes(sv.name)}
+                    onClick={() => add(sv.name)}
+                    streamer
+                    label={
+                      <>
+                        {sv.display_name}{' '}
+                        <span className="text-on-surface-variant">({sv.name})</span>
+                      </>
+                    }
+                    trailing={<span className="shrink-0 text-primary">Add</span>}
+                  />
+                ))}
+              </Stack>
+            )}
+            <FieldError message={wrong} />
+          </>
+        )}
+        {row && <SourceNote row={row} flush />}
+      </Surface>
     </PageRow>
   )
 }
@@ -252,8 +257,12 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
   const field = (key: keyof CreateServerForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [key]: e.target.value }))
   return (
-    <PageRow id="create_server" className="bg-surface-container px-3 py-3">
-      <form
+    <PageRow id="create_server" className="bg-surface-container">
+      <Surface
+        as="form"
+        tone="plain"
+        pad="md"
+        gap="sm"
         onSubmit={e => {
           e.preventDefault()
           const error = createServerError(form)
@@ -274,12 +283,11 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
             .catch(ownerSession.lifetime.inSession((e: unknown) => setWrong(errorText(e))))
             .finally(() => setBusy(false))
         }}
-        className="flex flex-col gap-2"
       >
         <p className="text-sm text-on-surface-variant">
           The owner gets the server with every permission. This works whoever can create servers.
         </p>
-        <div className="flex">
+        <Row gap="none">
           <input
             value={form.name}
             onChange={field('name')}
@@ -287,8 +295,8 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
             aria-label="Server name"
             className={`${fieldCls} streamer`}
           />
-        </div>
-        <div className="flex">
+        </Row>
+        <Row gap="none">
           <input
             value={form.owner}
             onChange={field('owner')}
@@ -297,8 +305,8 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
             autoCapitalize="none"
             className={`${fieldCls} streamer`}
           />
-        </div>
-        <div className="flex">
+        </Row>
+        <Row gap="none">
           <input
             type="password"
             value={form.password}
@@ -308,14 +316,12 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
             autoComplete="new-password"
             className={fieldCls}
           />
-        </div>
+        </Row>
         <FieldError message={wrong} />
-        <div className="flex justify-end">
-          <Button type="submit" variant="filled" size="md" disabled={busy}>
-            Create server
-          </Button>
-        </div>
-      </form>
+        <Button type="submit" variant="filled" size="md" disabled={busy} place="self-end">
+          Create server
+        </Button>
+      </Surface>
     </PageRow>
   )
 }
@@ -368,30 +374,34 @@ export function ServersSection() {
       <PageGroup
         label={overview ? `All servers (${overview.server_count.toLocaleString()})` : 'All servers'}
       >
-        <div className="flex pb-1">
-          <input
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder="Search servers"
-            aria-label="Search servers"
-            className={`${fieldCls} streamer`}
-          />
-        </div>
-        {adminServers.list.map(sv => (
-          <ListRow
-            key={sv.name}
-            variant="card"
-            chevron
-            onClick={() => openAdmin('servers', sv.name)}
-            streamer
-            label={
-              <>
-                {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-              </>
-            }
-          />
-        ))}
-        {adminServers.hasMore && <Sentinel key={adminServers.list.length} onVisible={more} />}
+        <Stack gap="sm">
+          <Row gap="none">
+            <input
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              placeholder="Search servers"
+              aria-label="Search servers"
+              className={`${fieldCls} streamer`}
+            />
+          </Row>
+          <Stack gap="2xs">
+            {adminServers.list.map(sv => (
+              <ListRow
+                key={sv.name}
+                variant="card"
+                chevron
+                onClick={() => openAdmin('servers', sv.name)}
+                streamer
+                label={
+                  <>
+                    {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                  </>
+                }
+              />
+            ))}
+            {adminServers.hasMore && <Sentinel key={adminServers.list.length} onVisible={more} />}
+          </Stack>
+        </Stack>
       </PageGroup>
     </div>
   )

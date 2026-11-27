@@ -2,6 +2,7 @@
 
 import { useStore } from '../../lib/store'
 import { Button } from '../controls'
+import { Row, Stack } from '../layout'
 import { Dialog } from '../ui'
 import { useAccountChanges } from './account_state'
 import { AddToServerDialog, CreateAccountDialog, TempPasswordDialog } from './accounts'
@@ -46,15 +47,17 @@ function UserConfirm({
   const closeDialog = useStore(s => s.closeDialog)
   return (
     <Dialog title={title} onClose={closeDialog}>
-      <p className="text-sm text-on-surface-variant">{children}</p>
-      <div className="mt-6 flex justify-end gap-2">
-        <Button size="md" onClick={closeDialog}>
-          Cancel
-        </Button>
-        <Button variant="filled-danger" size="md" onClick={() => void run().then(closeDialog)}>
-          {confirm}
-        </Button>
-      </div>
+      <Stack gap="xl">
+        <p className="text-sm text-on-surface-variant">{children}</p>
+        <Row gap="sm" justify="end">
+          <Button size="md" onClick={closeDialog}>
+            Cancel
+          </Button>
+          <Button variant="filled-danger" size="md" onClick={() => void run().then(closeDialog)}>
+            {confirm}
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

@@ -30,6 +30,7 @@ import { errorText, useStore } from '../../lib/store'
 import type { BrandAsset, BrandLink, InstanceSuggestion, SiteSettingsPatch } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { Button, IconButton, Pill } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { Chips, FieldError, fieldCls } from '../ui'
 import { useApplyConfig, useControl } from './config_state'
 
@@ -53,7 +54,7 @@ export const BRAND_IMAGE_ROWS = [
 
 const labelCls = 'text-sm font-medium text-on-surface'
 const lineCls = 'text-sm text-on-surface-variant'
-const rowCls = 'flex flex-col gap-1.5 rounded-xl bg-surface-container px-3 py-3'
+const noteCls = 'text-xs text-on-surface-variant'
 
 // Where a brand control's value comes from: pinned by the server config, the same as it, or
 // different from it with a way to take the config's value.
@@ -66,11 +67,13 @@ function Source({ rowKey }: { rowKey: string }) {
       return null
     case 'pinned':
       return (
-        <p data-source="pinned" className="flex items-center gap-2 text-xs text-on-surface-variant">
-          <Lock size={14} aria-hidden className="shrink-0" />
-          <span className="min-w-0 break-words">
-            Set in the server config (<code className="font-mono">{control.env}</code>)
-          </span>
+        <p data-source="pinned" className={noteCls}>
+          <Row as="span" gap="sm">
+            <Lock size={14} aria-hidden className="shrink-0" />
+            <span className="min-w-0 break-words">
+              Set in the server config (<code className="font-mono">{control.env}</code>)
+            </span>
+          </Row>
         </p>
       )
     case 'same':
@@ -81,16 +84,15 @@ function Source({ rowKey }: { rowKey: string }) {
       )
     case 'differs':
       return (
-        <p
-          data-source="differs"
-          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-on-surface-variant"
-        >
-          <span className="min-w-0">The server config has another value.</span>
-          {patchFor(control.key, control.config ?? '') !== null && (
-            <Button onClick={() => apply([control])} place="-my-1 shrink-0">
-              Use it
-            </Button>
-          )}
+        <p data-source="differs" className={noteCls}>
+          <Row as="span" gap="sm" wrap>
+            <span className="min-w-0">The server config has another value.</span>
+            {patchFor(control.key, control.config ?? '') !== null && (
+              <Button onClick={() => apply([control])} place="shrink-0">
+                Use it
+              </Button>
+            )}
+          </Row>
         </p>
       )
   }
@@ -109,7 +111,12 @@ function TextControl({ row }: { row: TextRow }) {
   const off = control === null || pinned
   const field = `${fieldCls} streamer disabled:opacity-50`
   return (
-    <form
+    <Surface
+      as="form"
+      tone="base"
+      radius="lg"
+      pad="md"
+      gap="xs"
       onSubmit={e => {
         e.preventDefault()
         const wrong = textError(row, text)
@@ -117,13 +124,12 @@ function TextControl({ row }: { row: TextRow }) {
         if (wrong !== null) return
         void updateSettings({ [row.key]: text } as SiteSettingsPatch).then(() => setDraft(null))
       }}
-      className={rowCls}
     >
       <label htmlFor={id} className={labelCls}>
         {row.label}
       </label>
       <p className={lineCls}>{row.line}</p>
-      <div className="flex min-w-0 flex-wrap items-end gap-2">
+      <Row gap="sm" wrap align="end">
         {row.lines ? (
           <textarea
             id={id}
@@ -153,11 +159,11 @@ function TextControl({ row }: { row: TextRow }) {
         >
           Save
         </Button>
-      </div>
+      </Row>
       <FieldError message={error} />
       {control === null && <p className={lineCls}>Loading</p>}
       <Source rowKey={row.key} />
-    </form>
+    </Surface>
   )
 }
 
@@ -189,34 +195,47 @@ function ListFrame({
   const control = useControl(rowKey)
   const off = control === null || control.pinned
   return (
-    <form
+    <Surface
+      as="form"
+      tone="base"
+      radius="lg"
+      pad="md"
+      gap="xs"
       onSubmit={e => {
         e.preventDefault()
         onSave()
       }}
-      className={rowCls}
     >
       <p className={labelCls}>{row?.label}</p>
       <p className={lineCls}>{row?.line}</p>
-      <fieldset disabled={off} className="flex min-w-0 flex-col gap-2 disabled:opacity-50">
-        {children}
+      <fieldset disabled={off} className="min-w-0 disabled:opacity-50">
+        <Stack gap="sm">{children}</Stack>
       </fieldset>
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <Row gap="sm" wrap justify="between">
         <Button disabled={off || full} onClick={onAdd}>
           {addLabel}
         </Button>
         <Button type="submit" variant="filled" size="md" disabled={off || !dirty} place="shrink-0">
           Save
         </Button>
-      </div>
+      </Row>
       <FieldError message={error} />
       {control === null && <p className={lineCls}>Loading</p>}
       <Source rowKey={rowKey} />
-    </form>
+    </Surface>
   )
 }
 
-const pairCls = 'flex min-w-0 flex-wrap items-center gap-2 rounded-xl bg-surface-container-high p-2'
+// One entry of a list: its fields and the button that removes it.
+function Pair({ children }: { children: ReactNode }) {
+  return (
+    <Surface tone="high" radius="lg" pad="sm">
+      <Row gap="sm" wrap>
+        {children}
+      </Row>
+    </Surface>
+  )
+}
 
 function LinksControl() {
   const control = useControl('brand_links')
@@ -244,7 +263,7 @@ function LinksControl() {
     >
       {list.length === 0 && <p className={lineCls}>No links.</p>}
       {list.map((link, i) => (
-        <div key={i} className={pairCls}>
+        <Pair key={i}>
           <input
             value={link.label}
             onChange={e => edit(i, { label: e.target.value })}
@@ -264,7 +283,7 @@ function LinksControl() {
             label="Remove the link"
             onClick={() => setDraft(list.filter((_, at) => at !== i))}
           />
-        </div>
+        </Pair>
       ))}
     </ListFrame>
   )
@@ -310,7 +329,7 @@ function SuggestionsControl() {
       />
       {shown.list.length === 0 && <p className={lineCls}>No instances.</p>}
       {shown.list.map((s, i) => (
-        <div key={i} className={pairCls}>
+        <Pair key={i}>
           <input
             value={s.url}
             onChange={e => edit(i, { url: e.target.value })}
@@ -330,7 +349,7 @@ function SuggestionsControl() {
             label="Remove the instance"
             onClick={() => setDraft({ ...shown, list: shown.list.filter((_, at) => at !== i) })}
           />
-        </div>
+        </Pair>
       ))}
     </ListFrame>
   )
@@ -425,48 +444,50 @@ function ImageControl({
       setBrand(await ownerSession.lifetime.live(ownerSession.api.brand()))
     })
   return (
-    <PageRow id={id} className={rowCls}>
-      <p className={labelCls}>{label}</p>
-      <p className={lineCls}>{line}</p>
-      <div className="flex min-w-0 flex-wrap items-center gap-3">
-        <div
-          data-brand-preview={preview}
-          className={`flex h-16 min-w-16 max-w-full shrink-0 items-center justify-center overflow-hidden bg-surface-container-highest px-2 ${
-            round ? 'w-16 rounded-2xl px-0' : 'rounded-xl'
-          }`}
-        >
-          {path === null ? (
-            <span className="text-xs text-on-surface-variant">None</span>
-          ) : (
-            <img
-              src={assetUrl(ownerSession.api.origin(), path)}
-              alt={`${label} uploaded now`}
-              className={round ? 'h-16 w-16 object-cover' : 'max-h-12 w-auto max-w-48'}
-            />
-          )}
-        </div>
-        <input
-          ref={input}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          aria-label={`${label} file`}
-          className="hidden"
-          onChange={e => {
-            const file = e.target.files?.[0]
-            e.target.value = ''
-            if (file) upload(file)
-          }}
-        />
-        <Button variant="filled" size="md" disabled={busy} onClick={() => input.current?.click()}>
-          {busy ? 'Working' : path === null ? 'Upload' : 'Replace'}
-        </Button>
-        {path !== null && (
-          <Button variant="danger" disabled={busy} onClick={remove}>
-            Remove
+    <PageRow id={id} className="bg-surface-container">
+      <Surface tone="plain" pad="md" gap="xs">
+        <p className={labelCls}>{label}</p>
+        <p className={lineCls}>{line}</p>
+        <Row gap="md" wrap>
+          <div
+            data-brand-preview={preview}
+            className={`flex h-16 min-w-16 max-w-full shrink-0 items-center justify-center overflow-hidden bg-surface-container-highest px-2 ${
+              round ? 'w-16 rounded-2xl px-0' : 'rounded-xl'
+            }`}
+          >
+            {path === null ? (
+              <span className="text-xs text-on-surface-variant">None</span>
+            ) : (
+              <img
+                src={assetUrl(ownerSession.api.origin(), path)}
+                alt={`${label} uploaded now`}
+                className={round ? 'h-16 w-16 object-cover' : 'max-h-12 w-auto max-w-48'}
+              />
+            )}
+          </div>
+          <input
+            ref={input}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            aria-label={`${label} file`}
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (file) upload(file)
+            }}
+          />
+          <Button variant="filled" size="md" disabled={busy} onClick={() => input.current?.click()}>
+            {busy ? 'Working' : path === null ? 'Upload' : 'Replace'}
           </Button>
-        )}
-      </div>
-      <FieldError message={error} />
+          {path !== null && (
+            <Button variant="danger" disabled={busy} onClick={remove}>
+              Remove
+            </Button>
+          )}
+        </Row>
+        <FieldError message={error} />
+      </Surface>
     </PageRow>
   )
 }
@@ -530,7 +551,7 @@ export function BrandingSection() {
           make={makeMark}
           kinds={MARK_SIZES.map(m => m.kind)}
         />
-        <p className="px-1 text-xs text-on-surface-variant">
+        <p className="text-xs text-on-surface-variant">
           The page title and the installed app follow the brand when the server serves the app too.
         </p>
       </PageGroup>

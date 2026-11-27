@@ -27,6 +27,7 @@ import type {
   ServerSummaryLite,
 } from '../../lib/types'
 import { Button, Chip, IconButton, ListRow } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { Dialog, FieldError, fieldCls, useCopied } from '../ui'
 import { useAccountChanges } from './account_state'
 import { useControl } from './config_state'
@@ -53,39 +54,45 @@ export function PasswordReveal({
   const mode = useStore(s => s.settings.password_change)
   const failed = servers.filter(s => !s.ok)
   return (
-    <div className="flex flex-col gap-3">
-      <p className="text-sm text-on-surface-variant">
-        <span className="streamer text-on-surface">{username}</span> can sign in with this temporary
-        password. It is shown only now.
-      </p>
-      <div className="flex items-center gap-2 rounded-2xl border border-primary bg-primary-container/30 p-3">
-        <code
-          data-temp-password
-          className="streamer min-w-0 flex-1 font-mono text-base break-all text-on-surface select-all"
-        >
-          {issued.temp_password}
-        </code>
-        <IconButton
-          icon={copied ? Check : Copy}
-          label={copied ? 'Copied' : 'Copy the password'}
-          size="lg"
-          data-icon-only
-          onClick={() => void sharing().copyText(issued.temp_password).then(flash)}
-        />
-      </div>
-      <p className="text-sm text-on-surface-variant">
-        {expiryLine(issued.expires_at, now())} {changeLine(mode)}
-      </p>
-      {failed.length > 0 && (
-        <ul className="flex flex-col gap-1 text-sm text-error">
-          {failed.map((s, i) => (
-            <li key={`${s.server}:${i}`} className="break-words">
-              Not added to <span className="streamer">{s.server}</span>: {s.error ?? 'It failed.'}
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="flex flex-wrap justify-end gap-2 pt-2">
+    <Stack gap="lg">
+      <Stack gap="md">
+        <p className="text-sm text-on-surface-variant">
+          <span className="streamer text-on-surface">{username}</span> can sign in with this
+          temporary password. It is shown only now.
+        </p>
+        <div className="rounded-2xl border border-primary bg-primary-container/30">
+          <Surface tone="plain" pad="md">
+            <Row gap="sm">
+              <code
+                data-temp-password
+                className="streamer min-w-0 flex-1 font-mono text-base break-all text-on-surface select-all"
+              >
+                {issued.temp_password}
+              </code>
+              <IconButton
+                icon={copied ? Check : Copy}
+                label={copied ? 'Copied' : 'Copy the password'}
+                size="lg"
+                data-icon-only
+                onClick={() => void sharing().copyText(issued.temp_password).then(flash)}
+              />
+            </Row>
+          </Surface>
+        </div>
+        <p className="text-sm text-on-surface-variant">
+          {expiryLine(issued.expires_at, now())} {changeLine(mode)}
+        </p>
+        {failed.length > 0 && (
+          <Stack as="ul" gap="2xs">
+            {failed.map((s, i) => (
+              <li key={`${s.server}:${i}`} className="text-sm break-words text-error">
+                Not added to <span className="streamer">{s.server}</span>: {s.error ?? 'It failed.'}
+              </li>
+            ))}
+          </Stack>
+        )}
+      </Stack>
+      <Row gap="sm" wrap justify="end">
         <Button
           size="md"
           onClick={() =>
@@ -99,8 +106,8 @@ export function PasswordReveal({
         <Button variant="filled" size="md" onClick={onDone}>
           Done
         </Button>
-      </div>
-    </div>
+      </Row>
+    </Stack>
   )
 }
 
@@ -140,8 +147,8 @@ function ServerSearch({
   }, [q, setError])
   const open = found.filter(sv => !taken.includes(sv.name))
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex">
+    <Stack gap="2xs">
+      <Row gap="none">
         <input
           value={q}
           disabled={disabled}
@@ -150,9 +157,9 @@ function ServerSearch({
           aria-label="Add a server"
           className={`${fieldCls} streamer disabled:opacity-50`}
         />
-      </div>
+      </Row>
       {open.length > 0 && (
-        <ul className="flex flex-col gap-1">
+        <Stack as="ul" gap="2xs">
           {open.map(sv => (
             <li key={sv.name}>
               <ListRow
@@ -171,9 +178,9 @@ function ServerSearch({
               />
             </li>
           ))}
-        </ul>
+        </Stack>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -207,7 +214,7 @@ function RoleToggles({
   }, [server, setError])
   if (all === null || all.length === 0) return null
   return (
-    <div role="group" aria-label="Roles" className="flex flex-wrap gap-1.5">
+    <Row role="group" aria-label="Roles" gap="xs" wrap>
       {all.map(role => {
         const on = roles.includes(role.id)
         return (
@@ -216,7 +223,7 @@ function RoleToggles({
           </Chip>
         )
       })}
-    </div>
+    </Row>
   )
 }
 
@@ -229,15 +236,12 @@ function ServerEntries({
   onChange: (servers: AccountServer[]) => void
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap="sm">
       {servers.length > 0 && (
-        <ul className="flex flex-col gap-2">
+        <Stack as="ul" gap="sm">
           {servers.map(entry => (
-            <li
-              key={entry.server}
-              className="flex flex-col gap-2 rounded-xl bg-surface-container px-3 py-2"
-            >
-              <div className="flex min-w-0 items-center gap-2">
+            <Surface as="li" key={entry.server} tone="base" radius="lg" pad="md" gap="sm">
+              <Row gap="sm">
                 <span className="streamer min-w-0 flex-1 truncate text-sm">{entry.server}</span>
                 <IconButton
                   icon={X}
@@ -246,22 +250,22 @@ function ServerEntries({
                   data-icon-only
                   onClick={() => onChange(withoutServer(servers, entry.server))}
                 />
-              </div>
+              </Row>
               <RoleToggles
                 server={entry.server}
                 roles={entry.roles}
                 onChange={roles => onChange(withServer(servers, entry.server, roles))}
               />
-            </li>
+            </Surface>
           ))}
-        </ul>
+        </Stack>
       )}
       <ServerSearch
         taken={servers.map(s => s.server)}
         disabled={servers.length >= ACCOUNT_SERVERS_MAX}
         onPick={sv => onChange(withServer(servers, sv.name))}
       />
-    </div>
+    </Stack>
   )
 }
 
@@ -306,7 +310,9 @@ export function CreateAccountDialog() {
     )
   return (
     <Dialog title="Create Account" onClose={closeDialog} full>
-      <form
+      <Stack
+        as="form"
+        gap="lg"
         onSubmit={e => {
           e.preventDefault()
           setTried(true)
@@ -327,18 +333,17 @@ export function CreateAccountDialog() {
             .catch(inSession((e: unknown) => setRefused(errorText(e))))
             .finally(() => setBusy(false))
         }}
-        className="flex flex-col gap-4"
       >
         {!passwords && (
-          <p className="rounded-xl bg-error-container px-3 py-2 text-sm text-on-error-container">
-            Password sign-in is off, so a new account could not sign in.
-          </p>
+          <Surface tone="error" radius="lg" pad="md">
+            <p className="text-sm">Password sign-in is off, so a new account could not sign in.</p>
+          </Surface>
         )}
-        <div className="flex flex-col gap-1.5">
+        <Stack gap="xs">
           <label htmlFor={nameId} className={labelCls}>
             Username
           </label>
-          <div className="flex">
+          <Row gap="none">
             <input
               id={nameId}
               value={form.username}
@@ -348,14 +353,14 @@ export function CreateAccountDialog() {
               onChange={e => setForm({ ...form, username: e.target.value })}
               className={`${fieldCls} streamer`}
             />
-          </div>
+          </Row>
           <FieldError message={shown('username')} />
-        </div>
-        <div className="flex flex-col gap-1.5">
+        </Stack>
+        <Stack gap="xs">
           <label htmlFor={displayId} className={labelCls}>
             Display name <span className="font-normal text-on-surface-variant">(optional)</span>
           </label>
-          <div className="flex">
+          <Row gap="none">
             <input
               id={displayId}
               value={form.displayName}
@@ -363,10 +368,10 @@ export function CreateAccountDialog() {
               onChange={e => setForm({ ...form, displayName: e.target.value })}
               className={`${fieldCls} streamer`}
             />
-          </div>
+          </Row>
           <FieldError message={shown('displayName')} />
-        </div>
-        <div className="flex flex-col gap-1.5">
+        </Stack>
+        <Stack gap="xs">
           <p className={labelCls}>Servers</p>
           {defaults.length > 0 && (
             <p className="text-sm break-words text-on-surface-variant">
@@ -378,18 +383,18 @@ export function CreateAccountDialog() {
             onChange={servers => setForm({ ...form, servers })}
           />
           <FieldError message={shown('servers')} />
-        </div>
+        </Stack>
         <p className="text-sm text-on-surface-variant">{changeLine(mode)}</p>
         <FieldError message={refused} />
-        <div className="flex flex-wrap justify-end gap-2">
+        <Row gap="sm" wrap justify="end">
           <Button size="md" onClick={closeDialog}>
             Cancel
           </Button>
           <Button type="submit" variant="filled" size="md" disabled={busy || !passwords}>
             Create account
           </Button>
-        </div>
-      </form>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
@@ -414,36 +419,40 @@ export function TempPasswordDialog({ username }: { username: string }) {
     )
   return (
     <Dialog title="New Temporary Password" onClose={closeDialog}>
-      <p className="text-sm text-on-surface-variant">
-        Give <span className="streamer">{username}</span> a new temporary password? Their password
-        stops working and they are signed out everywhere. Their backup phrase stays.
-      </p>
-      <FieldError message={refused} />
-      <div className="mt-6 flex flex-wrap justify-end gap-2">
-        <Button size="md" onClick={closeDialog}>
-          Cancel
-        </Button>
-        <Button
-          variant="filled-danger"
-          size="md"
-          disabled={busy}
-          onClick={() => {
-            setBusy(true)
-            setRefused(null)
-            api
-              .adminResetPassword(username)
-              .then(made => {
-                setIssued(made)
-                changed()
-                void loadAdminOverview()
-              })
-              .catch(inSession((e: unknown) => setRefused(errorText(e))))
-              .finally(() => setBusy(false))
-          }}
-        >
-          New password
-        </Button>
-      </div>
+      <Stack gap="xl">
+        <Stack gap="none">
+          <p className="text-sm text-on-surface-variant">
+            Give <span className="streamer">{username}</span> a new temporary password? Their
+            password stops working and they are signed out everywhere. Their backup phrase stays.
+          </p>
+          <FieldError message={refused} />
+        </Stack>
+        <Row gap="sm" wrap justify="end">
+          <Button size="md" onClick={closeDialog}>
+            Cancel
+          </Button>
+          <Button
+            variant="filled-danger"
+            size="md"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true)
+              setRefused(null)
+              api
+                .adminResetPassword(username)
+                .then(made => {
+                  setIssued(made)
+                  changed()
+                  void loadAdminOverview()
+                })
+                .catch(inSession((e: unknown) => setRefused(errorText(e))))
+                .finally(() => setBusy(false))
+            }}
+          >
+            New password
+          </Button>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }
@@ -463,7 +472,9 @@ export function AddToServerDialog({ username }: { username: string }) {
   const entry = servers[0]
   return (
     <Dialog title="Add to Server" onClose={closeDialog} full>
-      <form
+      <Stack
+        as="form"
+        gap="lg"
         onSubmit={e => {
           e.preventDefault()
           if (!entry || busy) return
@@ -479,7 +490,6 @@ export function AddToServerDialog({ username }: { username: string }) {
             .catch(inSession((e: unknown) => setRefused(errorText(e))))
             .finally(() => setBusy(false))
         }}
-        className="flex flex-col gap-4"
       >
         <p className="text-sm text-on-surface-variant">
           Add <span className="streamer">{username}</span> to a server. It works whatever the
@@ -487,15 +497,15 @@ export function AddToServerDialog({ username }: { username: string }) {
         </p>
         <ServerEntries servers={servers} onChange={next => setServers(next.slice(-1))} />
         <FieldError message={refused} />
-        <div className="flex flex-wrap justify-end gap-2">
+        <Row gap="sm" wrap justify="end">
           <Button size="md" onClick={closeDialog}>
             Cancel
           </Button>
           <Button type="submit" variant="filled" size="md" disabled={busy || !entry}>
             Add
           </Button>
-        </div>
-      </form>
+        </Row>
+      </Stack>
     </Dialog>
   )
 }

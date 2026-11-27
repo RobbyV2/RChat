@@ -7,8 +7,8 @@ import { useStore } from '../../lib/store'
 import type { RelayStatus } from '../../lib/types'
 import { useConfigStore } from './config_state'
 import { Button } from '../controls'
+import { Grid, Row, Stack, Surface } from '../layout'
 
-const cardCls = 'flex min-w-0 flex-col gap-1 rounded-xl bg-surface-container px-4 py-3'
 const cardTitleCls = 'text-xs font-medium tracking-wide text-on-surface-variant uppercase'
 
 // The name of the stored sign-up choice.
@@ -31,15 +31,36 @@ const useCounts = () => {
   return overview
 }
 
+function Card({ children }: { children: ReactNode }) {
+  return (
+    <Surface tone="base" radius="lg" pad="lg" gap="2xs">
+      {children}
+    </Surface>
+  )
+}
+
+// A line of a card and the button that opens where it is changed.
+function Line({ children, action }: { children: ReactNode; action: ReactNode }) {
+  return (
+    <Row gap="sm">
+      <span className="min-w-0 flex-1 text-sm break-words">{children}</span>
+      {action}
+    </Row>
+  )
+}
+
 function SignUp({ children }: { children: ReactNode }) {
   const openAdmin = useStore(s => s.openAdmin)
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 flex-1 text-sm break-words">{children}</span>
-      <Button onClick={() => openAdmin('features', null, 'registration')} place="shrink-0">
-        Change
-      </Button>
-    </div>
+    <Line
+      action={
+        <Button onClick={() => openAdmin('features', null, 'registration')} place="shrink-0">
+          Change
+        </Button>
+      }
+    >
+      {children}
+    </Line>
   )
 }
 
@@ -48,7 +69,7 @@ export function OverviewSummary() {
   const signUp = useSignUp()
   const overview = useCounts()
   return (
-    <div className={cardCls}>
+    <Card>
       <SignUp>Sign-up: {signUp}</SignUp>
       {overview && (
         <p className="text-sm text-on-surface-variant">
@@ -56,7 +77,7 @@ export function OverviewSummary() {
           {count(overview.server_count, 'server', 'servers')}
         </p>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -91,72 +112,80 @@ export function OverviewSection() {
     ['Media server', sfu ? 'On' : 'Off'],
   ]
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className={cardCls}>
+    <Stack gap="md">
+      <Grid cols={{ base: 1, sm: 2 }} gap="md">
+        <Card>
           <p className={cardTitleCls}>Sign-up</p>
           <SignUp>{signUp}</SignUp>
-        </div>
-        <div className={cardCls}>
+        </Card>
+        <Card>
           <p className={cardTitleCls}>Accounts and servers</p>
           {overview ? (
             <>
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 flex-1 text-sm break-words">
-                  {count(overview.user_count, 'account', 'accounts')}
-                </span>
-                <Button onClick={() => openAdmin('users')} place="shrink-0">
-                  Users
-                </Button>
-              </div>
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 flex-1 text-sm break-words">
-                  {count(overview.server_count, 'server', 'servers')}
-                </span>
-                <Button onClick={() => openAdmin('servers')} place="shrink-0">
-                  Servers
-                </Button>
-              </div>
+              <Line
+                action={
+                  <Button onClick={() => openAdmin('users')} place="shrink-0">
+                    Users
+                  </Button>
+                }
+              >
+                {count(overview.user_count, 'account', 'accounts')}
+              </Line>
+              <Line
+                action={
+                  <Button onClick={() => openAdmin('servers')} place="shrink-0">
+                    Servers
+                  </Button>
+                }
+              >
+                {count(overview.server_count, 'server', 'servers')}
+              </Line>
             </>
           ) : (
             <p className="text-sm text-on-surface-variant">Loading</p>
           )}
-        </div>
+        </Card>
         {overview && overview.temporary_count !== undefined && (
-          <div className={cardCls}>
+          <Card>
             <p className={cardTitleCls}>Temporary passwords</p>
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="min-w-0 flex-1 text-sm break-words">
-                {overview.temporary_count === 0
-                  ? 'None waiting'
-                  : `${overview.temporary_count.toLocaleString()} not changed yet`}
-              </span>
-              <Button onClick={() => openAdmin('users')} place="shrink-0">
-                Users
-              </Button>
-            </div>
-          </div>
+            <Line
+              action={
+                <Button onClick={() => openAdmin('users')} place="shrink-0">
+                  Users
+                </Button>
+              }
+            >
+              {overview.temporary_count === 0
+                ? 'None waiting'
+                : `${overview.temporary_count.toLocaleString()} not changed yet`}
+            </Line>
+          </Card>
         )}
         {config && (
-          <div className={cardCls}>
+          <Card>
             <p className={cardTitleCls}>Server config</p>
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="min-w-0 flex-1 text-sm break-words">{summaryLine(config)}</span>
-              <Button onClick={() => openAdmin('config')} place="shrink-0">
-                Config
-              </Button>
-            </div>
-          </div>
+            <Line
+              action={
+                <Button onClick={() => openAdmin('config')} place="shrink-0">
+                  Config
+                </Button>
+              }
+            >
+              {summaryLine(config)}
+            </Line>
+          </Card>
         )}
-      </div>
-      <dl className="space-y-1 rounded-xl bg-surface-container px-4 py-3 text-sm">
-        {facts.map(([label, value]) => (
-          <div key={label} className="flex items-center justify-between gap-3">
-            <dt className="text-on-surface-variant">{label}</dt>
-            <dd className="min-w-0 text-right break-words">{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
+      </Grid>
+      <Surface tone="base" radius="lg" pad="lg">
+        <Stack as="dl" gap="2xs">
+          {facts.map(([label, value]) => (
+            <Row key={label} gap="md" justify="between">
+              <dt className="text-sm text-on-surface-variant">{label}</dt>
+              <dd className="min-w-0 text-right text-sm break-words">{value}</dd>
+            </Row>
+          ))}
+        </Stack>
+      </Surface>
+    </Stack>
   )
 }

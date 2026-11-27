@@ -10,6 +10,7 @@ import { longPress } from '../context_menu'
 import { UserAvatar } from '../user_avatar'
 import { PageGroup } from '../settings_page'
 import { Button, ListRow } from '../controls'
+import { Grid, Row, Stack, Surface } from '../layout'
 import { Chips, Sentinel, fieldCls } from '../ui'
 import { useAccountChanges } from './account_state'
 
@@ -53,16 +54,15 @@ function UserServers({ username }: { username: string }) {
     <>
       {list.length === 0 && <p className="text-sm text-on-surface-variant">No servers created.</p>}
       {list.map(sv => (
-        <div
-          key={sv.name}
-          className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-container px-3 py-2"
-        >
-          <span className="streamer min-w-24 flex-1 truncate text-sm">
-            {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-          </span>
-          <Button onClick={() => void openServer(sv.name)}>Open</Button>
-          <Button onClick={() => openAdmin('servers', sv.name)}>Manage</Button>
-        </div>
+        <Surface key={sv.name} tone="base" radius="lg" pad="md">
+          <Row gap="sm" wrap>
+            <span className="streamer min-w-24 flex-1 truncate text-sm">
+              {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+            </span>
+            <Button onClick={() => void openServer(sv.name)}>Open</Button>
+            <Button onClick={() => openAdmin('servers', sv.name)}>Manage</Button>
+          </Row>
+        </Surface>
       ))}
       {next !== null && (
         <Button onClick={() => void fetchFrom(next)} disabled={loading}>
@@ -72,8 +72,6 @@ function UserServers({ username }: { username: string }) {
     </>
   )
 }
-
-const factCls = 'flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm'
 
 // How the account signs in, its sessions, its phrase and its servers.
 function AccountFacts({ account }: { account: AdminAccount }) {
@@ -85,14 +83,16 @@ function AccountFacts({ account }: { account: AdminAccount }) {
     ['Servers', account.servers.toLocaleString()],
   ]
   return (
-    <dl className="mb-4 grid grid-cols-1 gap-x-6 gap-y-1 rounded-xl bg-surface-container px-4 py-3 sm:grid-cols-2">
-      {facts.map(([label, value]) => (
-        <div key={label} className={factCls}>
-          <dt className="shrink-0 text-on-surface-variant">{label}</dt>
-          <dd className="min-w-0 break-words">{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <Surface tone="base" radius="lg" pad="lg">
+      <Grid as="dl" cols={{ base: 1, sm: 2 }} gap="sm">
+        {facts.map(([label, value]) => (
+          <Row key={label} gap="sm" wrap align="baseline">
+            <dt className="shrink-0 text-sm text-on-surface-variant">{label}</dt>
+            <dd className="min-w-0 text-sm break-words">{value}</dd>
+          </Row>
+        ))}
+      </Grid>
+    </Surface>
   )
 }
 
@@ -135,8 +135,8 @@ export function UserPage({ username }: { username: string }) {
   }, [ownerSession, username, rev, setError])
   const user = account?.user ?? listed
   return (
-    <div>
-      <Button onClick={() => openAdmin('users')} place="mb-3 -ml-3 hidden md:inline-flex">
+    <Stack gap="lg">
+      <Button onClick={() => openAdmin('users')} place="hidden md:inline-flex self-start">
         Back to users
       </Button>
       {account === null && !listed && (
@@ -144,20 +144,22 @@ export function UserPage({ username }: { username: string }) {
       )}
       {user && (
         <>
-          <div className="flex min-w-0 items-center gap-3 pb-4">
+          <Row gap="md">
             <UserAvatar
               username={user.username}
               avatarKind={user.avatar_kind}
               avatarColor={user.avatar_color}
               size={40}
             />
-            <span className="streamer flex min-w-0 flex-col">
-              <span className="truncate font-medium">{user.display_name}</span>
-              <span className="truncate text-sm text-on-surface-variant">{user.username}</span>
-            </span>
-          </div>
+            <Stack as="span" gap="none">
+              <span className="streamer truncate font-medium">{user.display_name}</span>
+              <span className="streamer truncate text-sm text-on-surface-variant">
+                {user.username}
+              </span>
+            </Stack>
+          </Row>
           {account && <AccountFacts account={account} />}
-          <div className="flex flex-wrap gap-2 pb-5">
+          <Row gap="sm" wrap>
             {!mine && (
               <>
                 <Button
@@ -179,41 +181,43 @@ export function UserPage({ username }: { username: string }) {
             >
               Add to server
             </Button>
-          </div>
-          <PageGroup label="Servers they created">
-            <UserServers username={user.username} />
-          </PageGroup>
-          {!mine && (
-            <PageGroup label="Danger">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="danger"
-                  onClick={() =>
-                    openDialog({ kind: 'remove_phrase_confirm', username: user.username })
-                  }
-                >
-                  Remove backup phrase
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={() => openDialog({ kind: 'ban_confirm', username: user.username })}
-                >
-                  Ban site-wide
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={() =>
-                    openDialog({ kind: 'delete_user_confirm', username: user.username })
-                  }
-                >
-                  Delete account
-                </Button>
-              </div>
+          </Row>
+          <div>
+            <PageGroup label="Servers they created">
+              <UserServers username={user.username} />
             </PageGroup>
-          )}
+            {!mine && (
+              <PageGroup label="Danger">
+                <Row gap="sm" wrap>
+                  <Button
+                    variant="danger"
+                    onClick={() =>
+                      openDialog({ kind: 'remove_phrase_confirm', username: user.username })
+                    }
+                  >
+                    Remove backup phrase
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={() => openDialog({ kind: 'ban_confirm', username: user.username })}
+                  >
+                    Ban site-wide
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={() =>
+                      openDialog({ kind: 'delete_user_confirm', username: user.username })
+                    }
+                  >
+                    Delete account
+                  </Button>
+                </Row>
+              </PageGroup>
+            )}
+          </div>
         </>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -282,8 +286,8 @@ export function UsersSection() {
   const list = all ? adminUsers.list : filtered.list
   const hasMore = all ? adminUsers.hasMore : filtered.next !== null
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <Stack gap="md">
+      <Row gap="sm" wrap>
         {overview && (
           <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
             {overview.user_count.toLocaleString()}{' '}
@@ -298,8 +302,8 @@ export function UsersSection() {
         >
           Create account
         </Button>
-      </div>
-      <div className="flex">
+      </Row>
+      <Row gap="none">
         <input
           value={q}
           onChange={e => setQ(e.target.value)}
@@ -307,9 +311,9 @@ export function UsersSection() {
           aria-label="Search users"
           className={`${fieldCls} streamer`}
         />
-      </div>
+      </Row>
       <Chips label="Show accounts" value={filter} options={ACCOUNT_FILTERS} onChange={setFilter} />
-      <div className="space-y-1">
+      <Stack gap="2xs">
         {list.length === 0 && !hasMore && !all && (
           <p className="text-sm text-on-surface-variant">
             {filter === 'expired'
@@ -351,7 +355,7 @@ export function UsersSection() {
         {hasMore && (
           <Sentinel key={`${filter}:${list.length}`} onVisible={all ? more : filtered.more} />
         )}
-      </div>
-    </div>
+      </Stack>
+    </Stack>
   )
 }

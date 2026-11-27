@@ -6,6 +6,7 @@ import { errorText, useStore } from '../../lib/store'
 import type { Announcement } from '../../lib/announcements'
 import { PageGroup, PageRow } from '../settings_page'
 import { Button } from '../controls'
+import { Grid, Row, Stack, Surface } from '../layout'
 import { fieldCls } from '../ui'
 
 export function AnnouncementEditor() {
@@ -90,50 +91,57 @@ function Editor() {
         {!available ? (
           <p>Announcements are unavailable on this server version.</p>
         ) : (
-          <div className="flex flex-col gap-4">
-            <form
+          <Stack gap="lg">
+            <Stack
+              as="form"
+              gap="md"
               onSubmit={e => {
                 e.preventDefault()
                 void save()
               }}
-              className="flex flex-col gap-3"
             >
-              <label className="grid gap-1 text-sm font-medium">
-                Announcement
-                <input
-                  required
-                  maxLength={500}
-                  value={message}
-                  onChange={e => setMessage(e.target.value)}
-                  className={fieldCls}
-                />
-              </label>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid min-w-0 gap-1 text-sm">
-                  Start (leave blank for now)
+              <label className="text-sm font-medium">
+                <Stack as="span" gap="2xs">
+                  Announcement
                   <input
-                    type="datetime-local"
-                    value={start}
-                    onChange={e => setStart(e.target.value)}
-                    className={fieldCls}
-                  />
-                </label>
-                <label className="grid min-w-0 gap-1 text-sm">
-                  End
-                  <input
-                    type="datetime-local"
                     required
-                    value={end}
-                    onChange={e => setEnd(e.target.value)}
+                    maxLength={500}
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
                     className={fieldCls}
                   />
+                </Stack>
+              </label>
+              <Grid cols={{ base: 1, sm: 2 }} gap="md">
+                <label className="min-w-0 text-sm">
+                  <Stack as="span" gap="2xs">
+                    Start (leave blank for now)
+                    <input
+                      type="datetime-local"
+                      value={start}
+                      onChange={e => setStart(e.target.value)}
+                      className={fieldCls}
+                    />
+                  </Stack>
                 </label>
-              </div>
+                <label className="min-w-0 text-sm">
+                  <Stack as="span" gap="2xs">
+                    End
+                    <input
+                      type="datetime-local"
+                      required
+                      value={end}
+                      onChange={e => setEnd(e.target.value)}
+                      className={fieldCls}
+                    />
+                  </Stack>
+                </label>
+              </Grid>
               <p className="text-xs text-on-surface-variant">Dates use your local time.</p>
               <Button type="submit" variant="filled" size="md" disabled={busy} place="self-start">
                 {start ? 'Schedule announcement' : 'Publish now'}
               </Button>
-            </form>
+            </Stack>
             {(error || loadError) && (
               <p role="alert" className="text-sm text-error">
                 {error || loadError}
@@ -142,23 +150,22 @@ function Editor() {
             <h3 className="text-sm font-medium">Active and upcoming</h3>
             {!rows.length && <p className="text-sm text-on-surface-variant">No announcements.</p>}
             {rows.map(a => (
-              <div
-                key={a.id}
-                className="flex min-w-0 flex-wrap items-center gap-2 border-t border-outline-variant pt-2"
-              >
-                <div className="min-w-0 grow basis-48">
-                  <p className="break-words text-sm">{a.message}</p>
-                  <p className="text-xs text-on-surface-variant">
-                    {new Date(a.starts_at * 1000).toLocaleString()} to{' '}
-                    {new Date(a.ends_at * 1000).toLocaleString()}
-                  </p>
-                </div>
-                <Button variant="danger" disabled={busy} onClick={() => void save(a.id)}>
-                  Remove
-                </Button>
-              </div>
+              <Surface key={a.id} tone="plain" radius="none" border="top" pad="sm">
+                <Row gap="sm" wrap>
+                  <div className="min-w-0 grow basis-48">
+                    <p className="break-words text-sm">{a.message}</p>
+                    <p className="text-xs text-on-surface-variant">
+                      {new Date(a.starts_at * 1000).toLocaleString()} to{' '}
+                      {new Date(a.ends_at * 1000).toLocaleString()}
+                    </p>
+                  </div>
+                  <Button variant="danger" disabled={busy} onClick={() => void save(a.id)}>
+                    Remove
+                  </Button>
+                </Row>
+              </Surface>
             ))}
-          </div>
+          </Stack>
         )}
       </PageRow>
     </PageGroup>

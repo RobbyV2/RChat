@@ -16,8 +16,10 @@ import {
   ServerPasswordField,
 } from '../server_settings'
 import { MemberSearchField, useMemberSearch } from '../member_search'
-import { Sentinel, sectionCls } from '../ui'
-import { dangerBtn, fieldCls, textBtn } from './touch'
+import { Button, SectionHeading } from '../controls'
+import { Row, Surface } from '../layout'
+import { Sentinel } from '../ui'
+import { dangerBtn, fieldCls } from './touch'
 
 function NameForm({
   initial,
@@ -34,7 +36,10 @@ function NameForm({
 }) {
   const [value, setValue] = useState(initial ?? '')
   return (
-    <form
+    <Row
+      as="form"
+      gap="sm"
+      place="flex-1"
       onSubmit={e => {
         e.preventDefault()
         const trimmed = value.trim()
@@ -42,7 +47,6 @@ function NameForm({
         onSubmit(trimmed)
         if (initial === undefined) setValue('')
       }}
-      className="flex min-w-0 flex-1 gap-2"
     >
       <input
         value={value}
@@ -51,8 +55,10 @@ function NameForm({
         aria-label={placeholder}
         className={`${fieldCls} min-w-24 ${streamer ? 'streamer' : ''}`}
       />
-      <button className={`${textBtn} shrink-0`}>{submitLabel}</button>
-    </form>
+      <Button type="submit" place="shrink-0">
+        {submitLabel}
+      </Button>
+    </Row>
   )
 }
 
@@ -100,7 +106,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
   const run = (fn: () => Promise<void>) => void fn().then(ownerSession.lifetime.inSession(refresh))
 
   return (
-    <div className="space-y-2 px-3 py-3">
+    <Surface tone="plain" pad="md" gap="sm">
       <NameForm
         initial={detail.display_name}
         placeholder="Server name"
@@ -132,14 +138,14 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
         </>
       )}
       <ServerAppearance server={name} detail={detail} refresh={() => void refresh()} />
-      <p className={sectionCls}>Roles</p>
+      <SectionHeading as="p">Roles</SectionHeading>
       <RolesEditor
         server={name}
         roles={detail.roles}
         version={detail.roles_version}
         refresh={refresh}
       />
-      <p className={sectionCls}>Channels</p>
+      <SectionHeading as="p">Channels</SectionHeading>
       {detail.channels.map(c => {
         const deletable = canDeleteChannel(detail.channels, c)
         return (
@@ -149,7 +155,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
             channel={c}
             refresh={refresh}
             lead={
-              <div className="flex w-full min-w-0 items-center gap-2">
+              <Row gap="sm" place="w-full">
                 <NameForm
                   initial={c.name}
                   placeholder="Channel name"
@@ -181,7 +187,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
                 >
                   <Trash2 size={16} />
                 </button>
-              </div>
+              </Row>
             }
           />
         )
@@ -191,16 +197,16 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
         submitLabel="Add"
         onSubmit={v => run(() => createChannel(name, v))}
       />
-      <p className={sectionCls}>Bans</p>
+      <SectionHeading as="p">Bans</SectionHeading>
       <BanList server={name} />
-      <p className={sectionCls}>Members ({detail.member_count})</p>
+      <SectionHeading as="p">Members ({detail.member_count})</SectionHeading>
       <MemberSearchField value={q} onChange={setQ} />
       {found.active && !found.loading && found.list.length === 0 && (
-        <p className="px-2 text-sm text-on-surface-variant">No matching members.</p>
+        <p className="text-sm text-on-surface-variant">No matching members.</p>
       )}
       {(found.active ? found.list : (cache?.list ?? [])).map(m => (
-        <div key={m.username} className="rounded-xl px-1 py-1">
-          <div className="flex flex-wrap items-center justify-end gap-2">
+        <Surface key={m.username} tone="plain" radius="lg" pad="2xs" gap="xs">
+          <Row gap="sm" wrap justify="end">
             <UserAvatar
               username={m.username}
               avatarKind={m.avatar_kind}
@@ -209,14 +215,13 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
             />
             <span className="streamer min-w-24 flex-1 truncate text-sm">{m.display_name}</span>
             {m.is_admin && (
-              <button
+              <Button
                 onClick={() => setEditingAdmin(editingAdmin === m.username ? null : m.username)}
-                className={textBtn}
               >
                 Perms
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               onClick={() =>
                 m.is_admin
                   ? ownerSession.store.menu.revokeAdminFor(name, m.username, reloadMembers)
@@ -224,16 +229,14 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
                       ownerSession.lifetime.inSession(reloadMembers)
                     )
               }
-              className={textBtn}
             >
               {m.is_admin ? 'Revoke Admin' : 'Grant Admin'}
-            </button>
+            </Button>
             {banning === m.username ? (
               <>
-                <button onClick={() => setBanning(null)} className={textBtn}>
-                  Cancel
-                </button>
-                <button
+                <Button onClick={() => setBanning(null)}>Cancel</Button>
+                <Button
+                  variant="danger"
                   onClick={() => {
                     setBanning(null)
                     run(() =>
@@ -242,31 +245,30 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
                       )
                     )
                   }}
-                  className={dangerBtn}
                 >
                   Confirm ban
-                </button>
+                </Button>
               </>
             ) : (
               <>
-                <button
+                <Button
+                  variant="danger"
                   onClick={() =>
                     ownerSession.store.menu.confirmKick(name, m.username, reloadMembers)
                   }
-                  className={dangerBtn}
                 >
                   Kick
-                </button>
+                </Button>
                 {m.username !== me?.username && (
-                  <button onClick={() => setBanning(m.username)} className={dangerBtn}>
+                  <Button variant="danger" onClick={() => setBanning(m.username)}>
                     Ban from server
-                  </button>
+                  </Button>
                 )}
               </>
             )}
-          </div>
+          </Row>
           {m.is_admin && editingAdmin === m.username && (
-            <div className="mt-1.5 pl-8">
+            <div className="pl-8">
               <AdminPermsEditor
                 server={name}
                 username={m.username}
@@ -275,13 +277,13 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
               />
             </div>
           )}
-        </div>
+        </Surface>
       ))}
       {found.active
         ? found.hasMore && <Sentinel key={`q${found.list.length}`} onVisible={found.more} />
         : (cache?.hasMore ?? false) && (
             <Sentinel key={cache?.list.length ?? 0} onVisible={moreMembers} />
           )}
-    </div>
+    </Surface>
   )
 }

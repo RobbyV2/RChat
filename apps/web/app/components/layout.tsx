@@ -39,7 +39,10 @@ type Tag =
   | 'span'
   | 'p'
 
-type Box<S extends string> = Omit<AllHTMLAttributes<HTMLElement>, 'className' | 'style' | 'as'> & {
+type Box<S extends string> = Omit<
+  AllHTMLAttributes<HTMLElement>,
+  'className' | 'style' | 'as' | 'wrap' | 'cols'
+> & {
   as?: Tag
   place?: LayoutPlace<S>
   ref?: Ref<HTMLElement>

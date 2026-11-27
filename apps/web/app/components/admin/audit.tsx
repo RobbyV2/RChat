@@ -14,6 +14,7 @@ import { errorText, useStore } from '../../lib/store'
 import type { InstanceAuditEntry } from '../../lib/types'
 import { Chips, Sentinel, fieldCls } from '../ui'
 import { Button } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 
 // What the site admin and the server config changed, newest first. With a filter on, the list
 // stops loading by itself after a few pages without a match.
@@ -54,9 +55,9 @@ export function AuditSection() {
   const filtered = auditFiltered(kind, person)
   const auto = autoLoads(filtered, quietPages(pages ?? [], kind, person))
   return (
-    <div className="space-y-2">
+    <Stack gap="sm">
       <Chips label="Kind" value={kind} options={AUDIT_KINDS} onChange={setKind} />
-      <div className="flex">
+      <Row gap="none">
         <input
           value={person}
           onChange={e => setPerson(e.target.value)}
@@ -64,8 +65,8 @@ export function AuditSection() {
           aria-label="Filter by person"
           className={`${fieldCls} streamer`}
         />
-      </div>
-      <div className="space-y-1">
+      </Row>
+      <Stack gap="2xs">
         {list !== null && shown.length === 0 && (next === null || !auto) && (
           <p className="text-sm text-on-surface-variant">
             {!filtered
@@ -76,32 +77,35 @@ export function AuditSection() {
           </p>
         )}
         {shown.map(e => (
-          <div
-            key={e.id}
-            className="flex flex-wrap items-baseline gap-x-2 rounded-xl bg-surface-container px-3 py-2 text-sm"
-          >
-            <span className="min-w-0 flex-1 break-words">
-              {instanceAuditLine(e).map((p, i) =>
-                p.name ? (
-                  <span key={i} className="streamer">
-                    {p.text}
-                  </span>
-                ) : (
-                  <Fragment key={i}>{p.text}</Fragment>
-                )
-              )}
-            </span>
-            <time
-              dateTime={new Date(e.at * 1000).toISOString()}
-              className="shrink-0 text-xs text-on-surface-variant"
-            >
-              {new Date(e.at * 1000).toLocaleString()}
-            </time>
-          </div>
+          <Surface key={e.id} tone="base" radius="lg" pad="md">
+            <Row gap="sm" wrap align="baseline">
+              <span className="min-w-0 flex-1 text-sm break-words">
+                {instanceAuditLine(e).map((p, i) =>
+                  p.name ? (
+                    <span key={i} className="streamer">
+                      {p.text}
+                    </span>
+                  ) : (
+                    <Fragment key={i}>{p.text}</Fragment>
+                  )
+                )}
+              </span>
+              <time
+                dateTime={new Date(e.at * 1000).toISOString()}
+                className="shrink-0 text-xs text-on-surface-variant"
+              >
+                {new Date(e.at * 1000).toLocaleString()}
+              </time>
+            </Row>
+          </Surface>
         ))}
         {next && auto && <Sentinel key={pages?.length ?? 0} onVisible={() => fetchFrom(next)} />}
-        {next && !auto && <Button onClick={() => fetchFrom(next)}>Load more</Button>}
-      </div>
-    </div>
+        {next && !auto && (
+          <Button onClick={() => fetchFrom(next)} place="self-start">
+            Load more
+          </Button>
+        )}
+      </Stack>
+    </Stack>
   )
 }

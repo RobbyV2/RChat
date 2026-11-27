@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { controlOf, saveWarning, shownValue } from '../../lib/admin_config'
 import {
@@ -24,6 +24,7 @@ import type { SiteSettings, SiteSettingsPatch } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { SettingSwitch } from '../settings_fields'
 import { Button, IconButton } from '../controls'
+import { Grid, Row, Stack, Surface } from '../layout'
 import { Chips, FieldError, fieldCls } from '../ui'
 import { useConfigStore, useControl, usePinned } from './config_state'
 import { SourceNote } from './source'
@@ -34,14 +35,21 @@ type SwitchRow = Extract<AdminRow, { kind: 'switch' }>
 
 const patchOf = (key: string, value: unknown) => ({ [key]: value }) as SiteSettingsPatch
 
-const noteCls = 'px-2 pb-1 text-xs text-on-surface-variant'
+// A line under a switch, inset like the switch's own text.
+function Note({ children }: { children: ReactNode }) {
+  return (
+    <Surface tone="plain" pad="sm" inset="bar">
+      <p className="text-xs text-on-surface-variant">{children}</p>
+    </Surface>
+  )
+}
 
 function RowText({ row, id }: { row: AdminRow; id?: string }) {
   return (
-    <span id={id} className="flex min-w-0 flex-col">
+    <Stack as="span" id={id} gap="none">
       <span className="text-sm">{row.label}</span>
       <span className="text-xs text-on-surface-variant">{row.line}</span>
-    </span>
+    </Stack>
   )
 }
 
@@ -57,10 +65,10 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
   const options = optionsOf(row, settings)
   const set = (v: string) => void updateSettings(patchOf(row.key, v))
   return (
-    <div className="flex flex-col gap-1.5 px-2 py-1.5">
+    <Surface tone="plain" pad="sm" gap="xs">
       <RowText row={row} />
       {row.list ? (
-        <div role="radiogroup" aria-label={row.label} className="flex flex-col gap-1">
+        <Stack role="radiogroup" aria-label={row.label} gap="2xs">
           {options.map(o => (
             <label
               key={o.value}
@@ -76,13 +84,13 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
                 onChange={() => set(o.value)}
                 className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
               />
-              <span className="flex min-w-0 flex-col">
+              <Stack as="span" gap="none">
                 <span className="text-sm">{o.label}</span>
                 {o.line && <span className="text-xs text-on-surface-variant">{o.line}</span>}
-              </span>
+              </Stack>
             </label>
           ))}
-        </div>
+        </Stack>
       ) : (
         <>
           <Chips
@@ -97,8 +105,8 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
           </p>
         </>
       )}
-      {row.note && <p className="px-2 text-xs text-on-surface-variant">{row.note}</p>}
-    </div>
+      {row.note && <p className="text-xs text-on-surface-variant">{row.note}</p>}
+    </Surface>
   )
 }
 
@@ -119,7 +127,11 @@ function NumberControl({ row }: { row: NumberRow }) {
   const valid =
     text.trim() !== '' && Number.isInteger(value) && value >= row.min && value <= row.max
   return (
-    <form
+    <Surface
+      as="form"
+      tone="plain"
+      pad="sm"
+      gap="xs"
       onSubmit={e => {
         e.preventDefault()
         if (!valid) return setError(`Enter ${row.min} to ${row.max} ${row.unit}.`)
@@ -129,12 +141,11 @@ function NumberControl({ row }: { row: NumberRow }) {
         if (warning === null) return save()
         askConfirm({ title: 'Lower the Limit', body: warning, confirm: 'Save', action: save })
       }}
-      className="flex flex-col gap-1.5 px-2 py-1.5"
     >
       <label htmlFor={id}>
         <RowText row={row} />
       </label>
-      <span className="flex items-center gap-2">
+      <Row as="span" gap="sm">
         <input
           id={id}
           type="number"
@@ -155,9 +166,9 @@ function NumberControl({ row }: { row: NumberRow }) {
         >
           Save
         </Button>
-      </span>
+      </Row>
       <FieldError message={error} />
-    </form>
+    </Surface>
   )
 }
 
@@ -166,36 +177,40 @@ function TargetChecks({ row }: { row: AdminRow }) {
   const updateSettings = useStore(s => s.updateSettings)
   const pinned = usePinned(row.key)
   return (
-    <fieldset
-      aria-label={row.label}
-      className={`mx-2 mb-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl bg-surface-container px-3 py-2 ${
-        settings.profanity_filter ? '' : 'opacity-60'
-      }`}
-    >
-      {PROFANITY_TARGETS.map(({ key, label }) => {
-        const locked = pinned || profanityTargetLocked(settings, key)
-        return (
-          <label
-            key={key}
-            title={label}
-            className={`flex min-w-0 items-center gap-2 py-1 text-sm leading-5 pointer-coarse:min-h-11 md:items-start ${
-              locked ? 'cursor-not-allowed text-on-surface-variant' : 'text-on-surface'
-            }`}
-          >
-            <input
-              type="checkbox"
-              checked={profanityTargetOn(settings, key)}
-              disabled={locked}
-              onChange={e =>
-                void updateSettings({ profanity_targets: { [key]: e.target.checked } })
-              }
-              className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
-            />
-            <span className="min-w-0 break-words">{label}</span>
-          </label>
-        )
-      })}
-    </fieldset>
+    <Surface tone="plain" pad="sm" inset="bar">
+      <fieldset
+        aria-label={row.label}
+        className={settings.profanity_filter ? undefined : 'opacity-60'}
+      >
+        <Surface tone="base" radius="lg" pad="md">
+          <Grid cols={2} gap="sm">
+            {PROFANITY_TARGETS.map(({ key, label }) => {
+              const locked = pinned || profanityTargetLocked(settings, key)
+              return (
+                <label
+                  key={key}
+                  title={label}
+                  className={`flex min-w-0 items-center gap-2 py-1 text-sm leading-5 pointer-coarse:min-h-11 md:items-start ${
+                    locked ? 'cursor-not-allowed text-on-surface-variant' : 'text-on-surface'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={profanityTargetOn(settings, key)}
+                    disabled={locked}
+                    onChange={e =>
+                      void updateSettings({ profanity_targets: { [key]: e.target.checked } })
+                    }
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                  />
+                  <span className="min-w-0 break-words">{label}</span>
+                </label>
+              )
+            })}
+          </Grid>
+        </Surface>
+      </fieldset>
+    </Surface>
   )
 }
 
@@ -217,8 +232,8 @@ function SwitchControl({ row }: { row: SwitchRow }) {
         }
         onChange={v => void updateSettings(patchOf(row.key, v))}
       />
-      {!on && row.off && <p className={noteCls}>Off: {row.off}</p>}
-      {textOnly && <p className={noteCls}>Text only: no attachments, in P2P conversations too.</p>}
+      {!on && row.off && <Note>Off: {row.off}</Note>}
+      {textOnly && <Note>Text only: no attachments, in P2P conversations too.</Note>}
     </>
   )
 }
@@ -236,7 +251,7 @@ function NamesControl({ row }: { row: AdminRow }) {
     void updateSettings(patchOf(row.key, next))
   }
   return (
-    <div className="flex flex-col gap-1.5 px-2 py-1.5">
+    <Surface tone="plain" pad="sm" gap="xs">
       <RowText row={row} />
       {control === null ? (
         <p className="text-xs text-on-surface-variant">Loading</p>
@@ -245,7 +260,7 @@ function NamesControl({ row }: { row: AdminRow }) {
           {list.length === 0 ? (
             <p className="text-xs text-on-surface-variant">Nobody is on the list.</p>
           ) : (
-            <ul className="flex flex-wrap gap-1.5">
+            <Row as="ul" gap="xs" wrap>
               {list.map((entry, i) => (
                 <li
                   key={entry}
@@ -262,9 +277,11 @@ function NamesControl({ row }: { row: AdminRow }) {
                   />
                 </li>
               ))}
-            </ul>
+            </Row>
           )}
-          <form
+          <Row
+            as="form"
+            gap="sm"
             onSubmit={e => {
               e.preventDefault()
               const edit = addCreator(list, text)
@@ -273,7 +290,6 @@ function NamesControl({ row }: { row: AdminRow }) {
               setText('')
               save(edit.list)
             }}
-            className="flex gap-2"
           >
             <input
               value={text}
@@ -289,11 +305,11 @@ function NamesControl({ row }: { row: AdminRow }) {
             <Button type="submit" disabled={pinned} place="shrink-0">
               Add
             </Button>
-          </form>
+          </Row>
           <FieldError message={error} />
         </>
       )}
-    </div>
+    </Surface>
   )
 }
 
@@ -302,31 +318,33 @@ type LinkRow = Extract<AdminRow, { kind: 'link' }>
 function LinkControl({ row }: { row: LinkRow }) {
   const openAdmin = useStore(s => s.openAdmin)
   return (
-    <div className="flex flex-wrap items-center gap-2 px-2 py-1.5">
-      <span className="min-w-40 flex-1">
-        <RowText row={row} />
-      </span>
-      <Button
-        onClick={() => openAdmin(row.to === 'servers' ? 'servers' : 'features', null, row.key)}
-        place="shrink-0"
-      >
-        {row.action}
-      </Button>
-    </div>
+    <Surface tone="plain" pad="sm">
+      <Row gap="sm" wrap>
+        <span className="min-w-40 flex-1">
+          <RowText row={row} />
+        </span>
+        <Button
+          onClick={() => openAdmin(row.to === 'servers' ? 'servers' : 'features', null, row.key)}
+          place="shrink-0"
+        >
+          {row.action}
+        </Button>
+      </Row>
+    </Surface>
   )
 }
 
 function InfoControl({ row }: { row: AdminRow }) {
   const control = useControl(row.key)
   return (
-    <div className="flex flex-col gap-1 px-2 py-1.5">
+    <Surface tone="plain" pad="sm" gap="2xs">
       <RowText row={row} />
       {control && (
         <p className="text-xs break-words text-on-surface-variant">
           Now: {shownValue(control.value)}
         </p>
       )}
-    </div>
+    </Surface>
   )
 }
 
@@ -338,29 +356,35 @@ function P2pAll() {
   const pinned = useConfigStore(s => P2P_KEYS.some(k => controlOf(s.config, k)?.pinned))
   const { label, patch } = p2pAll(settings)
   return (
-    <PageRow id="p2p_all" className="flex flex-wrap items-center gap-2 px-2 py-1.5">
-      <span className="flex min-w-40 flex-1 flex-col">
-        <span className="text-sm">All of P2P</span>
-        <span className="text-xs text-on-surface-variant">
-          Peer-to-peer, P2P attachments and P2P backups in one change.
-        </span>
-      </span>
-      <Button
-        disabled={pinned}
-        onClick={() =>
-          askConfirm({
-            title: patch.p2p ? 'Turn On All P2P' : 'Turn Off All P2P',
-            body: patch.p2p
-              ? 'Turn on Peer-to-peer, P2P attachments and P2P backups?'
-              : 'Turn off Peer-to-peer, P2P attachments and P2P backups? The app hides P2P and stops P2P signaling. Data stays on devices.',
-            confirm: patch.p2p ? 'Turn on' : 'Turn off',
-            action: () => void updateSettings(patch),
-          })
-        }
-        place="shrink-0"
-      >
-        {label}
-      </Button>
+    <PageRow id="p2p_all">
+      <Surface tone="plain" pad="sm">
+        <Row gap="sm" wrap>
+          <span className="min-w-40 flex-1">
+            <Stack as="span" gap="none">
+              <span className="text-sm">All of P2P</span>
+              <span className="text-xs text-on-surface-variant">
+                Peer-to-peer, P2P attachments and P2P backups in one change.
+              </span>
+            </Stack>
+          </span>
+          <Button
+            disabled={pinned}
+            onClick={() =>
+              askConfirm({
+                title: patch.p2p ? 'Turn On All P2P' : 'Turn Off All P2P',
+                body: patch.p2p
+                  ? 'Turn on Peer-to-peer, P2P attachments and P2P backups?'
+                  : 'Turn off Peer-to-peer, P2P attachments and P2P backups? The app hides P2P and stops P2P signaling. Data stays on devices.',
+                confirm: patch.p2p ? 'Turn on' : 'Turn off',
+                action: () => void updateSettings(patch),
+              })
+            }
+            place="shrink-0"
+          >
+            {label}
+          </Button>
+        </Row>
+      </Surface>
     </PageRow>
   )
 }

@@ -29,7 +29,9 @@ const excluded = () => {
 
 // Screens that take all their spacing from the layout boxes: hand-written spacing classes there
 // fail the lint.
-const LAID_OUT = []
+const LAID_OUT = [
+  'apps/web/app/components/admin/{accounts,admin_host,admin_page,announcements,audit,danger,dialogs,encryption,overview,servers,source,staff_view,users}.tsx',
+]
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
 

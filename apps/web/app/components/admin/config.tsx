@@ -21,6 +21,7 @@ import { PageGroup, PageRow } from '../settings_page'
 import { Chips } from '../ui'
 import { useApplyConfig, useConfigStore } from './config_state'
 import { Button, Pill } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 
 // Controls whose values are usernames or server names.
 const NAMES = new Set(['server_creators', 'default_servers'])
@@ -39,39 +40,44 @@ function Control({ control }: { control: ConfigControl }) {
   const names = NAMES.has(control.key) ? 'streamer' : ''
   const where = row?.kind === 'link' ? 'servers' : 'features'
   return (
-    <PageRow
-      id={`config-${control.key}`}
-      className="flex flex-wrap items-start gap-x-3 gap-y-1 bg-surface-container px-3 py-2"
-    >
-      <div className="flex min-w-48 flex-1 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="min-w-0 text-sm break-words">{controlLabel(control)}</span>
-          {source === 'pinned' && <Pill tone="outline">Pinned</Pill>}
-          {source === 'differs' && <Pill tone="outline">Differs</Pill>}
-        </div>
-        <code className="font-mono text-xs break-all text-on-surface-variant">{control.env}</code>
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
-          <dt className="text-on-surface-variant">Value</dt>
-          <dd className={`break-words ${names}`}>{shownValue(control.value, options)}</dd>
-          <dt className="text-on-surface-variant">Server config</dt>
-          <dd className={`break-words ${control.config === null ? '' : names}`}>
-            {control.config === null ? 'Not set' : shownValue(control.config, options)}
-          </dd>
-        </dl>
-        {control.key === 'upload_expiry_max_days' && (
-          <p className="text-xs text-on-surface-variant">{CAP_NOTE}</p>
-        )}
-      </div>
-      <div className="-mx-2 flex flex-wrap gap-1 sm:mx-0 sm:flex-col sm:items-end">
-        {source === 'differs' && patchFor(control.key, control.config ?? '') !== null && (
-          <Button onClick={() => apply([control])}>Use server config</Button>
-        )}
-        {row && (
-          <Button onClick={() => openAdmin(where, null, control.key)}>
-            {where === 'servers' ? 'Show in Servers' : 'Show in Features'}
-          </Button>
-        )}
-      </div>
+    <PageRow id={`config-${control.key}`} className="bg-surface-container">
+      <Surface tone="plain" pad="md">
+        <Row gap="md" wrap align="start">
+          <div className="min-w-48 flex-1">
+            <Stack gap="2xs">
+              <Row gap="sm" wrap>
+                <span className="min-w-0 text-sm break-words">{controlLabel(control)}</span>
+                {source === 'pinned' && <Pill tone="outline">Pinned</Pill>}
+                {source === 'differs' && <Pill tone="outline">Differs</Pill>}
+              </Row>
+              <code className="font-mono text-xs break-all text-on-surface-variant">
+                {control.env}
+              </code>
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
+                <dt className="text-on-surface-variant">Value</dt>
+                <dd className={`break-words ${names}`}>{shownValue(control.value, options)}</dd>
+                <dt className="text-on-surface-variant">Server config</dt>
+                <dd className={`break-words ${control.config === null ? '' : names}`}>
+                  {control.config === null ? 'Not set' : shownValue(control.config, options)}
+                </dd>
+              </dl>
+              {control.key === 'upload_expiry_max_days' && (
+                <p className="text-xs text-on-surface-variant">{CAP_NOTE}</p>
+              )}
+            </Stack>
+          </div>
+          <div className="flex flex-wrap gap-1 sm:flex-col sm:items-end">
+            {source === 'differs' && patchFor(control.key, control.config ?? '') !== null && (
+              <Button onClick={() => apply([control])}>Use server config</Button>
+            )}
+            {row && (
+              <Button onClick={() => openAdmin(where, null, control.key)}>
+                {where === 'servers' ? 'Show in Servers' : 'Show in Features'}
+              </Button>
+            )}
+          </div>
+        </Row>
+      </Surface>
     </PageRow>
   )
 }
@@ -86,72 +92,84 @@ export function ConfigSection() {
   const all = differing(config)
   const shown = filterControls(config.controls, filter)
   return (
-    <div>
-      <p className="pb-3 text-sm text-on-surface-variant">
-        Every setting has a name in the server config. A pinned one follows the config and
-        can&apos;t be changed here. {summaryLine(config)}.
-      </p>
-      <div className="flex flex-wrap items-center gap-2 pb-4">
-        <Chips label="Show" value={filter} options={CONFIG_FILTERS} onChange={setFilter} />
-        <span className="flex-1" />
-        <Button
-          variant="filled"
-          size="md"
-          disabled={all.length === 0}
-          onClick={() =>
-            apply(
-              all,
-              `Set ${all.length === 1 ? '1 setting' : `${all.length} settings`} to what the server config says: ${all.map(controlLabel).join(', ')}.`
-            )
-          }
-        >
-          Use server config for all
-        </Button>
-      </div>
-      <PageGroup label="Settings">
-        {shown.length === 0 && <p className="text-sm text-on-surface-variant">None.</p>}
-        {shown.map(c => (
-          <Control key={c.key} control={c} />
-        ))}
-      </PageGroup>
-      {filter === 'all' && (
-        <PageGroup label="Limits">
-          <p className="pb-2 text-sm text-on-surface-variant">
-            Limits are set in the server config. Restart to change.
-          </p>
-          {config.limits.map(l => (
-            <PageRow
-              key={l.env}
-              id={`limit-${l.env}`}
-              className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 bg-surface-container px-3 py-2"
-            >
-              <code className="min-w-0 flex-1 font-mono text-xs break-all">{l.env}</code>
-              <span className="text-sm">{limitValue(l)}</span>
-              <span className="w-full text-xs text-on-surface-variant">
-                {[
-                  limitChanged(l) && l.default !== null ? `Default ${l.default}` : null,
-                  l.range === '' ? null : `Range ${l.range}`,
-                ]
-                  .filter(Boolean)
-                  .join(', ') || 'Default'}
-              </span>
-            </PageRow>
+    <Stack gap="lg">
+      <Stack gap="md">
+        <p className="text-sm text-on-surface-variant">
+          Every setting has a name in the server config. A pinned one follows the config and
+          can&apos;t be changed here. {summaryLine(config)}.
+        </p>
+        <Row gap="sm" wrap>
+          <Chips label="Show" value={filter} options={CONFIG_FILTERS} onChange={setFilter} />
+          <Button
+            variant="filled"
+            size="md"
+            disabled={all.length === 0}
+            onClick={() =>
+              apply(
+                all,
+                `Set ${all.length === 1 ? '1 setting' : `${all.length} settings`} to what the server config says: ${all.map(controlLabel).join(', ')}.`
+              )
+            }
+            place="ml-auto"
+          >
+            Use server config for all
+          </Button>
+        </Row>
+      </Stack>
+      <div>
+        <PageGroup label="Settings">
+          {shown.length === 0 && <p className="text-sm text-on-surface-variant">None.</p>}
+          {shown.map(c => (
+            <Control key={c.key} control={c} />
           ))}
         </PageGroup>
-      )}
-      {filter === 'all' && config.database && (
-        <PageGroup label="Database">
-          <p className="pb-2 text-sm text-on-surface-variant">On this copy</p>
-          <dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-2 px-3 text-sm">
-            {databaseRows(config.database).map(([label, value]) => (
-              <div key={label} className="contents">
-                <dt className="break-words text-on-surface-variant">{label}</dt>
-                <dd className="break-words">{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </PageGroup>
-      )}
-    </div>
+        {filter === 'all' && (
+          <PageGroup label="Limits">
+            <Stack gap="md">
+              <p className="text-sm text-on-surface-variant">
+                Limits are set in the server config. Restart to change.
+              </p>
+              <Stack gap="2xs">
+                {config.limits.map(l => (
+                  <PageRow key={l.env} id={`limit-${l.env}`} className="bg-surface-container">
+                    <Surface tone="plain" pad="md" gap="3xs">
+                      <Row gap="md" align="baseline">
+                        <code className="min-w-0 flex-1 font-mono text-xs break-all">{l.env}</code>
+                        <span className="text-sm">{limitValue(l)}</span>
+                      </Row>
+                      <span className="text-xs text-on-surface-variant">
+                        {[
+                          limitChanged(l) && l.default !== null ? `Default ${l.default}` : null,
+                          l.range === '' ? null : `Range ${l.range}`,
+                        ]
+                          .filter(Boolean)
+                          .join(', ') || 'Default'}
+                      </span>
+                    </Surface>
+                  </PageRow>
+                ))}
+              </Stack>
+            </Stack>
+          </PageGroup>
+        )}
+        {filter === 'all' && config.database && (
+          <PageGroup label="Database">
+            <Stack gap="2xs">
+              <p className="text-sm text-on-surface-variant">On this copy</p>
+              <Surface tone="plain" pad="md" inset="bar">
+                <dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-2 text-sm">
+                  {databaseRows(config.database).map(([label, value]) => (
+                    <div key={label} className="contents">
+                      <dt className="break-words text-on-surface-variant">{label}</dt>
+                      <dd className="break-words">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </Surface>
+            </Stack>
+          </PageGroup>
+        )}
+      </div>
+    </Stack>
   )
 }

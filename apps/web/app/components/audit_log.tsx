@@ -41,6 +41,7 @@ import { useMemberSearch } from './member_search'
 import { UserAvatar } from './user_avatar'
 import { Dialog, Masked, Sentinel, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
+import { Grid, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
 
 const TEXT_DEBOUNCE = 300
@@ -142,71 +143,81 @@ function AuditLog({ server }: { server: string }) {
 
   return (
     <Dialog full title="Audit Log" onClose={back}>
-      <div className="mb-3 grid grid-cols-2 gap-2">
-        <label className="col-span-2 sm:col-span-1">
-          <span className="sr-only">Action type</span>
-          <select
-            value={group}
-            onChange={e => setGroup(e.target.value as AuditGroup | '')}
-            title="Action type"
-            className={`${smallField} bg-surface-container-high`}
-          >
-            <option value="">All actions</option>
-            {AUDIT_GROUPS.map(g => (
-              <option key={g.key} value={g.key}>
-                {g.label}
-              </option>
+      <Stack gap="md">
+        <Grid cols={2} gap="sm">
+          <label className="col-span-2 sm:col-span-1">
+            <span className="sr-only">Action type</span>
+            <select
+              value={group}
+              onChange={e => setGroup(e.target.value as AuditGroup | '')}
+              title="Action type"
+              className={`${smallField} bg-surface-container-high`}
+            >
+              <option value="">All actions</option>
+              {AUDIT_GROUPS.map(g => (
+                <option key={g.key} value={g.key}>
+                  {g.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <ActorField server={server} value={actor} onChange={setActor} />
+          <input
+            type="search"
+            value={targetText}
+            onChange={e => setTargetText(e.target.value)}
+            placeholder="Target name"
+            title="Only entries whose target name contains this"
+            aria-label="Target name"
+            className={`${smallField} col-span-2`}
+          />
+          <label className="min-w-0 text-xs text-on-surface-variant">
+            <Row as="span" gap="sm">
+              From
+              <input
+                type="date"
+                value={from}
+                max={to || undefined}
+                onChange={e => setFrom(e.target.value)}
+                className={smallField}
+              />
+            </Row>
+          </label>
+          <label className="min-w-0 text-xs text-on-surface-variant">
+            <Row as="span" gap="sm">
+              To
+              <input
+                type="date"
+                value={to}
+                min={from || undefined}
+                onChange={e => setTo(e.target.value)}
+                className={smallField}
+              />
+            </Row>
+          </label>
+        </Grid>
+        {log.list.length > 0 && (
+          <Stack as="ul" gap="3xs">
+            {log.list.map(e => (
+              <AuditRow key={e.id} entry={e} server={server} />
             ))}
-          </select>
-        </label>
-        <ActorField server={server} value={actor} onChange={setActor} />
-        <input
-          type="search"
-          value={targetText}
-          onChange={e => setTargetText(e.target.value)}
-          placeholder="Target name"
-          title="Only entries whose target name contains this"
-          aria-label="Target name"
-          className={`${smallField} col-span-2`}
-        />
-        <label className="flex min-w-0 items-center gap-2 text-xs text-on-surface-variant">
-          From
-          <input
-            type="date"
-            value={from}
-            max={to || undefined}
-            onChange={e => setFrom(e.target.value)}
-            className={smallField}
-          />
-        </label>
-        <label className="flex min-w-0 items-center gap-2 text-xs text-on-surface-variant">
-          To
-          <input
-            type="date"
-            value={to}
-            min={from || undefined}
-            onChange={e => setTo(e.target.value)}
-            className={smallField}
-          />
-        </label>
-      </div>
-      <ul className="space-y-0.5">
-        {log.list.map(e => (
-          <AuditRow key={e.id} entry={e} server={server} />
-        ))}
-      </ul>
-      {log.loaded && !log.loading && log.list.length === 0 && (
-        <p className="px-2 py-6 text-center text-sm text-on-surface-variant">
-          {filtered ? 'Nothing matches these filters.' : 'Nothing has been logged yet.'}
-        </p>
-      )}
-      {log.loading && <p className="px-2 py-3 text-sm text-on-surface-variant">Loading…</p>}
-      {log.next !== null && !log.loading && <Sentinel key={log.list.length} onVisible={more} />}
-      {log.loaded && log.next === null && log.list.length > 0 && (
-        <p className="px-2 pt-3 text-center text-xs text-on-surface-variant">
-          Entries are kept for 90 days.
-        </p>
-      )}
+          </Stack>
+        )}
+        {log.loaded && !log.loading && log.list.length === 0 && (
+          <Surface tone="plain" pad="md">
+            <p className="text-center text-sm text-on-surface-variant">
+              {filtered ? 'Nothing matches these filters.' : 'Nothing has been logged yet.'}
+            </p>
+          </Surface>
+        )}
+        {log.loading && <p className="text-sm text-on-surface-variant">Loading…</p>}
+        {log.next !== null && !log.loading && <Sentinel key={log.list.length} onVisible={more} />}
+        {log.loaded && log.next === null && log.list.length > 0 && (
+          <p className="text-center text-xs text-on-surface-variant">
+            Entries are kept for 90 days.
+          </p>
+        )}
+      </Stack>
     </Dialog>
   )
 }
@@ -308,10 +319,12 @@ function ActorField({
 function Swatch({ field, value }: { field: string; value: unknown }) {
   if (!field.endsWith('color') || typeof value !== 'string') return null
   return (
-    <span
-      className="mr-1 inline-block size-3 rounded-full border border-outline-variant align-middle"
-      style={{ backgroundColor: value }}
-    />
+    <>
+      <span
+        className="inline-block size-3 rounded-full border border-outline-variant align-middle"
+        style={{ backgroundColor: value }}
+      />{' '}
+    </>
   )
 }
 
@@ -339,10 +352,10 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
   const ms = entry.created_at * 1000
   const body = (
     <>
-      <span className="mt-0.5 shrink-0 rounded-full bg-secondary-container p-1.5 text-on-secondary-container">
+      <span className="shrink-0 rounded-full bg-secondary-container p-1.5 text-on-secondary-container">
         <Icon size={16} aria-hidden />
       </span>
-      <span className="min-w-0 flex-1">
+      <Stack as="span" gap="none" place="flex-1">
         <span className="block text-sm break-words text-on-surface">
           {sentence(entry).map((p, i) =>
             p.name ? (
@@ -365,7 +378,7 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
           {relativeTime(ms, Date.now())}
           {entry.hidden && ' · Details hidden'}
         </span>
-      </span>
+      </Stack>
     </>
   )
   return (
@@ -386,45 +399,55 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
           />
         </button>
       ) : (
-        <div className="flex items-start gap-3 px-2 py-2">{body}</div>
+        <Surface tone="plain" pad="sm">
+          <Row gap="md" align="start">
+            {body}
+          </Row>
+        </Surface>
       )}
       {open && expandable && (
-        <dl className="mx-2 mb-2 ml-12 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg bg-surface-container p-2 text-xs">
-          {changes.map((c, i) => (
-            <div key={`c${i}`} className="contents">
-              <dt className="text-on-surface-variant">{fieldLabel(c.field)}</dt>
-              <dd className="break-words text-on-surface">
-                {c.before !== null && (
-                  <>
-                    <span className="text-on-surface-variant line-through decoration-on-surface-variant/60">
-                      <Swatch field={c.field} value={c.before} />
-                      <span className={isNameValue(entry, c.field) ? 'streamer' : undefined}>
-                        {valueText(c.field, c.before)}
+        <div className="pr-2 pb-2 pl-12">
+          <Surface tone="base" radius="md" pad="sm">
+            <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+              {changes.map((c, i) => (
+                <div key={`c${i}`} className="contents">
+                  <dt className="text-on-surface-variant">{fieldLabel(c.field)}</dt>
+                  <dd className="break-words text-on-surface">
+                    {c.before !== null && (
+                      <>
+                        <Swatch field={c.field} value={c.before} />
+                        <span className="text-on-surface-variant line-through decoration-on-surface-variant/60">
+                          <span className={isNameValue(entry, c.field) ? 'streamer' : undefined}>
+                            {valueText(c.field, c.before)}
+                          </span>
+                        </span>
+                        {c.after !== null && <span className="text-on-surface-variant"> → </span>}
+                      </>
+                    )}
+                    {(c.after !== null || c.before === null) && (
+                      <span>
+                        <Swatch field={c.field} value={c.after} />
+                        <span className={isNameValue(entry, c.field) ? 'streamer' : undefined}>
+                          {valueText(c.field, c.after)}
+                        </span>
                       </span>
-                    </span>
-                    {c.after !== null && <span className="px-1 text-on-surface-variant">→</span>}
-                  </>
-                )}
-                {(c.after !== null || c.before === null) && (
-                  <span>
-                    <Swatch field={c.field} value={c.after} />
-                    <span className={isNameValue(entry, c.field) ? 'streamer' : undefined}>
-                      {valueText(c.field, c.after)}
-                    </span>
-                  </span>
-                )}
-              </dd>
-            </div>
-          ))}
-          {facts.map(([label, value]) => (
-            <div key={label} className="contents">
-              <dt className="text-on-surface-variant">{label}</dt>
-              <dd className={`break-words text-on-surface ${isNameFact(label) ? 'streamer' : ''}`}>
-                {value}
-              </dd>
-            </div>
-          ))}
-        </dl>
+                    )}
+                  </dd>
+                </div>
+              ))}
+              {facts.map(([label, value]) => (
+                <div key={label} className="contents">
+                  <dt className="text-on-surface-variant">{label}</dt>
+                  <dd
+                    className={`break-words text-on-surface ${isNameFact(label) ? 'streamer' : ''}`}
+                  >
+                    {value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </Surface>
+        </div>
       )}
     </li>
   )

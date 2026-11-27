@@ -1,7 +1,7 @@
 'use client'
 
 import { KeyRound, TriangleAlert } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   BACKUP_WARNING,
   fingerprints,
@@ -17,10 +17,29 @@ import {
 import { useAccount } from '../../lib/client/react'
 import { errorText, useStore } from '../../lib/store'
 import { Pill } from '../controls'
+import { Row, Stack, Surface } from '../layout'
 import { PageRow } from '../settings_page'
 
-const cardCls = 'flex min-w-0 flex-col gap-1 rounded-xl bg-surface-container px-4 py-3'
 const cardTitleCls = 'text-xs font-medium tracking-wide text-on-surface-variant uppercase'
+
+function Card({ children }: { children: ReactNode }) {
+  return (
+    <Surface tone="base" radius="lg" pad="lg" gap="2xs">
+      {children}
+    </Surface>
+  )
+}
+
+function Warning({ kind, children }: { kind: string; children: ReactNode }) {
+  return (
+    <Surface as="p" role="alert" data-warning={kind} tone="error" radius="lg" pad="lg">
+      <Row as="span" gap="sm" align="start">
+        <TriangleAlert size={18} aria-hidden className="shrink-0" />
+        <span className="min-w-0 text-sm break-words">{children}</span>
+      </Row>
+    </Surface>
+  )
+}
 
 export function EncryptionStatus({
   view,
@@ -34,76 +53,49 @@ export function EncryptionStatus({
   const note = keySourceNote(view)
   const reset = resetWarning(view, now)
   return (
-    <div className="space-y-3">
-      {view.needs_backup && (
-        <p
-          role="alert"
-          data-warning="backup"
-          className="flex min-w-0 items-start gap-2 rounded-xl bg-error-container px-4 py-3 text-sm text-on-error-container"
-        >
-          <TriangleAlert size={18} aria-hidden className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{BACKUP_WARNING}</span>
-        </p>
-      )}
-      {lost.length > 0 && (
-        <p
-          role="alert"
-          data-warning="lost"
-          className="flex min-w-0 items-start gap-2 rounded-xl bg-error-container px-4 py-3 text-sm text-on-error-container"
-        >
-          <TriangleAlert size={18} aria-hidden className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{lostWarning(lost)}</span>
-        </p>
-      )}
-      {reset !== null && (
-        <p
-          role="alert"
-          data-warning="reset"
-          className="flex min-w-0 items-start gap-2 rounded-xl bg-error-container px-4 py-3 text-sm text-on-error-container"
-        >
-          <TriangleAlert size={18} aria-hidden className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{reset}</span>
-        </p>
-      )}
-      <div className={cardCls}>
+    <Stack gap="md">
+      {view.needs_backup && <Warning kind="backup">{BACKUP_WARNING}</Warning>}
+      {lost.length > 0 && <Warning kind="lost">{lostWarning(lost)}</Warning>}
+      {reset !== null && <Warning kind="reset">{reset}</Warning>}
+      <Card>
         <p className={cardTitleCls}>Key source</p>
-        <p className="flex min-w-0 items-center gap-2 text-sm">
+        <Row as="p" gap="sm">
           <KeyRound size={16} aria-hidden className="shrink-0 text-on-surface-variant" />
-          <span data-key-source={view.source} className="min-w-0 break-words">
+          <span data-key-source={view.source} className="min-w-0 text-sm break-words">
             {keySourceLine(view)}
           </span>
-        </p>
+        </Row>
         {view.key_file !== null && (
           <p className="min-w-0 font-mono text-xs break-all text-on-surface-variant">
             {view.key_file}
           </p>
         )}
         {note !== null && <p className="text-xs text-on-surface-variant">{note}</p>}
-      </div>
+      </Card>
       {prints.length > 0 && (
-        <div className={cardCls}>
+        <Card>
           <p className={cardTitleCls}>Key fingerprints</p>
-          <ul className="space-y-1">
+          <Stack as="ul" gap="2xs">
             {prints.map(p => (
-              <li key={p.id} className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm">
-                <span className="min-w-0 font-mono break-all">{p.id}</span>
-                <span className="font-mono text-on-surface-variant">{p.print}</span>
+              <Row as="li" key={p.id} gap="sm" wrap>
+                <span className="min-w-0 font-mono text-sm break-all">{p.id}</span>
+                <span className="font-mono text-sm text-on-surface-variant">{p.print}</span>
                 {p.current && <Pill tone="outline">In use</Pill>}
-              </li>
+              </Row>
             ))}
-          </ul>
+          </Stack>
           <p className="text-xs text-on-surface-variant">If a key leaked, rotate data keys too.</p>
-        </div>
+        </Card>
       )}
-      <div className={cardCls}>
+      <Card>
         <p className={cardTitleCls}>Encrypted storage</p>
         <p className="text-sm">{readinessLine(view)}</p>
         <p className="text-xs text-on-surface-variant">
           Where it is on, messages are stored encrypted with a key this site keeps. This is not
           end-to-end encryption.
         </p>
-      </div>
-    </div>
+      </Card>
+    </Stack>
   )
 }
 
@@ -143,8 +135,10 @@ export function EncryptionSection() {
     }
   }, [owner, setError])
   return (
-    <PageRow id="keys" className="p-2">
-      <EncryptionBody view={view} />
+    <PageRow id="keys">
+      <Surface tone="plain" pad="sm">
+        <EncryptionBody view={view} />
+      </Surface>
     </PageRow>
   )
 }
