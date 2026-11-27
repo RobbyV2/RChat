@@ -32,6 +32,7 @@ import { membershipOf, roomColor, type HistoryVis } from '../state'
 import { p2pAbout, type AboutChange } from '../../server_about'
 import { parseP2pMemberList, type P2pMemberListChange } from '../../member_list'
 import type { P2pThread } from './store'
+import { sealEarlier } from '../seal_earlier'
 import type { IdentityScope, P2pParts } from './scope'
 import { time } from '../../platform/time'
 import type { Cancel } from '../../clock'
@@ -110,6 +111,7 @@ export function createServersPart(
       profiles: sum?.profiles ?? 'all',
       profile: r.profile ?? {},
       profileLock: { locked: false },
+      store: { on: false, earlier: false },
       system: { ch: null, join: true, leave: true },
       systemPick: null,
       channels: sum && me === 'join' ? channelViews(sum, ik, me, state.limits.display) : [],
@@ -253,7 +255,7 @@ export function createServersPart(
     const me = parts.dms.meNow()
     const peer = useP2p.getState().rooms[t.room]?.peer ?? useP2p.getState().chat?.peer
     if (t.ch) return state.servers ? state.servers.loadThread(t.room, t.root, opts) : null
-    return s && me && peer ? loadDmThread(s.db, t.room, t.root, me, peer, opts) : null
+    return s && me && peer ? loadDmThread(s.db, t.room, t.root, me, peer, opts, state.limits) : null
   }
 
   // The open thread's root and newest replies (`keep`: at least as many as shown).
@@ -402,7 +404,7 @@ export function createServersPart(
       if (!chat || !s || !me) return []
       const all = chat.ch
         ? ((await state.servers?.listThreads(chat.room, chat.ch)) ?? [])
-        : await loadDmThreads(s.db, chat.room, me, chat.peer)
+        : await loadDmThreads(s.db, chat.room, me, chat.peer, state.limits)
       const pings = state.pingLog
         ? await state.pingLog.threadPings(chat.room, chat.ch ?? null).catch(() => [])
         : []
@@ -823,6 +825,21 @@ export function createServersPart(
     setMemberList: (room: string, change: P2pMemberListChange) =>
       withServers(s => s.setMemberList(room, change)),
     setHistory: (room: string, vis: HistoryVis) => withServers(s => s.setHistory(room, vis)),
+    setStore: (room: string, on: boolean, earlier = false) =>
+      withServers(s => s.setStore(room, on, earlier)),
+    // Encrypts the earlier messages this device stored of `room` without changing its switch:
+    // where the site requires encrypted storage and the room's own switch is off.
+    sealEarlierHere: (room: string) => {
+      const s = state.store
+      if (s) void sealEarlier(s, room, state.limits.search).catch(() => {})
+    },
+    // Asks whether this device can keep a device key (making it), for the settings.
+    async checkSealKey() {
+      const s = state.store
+      if (!s) return
+      const available = await s.sealing.available()
+      if (state.store === s) useP2p.setState(st => ({ seal: { ...st.seal, available } }))
+    },
     setSystem: (room: string, sys: { ch: string | null; join: boolean; leave: boolean }) =>
       withServers(s => s.setSystem(room, sys)),
     addChannel: (room: string, name: string, kind: 'text' | 'voice' = 'text') =>

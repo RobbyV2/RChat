@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  deviceKeyNote,
+  dmPlace,
   hostedDmSeal,
   hostedServerSeal,
+  jobPercent,
+  jobText,
+  latestJob,
+  serverPlace,
   p2pSeal,
   sealDescription,
   sealReasonText,
@@ -170,5 +176,72 @@ describe('the encrypted storage switch', () => {
     expect(sealDescription('p2p')).toBe(
       "New messages are stored encrypted on each member's device."
     )
+  })
+})
+
+describe('jobs over stored messages', () => {
+  const job = (state: 'running' | 'done' | 'failed', done: number, upto = 200, from = 0) => ({
+    id: 1,
+    direction: 'seal' as const,
+    upto,
+    done,
+    from,
+    state,
+  })
+
+  test('show how far they got, and never 100% before they end', () => {
+    expect(jobPercent(job('running', 0))).toBe(0)
+    expect(jobPercent(job('running', 50))).toBe(25)
+    expect(jobPercent(job('running', 200))).toBe(99)
+    expect(jobPercent(job('done', 50))).toBe(100)
+    expect(jobPercent(job('running', 0, 0))).toBe(100)
+    // Over the place's own messages: a place whose ids start late is not near its end at once.
+    expect(jobPercent(job('running', 0, 1_001_000, 1_000_000))).toBe(0)
+    expect(jobPercent(job('running', 1_000_250, 1_001_000, 1_000_000))).toBe(25)
+    expect(jobText(job('running', 50))).toBe('Encrypting earlier messages: 25%')
+    expect(jobText(job('done', 200))).toBe('Earlier messages are stored encrypted.')
+    expect(jobText(job('failed', 10))).toBe(
+      'Encrypting earlier messages stopped. Start it again to go on.'
+    )
+    expect(jobText({ ...job('done', 200), direction: 'unseal' })).toBe(
+      'Messages are stored plain again.'
+    )
+  })
+
+  test('the newest of a direction is read defensively', () => {
+    const list = [
+      { direction: 'unseal', upto: 9, done: 9, state: 'done' },
+      { direction: 'seal', upto: 'x', done: 1, state: 'running' },
+      { direction: 'seal', upto: 9, done: 3, state: 'running' },
+      { direction: 'seal', upto: 9, done: 9, state: 'done' },
+    ]
+    expect(latestJob(list, 'seal')).toEqual({
+      id: 0,
+      place: '',
+      direction: 'seal',
+      upto: 9,
+      done: 3,
+      from: 0,
+      state: 'running',
+    })
+    const listed = [
+      { id: 7, place: 's:x', direction: 'seal', upto: 9, done: 3, from: 2, state: 'running' },
+    ]
+    const pushed = (id: number) => ({ ...listed[0], id, done: 5 })
+    expect(latestJob(listed, 'seal', pushed(7))?.done).toBe(5)
+    expect(latestJob(listed, 'seal', pushed(6))?.done).toBe(3)
+    expect(latestJob([], 'seal', pushed(1))?.done).toBe(5)
+    expect(latestJob(listed, 'unseal', pushed(9))).toBeNull()
+    expect(latestJob(list, 'unseal')?.state).toBe('done')
+    expect(latestJob(null, 'seal')).toBeNull()
+    expect(latestJob([{ direction: 'seal', upto: 1, done: 1, state: 'odd' }], 'seal')).toBeNull()
+  })
+
+  test('places and the device key note', () => {
+    expect(serverPlace('club')).toBe('s:club')
+    expect(dmPlace(7)).toBe('d:7')
+    expect(deviceKeyNote(true, false)).toBeNull()
+    expect(deviceKeyNote(false, false)).toContain('browser profile')
+    expect(deviceKeyNote(false, true)).toContain("app's profile")
   })
 })

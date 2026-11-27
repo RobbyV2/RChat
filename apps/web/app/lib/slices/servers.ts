@@ -164,6 +164,7 @@ export const applyServerChange = (
         ? (server.description ?? null)
         : detail.description,
       icon_kind: server.icon_kind ?? detail.icon_kind,
+      seal: server.seal ?? detail.seal,
     }
   }
   const members = renameKey(s.members, old_name, server.name)

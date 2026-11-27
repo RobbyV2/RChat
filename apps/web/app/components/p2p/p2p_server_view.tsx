@@ -2,6 +2,7 @@
 import { Name } from '../name'
 import { roomName, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
+import { StoredLock } from '../storage_settings'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -413,6 +414,7 @@ function ServerHead({ v }: { v: ServerView }) {
   const acct = useAccount()
 
   const own = useP2p(s => ownsP2pServer(v, s.me))
+  const sealAll = useP2p(s => s.seal.everything)
   const open = (x: number, y: number) =>
     openActionMenu(x, y, { kind: 'p2p_server', v, folder: null, at: 0 }, undefined, acct, identity)
   return (
@@ -440,6 +442,7 @@ function ServerHead({ v }: { v: ServerView }) {
           <Row as="span" gap="xs" place="w-full">
             <Name data-p2p-server-name of={roomName(v.name, own)} look="truncate font-medium" />
             <P2pBadge />
+            {(v.store.on || sealAll) && <StoredLock />}
           </Row>
           <span data-p2p-online-count className="truncate text-xs text-on-surface-variant">
             {v.online} of {v.joined} online

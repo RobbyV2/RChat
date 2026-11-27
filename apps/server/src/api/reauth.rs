@@ -154,6 +154,8 @@ pub enum Purpose {
     SealData {
         place: String,
     },
+    /// Saying a copy of the key file is kept somewhere safe.
+    KeysSaved,
 }
 
 impl Purpose {
@@ -167,13 +169,17 @@ impl Purpose {
             Purpose::StaffView { .. } => "staff_view",
             Purpose::DeleteAccount => "delete_account",
             Purpose::SealData { .. } => "seal-data",
+            Purpose::KeysSaved => "keys-saved",
         }
     }
 
     pub fn context(&self) -> &str {
         match self {
             Purpose::SetPhrase { key } => key,
-            Purpose::RemovePhrase | Purpose::SetPassword | Purpose::DeleteAccount => "",
+            Purpose::RemovePhrase
+            | Purpose::SetPassword
+            | Purpose::DeleteAccount
+            | Purpose::KeysSaved => "",
             Purpose::LinkIdp { provider } => provider,
             Purpose::P2pData { ik } => ik,
             Purpose::StaffView { channel } => channel,
@@ -187,6 +193,7 @@ impl Purpose {
             | Purpose::RemovePhrase
             | Purpose::P2pData { .. }
             | Purpose::SealData { .. }
+            | Purpose::KeysSaved
             | Purpose::LinkIdp { .. }
             | Purpose::StaffView { .. }
             | Purpose::DeleteAccount

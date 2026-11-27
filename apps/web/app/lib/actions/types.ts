@@ -87,7 +87,7 @@ export type Target =
       version: number
       after?(): void
     }
-  | { kind: 'dm'; dm: DmSummary; where: 'sidebar' | 'home' }
+  | { kind: 'dm'; dm: DmSummary; where: 'sidebar' | 'home' | 'header' }
   // The rail's home button and the instance badge.
   | { kind: 'home' }
   | { kind: 'rail_account'; origin: string; username: string | null }

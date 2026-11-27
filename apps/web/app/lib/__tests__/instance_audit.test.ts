@@ -215,3 +215,21 @@ test('a staff entry shows the reason it was given, and other entries never do', 
     'root changed p2p from on to off'
   )
 })
+
+test('encryption requirements and the saved key copy read as sentences', () => {
+  const site = (on: boolean) =>
+    entry({ action: 'encryption.required', target: null, detail: { on } })
+  expect(text(site(true))).toBe('root required encrypted storage on this site')
+  expect(text(site(false))).toBe('root stopped requiring encrypted storage on this site')
+  const server = entry({
+    action: 'encryption.server_required',
+    target: 'den',
+    detail: { on: true },
+  })
+  expect(text(server)).toBe('root required encrypted storage in den')
+  expect(names(server)).toEqual(['root', 'den'])
+  const gone = entry({ action: 'encryption.server_required', target: null, detail: { on: false } })
+  expect(text(gone)).toBe('root stopped requiring encrypted storage in a server')
+  const saved = entry({ action: 'encryption.backed_up', target: null, detail: {} })
+  expect(text(saved)).toBe('root saved a copy of the key file')
+})

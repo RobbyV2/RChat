@@ -1,5 +1,6 @@
 // What the site administration page says about the site's encryption keys.
 
+import { jobOf, type PlacedJob } from './sealing'
 import { formatStamp, type FormatOptions } from './timestamps'
 
 export interface AdminDataKey {
@@ -36,6 +37,14 @@ export interface AdminEncryption {
   // `updating`.
   readiness: string
   needs_backup: boolean
+  required: { on: boolean; pinned: boolean }
+  // Stored records that did not open since this copy of the site started.
+  unreadable: number
+  // Whether "Every copy runs this build" is confirmed; null where nobody has to confirm it.
+  copies_confirmed: boolean | null
+  places: { servers: number; dms: number }
+  // The newest jobs over stored messages, newest first.
+  jobs: PlacedJob[]
 }
 
 export const BACKUP_WARNING =
@@ -147,6 +156,11 @@ export const lostWarning = (lost: AdminDataKey[]) =>
 
 const text = (v: unknown) => (typeof v === 'string' ? v : '')
 
+const count = (v: unknown) => (Number.isSafeInteger(v) && (v as number) > 0 ? (v as number) : 0)
+
+const record = (v: unknown): Record<string, unknown> =>
+  typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {}
+
 // The answer of `GET /admin/encryption`, read defensively.
 export function parseAdminEncryption(value: unknown): AdminEncryption | null {
   if (typeof value !== 'object' || value === null) return null
@@ -180,5 +194,63 @@ export function parseAdminEncryption(value: unknown): AdminEncryption | null {
     }),
     readiness: text(v.readiness) || 'keys',
     needs_backup: v.needs_backup === true,
+    required: { on: record(v.required).on === true, pinned: record(v.required).pinned === true },
+    unreadable: count(v.unreadable),
+    copies_confirmed: typeof v.copies_confirmed === 'boolean' ? v.copies_confirmed : null,
+    places: { servers: count(record(v.places).servers), dms: count(record(v.places).dms) },
+    jobs: Array.isArray(v.jobs) ? v.jobs.flatMap(j => jobOf(j) ?? []) : [],
   }
 }
+
+export const REQUIRE_SITE = 'Require encryption on this site'
+export const REQUIRE_SITE_HINT = "Servers and DMs can't turn encrypted storage off."
+export const REQUIRE_SERVER = 'Require encryption'
+export const REQUIRE_SERVER_HINT = "This server's managers can't turn encrypted storage off."
+export const PINNED_NOTE = 'Set by the server configuration'
+export const COPIES_LABEL = 'Every copy runs this build'
+export const COPIES_HINT =
+  'Copies of this site on Postgres without Redis cannot say which build they run.'
+export const KEY_SAVED = 'Key copy saved'
+export const KEY_SAVED_CONFIRM =
+  'Confirm that a copy of the key file is kept somewhere safe, off this server.'
+export const EVERYWHERE = 'Encrypt earlier messages everywhere'
+export const EVERYWHERE_CONFIRM =
+  'Every server and DM that stores new messages encrypted will store its earlier messages only encrypted.'
+export const UNSEAL = 'Decrypt stored messages'
+export const UNSEAL_CONFIRM =
+  'Everything stored encrypted is stored plain again. New messages still follow each server and DM.'
+export const UNSEAL_SERVER_CONFIRM =
+  'Everything this server stored encrypted is stored plain again. New messages still follow its switch.'
+
+const counted = (n: number, one: string, many: string) =>
+  `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`
+
+// Where new messages are stored encrypted.
+export function placesLine(view: AdminEncryption): string {
+  if (view.required.on) return 'Every server and DM stores new messages encrypted.'
+  const { servers, dms } = view.places
+  if (servers === 0 && dms === 0) return 'No server or DM stores new messages encrypted.'
+  const parts = [
+    ...(servers > 0 ? [counted(servers, 'server', 'servers')] : []),
+    ...(dms > 0 ? [counted(dms, 'DM', 'DMs')] : []),
+  ]
+  return `New messages are stored encrypted in ${parts.join(' and ')}.`
+}
+
+export const unreadableLine = (view: AdminEncryption): string | null =>
+  view.unreadable === 0
+    ? null
+    : `${counted(view.unreadable, 'stored record', 'stored records')} couldn't be opened since this copy started.`
+
+export const keySavedLine = (at: number, now: number, o: FormatOptions = {}) =>
+  `Key copy saved on ${formatStamp(at * 1000, 'f', now, o)}.`
+
+// The place of a job as the admin page names it; `name` marks a server name.
+export const jobPlace = (place: string): { text: string; name: boolean } =>
+  place === '*'
+    ? { text: 'Every place', name: false }
+    : place.startsWith('s:')
+      ? { text: place.slice(2), name: true }
+      : { text: 'A DM', name: false }
+
+export const runningJob = (view: AdminEncryption) => view.jobs.some(j => j.state === 'running')

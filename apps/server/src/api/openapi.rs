@@ -571,7 +571,7 @@ pub(crate) mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 38] = [
+    const ADMIN_ROUTES: [(&str, &str); 39] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/report_forms"),
         ("put", "/api/v1/admin/report_forms"),
@@ -587,6 +587,7 @@ pub(crate) mod tests {
         ("get", "/api/v1/admin/encryption"),
         ("put", "/api/v1/admin/encryption/required"),
         ("put", "/api/v1/admin/encryption/copies"),
+        ("put", "/api/v1/admin/encryption/backed_up"),
         ("put", "/api/v1/admin/servers/{name}/seal_forced"),
         ("get", "/api/v1/admin/overview"),
         ("get", "/api/v1/admin/users"),

@@ -28,6 +28,9 @@ import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { fieldCls, Masked, Sentinel } from '../ui'
 import { Row, Stack, Surface } from '../layout'
 import { ServerSettingsPage } from '../server_settings_page'
+import { StorageSettings } from '../storage_settings'
+import { deviceKeyNote, p2pSeal, storeRegister } from '../../lib/sealing'
+import { inShell } from '../../lib/platform'
 import { page, PAGE } from '../../lib/paging'
 import { MemberAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
@@ -141,7 +144,62 @@ function Overview({ v }: { v: ServerView }) {
         </Stack>
         <Note>{OWNER_TEXT}</Note>
       </Stack>
+      <P2pStorage v={v} />
     </Stack>
+  )
+}
+
+// What this device does with encrypted storage; whether it can keep a device key is asked when
+// the settings open.
+export function useSealFacts() {
+  const { p2pServer } = useP2pApp()!
+  const facts = useP2p(s => s.seal)
+  useEffect(() => {
+    void p2pServer.checkSealKey().catch(() => {})
+  }, [p2pServer])
+  return facts
+}
+
+// "Encrypt stored messages" of a P2P server: owners and members with Manage server turn it on
+// or off for every member's device. Where the site requires it and the server's own switch is
+// off, "Encrypt earlier messages" is this device's alone.
+function P2pStorage({ v }: { v: ServerView }) {
+  const { p2pServer } = useP2pApp()!
+  const facts = useSealFacts()
+  const allowed = can(v, P.ManageServer)
+  const state = p2pSeal({
+    store: v.store,
+    siteForced: facts.everything,
+    deviceKey: facts.available,
+    allowed,
+  })
+  const shared = storeRegister(v.store).on
+  const earlier = (alsoOn: boolean): Promise<unknown> =>
+    alsoOn || (shared && allowed)
+      ? p2pServer.setStore(v.id, true, true)
+      : Promise.resolve(p2pServer.sealEarlierHere(v.id))
+  return (
+    <StorageSettings
+      state={state}
+      place="p2p"
+      onSwitch={on => p2pServer.setStore(v.id, on).then(() => undefined)}
+      note={deviceKeyNote(facts.durable, inShell())}
+      earlierStep={(close, alsoOn) => (
+        <Row gap="sm" justify="end">
+          <Button onClick={close}>Cancel</Button>
+          <Button
+            variant="filled"
+            onClick={() =>
+              void earlier(alsoOn).then(done => {
+                if (done !== null) close()
+              })
+            }
+          >
+            {alsoOn ? 'Turn on' : 'Encrypt'}
+          </Button>
+        </Row>
+      )}
+    />
   )
 }
 

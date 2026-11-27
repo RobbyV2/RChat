@@ -42,6 +42,7 @@ import type {
   BlockedUser,
   Brand,
   BulkJob,
+  SealJob,
   CallKind,
   CallRelays,
   CategoryStyle,
@@ -187,6 +188,7 @@ export type ActiveDialog =
   | { kind: 'poll_voters'; message: Message }
   // This account's scheduled messages, hosted and P2P; `focus`: a row to edit.
   | { kind: 'scheduled'; focus?: string }
+  | { kind: 'seal_earlier'; place: string }
 
 export type Panel =
   { kind: 'thread'; root: Message } | { kind: 'search' } | { kind: 'friends'; tab: FriendsTab }
@@ -327,6 +329,9 @@ export interface RChatState {
   scheduled: HostedScheduled
   // The store's own loads that were refused, for the screens that show what they load.
   refusedLoads: RefusedLoads
+  // The newest job over the stored messages of each place this person started, as its progress
+  // arrives.
+  sealJobs: Record<string, SealJob>
   dms: DmSummary[]
   dmsMore: boolean
   // While `dmsMore`, the list shows rows up to here (see `arrangeDms`).

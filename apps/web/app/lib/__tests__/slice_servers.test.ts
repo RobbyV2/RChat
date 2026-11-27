@@ -62,6 +62,18 @@ describe('servers reducers', () => {
     ).toBe('#abcdef')
   })
 
+  test('server_updated carries whether new messages are stored encrypted', () => {
+    const off = { on: false, forced: false, own: false, server_forced: false }
+    const s = state({ servers: { s: serverDetail('s', { seal: off }) }, view: null, voice: null })
+    const on = { on: true, forced: false, own: true, server_forced: false }
+    expect(
+      applyServerChange(s, { type: 'server_updated', server: lite({ seal: on }) }).servers!.s.seal
+    ).toEqual(on)
+    expect(
+      applyServerChange(s, { type: 'server_updated', server: lite() }).servers!.s.seal
+    ).toEqual(off)
+  })
+
   test('server_updated patches only the named fields', () => {
     const detail = serverDetail('s', {
       display_name: 'Old',

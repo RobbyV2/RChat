@@ -8,7 +8,10 @@ import { Settings } from 'lucide-react'
 import { GEAR_CHIP_CSS, headerColors } from '../lib/server_colors'
 import { longPress } from './context_menu'
 import { useOwnServer } from './ui'
-import { Inset } from './layout'
+import { Inset, Row } from './layout'
+import { StoredLock } from './storage_settings'
+import { useStore } from '../lib/client/react'
+import { hostedServerSeal } from '../lib/sealing'
 
 const gearCls =
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-offset-2 focus-visible:outline-2'
@@ -34,6 +37,7 @@ export function ServerHeader({
   showGear?: boolean
 }) {
   const own = useOwnServer(server)
+  const stored = useStore(s => hostedServerSeal(s.servers[server]?.seal, false, s.settings).on)
   const colors = headerColors(bannerColor, nameColor)
   const style: CSSProperties | undefined = colors?.bg
     ? ({
@@ -51,16 +55,19 @@ export function ServerHeader({
   return (
     <header style={style} className="h-14 shrink-0 border-b border-outline-variant">
       <Inset row pad="lg" inset="sides" gap="sm" justify="between" place="h-full">
-        {server === 'rchat' ? (
-          <img src="/rchat_logo.png" alt="RChat" className="h-8 w-auto" />
-        ) : (
-          <Name
-            of={serverCalled(displayName, own)}
-            {...(onMenu ? longPress(onMenu) : {})}
-            color={colors?.fg || undefined}
-            look="truncate font-medium"
-          />
-        )}
+        <Row as="span" gap="sm" place="min-w-0">
+          {server === 'rchat' ? (
+            <img src="/rchat_logo.png" alt="RChat" className="h-8 w-auto" />
+          ) : (
+            <Name
+              of={serverCalled(displayName, own)}
+              {...(onMenu ? longPress(onMenu) : {})}
+              color={colors?.fg || undefined}
+              look="truncate font-medium"
+            />
+          )}
+          {stored && !preview && <StoredLock />}
+        </Row>
         {preview
           ? showGear && (
               <span aria-hidden style={chip} className={gear}>

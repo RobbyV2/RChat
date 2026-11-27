@@ -14,6 +14,7 @@ import {
 import type { MemberSum, Summary } from '../acl/summary'
 import { cleanName } from '../keys'
 import { roomLock, shownRoomProfile } from '../../profile_reset'
+import { storeRegister } from '../../sealing'
 import type { Shown } from '../acl_room'
 import { getEvents } from '../dag'
 import { serverWire, type EventRecord, type OutboxRecord, type RoomRecord } from '../db'
@@ -223,6 +224,7 @@ export function serverView(
     profiles: s.profiles ?? 'all',
     profile: r.profile ?? {},
     profileLock: roomLock(memberOf(s, env.me)?.reset, Math.floor(clock / 1000)),
+    store: storeRegister(s.store),
     system: systemOf(s, env.lim.display),
     systemPick: systemPick(s, env.lim.display),
     channels: readOnly ? [] : channelViews(s, env.me, me, env.lim.display),
@@ -616,8 +618,34 @@ export async function loadThreadAround(cx: ServerCtx, room: string, root: string
   return { ...older, messages: [...older.messages, ...self, ...newer.messages] }
 }
 
+// The `store` writes that count and changed the switch, up to `hi`: a write that asks for the
+// earlier messages again while it is on shows no line.
+async function storeChanges(cx: ServerCtx, room: string, hi: string | undefined) {
+  const all = await cx.db.getAllFromIndex(
+    'events',
+    'room_type_sort',
+    IDBKeyRange.bound([room, 'store', ''], [room, 'store', hi ?? '￿'], false, !!hi)
+  )
+  const shown = all.length
+    ? await cx.host.display(
+        room,
+        all.map(r => r.id)
+      )
+    : []
+  const changed = new Set<string>()
+  let on = false
+  all.forEach((rec, i) => {
+    const c = serverWire(rec).c
+    if (!shown[i]?.store || typeof c?.on !== 'boolean') return
+    if (c.on !== on) changed.add(rec.id)
+    on = c.on
+  })
+  return changed
+}
+
 // System lines from ACL events in a sort key range: the genesis (its creator) and a live join, an
-// effective leave, kick or ban, as the server's settings ask; and every `store` write that counts.
+// effective leave, kick or ban, as the server's settings ask; and every `store` write that counts
+// and changed the switch.
 export async function systemRows(
   cx: ServerCtx,
   room: string,
@@ -647,12 +675,15 @@ export async function systemRows(
     historyOf(cx.sumOf(room)) === 'joined'
       ? await cx.host.history(room, cx.me, ids)
       : ids.map(() => true)
+  const changed = recs.some(r => r.type === 'store')
+    ? await storeChanges(cx, room, hi)
+    : new Set<string>()
   const out: P2pMessage[] = []
   recs.forEach((rec, i) => {
     if (!shown[i] || shown[i]?.hidden || !mine[i]) return
     const c = serverWire(rec).c
     if (rec.type === 'store') {
-      if (shown[i]?.store && typeof c?.on === 'boolean')
+      if (shown[i]?.store && typeof c?.on === 'boolean' && changed.has(rec.id))
         out.push({
           ...systemRow(rec, rec.sender),
           system: { kind: 'storage', ik: rec.sender, on: c.on },

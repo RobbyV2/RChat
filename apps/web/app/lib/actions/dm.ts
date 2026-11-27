@@ -1,11 +1,12 @@
 // A DM's menu, in the sidebar and on Home's pinned DMs. Marking read, muting and closing are the
 // open place's commands (place.ts), and adding or blocking the other person are member actions.
 
-import { ArrowDownUp, AtSign, ExternalLink, ListFilter, PinOff, X } from 'lucide-react'
+import { ArrowDownUp, AtSign, ExternalLink, ListFilter, Lock, PinOff, X } from 'lucide-react'
 import { DM_SORTS, clearDmFilters, dmListPrefs, filtersOn, type DmListPrefs } from '../dm_list'
 import type { NotifyScope } from '../notify'
 import { sharing } from '../platform'
 import type { DmSummary } from '../types'
+import { EARLIER_ACTION, SEAL_LABEL, dmPlace, hostedDmSeal, sealReasonText } from '../sealing'
 import { client } from '../client/client'
 import { signedIn } from './global'
 import { notifySettings } from './notify'
@@ -92,6 +93,58 @@ export const dmListActions: Action[] = [
   },
 ]
 
+// A DM's "Encrypt stored messages", in the sidebar and header menus: either participant
+// switches it, as the site allows.
+const sealOf = (ctx: ActionCtx) => {
+  const dm = dmAt(ctx, null)
+  if (!dm || (ctx.target.kind === 'dm' && ctx.target.where === 'home')) return null
+  return hostedDmSeal(dm.seal, ctx.s.settings)
+}
+
+const sealActions: Action[] = [
+  {
+    id: 'dm_seal',
+    title: SEAL_LABEL,
+    icon: Lock,
+    ...onDm,
+    order: 600,
+    keywords: ['encrypt', 'storage'],
+    available: ctx => sealOf(ctx) !== null,
+    checked: ctx => sealOf(ctx)?.on ?? false,
+    disabled: ctx => !(sealOf(ctx)?.available ?? false),
+    subtitle: ctx => {
+      const st = sealOf(ctx)
+      return (st && sealReasonText(st, 'hosted')) ?? undefined
+    },
+    run: ctx => {
+      const st = sealOf(ctx)
+      const dm = dmAt(ctx, null)
+      if (!st?.available || !dm) return
+      void ctx.acct.api
+        .setDmSeal(dm.id, !st.on)
+        .catch(
+          ctx.acct.lifetime.inSession((e: Error) => ctx.acct.store.getState().setError(e.message))
+        )
+    },
+  },
+  {
+    id: 'dm_seal_earlier',
+    title: EARLIER_ACTION,
+    icon: Lock,
+    ...onDm,
+    order: 610,
+    keywords: ['encrypt', 'storage'],
+    available: ctx => {
+      const st = sealOf(ctx)
+      return st !== null && st.on && st.reason !== 'permission'
+    },
+    run: ctx => {
+      const dm = dmAt(ctx, null)
+      if (dm) ctx.acct.store.getState().openDialog({ kind: 'seal_earlier', place: dmPlace(dm.id) })
+    },
+  },
+]
+
 export const dmActions: Action[] = [
   {
     id: 'dm_open',
@@ -130,6 +183,7 @@ export const dmActions: Action[] = [
       if (dm) acct.store.getState().unpinDm(dm.id)
     },
   },
+  ...sealActions,
   {
     id: 'dm_copy_id',
     title: 'Copy DM ID',

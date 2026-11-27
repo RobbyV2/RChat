@@ -6,6 +6,7 @@ import { asAccount } from '../lib/people'
 import { personCalled, personName } from '../lib/names'
 import { Name, NameInput } from './name'
 import { ViewActorTag } from './view_actor'
+import { ServerStorage } from './server_storage'
 import { useAccount } from '../lib/client/react'
 
 import {
@@ -1536,6 +1537,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
           </>
         )}
         <ServerAppearance server={server} />
+        <ServerStorage server={server} />
       </>
     ),
     widgets: () => <WidgetSettings server={server} channels={detail.channels} />,

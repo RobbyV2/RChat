@@ -4,16 +4,21 @@ import { EncryptionStatus } from '../../components/admin/encryption'
 import {
   BACKUP_WARNING,
   fingerprints,
+  jobPlace,
+  keySavedLine,
   keySourceLine,
   keySourceNote,
   LOST_WARNING,
   lostKeys,
   MISMATCH_WARNING,
   parseAdminEncryption,
+  placesLine,
   readinessLine,
   RESET_SHOWN_FOR,
   resetWarning,
+  runningJob,
   SET_KEYS,
+  unreadableLine,
   type AdminDataKey,
   type AdminEncryption,
 } from '../admin_encryption'
@@ -28,6 +33,11 @@ const view = (part: Partial<AdminEncryption> = {}): AdminEncryption => ({
   data_keys: [],
   readiness: 'keys',
   needs_backup: false,
+  required: { on: false, pinned: false },
+  unreadable: 0,
+  copies_confirmed: null,
+  places: { servers: 0, dms: 0 },
+  jobs: [],
   ...part,
 })
 
@@ -188,4 +198,91 @@ test('the page says which tokens were reset and when, for a month', () => {
   expect(
     renderToStaticMarkup(<EncryptionStatus view={reset(['relay_secret'])} now={gone} />)
   ).not.toContain('data-warning')
+})
+
+test('the page says where encrypted storage is on, what did not open and the jobs', () => {
+  expect(placesLine(view())).toBe('No server or DM stores new messages encrypted.')
+  expect(placesLine(view({ places: { servers: 1, dms: 0 } }))).toBe(
+    'New messages are stored encrypted in 1 server.'
+  )
+  expect(placesLine(view({ places: { servers: 2, dms: 1 } }))).toBe(
+    'New messages are stored encrypted in 2 servers and 1 DM.'
+  )
+  expect(
+    placesLine(view({ places: { servers: 0, dms: 3 }, required: { on: true, pinned: false } }))
+  ).toBe('Every server and DM stores new messages encrypted.')
+  expect(unreadableLine(view())).toBeNull()
+  expect(unreadableLine(view({ unreadable: 1 }))).toBe(
+    "1 stored record couldn't be opened since this copy started."
+  )
+  expect(unreadableLine(view({ unreadable: 1200 }))).toBe(
+    "1,200 stored records couldn't be opened since this copy started."
+  )
+  expect(jobPlace('*')).toEqual({ text: 'Every place', name: false })
+  expect(jobPlace('s:den')).toEqual({ text: 'den', name: true })
+  expect(jobPlace('d:7')).toEqual({ text: 'A DM', name: false })
+  const at = Date.UTC(2026, 10, 24, 19, 42) / 1000
+  expect(keySavedLine(at, at * 1000, { locale: 'en-US', timeZone: 'UTC' })).toBe(
+    'Key copy saved on November 24, 2026 at 7:42 PM.'
+  )
+  const jobs = [
+    {
+      id: 2,
+      place: '*',
+      direction: 'unseal' as const,
+      upto: 10,
+      done: 5,
+      from: 0,
+      state: 'running' as const,
+    },
+    {
+      id: 1,
+      place: 's:den',
+      direction: 'seal' as const,
+      upto: 10,
+      done: 10,
+      from: 0,
+      state: 'done' as const,
+    },
+  ]
+  expect(runningJob(view({ jobs }))).toBe(true)
+  expect(runningJob(view({ jobs: jobs.slice(1) }))).toBe(false)
+  const html = renderToStaticMarkup(
+    <EncryptionStatus
+      view={view({ source: 'file', backed_up_at: at, unreadable: 2, jobs })}
+      now={at * 1000}
+    />
+  )
+  expect(html).toContain('data-backed-up')
+  expect(html).toContain('data-unreadable')
+  expect(html).toContain('Every place')
+  expect(html).toContain('Storing messages plain: 50%')
+  expect(html).toContain('<span class="min-w-0 text-sm break-words streamer">den</span>')
+  expect(html).toContain('Earlier messages are stored encrypted.')
+})
+
+test('the new parts of the answer are read defensively', () => {
+  const parsed = parseAdminEncryption({
+    source: 'none',
+    required: { on: true, pinned: 1 },
+    unreadable: -3,
+    copies_confirmed: false,
+    places: { servers: 2, dms: 'x' },
+    jobs: [
+      { place: 's:den', direction: 'seal', upto: 4, done: 2, state: 'running', id: 1 },
+      { place: 's:den', direction: 'sideways', upto: 4, done: 2, state: 'running' },
+      { direction: 'unseal', upto: 1.5, done: 0, state: 'done' },
+      null,
+    ],
+  })!
+  expect(parsed.required).toEqual({ on: true, pinned: false })
+  expect(parsed.unreadable).toBe(0)
+  expect(parsed.copies_confirmed).toBe(false)
+  expect(parsed.places).toEqual({ servers: 2, dms: 0 })
+  expect(parsed.jobs).toEqual([
+    { id: 1, place: 's:den', direction: 'seal', upto: 4, done: 2, from: 0, state: 'running' },
+  ])
+  expect(
+    parseAdminEncryption({ source: 'none', copies_confirmed: 'yes' })!.copies_confirmed
+  ).toBeNull()
 })

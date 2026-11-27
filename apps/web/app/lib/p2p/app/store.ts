@@ -1,3 +1,4 @@
+import type { StoreRegister } from '../../sealing'
 import { create } from 'zustand'
 import { readLocal, sessionStore, writeLocal } from '../../instances'
 import { emptyLayout, type Layout } from '../../nav_layout'
@@ -75,6 +76,8 @@ export interface RoomSummary {
   peerFull: boolean
   // Parents we have not received: older history is incomplete here.
   gap: boolean
+  // The conversation's "Encrypt stored messages", as admitted here; absent until it is read.
+  store?: StoreRegister
 }
 
 // The open conversation: the newest messages (older pages load on scroll). A P2P server channel
@@ -119,6 +122,14 @@ export interface P2pSearch {
   // What the last page failed with; the page can be asked for again.
   failed?: unknown
 }
+
+export interface SealFacts {
+  everything: boolean
+  available: boolean
+  durable: boolean
+}
+
+export const NO_SEAL_FACTS: SealFacts = { everything: false, available: true, durable: true }
 
 export interface P2pState {
   // A fresh token after this runtime has loaded its persisted room and channel counters.
@@ -177,6 +188,9 @@ export interface P2pState {
   pulling: boolean
   // The browser refused to store more P2P data.
   storageFull: boolean
+  // What this device does with encrypted storage: whether its site requires it everywhere,
+  // whether it can keep a device key, and whether that key is kept outside the app's data.
+  seal: SealFacts
   // This browser's identity moved to another device then.
   movedAt: number | null
   // A P2P export paused sending here then.
@@ -405,6 +419,7 @@ export const initialPeerState = (): P2pState => ({
   focus: null,
   pulling: false,
   storageFull: false,
+  seal: NO_SEAL_FACTS,
   movedAt: null,
   movingAt: null,
   alertAt: null,

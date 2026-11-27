@@ -412,6 +412,7 @@ export function createChatStore(acct: AccountSession) {
       ...selectionInitial(),
       ...scheduledInitial(),
       ...ownLoadsInitial(),
+      sealJobs: {},
       dms: [],
       dmsMore: false,
       dmsEdge: NO_DM_EDGE,
@@ -550,6 +551,11 @@ export function createChatStore(acct: AccountSession) {
         if (pollsHub.onEvent(ev)) return
         if (scheduledHub.onEvent(ev)) return
         if (selectionHub.onEvent(ev)) return
+        if (ev.type === 'seal_job_progress') {
+          if (ev.username === get().me?.username)
+            set(s => ({ sealJobs: { ...s.sealJobs, [ev.job.place]: ev.job } }))
+          return
+        }
         routeEvent(ev, tables)
       },
     }

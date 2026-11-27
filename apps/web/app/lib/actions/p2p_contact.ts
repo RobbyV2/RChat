@@ -1,6 +1,14 @@
 // A P2P contact's menu: on the P2P page, in the contact's dialog and on Home's P2P card.
 
-import { Ban, Bell, BellOff, MessageCircle, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
+import { Ban, Bell, BellOff, Lock, MessageCircle, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
+import {
+  EARLIER_ACTION,
+  EARLIER_CONFIRM,
+  SEAL_LABEL,
+  p2pSeal,
+  sealReasonText,
+  storeRegister,
+} from '../sealing'
 import { muteEnd, mutedText, type NotifyScope } from '../notify'
 
 import { displayName, type Contact } from '../p2p/contacts'
@@ -45,6 +53,69 @@ export const peerContact = identityActions(identity => {
     `${verb} ${acct.store.getState().streamer ? 'this contact' : displayName(c)}?`
 
   const onContact = { scope: 'p2p', targets: ['p2p_contact'] } as const
+
+  // The conversation with a mutual contact and its "Encrypt stored messages".
+  const dmSeal = (ctx: ActionCtx) => {
+    const c = mutual(ctx)
+    const me = ctx.target.kind === 'p2p_contact' ? ctx.target.me : null
+    if (!c || !me) return null
+    const room = dmRoomId(me, c.ik)
+    const p2p = identity().useP2p.getState()
+    const store = p2p.rooms[room]?.store
+    const state = p2pSeal({
+      store,
+      siteForced: p2p.seal.everything,
+      deviceKey: p2p.seal.available,
+      allowed: true,
+    })
+    return { room, state, shared: storeRegister(store).on }
+  }
+
+  const sealActions: Action[] = [
+    {
+      id: 'p2p_dm_seal',
+      title: SEAL_LABEL,
+      icon: Lock,
+      ...onContact,
+      order: 600,
+      keywords: ['encrypt', 'storage'],
+      available: ctx => dmSeal(ctx) !== null,
+      checked: ctx => dmSeal(ctx)?.state.on ?? false,
+      disabled: ctx => !(dmSeal(ctx)?.state.available ?? false),
+      subtitle: ctx => {
+        const seal = dmSeal(ctx)
+        return (seal && sealReasonText(seal.state, 'p2p')) ?? undefined
+      },
+      run: ctx => {
+        const seal = dmSeal(ctx)
+        if (seal?.state.available) void identity().p2pDm.setStore(seal.room, !seal.state.on)
+      },
+    },
+    {
+      id: 'p2p_dm_seal_earlier',
+      title: EARLIER_ACTION,
+      icon: Lock,
+      ...onContact,
+      order: 610,
+      keywords: ['encrypt', 'storage'],
+      available: ctx => dmSeal(ctx)?.state.on ?? false,
+      run: ctx => {
+        const seal = dmSeal(ctx)
+        if (!seal) return
+        identity()
+          .owner.store.getState()
+          .askConfirm({
+            title: EARLIER_ACTION,
+            body: EARLIER_CONFIRM,
+            confirm: 'Encrypt',
+            action: () =>
+              seal.shared
+                ? void identity().p2pDm.setStore(seal.room, true, true)
+                : identity().p2pDm.sealEarlierHere(seal.room),
+          })
+      },
+    },
+  ]
 
   const p2pContactActions: Action[] = [
     {
@@ -166,6 +237,6 @@ export const peerContact = identityActions(identity => {
     acct = identity().owner
   ) => openActionMenu(x, y, { kind: 'p2p_contact', c, me }, undefined, acct, identity())
 
-  return { actions: p2pContactActions, openContactMenu }
+  return { actions: [...p2pContactActions, ...sealActions], openContactMenu }
 })
 export const p2pContactActions = peerContact.actions

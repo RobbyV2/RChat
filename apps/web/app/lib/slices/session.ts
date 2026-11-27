@@ -2193,6 +2193,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         ...selectionInitial(),
         ...scheduledInitial(),
         ...ownLoadsInitial(),
+        sealJobs: {},
         dms: [],
         dmsMore: false,
         dmsEdge: NO_DM_EDGE,

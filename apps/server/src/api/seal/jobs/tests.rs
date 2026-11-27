@@ -433,6 +433,17 @@ async fn a_job_goes_on_from_where_it_stopped() {
         )
         .await
         .expect("begin");
+        let first_id: i64 = sqlx::query_scalar(
+            "SELECT MIN(id) FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server = 'rchat')",
+        )
+        .fetch_one(db)
+        .await
+        .expect("first");
+        assert_eq!(
+            job.from,
+            first_id - 1,
+            "it starts before the place's first message"
+        );
         assert_eq!(
             begin(
                 &state,
@@ -467,7 +478,7 @@ async fn a_job_goes_on_from_where_it_stopped() {
         .collect();
         assert_eq!(forms, [(first.id, false), (second.id, true)]);
         let (ended, _) = super::load(db, job.id).await.expect("load").expect("job");
-        assert_eq!(ended.state, JobState::Done);
+        assert_eq!((ended.state, ended.from), (JobState::Done, 0));
         temp.done(state).await;
     }
 }

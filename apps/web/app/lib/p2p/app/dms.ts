@@ -14,12 +14,14 @@ import {
   Dms,
   loadAround,
   loadMessages,
+  loadStore,
   loadPins,
   threadPingTotal,
   type Arrival,
 } from '../dm'
 import type { Attachment, Fwd } from '../content'
 import type { PageOpts } from '../jump'
+import { sealEarlier } from '../seal_earlier'
 import { ServerError, Servers } from '../server'
 import { channelReadSkips, threadsSig } from './servers'
 import { typingResendMs } from '../sync'
@@ -70,8 +72,13 @@ export function createDmsPart(
     if (!s) return
     const list = await s.rooms()
     if (!current()) return
+    const dms = list.filter(r => r.kind !== 'server')
+    const stores = await Promise.all(
+      dms.map(r => loadStore(s.db, r.id, state.limits).catch(() => undefined))
+    )
+    if (!current()) return
     useP2p.setState({
-      rooms: Object.fromEntries(list.filter(r => r.kind !== 'server').map(r => [r.id, summary(r)])),
+      rooms: Object.fromEntries(dms.map((r, i) => [r.id, { ...summary(r), store: stores[i] }])),
     })
     const reader = state.reader
     if (reader?.store === s) {
@@ -170,7 +177,11 @@ export function createDmsPart(
       return
     }
     if (r?.kind === 'server') return
-    if (r) useP2p.setState(st => ({ rooms: { ...st.rooms, [room]: summary(r) } }))
+    if (r) {
+      const store = await loadStore(s.db, room, state.limits).catch(() => undefined)
+      if (!current()) return
+      useP2p.setState(st => ({ rooms: { ...st.rooms, [room]: { ...summary(r), store } } }))
+    }
     if (state.dms && useP2p.getState().storageFull !== state.dms.storageFull)
       useP2p.setState({ storageFull: state.dms.storageFull })
     const st = useP2p.getState()
@@ -414,7 +425,9 @@ export function createDmsPart(
         panel: st.panel === 'thread' && st.thread?.room !== room ? null : st.panel,
         editing: null,
         pulling: false,
-        rooms: r ? { ...st.rooms, [room]: summary(r) } : st.rooms,
+        rooms: r
+          ? { ...st.rooms, [room]: { ...summary(r), store: st.rooms[room]?.store } }
+          : st.rooms,
       }))
       await loadChat(room, ik)
     },
@@ -426,7 +439,10 @@ export function createDmsPart(
       if (!d) return null
       const r = await d.open(ik).catch(() => null)
       if (!current()) return null
-      if (r) useP2p.setState(st => ({ rooms: { ...st.rooms, [r.id]: summary(r) } }))
+      if (r)
+        useP2p.setState(st => ({
+          rooms: { ...st.rooms, [r.id]: { ...summary(r), store: st.rooms[r.id]?.store } },
+        }))
       return r?.id ?? null
     },
 
@@ -439,6 +455,22 @@ export function createDmsPart(
         replying: null,
         ...(st.server ? {} : { thread: null, panel: st.panel === 'thread' ? null : st.panel }),
       })),
+    // Encrypts the earlier messages this device stored of `room` without changing its switch:
+    // where the site requires encrypted storage and the conversation's own switch is off.
+    sealEarlierHere(room: string) {
+      const s = state.store
+      if (s) void sealEarlier(s, room, state.limits.search).catch(() => {})
+    },
+    // Turns "Encrypt stored messages" of a conversation on or off; either participant may.
+    async setStore(room: string, on: boolean, earlier = false) {
+      const d = state.dms
+      if (!d) return
+      try {
+        await d.setStore(room, on, earlier)
+      } catch (e) {
+        p2pHost.toast(e instanceof Error ? e.message : String(e))
+      }
+    },
 
     async loadOlderPage() {
       const current = currentSession()

@@ -3,6 +3,10 @@ import { IconButton, CardButton } from '../controls'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
+import { StoredLock } from '../storage_settings'
+import { longPress } from '../context_menu'
+import { peerContact } from '../../lib/actions/p2p_contact'
+import { useAccount } from '../../lib/client/react'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -91,6 +95,8 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   const { p2p } = identity
 
   const chat = useP2p(s => s.chat)
+  const me = useP2p(s => s.me)
+  const acct = useAccount()
   const typingIks = useP2p(s => (s.chat ? (s.typing[s.chat.room] ?? NONE) : NONE))
   const nameId = useId()
   const shieldId = useId()
@@ -108,6 +114,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   const { peer, peerIk, peerRaw, peerName, presence, online, room, canAct } = facts
   const { mayDelete } = facts
   const chip = useHasChip(peerIk)
+  const sealAll = useP2p(s => s.seal.everything)
 
   if (!chat) return null
 
@@ -152,6 +159,9 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
         title={streamer ? 'Contact' : peerName}
         aria-labelledby={peer ? `${nameId} ${shieldId} ${statusId}` : `${nameId} ${statusId}`}
         onClick={() => peer && p2p.openDialog({ kind: 'contact', ik: peer.ik })}
+        {...longPress((x, y) => {
+          if (peer) peerContact.forIdentity(identity).openContactMenu(x, y, peer, me, acct)
+        })}
         place="min-w-0"
         pad="sm"
       >
@@ -196,6 +206,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       <span className="max-sm:hidden">
         <P2pBadge />
       </span>
+      {(room?.store?.on || sealAll) && <StoredLock />}
       <Row gap="2xs" place="ml-auto shrink-0">
         <P2pCallButtons peer={peerIk} name={peerName} online={online} canCall={canAct} />
         <PlaceProvider place={P2pDm.open(identity, chat.room)}>

@@ -1264,6 +1264,7 @@ test("a contact's menu: mutual and pending", () => {
     'Notification settings',
     'Rename',
     'Verify',
+    'Encrypt stored messages',
     'Block',
     'Remove',
   ])

@@ -94,6 +94,10 @@ pub struct SealJob {
     pub upto: i64,
     /// The message id it has finished up to.
     pub done: i64,
+    /// The message id before the first one of the place it covers, while it runs (0 once it
+    /// ended): how far it got is `(done - from) / (upto - from)`.
+    #[serde(default)]
+    pub from: i64,
     /// Whether it runs, ended, or stopped on an error.
     pub state: JobState,
     /// Unix seconds.
@@ -189,8 +193,12 @@ async fn allowed(
     }
 }
 
-const COLS: &str =
-    "id, place, direction, upto_id, done_id, state, created_at, finished_at, started_by";
+const COLS: &str = "id, place, direction, upto_id, done_id, state, created_at, finished_at, started_by, (SELECT value FROM settings WHERE key = 'seal_job_from:' || CAST(seal_jobs.id AS TEXT))";
+
+/// The `settings` key holding where job `id` starts, while it runs.
+fn from_key(id: i64) -> String {
+    format!("seal_job_from:{id}")
+}
 
 fn job_of(r: &sqlx::any::AnyRow) -> Result<(SealJob, Option<String>), ApiError> {
     let wrong = |what: &str, v: &str| ApiError::internal(format!("a seal job has the {what} {v}"));
@@ -204,6 +212,10 @@ fn job_of(r: &sqlx::any::AnyRow) -> Result<(SealJob, Option<String>), ApiError> 
                 .ok_or_else(|| wrong("direction", &direction))?,
             upto: r.try_get(3)?,
             done: r.try_get(4)?,
+            from: r
+                .try_get::<Option<String>, _>(9)?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
             state: JobState::parse(&state).ok_or_else(|| wrong("state", &state))?,
             created_at: r.try_get(6)?,
             finished_at: r.try_get(7)?,
@@ -220,6 +232,16 @@ async fn load(db: &Db, id: i64) -> Result<Option<(SealJob, Option<String>)>, Api
     .fetch_optional(db)
     .await?;
     row.as_ref().map(job_of).transpose()
+}
+
+/// The newest jobs of every place, for the admin page.
+pub(crate) async fn recent(db: &Db) -> Result<Vec<SealJob>, ApiError> {
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM seal_jobs ORDER BY id DESC LIMIT 10"
+    )))
+    .fetch_all(db)
+    .await?;
+    rows.iter().map(|r| job_of(r).map(|(job, _)| job)).collect()
 }
 
 /// The newest message id of `target`.
@@ -289,14 +311,45 @@ pub(crate) async fn begin(
         .bind(state.clock.unix())
         .execute(db)
         .await?;
-    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+    let pick = format!(
         "SELECT {COLS} FROM seal_jobs WHERE place = $1 AND direction = $2 ORDER BY (CASE WHEN state = 'running' THEN 0 ELSE 1 END), id DESC LIMIT 1"
-    )))
-    .bind(&key)
-    .bind(direction.as_str())
-    .fetch_one(db)
-    .await?;
+    );
+    let row = sqlx::query(sqlx::AssertSqlSafe(pick.clone()))
+        .bind(&key)
+        .bind(direction.as_str())
+        .fetch_one(db)
+        .await?;
+    let (job, _) = job_of(&row)?;
+    if job.state != JobState::Running || job.from != 0 {
+        return Ok(job);
+    }
+    sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
+        .bind(from_key(job.id))
+        .bind(before_first(db, target, job.upto).await?.to_string())
+        .execute(db)
+        .await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(pick))
+        .bind(&key)
+        .bind(direction.as_str())
+        .fetch_one(db)
+        .await?;
     Ok(job_of(&row)?.0)
+}
+
+/// The message id before the first one of `target` up to `upto`; `upto` when there is none.
+async fn before_first(db: &Db, target: &Target, upto: i64) -> Result<i64, ApiError> {
+    let (cond, bind) = target.messages();
+    let sql = format!(
+        "SELECT COALESCE(MIN(id) - 1, $1) FROM messages WHERE id <= $1 AND {}",
+        cond.replace("$4", "$2")
+    );
+    let query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql)).bind(upto);
+    let query = match bind {
+        Some(Bind::Text(v)) => query.bind(v),
+        Some(Bind::Int(v)) => query.bind(v),
+        None => query,
+    };
+    Ok(query.fetch_one(db).await?)
 }
 
 /// Get a job over stored messages
@@ -449,7 +502,7 @@ async fn end(state: &AppState, id: i64, to: JobState) -> Result<(), ApiError> {
         JobState::Done => "done",
         JobState::Failed => "failed",
     };
-    sqlx::query(
+    let ended = sqlx::query(
         "UPDATE seal_jobs SET state = $1, finished_at = $2 WHERE id = $3 AND state = 'running' AND runner = $4",
     )
     .bind(word)
@@ -457,7 +510,14 @@ async fn end(state: &AppState, id: i64, to: JobState) -> Result<(), ApiError> {
     .bind(id)
     .bind(RUNNER.as_str())
     .execute(&state.db)
-    .await?;
+    .await?
+    .rows_affected();
+    if ended == 1 {
+        sqlx::query("DELETE FROM settings WHERE key = $1")
+            .bind(from_key(id))
+            .execute(&state.db)
+            .await?;
+    }
     announce(state, id).await
 }
 

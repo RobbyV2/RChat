@@ -13,6 +13,7 @@ const ACTIONS: Record<string, { verb: string; target: boolean }> = {
   'user.temp_password': { verb: 'gave a new temporary password to', target: true },
   'user.sign_out': { verb: 'signed out', target: true },
   'report_forms.change': { verb: 'changed the report forms', target: false },
+  'encryption.backed_up': { verb: 'saved a copy of the key file', target: false },
 }
 
 // The longest value of a setting a line shows in full.
@@ -192,6 +193,16 @@ const reasonParts = (e: InstanceAuditEntry): AuditPart[] => {
     : []
 }
 
+// "Require encryption" for the site, or for one server, which may have been deleted since.
+const requiredLine = (e: InstanceAuditEntry): AuditPart[] => {
+  const verb = detailOf(e).on === false ? ' stopped requiring' : ' required'
+  if (e.action === 'encryption.required')
+    return [{ text: `${verb} encrypted storage on this site` }]
+  return e.target === null
+    ? [{ text: `${verb} encrypted storage in a server` }]
+    : [{ text: `${verb} encrypted storage in ` }, { text: e.target, name: true }]
+}
+
 // Actions with a line of their own: what follows the actor.
 const LINES: Record<string, (e: InstanceAuditEntry) => AuditPart[]> = {
   'settings.change': settingLine,
@@ -206,6 +217,8 @@ const LINES: Record<string, (e: InstanceAuditEntry) => AuditPart[]> = {
   'staff.media': staffMediaLine,
   'staff.p2p_data': p2pDataLine,
   'report.view': reportViewLine,
+  'encryption.required': requiredLine,
+  'encryption.server_required': requiredLine,
 }
 
 // One line of the instance audit log: who did what to whom. Unknown actions show their code.
@@ -238,6 +251,7 @@ const KIND_PREFIXES: [string, Exclude<AuditKind, 'all'>][] = [
   ['settings.', 'settings'],
   ['branding.', 'settings'],
   ['report_forms.', 'settings'],
+  ['encryption.', 'settings'],
   ['user.', 'accounts'],
   ['server.', 'servers'],
   ['sso.', 'sign_in'],

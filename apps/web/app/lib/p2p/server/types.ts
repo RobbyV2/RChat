@@ -339,6 +339,8 @@ export interface ServerView {
   profiles: ProfilesMode
   profile: RoomExtras
   profileLock: LockState
+  // The room's "Encrypt stored messages" switch as admitted here.
+  store: import('../../sealing').StoreRegister
   system: SystemContent
   // The channel picked for join and leave lines; null: the first text channel.
   systemPick: string | null

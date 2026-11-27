@@ -24,6 +24,7 @@ test('an action has the kind of its prefix', () => {
   expect(auditKind('settings.change')).toBe('settings')
   expect(auditKind('settings.config')).toBe('settings')
   expect(auditKind('report_forms.change')).toBe('settings')
+  expect(auditKind('encryption.required')).toBe('settings')
   expect(auditKind('user.remove_phrase')).toBe('accounts')
   expect(auditKind('server.create')).toBe('servers')
   expect(auditKind('sso.config')).toBe('sign_in')

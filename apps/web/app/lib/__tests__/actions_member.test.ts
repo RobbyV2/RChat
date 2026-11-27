@@ -329,6 +329,7 @@ test('a sidebar DM, unpinned and pinned', () => {
     ['Close DM', false],
     ['Add friend', false],
     ['Block', false],
+    ['Encrypt stored messages', true],
     ['Copy DM ID', false],
     [COPY, false],
   ])
@@ -341,6 +342,7 @@ test('a sidebar DM, unpinned and pinned', () => {
     ['Close DM', false],
     ['Add friend', false],
     ['Block', false],
+    ['Encrypt stored messages', true],
     ['Copy DM ID', false],
     [COPY, false],
   ])
@@ -355,6 +357,7 @@ test('a sidebar DM, unpinned and pinned', () => {
     'Notification settings',
     'Unpin DM',
     'Close DM',
+    'Encrypt stored messages',
     'Copy DM ID',
     COPY,
   ])
@@ -594,6 +597,7 @@ test('each friend, request and DM row runs its action', async () => {
     ['Close DM', [['closeDm', 9]]],
     ['Add friend', [['askAddFriends', ['bob']]]],
     ['Block', [['askBlock', bobRef]]],
+    ['Encrypt stored messages', []],
     ['Copy DM ID', [['copy', '9']]],
     [COPY, [['copy', 'bob']]],
   ])
@@ -879,4 +883,37 @@ test('profile resets need the permission and a member ranked below, in a server 
   state({ owner: true })
   profilesOn('no_names')
   expect(labels(at('bob'))).toContain(RESET)
+})
+
+test("a DM's encrypted storage: the switch, its reason, and the earlier messages", async () => {
+  state()
+  const ready = { ...useStore.getState().settings, encryption_ready: 'ready' as const }
+  const sealed = (seal: DmSummary['seal']): DmSummary => ({ ...bobDm, seal })
+  const header = (dm: DmSummary): Target => ({ kind: 'dm', dm, where: 'header' })
+  useStore.setState({ settings: ready })
+  const off = sealed({ on: false, forced: false, own: false, server_forced: false })
+  const toggle = row(dmAt(off), 'Encrypt stored messages')
+  expect([toggle?.checked, !!toggle?.disabled, toggle?.subtitle]).toEqual([false, false, undefined])
+  expect(labels(dmAt(off))).not.toContain('Encrypt earlier messages')
+  const on = sealed({ on: true, forced: false, own: true, server_forced: false })
+  expect(row(header(on), 'Encrypt stored messages')?.checked).toBe(true)
+  expect(labels(header(on))).toContain('Encrypt earlier messages')
+  expect(labels(dmAt(on, 'home'))).not.toContain('Encrypt stored messages')
+  useStore.setState({ settings: { ...ready, encryption_required: true } })
+  const forced = row(dmAt(off), 'Encrypt stored messages')
+  expect([forced?.checked, !!forced?.disabled, forced?.subtitle]).toEqual([
+    true,
+    true,
+    'Required by this site',
+  ])
+  useStore.setState({ settings: { ...ready, encryption_ready: 'keys' } })
+  const keys = row(dmAt(off), 'Encrypt stored messages')
+  expect([!!keys?.disabled, keys?.subtitle]).toEqual([
+    true,
+    'This site needs an encryption key first',
+  ])
+  useStore.setState({ settings: ready, dms: [on] })
+  expect(await effects([row(dmAt(on), 'Encrypt earlier messages')!])).toEqual([
+    ['Encrypt earlier messages', [['openDialog', { kind: 'seal_earlier', place: 'd:9' }]]],
+  ])
 })

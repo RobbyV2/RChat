@@ -66,7 +66,7 @@ const recorder = () => {
 const settle = () => flush()
 
 describe("a P2P contact's menu", () => {
-  test('a mutual contact: message, mute, notifications, rename, verify, block and remove', async () => {
+  test('a mutual contact: message, mute, notifications, rename, verify, encryption, block and remove', async () => {
     useStore.setState({ notifyPrefs: EMPTY_NOTIFY })
     const items = menu(contact(DANA))
     expect(labels(items)).toEqual([
@@ -75,10 +75,20 @@ describe("a P2P contact's menu", () => {
       'Notification settings',
       'Rename',
       'Verify',
+      'Encrypt stored messages',
       'Block',
       'Remove',
     ])
-    expect(items.map(i => !!i.danger)).toEqual([false, false, false, false, false, true, true])
+    expect(items.map(i => !!i.danger)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+    ])
     const [, mute, settings] = items
     expect(labels(mute.submenu ?? [])).toEqual(MUTE_CHOICES.map(c => c.label))
     expect(labels(settings.submenu ?? [])).toEqual(LEVELS.map(l => l.label))

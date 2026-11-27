@@ -5,6 +5,7 @@ import type { EventRecord, PartRecord } from '../p2p/db'
 import { partRange } from '../p2p/blobs'
 import { EARLIER_META, earlierStep, markerOf, resumeEarlier } from '../p2p/seal_earlier'
 import { LOCAL } from '../p2p/limits'
+import { loadMessages } from '../p2p/dm'
 import {
   bodies,
   general,
@@ -53,6 +54,12 @@ const fileOf = async (size: number) => {
 
 type Fn = (...args: unknown[]) => unknown
 
+// The storage lines of `ch`: whether each turned it on.
+const storageLines = async (m: Member, room: string, ch: string) =>
+  (await m.servers.loadChannel(room, ch, { limit: 1000 })).messages
+    .filter(x => x.system?.kind === 'storage')
+    .map(x => (x.system as { on?: boolean }).on)
+
 const done = (m: Member, room: string) => async () =>
   markerOf(await m.store.meta(EARLIER_META + room)).phase === 'done'
 
@@ -94,6 +101,11 @@ describe('encrypting the earlier messages of a P2P server', () => {
     expect(new Uint8Array(await opened!.arrayBuffer())).toEqual(f.data)
     const shown = await bodies(a, room, ch)
     expect(['an earlier needle', 'more earlier hay'].every(t => shown.includes(t))).toBe(true)
+
+    // Asking again for the earlier messages while it is on shows no second line.
+    await a.servers.setStore(room, true, true)
+    await pump(clock, async () => (await storageLines(b, room, ch)).length >= 1, 'bob has the line')
+    for (const m of [a, b]) expect(await storageLines(m, room, ch)).toEqual([true])
 
     // Off: nothing is opened back to plain, and the job is forgotten.
     await a.servers.setStore(room, false)
@@ -207,5 +219,12 @@ describe('encrypting the earlier messages of a P2P conversation', () => {
     await b.dms.setStore(room, true, true)
     for (const m of [a, b]) await pump(clock, done(m, room), 'done')
     for (const m of [a, b]) expect((await forms(m, room)).plain).toBe(0)
+    await b.dms.setStore(room, true, true)
+    const dmLines = async (m: Member, peer: Member) =>
+      (await loadMessages(m.store.db, room, m.node.ik, peer.node.ik, { limit: 1000 })).messages
+        .filter(x => x.system?.kind === 'storage')
+        .map(x => (x.system as { on?: boolean }).on)
+    await pump(clock, async () => (await forms(a, room)).sealed >= 3, 'alice has the second')
+    expect([await dmLines(a, b), await dmLines(b, a)]).toEqual([[true], [true]])
   }, 90_000)
 })

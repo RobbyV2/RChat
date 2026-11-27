@@ -2875,6 +2875,10 @@ fn api_routes(
         .route("/admin/encryption/required", put(seal::put_required))
         .route("/admin/encryption/copies", put(seal::put_copies))
         .route(
+            "/admin/encryption/backed_up",
+            put(encryption::put_backed_up),
+        )
+        .route(
             "/admin/servers/{name}/seal_forced",
             put(seal::put_server_forced),
         )

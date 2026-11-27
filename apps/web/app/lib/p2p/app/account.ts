@@ -9,14 +9,14 @@ import { keepAsker } from '../keep'
 import { dbName, P2pStore, removeP2pDb } from '../db'
 import { dropSealed } from '../sealed_drop'
 import { resumeEarlier } from '../seal_earlier'
-import { followSiteSeal } from '../sealed_db'
+import { followSiteSeal, vaultOf } from '../sealed_db'
 import { BadgeKeeper, Badges, peersCanCheck, readSlots } from '../badge'
 import { fingerprint, keyId } from '../keys'
 import type { AddResult } from '../contacts'
 import { dmRoomId, Dms } from '../dm'
 import { PingLog } from '../ping_log'
 import { freeSpace, storageSpace } from '../files'
-import { pausesHidden } from '../../platform'
+import { deviceKeys, pausesHidden } from '../../platform'
 import { TabLeader, webLeaderDeps } from '../leader'
 import { P2pNode, squatted, type Visibility } from '../node'
 import { PeerTransport } from '../transport'
@@ -230,8 +230,19 @@ export function createAccountPart(
     }
   }
 
-  const followSite = (s: P2pStore) =>
-    followSiteSeal(s.sealing, owner.store.getState().settings.encryption_required)
+  const followSite = async (s: P2pStore) => {
+    await followSiteSeal(s.sealing, owner.store.getState().settings.encryption_required)
+    await noteSeal(s)
+  }
+
+  // What this device does with encrypted storage, for the settings and menus. Whether it can
+  // keep a device key is asked only where sealing needs the key anyway.
+  const noteSeal = async (s: P2pStore) => {
+    const everything = s.sealing.everything
+    const available = everything ? await s.sealing.available() : useP2p.getState().seal.available
+    const durable = deviceKeys(vaultOf(s.sealing.stored)).durable()
+    if (!s.closed) useP2p.setState({ seal: { everything, available, durable } })
+  }
 
   // Another tab runs P2P: this one opens the database to show what is stored, and reloads when
   // the leader says something changed.

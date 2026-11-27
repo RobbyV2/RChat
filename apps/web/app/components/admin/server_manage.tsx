@@ -25,6 +25,7 @@ import { MemberSearchField, useMemberSearch } from '../member_search'
 import { Button, IconButton, SectionHeading } from '../controls'
 import { Inset, Row, Surface } from '../layout'
 import { Sentinel } from '../ui'
+import { ServerEncryption } from './encryption'
 import { fieldCls } from './touch'
 
 function NameForm({
@@ -144,6 +145,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
         </>
       )}
       <ServerAppearance server={name} detail={detail} refresh={() => void refresh()} />
+      <ServerEncryption server={name} seal={detail.seal} refresh={() => void refresh()} />
       <SectionHeading as="p">Roles</SectionHeading>
       <RolesEditor
         server={name}

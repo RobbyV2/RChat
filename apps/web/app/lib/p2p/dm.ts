@@ -389,7 +389,8 @@ export const viewOf = async (
   room: string,
   recs: EventRecord[],
   me: string,
-  peer: string
+  peer: string,
+  walk: number
 ) => {
   const box = await outboxMap(db, room)
   const out: P2pMessage[] = []
@@ -401,6 +402,13 @@ export const viewOf = async (
     const replyRel = target ? await related(db, room, target.id) : []
     const m = deriveMessage(r, rel, target?.room === room ? target : null, replyRel, me, box, peer)
     if (!m) continue
+    // A storage line only where the switch changed: one that asks for the earlier messages
+    // again while it is on shows none.
+    if (
+      m.system?.kind === 'storage' &&
+      (await storeBefore(db, room, r.sortKey, walk)) === m.system.on
+    )
+      continue
     if (r.type !== 'msg') out.push(m)
     else if (r.thread) {
       const root = await dmRootOf(r, get)
@@ -412,6 +420,26 @@ export const viewOf = async (
     }
   }
   return out
+}
+
+// The switch as the last well-formed `store` event before `sortKey` left it (looking at `walk`
+// events at most): off before any.
+const storeBefore = async (db: P2pDatabase, room: string, sortKey: string, walk: number) => {
+  let cursor = await db
+    .transaction('events')
+    .store.index('room_type_sort')
+    .openCursor(
+      IDBKeyRange.bound([room, STORE_TYPE, ''], [room, STORE_TYPE, sortKey], false, true),
+      'prev'
+    )
+  let steps = 0
+  while (cursor && steps < walk) {
+    const c: unknown = cursor.value.wire.c
+    steps += 1
+    if (!cursor.value.redacted && isRecord(c) && typeof c.on === 'boolean') return c.on
+    cursor = await cursor.continue()
+  }
+  return false
 }
 
 const sortRange = (room: string, type: EvType, below?: string, above?: string, from?: string) =>
@@ -426,7 +454,7 @@ export const loadMessages = async (
   me: string,
   peer: string,
   opts: PageOpts = {},
-  lim: Pick<Local, 'dm'> = LOCAL
+  lim: Pick<Local, 'dm' | 'dag'> = LOCAL
 ) => {
   const limit = opts.limit ?? lim.dm.page
   const up = opts.newer === true
@@ -454,7 +482,7 @@ export const loadMessages = async (
   recs.length = Math.min(recs.length, limit + 1)
   const more = recs.length > limit
   const page = up ? recs.slice(0, limit) : recs.slice(0, limit).reverse()
-  return { messages: await viewOf(db, room, page, me, peer), more }
+  return { messages: await viewOf(db, room, page, me, peer, lim.dag.walk), more }
 }
 
 // Live pins, newest first, at most `pinsMax`. Walks pin events newest first, so the first one
@@ -487,7 +515,7 @@ export const loadPins = async (
     const r = await db.get('events', p.target as string)
     if (r && r.room === room && r.type === 'msg') recs.push(r)
   }
-  return viewOf(db, room, recs, me, peer)
+  return viewOf(db, room, recs, me, peer, lim.dag.walk)
 }
 
 // The type of the events that switch "Encrypt stored messages" of a conversation. Versions that
@@ -528,7 +556,7 @@ export const loadAround = async (
   if (!r || r.room !== room) return null
   return around(
     r.sortKey,
-    () => viewOf(db, room, [r], me, peer),
+    () => viewOf(db, room, [r], me, peer, lim.dag.walk),
     o => loadMessages(db, room, me, peer, o, lim),
     lim.misc
   )
@@ -542,7 +570,8 @@ export const loadDmThread = async (
   root: string,
   me: string,
   peer: string,
-  opts: { before?: string; after?: string; limit?: number } = {}
+  opts: { before?: string; after?: string; limit?: number } = {},
+  lim: Pick<Local, 'dag'> = LOCAL
 ) => {
   const limit = opts.limit ?? 100
   const r = await db.get('events', root)
@@ -558,8 +587,12 @@ export const loadDmThread = async (
   }
   const more = recs.length > limit
   const page = opts.after ? recs.slice(0, limit) : recs.slice(0, limit).reverse()
-  const [head] = await viewOf(db, room, [r], me, peer)
-  return { root: head ?? null, messages: await viewOf(db, room, page, me, peer), more }
+  const [head] = await viewOf(db, room, [r], me, peer, lim.dag.walk)
+  return {
+    root: head ?? null,
+    messages: await viewOf(db, room, page, me, peer, lim.dag.walk),
+    more,
+  }
 }
 
 // A thread around one of its replies, for jumping to it.
@@ -570,26 +603,42 @@ export const loadDmThreadAround = async (
   me: string,
   peer: string,
   id: string,
-  lim: Pick<Local, 'server'> = LOCAL
+  lim: Pick<Local, 'server' | 'dag'> = LOCAL
 ) => {
   const r = await db.get('events', id)
   if (!r || r.room !== room || (await dmRootOf(r, x => db.get('events', x))) !== root) return null
-  const older = await loadDmThread(db, room, root, me, peer, {
-    before: r.sortKey,
-    limit: lim.server.threadBefore,
-  })
-  const newer = await loadDmThread(db, room, root, me, peer, {
-    after: r.sortKey,
-    limit: lim.server.threadAfter,
-  })
+  const older = await loadDmThread(
+    db,
+    room,
+    root,
+    me,
+    peer,
+    { before: r.sortKey, limit: lim.server.threadBefore },
+    lim
+  )
+  const newer = await loadDmThread(
+    db,
+    room,
+    root,
+    me,
+    peer,
+    { after: r.sortKey, limit: lim.server.threadAfter },
+    lim
+  )
   if (!older || !newer) return null
-  const self = await viewOf(db, room, [r], me, peer)
+  const self = await viewOf(db, room, [r], me, peer, lim.dag.walk)
   return { ...older, messages: [...older.messages, ...self, ...newer.messages] }
 }
 
 // Every thread of a conversation that shows: its root (with its replies) and the sort key of
 // its newest reply.
-export const loadDmThreads = async (db: P2pDatabase, room: string, me: string, peer: string) => {
+export const loadDmThreads = async (
+  db: P2pDatabase,
+  room: string,
+  me: string,
+  peer: string,
+  lim: Pick<Local, 'dag'> = LOCAL
+) => {
   const recs = await db.getAllFromIndex(
     'events',
     'room_thread_sort',
@@ -604,7 +653,7 @@ export const loadDmThreads = async (db: P2pDatabase, room: string, me: string, p
     const r = await db.get('events', id)
     if (r && r.room === room && r.type === 'msg' && !r.thread) roots.push(r)
   }
-  const rows = await viewOf(db, room, roots, me, peer)
+  const rows = await viewOf(db, room, roots, me, peer, lim.dag.walk)
   return rows.flatMap(m => (m.replies ? [{ root: m, last: last.get(m.id) ?? '' }] : []))
 }
 

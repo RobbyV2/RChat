@@ -2,6 +2,7 @@
 import { Name } from './name'
 import { asAccount } from '../lib/people'
 import { personName } from '../lib/names'
+import { StoredLock } from './storage_settings'
 import { ViewActorTag } from './view_actor'
 import { useP2pApp } from '../lib/client/p2p_react'
 
@@ -55,7 +56,7 @@ import { TypingIndicator } from './typing_indicator'
 import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
 import { InboxButton } from './inbox'
-import { useMedia } from './context_menu'
+import { longPress, useMedia } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
 import { ChannelTopic } from './channel_topic'
@@ -79,6 +80,7 @@ import { ListedRow } from './listed_row'
 import { ThreadsButton, ThreadsWindow } from './threads'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { isNotice } from '../lib/system_messages'
+import { hostedDmSeal } from '../lib/sealing'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
 import { Row, Stack, Surface, Inset } from './layout'
@@ -492,6 +494,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   }, 'stage')
 
   const otherBlocked = useStore(s => (dm ? s.blocked[dm.other.username] === true : false))
+  const settings = useStore(s => s.settings)
   const dmCall =
     dm && call?.dmId === dm.id && (call.state === 'active' || call.from === me?.username)
   const callShare = useCallShare(dm?.id ?? -1)
@@ -695,8 +698,17 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </Stack>
         )}
         {dm && (
-          <Row as="span" gap="sm" look="font-medium" place="min-w-0">
+          <Row
+            as="span"
+            {...longPress((x, y) =>
+              openActionMenu(x, y, { kind: 'dm', dm, where: 'header' }, {}, acct)
+            )}
+            gap="sm"
+            look="font-medium"
+            place="min-w-0"
+          >
             <DmPeer other={dm.other} />
+            {hostedDmSeal(dm.seal, settings).on && <StoredLock />}
             {dm.is_self && (
               <Surface
                 as="span"

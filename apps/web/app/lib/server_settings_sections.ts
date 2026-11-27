@@ -85,7 +85,7 @@ const ROWS: Record<ServerSettingsSection, RowText> = {
   overview: {
     label: 'Name, about and appearance',
     line: 'Rename the server, describe it and change its banner and name colors.',
-    keywords: ['rename', 'server name', 'about', 'description', 'banner', 'color'],
+    keywords: ['rename', 'server name', 'about', 'description', 'banner', 'color', 'encrypt'],
   },
   widgets: { label: 'Widgets', keywords: ['embed', 'frame'] },
   messages: {
@@ -129,7 +129,7 @@ const BUILTIN: Partial<Record<ServerSettingsSection, RowText>> = {
   overview: {
     label: 'Appearance',
     line: 'The banner and name colors of the server.',
-    keywords: ['banner', 'color'],
+    keywords: ['banner', 'color', 'encrypt'],
   },
   access: {
     label: 'Guest participation',
@@ -171,7 +171,10 @@ export type RoomSettingsSection = (typeof ROOM_SECTIONS)[number]
 
 export const ROOM_SECTION_TEXT: Record<RoomSettingsSection, { label: string; keywords: string[] }> =
   {
-    overview: { label: 'Overview', keywords: ['rename', 'server name', 'server profiles'] },
+    overview: {
+      label: 'Overview',
+      keywords: ['rename', 'server name', 'server profiles', 'encrypt'],
+    },
     roles: { label: 'Roles', keywords: ['permissions', 'role'] },
     channels: { label: 'Channels', keywords: ['category', 'topic', 'slowmode', 'voice'] },
     invites: { label: 'Invites', keywords: ['invite', 'code', 'link'] },

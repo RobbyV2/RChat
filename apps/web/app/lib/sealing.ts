@@ -136,3 +136,95 @@ export function sealReasonText(state: SealState, place: SealPlace): string | nul
 
 // What stands in for a stored message whose record can't be opened.
 export const UNREADABLE_TEXT = "This message can't be opened"
+
+// The confirm that turning the switch on offers, and the earlier messages it may take along.
+export const EARLIER_LABEL = 'Also encrypt earlier messages'
+export const EARLIER_ACTION = 'Encrypt earlier messages'
+export const EARLIER_CONFIRM = 'Earlier messages will be stored only encrypted.'
+
+// The line beside a place whose new messages are stored encrypted, and its lock's label.
+export const STORED_ENCRYPTED = 'Stored encrypted'
+
+// What a device key protects where nothing outside the app keeps it.
+export const deviceKeyNote = (durable: boolean, shell: boolean) =>
+  durable
+    ? null
+    : shell
+      ? "Protects copies of this device's data, not this app's profile"
+      : "Protects copies of this device's data, not this browser profile"
+
+// The place of a job over a hosted server's or DM's stored messages.
+export const serverPlace = (name: string) => `s:${name}`
+export const dmPlace = (id: number) => `d:${id}`
+
+export interface JobView {
+  id: number
+  direction: 'seal' | 'unseal'
+  upto: number
+  done: number
+  // The message id before the first one of the place the job covers; 0 once it ended.
+  from: number
+  state: 'running' | 'done' | 'failed'
+}
+
+// How far a job got, as a whole percent of the place's messages it covers.
+export const jobPercent = ({ upto, done, from, state }: JobView) => {
+  if (state === 'done' || upto <= from) return 100
+  return Math.max(0, Math.min(99, Math.floor(((done - from) / (upto - from)) * 100)))
+}
+
+// A job's state as the settings show it.
+export function jobText(job: JobView): string {
+  const doing = job.direction === 'seal' ? 'Encrypting earlier messages' : 'Storing messages plain'
+  switch (job.state) {
+    case 'running':
+      return `${doing}: ${jobPercent(job)}%`
+    case 'done':
+      return job.direction === 'seal'
+        ? 'Earlier messages are stored encrypted.'
+        : 'Messages are stored plain again.'
+    case 'failed':
+      return `${doing} stopped. Start it again to go on.`
+  }
+}
+
+export interface PlacedJob extends JobView {
+  place: string
+}
+
+const whole = (v: unknown) => (Number.isSafeInteger(v) ? (v as number) : 0)
+
+// One job the API answered; null when it is malformed.
+export function jobOf(value: unknown): PlacedJob | null {
+  if (typeof value !== 'object' || value === null) return null
+  const o = value as Record<string, unknown>
+  const { direction, state, upto, done } = o
+  if (direction !== 'seal' && direction !== 'unseal') return null
+  if (state !== 'running' && state !== 'done' && state !== 'failed') return null
+  if (!Number.isSafeInteger(upto) || !Number.isSafeInteger(done)) return null
+  const place = typeof o.place === 'string' ? o.place : ''
+  return {
+    id: whole(o.id),
+    place,
+    direction,
+    upto: upto as number,
+    done: done as number,
+    from: whole(o.from),
+    state,
+  }
+}
+
+// The newest job of `direction` among a list the API answered (newest first) and one that
+// arrived as progress since; null for none.
+export function latestJob(
+  list: unknown,
+  direction: JobView['direction'],
+  pushed?: unknown
+): PlacedJob | null {
+  const listed = Array.isArray(list)
+    ? (list.map(jobOf).find(j => j?.direction === direction) ?? null)
+    : null
+  const arrived = jobOf(pushed)
+  if (arrived?.direction !== direction) return listed
+  return listed === null || arrived.id >= listed.id ? arrived : listed
+}
