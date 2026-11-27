@@ -11,6 +11,7 @@ default:
 
 # Install all dependencies
 install: deps
+  rustup target add wasm32-unknown-unknown
   cargo install wasm-pack --version 0.15.0 --locked
   cargo install wasm-bindgen-cli --version 0.2.129 --locked
   cargo install tauri-cli --version 2.12.2 --locked
