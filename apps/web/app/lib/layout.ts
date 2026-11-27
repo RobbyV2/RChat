@@ -18,6 +18,19 @@ const GAP: Record<Space, string> = {
   '3xl': 'gap-(--space-3xl)',
 }
 
+const ROW_GAP: Record<Space, string> = {
+  none: 'gap-y-0',
+  '3xs': 'gap-y-(--space-3xs)',
+  '2xs': 'gap-y-(--space-2xs)',
+  xs: 'gap-y-(--space-xs)',
+  sm: 'gap-y-(--space-sm)',
+  md: 'gap-y-(--space-md)',
+  lg: 'gap-y-(--space-lg)',
+  xl: 'gap-y-(--space-xl)',
+  '2xl': 'gap-y-(--space-2xl)',
+  '3xl': 'gap-y-(--space-3xl)',
+}
+
 const PAD: Record<Space, string> = {
   none: 'p-0',
   '3xs': 'p-(--space-3xs)',
@@ -63,6 +76,14 @@ export const smaller = (s: Space): Space => SPACES[Math.max(0, SPACES.indexOf(s)
 export type StackAlign = 'stretch' | 'start' | 'center' | 'end'
 export type RowAlign = 'center' | 'baseline' | 'start' | 'end' | 'stretch'
 export type Justify = 'start' | 'center' | 'end' | 'between'
+export type Breakpoint = 'sm' | 'md' | 'lg'
+
+// A column that turns into a centered row from a width on.
+const ROW_FROM: Record<Breakpoint, string> = {
+  sm: 'sm:flex-row sm:items-center',
+  md: 'md:flex-row md:items-center',
+  lg: 'lg:flex-row lg:items-center',
+}
 
 const ITEMS: Record<RowAlign, string> = {
   stretch: 'items-stretch',
@@ -82,29 +103,36 @@ const JUSTIFY: Record<Justify, string> = {
 // The looks below leave the display (`flex`, `grid`) to the component, so a placement can hide a
 // box (`hidden md:flex`).
 
-// A column: children one under the other, `gap` apart; `divided` draws a line between them.
+// A column: children one under the other, `gap` apart; `divided` draws a line between them;
+// `rowFrom` lays them side by side, centered, from that width on.
 export const stackLook = (
   gap: Space,
   align: StackAlign = 'stretch',
   justify: Justify = 'start',
-  divided = false
+  divided = false,
+  rowFrom?: Breakpoint
 ) =>
   `min-w-0 flex-col ${GAP[gap]} ${ITEMS[align]} ${JUSTIFY[justify]}${
     divided ? ' divide-y divide-outline-variant' : ''
-  }`
+  }${rowFrom ? ` ${ROW_FROM[rowFrom]}` : ''}`
 
 // A line: children side by side, `gap` apart, on one center (or baseline) line; `wrap` lets a
-// line that runs out of room continue under itself with the same gap.
+// line that runs out of room continue under itself, `lineGap` apart (`gap` unless given).
 export const rowLook = (
   gap: Space,
   align: RowAlign = 'center',
   justify: Justify = 'start',
-  wrap = false
-) => `min-w-0 ${wrap ? 'flex-wrap' : 'flex-nowrap'} ${GAP[gap]} ${ITEMS[align]} ${JUSTIFY[justify]}`
+  wrap = false,
+  lineGap?: Space
+) =>
+  `min-w-0 ${wrap ? 'flex-wrap' : 'flex-nowrap'} ${GAP[gap]}${
+    lineGap ? ` ${ROW_GAP[lineGap]}` : ''
+  } ${ITEMS[align]} ${JUSTIFY[justify]}`
 
 export type SurfaceTone =
   'plain' | 'lowest' | 'low' | 'base' | 'high' | 'highest' | 'primary' | 'secondary' | 'error'
-export type SurfaceRadius = 'none' | 'md' | 'lg' | 'xl' | 'group' | 'hero'
+export type SurfaceRadius = 'none' | 'md' | 'lg' | 'xl' | 'group' | 'hero' | 'full'
+export type Elevation = 0 | 1 | 2 | 3
 // How a surface pads its content: `even` the same on all four sides; `bar` (a header, footer or
 // toolbar line) one step less above and below than at the sides.
 export type SurfaceInset = 'even' | 'bar'
@@ -137,6 +165,14 @@ const RADIUS: Record<SurfaceRadius, string> = {
   xl: 'rounded-2xl',
   group: 'rounded-group',
   hero: 'rounded-hero',
+  full: 'rounded-full',
+}
+
+const SHADOW: Record<Elevation, string> = {
+  0: '',
+  1: 'shadow-elevation-1',
+  2: 'shadow-elevation-2',
+  3: 'shadow-elevation-3',
 }
 
 // A card: its own surface, padded by `pad` on every side (or as `inset` says), holding its
@@ -151,6 +187,8 @@ export const surfaceLook = ({
   inset,
   fit,
   align,
+  row = false,
+  elevation = 0,
 }: {
   pad: Space
   gap: Space
@@ -160,9 +198,11 @@ export const surfaceLook = ({
   inset: SurfaceInset
   fit: boolean
   align: StackAlign
+  row?: boolean
+  elevation?: Elevation
 }) =>
   [
-    'min-w-0 flex-col',
+    row ? 'min-w-0 flex-row' : 'min-w-0 flex-col',
     inset === 'even' ? PAD[pad] : `${PAD_X[pad]} ${PAD_Y[smaller(pad)]}`,
     GAP[gap],
     ITEMS[align],
@@ -170,6 +210,7 @@ export const surfaceLook = ({
     RADIUS[radius],
     BORDER[String(border) as keyof typeof BORDER],
     fit ? 'w-fit max-w-full' : '',
+    SHADOW[elevation],
   ]
     .filter(Boolean)
     .join(' ')
@@ -208,12 +249,22 @@ const COLS = {
   },
 } satisfies Record<string, Record<Columns, string>>
 
-// Equal columns, `gap` apart both ways; `cols` may change at the sm, md and lg widths.
-export const gridLook = (cols: GridColumns, gap: Space, align: RowAlign = 'stretch') => {
+// Equal columns, `gap` apart (rows `lineGap` apart when given); `cols` may change at the sm, md
+// and lg widths.
+export const gridLook = (
+  cols: GridColumns,
+  gap: Space,
+  align: RowAlign = 'stretch',
+  lineGap?: Space
+) => {
   const by = typeof cols === 'number' ? { base: cols } : cols
   const steps = (['base', 'sm', 'md', 'lg'] as const).flatMap(k => {
     const n = by[k]
     return n === undefined ? [] : [COLS[k][n]]
   })
-  return `min-w-0 ${steps.join(' ')} ${GAP[gap]} ${ITEMS[align]}`
+  return `min-w-0 ${steps.join(' ')} ${GAP[gap]}${lineGap ? ` ${ROW_GAP[lineGap]}` : ''} ${ITEMS[align]}`
 }
+
+// The box an icon sits in beside text: one line of the text high, so a row aligned at its start
+// puts the icon on the middle of the first line.
+export const firstLineLook = 'h-lh shrink-0 items-center'

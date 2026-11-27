@@ -1,7 +1,16 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { SPACES, gridLook, rowLook, smaller, stackLook, surfaceLook, type Space } from '../layout'
+import {
+  SPACES,
+  firstLineLook,
+  gridLook,
+  rowLook,
+  smaller,
+  stackLook,
+  surfaceLook,
+  type Space,
+} from '../layout'
 
 const css = readFileSync(fileURLToPath(new URL('../../globals.css', import.meta.url)), 'utf8')
 const rem = (s: Space) => Number(new RegExp(`--space-${s}: ([0-9.]+)rem;`).exec(css)?.[1])
@@ -89,4 +98,31 @@ test('a divided stack lines its children apart, and a surface lines one edge or 
   has(surface({ border: 'bottom' }), 'border-b')
   expect(surface({ border: 'bottom' }).split(' ').includes('border')).toBe(false)
   expect(surface().includes('border')).toBe(false)
+})
+
+test('a stack can turn into a centered row from a width on', () => {
+  has(
+    stackLook('sm', 'stretch', 'start', false, 'md'),
+    'flex-col',
+    'md:flex-row',
+    'md:items-center'
+  )
+  expect(stackLook('sm').includes('flex-row')).toBe(false)
+})
+
+test('wrapped lines and grid rows may sit apart by their own step of the scale', () => {
+  has(rowLook('sm', 'center', 'start', true, 'xs'), 'gap-(--space-sm)', 'gap-y-(--space-xs)')
+  expect(rowLook('sm', 'center', 'start', true).includes('gap-y')).toBe(false)
+  has(gridLook(2, 'md', 'stretch', '2xs'), 'gap-(--space-md)', 'gap-y-(--space-2xs)')
+})
+
+test('a row surface lays its children side by side; elevation and full round are named', () => {
+  has(surface({ row: true }), 'flex-row')
+  expect(surface().includes('flex-row')).toBe(false)
+  has(surface({ elevation: 2, radius: 'full' }), 'shadow-elevation-2', 'rounded-full')
+  expect(surface().includes('shadow')).toBe(false)
+})
+
+test('an icon beside text sits in a box one text line high', () => {
+  has(firstLineLook, 'h-lh', 'items-center', 'shrink-0')
 })
