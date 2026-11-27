@@ -1457,7 +1457,8 @@ pub(crate) async fn insert_message(
     const VALUES: &str = "$1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25";
     let sql = match reserved {
         Some(_) => format!(
-            "INSERT INTO messages({INTO}, id, body) OVERRIDING SYSTEM VALUE VALUES({VALUES}, $26, $27) RETURNING id"
+            "INSERT INTO messages({INTO}, id, body, grams) OVERRIDING SYSTEM VALUE VALUES({VALUES}, $26, $27, {}) RETURNING id",
+            crate::api::seal::grams_value(28)
         ),
         None => format!("INSERT INTO messages({INTO}) VALUES({VALUES}) RETURNING id"),
     };
@@ -1496,11 +1497,10 @@ pub(crate) async fn insert_message(
         .bind(i64::from(no_previews))
         .bind(&stored.alt);
     let insert = match (reserved, &writer) {
-        (Some(id), Some(writer)) => {
-            insert
-                .bind(id)
-                .bind(writer.message(id, &user.username, &parts))
-        }
+        (Some(id), Some(writer)) => insert
+            .bind(id)
+            .bind(writer.message(id, &user.username, &parts))
+            .bind(writer.grams(&parts)),
         (_, _) => insert,
     };
     let id: i64 = insert.fetch_one(&mut *tx).await?.try_get(0)?;
@@ -1870,7 +1870,8 @@ async fn insert_forward(
     const VALUES: &str = "$1, $2, $3, $4, $5, $6, $7, 0, $8, 'server', NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19";
     let sql = match reserved {
         Some(_) => format!(
-            "INSERT INTO messages({INTO}, id, body) OVERRIDING SYSTEM VALUE VALUES({VALUES}, $20, $21) RETURNING id"
+            "INSERT INTO messages({INTO}, id, body, grams) OVERRIDING SYSTEM VALUE VALUES({VALUES}, $20, $21, {}) RETURNING id",
+            crate::api::seal::grams_value(22)
         ),
         None => format!("INSERT INTO messages({INTO}) VALUES({VALUES}) RETURNING id"),
     };
@@ -1895,11 +1896,10 @@ async fn insert_forward(
         .bind(i64::from(text_only))
         .bind(&stored.alt);
     let insert = match (reserved, &writer) {
-        (Some(id), Some(writer)) => {
-            insert
-                .bind(id)
-                .bind(writer.message(id, &user.username, &parts))
-        }
+        (Some(id), Some(writer)) => insert
+            .bind(id)
+            .bind(writer.message(id, &user.username, &parts))
+            .bind(writer.grams(&parts)),
         (_, _) => insert,
     };
     let id: i64 = insert.fetch_one(&mut *tx).await?.try_get(0)?;
@@ -3009,6 +3009,9 @@ pub(crate) async fn edit_message(
     Ok(Json(edited))
 }
 
+mod sealed;
+pub(crate) use sealed::forget as forget_sealed;
+
 enum Bind {
     S(String),
     I(i64),
@@ -3019,6 +3022,15 @@ enum Scan {
     ChannelText,
     Window(i64, i64),
     Rows(Vec<i64>),
+    /// The encrypted messages of some channels with ids from `lo` up to `hi`, newest first:
+    /// `channels` is their JSON id list and `needles` the JSON object of the grams a candidate
+    /// of each channel must hold on Postgres, by channel id, when the text has any.
+    Sealed {
+        lo: i64,
+        hi: i64,
+        channels: String,
+        needles: Option<String>,
+    },
 }
 
 const SEARCH_PAGE: i64 = 25;
@@ -3246,20 +3258,40 @@ async fn search_page(
     resume: Option<Pass>,
     fts: bool,
 ) -> Result<(Vec<SearchResult>, Option<SearchCursor>), ApiError> {
+    let text = sq.q.clone().unwrap_or_default();
+    let text = text.trim();
+    let short = text.chars().count() < FTS_MIN_CHARS || !fts;
+    if !text.is_empty() && !short && is_sqlite(db) && has_channel_index(db).await? {
+        let (results, next, _) = channel_paged(db, scope, sq.clone(), text, resume).await?;
+        return Ok((results, next));
+    }
+    if !text.is_empty() {
+        let channels = sealed::channels(db, current, scope, &sq).await?;
+        if !channels.is_empty() {
+            return sealed::merged(db, current, scope, sq, text, &channels, fts).await;
+        }
+    }
+    plain_page(db, current, scope, sq, fts, SEARCH_PAGE).await
+}
+
+/// Up to `page` messages whose plain text matches, the way `search_page` reads them where no
+/// channel index walk applies.
+async fn plain_page(
+    db: &Db,
+    current: &Db,
+    scope: &Scope,
+    sq: SearchQuery,
+    fts: bool,
+    page: i64,
+) -> Result<(Vec<SearchResult>, Option<SearchCursor>), ApiError> {
     let text = sq.q.as_deref().map(str::trim).unwrap_or("");
     let short = text.chars().count() < FTS_MIN_CHARS || !fts;
     let unscoped = sq.server.is_none() && sq.channel_id.is_none();
     let first_page = sq.offset.is_none_or(|n| n <= 0);
-    if !text.is_empty() && !short && is_sqlite(db) {
-        if has_channel_index(db).await? {
-            let (results, next, _) = channel_paged(db, scope, sq.clone(), text, resume).await?;
-            return Ok((results, next));
-        }
-        if first_page {
-            let phrase = fts_phrase(text);
-            let (rows, next) = fts_paged(db, scope, sq, &phrase).await?;
-            return Ok((rows, next.map(SearchCursor::before)));
-        }
+    if !text.is_empty() && !short && is_sqlite(db) && first_page {
+        let phrase = fts_phrase(text);
+        let (rows, next) = fts_paged(db, scope, sq, &phrase, page).await?;
+        return Ok((rows, next.map(SearchCursor::before)));
     }
     let windowed = !text.is_empty() && (short || unscoped) && is_sqlite(db) && first_page;
     let budget = match short {
@@ -3277,11 +3309,11 @@ async fn search_page(
         };
         let results = match scan {
             Scan::All if !is_sqlite(db) && !text.is_empty() && unscoped && first_page => {
-                newest_first(db, current, scope, sq).await?
+                newest_first(db, current, scope, sq, page).await?
             }
-            scan => search_once(db, current, scope, sq, scan, SEARCH_PAGE).await?,
+            scan => search_once(db, current, scope, sq, scan, page).await?,
         };
-        let next = match results.len() as i64 == SEARCH_PAGE {
+        let next = match results.len() as i64 == page {
             true => results.last().map(|r| r.message.id),
             false => None,
         };
@@ -3295,19 +3327,16 @@ async fn search_page(
     let mut size = SEARCH_WINDOW;
     let mut scanned = 0i64;
     let mut results: Vec<SearchResult> = Vec::new();
-    while (results.len() as i64) < SEARCH_PAGE && hi > floor.saturating_add(1) && scanned < budget {
+    while (results.len() as i64) < page && hi > floor.saturating_add(1) && scanned < budget {
         let lo = hi.saturating_sub(size).max(floor.saturating_add(1));
-        let want = SEARCH_PAGE - results.len() as i64;
+        let want = page - results.len() as i64;
         let page = search_once(db, current, scope, sq.clone(), Scan::Window(lo, hi), want).await?;
         results.extend(page);
         scanned = scanned.saturating_add(hi - lo);
         hi = lo;
         size = size.saturating_mul(8);
     }
-    let next = match (
-        results.len() as i64 == SEARCH_PAGE,
-        hi > floor.saturating_add(1),
-    ) {
+    let next = match (results.len() as i64 == page, hi > floor.saturating_add(1)) {
         (true, _) => results.last().map(|r| r.message.id),
         (false, true) => Some(hi),
         (false, false) => None,
@@ -3323,6 +3352,7 @@ async fn newest_first(
     current: &Db,
     scope: &Scope,
     sq: SearchQuery,
+    page: i64,
 ) -> Result<Vec<SearchResult>, ApiError> {
     let floor = sq.after.unwrap_or(0).max(0);
     let hi = match sq.before {
@@ -3332,16 +3362,9 @@ async fn newest_first(
     let lo = hi
         .saturating_sub(SEARCH_WINDOW)
         .max(floor.saturating_add(1));
-    let mut results = search_once(
-        db,
-        current,
-        scope,
-        sq.clone(),
-        Scan::Window(lo, hi),
-        SEARCH_PAGE,
-    )
-    .await?;
-    let left = SEARCH_PAGE - results.len() as i64;
+    let mut results =
+        search_once(db, current, scope, sq.clone(), Scan::Window(lo, hi), page).await?;
+    let left = page - results.len() as i64;
     if left > 0 && lo > floor.saturating_add(1) {
         let below = SearchQuery {
             before: Some(lo),
@@ -3404,6 +3427,7 @@ async fn fts_paged(
     scope: &Scope,
     sq: SearchQuery,
     phrase: &str,
+    page: i64,
 ) -> Result<(Vec<SearchResult>, Option<i64>), ApiError> {
     let batch = batch_sql(scope);
     let floor = sq.after.unwrap_or(0).max(0);
@@ -3411,7 +3435,7 @@ async fn fts_paged(
     let mut results: Vec<SearchResult> = Vec::new();
     let mut more = true;
     for _ in 0..FTS_ROUNDS {
-        if results.len() as i64 >= SEARCH_PAGE {
+        if results.len() as i64 >= page {
             break;
         }
         let ids: Vec<i64> = bind_all(
@@ -3431,7 +3455,7 @@ async fn fts_paged(
             break;
         };
         let full = ids.len() as i64 == FTS_BATCH;
-        let want = SEARCH_PAGE - results.len() as i64;
+        let want = page - results.len() as i64;
         results.extend(search_once(db, db, scope, sq.clone(), Scan::Rows(ids), want).await?);
         hi = lo;
         if !full {
@@ -3439,7 +3463,7 @@ async fn fts_paged(
             break;
         }
     }
-    let next = match (results.len() as i64 == SEARCH_PAGE, more) {
+    let next = match (results.len() as i64 == page, more) {
         (true, _) => results.last().map(|r| r.message.id),
         (false, true) => Some(hi),
         (false, false) => None,
@@ -3515,11 +3539,12 @@ async fn search_places(
     Ok(format!("[{}]", places.join(",")))
 }
 
-/// One stream a search reads: the newest id of it the search may read and the JSON
-/// `[stream, floor, ceiling]` with the ids of it the search may read.
+/// One stream a search reads: the newest id of it the search may read, the JSON
+/// `[stream, floor, ceiling, channel]` with the ids of it the search may read, and its channel.
 struct Stream {
     head: i64,
     entry: String,
+    channel: i64,
 }
 
 /// The `limit` streams of the JSON channel list `places` whose newest readable id from `low`
@@ -3568,7 +3593,7 @@ fn streams_sql(
     // statement returns are sought after the limit.
     let sql = format!(
         "WITH readable AS MATERIALIZED (
-            SELECT s.id,s.first_id,s.first_at,s.first_sent,s.last_id,s.last_sent,j.value->>1 AS since,
+            SELECT s.id,s.channel_id AS channel,s.first_id,s.first_at,s.first_sent,s.last_id,s.last_sent,j.value->>1 AS since,
                 CASE WHEN s.last_id <= {upper} THEN s.last_id WHEN s.first_id <= {upper} THEN (
                     SELECT CASE WHEN j.value->>1 IS NULL OR d.readable_at >= j.value->>1 THEN d.id END
                     FROM search_documents d INDEXED BY search_documents_stream
@@ -3577,7 +3602,7 @@ fn streams_sql(
             WHERE s.channel_id=j.value->>0 AND s.last_at >= COALESCE(j.value->>1,-9223372036854775808)),
         newest AS MATERIALIZED (
             SELECT * FROM readable WHERE head >= {low}{unread} ORDER BY head DESC LIMIT {limit})
-        SELECT s.head,json_array(s.id,{floor},{ceiling}) FROM newest s ORDER BY s.head DESC"
+        SELECT s.head,json_array(s.id,{floor},{ceiling},s.channel),s.channel FROM newest s ORDER BY s.head DESC"
     );
     (sql, binds)
 }
@@ -3601,15 +3626,17 @@ async fn read_streams(
             Ok(Stream {
                 head: row.try_get(0)?,
                 entry: row.try_get(1)?,
+                channel: row.try_get(2)?,
             })
         })
         .collect()
 }
 
-/// The candidates of the JSON stream list `$1` for the JSON term pairs `$2`, newest first.
+/// The candidates of the JSON stream list `$1` for the JSON term pairs `$2`, newest first, and
+/// with `keyed` for the keyed terms `$3` of encrypted messages, `[channel, term, bucket]`.
 /// A true phrase occurs in every required posting list of its representation, so each stream
 /// walks the list whose newest entry is oldest and none where a term is missing.
-fn walk_sql(short_spans: bool) -> String {
+fn walk_sql(short_spans: bool, keyed: bool) -> String {
     let short_spans = match short_spans {
         true => {
             " UNION SELECT 3,'~' || (value->>0) FROM json_each($2)
@@ -3617,18 +3644,24 @@ fn walk_sql(short_spans: bool) -> String {
         }
         false => "",
     };
+    let keyed = match keyed {
+        true => format!(" UNION ALL SELECT ({POSTING_HEAD}) AS id,s.stream,s.floor,t.form,t.term FROM streams s JOIN
+            (SELECT 5 AS form,value->>0 AS channel,value->>1 AS term FROM json_each($3) UNION
+             SELECT 6,value->>0,value->>2 FROM json_each($3)) t ON t.channel=s.channel"),
+        false => String::new(),
+    };
     format!("WITH RECURSIVE terms(form,term) AS MATERIALIZED (SELECT 0,value->>0 FROM json_each($2) UNION
             SELECT 1,value->>1 FROM json_each($2) UNION SELECT 2,''{short_spans}),
-        streams(stream,floor,ceiling) AS MATERIALIZED (
-            SELECT value->>0,value->>1,value->>2 FROM json_each($1)),
-        heads AS MATERIALIZED (SELECT ({POSTING_HEAD}) AS id,s.stream,s.floor,t.form,t.term FROM streams s CROSS JOIN terms t),
+        streams(stream,floor,ceiling,channel) AS MATERIALIZED (
+            SELECT value->>0,value->>1,value->>2,value->>3 FROM json_each($1)),
+        heads AS MATERIALIZED (SELECT ({POSTING_HEAD}) AS id,s.stream,s.floor,t.form,t.term FROM streams s CROSS JOIN terms t{keyed}),
         ranked AS (SELECT *,dense_rank() OVER (PARTITION BY stream,form ORDER BY id,term) AS choice FROM heads),
         hits(id,stream,term,floor) AS (
             SELECT id,stream,term,floor FROM ranked WHERE choice=1 AND id IS NOT NULL UNION ALL
             SELECT ({POSTING_NEXT}),h.stream,h.term,h.floor FROM hits h WHERE h.id IS NOT NULL
             ORDER BY 1 DESC LIMIT {})
         SELECT h.id,m.content,m.author,m.created_at,CAST(m.media_id IS NOT NULL AS INTEGER),
-            CAST({LIVE_AUTHOR} AS INTEGER)
+            CAST({LIVE_AUTHOR} AS INTEGER),m.channel_id,m.body
         FROM hits h CROSS JOIN messages m WHERE m.id=h.id",FTS_BATCH*FTS_ROUNDS as i64)
 }
 
@@ -3640,14 +3673,35 @@ async fn tokenizer(slot: &mut Option<Tokenizer>) -> sqlx::Result<&mut Tokenizer>
 }
 
 /// What a search looks for in a candidate: the text itself where both are plain ASCII, the
-/// tokenizer's phrase match otherwise.
+/// tokenizer's phrase match otherwise, and in an encrypted message the folded text.
 struct Needle {
+    text: String,
     ascii: Option<String>,
     phrase: String,
     scratch: Option<Tokenizer>,
 }
 
 impl Needle {
+    /// Whether the message `id` holds the text: its plain `content`, or its `record` opened.
+    async fn found_in(
+        &mut self,
+        db: &Db,
+        id: i64,
+        channel: Option<i64>,
+        author: &str,
+        content: &str,
+        record: Option<Vec<u8>>,
+    ) -> sqlx::Result<bool> {
+        let Some(record) = record else {
+            return self.found(content).await;
+        };
+        let scope = SealScope::of(channel, None);
+        let opened =
+            crate::crypt::body::open_body(db, id, scope, author, Some(record), Parts::default())
+                .await?;
+        Ok(!opened.unreadable && crate::crypt::grams::found(&opened.parts.content, &self.text))
+    }
+
     async fn found(&mut self, body: &str) -> sqlx::Result<bool> {
         match &self.ascii {
             Some(needle) if body.is_ascii() && !body.as_bytes().contains(&0) => {
@@ -3692,7 +3746,16 @@ async fn findable(
     .await?;
     let mut found = Vec::with_capacity(rows.len());
     for row in rows {
-        if needle.found(row.try_get(5)?).await? {
+        let record = row.try_get::<Option<Vec<u8>>, _>(BODY_COL)?;
+        let (id, channel, author) = (
+            row.try_get(0)?,
+            row.try_get(1)?,
+            row.try_get::<String, _>(4)?,
+        );
+        if needle
+            .found_in(db, id, channel, &author, row.try_get(5)?, record)
+            .await?
+        {
             found.push(row);
         }
     }
@@ -3720,6 +3783,7 @@ async fn channel_paged(
         .before
         .map_or(i64::MAX, |before| before.saturating_sub(1));
     let mut needle = Needle {
+        text: text.to_owned(),
         ascii: text.is_ascii().then(|| text.to_ascii_lowercase()),
         phrase: fts_phrase(text),
         scratch: None,
@@ -3742,7 +3806,14 @@ async fn channel_paged(
         .collect();
     let short_spans = !(text.is_ascii() && crate::db::has_long_span(text));
     let buckets: std::collections::BTreeSet<_> = keys.iter().map(|(_, bucket)| bucket).collect();
-    let terms = (grams.len() + buckets.len()) * (1 + usize::from(short_spans)) + 1;
+    let sealed = sealed::channels(db, db, scope, &sq).await?;
+    let runs = match sealed.is_empty() {
+        true => Vec::new(),
+        false => spread(crate::crypt::grams::windows(&crate::crypt::grams::fold(
+            text,
+        ))),
+    };
+    let terms = (grams.len() + buckets.len()) * (1 + usize::from(short_spans)) + 1 + 2 * runs.len();
     let room = (HEAD_SEEKS / terms).max(1);
     let keys = serde_json::to_string(&keys).expect("string pairs");
     let mut skip = sq.offset.take().unwrap_or(0).clamp(0, SEARCH_OFFSET_MAX);
@@ -3799,15 +3870,20 @@ async fn channel_paged(
             .collect::<Vec<_>>()
             .join(",")
     );
+    let keyed = sealed::keyed_terms(db, &streams, &sealed, &runs).await?;
     let mut read = 0;
     let mut ids = Vec::new();
     let mut last = 0;
     let mut settled = streams.is_empty();
     if !streams.is_empty() {
-        let mut candidates = sqlx::query(sqlx::AssertSqlSafe(walk_sql(short_spans)))
+        let walk = sqlx::query(sqlx::AssertSqlSafe(walk_sql(short_spans, keyed.is_some())))
             .bind(entries)
-            .bind(keys)
-            .fetch(&mut *tx);
+            .bind(keys);
+        let walk = match keyed {
+            Some(keyed) => walk.bind(keyed),
+            None => walk,
+        };
+        let mut candidates = walk.fetch(&mut *tx);
         while let Some(row) = candidates.try_next().await? {
             let id: i64 = row.try_get(0)?;
             if let Some(Pass { held, .. }) = &pass
@@ -3828,7 +3904,18 @@ async fn channel_paged(
             {
                 continue;
             }
-            if !needle.found(row.try_get(1)?).await? {
+            let record = row.try_get::<Option<Vec<u8>>, _>(7)?;
+            if !needle
+                .found_in(
+                    db,
+                    id,
+                    row.try_get(6)?,
+                    row.try_get(2)?,
+                    row.try_get(1)?,
+                    record,
+                )
+                .await?
+            {
                 continue;
             }
             match &mut pass {
@@ -4218,20 +4305,26 @@ fn search_sql(
         servers: _,
     } = sq;
     let (lo, hi) = match scan {
-        Scan::Window(lo, hi) => (lo, hi),
+        Scan::Window(lo, hi) | Scan::Sealed { lo, hi, .. } => (lo, hi),
         Scan::All | Scan::ChannelText | Scan::Rows(_) => (i64::MIN, before.unwrap_or(i64::MAX)),
     };
-    let pg_channels = matches!(scan, Scan::ChannelText);
+    let pg_sealed = matches!(scan, Scan::Sealed { .. }) && !is_sqlite(db);
+    let pg_channels = matches!(scan, Scan::ChannelText) || pg_sealed;
     let mut place = scope.place();
     let mut conds = match pg_channels {
-        true => vec![
-            "m.channel_id = c.id".to_string(),
-            "m.kind IN ('user', 'poll')".to_string(),
-            LIVE_AUTHOR.to_string(),
-            "(m.thread_root_id IS NULL OR m.search_root_at IS NOT NULL)".to_string(),
-            "LEAST(m.created_at,m.search_root_at) >= c.since".to_string(),
-            "rchat_search_grams(lower(m.content)) @> c.grams".to_string(),
-        ],
+        true => {
+            let mut conds = vec![
+                "m.channel_id = c.id".to_string(),
+                "m.kind IN ('user', 'poll')".to_string(),
+                LIVE_AUTHOR.to_string(),
+                "(m.thread_root_id IS NULL OR m.search_root_at IS NOT NULL)".to_string(),
+                "LEAST(m.created_at,m.search_root_at) >= c.since".to_string(),
+            ];
+            if !pg_sealed {
+                conds.push("rchat_search_grams(lower(m.content)) @> c.grams".to_string());
+            }
+            conds
+        }
         false => {
             let mut conds = vec![place.clone(), scope.row()];
             if let Some(list) = &scope.channels {
@@ -4255,6 +4348,18 @@ fn search_sql(
         (Scan::ChannelText, Some(text)) => {
             binds.push(Bind::S(text.to_string()));
             conds.push("strpos(lower(m.content), c.needle) > 0".to_string());
+        }
+        (Scan::Sealed { channels, .. }, _) => {
+            binds.push(Bind::S(channels.clone()));
+            let list = at + binds.len();
+            match pg_sealed {
+                true => place.push_str(&format!(
+                    " AND c.id IN (SELECT CAST(value AS BIGINT) FROM jsonb_array_elements_text(CAST(${list} AS jsonb)))"
+                )),
+                false => conds.push(format!(
+                    "m.body IS NOT NULL AND m.grams IS NULL AND m.channel_id IN (SELECT value FROM json_each(${list}))"
+                )),
+            }
         }
         (_, None) => {}
         (Scan::All | Scan::Window(_, _), Some(text)) => {
@@ -4307,7 +4412,7 @@ fn search_sql(
         binds.push(Bind::I(b));
         conds.push(format!("m.id < ${}", at + binds.len()));
     }
-    if let Scan::Window(lo, hi) = scan {
+    if let Scan::Window(lo, hi) | Scan::Sealed { lo, hi, .. } = scan {
         binds.push(Bind::I(lo));
         conds.push(format!("m.id >= ${}", at + binds.len()));
         binds.push(Bind::I(hi));
@@ -4333,7 +4438,17 @@ fn search_sql(
         _ => String::new(),
     };
     let conditions = conds.join(" AND ");
-    let sql = if pg_channels {
+    let sql = if let Scan::Sealed {
+        needles: Some(needles),
+        ..
+    } = &scan
+        && pg_sealed
+    {
+        binds.push(Bind::S(needles.clone()));
+        sealed_sql(scope, &place, &conditions, Some(at + binds.len()), limit)
+    } else if pg_sealed {
+        sealed_sql(scope, &place, &conditions, None, limit)
+    } else if pg_channels {
         let since = scope.since.as_deref().unwrap_or("NULL");
         let take = limit + offset.unwrap_or(0).clamp(0, SEARCH_OFFSET_MAX);
         // GiST distances are floating point. Each half of the message id is exactly
@@ -4354,6 +4469,37 @@ fn search_sql(
         )
     };
     (sql, binds)
+}
+
+/// The Postgres form of `Scan::Sealed`: each channel's newest encrypted candidates, those with
+/// grams through the keyed gram index (holding the needle `$needles` of their channel when the
+/// text has one) and those without through the index of encrypted rows.
+fn sealed_sql(
+    scope: &Scope,
+    place: &str,
+    conditions: &str,
+    needles: Option<usize>,
+    limit: i64,
+) -> String {
+    let since = scope.since.as_deref().unwrap_or("NULL");
+    let (grams, holds) = match needles {
+        Some(n) => (
+            format!("CAST(CAST(${n} AS jsonb)->>CAST(c.id AS TEXT) AS integer[])"),
+            " AND m.grams @> c.grams",
+        ),
+        None => ("NULL::integer[]".to_string(), ""),
+    };
+    format!("WITH places AS MATERIALIZED (
+        SELECT c.id, {grams} AS grams, COALESCE({since}, '-9223372036854775808'::bigint) AS since FROM channels c WHERE {place}
+    ), page AS MATERIALIZED (
+        SELECT h.id FROM places c CROSS JOIN LATERAL (
+            (SELECT m.id FROM messages m WHERE {conditions} AND m.grams IS NOT NULL{holds}
+             ORDER BY ((m.id >> 32) <-> 2147483647::bigint), ((m.id & 4294967295) <-> 4294967295::bigint) LIMIT {limit})
+            UNION ALL
+            (SELECT m.id FROM messages m WHERE {conditions} AND m.body IS NOT NULL AND m.grams IS NULL
+             ORDER BY m.id DESC LIMIT {limit})
+        ) h ORDER BY h.id DESC LIMIT {limit}
+    ) SELECT {COLS}, c.server, c.name FROM page JOIN messages m ON m.id=page.id JOIN channels c ON c.id=m.channel_id ORDER BY page.id DESC")
 }
 
 const UNREADS_MAX: usize = 500;
@@ -7417,7 +7563,7 @@ mod tests {
         );
         let rows = explain(db, &sql, &scope.binds, &binds).await;
         let lists = [Bind::S("[[1,1,9]]".into()), Bind::S("[]".into())];
-        let by_channel = explain(db, &walk_sql(true), &[], &lists).await;
+        let by_channel = explain(db, &walk_sql(true, false), &[], &lists).await;
         assert_eq!(
             by_channel
                 .lines()
@@ -8728,9 +8874,15 @@ mod tests {
         let mut sq = query(Some("meeting notes"));
         sq.channel_id = Some(channel);
         let scope = member_scope(db, &user).await;
-        let (expected, cursor) = fts_paged(db, &scope, sq.clone(), &fts_phrase("meeting notes"))
-            .await
-            .unwrap();
+        let (expected, cursor) = fts_paged(
+            db,
+            &scope,
+            sq.clone(),
+            &fts_phrase("meeting notes"),
+            SEARCH_PAGE,
+        )
+        .await
+        .unwrap();
         let ids = expected.iter().map(|r| r.message.id).collect::<Vec<_>>();
         assert_eq!((ids.as_slice(), cursor), ([oldest].as_slice(), None));
         let (indexed, next, _) = channel_page(&state, &user, &sq).await;

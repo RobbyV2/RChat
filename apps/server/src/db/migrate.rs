@@ -175,6 +175,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "seal_forced {INT} NOT NULL DEFAULT 0"),
     ("dms", "seal {INT} NOT NULL DEFAULT 0"),
     ("dms", "seal_since {INT}"),
+    ("messages", "grams {INTS}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -309,7 +310,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 60: sealed instance secrets, outgoing webhook secrets and pending sign-in data.
 /// 61: scheduled messages (`scheduled_messages`).
 /// 62: sealed message and poll text, and the storage switches of servers and DMs.
-pub const SCHEMA_VERSION: i64 = 62;
+/// 63: keyed search grams of sealed messages (`messages.grams`).
+pub const SCHEMA_VERSION: i64 = 63;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

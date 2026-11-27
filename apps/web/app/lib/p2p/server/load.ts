@@ -27,6 +27,7 @@ import {
   P,
 } from '../state'
 import { indexEstimate } from '../search'
+import { searchForm } from '../sealed_db'
 import type { ServerCtx } from './context'
 import { followStore } from './sealing'
 import { heldBare, storeDue } from './storage'
@@ -226,7 +227,16 @@ export async function dropRows(cx: ServerCtx, room: string, ids: string[]) {
   let acl = 0
   let bytes = 0
   // Out of the index first, while everything is still stored.
-  bytes += await unindexAll(tx.objectStore('search'), events, null, room, ids, cx.local.search)
+  const form = searchForm(cx.db, cx.local.search.exact)
+  bytes += await unindexAll(
+    tx.objectStore('search'),
+    events,
+    null,
+    room,
+    ids,
+    cx.local.search,
+    form
+  )
   for (const id of ids) {
     const e = await events.get(id)
     if (!e || e.room !== room) continue

@@ -343,6 +343,13 @@ fn a_malformed_key_setting_is_an_error_naming_the_variable() {
     );
     let bad = load(&[("ENCRYPTION_ALLOW_LOST", "yes".to_owned())]).unwrap_err();
     assert!(bad.to_string().contains("ENCRYPTION_ALLOW_LOST"), "{bad}");
+    let bad = load(&[("SEARCH_SEALED", "grams".to_owned())]).unwrap_err();
+    assert_eq!(bad.to_string(), "SEARCH_SEALED is keyed or scan");
+    for (value, scan) in [("keyed", false), ("scan", true), (" scan ", true)] {
+        let config = load(&[("SEARCH_SEALED", value.to_owned())]).unwrap();
+        assert_eq!(config.search_scan, scan, "{value}");
+        assert_eq!(Ring::load(&config, None).unwrap().scans(), scan);
+    }
     let file = temp_file("crypt_keys_file");
     std::fs::write(&file, "k1:short\n").unwrap();
     let named = [("ENCRYPTION_KEYS_FILE", file.display().to_string())];
@@ -1328,16 +1335,11 @@ mod reads {
     }
 
     /// Queries that read a sealed column without its record, each for a stated reason.
-    const PLAIN_READS: [(&str, &str, &str); 9] = [
-        (
-            "api/messages.rs",
-            "SELECT h.id,m.content,m.author",
-            "search candidates come from the plain index, which has no sealed row",
-        ),
+    const PLAIN_READS: [(&str, &str, &str); 8] = [
         (
             "db/channel_index.rs",
             "",
-            "the plain search index; a sealed row has blank content and no terms",
+            "the plain search index; a sealed row has blank content, and its keyed terms come from its record",
         ),
         (
             "db/schema.rs",
@@ -1410,5 +1412,65 @@ mod reads {
             [("messages", "content")]
         );
         assert!(sealed_reads("SELECT contents FROM messages_fts").is_empty());
+    }
+}
+
+mod grams {
+    use super::super::grams::{
+        BUCKETS, Grams, array, bucket, fold, found, postings, term, windows,
+    };
+    use super::{key, subkey};
+
+    #[test]
+    fn text_folds_character_by_character() {
+        assert_eq!(
+            fold("Weekly NOTES from Zoë ΣΑΣ"),
+            "weekly notes from zoë σασ"
+        );
+        for (a, b) in [("ΟΔΟΣ", "ΚΑΙ"), ("İx", "Ab"), ("", "ẞ")] {
+            assert_eq!(fold(&format!("{a}{b}")), fold(a) + &fold(b));
+        }
+        assert!(found("say HELLO again", "hello a"));
+        assert!(found("ΟΔΟΣΚ", "ΟΔΟΣ"), "a final sigma folds like any other");
+        assert!(!found("hello", "hello!"));
+        assert_eq!(windows("ab"), Vec::<String>::new());
+        assert_eq!(windows("日本語🙂"), ["日本語", "本語🙂"]);
+        assert_eq!(windows("aaaa"), ["aaa", "aaa"]);
+    }
+
+    #[test]
+    fn grams_are_keyed_by_channel_and_stay_in_31_bits() {
+        let dek = key(7);
+        let one = Grams::new(subkey(&dek, "c:1"));
+        let two = Grams::new(subkey(&dek, "c:2"));
+        assert_eq!(one.gram("abc"), one.gram("abc"));
+        assert_ne!(one.gram("abc"), two.gram("abc"));
+        assert_ne!(one.gram("abc"), one.gram("abd"));
+        let doc = one.document("Abc abc ABCD");
+        assert!(doc.windows(2).all(|w| w[0] < w[1]), "distinct and sorted");
+        assert!(doc.iter().all(|g| *g >= 0));
+        assert_eq!(doc.len(), 5, "abc, bc_, c_a, _ab, bcd");
+        assert!(one.needle("BCD").iter().all(|g| doc.contains(g)));
+        assert!(one.needle("ab").is_empty());
+        let long: String = "x".repeat(40) + "needle";
+        assert_eq!(one.needle(&long), one.document(&"x".repeat(32)));
+        // The gram of a run is part of what existing indexes hold.
+        assert_eq!(Grams::new(key(1)).gram("abc"), 0x7386_0612);
+    }
+
+    #[test]
+    fn terms_name_their_gram_and_fold_into_buckets_past_the_limit() {
+        assert_eq!(term(0x2fd3_f6c6), "k2fd3f6c6");
+        assert_eq!(term(5), "k00000005");
+        assert_eq!(bucket(BUCKETS as i32 + 3), "k#003");
+        let few: Vec<i32> = (0..BUCKETS as i32).collect();
+        assert_eq!(postings(&few).len(), BUCKETS);
+        assert!(postings(&few).iter().all(|t| t.len() == 9));
+        let many: Vec<i32> = (0..BUCKETS as i32 * 3).collect();
+        let folded = postings(&many);
+        assert_eq!(folded.len(), BUCKETS);
+        assert!(folded.iter().all(|t| t.starts_with("k#") && t.len() == 5));
+        assert_eq!(array(&[1, 22, 333]), "{1,22,333}");
+        assert_eq!(array(&[]), "{}");
     }
 }

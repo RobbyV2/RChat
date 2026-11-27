@@ -1,8 +1,11 @@
+use std::collections::{BTreeSet, HashMap};
+
 use sqlx::Row;
 
 use super::{Floors, SITE_SQL, columns, place, writer};
 use crate::api::ApiError;
-use crate::crypt::body::{OPTIONS, POLLS, Parts, SNAPSHOTS, Scope};
+use crate::crypt::body::{OPTIONS, POLLS, Parts, SNAPSHOTS, Scope, open_body};
+use crate::crypt::grams::{Grams, array};
 use crate::db::{Db, is_sqlite, now};
 
 /// The `settings` key holding the last message id the sweep looked at.
@@ -48,7 +51,11 @@ pub(crate) async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
         alt: row.try_get(7)?,
     };
     let blank = columns(Some(&writer), &parts);
-    let written = sqlx::query("UPDATE messages SET body = $1, content = $2, webhook_embeds = $3, media_filename = $4, fwd_dropped = $7, media_alt = $8 WHERE id = $5 AND body IS NULL AND content = $6")
+    let grams = match sqlite {
+        true => String::new(),
+        false => format!(", grams = {}", super::grams_value(9)),
+    };
+    let query = sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE messages SET body = $1, content = $2, webhook_embeds = $3, media_filename = $4, fwd_dropped = $7, media_alt = $8{grams} WHERE id = $5 AND body IS NULL AND content = $6")))
         .bind(writer.message(id, &author, &parts))
         .bind(&blank.content)
         .bind(&blank.embeds)
@@ -56,10 +63,12 @@ pub(crate) async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
         .bind(id)
         .bind(&parts.content)
         .bind(&blank.dropped)
-        .bind(&blank.alt)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
+        .bind(&blank.alt);
+    let query = match sqlite {
+        true => query,
+        false => query.bind(writer.grams(&parts)),
+    };
+    let written = query.execute(&mut *tx).await?.rows_affected();
     if written == 0 {
         return Ok(false);
     }
@@ -125,10 +134,83 @@ async fn keep(db: &Db, at: i64) -> sqlx::Result<()> {
         .map(|_| ())
 }
 
+const GRAMS_BATCH: i64 = 500;
+const GRAMS_BATCHES: usize = 20;
+/// The encrypted channel messages without grams after `($1, $2)` as `(channel, id)`, `$3` of them.
+pub(crate) const WITHOUT_GRAMS: &str = "SELECT id, channel_id, author, body FROM messages WHERE body IS NOT NULL AND grams IS NULL AND channel_id IS NOT NULL AND (channel_id, id) > ($1, $2) ORDER BY channel_id, id LIMIT $3";
+
+/// Gives encrypted channel messages on Postgres the keyed grams they lack: rows stored with
+/// `SEARCH_SEALED=scan` or before the site had a search key. A record that does not open keeps
+/// none, so a search still reads it; each start reads it once. Returns how many rows it gave
+/// grams.
+pub(crate) async fn fill_grams(db: &Db) -> Result<u64, ApiError> {
+    let ring = crate::db::ring(db);
+    if is_sqlite(db) || ring.scans() {
+        return Ok(0);
+    }
+    let mut filled = 0;
+    let mut from = ring.grams_from();
+    for _ in 0..GRAMS_BATCHES {
+        let (after_channel, after_id) = from.unwrap_or((i64::MIN, i64::MIN));
+        let rows = sqlx::query(WITHOUT_GRAMS)
+            .bind(after_channel)
+            .bind(after_id)
+            .bind(GRAMS_BATCH)
+            .fetch_all(db)
+            .await?;
+        let channels: BTreeSet<i64> = rows
+            .iter()
+            .map(|r| r.try_get(1))
+            .collect::<sqlx::Result<_>>()?;
+        let keyers: HashMap<i64, Grams> = Grams::of_channels(db, channels)
+            .await
+            .map_err(ApiError::internal)?
+            .into_iter()
+            .collect();
+        if keyers.is_empty() {
+            break;
+        }
+        for row in &rows {
+            let (id, channel, author): (i64, i64, String) =
+                (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
+            from = Some((channel, id));
+            let record: Vec<u8> = row.try_get(3)?;
+            let opened = open_body(
+                db,
+                id,
+                Some(Scope::Channel(channel)),
+                &author,
+                Some(record.clone()),
+                Parts::default(),
+            )
+            .await?;
+            let Some(keyer) = keyers.get(&channel).filter(|_| !opened.unreadable) else {
+                continue;
+            };
+            filled += sqlx::query("UPDATE messages SET grams = CAST(CAST($1 AS TEXT) AS integer[]) WHERE id = $2 AND body = $3 AND grams IS NULL")
+                .bind(array(&keyer.document(&opened.parts.content)))
+                .bind(id)
+                .bind(record)
+                .execute(db)
+                .await?
+                .rows_affected();
+        }
+        if (rows.len() as i64) < GRAMS_BATCH {
+            break;
+        }
+    }
+    ring.set_grams_from(from);
+    if filled > 0 {
+        tracing::info!("gave {filled} encrypted messages their search grams");
+    }
+    Ok(filled)
+}
+
 /// Seals the messages that a sealed place got stored plain: rows a copy of an older build
 /// wrote, or a copy that had not seen the switch yet. It walks forward from where the last run
 /// stopped and returns how many rows it sealed.
 pub(crate) async fn sweep(db: &Db) -> Result<u64, ApiError> {
+    fill_grams(db).await?;
     let settled: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM messages WHERE created_at <= $1 ORDER BY id DESC LIMIT 1",
     )

@@ -113,11 +113,23 @@ describe('encrypted storage of a P2P server', () => {
       expect(count(stored, 'msg:sealed')).toBe(2)
       expect(count(stored, 'msg:plain')).toBe(1)
     }
-    // A sealed room is left out of the device's search index; what was indexed before stays.
-    expect((await a.servers.search(query('secretword'))).hits).toEqual([])
-    expect((await a.servers.search(query('plainword'))).hits.map(h => h.m.body)).toEqual([
-      'before plainword',
-    ])
+    // A sealed room's search rows are keyed: search finds both kinds, and no row holds a word.
+    for (const m of [a, b]) {
+      expect((await m.servers.search(query('secretword'))).hits.map(h => h.m.body)).toEqual([
+        'sealed secretword',
+      ])
+      expect((await m.servers.search(query('secr'))).hits.map(h => h.m.body)).toEqual([
+        'sealed secretword',
+      ])
+      expect((await m.servers.search(query('plainword'))).hits.map(h => h.m.body)).toEqual([
+        'before plainword',
+      ])
+      const rows = (await m.store.sealing.stored.getAllKeys('search')) as unknown as string[][]
+      const words = rows.filter(k => k[0] === room).map(k => k[1])
+      expect(words).toContain('plainword')
+      expect(words.some(w => w.includes('secret') || w.includes('answer'))).toBe(false)
+      expect(words.filter(w => w.startsWith('#')).length).toBeGreaterThan(0)
+    }
 
     await a.servers.setStore(room, false)
     await pump(clock, () => !b.store.sealing.room(room), 'b follows it off')
@@ -135,6 +147,79 @@ describe('encrypted storage of a P2P server', () => {
         [a.node.ik, false],
       ])
     }
+  })
+
+  test('keyed local search finds what plain search finds', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const sealed = await a.servers.create('Sealed')
+    const plain = await a.servers.create('Plain')
+    await a.servers.setStore(sealed, true)
+    await pump(clock, () => a.store.sealing.room(sealed), 'sealed')
+    const vocabulary = [
+      'needle',
+      'needles',
+      'Needlework',
+      'hay',
+      'haystack',
+      'ab',
+      'abc',
+      'zoë',
+      'Zoe',
+      'naïve',
+      '日本語',
+      'ПРИВЕТ',
+      'x',
+      '42',
+      'stack-overflow',
+      'e-mail',
+    ]
+    let seed = 7
+    const next = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31
+      return seed % n
+    }
+    const texts: string[] = []
+    for (let i = 0; i < 30; i++) {
+      const n = 1 + next(6)
+      texts.push(Array.from({ length: n }, () => vocabulary[next(vocabulary.length)]).join(' '))
+    }
+    for (const body of texts)
+      for (const room of [plain, sealed]) await a.servers.send(room, { ch: general(a, room), body })
+    await pump(
+      clock,
+      async () => (await bodies(a, sealed, general(a, sealed))).length === texts.length,
+      'all sent'
+    )
+    const queries = [
+      ...vocabulary,
+      'ne',
+      'nee',
+      'NEEDLEW',
+      'hay needle',
+      'st',
+      'sta',
+      'zo',
+      'zoë',
+      'naive',
+      '日本',
+      'при',
+      'e-mail',
+      'mail',
+      'absent',
+    ]
+    let found = 0
+    for (const q of queries) {
+      const hits = (await a.servers.search(query(q), null, 1000)).hits
+      const of = (room: string) => hits.filter(h => h.room === room).map(h => h.m.body)
+      expect([q, of(sealed)]).toEqual([q, of(plain)])
+      found += of(plain).length
+    }
+    expect(found).toBeGreaterThan(50)
+    const rows = (await a.store.sealing.stored.getAllKeys('search')) as unknown as string[][]
+    expect(rows.filter(k => k[0] === sealed).every(k => k[1].startsWith('#'))).toBe(true)
+    expect(rows.filter(k => k[0] === plain).some(k => k[1] === 'needle')).toBe(true)
   })
 
   test('a device restarts on its sealed room and reads it', async () => {

@@ -12,6 +12,7 @@ import {
   unindexEdit,
   type Cut,
   type EventRead,
+  type IndexCut,
   type SearchWrite,
 } from './search'
 import {
@@ -25,7 +26,7 @@ import {
   type P2pSchema,
   type RoomRecord,
 } from './db'
-import { sealingOf } from './sealed_db'
+import { PLAIN_FORM, searchForm, type SearchForm } from './sealed_db'
 
 // The room DAG on disk: heads (events without known children), the children index, parents we
 // still miss, and bounded walks over prev links. Inserting an event is one transaction, so the
@@ -490,11 +491,17 @@ export const withinShareNow = async (
 ) => (await shareOf(k => db.get('meta', k), room, sender, size, now, lim)).ok
 
 // A message's or an edit's search rows taken out (it is dropped or purged). Returns the bytes.
-const unindexOne = (st: SearchWrite, events: EventRead, r: EventRecord, cut: Cut) =>
+const unindexOne = (
+  st: SearchWrite,
+  events: EventRead,
+  r: EventRecord,
+  cut: Cut,
+  form: SearchForm
+) =>
   r.type === 'msg'
-    ? unindex(st, events, r, cut)
+    ? unindex(st, events, r, cut, form)
     : r.type === 'edit'
-      ? unindexEdit(st, events, r, cut)
+      ? unindexEdit(st, events, r, cut, form)
       : Promise.resolve(0)
 
 // The same for content about to be deleted: messages first, then edits; held bytes come off their
@@ -505,7 +512,8 @@ export const unindexAll = async (
   meta: Parameters<typeof heldAdd>[0] | null,
   room: string,
   ids: readonly string[],
-  cut: Cut
+  cut: Cut,
+  form: SearchForm = PLAIN_FORM
 ) => {
   const recs: EventRecord[] = []
   for (const id of ids) {
@@ -514,7 +522,7 @@ export const unindexAll = async (
   }
   let bytes = 0
   for (const e of [...recs.filter(r => r.type === 'msg'), ...recs.filter(r => r.type !== 'msg')]) {
-    const n = await unindexOne(st, events, e, cut)
+    const n = await unindexOne(st, events, e, cut, form)
     if (meta) await heldAdd(meta, room, e.sender, -n)
     bytes += n
   }
@@ -646,11 +654,16 @@ export const insertServer = async (
   const atts = isRedacted || ev.t !== 'msg' ? [] : attsOf(stored.c as never)
   if (atts.length) Object.assign(rec, withFiles(rec, atts))
   await events.put(rec)
-  // The search index's rows count as the room's storage.
-  // A sealed room stays out of the search index.
+  // The search index's rows count as the room's storage. An event stored sealed gets keyed rows.
   const indexed =
-    !acl && !ctx.unknown && !sealingOf(db)?.on(room)
-      ? await indexEvent(tx.objectStore('search'), events, rec, ctx.lim.search)
+    !acl && !ctx.unknown
+      ? await indexEvent(
+          tx.objectStore('search'),
+          events,
+          rec,
+          ctx.lim.search,
+          searchForm(db, ctx.lim.search.exact)
+        )
       : 0
   const storedBytes = (gone ? storedSize(stored) : size) + indexed
   // Only a body eviction can free counts.
@@ -712,7 +725,7 @@ export const dropServer = async (
   db: P2pDatabase,
   room: string,
   drops: Drops,
-  cut: Cut = LOCAL.search
+  cut: IndexCut = LOCAL.search
 ) => {
   const tx = db.transaction(
     ['events', 'dropped', 'rooms', 'meta', 'children', 'search'],
@@ -728,7 +741,8 @@ export const dropServer = async (
   const freed: string[] = []
   const gone = new Set<string>()
   // Messages, then edits, leave the index first, while everything is still stored.
-  bytes += await unindexAll(tx.objectStore('search'), events, meta, room, drops.content, cut)
+  const form = searchForm(db, cut.exact)
+  bytes += await unindexAll(tx.objectStore('search'), events, meta, room, drops.content, cut, form)
   for (const id of [...drops.acl.map(d => d.id), ...drops.content]) {
     const e = await events.get(id)
     if (!e || e.room !== room) continue
@@ -779,11 +793,12 @@ export const purgeServer = async (
   ids: readonly string[],
   me: string,
   evict = false,
-  cut: Cut = LOCAL.search
+  cut: IndexCut = LOCAL.search
 ) => {
   const tx = db.transaction(['events', 'rooms', 'meta', 'search'], 'readwrite')
   const events = tx.objectStore('events')
   const meta = tx.objectStore('meta')
+  const form = searchForm(db, cut.exact)
   let saved = 0
   let counted = 0
   const done: string[] = []
@@ -802,7 +817,7 @@ export const purgeServer = async (
     }
     done.push(r.id)
     // Out of the index before the record goes (an edit while its message's rows are there).
-    const ix = await unindexOne(tx.objectStore('search'), events, r, cut)
+    const ix = await unindexOne(tx.objectStore('search'), events, r, cut, form)
     await heldAdd(meta, room, r.sender, -ix)
     saved += ix
     await events.put(next)
@@ -831,7 +846,7 @@ export const restoreBody = async (
   id: string,
   wire: WireV2,
   now: number,
-  cut: Cut = LOCAL.search
+  cut: IndexCut = LOCAL.search
 ) => {
   const tx = db.transaction(['events', 'rooms', 'meta', 'search'], 'readwrite')
   const events = tx.objectStore('events')
@@ -847,9 +862,13 @@ export const restoreBody = async (
   next = withFiles(next, atts)
   const size = storedSize(next.wire)
   await events.put(next)
-  const indexed = sealingOf(db)?.on(room)
-    ? 0
-    : await indexEvent(tx.objectStore('search'), events, next, cut)
+  const indexed = await indexEvent(
+    tx.objectStore('search'),
+    events,
+    next,
+    cut,
+    searchForm(db, cut.exact)
+  )
   const grown = size - storedSize(r.wire) + indexed
   await heldAdd(meta, room, r.sender, size + indexed)
   const rec = await tx.objectStore('rooms').get(room)

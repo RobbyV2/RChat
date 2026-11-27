@@ -296,8 +296,11 @@ impl Stored<'_> {
             crate::api::seal::reserve(tx, crate::db::is_sqlite(db), "messages", writer.as_ref())
                 .await?;
         let (columns, values) = match reserved {
-            Some(_) => (", id, body", ", $9, $10"),
-            None => ("", ""),
+            Some(_) => (
+                ", id, body, grams",
+                format!(", $9, $10, {}", crate::api::seal::grams_value(11)),
+            ),
+            None => ("", String::new()),
         };
         let overriding = match reserved {
             Some(_) => " OVERRIDING SYSTEM VALUE",
@@ -316,9 +319,10 @@ impl Stored<'_> {
             .bind(self.server)
             .bind(i64::from(granted));
         let query = match (reserved, &writer) {
-            (Some(id), Some(writer)) => {
-                query.bind(id).bind(writer.message(id, self.author, &parts))
-            }
+            (Some(id), Some(writer)) => query
+                .bind(id)
+                .bind(writer.message(id, self.author, &parts))
+                .bind(writer.grams(&parts)),
             (_, _) => query,
         };
         let row = query.fetch_optional(&mut *tx).await?;

@@ -128,6 +128,7 @@ pub(crate) async fn without_channel_index(db: &Db) {
         "DROP TRIGGER search_message_delete",
         "DROP TRIGGER search_message_update",
         "DROP TRIGGER search_message_edit",
+        "DROP TRIGGER search_message_seal",
         "DROP TABLE search_documents",
         "DROP TABLE search_streams",
         "DROP VIEW search_input",

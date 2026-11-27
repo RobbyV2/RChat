@@ -7642,7 +7642,7 @@ async fn channel_search_upgrade(url: &str) {
                 );
                 assert_eq!(
                     count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'search_message_%'").await,
-                    4
+                    5
                 );
                 assert_eq!(
                     count(&db, "SELECT COUNT(*) FROM search_positions").await,
@@ -9050,7 +9050,13 @@ async fn messages_keep_their_files_when_image_descriptions_are_added() {
 async fn sealed_messages_upgrade_preserves_v61_rows() {
     on_each_database("sealed_messages_upgrade", |url| async move {
         let db = super::open(Some(&url)).await.unwrap();
+        if is_sqlite(&db) {
+            for sql in unsealed_search_triggers(&db).await {
+                sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&db).await.unwrap();
+            }
+        }
         for sql in [
+            "DROP INDEX idx_messages_sealed_scan",
             "ALTER TABLE messages DROP COLUMN body",
             "ALTER TABLE polls DROP COLUMN body",
             "ALTER TABLE poll_options DROP COLUMN body",
@@ -9093,6 +9099,87 @@ async fn sealed_messages_upgrade_preserves_v61_rows() {
             sqlx::query("UPDATE servers SET seal = 0, seal_since = NULL, seal_forced = 0 WHERE name = 'den'").execute(&db).await.unwrap();
             sqlx::query("UPDATE dms SET seal = 0, seal_since = NULL").execute(&db).await.unwrap();
             sqlx::query("UPDATE messages SET body = NULL WHERE content = 'kept text'").execute(&db).await.unwrap();
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+/// The statements that give a SQLite database a term trigger that gives encrypted rows no
+/// catch-all posting, and no trigger on `body`.
+async fn unsealed_search_triggers(db: &Db) -> Vec<String> {
+    let terms: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'search_input_terms'",
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+    let unsealed = terms
+        .replace("search_input_terms", "search_input_insert")
+        .replace(
+            "OR EXISTS(SELECT 1 FROM messages WHERE id = new.id AND body IS NOT NULL)",
+            "",
+        );
+    assert_ne!(
+        unsealed,
+        terms.replace("search_input_terms", "search_input_insert")
+    );
+    vec![
+        "DROP TRIGGER search_input_terms".to_owned(),
+        "DROP TRIGGER search_message_seal".to_owned(),
+        unsealed,
+    ]
+}
+
+#[tokio::test]
+async fn keyed_search_upgrade_preserves_v62_rows() {
+    on_each_database("keyed_search_upgrade", |url| async move {
+        let db = super::open(Some(&url)).await.unwrap();
+        let sqlite = is_sqlite(&db);
+        let mut steps = vec!["DROP INDEX idx_messages_sealed_scan".to_owned()];
+        match sqlite {
+            true => steps.extend(unsealed_search_triggers(&db).await),
+            false => steps.push("DROP INDEX idx_messages_channel_grams".to_owned()),
+        }
+        steps.extend([
+            "ALTER TABLE messages DROP COLUMN grams",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1)",
+            "INSERT INTO servers(name, display_name, creator, created_at, seal, seal_since) VALUES('den', 'Den', 'alice', 1, 1, 1)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('den', 'general', 'text', 1)",
+            "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'kept text', 5 FROM channels WHERE server = 'den'",
+            "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', '', 6 FROM channels WHERE server = 'den'",
+            "UPDATE settings SET value='62' WHERE key='schema_version'",
+        ].map(str::to_owned));
+        for sql in steps {
+            sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&db).await.unwrap();
+        }
+        sqlx::query("UPDATE messages SET body = $1 WHERE content = '' AND kind = 'user'")
+            .bind(vec![0x52_u8, 1, 0, 0, 0, 9])
+            .execute(&db)
+            .await
+            .unwrap();
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open_started(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM messages WHERE grams IS NULL AND body IS NULL AND content = 'kept text'").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM messages WHERE grams IS NULL AND body IS NOT NULL AND content = ''").await, 1);
+            match sqlite {
+                true => {
+                    assert_eq!(count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'search_input_insert'").await, 0);
+                    assert_eq!(count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN ('search_input_terms', 'search_message_seal')").await, 2);
+                    assert_eq!(count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_sealed_scan'").await, 1);
+                    assert_eq!(count(&db, "SELECT COUNT(*) FROM search_postings p JOIN messages m ON m.id = p.id WHERE m.body IS NOT NULL AND p.term = ''").await, 1, "the encrypted row is searchable again");
+                    assert!(count(&db, "SELECT COUNT(*) FROM search_postings p JOIN messages m ON m.id = p.id WHERE m.content = 'kept text'").await > 0);
+                    build_channel_index(&db).await.unwrap();
+                    assert_eq!(count(&db, "SELECT COUNT(*) FROM search_merge").await, 0);
+                }
+                false => {
+                    for index in ["idx_messages_channel_grams", "idx_messages_sealed_scan"] {
+                        assert_eq!(super::indexes::index_valid(&mut db.acquire().await.unwrap(), index).await.unwrap(), Some(true), "{index}");
+                    }
+                }
+            }
             close(&db).await;
         }
     })

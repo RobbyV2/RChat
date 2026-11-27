@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use super::grams::Grams;
 use super::ring::Ring;
 use super::{Key, Purpose, header, open, row_aad, seal};
 use crate::db::Db;
@@ -32,7 +33,7 @@ impl Scope {
         }
     }
 
-    fn key(self) -> String {
+    pub(crate) fn key(self) -> String {
         match self {
             Scope::Channel(id) => format!("c:{id}"),
             Scope::Dm(id) => format!("d:{id}"),
@@ -123,6 +124,7 @@ pub struct Writer {
     key_id: u32,
     key: Key,
     scope: Scope,
+    grams: Option<Grams>,
 }
 
 impl Writer {
@@ -137,11 +139,25 @@ impl Writer {
         let Some((key_id, dek)) = ring.stored_data_key_on(conn, Purpose::Content).await? else {
             return Ok(None);
         };
+        let grams = match ring.scans() {
+            true => None,
+            false => Grams::of_on(ring, conn, scope).await?,
+        };
         Ok(Some(Writer {
             key_id,
             key: ring.subkeys.get(key_id, &dek, &scope.key()),
             scope,
+            grams,
         }))
+    }
+
+    /// The `messages.grams` of a message holding `parts`, as Postgres reads an `integer[]`:
+    /// `None` for a DM and while there is no search key or `SEARCH_SEALED=scan`, so a search
+    /// reads the row itself.
+    pub fn grams(&self, parts: &Parts) -> Option<String> {
+        self.grams
+            .as_ref()
+            .map(|grams| super::grams::array(&grams.document(&parts.content)))
     }
 
     fn record(&self, table: &str, binding: &str, plain: &[u8]) -> Vec<u8> {

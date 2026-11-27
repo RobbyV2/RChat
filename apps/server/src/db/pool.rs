@@ -367,10 +367,16 @@ pub(crate) fn test_ring() -> Arc<Ring> {
 
 #[cfg(test)]
 fn keyed_ring() -> Arc<Ring> {
+    keyed_ring_with(false)
+}
+
+#[cfg(test)]
+fn keyed_ring_with(search_scan: bool) -> Arc<Ring> {
     let config = crate::crypt::ring::KeyConfig {
         keys: Some(zeroize::Zeroizing::new(
             "k1:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU".to_owned(),
         )),
+        search_scan,
         ..Default::default()
     };
     Arc::new(Ring::load(&config, None).expect("ring"))
@@ -380,6 +386,12 @@ fn keyed_ring() -> Arc<Ring> {
 #[cfg(test)]
 pub(crate) async fn open_keyed(database_url: Option<&str>) -> anyhow::Result<Db> {
     open_ringed(database_url, keyed_ring()).await
+}
+
+/// `open_keyed` with `SEARCH_SEALED=scan`.
+#[cfg(test)]
+pub(crate) async fn open_keyed_scan(database_url: Option<&str>) -> anyhow::Result<Db> {
+    open_ringed(database_url, keyed_ring_with(true)).await
 }
 
 #[cfg(test)]

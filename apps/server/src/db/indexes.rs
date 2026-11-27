@@ -32,6 +32,20 @@ pub(super) const ONLINE_INDEXES: &[OnlineIndex] = &[
         extensions: &["btree_gist", "intarray"],
     },
     OnlineIndex {
+        name: "idx_messages_channel_grams",
+        table: "messages",
+        body: "ON messages USING gist(channel_id, (LEAST(created_at, search_root_at)), grams gist__intbig_ops(siglen=64), (id >> 32), (id & 4294967295)) WHERE grams IS NOT NULL AND channel_id IS NOT NULL AND kind IN ('user', 'poll') AND (thread_root_id IS NULL OR search_root_at IS NOT NULL)",
+        replaces: &[],
+        extensions: &["btree_gist", "intarray"],
+    },
+    OnlineIndex {
+        name: "idx_messages_sealed_scan",
+        table: "messages",
+        body: "ON messages(channel_id, id) WHERE body IS NOT NULL AND grams IS NULL AND channel_id IS NOT NULL",
+        replaces: &[],
+        extensions: &[],
+    },
+    OnlineIndex {
         name: "idx_messages_content_trgm",
         table: "messages",
         body: "ON messages USING gin (lower(content) gin_trgm_ops)",

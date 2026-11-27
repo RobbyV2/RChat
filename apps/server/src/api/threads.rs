@@ -6,7 +6,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::{Proof, resolve_channel, resolve_dm};
 use crate::api::admin::like_pattern;
-use crate::api::messages::{COLS, Quotes, attach_embeds, rows_messages};
+use crate::api::messages::{BODY_COL, COLS, Quotes, attach_embeds, rows_messages};
 use crate::api::reactions::attach_reactions;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, Paged, bad, check_len, cursor_int,
@@ -26,8 +26,10 @@ pub const THREADS_QUERY_MAX: usize = 200;
 pub struct ThreadsQuery {
     /// Only threads whose root text, or the root author's username, display name or webhook
     /// name, contains this, ignoring case. Case folding depends on the database: Postgres folds
-    /// every letter, SQLite only ASCII letters (other letters match in the same case). At most
-    /// 200 characters, no NUL. Blank lists every thread.
+    /// every letter, SQLite only ASCII letters (other letters match in the same case); the text
+    /// of a root stored encrypted is matched once read, folding every letter. A page can hold
+    /// fewer threads than 50 while `X-Next-Cursor` says more follow. At most 200 characters, no
+    /// NUL. Blank lists every thread.
     q: Option<String>,
     /// Opaque cursor from the `X-Next-Cursor` header of the previous page.
     cursor: Option<String>,
@@ -77,17 +79,22 @@ fn before_of(cursor: Option<String>) -> Result<i64, ApiError> {
 
 /// The page query of a thread list over `col` (`channel_id` or `dm_id`): `$1` the channel or DM,
 /// `$2` the read-history floor, `$3` the cursor, `$4` the page size and, with `search`, `$5` the
-/// `LIKE` pattern. The replies are grouped through `idx_messages_channel_threads` or
-/// `idx_messages_dm_threads`.
+/// `LIKE` pattern. A root stored encrypted is kept whatever its text, which is matched once it is
+/// opened; the last column says whether the root's author or webhook name matched. The replies
+/// are grouped through `idx_messages_channel_threads` or `idx_messages_dm_threads`.
 pub(crate) fn list_sql(col: &str, search: bool) -> String {
-    let matching = match search {
-        true => {
-            " AND (lower(m.content) LIKE lower($5) ESCAPE '\\' OR lower(COALESCE(m.webhook_name, '')) LIKE lower($5) ESCAPE '\\' OR EXISTS(SELECT 1 FROM users tu WHERE tu.username = m.author AND (lower(tu.username) LIKE lower($5) ESCAPE '\\' OR lower(tu.display_name) LIKE lower($5) ESCAPE '\\')))"
-        }
-        false => "",
+    const NAMED: &str = "lower(COALESCE(m.webhook_name, '')) LIKE lower($5) ESCAPE '\\' OR EXISTS(SELECT 1 FROM users tu WHERE tu.username = m.author AND (lower(tu.username) LIKE lower($5) ESCAPE '\\' OR lower(tu.display_name) LIKE lower($5) ESCAPE '\\'))";
+    let (matching, named) = match search {
+        true => (
+            format!(
+                " AND (m.body IS NOT NULL OR lower(m.content) LIKE lower($5) ESCAPE '\\' OR {NAMED})"
+            ),
+            format!("CAST(CASE WHEN {NAMED} THEN 1 ELSE 0 END AS BIGINT)"),
+        ),
+        false => (String::new(), "CAST(0 AS BIGINT)".to_string()),
     };
     format!(
-        "SELECT {COLS}, t.last_id, (SELECT lr.created_at FROM messages lr WHERE lr.id = t.last_id) FROM (SELECT r.thread_root_id AS root_id, MAX(r.id) AS last_id FROM messages r WHERE r.{col} = $1 AND r.thread_root_id IS NOT NULL GROUP BY r.thread_root_id) t JOIN messages m ON m.id = t.root_id WHERE m.{col} = $1 AND m.thread_root_id IS NULL AND m.kind IN ('user', 'poll') AND m.created_at >= $2 AND t.last_id < $3 AND {LIVE_AUTHOR}{matching} ORDER BY t.last_id DESC LIMIT $4"
+        "SELECT {COLS}, t.last_id, (SELECT lr.created_at FROM messages lr WHERE lr.id = t.last_id), {named} FROM (SELECT r.thread_root_id AS root_id, MAX(r.id) AS last_id FROM messages r WHERE r.{col} = $1 AND r.thread_root_id IS NOT NULL GROUP BY r.thread_root_id) t JOIN messages m ON m.id = t.root_id WHERE m.{col} = $1 AND m.thread_root_id IS NULL AND m.kind IN ('user', 'poll') AND m.created_at >= $2 AND t.last_id < $3 AND {LIVE_AUTHOR}{matching} ORDER BY t.last_id DESC LIMIT $4"
     )
 }
 
@@ -120,21 +127,43 @@ async fn list(
     .await?;
     let more = rows.len() as i64 > THREADS_PAGE;
     let rows = &rows[..rows.len().min(THREADS_PAGE as usize)];
-    let mut roots = rows_messages(db, rows, Quotes::Since(floor)).await?;
+    let (mut roots, mut kept) = (
+        Vec::with_capacity(rows.len()),
+        Vec::with_capacity(rows.len()),
+    );
+    for (root, r) in rows_messages(db, rows, Quotes::Since(floor))
+        .await?
+        .into_iter()
+        .zip(rows)
+    {
+        let sealed = r.try_get::<Option<Vec<u8>>, _>(BODY_COL)?.is_some();
+        let named = r.try_get::<i64, _>(r.len() - 1)? != 0;
+        let shown = match &text {
+            Some(text) if sealed && !named => crate::crypt::grams::found(&root.content, text),
+            _ => true,
+        };
+        if shown {
+            roots.push(root);
+            kept.push(r);
+        }
+    }
     attach_embeds(db, &mut roots).await?;
     attach_reactions(db, &mut roots, viewer).await?;
     crate::api::polls::personalize(db, &mut roots, viewer).await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for (root, r) in roots.into_iter().zip(rows) {
-        let at = r.len() - 2;
+    let mut items = Vec::with_capacity(roots.len());
+    for (root, r) in roots.into_iter().zip(kept) {
+        let at = r.len() - 3;
         items.push(ThreadItem {
             root,
             last_reply_id: r.try_get(at)?,
             last_reply_at: r.try_get(at + 1)?,
         });
     }
-    let next = match (more, items.last()) {
-        (true, Some(last)) => Some(encode_cursor(&[&last.last_reply_id.to_string()])),
+    let next = match (more, rows.last()) {
+        (true, Some(last)) => {
+            let id: i64 = last.try_get(last.len() - 3)?;
+            Some(encode_cursor(&[&id.to_string()]))
+        }
         (_, _) => None,
     };
     Ok(Paged(items, next))
@@ -960,5 +989,64 @@ mod tests {
             vec![root, top]
         );
         done(state, path).await;
+    }
+
+    async fn sealed_root(state: &AppState, cid: i64, text: &str) -> i64 {
+        let Json(root) = crate::api::messages::send_channel_message(
+            State(state.clone()),
+            Path(cid),
+            Authed(mem_user("bob", false)),
+            Json(serde_json::from_value(serde_json::json!({ "content": text })).expect("req")),
+        )
+        .await
+        .expect("root");
+        reply(state, "bob", root.id, "noted").await.expect("reply");
+        root.id
+    }
+
+    #[tokio::test]
+    async fn a_search_reads_the_text_of_roots_stored_encrypted() {
+        for (state, temp) in crate::api::test_util::each_db_keyed("threads_sealed").await {
+            let db = &state.db;
+            add_user(db, "bob", "Robert").await;
+            add_member(db, "rchat", "alice", 1, 0, 1).await;
+            add_member(db, "rchat", "bob", 0, 0, 1).await;
+            let cid = general(db).await;
+            let plain = post(db, (Some(cid), None), "bob", "plain plan").await;
+            reply(&state, "bob", plain, "ok").await.expect("reply");
+            let _ = crate::api::servers::update_server(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Path("rchat".to_owned()),
+                Json(serde_json::from_value(serde_json::json!({ "seal": true })).expect("patch")),
+            )
+            .await
+            .expect("switch");
+            let secret = sealed_root(&state, cid, "Secret PLAN").await;
+            let other = sealed_root(&state, cid, "other words").await;
+            let stored = id_of(
+                db,
+                &format!("SELECT COUNT(*) FROM messages WHERE id IN ({secret}, {other}) AND body IS NOT NULL AND content = ''"),
+            )
+            .await;
+            assert_eq!(stored, 2, "the roots are stored encrypted");
+            let ids = |q: &'static str| {
+                let state = state.clone();
+                async move {
+                    let (page, next) = channel_list(&state, Some("bob"), cid, q)
+                        .await
+                        .expect("list");
+                    assert_eq!(next, None);
+                    page.into_iter().map(|(id, _)| id).collect::<Vec<_>>()
+                }
+            };
+            assert_eq!(ids("q=plan").await, vec![secret, plain]);
+            assert_eq!(ids("q=secret%20p").await, vec![secret]);
+            assert_eq!(ids("q=WORDS").await, vec![other]);
+            assert_eq!(ids("q=nothing").await, Vec::<i64>::new());
+            assert_eq!(ids("q=robert").await, vec![other, secret, plain]);
+            assert_eq!(ids("").await, vec![other, secret, plain]);
+            temp.done(state).await;
+        }
     }
 }

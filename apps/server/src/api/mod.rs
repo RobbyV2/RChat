@@ -3058,16 +3058,31 @@ pub(crate) mod test_util {
     /// `each_db` on databases whose ring holds a root key, so encrypted storage can be turned
     /// on. The Postgres one has "every copy runs this build" confirmed.
     pub(crate) async fn each_db_keyed(tag: &str) -> Vec<(AppState, TempDb)> {
+        each_db_ringed(tag, false).await
+    }
+
+    /// `each_db_keyed` with `SEARCH_SEALED=scan`.
+    pub(crate) async fn each_db_scanning(tag: &str) -> Vec<(AppState, TempDb)> {
+        each_db_ringed(tag, true).await
+    }
+
+    async fn each_db_ringed(tag: &str, scan: bool) -> Vec<(AppState, TempDb)> {
+        let open = |url: Option<String>| async move {
+            match scan {
+                true => crate::db::open_keyed_scan(url.as_deref()).await,
+                false => crate::db::open_keyed(url.as_deref()).await,
+            }
+        };
         let path = crate::db::temp_db_path(tag);
         let _ = std::fs::remove_file(&path);
         let mut opened = vec![(
-            crate::db::open_keyed(path.to_str()).await.expect("open db"),
+            open(path.to_str().map(str::to_owned))
+                .await
+                .expect("open db"),
             TempDb::Sqlite(path),
         )];
         if let Some(temp) = pg_temp(tag).await {
-            let db = crate::db::open_keyed(Some(temp.url.as_str()))
-                .await
-                .expect("open postgres");
+            let db = open(Some(temp.url.clone())).await.expect("open postgres");
             sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2)")
                 .bind(super::seal::COPIES)
                 .bind(env!("CARGO_PKG_VERSION"))

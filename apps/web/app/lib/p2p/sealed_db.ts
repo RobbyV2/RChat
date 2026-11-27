@@ -3,14 +3,16 @@ import { time } from '../platform/time'
 import type { IDBPDatabase } from 'idb'
 import type { DeviceKey, DeviceKeys, KeyVault } from '../platform'
 import { DEVICE_KEYS_META } from '../platform/device_keys'
-import { deviceAad, openDevice, recordHeader, sealDevice } from '../seal_record'
+import { deviceAad, deviceSearchKey, openDevice, recordHeader, sealDevice } from '../seal_record'
+import { keyedWords, type Keyed } from './search_keys'
 
 // Sealed event storage. A sealed room or DM keeps the `wire` of every event it stores as a device
 // record (seal_record.ts) under this device's key; ids, room ids, senders, sort keys, channels and
 // times stay as they are. The database handle the rest of the app uses seals on the way in and
 // opens on the way out, so the code above it reads and writes whole events. A row says its own
 // form, so a room switches any number of times, and a handle opened before anything was sealed
-// reads what another one sealed since.
+// reads what another one sealed since. What is stored sealed stays sealed: a record read from a
+// sealed one is sealed again when it is written, whatever the switches say now.
 
 const EVENTS = 'events'
 const CHECK = 'check'
@@ -69,6 +71,23 @@ const wait = (ms: number) => sleep(time(), ms)
 export const isSealed = (v: unknown): v is Sealable & { wire: Uint8Array } =>
   typeof v === 'object' && v !== null && ArrayBuffer.isView((v as Sealable).wire)
 
+// The mark of a record the handle read from a sealed one or wrote sealed. Copies made by spreading
+// the record keep it; it is never stored, exported or sent.
+const SEALED = Symbol('sealed')
+
+type Marked = Record<typeof SEALED, true | undefined>
+
+// Whether a record is stored sealed: it was read from a sealed record, or written sealed.
+export const storedSealed = (v: unknown) =>
+  isSealed(v) || (typeof v === 'object' && v !== null && (v as Marked)[SEALED] === true)
+
+// Marks a record the way the handle just stored it.
+const markStored = (v: unknown, sealed: boolean) => {
+  if (typeof v !== 'object' || v === null) return
+  if (sealed) (v as Marked)[SEALED] = true
+  else delete (v as Marked)[SEALED]
+}
+
 interface Plain {
   room: string
   type?: string
@@ -108,7 +127,7 @@ const unopened = <T extends Sealable>(rec: T): T => {
           prev: [],
           ch: '',
         }
-  return { ...rec, wire: { ev, c: null, sig: '' }, unreadable: true }
+  return { ...rec, wire: { ev, c: null, sig: '' }, unreadable: true, [SEALED]: true }
 }
 
 // A record that didn't open, or one made from it (it keeps the empty signature): a write of it
@@ -127,6 +146,16 @@ const whole = <T>(v: T): T => {
   return rest as T
 }
 
+// The keyed rows of the search index: those a message stored sealed gets now, under the current
+// device key, and those of every device key that sealed here, which are found and taken out
+// whatever the switches say now.
+export interface SearchForm {
+  keyed: Keyed | null
+  every: readonly Keyed[]
+}
+
+export const PLAIN_FORM: SearchForm = { keyed: null, every: [] }
+
 // Which rooms of one P2P database store their events sealed, and the keys that seal them.
 export class Sealing {
   private rooms = new Set<string>()
@@ -134,6 +163,8 @@ export class Sealing {
   private used = new Set<number>()
   private checks: Record<string, Uint8Array> = {}
   private cur: DeviceKey | null = null
+  // The search key of the current device key and of every one that sealed here.
+  private search = new Map<number, Uint8Array>()
   private held = new Map<number, CryptoKey | null>()
   // Stored records that didn't open since this database was opened.
   unreadable = 0
@@ -154,7 +185,8 @@ export class Sealing {
     this.all = k.all
     this.used = new Set(k.keys)
     this.checks = k.checks
-    if (this.all || this.rooms.size) await this.ready().catch(() => {})
+    if (this.all || this.rooms.size || this.used.size) await this.ready().catch(() => {})
+    for (const id of this.used) await this.key(id).catch(() => null)
   }
 
   // Whether new events of `room` are stored sealed.
@@ -171,6 +203,11 @@ export class Sealing {
     return this.all
   }
 
+  // Whether a device key ever sealed records here.
+  get sealedAny() {
+    return this.used.size > 0
+  }
+
   // Whether this device can keep a device key.
   async available() {
     try {
@@ -184,9 +221,19 @@ export class Sealing {
   private async ready() {
     if (this.cur) return this.cur
     const cur = await this.keys().current()
+    const search = await deviceSearchKey(cur.key)
+    if (this.cur) return this.cur
     this.cur = cur
+    this.search.set(cur.id, search)
     this.held.set(cur.id, cur.key)
     return cur
+  }
+
+  // The keyed rows of the search index (`SearchForm`). `exact` is the length up to which query
+  // words match whole words only.
+  form(exact: number): SearchForm {
+    const every = new Map([...this.search].map(([id, key]) => [id, keyedWords(key, id, exact)]))
+    return { keyed: (this.cur && every.get(this.cur.id)) ?? null, every: [...every.values()] }
   }
 
   private async save() {
@@ -254,6 +301,7 @@ export class Sealing {
     this.checks = {}
     this.held.clear()
     this.cur = null
+    this.search.clear()
     await this.save()
   }
 
@@ -263,14 +311,16 @@ export class Sealing {
     const key = await this.keys()
       .byId(id)
       .catch(() => null)
-    if (key) this.held.set(id, key)
+    if (!key) return key
+    if (this.used.has(id) && !this.search.has(id)) this.search.set(id, await deviceSearchKey(key))
+    this.held.set(id, key)
     return key
   }
 
   // The stored form of an event record.
   async seal<T extends Sealable>(rec: T): Promise<T> {
     const cur = this.cur
-    if (!cur || !this.on(rec.room) || isSealed(rec)) return rec
+    if (!cur || !this.needsSeal(rec)) return rec
     const wire = await sealDevice(
       cur.key,
       cur.id,
@@ -280,14 +330,11 @@ export class Sealing {
     return { ...rec, wire }
   }
 
+  // Whether a write of `rec` stores it sealed: its room is sealed, or it was stored sealed.
   needsSeal(rec: unknown) {
-    return (
-      typeof rec === 'object' &&
-      rec !== null &&
-      typeof (rec as Sealable).room === 'string' &&
-      this.on((rec as Sealable).room) &&
-      !isSealed(rec)
-    )
+    if (typeof rec !== 'object' || rec === null || isSealed(rec)) return false
+    const { room } = rec as Sealable
+    return typeof room === 'string' && (this.on(room) || (this.cur !== null && storedSealed(rec)))
   }
 
   // The event record a stored one holds. One that doesn't open reads as `unopened` and is
@@ -298,7 +345,7 @@ export class Sealing {
     const key = id === undefined ? null : await this.key(id)
     const plain = key && (await openDevice(key, deviceAad(EVENTS, rec.id, rec.room), rec.wire))
     const wire = plain && parsed(plain)
-    if (wire !== undefined && wire !== null) return { ...rec, wire }
+    if (wire !== undefined && wire !== null) return { ...rec, wire, [SEALED]: true }
     this.unreadable += 1
     return unopened(rec)
   }
@@ -322,6 +369,10 @@ const SEALINGS = new WeakMap<object, Sealing>()
 
 // The sealing of a database handle `sealedDb` made.
 export const sealingOf = (db: object): Sealing | undefined => SEALINGS.get(db)
+
+// The keyed search rows of a database handle (see `Sealing.form`).
+export const searchForm = (db: object, exact: number): SearchForm =>
+  sealingOf(db)?.form(exact) ?? PLAIN_FORM
 
 type Fn = (...args: unknown[]) => unknown
 type Thing = Record<string | symbol, unknown>
@@ -373,11 +424,14 @@ function inTx(s: Sealing, store: Thing) {
     const [rec, ...rest] = args
     if (unchanged(rec)) return Promise.resolve(key)
     const next = whole(rec)
-    return s.needsSeal(next)
-      ? during(store, s.seal(next as Sealable)).then(sealed =>
-          call(target, prop, [sealed, ...rest])
-        )
-      : call(target, prop, [next, ...rest])
+    if (!s.needsSeal(next)) {
+      markStored(rec, isSealed(next))
+      return call(target, prop, [next, ...rest])
+    }
+    return during(store, s.seal(next as Sealable)).then(sealed => {
+      markStored(rec, isSealed(sealed))
+      return call(target, prop, [sealed, ...rest])
+    })
   }
   const cursor = async (found: unknown): Promise<unknown> => {
     if (!found) return found
@@ -462,6 +516,7 @@ export function sealedDb<D extends object>(raw: D, sealing: Sealing): D {
           if (unchanged(rec)) return keyOf(rec, rest[0])
           const next = whole(rec)
           const value = sealing.needsSeal(next) ? await sealing.seal(next as Sealable) : next
+          markStored(rec, isSealed(value))
           return call(target, prop, [name, value, ...rest])
         }
       return bound(target, prop)

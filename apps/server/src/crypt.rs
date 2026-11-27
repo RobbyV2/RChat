@@ -13,6 +13,7 @@ use zeroize::Zeroizing;
 
 pub mod body;
 pub mod cli;
+pub mod grams;
 pub mod ring;
 pub mod secrets;
 

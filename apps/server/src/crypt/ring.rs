@@ -58,6 +58,8 @@ pub struct KeyConfig {
     pub allow_lost: bool,
     /// `ENCRYPTION_REQUIRED`: every server and DM stores new messages encrypted.
     pub required: bool,
+    /// `SEARCH_SEALED=scan`: encrypted messages get no search grams.
+    pub search_scan: bool,
 }
 
 impl std::fmt::Debug for KeyConfig {
@@ -71,8 +73,9 @@ impl std::fmt::Debug for KeyConfig {
 
 impl KeyConfig {
     /// Reads `ENCRYPTION_KEYS`, `ENCRYPTION_KEYS_FILE`, `ACCOUNT_SECRETS_KEY`,
-    /// `ENCRYPTION_ALLOW_LOST` and `ENCRYPTION_REQUIRED`. An unreadable file or a malformed value is an error naming the
-    /// variable. `ENCRYPTION_KEYS_FILE` may name a file that does not exist yet.
+    /// `ENCRYPTION_ALLOW_LOST`, `ENCRYPTION_REQUIRED` and `SEARCH_SEALED`. An unreadable file or a
+    /// malformed value is an error naming the variable. `ENCRYPTION_KEYS_FILE` may name a file
+    /// that does not exist yet.
     pub fn load(get: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<KeyConfig> {
         let set = |name: &str| {
             get(name)
@@ -108,6 +111,11 @@ impl KeyConfig {
             Some("on") => true,
             Some(_) => anyhow::bail!("ENCRYPTION_REQUIRED is on or off"),
         };
+        let search_scan = match set("SEARCH_SEALED").as_deref() {
+            None | Some("keyed") => false,
+            Some("scan") => true,
+            Some(_) => anyhow::bail!("SEARCH_SEALED is keyed or scan"),
+        };
         Ok(KeyConfig {
             keys_from_file: keys_from_file && keys.is_some(),
             keys: keys.map(Zeroizing::new),
@@ -115,6 +123,7 @@ impl KeyConfig {
             account_secrets_key: account_secrets_key.map(Zeroizing::new),
             allow_lost,
             required,
+            search_scan,
         })
     }
 }
@@ -321,10 +330,12 @@ pub struct Ring {
     named_file: bool,
     allow_lost: bool,
     required: bool,
+    search_scan: bool,
     making: tokio::sync::Mutex<()>,
     deks: RwLock<HashMap<u32, Dek>>,
     active: RwLock<HashMap<Purpose, u32>>,
     unreadable: std::sync::atomic::AtomicU64,
+    grams_from: std::sync::Mutex<Option<(i64, i64)>>,
     pub subkeys: Subkeys,
 }
 
@@ -414,10 +425,12 @@ impl Ring {
             named_file: false,
             allow_lost,
             required: false,
+            search_scan: false,
             making: tokio::sync::Mutex::new(()),
             deks: RwLock::default(),
             active: RwLock::default(),
             unreadable: std::sync::atomic::AtomicU64::new(0),
+            grams_from: std::sync::Mutex::new(None),
             subkeys: Subkeys::default(),
         }
     }
@@ -432,6 +445,7 @@ impl Ring {
             account_secrets_key,
             allow_lost,
             required,
+            search_scan,
         } = config;
         let alias = match account_secrets_key {
             Some(text) => parse_keys(text)
@@ -459,6 +473,7 @@ impl Ring {
         Ok(Ring {
             named_file: *keys_from_file,
             required: *required,
+            search_scan: *search_scan,
             ..Ring::with(loaded, alias, key_file, *allow_lost)
         })
     }
@@ -741,6 +756,19 @@ impl Ring {
         }
     }
 
+    /// `stored_data_key_on` on a connection of the pool.
+    pub async fn stored_data_key(
+        &self,
+        db: &Db,
+        purpose: Purpose,
+    ) -> anyhow::Result<Option<(u32, Key)>> {
+        if let Some(held) = self.held_data_key(purpose) {
+            return Ok(Some(held));
+        }
+        self.stored_data_key_on(&mut *db.acquire().await?, purpose)
+            .await
+    }
+
     async fn hold_active(
         &self,
         conn: &mut AnyConnection,
@@ -822,6 +850,12 @@ impl Ring {
         self.required
     }
 
+    /// Whether encrypted messages get no search grams (`SEARCH_SEALED=scan`), so a search
+    /// reads them one by one.
+    pub fn scans(&self) -> bool {
+        self.search_scan
+    }
+
     /// A data key this process already holds.
     pub fn held(&self, id: u32) -> Option<(Purpose, Key)> {
         read(&self.deks)
@@ -838,6 +872,16 @@ impl Ring {
     /// How many stored records did not open since this process started.
     pub fn unreadable(&self) -> u64 {
         self.unreadable.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Where the grams fill goes on, as `(channel, id)`: it read the encrypted rows before it
+    /// since this start. A record that did not open opens only with keys a later start loads.
+    pub fn grams_from(&self) -> Option<(i64, i64)> {
+        *self.grams_from.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn set_grams_from(&self, at: Option<(i64, i64)>) {
+        *self.grams_from.lock().unwrap_or_else(|e| e.into_inner()) = at;
     }
 
     /// Whether a start goes on with records it cannot open (`ENCRYPTION_ALLOW_LOST=on`).

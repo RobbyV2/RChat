@@ -192,7 +192,8 @@ describe('sealed event storage', () => {
     })
     const pauses: number[] = []
     const pause = async (ms: number) => void pauses.push(ms)
-    const flaky = failing(1)
+    // Missed by the read when the database opens and by the first check, found by the next.
+    const flaky = failing(2)
     const once = new Sealing(first.stored, () => flaky)
     await once.load()
     expect(await once.lost(pause)).toBe(false)
@@ -264,6 +265,34 @@ describe('sealed event storage', () => {
       /* the next step */
     }
     expect(sealing.unreadable).toBeGreaterThanOrEqual(3)
+    db.close()
+  })
+
+  test('what is stored sealed stays sealed when it is written after the switch is off', async () => {
+    const db = await fresh()
+    const sealing = sealingOf(db)!
+    await sealing.setRoom('room', true)
+    await db.put('events', rec('a', 'room', 'kept sealed', 's1'))
+    await db.put('events', rec('b', 'room', 'also sealed', 's2'))
+    await sealing.setRoom('room', false)
+    const a = (await db.get('events', 'a'))!
+    await db.put('events', { ...a, seq: 2 })
+    const walk = db.transaction('events', 'readwrite')
+    const cur = await walk.store.openCursor('b')
+    await cur?.update({ ...cur.value, seq: 3 })
+    await walk.done
+    await db.put('events', rec('c', 'room', 'plain now', 's3'))
+    for (const id of ['a', 'b']) {
+      const raw = (await stored(db, id))?.wire as Uint8Array
+      expect(ArrayBuffer.isView(raw)).toBe(true)
+      expect(new TextDecoder().decode(raw)).not.toContain('sealed')
+    }
+    expect((await stored(db, 'c'))?.wire).toEqual(rec('c', 'room', 'plain now').wire)
+    expect((await db.getAll('events')).map(r => [text(r), r.seq])).toEqual([
+      ['kept sealed', 2],
+      ['also sealed', 3],
+      ['plain now', 1],
+    ])
     db.close()
   })
 

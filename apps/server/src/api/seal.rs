@@ -28,6 +28,9 @@ pub const REQUIRED: &str = "encryption_required";
 /// The `settings` key holding the first message id the site's requirement covers. It is there
 /// exactly while the requirement is on, from the environment or the admin page.
 pub const SITE_FROM: &str = "seal_site_from";
+/// The `settings` key holding when the site first required encryption, never removed: from then
+/// on every channel may hold encrypted messages.
+pub const SITE_SINCE: &str = "seal_site_since";
 /// The `settings` key holding the build an admin confirmed every copy runs, for a site whose
 /// copies do not announce themselves.
 pub const COPIES: &str = "seal_copies_build";
@@ -113,10 +116,13 @@ pub(crate) async fn site_floor(db: &Db) -> i64 {
     floor
 }
 
-fn forget_site(db: &Db) {
+/// Forgets what was last read of the site's requirement and of the servers that ever stored
+/// messages encrypted, after a switch.
+pub(crate) fn forget_site(db: &Db) {
     if let Ok(mut cache) = SITE.lock() {
         cache.remove(&pool_key(db));
     }
+    super::messages::forget_sealed(db);
 }
 
 /// The state of a server from its `seal` and `seal_forced` columns.
@@ -284,6 +290,11 @@ pub(crate) async fn reserve(
     }
 }
 
+/// The SQL of the bind `$n`, a `Writer::grams`, as the `messages.grams` Postgres stores.
+pub(crate) fn grams_value(n: usize) -> String {
+    format!("CAST(CAST(${n} AS TEXT) AS integer[])")
+}
+
 /// Writes the record of a row that was inserted without one.
 pub(crate) async fn set_body(
     conn: &mut AnyConnection,
@@ -345,17 +356,24 @@ pub(crate) async fn store_parts(
         dropped,
         alt,
     } = columns(writer, parts);
-    sqlx::query("UPDATE messages SET body = $1, content = $2, webhook_embeds = $3, media_filename = $4, fwd_dropped = $5, media_alt = $7 WHERE id = $6")
+    let postgres = conn.backend_name() == "PostgreSQL";
+    let grams = match postgres {
+        true => format!(", grams = {}", grams_value(8)),
+        false => String::new(),
+    };
+    let query = sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE messages SET body = $1, content = $2, webhook_embeds = $3, media_filename = $4, fwd_dropped = $5, media_alt = $7{grams} WHERE id = $6")))
         .bind(writer.map(|w| w.message(id, author, parts)))
         .bind(content)
         .bind(embeds)
         .bind(filename)
         .bind(dropped)
         .bind(id)
-        .bind(alt)
-        .execute(&mut *conn)
-        .await
-        .map(|_| ())
+        .bind(alt);
+    let query = match postgres {
+        true => query.bind(writer.and_then(|w| w.grams(parts))),
+        false => query,
+    };
+    query.execute(&mut *conn).await.map(|_| ())
 }
 
 async fn next_message_id(conn: &mut AnyConnection) -> sqlx::Result<i64> {
@@ -460,11 +478,31 @@ pub(crate) async fn make_ready(state: &AppState) -> Result<(), ApiError> {
     }
 }
 
-/// Makes the active `content` key on a connection of its own, so it is committed before a
-/// place turns on and a write transaction only ever reads it. False without a root key.
+/// Makes the active `content` key, and the `search` key of its grams, on a connection of their
+/// own, so they are committed before a place turns on and a write transaction only ever reads
+/// them. False without a root key.
 async fn content_key(db: &Db) -> anyhow::Result<bool> {
     let ring = crate::db::ring(db);
-    Ok(ring.data_key(db, Purpose::Content).await?.is_some())
+    if ring.data_key(db, Purpose::Content).await?.is_none() {
+        return Ok(false);
+    }
+    if !ring.scans() {
+        ring.data_key(db, Purpose::Search).await?;
+    }
+    Ok(true)
+}
+
+/// Makes the `search` key of a site that stores messages encrypted and has none yet.
+async fn search_key(db: &Db) -> anyhow::Result<()> {
+    let ring = crate::db::ring(db);
+    let sealed: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM data_keys WHERE purpose = 'content' LIMIT 1")
+            .fetch_optional(db)
+            .await?;
+    if sealed.is_some() && !ring.scans() {
+        ring.data_key(db, Purpose::Search).await?;
+    }
+    Ok(())
 }
 
 /// What a switch request changed.
@@ -647,6 +685,9 @@ async fn settle_site(conn: &mut AnyConnection, by_config: bool) -> sqlx::Result<
                 .await?;
         }
     }
+    if required && stored(conn, SITE_SINCE).await?.is_none() {
+        store(conn, SITE_SINCE, &now().to_string()).await?;
+    }
     Ok(required)
 }
 
@@ -662,6 +703,9 @@ pub async fn start(state: &AppState) -> anyhow::Result<()> {
                 "ENCRYPTION_REQUIRED is on, but there is no encryption key. Set ENCRYPTION_KEYS or ENCRYPTION_KEYS_FILE"
             );
         }
+    }
+    if let Err(e) = search_key(db).await {
+        tracing::warn!("the search key of encrypted messages could not be made: {e}");
     }
     note_copies(db, &state.hub);
     let mut tx = db.begin().await?;
@@ -829,6 +873,8 @@ pub(crate) async fn put_copies(
 
 mod sweep;
 pub(crate) use sweep::sweep;
+#[cfg(test)]
+pub(crate) use sweep::{WITHOUT_GRAMS, fill_grams};
 
 #[cfg(test)]
 mod tests;

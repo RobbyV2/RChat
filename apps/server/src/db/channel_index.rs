@@ -49,7 +49,8 @@ fn documents(predicate: &str) -> String {
 }
 
 // Short ASCII input has the same folds in SQLite lower() and the trigram tokenizer.
-// Other documents have a searchable catch-all posting until their terms are merged.
+// Other documents, and encrypted ones, have a searchable catch-all posting until their terms
+// are merged.
 fn write_terms() -> String {
     let long_span = "[^ ]".repeat(SHORT_SPAN + 1);
     format!("
@@ -60,7 +61,8 @@ fn write_terms() -> String {
                   AND p.i <= length(new.content)-2) grams WHERE d.id = new.id;
         INSERT INTO search_postings(stream, term, id)
             SELECT stream, '', id FROM search_documents WHERE id = new.id AND
-            (octet_length(new.content) > {INLINE_BYTES} OR octet_length(new.content) <> length(new.content));
+            (octet_length(new.content) > {INLINE_BYTES} OR octet_length(new.content) <> length(new.content)
+             OR EXISTS(SELECT 1 FROM messages WHERE id = new.id AND body IS NOT NULL));
         INSERT INTO search_merge(id) SELECT id FROM search_postings WHERE id = new.id AND term = '';")
 }
 
@@ -104,7 +106,7 @@ fn triggers() -> Vec<String> {
                 WHERE id = ({row}) AND last_id < new.id;
             INSERT INTO search_input(id, content) SELECT id, content FROM messages WHERE id = new.id;
             END"),
-        format!("CREATE TRIGGER IF NOT EXISTS search_input_insert INSTEAD OF INSERT ON search_input
+        format!("CREATE TRIGGER IF NOT EXISTS search_input_terms INSTEAD OF INSERT ON search_input
             BEGIN {} END", write_terms()),
         "CREATE TRIGGER IF NOT EXISTS search_documents_delete AFTER DELETE ON search_documents BEGIN
             DELETE FROM search_postings WHERE id = old.id;
@@ -127,6 +129,10 @@ fn triggers() -> Vec<String> {
             BEGIN DELETE FROM search_documents WHERE id = old.id; END".to_owned(),
         format!("CREATE TRIGGER IF NOT EXISTS search_message_edit AFTER UPDATE OF content ON messages
             WHEN old.content <> new.content AND NOT ({layout}) BEGIN
+            DELETE FROM search_postings WHERE id = new.id; DELETE FROM search_merge WHERE id = new.id;
+            INSERT INTO search_input(id, content) VALUES(new.id, new.content); END"),
+        format!("CREATE TRIGGER IF NOT EXISTS search_message_seal AFTER UPDATE OF body ON messages
+            WHEN old.body IS NOT new.body AND NOT ({layout}) BEGIN
             DELETE FROM search_postings WHERE id = new.id; DELETE FROM search_merge WHERE id = new.id;
             INSERT INTO search_input(id, content) VALUES(new.id, new.content); END"),
         format!("CREATE TRIGGER IF NOT EXISTS search_message_update AFTER UPDATE OF channel_id, kind, created_at, thread_root_id ON messages
@@ -165,12 +171,47 @@ async fn store_next(conn: &mut sqlx::AnyConnection, next: i64) -> sqlx::Result<(
     store(conn, NEXT, next).await
 }
 
+/// The `settings` key of how the last start indexed encrypted messages: `keyed` or `scan`.
+const SEALED_MODE: &str = "search_sealed";
+/// A term trigger that leaves encrypted messages out of the index; a database that has it gets
+/// `search_input_terms` in its place.
+const UNSEALED_TERMS: &str = "search_input_insert";
+
+/// Puts every encrypted message the index holds back on its catch-all posting, to be merged
+/// again: where the index left them out, or gave them no keyed terms.
+async fn requeue_sealed(conn: &mut sqlx::AnyConnection) -> sqlx::Result<()> {
+    let sealed = "FROM messages m JOIN search_documents d ON d.id = m.id WHERE m.body IS NOT NULL AND m.grams IS NULL AND m.channel_id IS NOT NULL";
+    for sql in [
+        format!(
+            "INSERT OR IGNORE INTO search_postings(stream, term, id) SELECT d.stream, '', d.id {sealed}"
+        ),
+        format!("INSERT OR IGNORE INTO search_merge(id) SELECT d.id {sealed}"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Creates the channel index and its triggers where the database lacks them, in one short write.
 /// The messages that exist then wait for `build_step`; searches read the index once it holds
 /// them all.
 pub(super) async fn create(pool: &Db) -> anyhow::Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let position = stored_next(&mut tx).await?;
+    let unsealed: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = $1")
+            .bind(UNSEALED_TERMS)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if unsealed.is_some() {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER {UNSEALED_TERMS}"
+        )))
+        .execute(&mut *tx)
+        .await?;
+    }
     for ddl in [
         "CREATE VIEW IF NOT EXISTS search_input AS SELECT id, content FROM messages",
         "CREATE TABLE IF NOT EXISTS search_postings(stream INTEGER NOT NULL, term TEXT NOT NULL, id INTEGER NOT NULL, PRIMARY KEY(stream, term, id)) WITHOUT ROWID",
@@ -204,6 +245,24 @@ pub(super) async fn create(pool: &Db) -> anyhow::Result<()> {
     }
     for stmt in triggers() {
         sqlx::query(sqlx::AssertSqlSafe(stmt))
+            .execute(&mut *tx)
+            .await?;
+    }
+    let mode = match super::ring(pool).scans() {
+        true => "scan",
+        false => "keyed",
+    };
+    let last: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = $1")
+        .bind(SEALED_MODE)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if unsealed.is_some() || (mode == "keyed" && last.as_deref() == Some("scan")) {
+        requeue_sealed(&mut tx).await?;
+    }
+    if last.as_deref() != Some(mode) {
+        sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+            .bind(SEALED_MODE)
+            .bind(mode)
             .execute(&mut *tx)
             .await?;
     }
@@ -366,6 +425,83 @@ async fn merge_document(
     Ok(())
 }
 
+/// The keyed terms of the encrypted message `id` in `channel`: `None` while it has to stay on its
+/// catch-all posting, with no search key (`SEARCH_SEALED=scan`, or none made yet) or a record
+/// that does not open.
+async fn sealed_terms(
+    db: &Db,
+    id: i64,
+    channel: i64,
+    author: &str,
+    record: &[u8],
+) -> anyhow::Result<Option<Vec<String>>> {
+    use crate::crypt::Purpose;
+    use crate::crypt::body::{Parts, Scope, open_body};
+    let ring = super::ring(db);
+    if ring.scans() {
+        return Ok(None);
+    }
+    let scope = Scope::Channel(channel);
+    let opened = open_body(
+        db,
+        id,
+        Some(scope),
+        author,
+        Some(record.to_vec()),
+        Parts::default(),
+    )
+    .await?;
+    if opened.unreadable {
+        return Ok(None);
+    }
+    let Some((key_id, dek)) = ring.data_key(db, Purpose::Search).await? else {
+        return Ok(None);
+    };
+    let keyer = crate::crypt::grams::Grams::new(ring.subkeys.get(key_id, &dek, &scope.key()));
+    Ok(Some(crate::crypt::grams::postings(
+        &keyer.document(&opened.parts.content),
+    )))
+}
+
+/// Gives an encrypted message its keyed terms in place of its catch-all posting, or leaves it on
+/// the catch-all, where a search opens it.
+async fn merge_sealed(
+    db: &Db,
+    id: i64,
+    channel: Option<i64>,
+    author: &str,
+    record: Vec<u8>,
+) -> anyhow::Result<()> {
+    let terms = match channel {
+        Some(channel) => sealed_terms(db, id, channel, author, &record).await?,
+        None => None,
+    };
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let stream: Option<i64> = sqlx::query_scalar("SELECT d.stream FROM search_merge q JOIN search_documents d ON d.id=q.id JOIN messages m ON m.id=q.id WHERE q.id=$1 AND m.body=$2")
+        .bind(id).bind(&record).fetch_optional(&mut *tx).await?;
+    if let Some(stream) = stream {
+        if let Some(terms) = terms {
+            sqlx::query("DELETE FROM search_postings WHERE stream=$1 AND term='' AND id=$2")
+                .bind(stream)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("INSERT OR IGNORE INTO search_postings(stream,term,id) SELECT $1,value,$2 FROM json_each($3)")
+                .bind(stream)
+                .bind(id)
+                .bind(serde_json::to_string(&terms)?)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("DELETE FROM search_merge WHERE id=$1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn build_channel_index(db: &Db) -> anyhow::Result<()> {
     if is_sqlite(db) && !has_fts(db) {
         return Ok(());
@@ -386,21 +522,25 @@ pub async fn build_channel_index(db: &Db) -> anyhow::Result<()> {
     if is_sqlite(db) {
         let mut tokenizer = None;
         let reader = super::reader(db);
+        let mut last = 0i64;
         loop {
-            let row = sqlx::query("SELECT q.id,m.content FROM search_merge q CROSS JOIN messages m WHERE m.id=q.id ORDER BY q.id LIMIT 1")
-                .fetch_optional(&reader).await?;
+            let row = sqlx::query("SELECT q.id,m.content,m.body,m.channel_id,m.author FROM search_merge q CROSS JOIN messages m WHERE m.id=q.id AND q.id>$1 ORDER BY q.id LIMIT 1")
+                .bind(last).fetch_optional(&reader).await?;
             let Some(row) = row else { break };
-            if tokenizer.is_none() {
-                tokenizer = Some(Tokenizer::open().await?);
-            }
+            last = row.try_get(0)?;
             let step = Instant::now();
-            merge_document(
-                db,
-                tokenizer.as_mut().expect("tokenizer"),
-                row.try_get(0)?,
-                row.try_get(1)?,
-            )
-            .await?;
+            match row.try_get::<Option<Vec<u8>>, _>(2)? {
+                Some(record) => {
+                    merge_sealed(db, last, row.try_get(3)?, row.try_get(4)?, record).await?
+                }
+                None => {
+                    if tokenizer.is_none() {
+                        tokenizer = Some(Tokenizer::open().await?);
+                    }
+                    let tokenizer = tokenizer.as_mut().expect("tokenizer");
+                    merge_document(db, tokenizer, last, row.try_get(1)?).await?
+                }
+            }
             tokio::time::sleep(step.elapsed().max(Duration::from_millis(2))).await;
         }
     }

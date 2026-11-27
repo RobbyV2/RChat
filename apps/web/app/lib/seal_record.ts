@@ -100,3 +100,23 @@ export async function openDevice(
     return null
   }
 }
+
+// The key a device's search rows are made with, from its device key: AES-GCM over zeros under a
+// fixed nonce, so the same device key always gives the same search key and the device key never
+// leaves WebCrypto. It is kept in memory only.
+const SEARCH_NONCE = utf8.encode('rchat-srch1\0')
+const SEARCH_LABEL = utf8.encode('rchat-search1')
+
+export async function deviceSearchKey(key: CryptoKey): Promise<Uint8Array> {
+  const out = await crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv: buffer(SEARCH_NONCE),
+      additionalData: buffer(SEARCH_LABEL),
+      tagLength: 128,
+    },
+    key,
+    new ArrayBuffer(32)
+  )
+  return new Uint8Array(out).slice(0, 32)
+}

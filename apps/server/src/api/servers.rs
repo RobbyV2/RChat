@@ -3847,6 +3847,7 @@ pub(crate) async fn update_server(
     };
     tx.commit().await?;
     if let crate::api::seal::Switched::Changed(notice) = storage {
+        crate::api::seal::forget_site(&state.db);
         announce_system(&state, &new_key, notice).await;
     }
     let reading = password_hash.is_some() || public_read.is_some();

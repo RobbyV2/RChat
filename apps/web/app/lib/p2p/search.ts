@@ -9,7 +9,8 @@ import {
   type SearchKey,
   type SearchMeta,
 } from './db'
-import { sealingOf } from './sealed_db'
+import { PLAIN_FORM, sealingOf, searchForm, storedSealed, type SearchForm } from './sealed_db'
+import type { Keyed } from './search_keys'
 import { isEventId, type EditContent, type MsgContent } from './content'
 import { LOCAL, type Local } from './limits'
 
@@ -18,13 +19,16 @@ import { LOCAL, type Local } from './limits'
 // counted in the room's and every server's storage. Words are lowercase NFKD without marks; a
 // query word of three characters or more matches any word it starts, a shorter one only itself.
 // An edit's words count for its message, and hidden content keeps its rows (visibility changes
-// after storage), so hits are checked against what shows before they are listed.
+// after storage), so hits are checked against what shows before they are listed. A message any
+// text of which is stored sealed has keyed rows (search_keys.ts), which hold no words; a room that
+// switched holds both kinds.
 
-// limits.ts `search`. `word` and `words` cut what the index holds: an index made with another cut
-// is built again (rebuildStep).
+// limits.ts `search`. `word` and `words` cut what the index holds, and `exact` how keyed rows are
+// made: an index made with another cut is built again (rebuildStep).
 export type SearchLimits = Local['search']
 export type Cut = Pick<SearchLimits, 'word' | 'words'>
 type Query = Pick<SearchLimits, 'word' | 'words' | 'exact'>
+export type IndexCut = Pick<SearchLimits, 'word' | 'words' | 'exact'>
 
 export const words = (text: string, cut: Cut = LOCAL.search): string[] => {
   const norm = text
@@ -102,21 +106,65 @@ const planned = (texts: (string | null)[], cut: Cut) => {
   return out
 }
 
-// Writes rows for words; returns the bytes of the rows that are new.
+// The rows `words` are held as in one kind: words themselves, or keyed rows.
+const rowsFor = (keyed: Keyed | null, room: string, words: Iterable<string>) => {
+  const out = new Set<string>()
+  for (const w of words) for (const row of keyed ? keyed.rows(room, w) : [w]) out.add(row)
+  return out
+}
+
+// The kinds of rows the index may hold, for taking rows out.
+const kinds = (form: SearchForm) => [null, ...form.every]
+
+// Writes rows for words, keyed or plain; returns the bytes of the rows that are new.
 const putWords = async (
   st: SearchWrite,
   room: string,
   id: string,
   sk: string,
-  list: Iterable<string>
+  list: Iterable<string>,
+  keyed: Keyed | null
 ) => {
   let bytes = 0
   const head = skHead(sk, id)
-  for (const token of list) {
+  for (const token of rowsFor(keyed, room, list)) {
     const k: SearchKey = [room, token, id]
     if ((await st.getKey(k)) !== undefined) continue
     await st.put(head, k)
     bytes += rowBytes(k, head)
+  }
+  return bytes
+}
+
+// Whether a word of a message has its rows, in any kind. A keyed word's own row is there only
+// when every start it is held as is.
+const held = async (st: SearchWrite, form: SearchForm, room: string, id: string, w: string) => {
+  for (const keyed of kinds(form))
+    if ((await st.getKey([room, keyed ? keyed.row(room, w) : w, id])) !== undefined) return true
+  return false
+}
+
+// Takes out the rows `words` are held as in every kind, but those `keep` is held as.
+const dropRows = async (
+  st: SearchWrite,
+  form: SearchForm,
+  room: string,
+  id: string,
+  head: string,
+  words: Iterable<string>,
+  keep: Iterable<string> = []
+) => {
+  let bytes = 0
+  const list = [...words]
+  const kept = [...keep]
+  for (const keyed of kinds(form)) {
+    const keepRows = rowsFor(keyed, room, kept)
+    for (const token of rowsFor(keyed, room, list)) {
+      const k: SearchKey = [room, token, id]
+      if (keepRows.has(token) || (await st.getKey(k)) === undefined) continue
+      await st.delete(k)
+      bytes += rowBytes(k, head)
+    }
   }
   return bytes
 }
@@ -150,34 +198,40 @@ const wordsOf = async (events: EventRead, msg: EventRecord, cut: Cut, without?: 
   )
 
 // Indexes a stored content event: a message (with the edits its author made of it that came
-// first), or an edit of a message held here. A message holds `words` rows at most, whatever
-// order its edits arrive in: rows already there count first. Returns the bytes added.
+// first), or an edit of a message held here. A message any text of which is stored sealed gets
+// keyed rows (`form.keyed`), or none when there is no device key; any other gets words. A
+// message holds `words` words at most, whatever order its edits arrive in: words already there
+// count first. Returns the bytes added.
 export const indexEvent = async (
   st: SearchWrite,
   events: EventRead,
   rec: EventRecord,
-  cut: Cut
+  cut: Cut,
+  form: SearchForm = PLAIN_FORM
 ) => {
   if (!indexable(rec) || (rec.type !== 'msg' && rec.type !== 'edit')) return 0
   const msg = await messageOf(events, rec)
   if (!msg) return 0
+  const edits = await editsOf(events, msg)
+  const sealed = [rec, msg, ...edits].some(storedSealed)
+  if (sealed && !form.keyed) return 0
   // Every word any text of the message ever had (edits superseded or not): its possible rows.
   const every = new Set<string>()
-  for (const r of [msg, ...(await editsOf(events, msg))]) {
+  for (const r of [msg, ...edits]) {
     const t = textOf(r)
     for (const w of t ? words(t, cut) : []) every.add(w)
   }
   const present = new Set<string>()
-  for (const w of every) if ((await st.getKey([msg.room, w, msg.id])) !== undefined) present.add(w)
+  for (const w of every) if (await held(st, form, msg.room, msg.id, w)) present.add(w)
   let left = cut.words - present.size
   const fresh: string[] = []
-  for (const w of await wordsOf(events, msg, cut)) {
+  for (const w of planned([textOf(msg), ...edits.filter(indexable).map(textOf)], cut)) {
     if (left <= 0) break
     if (present.has(w)) continue
     fresh.push(w)
     left -= 1
   }
-  return putWords(st, msg.room, msg.id, msg.sortKey, fresh)
+  return putWords(st, msg.room, msg.id, msg.sortKey, fresh, sealed ? form.keyed : null)
 }
 
 // About what a message's or edit's rows take (a cold start counts it for its author).
@@ -197,37 +251,31 @@ export const unindexEdit = async (
   st: SearchWrite,
   events: EventRead,
   edit: EventRecord,
-  cut: Cut
+  cut: Cut,
+  form: SearchForm = PLAIN_FORM
 ) => {
   const text = edit.type === 'edit' && edit.target ? textOf(edit) : null
   const msg = edit.target ? await events.get(edit.target) : undefined
   if (!text || !msg || msg.type !== 'msg' || msg.room !== edit.room) return 0
   const keep = indexable(msg) ? await wordsOf(events, msg, cut, edit.id) : new Set<string>()
   const head = skHead(msg.sortKey, msg.id)
-  let bytes = 0
-  for (const token of words(text, cut)) {
-    const k: SearchKey = [edit.room, token, msg.id]
-    if (keep.has(token) || (await st.getKey(k)) === undefined) continue
-    await st.delete(k)
-    bytes += rowBytes(k, head)
-  }
-  return bytes
+  return dropRows(st, form, edit.room, msg.id, head, words(text, cut), keep)
 }
 
 // Takes a message out of the index (purged, dropped or deleted here), by its words and its
 // edits' (call it while they are still stored whole); returns the bytes freed.
-export const unindex = async (st: SearchWrite, events: EventRead, rec: EventRecord, cut: Cut) => {
+export const unindex = async (
+  st: SearchWrite,
+  events: EventRead,
+  rec: EventRecord,
+  cut: Cut,
+  form: SearchForm = PLAIN_FORM
+) => {
   if (rec.type !== 'msg') return 0
   const texts = [textOf(rec), ...(await editsOf(events, rec)).map(textOf)]
   const head = skHead(rec.sortKey, rec.id)
-  let bytes = 0
-  for (const token of new Set(texts.flatMap(t => (t ? words(t, cut) : [])))) {
-    const k: SearchKey = [rec.room, token, rec.id]
-    if ((await st.getKey(k)) === undefined) continue
-    await st.delete(k)
-    bytes += rowBytes(k, head)
-  }
-  return bytes
+  const all = new Set(texts.flatMap(t => (t ? words(t, cut) : [])))
+  return dropRows(st, form, rec.room, rec.id, head, all)
 }
 
 // Deletes rows (`room`'s, or all) and returns the bytes freed per room.
@@ -246,26 +294,34 @@ const deleteRows = async (st: SearchWrite, range?: IDBKeyRange) => {
 export const unindexRoom = async (st: SearchWrite, room: string) =>
   (await deleteRows(st, IDBKeyRange.bound([room], [room, []]))).get(room) ?? 0
 
-// The cut of an index whose meta states none: 32 characters of a word, 256 words of a message.
-const UNSTATED_CUT: Cut = { word: 32, words: 256 }
+// The cut of an index whose meta states none: 32 characters of a word, 256 words of a message,
+// and keyed rows made for whole words up to 2 characters.
+const UNSTATED_CUT: IndexCut = { word: 32, words: 256, exact: 2 }
 
-// The index's progress, or null when it is of another version or cut (it is built again).
-const readMeta = (x: unknown, cut: Cut): SearchMeta | null => {
+// The index's progress, or null when it is of another version or cut (it is built again), or,
+// on a device that sealed something, does not say it holds keyed rows (`keyed`).
+const readMeta = (x: unknown, cut: IndexCut, keyed: boolean): SearchMeta | null => {
   if (typeof x !== 'object' || x === null) return null
   const m = x as Record<string, unknown>
   const word = m.word ?? UNSTATED_CUT.word
   const max = m.words ?? UNSTATED_CUT.words
+  const exact = m.exact ?? UNSTATED_CUT.exact
   return m.v === SEARCH_V &&
     typeof m.done === 'boolean' &&
     typeof m.at === 'string' &&
     word === cut.word &&
-    max === cut.words
+    max === cut.words &&
+    exact === cut.exact &&
+    (!keyed || m.keyed === true)
     ? { v: SEARCH_V, done: m.done, at: m.at }
     : null
 }
 
-export const searchReady = async (db: P2pDatabase, cut: Cut = LOCAL.search) =>
-  readMeta(await db.get('meta', SEARCH_META), cut)?.done === true
+// Whether the database's device sealed any room: its index must have been built with keyed rows.
+const sealedHere = (db: P2pDatabase) => sealingOf(db)?.sealedAny === true
+
+export const searchReady = async (db: P2pDatabase, cut: IndexCut = LOCAL.search) =>
+  readMeta(await db.get('meta', SEARCH_META), cut, sealedHere(db))?.done === true
 
 // Bytes of the index rows a step wrote or freed, per room (the rooms and the servers' total
 // count them).
@@ -296,24 +352,29 @@ const account = async (
 // before threads existed are filled in on the way. Returns whether the index is complete.
 export const rebuildStep = async (
   db: P2pDatabase,
-  lim: Pick<SearchLimits, 'word' | 'words' | 'step'> = LOCAL.search,
+  lim: Pick<SearchLimits, 'word' | 'words' | 'step' | 'exact'> = LOCAL.search,
   skip: (room: string) => boolean = () => false
 ) => {
+  const exact = lim.exact
   const tx = db.transaction(['events', 'search', 'meta', 'rooms'], 'readwrite')
   const meta = tx.objectStore('meta')
-  let m = readMeta(await meta.get(SEARCH_META), lim)
+  const stored = await meta.get(SEARCH_META)
+  let m = readMeta(stored, lim, sealedHere(db))
   if (m?.done) {
+    // Built where nothing was sealed: complete for keyed rows too.
+    if ((stored as { keyed?: unknown }).keyed !== true)
+      await meta.put({ ...(stored as object), exact, keyed: true }, SEARCH_META)
     await tx.done
     return true
   }
   const st = tx.objectStore('search')
+  const form = searchForm(db, exact)
   const delta = new Map<string, number>()
   if (!m) {
     for (const [room, n] of await deleteRows(st)) delta.set(room, -n)
     m = SEARCH_STALE
   }
   const events = tx.objectStore('events')
-  const sealing = sealingOf(db)
   let cursor = await events.openCursor(m.at ? IDBKeyRange.lowerBound(m.at, true) : undefined)
   let at = m.at
   let n = 0
@@ -326,15 +387,22 @@ export const rebuildStep = async (
         await cursor.update(rec)
       }
     }
-    if (rec.layer === 'c' && !skip(rec.room) && !sealing?.on(rec.room))
-      delta.set(rec.room, (delta.get(rec.room) ?? 0) + (await indexEvent(st, events, rec, lim)))
+    if (rec.layer === 'c' && !skip(rec.room)) {
+      delta.set(
+        rec.room,
+        (delta.get(rec.room) ?? 0) + (await indexEvent(st, events, rec, lim, form))
+      )
+    }
     at = rec.id
     n += 1
     cursor = await cursor.continue()
   }
   await account(tx.objectStore('rooms'), meta, delta)
   const done = cursor === null
-  await meta.put({ v: SEARCH_V, done, at, word: lim.word, words: lim.words }, SEARCH_META)
+  await meta.put(
+    { v: SEARCH_V, done, at, word: lim.word, words: lim.words, exact, keyed: true },
+    SEARCH_META
+  )
   await tx.done
   return done
 }
@@ -345,8 +413,14 @@ const wordRange = (room: string, q: string, exact: number) =>
     ? IDBKeyRange.bound([room, q], [room, q, []])
     : IDBKeyRange.bound([room, q], [room, `${q}￿`])
 
+// The keyed row a query word looks for.
+const keyedRange = (room: string, keyed: Keyed, q: string) => {
+  const row = keyed.row(room, q)
+  return IDBKeyRange.bound([room, row], [room, row, []])
+}
+
 // Messages of `room` with a word matching every query word, newest first, below `before` (a sort
-// key), at most `max`; `more` when there were more.
+// key), at most `max`; `more` when there were more. Words and keyed rows both count.
 export const candidates = async (
   db: P2pDatabase,
   room: string,
@@ -355,18 +429,26 @@ export const candidates = async (
   max: number,
   exact: number
 ) => {
+  const { every } = searchForm(db, exact)
   const order = [...query].sort((a, b) => b.length - a.length)
-  const range = wordRange(room, order[0], exact)
+  const ranges = (q: string) => [
+    wordRange(room, q, exact),
+    ...every.map(keyed => keyedRange(room, keyed, q)),
+  ]
   const tx = db.transaction('search')
-  const [keys, heads] = await Promise.all([tx.store.getAllKeys(range), tx.store.getAll(range)])
   const sk = new Map<string, string>()
-  keys.forEach((k, i) => {
-    const s = skOf(heads[i], k[2])
-    if (before === null || s < before) sk.set(k[2], s)
-  })
+  for (const range of ranges(order[0])) {
+    const [keys, heads] = await Promise.all([tx.store.getAllKeys(range), tx.store.getAll(range)])
+    keys.forEach((k, i) => {
+      const s = skOf(heads[i], k[2])
+      if (before === null || s < before) sk.set(k[2], s)
+    })
+  }
   for (const q of order.slice(1)) {
     if (!sk.size) break
-    const ids = new Set((await db.getAllKeys('search', wordRange(room, q, exact))).map(k => k[2]))
+    const ids = new Set<string>()
+    for (const range of ranges(q))
+      for (const k of await db.getAllKeys('search', range)) ids.add(k[2])
     for (const id of [...sk.keys()]) if (!ids.has(id)) sk.delete(id)
   }
   const list = [...sk]
