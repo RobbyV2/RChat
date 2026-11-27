@@ -71,6 +71,7 @@ import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
 import { Button, IconButton, LinkButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Masked, Sentinel, useOwnServer } from './ui'
 import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
@@ -429,45 +430,51 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
       aria-label="P2P direct messages"
       className={'flex shrink-0 flex-col pb-1' + (label ? '' : ' max-h-[45%]')}
     >
-      <div className="flex shrink-0 items-center gap-2 pt-3 pr-3 pb-1 pl-4">
-        <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
-        <P2pBadge />
-        {peer && (
-          <button
-            className="streamer truncate text-xs hover:underline"
-            onClick={() =>
-              void switchActor(peer, client.shown()).catch(e =>
-                owner.store.getState().setError(String(e))
-              )
-            }
-          >
-            {label}
-          </button>
-        )}
-        <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
-        {adds && (
-          <IconButton
-            icon={UserPlus}
-            label="Add contact"
-            size="sm"
-            onClick={() => {
-              selectIdentity()
-              p2p?.openDialog({ kind: 'add' })
-            }}
-          />
-        )}
-      </div>
+      <Surface pad="lg" inset="bar" tone="plain" radius="none" place="shrink-0">
+        <Row gap="sm">
+          <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
+          <P2pBadge />
+          {peer && (
+            <button
+              className="streamer truncate text-xs hover:underline"
+              onClick={() =>
+                void switchActor(peer, client.shown()).catch(e =>
+                  owner.store.getState().setError(String(e))
+                )
+              }
+            >
+              {label}
+            </button>
+          )}
+          <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
+          {adds && (
+            <IconButton
+              icon={UserPlus}
+              label="Add contact"
+              size="sm"
+              onClick={() => {
+                selectIdentity()
+                p2p?.openDialog({ kind: 'add' })
+              }}
+            />
+          )}
+        </Row>
+      </Surface>
       {loading && section && !section.rows.length && (
         <Held>
-          <DmListSkeleton
-            seed={identity?.localId ?? 'p2p'}
-            rows={3}
-            label="Loading contacts"
-            className="px-2"
-          />
+          <Surface pad="sm" tone="plain" radius="none">
+            <DmListSkeleton seed={identity?.localId ?? 'p2p'} rows={3} label="Loading contacts" />
+          </Surface>
         </Held>
       )}
-      <ul onClickCapture={selectIdentity} className="flex min-h-0 flex-col overflow-y-auto px-2">
+      <Surface
+        as="ul"
+        onClickCapture={selectIdentity}
+        pad="sm"
+        tone="plain"
+        radius="none"
+        place="min-h-0 overflow-y-auto"
+      >
         {section?.rows.map(c => (
           <ContactRow
             key={c.ik}
@@ -480,7 +487,7 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
             where="dms"
           />
         ))}
-      </ul>
+      </Surface>
       {section && section.requests > 0 && (
         <button
           data-p2p-requests
@@ -635,27 +642,29 @@ export function DmBlock({
         >
           {!peers && <FriendsEntry />}
           {label && (
-            <div className="flex items-center px-3 pt-2">
-              <button
-                className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium pointer-coarse:min-h-11"
-                aria-expanded={!collapsed}
-                onClick={() => collapse(!collapsed)}
-              >
-                {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                <span className="streamer truncate">{label}</span>
-              </button>
-              <IconButton
-                icon={Plus}
-                label="New direct message"
-                size="sm"
-                onClick={() => {
-                  collapse(false)
-                  settled.current = false
-                  setAs(acct)
-                  setDmInput('')
-                }}
-              />
-            </div>
+            <Surface pad="md" inset="bar" tone="plain" radius="none">
+              <Row gap="none">
+                <button
+                  className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium pointer-coarse:min-h-11"
+                  aria-expanded={!collapsed}
+                  onClick={() => collapse(!collapsed)}
+                >
+                  {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                  <span className="streamer truncate">{label}</span>
+                </button>
+                <IconButton
+                  icon={Plus}
+                  label="New direct message"
+                  size="sm"
+                  onClick={() => {
+                    collapse(false)
+                    settled.current = false
+                    setAs(acct)
+                    setDmInput('')
+                  }}
+                />
+              </Row>
+            </Surface>
           )}
           {!collapsed && (
             <>
@@ -667,10 +676,20 @@ export function DmBlock({
                     pinning ? 'bg-primary-container/40' : ''
                   }`}
                 >
-                  <div className="sticky top-0 z-raised flex items-center gap-1.5 bg-surface-container-low px-4 pt-3 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-                    <Pin size={12} className="shrink-0" />
-                    Pinned
-                  </div>
+                  <Surface
+                    pad="lg"
+                    inset="bar"
+                    tone="low"
+                    radius="none"
+                    place="sticky top-0 z-raised"
+                  >
+                    <p className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                      <Row as="span" gap="xs">
+                        <Pin size={12} className="shrink-0" />
+                        Pinned
+                      </Row>
+                    </p>
+                  </Surface>
                   {pinned.map(row)}
                 </div>
               )}
@@ -680,41 +699,47 @@ export function DmBlock({
                 className="sticky top-0 z-raised shrink-0 bg-surface-container-low"
               >
                 {pinZone ? (
-                  <div
-                    className={`mx-2 my-1 flex h-8 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed text-xs font-medium transition-colors ${
-                      dropZone === 'pinned'
-                        ? 'border-primary bg-primary-container text-on-primary-container'
-                        : 'border-outline text-on-surface-variant'
-                    }`}
-                  >
-                    <Pin size={14} className="shrink-0" />
-                    Drop here to pin
-                  </div>
+                  <Surface pad="sm" inset="bar" tone="plain" radius="none">
+                    <div
+                      className={`flex h-8 items-center justify-center rounded-lg border-2 border-dashed text-xs font-medium transition-colors ${
+                        dropZone === 'pinned'
+                          ? 'border-primary bg-primary-container text-on-primary-container'
+                          : 'border-outline text-on-surface-variant'
+                      }`}
+                    >
+                      <Row as="span" gap="xs">
+                        <Pin size={14} className="shrink-0" />
+                        Drop here to pin
+                      </Row>
+                    </div>
+                  </Surface>
                 ) : (
-                  <div className="flex items-center gap-0.5 pt-3 pr-3 pb-1 pl-4">
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-                      Direct Messages
-                    </span>
-                    <DmListControl prefs={prefs} />
-                    {!label && (
-                      <IconButton
-                        icon={Plus}
-                        label="New direct message"
-                        size="sm"
-                        onClick={() => {
-                          settled.current = false
-                          setAs(acct)
-                          setDmInput('')
-                        }}
-                      />
-                    )}
-                  </div>
+                  <Surface pad="lg" inset="bar" tone="plain" radius="none">
+                    <Row gap="3xs">
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                        Direct Messages
+                      </span>
+                      <DmListControl prefs={prefs} />
+                      {!label && (
+                        <IconButton
+                          icon={Plus}
+                          label="New direct message"
+                          size="sm"
+                          onClick={() => {
+                            settled.current = false
+                            setAs(acct)
+                            setDmInput('')
+                          }}
+                        />
+                      )}
+                    </Row>
+                  </Surface>
                 )}
               </div>
               {dmInput !== null && (
-                <>
+                <Surface pad="sm" gap="2xs" tone="plain" radius="none">
                   {accounts.length > 1 && (
-                    <label className="mx-2 text-xs">
+                    <label className="text-xs">
                       As{' '}
                       <select
                         aria-label="As"
@@ -745,14 +770,14 @@ export function DmBlock({
                     }}
                     onBlur={accounts.length > 1 ? undefined : submitDm}
                     placeholder={accounts.length > 1 ? 'username or username@host' : 'username'}
-                    className="mx-2 my-0.5 shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+                    className="shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
                   />
                   {accounts.length > 1 && (
-                    <Button onClick={submitDm} place="mx-2 self-start">
+                    <Button onClick={submitDm} place="self-start">
                       Start message
                     </Button>
                   )}
-                </>
+                </Surface>
               )}
               <div
                 data-drop-zone="recent"
@@ -764,25 +789,25 @@ export function DmBlock({
                 {rest.length === 0 &&
                   (starting ||
                     (filtersOn(prefs) > 0 && !paging && !!unreadKey && looked !== unreadKey)) && (
-                    <DmListSkeleton
-                      seed={label ?? 'dms'}
-                      label="Loading direct messages"
-                      className="px-2"
-                    />
+                    <Surface pad="sm" tone="plain" radius="none">
+                      <DmListSkeleton seed={label ?? 'dms'} label="Loading direct messages" />
+                    </Surface>
                   )}
                 {rest.length === 0 &&
                   filtersOn(prefs) > 0 &&
                   !paging &&
                   (!unreadKey || looked === unreadKey) && (
-                    <p
-                      data-dm-none
-                      className="mx-4 my-2 flex flex-wrap items-baseline gap-x-2 text-sm text-on-surface-variant"
-                    >
-                      <span>No conversations match</span>
-                      <LinkButton onClick={() => setDmList(clearDmFilters(prefs))}>
-                        Clear filters
-                      </LinkButton>
-                    </p>
+                    <Surface pad="lg" tone="plain" radius="none">
+                      <p
+                        data-dm-none
+                        className="flex flex-wrap items-baseline gap-x-2 text-sm text-on-surface-variant"
+                      >
+                        <span>No conversations match</span>
+                        <LinkButton onClick={() => setDmList(clearDmFilters(prefs))}>
+                          Clear filters
+                        </LinkButton>
+                      </p>
+                    </Surface>
                   )}
                 {paging && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
               </div>
@@ -833,7 +858,9 @@ function DmSidebar({ dmId }: { dmId: number }) {
           {groups.map(g => (
             <div key={g.origin}>
               {groups.length > 1 && (
-                <h3 className="streamer px-4 pt-2 text-xs font-semibold uppercase">{g.name}</h3>
+                <Surface pad="lg" inset="bar" tone="plain" radius="none">
+                  <h3 className="streamer text-xs font-semibold uppercase">{g.name}</h3>
+                </Surface>
               )}
               {g.owners.map(({ row, owner }) => (
                 <section
@@ -1032,54 +1059,57 @@ export function ChannelSidebar() {
       }}
       onBlur={editingHere?.mode === 'rename' ? submit : undefined}
       placeholder="channel name"
-      className="mx-2 my-0.5 min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+      className="min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
     />
   )
 
   const createRow = (category: number | null) =>
     editingHere?.mode === 'create' && editingHere.category === category ? (
-      <span
-        className="flex flex-wrap items-center"
+      <Surface
+        as="span"
+        pad="sm"
+        gap="2xs"
+        tone="plain"
+        radius="none"
         onBlur={e => {
           if (!e.currentTarget.contains(e.relatedTarget)) submit()
         }}
       >
-        <span className="flex shrink-0 gap-0.5 pl-2">
-          <IconButton
-            icon={Hash}
-            label="Text channel"
-            size="sm"
-            shape="square"
-            pressed={editingHere.kind === 'text'}
-            onMouseDown={e => e.preventDefault()}
-            onClick={() => acct.channelEdit.getState().setKind('text')}
-          />
-          <IconButton
-            icon={Volume2}
-            label="Voice channel"
-            size="sm"
-            shape="square"
-            pressed={editingHere.kind === 'voice'}
-            onMouseDown={e => e.preventDefault()}
-            onClick={() => acct.channelEdit.getState().setKind('voice')}
-          />
-        </span>
-        {editInput}
+        <Row as="span" gap="sm">
+          <Row as="span" gap="3xs" place="shrink-0">
+            <IconButton
+              icon={Hash}
+              label="Text channel"
+              size="sm"
+              shape="square"
+              pressed={editingHere.kind === 'text'}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => acct.channelEdit.getState().setKind('text')}
+            />
+            <IconButton
+              icon={Volume2}
+              label="Voice channel"
+              size="sm"
+              shape="square"
+              pressed={editingHere.kind === 'voice'}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => acct.channelEdit.getState().setKind('voice')}
+            />
+          </Row>
+          {editInput}
+        </Row>
         {editingHere.kind === 'text' && (
-          <label
-            onMouseDown={e => e.preventDefault()}
-            className="mx-2 flex basis-full items-center gap-2 py-1 text-sm"
-          >
+          <Row as="label" gap="sm" onMouseDown={e => e.preventDefault()}>
             <input
               type="checkbox"
               className="accent-primary"
               checked={!!editingHere.textOnly}
               onChange={e => acct.channelEdit.getState().setTextOnly(e.target.checked)}
             />
-            Text only
-          </label>
+            <span className="text-sm">Text only</span>
+          </Row>
         )}
-      </span>
+      </Surface>
     ) : null
 
   const textRow = (c: Channel) => (
@@ -1142,9 +1172,11 @@ export function ChannelSidebar() {
 
   const row = (c: Channel) =>
     editingHere?.mode === 'rename' && editingHere.id === c.id ? (
-      <span key={c.id} className="flex">
-        {editInput}
-      </span>
+      <Surface key={c.id} as="span" pad="sm" inset="bar" tone="plain" radius="none">
+        <Row as="span" gap="none">
+          {editInput}
+        </Row>
+      </Surface>
     ) : c.kind === 'voice' ? (
       voiceRow(c)
     ) : (
@@ -1169,44 +1201,53 @@ export function ChannelSidebar() {
       ? []
       : channels.filter(c => c.kind === 'text' && !keepShown(c)).map(c => `c${c.id}`)
     return (
-      <div key={category.id} data-drag-box className="group/cat flex flex-col rounded-lg pt-3">
-        <div className="flex items-center pr-2">
-          <button
-            aria-expanded={open}
-            onClick={() => setCategoriesCollapsed(server, [category.id], open)}
-            {...longPress(categoryMenu(category), categoryDragSpec(category))}
-            className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase outline-offset-[-2px] hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
-          >
-            {open ? (
-              <ChevronDown size={14} className="shrink-0" />
-            ) : (
-              <ChevronRight size={14} className="shrink-0" />
-            )}
-            <span className="truncate">
-              <Masked text={category.name} own={ownServer} />
-            </span>
-            {hiddenPings > 0 ? (
-              <PingBadge count={hiddenPings} className="ml-auto" />
-            ) : (
-              <HostedChannelEnd
-                scopes={hiddenScopes}
-                server={server}
-                pings={0}
-                unread={hiddenUnread}
+      <Surface
+        key={category.id}
+        data-drag-box
+        pad="none"
+        tone="plain"
+        radius="md"
+        place="group/cat"
+      >
+        <Surface pad="sm" inset="bar" tone="plain" radius="none">
+          <Row gap="none">
+            <button
+              aria-expanded={open}
+              onClick={() => setCategoriesCollapsed(server, [category.id], open)}
+              {...longPress(categoryMenu(category), categoryDragSpec(category))}
+              className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase outline-offset-[-2px] hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+            >
+              {open ? (
+                <ChevronDown size={14} className="shrink-0" />
+              ) : (
+                <ChevronRight size={14} className="shrink-0" />
+              )}
+              <span className="truncate">
+                <Masked text={category.name} own={ownServer} />
+              </span>
+              {hiddenPings > 0 ? (
+                <PingBadge count={hiddenPings} className="ml-auto" />
+              ) : (
+                <HostedChannelEnd
+                  scopes={hiddenScopes}
+                  server={server}
+                  pings={0}
+                  unread={hiddenUnread}
+                />
+              )}
+            </button>
+            {canManage && (
+              <IconButton
+                icon={Plus}
+                label={`Create channel in ${category.name}`}
+                tooltip="Create channel"
+                size="sm"
+                onClick={() => createIn(category.id)}
+                place="md:opacity-0 md:group-hover/cat:opacity-100 md:focus-visible:opacity-100 pointer-coarse:opacity-100"
               />
             )}
-          </button>
-          {canManage && (
-            <IconButton
-              icon={Plus}
-              label={`Create channel in ${category.name}`}
-              tooltip="Create channel"
-              size="sm"
-              onClick={() => createIn(category.id)}
-              place="md:opacity-0 md:group-hover/cat:opacity-100 md:focus-visible:opacity-100 pointer-coarse:opacity-100"
-            />
-          )}
-        </div>
+          </Row>
+        </Surface>
         <div
           data-drop-zone={zone}
           data-drop-label={category.name}
@@ -1215,7 +1256,7 @@ export function ChannelSidebar() {
           {visible.map(row)}
           {createRow(category.id)}
         </div>
-      </div>
+      </Surface>
     )
   }
 
@@ -1233,42 +1274,48 @@ export function ChannelSidebar() {
           openActionMenu(x, y, { kind: 'server', server, folder: null, at: 0 }, undefined, acct)
         }
       />
-      <div className="flex items-center justify-between px-4 pt-3 pb-1">
-        <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-          Channels
-        </span>
-        {canManage && (
-          <span className="flex items-center gap-0.5">
-            <IconButton
-              icon={FolderPlus}
-              label="Create category"
-              size="sm"
-              onClick={() => openDialog({ kind: 'category', server })}
-            />
-            <IconButton
-              icon={Plus}
-              label="Create channel"
-              size="sm"
-              onClick={() => createIn(null)}
-            />
+      <Surface pad="lg" inset="bar" tone="plain" radius="none">
+        <Row gap="sm" justify="between">
+          <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+            Channels
           </span>
-        )}
-      </div>
-      <div ref={dragScope} className="flex flex-1 flex-col overflow-y-auto pb-3">
-        <div
-          data-drop-zone={NO_CATEGORY}
-          data-drop-label="No category"
-          className={zoneCls(
-            NO_CATEGORY,
-            groups.uncategorized.length === 0 && groups.categories.length > 0
+          {canManage && (
+            <Row as="span" gap="3xs">
+              <IconButton
+                icon={FolderPlus}
+                label="Create category"
+                size="sm"
+                onClick={() => openDialog({ kind: 'category', server })}
+              />
+              <IconButton
+                icon={Plus}
+                label="Create channel"
+                size="sm"
+                onClick={() => createIn(null)}
+              />
+            </Row>
           )}
-        >
-          {groups.uncategorized.map(row)}
-          {createRow(null)}
-        </div>
-        <div data-drop-zone={CATEGORIES_ZONE} className="flex flex-col">
-          {groups.categories.map(categoryBlock)}
-        </div>
+        </Row>
+      </Surface>
+      <div ref={dragScope} className="flex-1 overflow-y-auto pb-3">
+        <Stack gap="md">
+          <div
+            data-drop-zone={NO_CATEGORY}
+            data-drop-label="No category"
+            className={zoneCls(
+              NO_CATEGORY,
+              groups.uncategorized.length === 0 && groups.categories.length > 0
+            )}
+          >
+            {groups.uncategorized.map(row)}
+            {createRow(null)}
+          </div>
+          {groups.categories.length > 0 && (
+            <Stack data-drop-zone={CATEGORIES_ZONE} gap="md">
+              {groups.categories.map(categoryBlock)}
+            </Stack>
+          )}
+        </Stack>
       </div>
       <VoiceDock />
     </aside>

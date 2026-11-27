@@ -62,6 +62,7 @@ import { AccountSwitcherTile } from './account_switcher'
 import { ThemeToggle } from './status_clock'
 import { PaletteButton } from './palette'
 import { IconButton } from './controls'
+import { Stack, Surface } from './layout'
 import { Sentinel, useOwnServer } from './ui'
 import { ServerRailSkeleton } from './skeletons'
 import { RailPingBadge, pingLabel } from './ping_badge'
@@ -107,12 +108,14 @@ export function ServerGlyph({
   const kind = useStore(s => (look ? iconKind(look.icon_kind) : serverIconKind(s, name)))
   const color = useStore(s => (look ? (look.banner_color ?? null) : serverIconColor(s, name)))
   return name === 'rchat' ? (
-    <img
-      src="/rchat_r.png"
-      alt="RChat"
-      draggable={false}
-      className="h-full w-full object-contain p-1"
-    />
+    <Surface pad="2xs" tone="plain" radius="none" place="h-full w-full">
+      <img
+        src="/rchat_r.png"
+        alt="RChat"
+        draggable={false}
+        className="h-full w-full object-contain"
+      />
+    </Surface>
   ) : (
     <ServerIcon
       seed={name}
@@ -369,7 +372,6 @@ function DmTile({ active, pings, unread }: { active: boolean; pings: number; unr
   )
 }
 
-const column = 'flex shrink-0 flex-col items-center gap-2'
 function ResumeAccount({ row }: { row: SwitcherRow }) {
   const streamer = useStore(s => s.streamer)
   const label = streamer
@@ -411,13 +413,15 @@ export function AccountServers({ row }: { row?: SwitcherRow }) {
   )
 
   return (
-    <div ref={dragScope} className={column}>
+    <Stack ref={dragScope} gap="sm" align="center" place="shrink-0">
       {me && <PreviewTile />}
-      <div
+      <Stack
         data-rail="servers"
         data-drop-zone="servers"
         data-drop-label="Remove from folder"
-        className="flex shrink-0 flex-col items-center gap-2"
+        gap="sm"
+        align="center"
+        place="shrink-0"
       >
         {items.map((item, at) =>
           item.kind === 'server' ? (
@@ -426,9 +430,9 @@ export function AccountServers({ row }: { row?: SwitcherRow }) {
             <FolderEntry key={item.key} folder={item.folder} servers={item.servers} at={at} />
           )
         )}
-      </div>
+      </Stack>
       {me && serversMore && <Sentinel key={me.servers.length} onVisible={loadMoreServers} />}
-    </div>
+    </Stack>
   )
 }
 type PeerBlock = { account: AccountSession; app: P2pApp; label: string }
@@ -440,15 +444,17 @@ function PeerBlockView({ peer, children }: { peer: PeerBlock; children: React.Re
   return (
     <AccountProvider session={peer.account}>
       <P2pProvider identity={peer.app}>
-        <div
+        <Stack
           ref={dragScope}
-          className={column}
+          gap="sm"
+          align="center"
+          place="shrink-0"
           onClickCapture={e => {
             if (!(e.target as HTMLElement).closest('[data-peer-home]')) selectPeer(peer)
           }}
         >
           {children}
-        </div>
+        </Stack>
       </P2pProvider>
     </AccountProvider>
   )
@@ -556,10 +562,18 @@ export function ServerRail() {
 
   return (
     <nav className="flex h-full w-18 shrink-0 flex-col bg-surface-container-lowest">
-      <div data-rail="instance" className="flex shrink-0 flex-col items-center gap-1.5 pt-2">
+      <Surface
+        data-rail="instance"
+        pad="sm"
+        gap="xs"
+        align="center"
+        tone="plain"
+        radius="none"
+        place="shrink-0"
+      >
         <AccountSwitcherTile />
         <div className="h-px w-8 bg-outline-variant" />
-      </div>
+      </Surface>
       <div
         ref={scroller}
         onClickCapture={e => {
@@ -571,247 +585,259 @@ export function ServerRail() {
           )
             p2pView?.closeHome()
         }}
-        className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pt-2 pb-2"
+        className="min-h-0 flex-1 overflow-y-auto pb-2"
       >
-        <button
-          title="Home"
-          aria-label="Home"
-          aria-current={atHome ? 'page' : undefined}
-          data-home-button
-          data-rail="home"
-          onClick={goHome}
-          className={`${tile} ${atHome ? 'bg-primary text-on-primary' : idle}`}
-        >
-          <House size={22} />
-        </button>
-        {me && (
-          <DmTile
-            pings={activityRows.reduce((sum, row) => sum + row.pings, 0)}
-            unread={activityRows.some(row => row.unread)}
-            active={view?.kind === 'dm' && (!p2pHome || p2pBeside)}
-          />
-        )}
-        <button
-          data-rail="add-server"
-          title="Add a server"
-          aria-label="Add a server"
-          onClick={() => openDialog({ kind: 'add_server' })}
-          className={`${tile} bg-primary-container text-on-primary-container shadow-elevation-1 hover:bg-primary hover:text-on-primary`}
-        >
-          <Plus size={22} />
-        </button>
-        {canAdd && (
+        <Stack gap="sm" align="center">
           <button
-            type="button"
-            title="Add an instance"
-            aria-label="Add an instance"
-            className={`${tile} ${idle}`}
-            onClick={() => openDialog({ kind: 'add_instance' })}
+            title="Home"
+            aria-label="Home"
+            aria-current={atHome ? 'page' : undefined}
+            data-home-button
+            data-rail="home"
+            onClick={goHome}
+            className={`${tile} ${atHome ? 'bg-primary text-on-primary' : idle}`}
           >
-            <Globe size={22} />
+            <House size={22} />
           </button>
-        )}
-        {(groupedPeers ? peerTiles.length > 0 : p2pOn) && (
-          <div
-            data-rail="p2p"
-            className="flex shrink-0 flex-col items-center gap-2 rounded-group border-2 border-dashed border-tertiary/70 p-[3px]"
+          {me && (
+            <DmTile
+              pings={activityRows.reduce((sum, row) => sum + row.pings, 0)}
+              unread={activityRows.some(row => row.unread)}
+              active={view?.kind === 'dm' && (!p2pHome || p2pBeside)}
+            />
+          )}
+          <button
+            data-rail="add-server"
+            title="Add a server"
+            aria-label="Add a server"
+            onClick={() => openDialog({ kind: 'add_server' })}
+            className={`${tile} bg-primary-container text-on-primary-container shadow-elevation-1 hover:bg-primary hover:text-on-primary`}
           >
-            {groupedPeers ? (
-              <>
-                {peerTiles.map(({ key, live, row, label }) =>
-                  live ? (
-                    <PeerBlockView key={key} peer={live}>
-                      <P2pRailTile actorLabel={label} />
-                    </PeerBlockView>
-                  ) : (
-                    row && (
-                      <button
-                        key={key}
-                        data-p2p-tile
-                        data-peer-home
-                        title={label + ' (paused)'}
-                        aria-label={label}
-                        aria-pressed={false}
-                        className={tile + ' relative ' + idle}
-                        onClick={() => void switchActor(row, client.shown())}
-                      >
-                        <ActorAvatar row={row} size={28} />
-                        {row.badge > 0 && <RailPingBadge count={row.badge} />}
-                      </button>
-                    )
-                  )
-                )}
-                {joined.length === 1 && (
-                  <PeerBlockView peer={joined[0]}>
-                    <P2pJoinTile />
-                  </PeerBlockView>
-                )}
-                {joined.length > 1 && (
-                  <label
-                    data-p2p-tile
-                    data-p2p-join
-                    title="Create or join a P2P server"
-                    className={tile + ' relative ' + idle}
-                  >
-                    <Plus size={22} />
-                    <select
-                      aria-label="Create or join a P2P server as"
-                      value=""
-                      className="absolute inset-0 cursor-pointer opacity-0"
-                      onChange={e => {
-                        const peer = joined.find(
-                          p => p.account.renderKey + ':' + p.app.localId === e.target.value
+            <Plus size={22} />
+          </button>
+          {canAdd && (
+            <button
+              type="button"
+              title="Add an instance"
+              aria-label="Add an instance"
+              className={`${tile} ${idle}`}
+              onClick={() => openDialog({ kind: 'add_instance' })}
+            >
+              <Globe size={22} />
+            </button>
+          )}
+          {(groupedPeers ? peerTiles.length > 0 : p2pOn) && (
+            <div
+              data-rail="p2p"
+              className="shrink-0 rounded-group border-2 border-dashed border-tertiary/70"
+            >
+              <Surface pad="2xs" gap="sm" align="center" tone="plain" radius="group">
+                {groupedPeers ? (
+                  <>
+                    {peerTiles.map(({ key, live, row, label }) =>
+                      live ? (
+                        <PeerBlockView key={key} peer={live}>
+                          <P2pRailTile actorLabel={label} />
+                        </PeerBlockView>
+                      ) : (
+                        row && (
+                          <button
+                            key={key}
+                            data-p2p-tile
+                            data-peer-home
+                            title={label + ' (paused)'}
+                            aria-label={label}
+                            aria-pressed={false}
+                            className={tile + ' relative ' + idle}
+                            onClick={() => void switchActor(row, client.shown())}
+                          >
+                            <ActorAvatar row={row} size={28} />
+                            {row.badge > 0 && <RailPingBadge count={row.badge} />}
+                          </button>
                         )
-                        if (peer) {
-                          selectPeer(peer)
-                          peer.app.p2p.openDialog({ kind: 'server_new' })
-                        }
-                      }}
-                    >
-                      <option value="" disabled>
-                        As
-                      </option>
-                      {joined.map(peer => (
-                        <option
-                          key={peer.account.renderKey + ':' + peer.app.localId}
-                          value={peer.account.renderKey + ':' + peer.app.localId}
-                        >
-                          {peer.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-              </>
-            ) : (
-              <>
-                <P2pRailTile />
-                {p2pEnabled && <P2pJoinTile />}
-              </>
-            )}
-          </div>
-        )}
-        <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />
-        {model.accountCount > 1 || model.instanceHeaders ? (
-          model.blocks.map(group => (
-            <div key={group.origin} className={column}>
-              {model.instanceHeaders && (
-                <button
-                  title={streamer ? 'Instance' : group.name + ' (' + group.host + ')'}
-                  aria-expanded={!collapsed.has(group.origin)}
-                  onClick={() => toggle(group.origin)}
-                  className="relative h-5 w-10 rounded bg-surface-container-high text-xs"
-                >
-                  <span className="streamer">{group.name.slice(0, 1)}</span>
-                  {collapsed.has(group.origin) && group.pings > 0 && (
-                    <RailPingBadge count={group.pings} />
-                  )}
-                </button>
-              )}
-              {!collapsed.has(group.origin) &&
-                group.accounts.map(row => {
-                  const account = switcherSession(row)
-                  const key = JSON.stringify([row.origin, row.username])
-                  return (
-                    <div
-                      key={key}
-                      data-account-section
-                      data-shown-block={account === loginAccount}
-                      className={
-                        column + (account === loginAccount ? ' border-l-[3px] border-primary' : '')
-                      }
-                    >
-                      {group.accounts.length > 1 && (
-                        <button
-                          aria-expanded={!collapsed.has(key)}
-                          title={
-                            streamer ? 'Account' : (row.username ?? 'Guest') + ' on ' + group.name
-                          }
-                          className="relative"
-                          onClick={() => toggle(key)}
-                          {...longPress((x, y) =>
-                            openActionMenu(
-                              x,
-                              y,
-                              { kind: 'rail_account', origin: row.origin, username: row.username },
-                              {},
-                              account &&
-                                (account.store.getState().me || account.store.getState().guest)
-                                ? account
-                                : loginAccount
+                      )
+                    )}
+                    {joined.length === 1 && (
+                      <PeerBlockView peer={joined[0]}>
+                        <P2pJoinTile />
+                      </PeerBlockView>
+                    )}
+                    {joined.length > 1 && (
+                      <label
+                        data-p2p-tile
+                        data-p2p-join
+                        title="Create or join a P2P server"
+                        className={tile + ' relative ' + idle}
+                      >
+                        <Plus size={22} />
+                        <select
+                          aria-label="Create or join a P2P server as"
+                          value=""
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                          onChange={e => {
+                            const peer = joined.find(
+                              p => p.account.renderKey + ':' + p.app.localId === e.target.value
                             )
-                          )}
+                            if (peer) {
+                              selectPeer(peer)
+                              peer.app.p2p.openDialog({ kind: 'server_new' })
+                            }
+                          }}
                         >
-                          <ActorAvatar row={row} size={28} />
-                          {row.badge > 0 && <RailPingBadge count={row.badge} />}
-                        </button>
-                      )}
-                      {!collapsed.has(key) &&
-                        (account ? (
-                          <AccountProvider session={account}>
-                            <AccountServers row={row} />
-                          </AccountProvider>
-                        ) : (
-                          <ResumeAccount row={row} />
-                        ))}
-                    </div>
-                  )
-                })}
+                          <option value="" disabled>
+                            As
+                          </option>
+                          {joined.map(peer => (
+                            <option
+                              key={peer.account.renderKey + ':' + peer.app.localId}
+                              value={peer.account.renderKey + ':' + peer.app.localId}
+                            >
+                              {peer.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <P2pRailTile />
+                    {p2pEnabled && <P2pJoinTile />}
+                  </>
+                )}
+              </Surface>
             </div>
-          ))
-        ) : accounts[0] ? (
-          <AccountProvider session={accounts[0]}>
-            <AccountServers row={model.blocks[0]?.accounts[0]} />
-          </AccountProvider>
-        ) : model.blocks[0]?.accounts[0] ? (
-          <ResumeAccount row={model.blocks[0].accounts[0]} />
-        ) : null}
-        {groupedPeers
-          ? peers.map(peer => (
-              <PeerBlockView key={peer.account.renderKey + ':' + peer.app.localId} peer={peer}>
-                <P2pServerRail actorLabel={peers.length > 1 ? peer.label : undefined} />
-              </PeerBlockView>
+          )}
+          <div className="h-px w-8 shrink-0 bg-outline-variant" />
+          {model.accountCount > 1 || model.instanceHeaders ? (
+            model.blocks.map(group => (
+              <Stack key={group.origin} gap="sm" align="center" place="shrink-0">
+                {model.instanceHeaders && (
+                  <button
+                    title={streamer ? 'Instance' : group.name + ' (' + group.host + ')'}
+                    aria-expanded={!collapsed.has(group.origin)}
+                    onClick={() => toggle(group.origin)}
+                    className="relative h-5 w-10 rounded bg-surface-container-high text-xs"
+                  >
+                    <span className="streamer">{group.name.slice(0, 1)}</span>
+                    {collapsed.has(group.origin) && group.pings > 0 && (
+                      <RailPingBadge count={group.pings} />
+                    )}
+                  </button>
+                )}
+                {!collapsed.has(group.origin) &&
+                  group.accounts.map(row => {
+                    const account = switcherSession(row)
+                    const key = JSON.stringify([row.origin, row.username])
+                    return (
+                      <div
+                        key={key}
+                        data-account-section
+                        data-shown-block={account === loginAccount}
+                        className={`shrink-0${account === loginAccount ? ' border-l-[3px] border-primary' : ''}`}
+                      >
+                        <Stack gap="sm" align="center">
+                          {group.accounts.length > 1 && (
+                            <button
+                              aria-expanded={!collapsed.has(key)}
+                              title={
+                                streamer
+                                  ? 'Account'
+                                  : (row.username ?? 'Guest') + ' on ' + group.name
+                              }
+                              className="relative"
+                              onClick={() => toggle(key)}
+                              {...longPress((x, y) =>
+                                openActionMenu(
+                                  x,
+                                  y,
+                                  {
+                                    kind: 'rail_account',
+                                    origin: row.origin,
+                                    username: row.username,
+                                  },
+                                  {},
+                                  account &&
+                                    (account.store.getState().me || account.store.getState().guest)
+                                    ? account
+                                    : loginAccount
+                                )
+                              )}
+                            >
+                              <ActorAvatar row={row} size={28} />
+                              {row.badge > 0 && <RailPingBadge count={row.badge} />}
+                            </button>
+                          )}
+                          {!collapsed.has(key) &&
+                            (account ? (
+                              <AccountProvider session={account}>
+                                <AccountServers row={row} />
+                              </AccountProvider>
+                            ) : (
+                              <ResumeAccount row={row} />
+                            ))}
+                        </Stack>
+                      </div>
+                    )
+                  })}
+              </Stack>
             ))
-          : p2pOn && <P2pServerRail />}
+          ) : accounts[0] ? (
+            <AccountProvider session={accounts[0]}>
+              <AccountServers row={model.blocks[0]?.accounts[0]} />
+            </AccountProvider>
+          ) : model.blocks[0]?.accounts[0] ? (
+            <ResumeAccount row={model.blocks[0].accounts[0]} />
+          ) : null}
+          {groupedPeers
+            ? peers.map(peer => (
+                <PeerBlockView key={peer.account.renderKey + ':' + peer.app.localId} peer={peer}>
+                  <P2pServerRail actorLabel={peers.length > 1 ? peer.label : undefined} />
+                </PeerBlockView>
+              ))
+            : p2pOn && <P2pServerRail />}
+        </Stack>
       </div>
-      <div className="flex shrink-0 flex-col items-center gap-2 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <PaletteButton rail />
-        <ThemeToggle />
-        <InstallButton compact />
-        <IconButton
-          icon={Settings}
-          label="Settings"
-          size="lg"
-          onClick={() => openDialog({ kind: 'settings' })}
-        />
-        {me?.is_site_admin && (
+      <div className="shrink-0 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <Stack gap="sm" align="center">
+          <PaletteButton rail />
+          <ThemeToggle />
+          <InstallButton compact />
           <IconButton
-            icon={Shield}
-            label="Site administration"
+            icon={Settings}
+            label="Settings"
             size="lg"
-            onClick={() => openAdmin()}
+            onClick={() => openDialog({ kind: 'settings' })}
           />
-        )}
-        <IconButton
-          icon={LogOut}
-          size="lg"
-          tone="danger"
-          label={
-            me
-              ? model.accountCount > 1 && !streamer
-                ? 'Log out of ' + me.username + ' on ' + loginAccount.conn.name
-                : 'Log out'
-              : 'Exit guest mode'
-          }
-          onClick={() => {
-            if (model.accountCount > 1) {
-              signOutSwitcherAccount(loginAccount.conn.origin, me?.username ?? null)
-              return
+          {me?.is_site_admin && (
+            <IconButton
+              icon={Shield}
+              label="Site administration"
+              size="lg"
+              onClick={() => openAdmin()}
+            />
+          )}
+          <IconButton
+            icon={LogOut}
+            size="lg"
+            tone="danger"
+            label={
+              me
+                ? model.accountCount > 1 && !streamer
+                  ? 'Log out of ' + me.username + ' on ' + loginAccount.conn.name
+                  : 'Log out'
+                : 'Exit guest mode'
             }
-            logoutForLogin(loginAccount)
-            router.replace('/login')
-          }}
-        />
+            onClick={() => {
+              if (model.accountCount > 1) {
+                signOutSwitcherAccount(loginAccount.conn.origin, me?.username ?? null)
+                return
+              }
+              logoutForLogin(loginAccount)
+              router.replace('/login')
+            }}
+          />
+        </Stack>
       </div>
     </nav>
   )

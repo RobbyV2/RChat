@@ -50,6 +50,7 @@ import { ApiConsoleFor } from './api_console'
 import { useMedia } from './context_menu'
 import { CreatePollDialog } from './poll_dialog'
 import { Button, Chip, IconButton } from './controls'
+import { Row, Surface } from './layout'
 import { Masked, MaskedText, Sheet } from './ui'
 
 const SHEET = '(max-width: 767px)'
@@ -164,7 +165,7 @@ function Title({ item, hits }: { item: PaletteItem; hits: number[] }) {
   )
 }
 
-function Row({
+function ResultRow({
   id,
   item,
   hits,
@@ -275,40 +276,51 @@ function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-outline-variant px-3 py-2">
-        <IconButton icon={ArrowLeft} label="Back" size="lg" onClick={onBack} />
-        <span className="min-w-0 truncate text-sm font-medium">{item.title}</span>
-      </div>
-      <div className="flex items-center gap-2 px-4 py-3">
-        <input
-          ref={inputRef}
-          value={text}
-          onChange={e => {
-            setText(e.target.value)
-            setError(null)
-            setActive(0)
-          }}
-          onKeyDown={onKey}
-          placeholder={arg.placeholder}
-          aria-label={arg.placeholder}
-          aria-invalid={error !== null}
-          role={choices ? 'combobox' : undefined}
-          aria-expanded={choices ? true : undefined}
-          aria-controls={choices ? listId : undefined}
-          aria-activedescendant={choices && shown.length ? `${listId}-${active}` : undefined}
-          autoComplete="off"
-          spellCheck={false}
-          className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant md:text-sm"
-        />
-        {!choices && <IconButton icon={CornerDownLeft} label="Run" size="lg" onClick={submit} />}
-      </div>
-      {error && (
-        <p role="alert" className="px-4 pb-2 text-xs text-error">
-          {error}
-        </p>
-      )}
+      <Surface pad="md" inset="bar" tone="plain" radius="none" border="bottom" place="shrink-0">
+        <Row gap="sm">
+          <IconButton icon={ArrowLeft} label="Back" size="lg" onClick={onBack} />
+          <span className="min-w-0 truncate text-sm font-medium">{item.title}</span>
+        </Row>
+      </Surface>
+      <Surface pad="lg" inset="bar" gap="md" tone="plain" radius="none">
+        <Row gap="sm">
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={e => {
+              setText(e.target.value)
+              setError(null)
+              setActive(0)
+            }}
+            onKeyDown={onKey}
+            placeholder={arg.placeholder}
+            aria-label={arg.placeholder}
+            aria-invalid={error !== null}
+            role={choices ? 'combobox' : undefined}
+            aria-expanded={choices ? true : undefined}
+            aria-controls={choices ? listId : undefined}
+            aria-activedescendant={choices && shown.length ? `${listId}-${active}` : undefined}
+            autoComplete="off"
+            spellCheck={false}
+            className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant md:text-sm"
+          />
+          {!choices && <IconButton icon={CornerDownLeft} label="Run" size="lg" onClick={submit} />}
+        </Row>
+        {error && (
+          <p role="alert" className="text-xs text-error">
+            {error}
+          </p>
+        )}
+      </Surface>
       {choices && (
-        <div id={listId} role="listbox" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <Surface
+          id={listId}
+          role="listbox"
+          pad="sm"
+          tone="plain"
+          radius="none"
+          place="min-h-0 flex-1 overflow-y-auto"
+        >
           {shown.map((c, i) => (
             <div
               key={c.value}
@@ -324,7 +336,7 @@ function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
               {c.label}
             </div>
           ))}
-        </div>
+        </Surface>
       )}
     </div>
   )
@@ -439,51 +451,63 @@ function ListView() {
   let n = 0
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-3 border-b border-outline-variant px-4">
-        <Search size={18} className="shrink-0 text-on-surface-variant" />
-        <input
-          ref={inputRef}
-          value={text}
-          onChange={e => setPaletteText(e.target.value)}
-          onKeyDown={onKey}
-          role="combobox"
-          aria-expanded="true"
-          aria-controls={listId}
-          aria-activedescendant={items.length ? `${listId}-${current}` : undefined}
-          aria-label="Search or run a command"
-          placeholder="Search, or type > for commands"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          data-palette-input
-          className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant"
-        />
+      <div className="shrink-0 border-b border-outline-variant px-4">
+        <Row gap="md">
+          <Search size={18} className="shrink-0 text-on-surface-variant" />
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={e => setPaletteText(e.target.value)}
+            onKeyDown={onKey}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-activedescendant={items.length ? `${listId}-${current}` : undefined}
+            aria-label="Search or run a command"
+            placeholder="Search, or type > for commands"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            data-palette-input
+            className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant"
+          />
+        </Row>
       </div>
-      <div
+      <Surface
         role="toolbar"
         aria-label="Narrow the search"
-        className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-outline-variant px-3 py-2"
+        pad="md"
+        inset="bar"
+        tone="plain"
+        radius="none"
+        border="bottom"
+        place="shrink-0 overflow-x-auto"
       >
-        {prefixes.map(p => {
-          const on = mode === p.mode
-          return (
-            <Chip
-              key={p.prefix}
-              on={on}
-              title={`${p.label} (${p.prefix})`}
-              onClick={() => setMode(on ? '' : p.prefix)}
-              place="shrink-0"
-            >
-              <span className="font-mono font-semibold">{p.prefix}</span> {p.label}
-            </Chip>
-          )
-        })}
-      </div>
-      <div
+        <Row gap="xs">
+          {prefixes.map(p => {
+            const on = mode === p.mode
+            return (
+              <Chip
+                key={p.prefix}
+                on={on}
+                title={`${p.label} (${p.prefix})`}
+                onClick={() => setMode(on ? '' : p.prefix)}
+                place="shrink-0"
+              >
+                <span className="font-mono font-semibold">{p.prefix}</span> {p.label}
+              </Chip>
+            )
+          })}
+        </Row>
+      </Surface>
+      <Surface
         id={listId}
         role="listbox"
         aria-label="Results"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2"
+        pad="sm"
+        tone="plain"
+        radius="none"
+        place="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
         {sections.map((sec, ix) => (
           <div
@@ -498,20 +522,22 @@ function ListView() {
             data-palette-owner={sec.owner?.account.renderKey}
             data-palette-identity={sec.owner?.local}
           >
-            {sec.owner &&
-              (sections[ix - 1]?.owner?.account !== sec.owner.account ||
-                sections[ix - 1]?.owner?.local !== sec.owner.local) && (
-                <h3 className="streamer px-3 pt-3 text-sm font-semibold">
-                  <Masked text={sec.owner.label} />
-                </h3>
-              )}
-            <p className="px-3 pt-2 pb-1 text-2xs font-medium tracking-wide text-on-surface-variant uppercase">
-              {sec.label}
-            </p>
+            <Surface pad="md" inset="bar" gap="sm" tone="plain" radius="none">
+              {sec.owner &&
+                (sections[ix - 1]?.owner?.account !== sec.owner.account ||
+                  sections[ix - 1]?.owner?.local !== sec.owner.local) && (
+                  <h3 className="streamer text-sm font-semibold">
+                    <Masked text={sec.owner.label} />
+                  </h3>
+                )}
+              <p className="text-2xs font-medium tracking-wide text-on-surface-variant uppercase">
+                {sec.label}
+              </p>
+            </Surface>
             {sec.items.map(({ item, hits }) => {
               const i = n++
               return (
-                <Row
+                <ResultRow
                   key={`${sec.group}:${sec.label}:${item.id}`}
                   id={`${listId}-${i}`}
                   item={item}
@@ -525,32 +551,51 @@ function ListView() {
           </div>
         ))}
         {apiMode && apiLoading && (
-          <p className="px-3 py-4 text-sm text-on-surface-variant">Loading the API…</p>
+          <Surface pad="lg" tone="plain" radius="none">
+            <p className="text-sm text-on-surface-variant">Loading the API…</p>
+          </Surface>
         )}
         {apiMode && apiError && (
-          <div className="flex items-center gap-2 px-3 py-4 text-sm text-on-surface-variant">
-            <span>{apiError}</span>
-            <Button onClick={() => void acct.apiDoc.loadApiDoc(true)}>Try again</Button>
-          </div>
+          <Surface pad="lg" tone="plain" radius="none">
+            <Row gap="sm">
+              <span className="text-sm text-on-surface-variant">{apiError}</span>
+              <Button onClick={() => void acct.apiDoc.loadApiDoc(true)}>Try again</Button>
+            </Row>
+          </Surface>
         )}
         {!items.length && !(apiMode && (apiLoading || apiError)) && (
-          <p className="px-3 py-6 text-center text-sm text-on-surface-variant">
-            {q ? 'Nothing matches.' : 'Nothing here yet.'}
-          </p>
+          <Surface pad="xl" tone="plain" radius="none">
+            <p className="text-center text-sm text-on-surface-variant">
+              {q ? 'Nothing matches.' : 'Nothing here yet.'}
+            </p>
+          </Surface>
         )}
         {mode === 'all' && q.length > 1 && indexMode === 'off' && (
-          <p className="px-3 pt-2 pb-1 text-xs text-on-surface-variant">
-            Turn on the index under Settings, Command palette, to search messages here.
-          </p>
+          <Surface pad="md" inset="bar" tone="plain" radius="none">
+            <p className="text-xs text-on-surface-variant">
+              Turn on the index under Settings, Command palette, to search messages here.
+            </p>
+          </Surface>
         )}
-      </div>
-      <div className="hidden shrink-0 items-center gap-4 border-t border-outline-variant px-4 py-2 text-2xs text-on-surface-variant md:flex">
-        <span>↑↓ Move</span>
-        <span>Enter Run</span>
-        <span>Esc Close</span>
-        {hasMasked(items[current], mask) && <span>Alt+Enter Show masked text</span>}
-        <span className="ml-auto">? Help</span>
-      </div>
+      </Surface>
+      <Surface
+        pad="lg"
+        inset="bar"
+        tone="plain"
+        radius="none"
+        border="top"
+        place="hidden shrink-0 md:flex"
+      >
+        <p className="text-2xs text-on-surface-variant">
+          <Row as="span" gap="lg">
+            <span>↑↓ Move</span>
+            <span>Enter Run</span>
+            <span>Esc Close</span>
+            {hasMasked(items[current], mask) && <span>Alt+Enter Show masked text</span>}
+            <span className="ml-auto">? Help</span>
+          </Row>
+        </p>
+      </Surface>
     </div>
   )
 }

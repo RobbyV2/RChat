@@ -7,6 +7,7 @@ import { FileText, Hash, Search } from 'lucide-react'
 import { useMask } from '../lib/store'
 import { dayEndTs, dayStartTs, endOfList } from '../lib/search'
 import { Button, Chip } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { MessageListSkeleton } from './skeletons'
 import { ShownAvatar, ShownName } from './shown_user'
@@ -33,31 +34,34 @@ function HitText({ r }: { r: SearchHit }) {
   const copy = useForwardAccess(r.copy?.message, { server: r.copy?.server })
   if (r.reveal)
     return (
-      <p className="mt-0.5 text-sm text-on-surface-variant">
+      <p className="text-sm text-on-surface-variant">
         <RevealChannelPreview target={r.reveal} />
       </p>
     )
   if (copy.access !== 'open')
     return (
-      <p className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1 text-sm text-on-surface-variant">
+      <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-sm text-on-surface-variant">
         <span className="italic">Forwarded message</span>
         {copy.target && <RevealChannelPreview target={copy.target} />}
       </p>
     )
+  if (!r.content && r.file === null) return null
   return (
-    <>
+    <Stack gap="3xs">
       {r.content && (
-        <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
+        <p className="line-clamp-2 text-sm break-words text-on-surface">
           <SpoilerLine parts={spoilerParts(plainStamps(r.content))} own={r.own && !r.forwarded} />
         </p>
       )}
       {r.file !== null && (
-        <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">
-          <FileText size={12} />
-          <PreviewFilename name={r.file} spoiler={r.fileSpoiler} own={r.own && !r.forwarded} />
+        <p className="text-xs text-on-surface-variant">
+          <Row as="span" gap="2xs">
+            <FileText size={12} />
+            <PreviewFilename name={r.file} spoiler={r.fileSpoiler} own={r.own && !r.forwarded} />
+          </Row>
         </p>
       )}
-    </>
+    </Stack>
   )
 }
 
@@ -196,15 +200,17 @@ export function SearchView({
     onChange: (value: string) => void,
     max?: string
   ) => (
-    <label className="flex items-center gap-1.5 text-xs text-on-surface-variant">
-      {label}
-      <input
-        type="date"
-        value={value}
-        max={max}
-        onChange={e => onChange(e.target.value)}
-        className="rounded-lg border border-outline bg-transparent px-2 py-1 text-base outline-none focus:border-primary md:text-xs"
-      />
+    <label className="text-xs text-on-surface-variant">
+      <Row as="span" gap="xs">
+        {label}
+        <input
+          type="date"
+          value={value}
+          max={max}
+          onChange={e => onChange(e.target.value)}
+          className="rounded-lg border border-outline bg-transparent px-2 py-1 text-base outline-none focus:border-primary md:text-xs"
+        />
+      </Row>
     </label>
   )
 
@@ -217,7 +223,7 @@ export function SearchView({
         closeTitle="Close search"
         onClose={onClose}
       />
-      <div className="flex shrink-0 flex-col gap-2 border-b border-outline-variant p-3">
+      <Surface pad="md" gap="sm" tone="plain" radius="none" border="bottom" place="shrink-0">
         <input
           value={q}
           onChange={e => setQ(e.target.value)}
@@ -253,61 +259,74 @@ export function SearchView({
           {dateField('after', after, setAfter)}
         </div>
         {note && <p className="text-xs text-on-surface-variant">{note}</p>}
-      </div>
+      </Surface>
       <div
         ref={listRef}
         onScroll={scrolled}
         className="flex-1 overflow-y-auto p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] [overflow-anchor:none]"
       >
         {!active && (
-          <p className="px-3 py-6 text-center text-sm text-on-surface-variant">
-            Type a query or pick a filter to search.
-          </p>
+          <Surface pad="xl" tone="plain" radius="none">
+            <p className="text-center text-sm text-on-surface-variant">
+              Type a query or pick a filter to search.
+            </p>
+          </Surface>
         )}
         {active && !loading && hits.length === 0 && !hasMore && (
-          <p className="px-3 py-6 text-center text-sm text-on-surface-variant">No results.</p>
+          <Surface pad="xl" tone="plain" radius="none">
+            <p className="text-center text-sm text-on-surface-variant">No results.</p>
+          </Surface>
         )}
         {first && <MessageListSkeleton seed="search" variant="search" label="Loading results" />}
         {hits.map(r => (
           <PreviewRow
             key={r.key}
             onOpen={r.onOpen}
-            className="block w-full rounded-xl px-3 py-2 text-left hover:bg-surface-container-high"
+            className="block w-full rounded-xl text-left hover:bg-surface-container-high"
           >
-            <p className="flex min-w-0 items-center gap-1 text-xs text-on-surface-variant">
-              <Hash size={12} className="shrink-0" />
-              <span className="truncate">
-                <Masked text={r.channel} own={r.ownPlace} />
-              </span>
-              <span className="shrink-0">·</span>
-              <span className="streamer truncate">
-                <Masked text={r.server} own={r.ownPlace} />
-              </span>
-            </p>
-            <div className="mt-1 flex min-w-0 items-center gap-2">
-              <HitAuthor r={r} />
-              <MessageTime ts={r.createdAt} className="shrink-0 text-xs text-on-surface-variant" />
-              {r.forwarded && (
-                <span className="text-xs">
-                  <ForwardedTag />
-                </span>
-              )}
-            </div>
-            <HitText r={r} />
+            <Surface pad="md" gap="2xs" tone="plain" radius="none">
+              <p className="text-xs text-on-surface-variant">
+                <Row as="span" gap="2xs">
+                  <Hash size={12} className="shrink-0" />
+                  <span className="truncate">
+                    <Masked text={r.channel} own={r.ownPlace} />
+                  </span>
+                  <span className="shrink-0">·</span>
+                  <span className="streamer truncate">
+                    <Masked text={r.server} own={r.ownPlace} />
+                  </span>
+                </Row>
+              </p>
+              <Row gap="sm">
+                <HitAuthor r={r} />
+                <MessageTime
+                  ts={r.createdAt}
+                  className="shrink-0 text-xs text-on-surface-variant"
+                />
+                {r.forwarded && (
+                  <span className="text-xs">
+                    <ForwardedTag />
+                  </span>
+                )}
+              </Row>
+              <HitText r={r} />
+            </Surface>
           </PreviewRow>
         ))}
         {active && hasMore && <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />}
         {stepped && !first && (hasMore || loading) && (
-          <div className="flex min-h-9 items-end justify-center">
+          <div className="flex min-h-9 items-center justify-center">
             {loading ? (
-              <p className="py-2 text-xs text-on-surface-variant">Searching</p>
+              <p className="text-xs text-on-surface-variant">Searching</p>
             ) : (
               <Button onClick={more}>Search older messages</Button>
             )}
           </div>
         )}
         {loading && !stepped && !first && (
-          <p className="px-3 py-2 text-center text-xs text-on-surface-variant">Searching</p>
+          <Surface pad="md" tone="plain" radius="none">
+            <p className="text-center text-xs text-on-surface-variant">Searching</p>
+          </Surface>
         )}
       </div>
     </div>

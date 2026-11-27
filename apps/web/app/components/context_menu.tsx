@@ -34,6 +34,7 @@ import { EDITABLE } from '../lib/follow'
 import { withActionElement } from '../lib/masked_reveal'
 import { dnd, type DragSpec } from './drag'
 import { IconButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Overlay, Sheet } from './ui'
 
 let press = idlePress
@@ -346,7 +347,7 @@ function Indicator({ it, size }: { it: MenuItem; size: number }) {
   return it.icon ? <it.icon size={size} aria-hidden className="shrink-0 opacity-80" /> : null
 }
 
-function Row({
+function MenuRow({
   it,
   level,
   index,
@@ -452,8 +453,14 @@ function Panel({
       className="fixed max-h-[calc(100dvh-1rem)] min-w-44 overflow-y-auto rounded-xl bg-surface-container-high py-2 shadow-elevation-2"
       onMouseDown={e => e.stopPropagation()}
     >
-      {header && <div className="mb-1 border-b border-outline-variant px-2 pb-2">{header}</div>}
-      {children}
+      <Stack gap="2xs">
+        {header && (
+          <Surface pad="sm" inset="bar" tone="plain" radius="none" border="bottom">
+            {header}
+          </Surface>
+        )}
+        <Stack gap="none">{children}</Stack>
+      </Stack>
     </div>
   )
 }
@@ -611,17 +618,21 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
         }}
       >
         {top ? (
-          <div className="flex items-center gap-1 border-b border-outline-variant px-2 pb-2">
-            <IconButton icon={ChevronLeft} label="Back" size="lg" onClick={back} />
-            <span className="truncate text-base font-medium text-on-surface">{top.label}</span>
-          </div>
+          <Surface pad="sm" inset="bar" tone="plain" radius="none" border="bottom">
+            <Row gap="2xs">
+              <IconButton icon={ChevronLeft} label="Back" size="lg" onClick={back} />
+              <span className="truncate text-base font-medium text-on-surface">{top.label}</span>
+            </Row>
+          </Surface>
         ) : (
           menu.header && (
-            <div className="border-b border-outline-variant px-4 pt-1 pb-3">{menu.header}</div>
+            <Surface pad="lg" inset="bar" tone="plain" radius="none" border="bottom">
+              {menu.header}
+            </Surface>
           )
         )}
         {items.map((it, i) => (
-          <Row
+          <MenuRow
             key={`${depth}:${i}`}
             it={it}
             level={depth}
@@ -655,7 +666,7 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
           header={level === 0 ? menu.header : undefined}
         >
           {items.map((it, i) => (
-            <Row
+            <MenuRow
               key={i}
               it={it}
               level={level}

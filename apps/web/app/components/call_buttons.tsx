@@ -9,6 +9,7 @@ import { ROUTE_LABEL, routeFor, type CallRoute } from '../lib/call_choice'
 import { fmtDuration } from '../lib/voice_layout'
 import { useStore } from '../lib/store'
 import type { DmSummary } from '../lib/types'
+import { Row } from './layout'
 
 export function DirectBadge({ label = 'Direct' }: { label?: string }) {
   return (
@@ -47,10 +48,12 @@ export function CallType({
   const label = video ? 'Video call' : 'Call'
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-on-surface-variant">
-      <span className="flex items-center gap-1.5 whitespace-nowrap">
+      <Row as="span" gap="xs">
         <Icon size={14} aria-hidden className="shrink-0" />
-        {incoming ? `Incoming ${label.toLowerCase()}` : label}
-      </span>
+        <span className="whitespace-nowrap">
+          {incoming ? `Incoming ${label.toLowerCase()}` : label}
+        </span>
+      </Row>
       {chip ??
         (p2p ? (
           <DirectBadge label={ROUTE_LABEL.p2p} />
@@ -87,7 +90,7 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
       { kind: 'call', dm, video },
       {
         header: (
-          <span className="px-2 text-xs font-medium text-on-surface-variant">
+          <span className="text-xs font-medium text-on-surface-variant">
             {video ? 'Start a video call' : 'Start a call'}
           </span>
         ),
@@ -139,9 +142,9 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
 // Call and Video, each with a chevron to pick how it connects.
 export function CallButtons({ dm }: { dm: DmSummary }) {
   return (
-    <div className="flex items-center gap-1">
+    <Row gap="2xs">
       <SplitCall dm={dm} video={false} />
       <SplitCall dm={dm} video />
-    </div>
+    </Row>
   )
 }

@@ -28,6 +28,7 @@ import { ShownAvatar, ShownName } from './shown_user'
 import { MessageTime } from './timestamp'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { Button, IconButton } from './controls'
+import { Row, Stack, Surface } from './layout'
 import { Masked, Sentinel, useOwn } from './ui'
 
 function ThreadsToggle({ threads, className }: { threads: Threads; className: string }) {
@@ -156,62 +157,65 @@ function ThreadEntry({
         data-thread-row={row.key}
         onOpen={onOpen}
         title="Open thread"
-        className="rounded-xl border border-outline-variant bg-surface-container px-3 py-2.5 hover:bg-surface-container-highest"
-        contentClassName="flex min-w-0 flex-col gap-1"
+        className="rounded-xl border border-outline-variant bg-surface-container hover:bg-surface-container-highest"
       >
-        <span className="flex min-w-0 items-center gap-2">
-          {peer ? (
-            <KeyAvatar
-              ik={m.author.username}
-              size={24}
-              kind={m.author.avatar_kind}
-              bg={m.author.avatar_color}
-            />
-          ) : (
-            <ShownAvatar user={m.author} server={server} size={24} />
-          )}
-          <span className="streamer min-w-0 truncate text-sm font-medium text-on-surface">
+        <Surface pad="md" gap="2xs" tone="plain" radius="none">
+          <Row as="span" gap="sm">
             {peer ? (
-              <Masked text={m.author.display_name} by={m.author.username} />
+              <KeyAvatar
+                ik={m.author.username}
+                size={24}
+                kind={m.author.avatar_kind}
+                bg={m.author.avatar_color}
+              />
             ) : (
-              <ShownName user={m.author} server={server} />
+              <ShownAvatar user={m.author} server={server} size={24} />
+            )}
+            <span className="streamer min-w-0 truncate text-sm font-medium text-on-surface">
+              {peer ? (
+                <Masked text={m.author.display_name} by={m.author.username} />
+              ) : (
+                <ShownName user={m.author} server={server} />
+              )}
+            </span>
+            <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
+            {row.pinged && (
+              <span
+                data-thread-pinged
+                role="img"
+                title="Unread mentions"
+                aria-label="Unread mentions"
+                className="ml-auto size-2.5 shrink-0 rounded-full bg-danger"
+              />
+            )}
+          </Row>
+          <span className="min-w-0 text-sm text-on-surface-variant">
+            {blocked ? (
+              <span className="italic">Blocked message</span>
+            ) : closed ? (
+              <span className="flex min-w-0 flex-wrap items-center gap-x-1">
+                <span className="italic">Forwarded message</span>
+                {target && <RevealChannelPreview target={target} />}
+              </span>
+            ) : line.label ? (
+              <span className="italic">{line.label}</span>
+            ) : (
+              <span className="line-clamp-2 break-words">
+                <SpoilerLine parts={snippetParts(plainStamps(line.text))} own={own} />
+              </span>
             )}
           </span>
-          <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
-          {row.pinged && (
-            <span
-              data-thread-pinged
-              role="img"
-              title="Unread mentions"
-              aria-label="Unread mentions"
-              className="ml-auto size-2.5 shrink-0 rounded-full bg-danger"
-            />
-          )}
-        </span>
-        <span className="min-w-0 text-sm text-on-surface-variant">
-          {blocked ? (
-            <span className="italic">Blocked message</span>
-          ) : closed ? (
-            <span className="flex min-w-0 flex-wrap items-center gap-x-1">
-              <span className="italic">Forwarded message</span>
-              {target && <RevealChannelPreview target={target} />}
+          <Row as="span" gap="xs">
+            <MessageSquareText size={12} className="shrink-0 text-primary" />
+            <span className="text-xs font-medium text-primary">{repliesText(row.replies)}</span>
+            <span aria-hidden className="text-xs text-on-surface-variant">
+              ·
             </span>
-          ) : line.label ? (
-            <span className="italic">{line.label}</span>
-          ) : (
-            <span className="line-clamp-2 break-words">
-              <SpoilerLine parts={snippetParts(plainStamps(line.text))} own={own} />
+            <span className="truncate text-xs text-on-surface-variant">
+              Last reply <MessageTime ts={row.lastAt} />
             </span>
-          )}
-        </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-on-surface-variant">
-          <MessageSquareText size={12} className="shrink-0 text-primary" />
-          <span className="font-medium text-primary">{repliesText(row.replies)}</span>
-          <span aria-hidden>·</span>
-          <span className="truncate">
-            Last reply <MessageTime ts={row.lastAt} />
-          </span>
-        </span>
+          </Row>
+        </Surface>
       </PreviewRow>
     </li>
   )
@@ -246,7 +250,7 @@ export function ThreadsPanel({
       sheetClose
       onClose={onClose}
     >
-      <div className="shrink-0 px-3 pb-3">
+      <Surface pad="md" tone="plain" radius="none" place="shrink-0">
         <div className="flex items-center gap-2 rounded-full border border-outline px-3 focus-within:border-primary">
           <Search size={16} className="shrink-0 text-on-surface-variant" />
           <input
@@ -259,38 +263,37 @@ export function ThreadsPanel({
             className="h-11 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant md:h-9 md:text-sm [&::-webkit-search-cancel-button]:hidden"
           />
           {query !== '' && (
-            <IconButton
-              icon={X}
-              label="Clear search"
-              size="sm"
-              onClick={() => search('')}
-              place="-mr-1.5 pointer-coarse:-mr-2.5"
-            />
+            <IconButton icon={X} label="Clear search" size="sm" onClick={() => search('')} />
           )}
         </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-outline-variant px-3 pt-3 pb-3">
+      </Surface>
+      <Surface
+        pad="md"
+        tone="plain"
+        radius="none"
+        border="top"
+        place="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      >
         {rows === null && !failed && (
-          <p className="px-1 py-6 text-center text-sm text-on-surface-variant">Loading threads</p>
+          <Surface pad="xl" tone="plain" radius="none">
+            <p className="text-center text-sm text-on-surface-variant">Loading threads</p>
+          </Surface>
         )}
         {rows === null && failed && (
-          <div className="flex flex-col items-center gap-2 py-6 text-sm text-on-surface-variant">
-            <span>Couldn&apos;t load threads.</span>
+          <Surface pad="xl" gap="sm" align="center" tone="plain" radius="none">
+            <span className="text-sm text-on-surface-variant">Couldn&apos;t load threads.</span>
             <Button onClick={retry}>Retry</Button>
-          </div>
+          </Surface>
         )}
         {rows !== null && rows.length === 0 && (
-          <div
-            data-threads-empty
-            className="flex flex-col items-center gap-2 px-4 py-8 text-center"
-          >
+          <Surface data-threads-empty pad="2xl" gap="sm" align="center" tone="plain" radius="none">
             <MessagesSquare size={36} className="text-on-surface-variant opacity-70" />
-            <p className="text-base font-semibold text-on-surface">{empty.title}</p>
-            <p className="text-sm text-on-surface-variant">{empty.body}</p>
-          </div>
+            <p className="text-center text-base font-semibold text-on-surface">{empty.title}</p>
+            <p className="text-center text-sm text-on-surface-variant">{empty.body}</p>
+          </Surface>
         )}
         {rows !== null && rows.length > 0 && (
-          <ul className="flex flex-col gap-2" aria-label={THREADS_TITLE}>
+          <Stack as="ul" gap="sm" aria-label={THREADS_TITLE}>
             {rows.map(r => (
               <ThreadEntry
                 key={r.key}
@@ -301,10 +304,10 @@ export function ThreadsPanel({
                 onJump={() => onJump(r)}
               />
             ))}
-          </ul>
+          </Stack>
         )}
         {rows !== null && next !== null && <Sentinel key={rows.length} onVisible={more} />}
-      </div>
+      </Surface>
     </HeaderPopover>
   )
 }

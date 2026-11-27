@@ -58,6 +58,7 @@ import { canEdit as ownEditable } from '../lib/sed'
 import { MessageEditor, editAction } from './message_editor'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
+import { Row, Surface } from './layout'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 
 // The name color and role icon of an author, as `AuthorRow` props.
@@ -115,11 +116,15 @@ export function ThreadPanelView({
           <div ref={contentRef}>
             {head}
             {root}
-            <div className="my-2 flex items-center gap-2 px-4 text-xs text-on-surface-variant">
-              <span className="h-px flex-1 bg-outline-variant" />
-              {count} {count === 1 ? 'reply' : 'replies'}
-              <span className="h-px flex-1 bg-outline-variant" />
-            </div>
+            <Surface pad="lg" inset="bar" tone="plain" radius="none">
+              <Row gap="sm">
+                <span className="h-px flex-1 bg-outline-variant" />
+                <span className="text-xs text-on-surface-variant">
+                  {count} {count === 1 ? 'reply' : 'replies'}
+                </span>
+                <span className="h-px flex-1 bg-outline-variant" />
+              </Row>
+            </Surface>
             {replies}
             {tail}
           </div>

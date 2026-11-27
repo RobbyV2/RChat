@@ -1,6 +1,7 @@
 'use client'
 import { MicOff, VolumeX } from 'lucide-react'
 import { voiceStatusText, type VoiceStatus } from '../lib/voice_status'
+import { Row } from './layout'
 
 // A voice member's mic and sound icons: in sidebar rows (`row`), or on a grid tile's name pill
 // (`tile`), where a forced mute keeps its red badge.
@@ -29,7 +30,7 @@ export function VoiceStatusIcons({
   const sound = tile ? '' : 'text-on-surface-variant'
   const stroke = tile ? 2.5 : 2
   return (
-    <span data-voice-status className="flex shrink-0 items-center gap-1">
+    <Row as="span" gap="2xs" place="shrink-0" data-voice-status>
       {text.mic !== null && (
         <span role="img" title={text.mic} aria-label={text.mic} className={`flex shrink-0 ${mic}`}>
           <MicOff size={size} strokeWidth={stroke} aria-hidden />
@@ -45,6 +46,6 @@ export function VoiceStatusIcons({
           <VolumeX size={size} strokeWidth={stroke} aria-hidden />
         </span>
       )}
-    </span>
+    </Row>
   )
 }

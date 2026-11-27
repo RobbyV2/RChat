@@ -73,6 +73,7 @@ import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { Dialog, Masked, useEscape, useOwn } from './ui'
+import { Row, Stack, Surface } from './layout'
 import { NameWithUsername } from './display_name'
 import { tileName } from '../lib/display_name'
 import { ownsP2pServer } from '../lib/p2p/server/types'
@@ -601,7 +602,7 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
           : hangupCall()
   const inVoice = voice !== null || roomVoice !== null
   return (
-    <div className={`flex items-center ${lg ? 'gap-2 sm:gap-3' : 'w-full gap-1.5'}`}>
+    <Row gap={lg ? 'md' : 'xs'} place={lg ? undefined : 'w-full'}>
       <button
         title={micTitle}
         aria-label={micTitle}
@@ -653,7 +654,7 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
           <PhoneOff size={icon} />
         </button>
       )}
-    </div>
+    </Row>
   )
 }
 
@@ -671,32 +672,36 @@ function StageHeader({
   badge: ReactNode
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-2 px-4 pt-3 text-xs text-on-surface-variant">
-      <span
-        aria-hidden
-        className={`h-2 w-2 shrink-0 rounded-full ${
-          active ? 'bg-status-green' : 'bg-status-yellow motion-safe:animate-pulse'
-        }`}
-      />
-      <span className="flex min-w-0 items-center gap-1">
-        {active ? 'In call with' : 'Calling'}
-        <span className="streamer truncate font-medium text-on-surface">
-          {name}
-          {!active && '…'}
-        </span>
-      </span>
-      <span aria-hidden>·</span>
-      <span className="shrink-0">{video ? 'Video call' : 'Voice call'}</span>
-      {badge}
-      {active && since !== null && (
-        <span
-          title="Call length"
-          className="ml-auto shrink-0 font-medium text-on-surface tabular-nums"
-        >
-          <CallDuration from={since} />
-        </span>
-      )}
-    </div>
+    <Surface pad="lg" inset="bar" tone="plain" radius="none" place="shrink-0">
+      <div className="text-xs text-on-surface-variant">
+        <Row gap="sm">
+          <span
+            aria-hidden
+            className={`h-2 w-2 shrink-0 rounded-full ${
+              active ? 'bg-status-green' : 'bg-status-yellow motion-safe:animate-pulse'
+            }`}
+          />
+          <Row as="span" gap="2xs">
+            {active ? 'In call with' : 'Calling'}
+            <span className="streamer truncate font-medium text-on-surface">
+              {name}
+              {!active && '…'}
+            </span>
+          </Row>
+          <span aria-hidden>·</span>
+          <span className="shrink-0">{video ? 'Video call' : 'Voice call'}</span>
+          {badge}
+          {active && since !== null && (
+            <span
+              title="Call length"
+              className="ml-auto shrink-0 font-medium text-on-surface tabular-nums"
+            >
+              <CallDuration from={since} />
+            </span>
+          )}
+        </Row>
+      </div>
+    </Surface>
   )
 }
 
@@ -715,7 +720,7 @@ const QUALITY: Record<LinkQuality, { label: string; cls: string; Icon: typeof Si
 
 // How far a P2P voice mesh goes, past `voice.fitAudio` people (`fitVideo` with video). Joining
 // is never blocked.
-export function MeshNotice({ users, className }: { users: VoiceUser[]; className?: string }) {
+export function MeshNotice({ users, at }: { users: VoiceUser[]; at: 'stage' | 'dock' }) {
   const identity = useP2pApp()
   const p2pApp = identity?.p2p
 
@@ -729,14 +734,23 @@ export function MeshNotice({ users, className }: { users: VoiceUser[]; className
     )
   )
     return null
-  return (
+  const note = (
     <p
       role="note"
       data-p2p-voice-notice
-      className={`rounded-lg border border-dashed border-tertiary bg-tertiary-container/40 px-2.5 py-1.5 text-xs text-on-surface ${className ?? ''}`}
+      className="rounded-lg border border-dashed border-tertiary bg-tertiary-container/40 px-2.5 py-1.5 text-xs text-on-surface"
     >
       {voiceNotice(fit)}
     </p>
+  )
+  return at === 'stage' ? (
+    <Surface pad="lg" inset="bar" tone="plain" radius="none" align="start" place="shrink-0">
+      {note}
+    </Surface>
+  ) : (
+    <Surface pad="2xs" tone="plain" radius="none">
+      {note}
+    </Surface>
   )
 }
 
@@ -849,79 +863,81 @@ function VoiceDockBody() {
   const { Icon } = status
   return (
     <div className="shrink-0 border-t border-outline-variant bg-surface-container px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-      <div className="flex items-center gap-2 px-1">
-        <span title={status.label} className={`flex shrink-0 ${status.cls}`}>
-          <Icon size={18} strokeWidth={2.5} />
-        </span>
-        <div className="min-w-0 flex-1">
-          {account !== client.shown() && <AccountLabel />}
-          <p className={`truncate text-sm leading-tight font-semibold ${status.cls}`}>
-            {status.label}
-          </p>
-          <button
-            title={`Go to ${inVoice ? 'voice channel' : 'call'}`}
-            onClick={() => {
-              if (identity && (roomVoice || roomCall)) {
-                if (claim && account !== client.shown()) {
-                  client.calls.expand(claim)
-                  return
-                }
-                account.identities.show(identity)
-              }
-              if ((voice || call) && account !== client.shown()) client.show(account, 'none')
-              if (voice) void openChannel(voice.server, voice.channelId)
-              else if (roomVoice) p2pServer?.open(roomVoice.room, roomVoice.ch)
-              else if (roomCall) {
-                p2pApp?.openHome()
-                void p2pDm?.openDm(roomCall.peer)
-              } else if (call) void openDm(call.dmId)
-            }}
-            className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs leading-tight text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
-          >
-            {roomVoice && <P2pBadge />}
-            <span className={`streamer truncate ${roomVoice ? 'max-w-[60%] shrink-0' : ''}`}>
-              <DockPlace place={place} peer={dmPeer} />
+      <Stack gap="sm">
+        <Surface pad="2xs" tone="plain" radius="none">
+          <Row gap="sm">
+            <span title={status.label} className={`flex shrink-0 ${status.cls}`}>
+              <Icon size={18} strokeWidth={2.5} />
             </span>
-            {roomCall && <P2pBadge />}
-            {voice && detail && (
-              <>
-                <span className="shrink-0">/</span>
-                <span className="streamer truncate">
-                  <Masked text={detail.display_name} by={detail.creator} />
+            <div className="min-w-0 flex-1">
+              {account !== client.shown() && <AccountLabel />}
+              <p className={`truncate text-sm leading-tight font-semibold ${status.cls}`}>
+                {status.label}
+              </p>
+              <button
+                title={`Go to ${inVoice ? 'voice channel' : 'call'}`}
+                onClick={() => {
+                  if (identity && (roomVoice || roomCall)) {
+                    if (claim && account !== client.shown()) {
+                      client.calls.expand(claim)
+                      return
+                    }
+                    account.identities.show(identity)
+                  }
+                  if ((voice || call) && account !== client.shown()) client.show(account, 'none')
+                  if (voice) void openChannel(voice.server, voice.channelId)
+                  else if (roomVoice) p2pServer?.open(roomVoice.room, roomVoice.ch)
+                  else if (roomCall) {
+                    p2pApp?.openHome()
+                    void p2pDm?.openDm(roomCall.peer)
+                  } else if (call) void openDm(call.dmId)
+                }}
+                className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs leading-tight text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                {roomVoice && <P2pBadge />}
+                <span className={`streamer truncate ${roomVoice ? 'max-w-[60%] shrink-0' : ''}`}>
+                  <DockPlace place={place} peer={dmPeer} />
                 </span>
-              </>
-            )}
-            {roomVoice && sv && (
-              <>
-                <span className="shrink-0">/</span>
-                <span className="streamer min-w-0 truncate">
-                  <Masked text={sv.name} own={ownSv} />
-                </span>
-              </>
-            )}
-          </button>
-        </div>
-        <button
-          title={inVoice ? 'Disconnect' : 'Leave call'}
-          aria-label={inVoice ? 'Disconnect' : 'Leave call'}
-          onClick={() =>
-            voice
-              ? leaveVoice()
-              : roomVoice
-                ? p2pVoice?.leave()
-                : roomCall
-                  ? peerCall?.hangup()
-                  : hangupCall()
-          }
-          className={`${ctlBase} h-8 w-8 text-on-surface-variant hover:bg-error/15 hover:text-error`}
-        >
-          <PhoneOff size={18} />
-        </button>
-      </div>
-      {roomVoice && <MeshNotice users={users} className="mx-1 mt-2" />}
-      <div className="mt-2">
+                {roomCall && <P2pBadge />}
+                {voice && detail && (
+                  <>
+                    <span className="shrink-0">/</span>
+                    <span className="streamer truncate">
+                      <Masked text={detail.display_name} by={detail.creator} />
+                    </span>
+                  </>
+                )}
+                {roomVoice && sv && (
+                  <>
+                    <span className="shrink-0">/</span>
+                    <span className="streamer min-w-0 truncate">
+                      <Masked text={sv.name} own={ownSv} />
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
+            <button
+              title={inVoice ? 'Disconnect' : 'Leave call'}
+              aria-label={inVoice ? 'Disconnect' : 'Leave call'}
+              onClick={() =>
+                voice
+                  ? leaveVoice()
+                  : roomVoice
+                    ? p2pVoice?.leave()
+                    : roomCall
+                      ? peerCall?.hangup()
+                      : hangupCall()
+              }
+              className={`${ctlBase} h-8 w-8 text-on-surface-variant hover:bg-error/15 hover:text-error`}
+            >
+              <PhoneOff size={18} />
+            </button>
+          </Row>
+        </Surface>
+        {roomVoice && <MeshNotice users={users} at="dock" />}
         <CallControls size="sm" />
-      </div>
+      </Stack>
     </div>
   )
 }
@@ -984,43 +1000,48 @@ function SharePill() {
   const toggleShare = useStore(s => s.toggleShare)
   if (!sharing) return null
   return (
-    <div className="flex shrink-0 justify-center px-3 pt-3 sm:px-4">
+    <Surface pad="lg" inset="bar" tone="plain" radius="none" align="center" place="shrink-0">
       <div
         role="status"
-        className={`flex max-w-full min-w-0 items-center gap-2.5 bg-surface-container-high py-1 pr-1 pl-3 text-sm text-on-surface shadow-elevation-2 ${
+        className={`max-w-full min-w-0 bg-surface-container-high py-1 pr-1 pl-3 text-sm text-on-surface shadow-elevation-2 ${
           audioNote ? 'rounded-3xl' : 'rounded-full'
         }`}
       >
-        <span aria-hidden className="relative flex h-2.5 w-2.5 shrink-0">
-          <span className="absolute inset-0 rounded-full bg-danger/60 motion-safe:animate-ring" />
-          <span className="relative h-2.5 w-2.5 rounded-full bg-danger" />
-        </span>
-        <span className="flex min-w-0 flex-col">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <Monitor size={15} aria-hidden className="shrink-0 text-on-surface-variant" />
-            <span className="truncate">You&apos;re sharing your screen</span>
+        <Row gap="sm">
+          <span aria-hidden className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="absolute inset-0 rounded-full bg-danger/60 motion-safe:animate-ring" />
+            <span className="relative h-2.5 w-2.5 rounded-full bg-danger" />
           </span>
-          {audioNote && (
-            <span
-              data-share-audio-note
-              title="This browser can't keep the call's own sound out of system audio, so it isn't sent, or everyone would hear an echo. Share a tab to include its audio."
-              className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-on-surface-variant"
-            >
-              <VolumeOff size={13} aria-hidden className="shrink-0" />
-              <span className="truncate">System audio isn&apos;t shared on this browser</span>
-            </span>
-          )}
-        </span>
-        <button
-          title="Stop sharing"
-          onClick={() => void toggleShare()}
-          className={`${ctlBase} h-7 shrink-0 gap-1 bg-danger px-3 text-xs font-semibold text-on-danger hover:brightness-110`}
-        >
-          <ScreenShareOff size={14} aria-hidden />
-          Stop
-        </button>
+          <Stack as="span" gap="none">
+            <Row as="span" gap="xs">
+              <Monitor size={15} aria-hidden className="shrink-0 text-on-surface-variant" />
+              <span className="truncate">You&apos;re sharing your screen</span>
+            </Row>
+            {audioNote && (
+              <Row
+                as="span"
+                gap="xs"
+                data-share-audio-note
+                title="This browser can't keep the call's own sound out of system audio, so it isn't sent, or everyone would hear an echo. Share a tab to include its audio."
+              >
+                <VolumeOff size={13} aria-hidden className="shrink-0 text-on-surface-variant" />
+                <span className="truncate text-xs leading-4 text-on-surface-variant">
+                  System audio isn&apos;t shared on this browser
+                </span>
+              </Row>
+            )}
+          </Stack>
+          <button
+            title="Stop sharing"
+            onClick={() => void toggleShare()}
+            className={`${ctlBase} h-7 shrink-0 gap-1 bg-danger px-3 text-xs font-semibold text-on-danger hover:brightness-110`}
+          >
+            <ScreenShareOff size={14} aria-hidden />
+            Stop
+          </button>
+        </Row>
       </div>
-    </div>
+    </Surface>
   )
 }
 
@@ -1326,41 +1347,45 @@ export function VoiceGrid({
         />
       )}
       {dmId !== undefined && forDm && (
-        <div className="flex shrink-0 items-center gap-2 px-4 pt-3 text-xs text-on-surface-variant">
-          <span
-            aria-hidden
-            className={`h-2 w-2 shrink-0 rounded-full ${
-              forDm.state === 'active'
-                ? 'bg-status-green'
-                : 'bg-status-yellow motion-safe:animate-pulse'
-            }`}
-          />
-          <span className="flex min-w-0 items-center gap-1">
-            {forDm.state === 'active' ? 'In call with' : 'Calling'}
-            <span className="streamer truncate font-medium text-on-surface">
-              {dm ? <NameWithUsername user={dm.other} /> : <Masked text={pendingOther ?? ''} />}
-              {forDm.state === 'ringing' && '…'}
-            </span>
-          </span>
-          <span aria-hidden>·</span>
-          <span className="shrink-0">{forDm.video ? 'Video call' : 'Voice call'}</span>
-          {p2pKind && <DirectBadge />}
-          {forDm.state === 'active' && forDm.since !== null && (
-            <span
-              title="Call length"
-              className="ml-auto shrink-0 font-medium text-on-surface tabular-nums"
-            >
-              <CallDuration from={forDm.since} />
-            </span>
-          )}
-        </div>
+        <Surface pad="lg" inset="bar" tone="plain" radius="none" place="shrink-0">
+          <div className="text-xs text-on-surface-variant">
+            <Row gap="sm">
+              <span
+                aria-hidden
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  forDm.state === 'active'
+                    ? 'bg-status-green'
+                    : 'bg-status-yellow motion-safe:animate-pulse'
+                }`}
+              />
+              <Row as="span" gap="2xs">
+                {forDm.state === 'active' ? 'In call with' : 'Calling'}
+                <span className="streamer truncate font-medium text-on-surface">
+                  {dm ? <NameWithUsername user={dm.other} /> : <Masked text={pendingOther ?? ''} />}
+                  {forDm.state === 'ringing' && '…'}
+                </span>
+              </Row>
+              <span aria-hidden>·</span>
+              <span className="shrink-0">{forDm.video ? 'Video call' : 'Voice call'}</span>
+              {p2pKind && <DirectBadge />}
+              {forDm.state === 'active' && forDm.since !== null && (
+                <span
+                  title="Call length"
+                  className="ml-auto shrink-0 font-medium text-on-surface tabular-nums"
+                >
+                  <CallDuration from={forDm.since} />
+                </span>
+              )}
+            </Row>
+          </div>
+        </Surface>
       )}
       {channel?.topic && (
-        <div className="flex shrink-0 px-4 pt-3">
+        <Surface pad="lg" inset="bar" tone="plain" radius="none" align="start" place="shrink-0">
           <ChannelTopic channel={channel} variant="voice" />
-        </div>
+        </Surface>
       )}
-      {forVoice && <MeshNotice users={voiceUsers} className="mx-4 mt-3 self-start" />}
+      {forVoice && <MeshNotice users={voiceUsers} at="stage" />}
       {joined && <SharePill />}
       <div
         ref={area}
@@ -1369,14 +1394,14 @@ export function VoiceGrid({
         }`}
       >
         {focused ? (
-          <div className="flex h-full min-h-0 flex-col gap-2">
+          <Stack gap="sm" place="h-full min-h-0">
             <div className="min-h-0 flex-1">{tile(focused, 'focus')}</div>
             {others.length > 0 && (
               <div className="flex shrink-0 justify-center-safe gap-2 overflow-x-auto pb-1">
                 {others.map(t => tile(t, 'strip'))}
               </div>
             )}
-          </div>
+          </Stack>
         ) : tiles.length > 0 ? (
           <div
             style={{ gap: GAP }}
@@ -1385,9 +1410,9 @@ export function VoiceGrid({
             {box.width > 0 && tiles.map(t => tile(t, 'grid'))}
           </div>
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-            <p className="text-lg font-semibold text-on-surface">No one is here yet</p>
-            <p className="text-sm text-on-surface-variant">
+          <Stack gap="2xs" align="center" justify="center" place="h-full">
+            <p className="text-center text-lg font-semibold text-on-surface">No one is here yet</p>
+            <p className="text-center text-sm text-on-surface-variant">
               {mine === null && !forVoice
                 ? `${ask} to join voice.`
                 : shut !== null && !forVoice
@@ -1396,7 +1421,7 @@ export function VoiceGrid({
                     ? 'P2P is open in another tab.'
                     : 'Join to start talking.'}
             </p>
-          </div>
+          </Stack>
         )}
       </div>
       <div
@@ -1501,34 +1526,38 @@ function CallBannerBody() {
     return (
       <div
         role="status"
-        className="pointer-events-auto flex shrink-0 max-w-[calc(100vw-2rem)] items-center gap-3 rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
+        className="pointer-events-auto shrink-0 max-w-[calc(100vw-2rem)] rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
       >
-        <button
-          title="Go to call"
-          onClick={go}
-          className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
-        >
-          {avatar(28)}
-          <span className="flex min-w-0 flex-col text-left">
-            <span className="flex min-w-0 items-center gap-1 text-sm">
-              Calling
-              <span className="streamer truncate font-medium">
-                <NameWithUsername user={other} />
+        <Row gap="md">
+          <button
+            title="Go to call"
+            onClick={go}
+            className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            {avatar(28)}
+            <span className="flex min-w-0 flex-col text-left">
+              <span className="text-sm">
+                <Row as="span" gap="2xs">
+                  Calling
+                  <span className="streamer truncate font-medium">
+                    <NameWithUsername user={other} />
+                  </span>
+                  …
+                </Row>
               </span>
-              …
+              {!shown && <AccountLabel />}
+              <CallType video={call.video} p2p={p2pCall} />
             </span>
-            {!shown && <AccountLabel />}
-            <CallType video={call.video} p2p={p2pCall} />
-          </span>
-        </button>
-        <button
-          title="Cancel call"
-          aria-label="Cancel call"
-          onClick={hangupCall}
-          className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
-        >
-          <PhoneOff size={16} />
-        </button>
+          </button>
+          <button
+            title="Cancel call"
+            aria-label="Cancel call"
+            onClick={hangupCall}
+            className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
+          >
+            <PhoneOff size={16} />
+          </button>
+        </Row>
       </div>
     )
   return (
@@ -1664,33 +1693,37 @@ function ContactCallBanner() {
     return (
       <div
         role="status"
-        className="pointer-events-auto flex shrink-0 max-w-[calc(100vw-2rem)] items-center gap-3 rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
+        className="pointer-events-auto shrink-0 max-w-[calc(100vw-2rem)] rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
       >
-        <button
-          title="Go to call"
-          onClick={go}
-          className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
-        >
-          {avatar(28)}
-          <span className="flex min-w-0 flex-col text-left">
-            <span className="flex min-w-0 items-center gap-1 text-sm">
-              Calling
-              <span className="streamer truncate font-medium">
-                <Masked text={name} />
+        <Row gap="md">
+          <button
+            title="Go to call"
+            onClick={go}
+            className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            {avatar(28)}
+            <span className="flex min-w-0 flex-col text-left">
+              <span className="text-sm">
+                <Row as="span" gap="2xs">
+                  Calling
+                  <span className="streamer truncate font-medium">
+                    <Masked text={name} />
+                  </span>
+                  …
+                </Row>
               </span>
-              …
+              <CallType video={c.video} p2p chip={<P2pBadge />} />
             </span>
-            <CallType video={c.video} p2p chip={<P2pBadge />} />
-          </span>
-        </button>
-        <button
-          title="Cancel call"
-          aria-label="Cancel call"
-          onClick={() => peerCall?.hangup()}
-          className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
-        >
-          <PhoneOff size={16} />
-        </button>
+          </button>
+          <button
+            title="Cancel call"
+            aria-label="Cancel call"
+            onClick={() => peerCall?.hangup()}
+            className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
+          >
+            <PhoneOff size={16} />
+          </button>
+        </Row>
       </div>
     )
   return (

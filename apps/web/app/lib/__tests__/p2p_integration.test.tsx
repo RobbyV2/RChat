@@ -2509,7 +2509,9 @@ describe('P2P placeholders while loading', () => {
     p2pState({ enabled: true, account: 'bob', loading: true })
     const html = render(<ChannelSidebar />)
     const part = html.slice(html.indexOf('data-p2p-dms'))
-    expect(part).toContain('<div hidden="" class="contents"><div role="status"')
+    expect(/<div hidden="" class="contents"><div class="[^"]*"><div role="status"/.test(part)).toBe(
+      true
+    )
     expect(part).toContain('aria-label="Loading contacts"')
     p2pState({ enabled: true, account: 'bob', me: BOB, countsLoaded: {} })
     const started = render(<ChannelSidebar />)
