@@ -33,6 +33,7 @@ export function useLiveSessions() {
 export const useStoreApi = () => useAccount().store
 export const useConn = () => useAccount().conn
 export const useApi = () => useAccount().api
+export const useClock = () => useAccount().time
 
 export function accountBoundStore<S>(
   select: (account: AccountSession) => StoreApi<S>

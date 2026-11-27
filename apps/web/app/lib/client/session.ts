@@ -24,6 +24,7 @@ import { client } from './client'
 import { P2pIdentities } from './p2p_identities'
 import { AccountTabLock } from './tab_lock'
 import { KeyScope } from './keys'
+import { time } from '../platform/time'
 
 export type AccountId = string
 
@@ -31,6 +32,8 @@ export type AccountMode = 'shown' | 'live' | 'lite' | 'parked'
 export class AccountSession {
   mode: AccountMode = 'shown'
   socketAllowed = true
+  // The clock and timers everything in this account runs on.
+  readonly time = time()
   readonly counts = createAccountCounts(this)
   readonly identities = new P2pIdentities(this)
   readonly channelEdit = createChannelEdit()

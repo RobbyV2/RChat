@@ -26,6 +26,7 @@ export type { NoticeHandle, NoticeOptions, Notifier, Permission } from './notifi
 export type { ShareData, ShareResult, Sharing } from './sharing'
 export type { QrScanner } from './qr_scanner'
 export { mobileBrowser, pausesHidden } from './background'
+export { deviceTime, setTime, time } from './time'
 export {
   desktopInfo,
   inShell,

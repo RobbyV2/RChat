@@ -1,38 +1,41 @@
+import type { Cancel } from './clock'
+import { time } from './platform/time'
 import { tickDelay } from './timestamps'
 
 // One clock for every relative timestamp on screen. Each live pill registers its target time;
 // the clock ticks every second while one is under a minute away, otherwise every minute.
 const targets = new Map<symbol, number>()
 const listeners = new Set<() => void>()
-let now = Date.now()
-let timer: ReturnType<typeof setTimeout> | null = null
+let now = time().now()
+let timer: Cancel | null = null
 
 const dayListeners = new Set<() => void>()
 let dayVersion = 0
-let dayTimer: ReturnType<typeof setTimeout> | null = null
+let dayTimer: Cancel | null = null
+
+// Milliseconds until shortly after the next local midnight.
+const untilTomorrow = () => {
+  const t = new Date(time().now())
+  const wait = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1).getTime() - t.getTime()
+  return Math.max(1000, wait + 500)
+}
 
 export const refreshDay = () => {
-  if (dayTimer !== null) clearTimeout(dayTimer)
+  dayTimer?.()
   dayTimer = null
   dayVersion++
   for (const l of dayListeners) l()
   if (!dayListeners.size) return
-  const t = new Date()
-  const wait = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1).getTime() - t.getTime()
-  dayTimer = setTimeout(refreshDay, Math.max(1000, wait + 500))
+  dayTimer = time().after(untilTomorrow(), refreshDay)
 }
 
 export const subscribeDay = (l: () => void) => {
   dayListeners.add(l)
-  if (dayTimer === null) {
-    const t = new Date()
-    const wait = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1).getTime() - t.getTime()
-    dayTimer = setTimeout(refreshDay, Math.max(1000, wait + 500))
-  }
+  if (dayTimer === null) dayTimer = time().after(untilTomorrow(), refreshDay)
   return () => {
     dayListeners.delete(l)
     if (!dayListeners.size && dayTimer !== null) {
-      clearTimeout(dayTimer)
+      dayTimer()
       dayTimer = null
     }
   }
@@ -41,19 +44,19 @@ export const subscribeDay = (l: () => void) => {
 export const daySnapshot = () => dayVersion
 
 const schedule = () => {
-  if (timer !== null) clearTimeout(timer)
+  timer?.()
   timer = null
-  const wait = tickDelay([...targets.values()], Date.now())
+  const wait = tickDelay([...targets.values()], time().now())
   if (wait === null) return
-  timer = setTimeout(() => {
-    now = Date.now()
+  timer = time().after(wait, () => {
+    now = time().now()
     for (const l of listeners) l()
     schedule()
-  }, wait)
+  })
 }
 
 export const refresh = () => {
-  now = Date.now()
+  now = time().now()
   for (const l of listeners) l()
   schedule()
 }
