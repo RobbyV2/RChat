@@ -8,13 +8,14 @@ import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
-import { useP2pRoom } from '../../lib/place/react'
+import { PlaceProvider, useP2pRoom } from '../../lib/place/react'
+import { P2pRoom } from '../../lib/place/place'
+import MemberSidebar from '../member_sidebar'
 
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { roomLooksKey } from '../../lib/server_profile'
 import {
   Clock,
-  Crown,
   Folder as FolderIcon,
   FolderOpen,
   Hash,
@@ -32,7 +33,7 @@ import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
 import { channelScope, chatKey, serverScope } from '../../lib/p2p/app'
-import { displayName, shieldOf } from '../../lib/p2p/contacts'
+import { displayName } from '../../lib/p2p/contacts'
 import { movedText, type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import { serverPings, serverUnread } from '../../lib/p2p/alerts'
@@ -57,36 +58,21 @@ import { voiceLabel } from '../../lib/voice_rail'
 import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
-import { iconBtn, Masked, Sentinel } from '../ui'
+import { iconBtn, Masked } from '../ui'
 import { Row, Stack, Surface } from '../layout'
-import { PAGE, pageGroups } from '../../lib/paging'
-import {
-  AccountChip,
-  ContactShield,
-  KeyAvatar,
-  MemberAvatar,
-  P2pBadge,
-  PresenceDot,
-} from './p2p_badge'
+import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
-import { SYNCING_TEXT, TRANSFERRED_TEXT, VOUCH_INVITER_TEXT } from '../../lib/p2p/flows'
+import { SYNCING_TEXT, TRANSFERRED_TEXT } from '../../lib/p2p/flows'
 import { NoteBar, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
 import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
-import { PeerTimeoutBadge, TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
-import { hex, lookOfMember, memberGroups, memberLooks } from '../../lib/p2p/roles'
-import { RoleIcon } from '../role_icon'
+import { TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
+import { hex, memberLooks } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
 import { serversLoading } from '../../lib/p2p/conversations'
-import {
-  ChannelListSkeleton,
-  Held,
-  MemberListSkeleton,
-  MessageListSkeleton,
-  ServerRailSkeleton,
-} from '../skeletons'
+import { ChannelListSkeleton, Held, MessageListSkeleton, ServerRailSkeleton } from '../skeletons'
 
 // P2P servers in the app: their group at the bottom of the rail (dashed rings, the Waypoints
 // badge, folders of their own), and the open server: channels, the channel's messages and the
@@ -704,122 +690,15 @@ export const openMemberMenu = (
     identity
   )
 
-function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
-  const identity = useP2pApp()!
-  const acct = useAccount()
-
-  const contact = useP2p(s => s.contacts.find(c => c.ik === m.ik))
-  const me = useP2p(s => s.me)
-  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
-  const look = lookOfMember(m, v.roles)
-  return (
-    <li>
-      <button
-        data-p2p-member={m.name}
-        {...longPress((x, y) => openMemberMenu(v, m, x, y, acct, identity))}
-        onClick={e => {
-          const r = e.currentTarget.getBoundingClientRect()
-          openMemberMenu(v, m, r.left + 24, r.bottom, acct, identity)
-        }}
-        className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface-container ${m.online || m.ik === me ? '' : 'opacity-60'}`}
-      >
-        <span className="relative shrink-0">
-          <MemberAvatar members={v.members} ik={m.ik} size={32} />
-          {m.m === 'join' && (
-            <PresenceDot presence={m.online || m.ik === me ? 'online' : 'offline'} />
-          )}
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <Row as="span" gap="2xs">
-            <span className="streamer truncate text-sm" style={{ color: look.color }}>
-              <Masked text={m.name} own={m.ik === me} />
-            </span>
-            <RoleIcon emoji={look.icon?.emoji} role={look.icon && mask(look.icon.role)} />
-          </Row>
-          {m.ik !== me && (
-            <span className="flex min-w-0 empty:hidden">
-              <AccountChip ik={m.ik} size="short" />
-            </span>
-          )}
-          {m.waits && (
-            <span data-p2p-vouch-wait className="truncate text-xs text-on-surface-variant">
-              {VOUCH_INVITER_TEXT}
-            </span>
-          )}
-        </span>
-        {(m.ik === me || can(v, P.TimeoutMembers)) && <PeerTimeoutBadge m={m} compact />}
-        {m.owner && (
-          <span title="Owner" aria-label="Owner" role="img" className="flex shrink-0 text-tertiary">
-            <Crown size={14} />
-          </span>
-        )}
-        {m.ik !== me && (
-          <ContactShield kind={contact ? shieldOf(contact) : 'unverified'} size={14} />
-        )}
-      </button>
-    </li>
-  )
-}
-
+// The member list of the open room.
 function P2pMemberListBody() {
-  const { room: open, v } = useOpen()
-  const loading = useP2p(serversLoading)
-  const me = useP2p(s => s.me)
-  const [shown, setShown] = useState(PAGE)
-  const room = v?.id
-  const more = useCallback(() => setShown(n => n + PAGE), [])
-  const [at, setAt] = useState(room)
-  if (at !== room) {
-    setAt(room)
-    setShown(PAGE)
-  }
-  if (!v)
-    return open && loading ? (
-      <aside className="flex h-full w-60 shrink-0 flex-col overflow-hidden bg-surface-container-low">
-        <PeerActorTag header />
-        <Surface pad="2xs" tone="plain" radius="none">
-          <MemberListSkeleton seed={open} />
-        </Surface>
-      </aside>
-    ) : null
-  const paged = pageGroups(memberGroups(v.members, v.roles, me), shown)
+  const identity = useP2pApp()!
+  const room = useP2p(s => s.server?.room ?? null)
+  if (room === null) return null
   return (
-    <aside
-      data-p2p-members
-      aria-label="Members"
-      className="flex h-full w-60 shrink-0 flex-col overflow-y-auto bg-surface-container-low"
-    >
-      <PeerActorTag header />
-      <Surface pad="2xs" gap="sm" tone="plain" radius="none">
-        {paged.groups.map(g => (
-          <Stack as="section" key={g.key} data-p2p-member-group={g.label} gap="none">
-            <Surface pad="sm" inset="bar" tone="plain" radius="none">
-              <Row as="p" gap="xs">
-                {g.key.startsWith('r:') && (
-                  <span
-                    aria-hidden
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: hex(g.color) ?? 'var(--color-outline)' }}
-                  />
-                )}
-                <span className="min-w-0 truncate text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-                  <Masked text={g.label} />
-                </span>
-                <span className="shrink-0 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-                  ({g.total})
-                </span>
-              </Row>
-            </Surface>
-            <Stack as="ul" gap="none">
-              {g.list.map(m => (
-                <MemberRow key={m.ik} v={v} m={m} />
-              ))}
-            </Stack>
-          </Stack>
-        ))}
-        {paged.more && <Sentinel key={shown} onVisible={more} />}
-      </Surface>
-    </aside>
+    <PlaceProvider place={P2pRoom.open(identity, room)}>
+      <MemberSidebar />
+    </PlaceProvider>
   )
 }
 

@@ -1,27 +1,30 @@
 'use client'
-import { ViewActorTag } from './view_actor'
-import { useAccount } from '../lib/client/react'
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { Member, UserRef } from '../lib/types'
-import { prefixHeights, visibleRange } from '../lib/window'
-import { onlineSection } from '../lib/presence'
-import { MEMBERS_HIDDEN_LINE, seesMembers } from '../lib/profile_choice'
+import { useEffect, useMemo, useState } from 'react'
+import { Crown } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
-import { byShownName } from '../lib/server_profile'
-import { roleLook, useStore } from '../lib/store'
-import { FIRST_GROUPS, FIRST_ROWS, groupParts, serverGroups } from '../lib/member_groups'
-import { RoleIcon } from './role_icon'
+import { useAccount } from '../lib/client/react'
+import { isUnsupported } from '../lib/place/feature'
+import { members, type MemberEntry, type MemberItem, type Members } from '../lib/place/members'
+import { useFeature, useLive, usePlace } from '../lib/place/react'
+import { MEMBERS_HIDDEN_LINE } from '../lib/profile_choice'
 import type { Look } from '../lib/role_looks'
-import { UserAvatar } from './user_avatar'
+import { useMask } from '../lib/store'
+import type { Timeout } from '../lib/timeouts'
+import type { UserRef } from '../lib/types'
+import { prefixHeights, visibleRange } from '../lib/window'
 import { longPress } from './context_menu'
-import { Badge, profileTrigger } from './profile_card'
 import { Row, Surface } from './layout'
-import { Sentinel } from './ui'
-import { MemberListSkeleton } from './skeletons'
 import { FitName } from './display_name'
-import { useShownMembers } from './shown_user'
-import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
+import { AccountChip, ContactShield, MemberAvatar, PresenceDot } from './p2p/p2p_badge'
+import { MemberCard } from './p2p/p2p_server_roles'
+import { Badge, profileTrigger } from './profile_card'
+import { RoleIcon } from './role_icon'
+import { MemberListSkeleton } from './skeletons'
+import { TimeoutBadge, useMemberTimeout, useNow } from './timeout_dialog'
+import { Masked, Sentinel } from './ui'
+import { UserAvatar } from './user_avatar'
+import { PeerActorTag, ViewActorTag } from './view_actor'
 
 const rowFocus = 'outline-offset-[-2px] focus-visible:outline-2 focus-visible:outline-primary'
 
@@ -29,16 +32,15 @@ const ROW = 40
 const HEAD = 32
 const EDGE = 1
 const OVERSCAN = 400
+// What a line under the name adds to a row.
+const LINE = 16
+const linesOf = (entry: MemberEntry) => (entry.chip ? 1 : 0) + (entry.note ? 1 : 0)
+const ROW_HEIGHT = ['h-10', 'h-14', 'h-18']
 
-type Item =
-  | { kind: 'head'; key: string; label: string }
-  | { kind: 'member'; key: string; m: Member; shown: Member }
-  | { kind: 'user'; key: string; u: UserRef }
-  | { kind: 'more'; key: string; onVisible: () => void }
+const heightOf = (item: MemberItem) =>
+  item.kind === 'head' ? HEAD : item.kind === 'more' ? EDGE : ROW + LINE * linesOf(item.entry)
 
-const heightOf = (item: Item) => (item.kind === 'head' ? HEAD : item.kind === 'more' ? EDGE : ROW)
-
-function useWindowed(items: Item[]) {
+function useWindowed(items: MemberItem[]) {
   const [el, ref] = useState<HTMLElement | null>(null)
   const [port, setPort] = useState({ top: 0, height: 800 })
   useEffect(() => {
@@ -99,240 +101,183 @@ export function MemberTimeout({ server, username }: { server: string; username: 
 const asideCls = 'h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low p-2'
 const loadingCls = 'h-full w-60 shrink-0 overflow-hidden bg-surface-container-low p-2'
 
-export default function MemberSidebar() {
-  const acct = useAccount()
-  const { store } = acct
+// The timer of a row's timeout, until it ends.
+function RowTimeout({ t }: { t: Timeout | null }) {
+  const now = useNow(t !== null && t.ends > Date.now())
+  return t && t.ends > now ? <TimeoutBadge t={t} compact /> : null
+}
 
-  const viewServer = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : null))
-  const cache = useStore(s => (s.view?.kind === 'channel' ? s.members[s.view.server] : undefined))
-  const info = useStore(s => (s.view?.kind === 'channel' ? s.memberInfo[s.view.server] : undefined))
-  const inter = useStore(s =>
-    s.view?.kind === 'channel' ? s.interacted[s.view.server] : undefined
+function Face({ entry }: { entry: MemberEntry }) {
+  const { face } = entry
+  return (
+    <span className="relative shrink-0">
+      {face.kind === 'account' ? (
+        <UserAvatar
+          username={face.user.username}
+          avatarKind={face.user.avatar_kind}
+          avatarColor={face.user.avatar_color}
+          size={28}
+        />
+      ) : (
+        <MemberAvatar members={face.of} ik={face.ik} size={28} />
+      )}
+      {entry.dot && <PresenceDot presence={entry.online ? 'online' : 'offline'} />}
+    </span>
   )
-  const me = useStore(s => s.me)
-  const listed = useStore(s => {
-    const v = s.view
-    if (v?.kind !== 'channel') return true
-    const member = s.me?.servers.some(x => x.name === v.server) ?? false
-    return seesMembers(s.servers[v.server]?.members_visible, member, s.me?.is_site_admin ?? false)
-  })
-  const hoisted = useStore(s => (s.view?.kind === 'channel' ? s.hoisted[s.view.server] : undefined))
-  const loadMembers = useStore(s => s.loadMembers)
-  const loadGroup = useStore(s => s.loadGroup)
-  const clearGroups = useStore(s => s.clearGroups)
-  const loadInteracted = useStore(s => s.loadInteracted)
-  const loadMissingOnline = useStore(s => s.loadMissingOnline)
-  const server = listed ? detail?.name : undefined
-  const groups = useMemo(() => serverGroups(detail?.roles), [detail?.roles])
-  const groupIds = groups.map(g => g.id).join(',')
-  const grouped = !!server && groups.length > 0
-  const groupsLoaded = !!hoisted
-  useEffect(() => {
-    if (server) {
-      void loadMembers(server, true)
-      void loadInteracted(server, true)
-    }
-  }, [server, loadMembers, loadInteracted])
-  useEffect(() => {
-    if (server) clearGroups(server)
-  }, [server, groupIds, clearGroups])
-  useEffect(() => {
-    if (!server || !groupIds || groupsLoaded) return
-    for (const id of groupIds.split(',').slice(0, FIRST_GROUPS))
-      void loadGroup(server, Number(id), true, FIRST_ROWS)
-    void loadGroup(server, 'rest', true)
-  }, [server, groupIds, groupsLoaded, loadGroup])
-  const more = useCallback(() => {
-    if (server) void loadMembers(server)
-  }, [server, loadMembers])
-  const moreOnline = useCallback(() => {
-    if (server) void loadMissingOnline(server)
-  }, [server, loadMissingOnline])
-  const moreInteracted = useCallback(() => {
-    if (server) void loadInteracted(server)
-  }, [server, loadInteracted])
-  const shownOf = useShownMembers(server)
-  const items = useMemo(() => {
-    if (!detail) return []
-    const out: Item[] = []
-    const interacted = () => {
-      const users = inter?.list ?? []
-      if (!users.length) return
-      out.push({
-        kind: 'head',
-        key: 'hint',
-        label: `Interacted (${users.length}${inter?.hasMore ? '+' : ''})`,
-      })
-      for (const u of users) out.push({ kind: 'user', key: `u${u.username}`, u })
-      if (inter?.hasMore)
-        out.push({ kind: 'more', key: `imore${users.length}`, onVisible: moreInteracted })
-    }
-    if (grouped) {
-      for (const part of groupParts(groups, hoisted, m => shownOf(m).display_name))
-        out.push(
-          part.kind === 'more'
-            ? {
-                kind: 'more',
-                key: part.key,
-                onVisible: () => void loadGroup(detail.name, part.group),
-              }
-            : part.kind === 'member'
-              ? { ...part, shown: shownOf(part.m) }
-              : part
-        )
-      interacted()
-      return out
-    }
-    // Each section in the order of the names the server shows.
-    const byName = (list: Member[]) =>
-      list.map(m => ({ m, shown: shownOf(m) })).sort((a, b) => byShownName(a.shown, b.shown))
-    const loaded = cache?.list ?? []
-    const {
-      online,
-      offline: away,
-      totals,
-      more: omore,
-    } = onlineSection(detail.online_count, detail.member_count, cache, info)
-    const section = (id: string, label: string, count: number, list: Member[]) => {
-      if (count <= 0 && !list.length) return
-      out.push({ kind: 'head', key: `h${id}`, label: `${label} (${count})` })
-      for (const { m, shown } of byName(list))
-        out.push({ kind: 'member', key: `m${m.username}`, m, shown })
-    }
-    section('on', 'Online', totals.online, online)
-    if (omore) out.push({ kind: 'more', key: omore, onVisible: moreOnline })
-    section('off', 'Offline', totals.offline, away)
-    if (cache?.hasMore) out.push({ kind: 'more', key: `more${loaded.length}`, onVisible: more })
-    interacted()
-    return out
-  }, [
-    detail,
-    cache,
-    info,
-    inter,
-    more,
-    moreOnline,
-    moreInteracted,
-    shownOf,
-    grouped,
-    groups,
-    hoisted,
-    loadGroup,
-  ])
-  const { ref, range } = useWindowed(items)
-  if (!detail)
-    return viewServer ? (
+}
+
+function MemberRow({
+  entry,
+  mask,
+}: {
+  entry: MemberEntry
+  mask: ((text: string) => string) | null
+}) {
+  const acct = useAccount()
+  const place = usePlace()
+  const { face, look, opens } = entry
+  const identity = place?.kind === 'p2pRoom' ? place.app : undefined
+  const menu = (x: number, y: number) => {
+    if (entry.menu)
+      openActionMenu(
+        x,
+        y,
+        entry.menu,
+        opens.kind === 'card'
+          ? { header: <MemberCard room={opens.room} ik={entry.who} /> }
+          : undefined,
+        acct,
+        identity
+      )
+  }
+  const under = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    menu(r.left + 24, r.bottom)
+  }
+  const trigger =
+    opens.kind === 'profile'
+      ? profileTrigger(acct.store, opens.user, opens.server)
+      : {
+          role: 'button' as const,
+          tabIndex: 0,
+          onClick: (e: React.MouseEvent<HTMLElement>) => under(e.currentTarget),
+          onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return
+            e.preventDefault()
+            under(e.currentTarget)
+          },
+        }
+  const icon = look.icon && { ...look.icon, role: mask ? mask(look.icon.role) : look.icon.role }
+  return (
+    <div
+      data-member={entry.who}
+      {...(entry.menu ? longPress(menu) : {})}
+      {...trigger}
+      className={`flex ${ROW_HEIGHT[linesOf(entry)]} cursor-pointer items-center gap-2 overflow-hidden rounded-xl px-2 hover:bg-surface-container-high ${rowFocus} ${
+        entry.faded ? 'opacity-70' : entry.online ? '' : 'opacity-50'
+      }`}
+    >
+      <Face entry={entry} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        {face.kind === 'account' ? (
+          <MemberName user={face.user} color={look.color} icon={icon} />
+        ) : (
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="streamer min-w-0 truncate text-sm" style={{ color: look.color }}>
+              <Masked text={entry.name} own={entry.own} />
+            </span>
+            <RoleIcon emoji={icon?.emoji} role={icon?.role} />
+          </span>
+        )}
+        {entry.chip && (
+          <span className="flex h-4 min-w-0">
+            <AccountChip ik={entry.chip} size="short" />
+          </span>
+        )}
+        {entry.note && (
+          <span data-member-note className="h-4 truncate text-xs text-on-surface-variant">
+            {entry.note}
+          </span>
+        )}
+      </span>
+      <RowTimeout t={entry.timeout} />
+      {entry.tags.includes('creator') && <Badge tone="tertiary">Creator</Badge>}
+      {entry.tags.includes('admin') && <Badge tone="primary">Admin</Badge>}
+      {entry.tags.includes('owner') && (
+        <span title="Owner" aria-label="Owner" role="img" className="flex shrink-0 text-tertiary">
+          <Crown size={14} />
+        </span>
+      )}
+      {entry.shield && <ContactShield kind={entry.shield} size={14} />}
+    </div>
+  )
+}
+
+function Head({ item, masked }: { item: Extract<MemberItem, { kind: 'head' }>; masked: boolean }) {
+  return (
+    <p
+      data-member-group={item.key}
+      className="flex h-8 items-end gap-1.5 px-2 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase"
+    >
+      {item.dot && (
+        <span
+          aria-hidden
+          className="mb-1 h-2 w-2 shrink-0 rounded-full"
+          style={{ backgroundColor: item.dot }}
+        />
+      )}
+      <span className="min-w-0 truncate">{masked ? <Masked text={item.label} /> : item.label}</span>
+      {item.count !== null && <span className="shrink-0">({item.count})</span>}
+    </p>
+  )
+}
+
+// The member list of a hosted server or a P2P room: its groups, 50 members at a time, each row
+// with the member's menu.
+function MemberListView({ of }: { of: Members }) {
+  const list = useLive(of.list)
+  useEffect(() => of.watch(), [of])
+  const mask = useMask(list.ownText)
+  const { ref, range } = useWindowed(list.items)
+  const actor = list.byIdentity ? <PeerActorTag header /> : <ViewActorTag header />
+  if (list.state === 'none') return null
+  if (list.state === 'loading')
+    return (
       <aside className={loadingCls}>
-        <ViewActorTag header />
-        <MemberListSkeleton seed={viewServer} />
+        {actor}
+        <MemberListSkeleton seed={list.seed} />
       </aside>
-    ) : null
-  if (!listed)
+    )
+  if (list.state === 'hidden')
     return (
       <aside className={asideCls}>
-        <ViewActorTag header />
+        {actor}
         <Surface pad="md" tone="plain" radius="none">
           <p className="text-sm text-on-surface-variant">{MEMBERS_HIDDEN_LINE}</p>
         </Surface>
       </aside>
     )
-  if (detail.member_count > 0 && (!cache || (cache.loading && !cache.list.length)))
-    return (
-      <aside className={loadingCls}>
-        <ViewActorTag header />
-        <MemberListSkeleton seed={detail.name} />
-      </aside>
-    )
-
-  const row = (m: Member, shown: Member) => {
-    const look = roleLook(detail.roles, m.role_ids)
-    return (
-      <div
-        key={m.username}
-        {...(me
-          ? longPress((x, y) =>
-              openActionMenu(
-                x,
-                y,
-                { kind: 'member', user: m, server: detail.name, where: 'list' },
-                undefined,
-                acct
-              )
-            )
-          : {})}
-        {...profileTrigger(store, m, detail.name)}
-        className={`flex h-10 cursor-pointer items-center gap-2 rounded-xl px-2 hover:bg-surface-container-high ${rowFocus} ${
-          m.online ? '' : 'opacity-50'
-        }`}
-      >
-        <UserAvatar
-          username={shown.username}
-          avatarKind={shown.avatar_kind}
-          avatarColor={shown.avatar_color}
-          size={28}
-        />
-        <MemberName user={shown} color={look.color} icon={look.icon} />
-        <MemberTimeout server={detail.name} username={m.username} />
-        {m.is_creator && <Badge tone="tertiary">Creator</Badge>}
-        {m.is_admin && <Badge tone="primary">Admin</Badge>}
-      </div>
-    )
-  }
-
-  const interactedRow = (u: UserRef) => (
-    <div
-      key={u.username}
-      {...(me
-        ? longPress((x, y) =>
-            openActionMenu(
-              x,
-              y,
-              { kind: 'member', user: u, server: null, where: 'interacted' },
-              undefined,
-              acct
-            )
-          )
-        : {})}
-      {...profileTrigger(store, u, detail.name)}
-      className={`flex h-10 cursor-pointer items-center gap-2 rounded-xl px-2 opacity-70 hover:bg-surface-container-high ${rowFocus}`}
-    >
-      <UserAvatar
-        username={u.username}
-        avatarKind={u.avatar_kind}
-        avatarColor={u.avatar_color}
-        size={28}
-      />
-      <MemberName user={u} />
-    </div>
-  )
-
-  const render = (item: Item): ReactNode => {
-    switch (item.kind) {
-      case 'head':
-        return (
-          <p
-            key={item.key}
-            className="flex h-8 items-end px-2 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase"
-          >
-            {item.label}
-          </p>
-        )
-      case 'member':
-        return row(item.m, item.shown)
-      case 'user':
-        return interactedRow(item.u)
-      case 'more':
-        return <Sentinel key={item.key} onVisible={item.onVisible} />
-    }
-  }
-
   return (
-    <aside ref={ref} className={asideCls}>
-      <ViewActorTag header />
+    <aside ref={ref} data-members aria-label="Members" className={asideCls}>
+      {actor}
       <div style={{ height: range.before }} />
-      {items.slice(range.start, range.end).map(render)}
+      {list.items
+        .slice(range.start, range.end)
+        .map(item =>
+          item.kind === 'head' ? (
+            <Head key={item.key} item={item} masked={list.masked} />
+          ) : item.kind === 'more' ? (
+            <Sentinel key={item.key} onVisible={item.load} />
+          ) : (
+            <MemberRow key={item.key} entry={item.entry} mask={list.masked ? mask : null} />
+          )
+        )}
       <div style={{ height: range.after }} />
     </aside>
   )
+}
+
+export default function MemberSidebar() {
+  const here = useFeature(members)
+  return isUnsupported(here) ? null : <MemberListView of={here} />
 }
