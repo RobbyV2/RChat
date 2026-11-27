@@ -100,8 +100,23 @@ export class ManualClock implements Clock {
   }
 }
 
+// WebCrypto finishes on other threads, at no fixed number of turns of the event loop.
+let inFlight = 0
+for (const name of ['encrypt', 'decrypt', 'digest', 'sign', 'verify', 'importKey'] as const) {
+  const real = crypto.subtle[name].bind(crypto.subtle) as (...args: unknown[]) => Promise<unknown>
+  const counted = (...args: unknown[]) => {
+    inFlight += 1
+    return real(...args).finally(() => void (inFlight -= 1))
+  }
+  Object.defineProperty(crypto.subtle, name, { value: counted, configurable: true, writable: true })
+}
+
+// Runs `rounds` turns of the event loop after the last WebCrypto call has finished.
 export const settle = async (rounds = 30) => {
-  for (let i = 0; i < rounds; i += 1) await new Promise(r => setTimeout(r, 0))
+  for (let i = 0; i < rounds; i += 1) {
+    await new Promise(r => setTimeout(r, 0))
+    if (inFlight > 0) i = -1
+  }
 }
 
 // Waits until `ok()` holds, however slow the machine is (WebCrypto and fake-indexeddb under a
