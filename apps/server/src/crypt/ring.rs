@@ -518,6 +518,19 @@ impl Ring {
             .collect()
     }
 
+    /// The ids of every root key this process holds: the ones it wraps under, the key file's it
+    /// keeps, and `ACCOUNT_SECRETS_KEY`'s.
+    pub fn held_ids(&self) -> Vec<String> {
+        let loaded = read(&self.loaded);
+        loaded
+            .keks
+            .iter()
+            .chain(&loaded.kept)
+            .chain(&self.alias)
+            .map(|k| k.id.clone())
+            .collect()
+    }
+
     /// The id of the key new data keys are wrapped under.
     pub fn first_kek(&self) -> Option<String> {
         read(&self.loaded).keks.first().map(|k| k.id.clone())

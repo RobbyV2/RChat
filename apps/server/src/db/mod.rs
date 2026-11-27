@@ -1,3 +1,4 @@
+pub mod backup;
 mod channel_index;
 pub mod cli;
 mod indexes;

@@ -332,6 +332,51 @@ mod tests {
             | Err(_) => None,
         };
         assert_eq!(action(&["db", "compact"]), Some(DbCommand::Compact));
+        assert_eq!(
+            action(&[
+                "db",
+                "backup",
+                "site.backup",
+                "--recipient",
+                "age1a",
+                "--recipient",
+                "age1b",
+                "--with-keys"
+            ]),
+            Some(DbCommand::Backup {
+                path: "site.backup".into(),
+                recipients: vec!["age1a".into(), "age1b".into()],
+                with_keys: true
+            })
+        );
+        assert_eq!(
+            action(&["db", "verify", "site.backup"]),
+            Some(DbCommand::Verify {
+                path: "site.backup".into(),
+                identity: None
+            })
+        );
+        assert_eq!(
+            action(&[
+                "db",
+                "restore",
+                "site.backup",
+                "--identity",
+                "id.txt",
+                "--to",
+                "out"
+            ]),
+            Some(DbCommand::Restore {
+                path: "site.backup".into(),
+                identity: "id.txt".into(),
+                to: "out".into()
+            })
+        );
+        assert_eq!(
+            action(&["db", "restore", "site.backup", "--to", "out"]),
+            None,
+            "an identity is needed"
+        );
         assert_eq!(action(&["db"]), None);
     }
 }

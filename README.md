@@ -77,6 +77,8 @@ Never run an older release on a database that a newer release upgraded.
 
 Encrypted storage is off until a server or DM turns it on; set `ENCRYPTION_KEYS` (see `.env.local.example`) to keep the key off the server.
 
+Back up SQLite with `server db backup <path> --recipient age1...` (an encrypted file; `server db restore` reads it); on Postgres use `pg_dump`.
+
 ### Sign-in (SSO)
 
 OIDC sign-in and SCIM provisioning are set in [.env.local.example](.env.local.example). Create the local site admin with `server user create <name>` first. [deploy/authentik](deploy/authentik/README.md) is a local example.

@@ -196,6 +196,9 @@ pub struct AppConfig {
     pub secrets: Secrets,
     #[serde(skip)]
     pub encryption: crate::crypt::ring::KeyConfig,
+    /// `BACKUP_RECIPIENTS`: the age recipients `server db backup` encrypts to.
+    #[serde(skip)]
+    pub backup_recipients: Vec<String>,
     #[serde(skip)]
     pub controls: ControlSeeds,
     #[serde(skip)]
@@ -381,6 +384,9 @@ impl AppConfig {
             p2p_secret: secret(&env, "P2P_SECRET"),
         };
         config.encryption = crate::crypt::ring::KeyConfig::load(&|name| lookup(&env, name))?;
+        config.backup_recipients = lookup(&env, "BACKUP_RECIPIENTS")
+            .map(|v| vec![v])
+            .unwrap_or_default();
         config.controls = ControlSeeds::load(&|name| lookup(&env, name))?;
         config.sso = crate::sso::config::SsoConfig::load(
             &|name| lookup(&env, name),
