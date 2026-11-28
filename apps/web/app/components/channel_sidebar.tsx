@@ -6,16 +6,7 @@ import { Name, NameSelect } from './name'
 import { useP2pApp, useP2p, P2pProvider } from '../lib/client/p2p_react'
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import {
-  ChevronDown,
-  FolderPlus,
-  Hash,
-  ListFilter,
-  Pin,
-  Plus,
-  UserPlus,
-  Volume2,
-} from 'lucide-react'
+import { ChevronDown, FolderPlus, ListFilter, Pin, Plus, UserPlus } from 'lucide-react'
 import {
   badgePings,
   myPerms,
@@ -25,7 +16,6 @@ import {
   useStore,
 } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
-import { useChannelEdit, type Editing } from '../lib/channel_edit'
 import { isGuestName } from '../lib/guest_voice'
 import { dmSections, type DmSections } from '../lib/nav_layout'
 import {
@@ -762,12 +752,9 @@ export function ChannelSidebar() {
   const dragGroup = useDrag(s => s.group)
   const dropZone = useDrag(s => s.zone)
   const openDialog = useStore(s => s.openDialog)
-  const createChannel = useStore(s => s.createChannel)
   const moveChannel = useStore(s => s.moveChannel)
   const moveSeparator = useStore(s => s.moveSeparator)
   const moveCategory = useStore(s => s.moveCategory)
-  const setCategoriesCollapsed = useStore(s => s.setCategoriesCollapsed)
-  const renameChannel = useStore(s => s.renameChannel)
   const voice = useStore(s => s.voice)
   useStore(s => s.reads)
   useStore(s => s.notifyPrefs)
@@ -775,8 +762,6 @@ export function ChannelSidebar() {
   useStore(s => s.members)
   useStore(s => s.memberInfo)
   useStore(s => s.me)
-  const editing = useChannelEdit(e => e.editing)
-  const name = useChannelEdit(e => e.name)
   const voiceServer = view?.kind === 'channel' ? view.server : null
   acct.viewing.useViewing(s => s.revision)
   const voiceKey = useStore(s => {
@@ -818,34 +803,6 @@ export function ChannelSidebar() {
   const channelDrag = dragGroup === 'channel'
 
   // Here only: a field started for another server waits for it.
-  const editingHere: Editing | null = editing?.server === server ? editing : null
-
-  const submit = () => {
-    const edit = acct.channelEdit.getState()
-    const current = edit.editing
-    const trimmed = edit.name.trim()
-    edit.stop()
-    if (!current || !trimmed) return
-    switch (current.mode) {
-      case 'create':
-        void createChannel(
-          current.server,
-          trimmed,
-          current.kind,
-          current.category,
-          current.kind === 'text' && current.textOnly
-        )
-        return
-      case 'rename':
-        void renameChannel(current.id, trimmed)
-        return
-    }
-  }
-
-  const createIn = (category: number | null) => {
-    if (category !== null) setCategoriesCollapsed(server, [category], false)
-    acct.channelEdit.getState().start({ mode: 'create', server, kind: 'text', category }, '')
-  }
 
   const allCategories = groups.categories.map(g => g.category.id)
 
@@ -906,82 +863,9 @@ export function ChannelSidebar() {
         }
       : undefined
 
-  const editInput = (
-    <input
-      autoFocus
-      value={name}
-      onChange={e => acct.channelEdit.getState().setName(e.target.value)}
-      onKeyDown={e => {
-        if (enterKey(e)) submit()
-        if (e.key === 'Escape') acct.channelEdit.getState().stop()
-      }}
-      onBlur={editingHere?.mode === 'rename' ? submit : undefined}
-      placeholder="channel name"
-      className={`${renameFieldCls} min-w-0 flex-1`}
-    />
-  )
-
-  const createRow = (category: number | null) =>
-    editingHere?.mode === 'create' && editingHere.category === category ? (
-      <Surface
-        as="span"
-        pad="sm"
-        gap="2xs"
-        tone="plain"
-        radius="none"
-        onBlur={e => {
-          if (!e.currentTarget.contains(e.relatedTarget)) submit()
-        }}
-      >
-        <Row as="span" gap="sm">
-          <Row as="span" gap="3xs" place="shrink-0">
-            <IconButton
-              icon={Hash}
-              label="Text channel"
-              size="sm"
-              shape="square"
-              pressed={editingHere.kind === 'text'}
-              onMouseDown={e => e.preventDefault()}
-              onClick={() => acct.channelEdit.getState().setKind('text')}
-            />
-            <IconButton
-              icon={Volume2}
-              label="Voice channel"
-              size="sm"
-              shape="square"
-              pressed={editingHere.kind === 'voice'}
-              onMouseDown={e => e.preventDefault()}
-              onClick={() => acct.channelEdit.getState().setKind('voice')}
-            />
-          </Row>
-          {editInput}
-        </Row>
-        {editingHere.kind === 'text' && (
-          <Row as="label" gap="sm" onMouseDown={e => e.preventDefault()}>
-            <input
-              type="checkbox"
-              className="accent-primary"
-              checked={!!editingHere.textOnly}
-              onChange={e => acct.channelEdit.getState().setTextOnly(e.target.checked)}
-            />
-            <span className="text-sm">Text only</span>
-          </Row>
-        )}
-      </Surface>
-    ) : null
-
   const byKey = new Map(detail.channels.map(c => [String(c.id), c]))
   const categoryByKey = new Map((detail.categories ?? []).map(c => [String(c.id), c]))
   const channelOf = (entry: ChannelEntry) => byKey.get(entry.key)
-  const renameRow = (entry: ChannelEntry) =>
-    editingHere?.mode === 'rename' && String(editingHere.id) === entry.key ? (
-      <Surface key={entry.key} as="span" pad="sm" inset="bar" tone="plain" radius="none">
-        <Row as="span" gap="none">
-          {editInput}
-        </Row>
-      </Surface>
-    ) : null
-
   return (
     <aside className={base}>
       <ServerHeader
@@ -1013,7 +897,7 @@ export function ChannelSidebar() {
                 icon={Plus}
                 label="Create channel"
                 size="sm"
-                onClick={() => createIn(null)}
+                onClick={() => listed.startCreate(null)}
               />
             </Row>
           )}
@@ -1034,9 +918,6 @@ export function ChannelSidebar() {
             />
           )
         }}
-        replace={renameRow}
-        createRow={category => createRow(category === null ? null : Number(category))}
-        onAdd={category => createIn(Number(category.key))}
         drag={{
           scope: dragScope,
           channel: entry => {

@@ -91,9 +91,35 @@ export const noEndings: Live<EndingsState> = constant({
   server: null,
 })
 
+// The name being typed in the list: for a new channel (in `category`, or outside any), or for a
+// channel being renamed.
+export type ChannelDraft = {
+  name: string
+  // The longest name the place takes; null where the field holds no limit.
+  max: number | null
+} & (
+  | {
+      mode: 'create'
+      category: string | null
+      kind: 'text' | 'voice'
+      // Whether the new text channel takes only text; null where there is no such choice.
+      textOnly: boolean | null
+    }
+  | { mode: 'rename'; key: string }
+)
+
 export interface Channels {
   state: Live<ChannelsState>
   ends: Live<EndingsState>
+  draft: Live<ChannelDraft | null>
+  // Opens the field that names a new channel in `category` (null: outside any).
+  startCreate: (category: string | null) => void
+  nameDraft: (name: string) => void
+  setDraftKind: (kind: 'text' | 'voice') => void
+  setDraftTextOnly: (on: boolean) => void
+  // Makes or renames the channel as the field says; nothing with an empty name.
+  submitDraft: () => void
+  dropDraft: () => void
   // Shows a text channel.
   open: (key: string) => void
   setOpen: (category: string, open: boolean) => void
@@ -223,8 +249,52 @@ const hosted = (account: AccountSession, server: string): Channels => {
         return { of, ask: ask.size ? [...ask] : NO_NAMES, server }
       }
     )
+  const edit = account.channelEdit
+  const draft = built(
+    () => [edit.getState().editing, edit.getState().name] as const,
+    ([editing, name]): ChannelDraft | null =>
+      editing === null || editing.server !== server
+        ? null
+        : editing.mode === 'rename'
+          ? { mode: 'rename', key: String(editing.id), name, max: null }
+          : {
+              mode: 'create',
+              category: editing.category === null ? null : String(editing.category),
+              kind: editing.kind === 'voice' ? 'voice' : 'text',
+              textOnly: !!editing.textOnly,
+              name,
+              max: null,
+            }
+  )
   const detail = () => store.getState().servers[server]
   return {
+    draft: { get: draft, subscribe: changed => edit.subscribe(changed) },
+    startCreate: category => {
+      const id = category === null ? null : Number(category)
+      if (id !== null) store.getState().setCategoriesCollapsed(server, [id], false)
+      edit.getState().start({ mode: 'create', server, kind: 'text', category: id }, '')
+    },
+    nameDraft: name => edit.getState().setName(name),
+    setDraftKind: kind => edit.getState().setKind(kind),
+    setDraftTextOnly: on => edit.getState().setTextOnly(on),
+    submitDraft: () => {
+      const { editing, name, stop } = edit.getState()
+      const trimmed = name.trim()
+      stop()
+      if (!editing || editing.server !== server || !trimmed) return
+      if (editing.mode === 'rename') void store.getState().renameChannel(editing.id, trimmed)
+      else
+        void store
+          .getState()
+          .createChannel(
+            server,
+            trimmed,
+            editing.kind,
+            editing.category,
+            editing.kind === 'text' && editing.textOnly
+          )
+    },
+    dropDraft: () => edit.getState().stop(),
     ends: {
       get: ends(false),
       initial: ends(true),
@@ -363,8 +433,60 @@ const peer = (app: P2pApp, room: string): Channels => {
         return { of, ask: NO_NAMES, server: null }
       }
     )
+  let drafted: ChannelDraft | null = null
+  const draftListeners = new Set<() => void>()
+  const setDraft = (next: ChannelDraft | null) => {
+    drafted = next
+    for (const changed of [...draftListeners]) changed()
+  }
+  const fold = (category: string, open: boolean) => {
+    const next = new Set(shut)
+    if (open) next.delete(category)
+    else next.add(category)
+    shut = next
+    for (const changed of [...listeners]) changed()
+  }
   const view = () => useP2p.getState().servers[room]
   return {
+    draft: {
+      get: () => drafted,
+      subscribe: changed => {
+        draftListeners.add(changed)
+        return () => void draftListeners.delete(changed)
+      },
+    },
+    startCreate: category => {
+      if (category !== null) fold(category, true)
+      setDraft({
+        mode: 'create',
+        category,
+        kind: 'text',
+        textOnly: null,
+        name: '',
+        max: app.p2p.limits().server.nameMax,
+      })
+    },
+    nameDraft: name => {
+      if (drafted) setDraft({ ...drafted, name })
+    },
+    setDraftKind: kind => {
+      if (drafted?.mode === 'create') setDraft({ ...drafted, kind })
+    },
+    setDraftTextOnly: () => {},
+    submitDraft: () => {
+      const made = drafted
+      setDraft(null)
+      const name = made?.name.trim()
+      if (made?.mode !== 'create' || !name) return
+      const adding =
+        made.category === null
+          ? p2pServer.addChannel(room, name, made.kind)
+          : p2pServer.addChannelIn(room, name, made.category, made.kind)
+      void adding.then(id => {
+        if (id && made.kind === 'text') void p2pServer.openChannel(id)
+      })
+    },
+    dropDraft: () => setDraft(null),
     ends: {
       get: ends(false),
       initial: ends(true),
@@ -386,13 +508,7 @@ const peer = (app: P2pApp, room: string): Channels => {
       },
     },
     open: key => void p2pServer.openChannel(key),
-    setOpen: (category, open) => {
-      const next = new Set(shut)
-      if (open) next.delete(category)
-      else next.add(category)
-      shut = next
-      for (const changed of [...listeners]) changed()
-    },
+    setOpen: fold,
     channelMenu: (key, x, y) => {
       const v = view()
       const ch = v?.channels.find(c => c.id === key)

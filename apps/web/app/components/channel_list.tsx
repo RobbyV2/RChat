@@ -1,11 +1,12 @@
 'use client'
 
 import type { ReactNode, Ref } from 'react'
-import { ChevronDown, Hash, Lock, Plus } from 'lucide-react'
+import { ChevronDown, Hash, Lock, Plus, Volume2 } from 'lucide-react'
 import {
   unfolded,
   unfoldedRows,
   type CategoryEntry,
+  type ChannelDraft,
   type ChannelEntry,
   type Channels,
   type ChannelsState,
@@ -19,7 +20,8 @@ import { longPress } from './context_menu'
 import { IconButton, SideRow } from './controls'
 import type { DragSpec } from './drag'
 import { Row, Stack, Surface } from './layout'
-import { Masked } from './ui'
+import { Masked, renameFieldCls } from './ui'
+import { enterKey } from '../lib/keys'
 import { useLive } from '../lib/place/react'
 import { MutedIcon } from './notify_menu'
 import { PingBadge } from './ping_badge'
@@ -60,15 +62,102 @@ function FoldedEnd({ ends, hidden }: { ends: EndingsState; hidden: ChannelEntry[
   return <ChannelEnd typers={typers} pings={0} unread={found.some(e => e.unread)} />
 }
 
-// The channels of a server or a room in their categories, whichever place they are in. A voice
-// channel's row and the fields that add or rename a channel are the caller's.
+function NameField({
+  channels,
+  draft,
+  blurSubmits,
+}: {
+  channels: Channels
+  draft: ChannelDraft
+  blurSubmits: boolean
+}) {
+  return (
+    <input
+      autoFocus
+      value={draft.name}
+      maxLength={draft.max ?? undefined}
+      onChange={e => channels.nameDraft(e.target.value)}
+      onKeyDown={e => {
+        if (enterKey(e)) channels.submitDraft()
+        if (e.key === 'Escape') channels.dropDraft()
+      }}
+      onBlur={blurSubmits ? channels.submitDraft : undefined}
+      placeholder="channel name"
+      aria-label={draft.mode === 'create' ? 'New channel name' : 'Channel name'}
+      className={`${renameFieldCls} min-w-0 flex-1`}
+    />
+  )
+}
+
+// The field in a channel's place while it is renamed.
+function RenameField({ channels, draft }: { channels: Channels; draft: ChannelDraft }) {
+  return (
+    <Surface as="span" pad="sm" inset="bar" tone="plain" radius="none">
+      <Row as="span" gap="none">
+        <NameField channels={channels} draft={draft} blurSubmits />
+      </Row>
+    </Surface>
+  )
+}
+
+// The field that names a new channel, with its kind and what it takes.
+function CreateField({
+  channels,
+  draft,
+}: {
+  channels: Channels
+  draft: ChannelDraft & { mode: 'create' }
+}) {
+  const kind = (k: 'text' | 'voice') => (
+    <IconButton
+      icon={k === 'text' ? Hash : Volume2}
+      label={k === 'text' ? 'Text channel' : 'Voice channel'}
+      size="sm"
+      shape="square"
+      pressed={draft.kind === k}
+      onMouseDown={e => e.preventDefault()}
+      onClick={() => channels.setDraftKind(k)}
+    />
+  )
+  return (
+    <Surface
+      as="span"
+      pad="sm"
+      gap="2xs"
+      tone="plain"
+      radius="none"
+      onBlur={e => {
+        if (!e.currentTarget.contains(e.relatedTarget)) channels.submitDraft()
+      }}
+    >
+      <Row as="span" gap="sm">
+        <Row as="span" gap="3xs" place="shrink-0">
+          {kind('text')}
+          {kind('voice')}
+        </Row>
+        <NameField channels={channels} draft={draft} blurSubmits={false} />
+      </Row>
+      {draft.kind === 'text' && draft.textOnly !== null && (
+        <Row as="label" gap="sm" onMouseDown={e => e.preventDefault()}>
+          <input
+            type="checkbox"
+            className="accent-primary"
+            checked={draft.textOnly}
+            onChange={e => channels.setDraftTextOnly(e.target.checked)}
+          />
+          <span className="text-sm">Text only</span>
+        </Row>
+      )}
+    </Surface>
+  )
+}
+
+// The channels of a server or a room in their categories, whichever place they are in, with the
+// fields that add or rename a channel. A voice channel's row is the caller's.
 export function ChannelList({
   channels,
   state,
   voice,
-  replace,
-  createRow,
-  onAdd,
   drag,
   rowProps,
   categoryProps,
@@ -76,12 +165,6 @@ export function ChannelList({
   channels: Channels
   state: ChannelsState
   voice: (channel: ChannelEntry) => ReactNode
-  // What stands in a channel's place (the field that renames it), or null.
-  replace?: (channel: ChannelEntry) => ReactNode
-  // The field that adds a channel to a category (null: outside any), while it is open.
-  createRow?: (category: string | null) => ReactNode
-  // Opens that field for a category.
-  onAdd?: (category: CategoryEntry) => void
   drag?: ChannelDrag
   rowProps?: (channel: ChannelEntry) => Record<`data-${string}`, string>
   categoryProps?: (category: CategoryEntry) => Record<`data-${string}`, string>
@@ -116,7 +199,19 @@ export function ChannelList({
       </SideRow>
     )
   }
-  const row = (c: ChannelEntry) => replace?.(c) ?? (c.kind === 'voice' ? voice(c) : textRow(c))
+  const draft = useLive(channels.draft)
+  const row = (c: ChannelEntry) =>
+    draft?.mode === 'rename' && draft.key === c.key ? (
+      <RenameField key={c.key} channels={channels} draft={draft} />
+    ) : c.kind === 'voice' ? (
+      voice(c)
+    ) : (
+      textRow(c)
+    )
+  const createRow = (category: string | null) =>
+    draft?.mode === 'create' && draft.category === category ? (
+      <CreateField channels={channels} draft={draft} />
+    ) : null
   const listRow = (r: ListEntry) =>
     r.kind === 'channel' ? (
       row(r.channel)
@@ -175,13 +270,13 @@ export function ChannelList({
               <CategoryLine style={category.style} />
               <FoldedEnd ends={ends} hidden={hidden} />
             </SideRow>
-            {state.canManage && onAdd && (
+            {state.canManage && (
               <IconButton
                 icon={Plus}
                 label={`Create channel in ${category.name}`}
                 tooltip="Create channel"
                 size="sm"
-                onClick={() => onAdd(category)}
+                onClick={() => channels.startCreate(category.key)}
                 place="md:opacity-0 md:group-hover/cat:opacity-100 md:focus-visible:opacity-100 pointer-coarse:opacity-100"
               />
             )}
@@ -193,7 +288,7 @@ export function ChannelList({
           className={zoneCls(zone, visible.length === 0)}
         >
           {visible.map(listRow)}
-          {createRow?.(category.key)}
+          {createRow(category.key)}
         </div>
       </Surface>
     )
@@ -209,7 +304,7 @@ export function ChannelList({
           className={zoneCls(loose, state.loose.length === 0 && state.categories.length > 0)}
         >
           {state.loose.map(listRow)}
-          {createRow?.(null)}
+          {createRow(null)}
         </div>
         {state.categories.length > 0 && (
           <Stack data-drop-zone={drag?.categoriesZone} gap="md">

@@ -157,6 +157,63 @@ placeContract(channels, (kind, world) => {
     expect(html).toContain(hosted ? 'data-typing-dots' : '>2<')
   })
 
+  test('a new channel is named in the list, in a category or outside any', async () => {
+    const calls: unknown[][] = []
+    const here = listed(calls)
+    const { ann } = world()
+    if (hosted)
+      ann.account.store.setState({
+        createChannel: async (...a: unknown[]) => void calls.push(['create', ...a]),
+      } as never)
+    else if (ann.app)
+      Object.assign(ann.app.p2pServer, {
+        addChannel: async (...a: unknown[]) => {
+          calls.push(['create', ...a])
+          return null
+        },
+        addChannelIn: async (...a: unknown[]) => {
+          calls.push(['create in', ...a])
+          return null
+        },
+      })
+    expect(here.draft.get()).toBeNull()
+    here.setOpen(ids[3], false)
+    here.startCreate(ids[3])
+    expect(here.state.get().categories[0].open).toBe(true)
+    here.nameDraft(' galley ')
+    here.setDraftKind('voice')
+    expect(here.draft.get()).toMatchObject({
+      mode: 'create',
+      category: ids[3],
+      kind: 'voice',
+      name: ' galley ',
+    })
+    const html = renderToStaticMarkup(
+      <AccountProvider session={ann.account}>
+        <ChannelList channels={here} state={here.state.get()} voice={() => null} />
+      </AccountProvider>
+    )
+    expect(html).toContain('aria-label="New channel name"')
+    expect(html).toContain('aria-label="Voice channel"')
+    expect(html.includes('Text only')).toBe(false)
+    calls.length = 0
+    here.submitDraft()
+    await Promise.resolve()
+    expect(here.draft.get()).toBeNull()
+    expect(calls).toEqual([
+      hosted
+        ? ['create', world().server, 'galley', 'voice', 9, false]
+        : ['create in', world().room, 'galley', 'k9', 'voice'],
+    ])
+    calls.length = 0
+    here.startCreate(null)
+    here.submitDraft()
+    here.startCreate(null)
+    here.dropDraft()
+    expect(calls.filter(c => String(c[0]).startsWith('create'))).toEqual([])
+    expect(here.draft.get()).toBeNull()
+  })
+
   test('one list draws either side', () => {
     const here = listed()
     const html = renderToStaticMarkup(

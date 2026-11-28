@@ -20,7 +20,7 @@ import { VoiceRow } from '../voice_row'
 import { Button, IconButton, LinkButton, Tile, CardButton } from '../controls'
 import MemberSidebar from '../member_sidebar'
 
-import { useCallback, useMemo, useState, type ComponentProps, type CSSProperties } from 'react'
+import { useCallback, useMemo, type ComponentProps, type CSSProperties } from 'react'
 import {
   Clock,
   Folder as FolderIcon,
@@ -65,7 +65,7 @@ import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
 import { HeaderMore } from '../header_more'
-import { Masked, renameFieldCls } from '../ui'
+import { Masked } from '../ui'
 import { Row, Stack, Surface, Inset, Grid } from '../layout'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { ElsewhereNotice } from './p2p_home'
@@ -428,12 +428,9 @@ function ServerHead({ v }: { v: ServerView }) {
 
 function P2pServerSidebarBody() {
   const identity = useP2pApp()!
-  const { p2pServer, p2p } = identity
 
   const { room, v } = useOpen()
   const loading = useP2p(serversLoading)
-  const [adding, setAdding] = useState<string | null>(null)
-  const [kind, setKind] = useState<'text' | 'voice'>('text')
   const place = useP2pRoom(room)
   const list = place ? featureAt(channelsFeature, place) : null
   const listed = list && !isUnsupported(list) ? list : null
@@ -444,25 +441,6 @@ function P2pServerSidebarBody() {
         {room && loading && <ChannelListSkeleton seed={room} header className="min-h-0 flex-1" />}
       </aside>
     )
-  const submit = () => {
-    const name = (adding ?? '').trim()
-    setAdding(null)
-    if (!name) return
-    void p2pServer.addChannel(v.id, name, kind).then(id => {
-      if (id && kind === 'text') void p2pServer.openChannel(id)
-    })
-  }
-  const kindBtn = (k: 'text' | 'voice') => (
-    <IconButton
-      icon={k === 'text' ? Hash : Volume2}
-      label={k === 'text' ? 'Text channel' : 'Voice channel'}
-      size="sm"
-      shape="square"
-      pressed={kind === k}
-      onMouseDown={e => e.preventDefault()}
-      onClick={() => setKind(k)}
-    />
-  )
   return (
     <aside
       data-p2p-sidebar
@@ -479,10 +457,7 @@ function P2pServerSidebarBody() {
               icon={Plus}
               label="Create channel"
               size="sm"
-              onClick={() => {
-                setKind('text')
-                setAdding('')
-              }}
+              onClick={() => listed.startCreate(null)}
             />
           )}
         </Row>
@@ -501,32 +476,6 @@ function P2pServerSidebarBody() {
           )}
           rowProps={c => ({ 'data-p2p-channel': c.name })}
           categoryProps={category => ({ 'data-p2p-category': category.name })}
-          createRow={category =>
-            category === null && adding !== null ? (
-              <Surface as="span" pad="sm" tone="plain" radius="none">
-                <Row as="span" gap="sm">
-                  <Row as="span" gap="3xs" place="shrink-0">
-                    {kindBtn('text')}
-                    {kindBtn('voice')}
-                  </Row>
-                  <input
-                    autoFocus
-                    value={adding}
-                    maxLength={p2p.limits().server.nameMax}
-                    onChange={e => setAdding(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') submit()
-                      if (e.key === 'Escape') setAdding(null)
-                    }}
-                    onBlur={submit}
-                    placeholder="channel name"
-                    aria-label="New channel name"
-                    className={`${renameFieldCls} min-w-0 flex-1`}
-                  />
-                </Row>
-              </Surface>
-            ) : null
-          }
         />
       </PlaceProvider>
       <VoiceDock />
