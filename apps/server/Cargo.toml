@@ -41,6 +41,7 @@ sqlx = { version = "0.9", features = [
 ] }
 rchat-perms = { path = "../../crates/perms" }
 rchat-profanity = { path = "../../crates/profanity" }
+rchat-reports = { path = "../../crates/reports", features = ["schema"] }
 rchat-settings = { path = "../../crates/settings" }
 sha2 = "0.11.1"
 subtle = "2"

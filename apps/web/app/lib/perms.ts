@@ -122,6 +122,18 @@ export interface PermsModule {
     inChannel: boolean,
     flags: number
   ): number
+  reports_default_forms(): string
+  reports_validate(forms: string, form: string, answers: string, nameMax: number): string
+  reports_allowed(
+    sent: string,
+    target: string | undefined,
+    sameTargetSecs: number,
+    targetsPerDay: number,
+    perWeek: number,
+    feedbackPerWeek: number,
+    t: number
+  ): boolean
+  reports_context(held: Float64Array, reported: number, count: number): Float64Array
 }
 
 type RankArgs = [number, number, number, Tie, number]
@@ -154,6 +166,9 @@ const rules = (): PermsModule => {
   if (mod === null) throw new Error('permission rules are not loaded')
   return mod
 }
+
+// The loaded module, for the other rule sets it carries (`report_rules.ts`).
+export const sharedRules = rules
 
 // The shared rules take and give masks as floats, exact below 2^53.
 const n = (mask: bigint) => Number(mask)

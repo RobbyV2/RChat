@@ -1,0 +1,519 @@
+[
+  {
+    "name": "nothing sent before",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [],
+    "target": "u:bob",
+    "allowed": true
+  },
+  {
+    "name": "the same target again within the wait",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:bob",
+        "ago": 100
+      }
+    ],
+    "target": "u:bob",
+    "allowed": false
+  },
+  {
+    "name": "the same target again once the wait is over",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:bob",
+        "ago": 3600
+      }
+    ],
+    "target": "u:bob",
+    "allowed": true
+  },
+  {
+    "name": "another target within the wait",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:bob",
+        "ago": 100
+      }
+    ],
+    "target": "u:carol",
+    "allowed": true
+  },
+  {
+    "name": "no wait for the same target",
+    "caps": {
+      "same_target_secs": 0,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:bob",
+        "ago": 10
+      }
+    ],
+    "target": "u:bob",
+    "allowed": true
+  },
+  {
+    "name": "a fourth target in a day",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 4000
+      },
+      {
+        "target": "u:b",
+        "ago": 5000
+      },
+      {
+        "target": "u:c",
+        "ago": 6000
+      }
+    ],
+    "target": "u:d",
+    "allowed": false
+  },
+  {
+    "name": "one of the three targets of the day again",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 4000
+      },
+      {
+        "target": "u:b",
+        "ago": 5000
+      },
+      {
+        "target": "u:c",
+        "ago": 6000
+      }
+    ],
+    "target": "u:a",
+    "allowed": true
+  },
+  {
+    "name": "targets of a day ago no longer count",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 86400
+      },
+      {
+        "target": "u:b",
+        "ago": 86400
+      },
+      {
+        "target": "u:c",
+        "ago": 90000
+      }
+    ],
+    "target": "u:d",
+    "allowed": true
+  },
+  {
+    "name": "no cap on targets per day",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 0,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 5000
+      },
+      {
+        "target": "u:b",
+        "ago": 5000
+      },
+      {
+        "target": "u:c",
+        "ago": 5000
+      },
+      {
+        "target": "u:d",
+        "ago": 5000
+      }
+    ],
+    "target": "u:e",
+    "allowed": true
+  },
+  {
+    "name": "a sixth report in a week",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 100000
+      },
+      {
+        "target": "u:b",
+        "ago": 200000
+      },
+      {
+        "target": "u:c",
+        "ago": 300000
+      },
+      {
+        "target": "u:d",
+        "ago": 400000
+      },
+      {
+        "target": "u:e",
+        "ago": 500000
+      }
+    ],
+    "target": "u:f",
+    "allowed": false
+  },
+  {
+    "name": "reports of a week ago no longer count",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 604800
+      },
+      {
+        "target": "u:b",
+        "ago": 604800
+      },
+      {
+        "target": "u:c",
+        "ago": 604800
+      },
+      {
+        "target": "u:d",
+        "ago": 604800
+      },
+      {
+        "target": "u:e",
+        "ago": 604800
+      }
+    ],
+    "target": "u:f",
+    "allowed": true
+  },
+  {
+    "name": "the weekly cap counts the same target twice",
+    "caps": {
+      "same_target_secs": 0,
+      "targets_per_day": 0,
+      "per_week": 2,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 100
+      },
+      {
+        "target": "u:a",
+        "ago": 200
+      }
+    ],
+    "target": "u:a",
+    "allowed": false
+  },
+  {
+    "name": "reports without a target do not count against the others",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": null,
+        "ago": 100
+      },
+      {
+        "target": null,
+        "ago": 200
+      },
+      {
+        "target": null,
+        "ago": 300
+      },
+      {
+        "target": null,
+        "ago": 400
+      },
+      {
+        "target": null,
+        "ago": 500
+      }
+    ],
+    "target": "u:a",
+    "allowed": true
+  },
+  {
+    "name": "a third report without a target in a week",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": null,
+        "ago": 100
+      },
+      {
+        "target": null,
+        "ago": 200
+      }
+    ],
+    "target": null,
+    "allowed": false
+  },
+  {
+    "name": "a second report without a target in a week",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": null,
+        "ago": 100
+      },
+      {
+        "target": "u:a",
+        "ago": 50
+      }
+    ],
+    "target": null,
+    "allowed": true
+  },
+  {
+    "name": "reports without a target of a week ago no longer count",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": null,
+        "ago": 604800
+      },
+      {
+        "target": null,
+        "ago": 604800
+      }
+    ],
+    "target": null,
+    "allowed": true
+  },
+  {
+    "name": "no cap on reports without a target",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 0
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": null,
+        "ago": 1
+      },
+      {
+        "target": null,
+        "ago": 11
+      },
+      {
+        "target": null,
+        "ago": 21
+      },
+      {
+        "target": null,
+        "ago": 31
+      },
+      {
+        "target": null,
+        "ago": 41
+      },
+      {
+        "target": null,
+        "ago": 51
+      },
+      {
+        "target": null,
+        "ago": 61
+      },
+      {
+        "target": null,
+        "ago": 71
+      },
+      {
+        "target": null,
+        "ago": 81
+      },
+      {
+        "target": null,
+        "ago": 91
+      }
+    ],
+    "target": null,
+    "allowed": true
+  },
+  {
+    "name": "reports about someone do not count against those without a target",
+    "caps": {
+      "same_target_secs": 3600,
+      "targets_per_day": 3,
+      "per_week": 5,
+      "feedback_per_week": 2
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 100
+      },
+      {
+        "target": "u:b",
+        "ago": 100
+      },
+      {
+        "target": "u:c",
+        "ago": 100
+      },
+      {
+        "target": "u:d",
+        "ago": 100
+      },
+      {
+        "target": "u:e",
+        "ago": 100
+      }
+    ],
+    "target": null,
+    "allowed": true
+  },
+  {
+    "name": "no caps at all",
+    "caps": {
+      "same_target_secs": 0,
+      "targets_per_day": 0,
+      "per_week": 0,
+      "feedback_per_week": 0
+    },
+    "t": 1000000,
+    "sent": [
+      {
+        "target": "u:a",
+        "ago": 1
+      },
+      {
+        "target": "u:a",
+        "ago": 1
+      },
+      {
+        "target": "u:a",
+        "ago": 1
+      },
+      {
+        "target": "u:a",
+        "ago": 1
+      },
+      {
+        "target": "u:a",
+        "ago": 1
+      },
+      {
+        "target": "u:a",
+        "ago": 1
+      },
+      {
+        "target": "u:a",
+        "ago": 1
+      },
+      {
+        "target": "u:a",
+        "ago": 1
+      }
+    ],
+    "target": "u:a",
+    "allowed": true
+  }
+]

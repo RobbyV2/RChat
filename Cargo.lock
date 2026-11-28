@@ -5467,6 +5467,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rchat-reports"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "utoipa",
+]
+
+[[package]]
 name = "rchat-settings"
 version = "0.3.0"
 dependencies = [
@@ -5775,6 +5784,7 @@ dependencies = [
  "rchat-avatar",
  "rchat-perms",
  "rchat-profanity",
+ "rchat-reports",
  "rchat-settings",
  "redis",
  "regex",
@@ -5819,6 +5829,7 @@ dependencies = [
  "console_error_panic_hook",
  "rchat-perms",
  "rchat-profanity",
+ "rchat-reports",
  "serde_json",
  "wasm-bindgen",
 ]

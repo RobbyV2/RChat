@@ -104,7 +104,7 @@ export interface Announcement {
 
 export interface Answer {
   id: string
-  value: Record<string, unknown>
+  value: unknown
 }
 
 export interface ApiErrorBody {
@@ -2474,7 +2474,7 @@ export interface StoredAnswer {
   kind: FieldKind
   label: string
   shown: string[] | null
-  value: Record<string, unknown>
+  value: unknown
 }
 
 export interface Suggestion {
@@ -3504,7 +3504,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   AdminServerReq: ref((): Schema<AdminServerReq> => merged(ref(() => decode.ServerOptions), obj({ name: str(), owner: str(), password: opt(nullable(str())) })) as Schema<AdminServerReq>),
   AllowedMentions: ref((): Schema<AllowedMentions> => obj({ parse: opt(arr(ref(() => decode.MentionKind))), replied_user: opt(bool), roles: opt(arr(int())), users: opt(arr(str())) }) as Schema<AllowedMentions>),
   Announcement: ref((): Schema<Announcement> => obj({ ends_at: int(), id: str(), message: str(), starts_at: int() }) as Schema<Announcement>),
-  Answer: ref((): Schema<Answer> => obj({ id: str(), value: jsonObject }) as Schema<Answer>),
+  Answer: ref((): Schema<Answer> => obj({ id: str(), value: anything }) as Schema<Answer>),
   ApiErrorBody: ref((): Schema<ApiErrorBody> => obj({ error: str(), reason: orNull(ref(() => decode.Reason)) }) as Schema<ApiErrorBody>),
   Assertion: ref((): Schema<Assertion> => obj({ expires_at: int(), iss: str(), sub: str(), token: str() }) as Schema<Assertion>),
   AssertionRequest: ref((): Schema<AssertionRequest> => obj({ aud: str(), nonce: opt(nullable(str())) }) as Schema<AssertionRequest>),
@@ -3853,7 +3853,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   StaffViewReq: ref((): Schema<StaffViewReq> => obj({ reauth: ref(() => decode.ReAuthBody) }) as Schema<StaffViewReq>),
   StartChannels: ref((): Schema<StartChannels> => choice('text', 'text_voice') as Schema<StartChannels>),
   Status: ref((): Schema<Status> => choice('open', 'in_review', 'resolved', 'dismissed') as Schema<Status>),
-  StoredAnswer: ref((): Schema<StoredAnswer> => obj({ id: str(), kind: ref(() => decode.FieldKind), label: str(), shown: orNull(arr(str())), value: jsonObject }) as Schema<StoredAnswer>),
+  StoredAnswer: ref((): Schema<StoredAnswer> => obj({ id: str(), kind: ref(() => decode.FieldKind), label: str(), shown: orNull(arr(str())), value: anything }) as Schema<StoredAnswer>),
   Suggestion: ref((): Schema<Suggestion> => obj({ label: opt(str()), url: str() }) as Schema<Suggestion>),
   SuggestionMode: ref((): Schema<SuggestionMode> => choice('add', 'replace') as Schema<SuggestionMode>),
   Suggestions: ref((): Schema<Suggestions> => obj({ list: opt(arr(ref(() => decode.Suggestion))), mode: opt(ref(() => decode.SuggestionMode)) }) as Schema<Suggestions>),

@@ -34,13 +34,12 @@ use crate::db::{Db, User};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 use forms::{Answer, Base, FieldKind, Form, OTHER, StoredAnswer, validate_answers};
-use limits::{Caps, Class};
+use limits::{Class, caps_of};
 use snapshot::{Place, SnapUser, Snapshot};
 
 /// The longest note of a report, in characters.
 pub const NOTE_MAX: usize = 1000;
-/// The most earlier messages a report about a message takes along.
-pub const CONTEXT_MAX: u8 = 10;
+pub use rchat_reports::context::CONTEXT_MAX;
 /// The 429 answer to a reporter past a cap, and to one whose reports are muted.
 pub const OVER_LIMIT: &str = "You've sent a lot of reports. Try again later.";
 pub const INSTANCE_ONLY: &str = "This can only be reported to the instance";
@@ -724,7 +723,7 @@ pub(crate) async fn create_at(
         note,
         answers: &answers,
     };
-    let id = store::insert(&state.db, row, class, Caps::of(&state.limits), t)
+    let id = store::insert(&state.db, row, class, caps_of(&state.limits), t)
         .await?
         .ok_or_else(over_limit)?;
     let audience = Audience {

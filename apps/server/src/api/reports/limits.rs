@@ -4,45 +4,23 @@ use super::ReportKind;
 use crate::api::ApiError;
 use crate::limits::Limits;
 
-const DAY: i64 = 86400;
-const WEEK: i64 = 7 * DAY;
+pub(crate) use rchat_reports::caps::{Caps, Class};
+use rchat_reports::caps::{DAY, WEEK};
 
-/// The caps on one account's reports of one kind. 0 means no cap.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Caps {
-    /// Seconds before the same target can be reported again.
-    pub same_target_secs: i64,
-    /// Different targets per 24 hours.
-    pub targets_per_day: i64,
-    /// Reports about someone or something per 7 days.
-    pub per_week: i64,
-    /// Reports without a target (bugs, feedback) per 7 days, counted apart from the others.
-    pub feedback_per_week: i64,
-}
-
-impl Caps {
-    pub fn of(limits: &Limits) -> Caps {
-        Caps {
-            same_target_secs: i64::from(limits.report_same_target_hours) * 3600,
-            targets_per_day: i64::from(limits.report_targets_per_day),
-            per_week: i64::from(limits.report_max_per_week),
-            feedback_per_week: i64::from(limits.report_feedback_per_week),
-        }
+/// The caps of `limits`.
+pub(crate) fn caps_of(limits: &Limits) -> Caps {
+    Caps {
+        same_target_secs: i64::from(limits.report_same_target_hours) * 3600,
+        targets_per_day: i64::from(limits.report_targets_per_day),
+        per_week: i64::from(limits.report_max_per_week),
+        feedback_per_week: i64::from(limits.report_feedback_per_week),
     }
-}
-
-/// What a new report counts against: the caps on reports about someone or something, or the
-/// cap on reports without a target.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Class<'a> {
-    Abuse { target_key: &'a str },
-    Feedback,
 }
 
 /// Whether `reporter` may send one more report of `kind` at `t`. Only their own reports of that
 /// kind count, never the copies an escalation makes. Run it inside the transaction that inserts
 /// the report, after the pace row of the reporter is written, so reports sent at once are
-/// counted one after the other.
+/// counted one after the other. `rchat_reports::caps::allowed` is the same rule over a list.
 pub(crate) async fn allowed(
     conn: &mut AnyConnection,
     reporter: &str,
@@ -122,5 +100,70 @@ pub(crate) async fn allowed(
             }
             Ok(true)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rchat_reports::caps::cases;
+
+    use super::{ReportKind, allowed};
+    use crate::api::test_util::{done, temp_state};
+
+    const CASES: &str = include_str!("../../../../../assets/report_cap_cases.json");
+
+    async fn insert(
+        db: &crate::db::Db,
+        reporter: &str,
+        kind: &str,
+        key: Option<&str>,
+        at: i64,
+    ) -> i64 {
+        let (target_kind, target_key) = match key {
+            Some(key) => ("user", key),
+            None => ("none", "-"),
+        };
+        sqlx::query("INSERT INTO reports(kind, target_kind, target_key, reporter, form, form_label, reason, snapshot, created_at, updated_at) VALUES($1, $2, $3, $4, 'user', 'Report a user', 'spam', '{}', $5, $5) RETURNING id")
+            .bind(kind)
+            .bind(target_kind)
+            .bind(target_key)
+            .bind(reporter)
+            .bind(at)
+            .fetch_one(db)
+            .await
+            .map(|r| sqlx::Row::get(&r, 0))
+            .expect("insert report")
+    }
+
+    #[tokio::test]
+    async fn the_cases_hold_in_the_database() {
+        let (state, path) = temp_state("report_cap_cases").await;
+        for (n, case) in cases(CASES).expect("cases").iter().enumerate() {
+            let reporter = format!("r{n}");
+            for sent in case.sent() {
+                let id = insert(&state.db, &reporter, "server", sent.target_key, sent.at).await;
+                insert(&state.db, "someone", "server", sent.target_key, sent.at).await;
+                insert(&state.db, &reporter, "instance", sent.target_key, sent.at).await;
+                sqlx::query("INSERT INTO reports(kind, target_kind, target_key, reporter, form, form_label, reason, snapshot, escalated_from, created_at, updated_at) SELECT kind, target_kind, target_key, reporter, form, form_label, reason, snapshot, id, created_at, updated_at FROM reports WHERE id = $1")
+                    .bind(id)
+                    .execute(&state.db)
+                    .await
+                    .expect("escalated copy");
+            }
+            let mut tx = state.db.begin().await.expect("begin");
+            let got = allowed(
+                &mut tx,
+                &reporter,
+                ReportKind::Server,
+                case.class(),
+                case.caps,
+                case.t,
+            )
+            .await
+            .expect("allowed");
+            tx.rollback().await.expect("rollback");
+            assert_eq!(got, case.allowed, "{}", case.name);
+        }
+        done(state, path).await;
     }
 }

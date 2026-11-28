@@ -28837,7 +28837,6 @@
             "description": "The field's id."
           },
           "value": {
-            "type": "object",
             "description": "A string for text fields and a single choice, a list of option ids for a multiple\nchoice, `true` or `false` for a checkbox, `{\"username\": ...}`, `{\"server\": ...}` or\n`{\"message_id\": ...}` for a reference."
           }
         }
@@ -39062,7 +39061,6 @@
             "description": "For choices: the labels of the chosen options when the report was sent."
           },
           "value": {
-            "type": "object",
             "description": "The answer: a string for text fields and a single choice, a list of option ids for a\nmultiple choice, `true` for a checkbox, and for a reference the names it had:\n`{\"username\", \"display_name\"}`, `{\"server\", \"display_name\"}` or\n`{\"message_id\", \"author\"}`. `{\"deleted\": true}` stands for an account deleted since."
           }
         }

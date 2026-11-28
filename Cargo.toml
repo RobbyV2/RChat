@@ -16,6 +16,7 @@ members = [
   "crates/pow",
   "crates/pow-wasm",
   "crates/profanity",
+  "crates/reports",
   "crates/settings",
   "crates/wasm",
 ]
