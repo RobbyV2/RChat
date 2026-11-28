@@ -797,7 +797,11 @@ export function ServerRail() {
                   <P2pServerRail actorLabel={peers.length > 1 ? peer.label : undefined} />
                 </PeerBlockView>
               ))
-            : p2pOn && <P2pServerRail />}
+            : p2pOn && (
+                <Stack ref={dragScope} gap="sm" align="center" place="shrink-0">
+                  <P2pServerRail />
+                </Stack>
+              )}
         </Stack>
       </div>
       <Inset pad="sm" border="top" safe place="shrink-0">
