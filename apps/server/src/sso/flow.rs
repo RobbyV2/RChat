@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     api::{ApiError, auth::new_token, bad, reauth::Session},
-    crypt::secrets::{Sealer, open_or},
+    crypt::secrets::{Sealer, open_or, open_or_on},
     db::{Db, now, secret_key},
     state::AppState,
 };
@@ -716,6 +716,7 @@ pub async fn client_consent(
         return Err(expired());
     }
     let (sealer, id) = (Sealer::of(db).await?, secret_key(receipt));
+    let ring = crate::db::ring(db);
     let mut tx = db.begin().await?;
     let sql = match action {
         ConsentAction::Describe => {
@@ -731,7 +732,9 @@ pub async fn client_consent(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(expired)?;
-    let raw = pending(db, &id, raw, sealed).await?;
+    let raw = open_or_on(&ring, &mut tx, "sso_pending", "data", &id, sealed, raw)
+        .await?
+        .to_string();
     let consent: Consent = serde_json::from_str(&raw).map_err(ApiError::internal)?;
     let code = if matches!(action, ConsentAction::Allow) {
         let code = new_token();

@@ -1687,11 +1687,12 @@ pub(crate) async fn edit_hook_message(
         return Err(bad("Cannot edit this message"));
     }
     let attached = row.try_get::<Option<String>, _>(1)?.is_some() && row.try_get::<i64, _>(2)? == 0;
-    let (author, parts) = match crate::api::seal::stored_parts(db, &mut tx, mid).await? {
-        Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
-        Some(_) => return Err(bad("Cannot edit this message")),
-        None => return Err(unknown_message()),
-    };
+    let (author, parts) =
+        match crate::api::seal::stored_parts(crate::db::ring(db), &mut tx, mid).await? {
+            Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
+            Some(_) => return Err(bad("Cannot edit this message")),
+            None => return Err(unknown_message()),
+        };
     let old = parts.content.clone();
     let old_cards = parse_embeds(parts.embeds.as_deref());
     let content = content.unwrap_or_else(|| old.clone());

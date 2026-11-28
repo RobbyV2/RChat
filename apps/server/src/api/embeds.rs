@@ -530,10 +530,11 @@ async fn store_embeds(
         .bind(message_id)
         .fetch_one(&mut *tx)
         .await?;
-    let content = match crate::api::seal::stored_parts(db, &mut tx, message_id).await? {
-        Some((_, _, opened)) => opened.parts.content,
-        None => return Ok(None),
-    };
+    let content =
+        match crate::api::seal::stored_parts(crate::db::ring(db), &mut tx, message_id).await? {
+            Some((_, _, opened)) => opened.parts.content,
+            None => return Ok(None),
+        };
     if extract_urls(&content) != urls {
         return Ok(None);
     }

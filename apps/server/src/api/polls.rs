@@ -1440,7 +1440,8 @@ async fn lock_poll(db: &Db, conn: &mut sqlx::AnyConnection, id: i64) -> Result<D
         .fetch_optional(&mut *conn)
         .await?
         .ok_or_else(not_found)?;
-    let opener = Opener::of_rows(db, std::slice::from_ref(&row), DEF_BODY).await?;
+    let ring = crate::db::ring(db);
+    let opener = Opener::on_rows(ring, conn, std::slice::from_ref(&row), DEF_BODY).await?;
     Ok(row_def(&row, &opener)?.1)
 }
 
@@ -1693,7 +1694,7 @@ pub(crate) async fn add_option(
         .bind(id)
         .fetch_all(&mut *tx)
         .await?;
-    let opener = Opener::of_rows(db, &rows, 2).await?;
+    let opener = Opener::on_rows(crate::db::ring(db), &mut tx, &rows, 2).await?;
     let mut existing: Vec<String> = Vec::with_capacity(rows.len());
     for r in &rows {
         existing.push(opener.text(

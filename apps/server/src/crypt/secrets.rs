@@ -97,9 +97,40 @@ pub async fn open_or(
         (Some(_), false) | (None, _) => return Ok(Zeroizing::new(plain)),
     };
     let id = header(&record)?.key_id;
-    let ring = crate::db::ring(db);
-    match ring.key_by_id(db, id).await? {
-        Some((Purpose::Secrets, key)) => opened(&key, id, table, column, binding, &record),
+    let held = crate::db::ring(db).key_by_id(db, id).await?;
+    opened_under(held, id, table, column, binding, &record)
+}
+
+/// `open_or` on one connection with the key ring of its database, for a caller inside a
+/// transaction.
+pub async fn open_or_on(
+    ring: &Ring,
+    conn: &mut AnyConnection,
+    table: &str,
+    column: &str,
+    binding: &str,
+    sealed: Option<Vec<u8>>,
+    plain: String,
+) -> anyhow::Result<Zeroizing<String>> {
+    let record = match (sealed, plain.is_empty()) {
+        (Some(record), true) => record,
+        (Some(_), false) | (None, _) => return Ok(Zeroizing::new(plain)),
+    };
+    let id = header(&record)?.key_id;
+    let held = ring.key_by_id_on(conn, id).await?;
+    opened_under(held, id, table, column, binding, &record)
+}
+
+fn opened_under(
+    held: Option<(Purpose, Key)>,
+    id: u32,
+    table: &str,
+    column: &str,
+    binding: &str,
+    record: &[u8],
+) -> anyhow::Result<Zeroizing<String>> {
+    match held {
+        Some((Purpose::Secrets, key)) => opened(&key, id, table, column, binding, record),
         Some(_) | None => anyhow::bail!("the data key {id} of {table}.{column} is not held"),
     }
 }

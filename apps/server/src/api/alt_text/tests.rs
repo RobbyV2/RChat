@@ -8,7 +8,7 @@ use super::*;
 use crate::api::messages::{edit_message, send_channel_message};
 use crate::api::test_util::{add_member, each_db, each_db_keyed, mem_user, profanity_on};
 use crate::api::{Authed, Message};
-use crate::db::NewUser;
+use crate::db::{Db, NewUser};
 use crate::state::AppState;
 
 async fn general(db: &Db) -> i64 {

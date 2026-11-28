@@ -2,7 +2,7 @@
 //! write follows, and the sweep for rows a sealed place got stored plain.
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::Json;
@@ -15,8 +15,8 @@ use super::access::resolve_dm;
 use super::admin::require_site_admin;
 use super::system_messages::{post_storage, post_storage_dm};
 use super::{ApiError, Authed, OkResp, ok};
-use crate::crypt::body::{Opened, Parts, Scope, Writer, open_body};
-use crate::crypt::ring::Readiness;
+use crate::crypt::body::{Opened, Parts, Scope, Writer, open_body_on};
+use crate::crypt::ring::{Readiness, Ring};
 use crate::crypt::{Purpose, copies};
 use crate::db::{Db, is_sqlite, now, pool_key};
 use crate::hub::CopyNote;
@@ -399,10 +399,11 @@ pub(crate) async fn set_body(
     .map(|_| ())
 }
 
-/// The text of the message `id` as stored, opened, with its scope and author. Reads on the
-/// caller's connection, so inside a transaction it sees that transaction's row.
+/// The text of the message `id` as stored, opened, with its scope and author. Reads the row
+/// and its key on the caller's connection, so inside a transaction it sees that transaction's
+/// row and asks for no other connection.
 pub(crate) async fn stored_parts(
-    db: &Db,
+    ring: Arc<Ring>,
     conn: &mut AnyConnection,
     id: i64,
 ) -> sqlx::Result<Option<(Option<Scope>, String, Opened)>> {
@@ -422,7 +423,7 @@ pub(crate) async fn stored_parts(
         dropped: row.try_get(6)?,
         alt: row.try_get(8)?,
     };
-    let opened = open_body(db, id, scope, &author, row.try_get(7)?, plain).await?;
+    let opened = open_body_on(ring, conn, id, scope, &author, row.try_get(7)?, plain).await?;
     Ok(Some((scope, author, opened)))
 }
 

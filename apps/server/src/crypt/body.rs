@@ -198,12 +198,20 @@ pub struct Opener {
 impl Opener {
     /// An opener for `rows`, whose column `at` is a `body`.
     pub async fn of_rows(db: &Db, rows: &[sqlx::any::AnyRow], at: usize) -> sqlx::Result<Opener> {
-        use sqlx::Row;
-        let mut records = Vec::new();
-        for row in rows {
-            records.extend(row.try_get::<Option<Vec<u8>>, _>(at)?);
-        }
+        let records = records(rows, at)?;
         Opener::of(db, records.iter().map(Vec::as_slice)).await
+    }
+
+    /// `of_rows` on one connection with the key ring of its database, for a caller inside a
+    /// transaction.
+    pub async fn on_rows(
+        ring: Arc<Ring>,
+        conn: &mut sqlx::AnyConnection,
+        rows: &[sqlx::any::AnyRow],
+        at: usize,
+    ) -> sqlx::Result<Opener> {
+        let records = records(rows, at)?;
+        Opener::on(ring, conn, records.iter().map(Vec::as_slice)).await
     }
 
     /// An opener holding the key of every record in `records`.
@@ -220,6 +228,27 @@ impl Opener {
             .collect();
         for id in wanted {
             ring.key_by_id(db, id)
+                .await
+                .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+        }
+        Ok(Opener { ring })
+    }
+
+    /// `of` on one connection with the key ring of its database, for a caller inside a
+    /// transaction.
+    pub async fn on<'a>(
+        ring: Arc<Ring>,
+        conn: &mut sqlx::AnyConnection,
+        records: impl IntoIterator<Item = &'a [u8]>,
+    ) -> sqlx::Result<Opener> {
+        let wanted: BTreeSet<u32> = records
+            .into_iter()
+            .filter_map(|record| header(record).ok())
+            .map(|h| h.key_id)
+            .filter(|id| ring.held(*id).is_none())
+            .collect();
+        for id in wanted {
+            ring.key_by_id_on(conn, id)
                 .await
                 .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
         }
@@ -314,6 +343,16 @@ impl Opener {
     }
 }
 
+/// The records in the column `at` of `rows`.
+fn records(rows: &[sqlx::any::AnyRow], at: usize) -> sqlx::Result<Vec<Vec<u8>>> {
+    use sqlx::Row;
+    let mut records = Vec::new();
+    for row in rows {
+        records.extend(row.try_get::<Option<Vec<u8>>, _>(at)?);
+    }
+    Ok(records)
+}
+
 /// The text of one message row, for a caller that read a single row.
 pub async fn open_body(
     db: &Db,
@@ -324,5 +363,20 @@ pub async fn open_body(
     plain: Parts,
 ) -> sqlx::Result<Opened> {
     let opener = Opener::of(db, body.as_deref()).await?;
+    Ok(opener.message(id, scope, author, body.as_deref(), plain))
+}
+
+/// `open_body` on one connection with the key ring of its database, for a caller inside a
+/// transaction.
+pub async fn open_body_on(
+    ring: Arc<Ring>,
+    conn: &mut sqlx::AnyConnection,
+    id: i64,
+    scope: Option<Scope>,
+    author: &str,
+    body: Option<Vec<u8>>,
+    plain: Parts,
+) -> sqlx::Result<Opened> {
+    let opener = Opener::on(ring, conn, body.as_deref()).await?;
     Ok(opener.message(id, scope, author, body.as_deref(), plain))
 }

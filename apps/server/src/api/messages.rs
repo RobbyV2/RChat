@@ -1452,12 +1452,11 @@ pub(crate) async fn insert_message(
         settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
     }
     let alt = crate::api::alt_text::alt_to_store(
-        db,
+        &settings,
         media_alt.as_deref(),
         media.is_some(),
         channel_id.is_some(),
-    )
-    .await?;
+    )?;
     let has_cards = hook.is_some_and(|h| !h.embeds.is_empty());
     if content.trim().is_empty() && media.is_none() && !has_cards && poll.is_none() {
         return Err(bad("Message is empty"));
@@ -2929,7 +2928,7 @@ pub(crate) async fn edit_message(
     }
     let stored = {
         let mut conn = state.db.acquire().await?;
-        crate::api::seal::stored_parts(&state.db, &mut conn, id).await?
+        crate::api::seal::stored_parts(crate::db::ring(&state.db), &mut conn, id).await?
     };
     let (old, old_alt) = match stored {
         Some((_, _, Opened { parts, unreadable })) if !unreadable => (parts.content, parts.alt),
@@ -2946,10 +2945,11 @@ pub(crate) async fn edit_message(
     }
     let alt = match media_alt {
         Some(_) if !attached => return Err(bad(crate::api::alt_text::NOTHING_TO_DESCRIBE)),
-        Some(text) => {
-            crate::api::alt_text::clean_alt(&state.db, text.as_deref(), message.channel().is_some())
-                .await?
-        }
+        Some(text) => crate::api::alt_text::clean_alt(
+            &Settings::cached(&state.db).await,
+            text.as_deref(),
+            message.channel().is_some(),
+        )?,
         None => old_alt.clone(),
     };
     let floor = match message.channel() {
@@ -2958,42 +2958,26 @@ pub(crate) async fn edit_message(
     };
     if content != old || alt != old_alt {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
-        let no_embeds = match message.channel() {
-            Some(channel) => !channel.member_rights(&state.db).await?.holds(held::EMBED),
-            None => false,
+        let edit = Edit {
+            id,
+            content: &content,
+            alt: alt.as_deref(),
+            may_embed: match message.channel() {
+                Some(channel) => channel.member_rights(&state.db).await?.holds(held::EMBED),
+                None => true,
+            },
+            relink,
+            at: state.clock.unix(),
         };
-        let (mut tx, text_only, writer) = begin_message_write(
+        let ring = crate::db::ring(&state.db);
+        let write = begin_message_write(
             &state.db,
             message.scope().channel_id,
             message.scope().dm_id,
             false,
         )
         .await?;
-        let text_only = text_only || no_embeds;
-        let (author, parts) = match crate::api::seal::stored_parts(&state.db, &mut tx, id).await? {
-            Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
-            Some(_) => return Err(bad("Cannot edit this message")),
-            None => return Err(crate::api::access::not_found()),
-        };
-        let parts = Parts {
-            content: content.clone(),
-            alt: alt.clone(),
-            ..parts
-        };
-        crate::api::seal::store_parts(&mut tx, writer.as_ref(), id, &author, &parts).await?;
-        sqlx::query("UPDATE messages SET edited_at = $1, no_previews = $3 WHERE id = $2")
-            .bind(state.clock.unix())
-            .bind(id)
-            .bind(i64::from(text_only))
-            .execute(&mut *tx)
-            .await?;
-        if relink || text_only {
-            sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        tx.commit().await?;
+        let text_only = store_edit(write, ring, edit).await?;
         let crate::api::access::MsgScope {
             channel_id,
             dm_id,
@@ -3042,6 +3026,61 @@ pub(crate) async fn edit_message(
 
 mod sealed;
 pub(crate) use sealed::forget as forget_sealed;
+
+/// An edit of the message `id`, decided before its transaction begins.
+struct Edit<'a> {
+    id: i64,
+    content: &'a str,
+    alt: Option<&'a str>,
+    may_embed: bool,
+    relink: bool,
+    at: i64,
+}
+
+/// Stores `edit` in the transaction of `write` and commits it. The transaction is its only way
+/// to the database. Answers whether the message carries no link previews: its channel is text
+/// only, or its author may not embed.
+async fn store_edit(
+    write: (sqlx::Transaction<'static, sqlx::Any>, bool, Option<Writer>),
+    ring: std::sync::Arc<crate::crypt::ring::Ring>,
+    edit: Edit<'_>,
+) -> Result<bool, ApiError> {
+    let Edit {
+        id,
+        content,
+        alt,
+        may_embed,
+        relink,
+        at,
+    } = edit;
+    let (mut tx, text_only, writer) = write;
+    let text_only = text_only || !may_embed;
+    let (author, parts) = match crate::api::seal::stored_parts(ring, &mut tx, id).await? {
+        Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
+        Some(_) => return Err(bad("Cannot edit this message")),
+        None => return Err(crate::api::access::not_found()),
+    };
+    let parts = Parts {
+        content: content.to_owned(),
+        alt: alt.map(str::to_owned),
+        ..parts
+    };
+    crate::api::seal::store_parts(&mut tx, writer.as_ref(), id, &author, &parts).await?;
+    sqlx::query("UPDATE messages SET edited_at = $1, no_previews = $3 WHERE id = $2")
+        .bind(at)
+        .bind(id)
+        .bind(i64::from(text_only))
+        .execute(&mut *tx)
+        .await?;
+    if relink || text_only {
+        sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(text_only)
+}
 
 enum Bind {
     S(String),
@@ -12053,6 +12092,75 @@ mod tests {
                 "a removed attachment counts as none"
             );
         }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn edits_and_sends_share_the_one_sqlite_writer() {
+        let (state, path) = crate::api::test_util::temp_state_env(
+            "edit_writer",
+            &[("DATABASE_ACQUIRE_TIMEOUT_SECS", "1")],
+        )
+        .await;
+        let db = &state.db;
+        assert_eq!(db.options().get_max_connections(), 1);
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let mut posts = Vec::new();
+        for n in 0..4 {
+            posts.push(
+                say(
+                    &state,
+                    (Some(cid), None, None),
+                    "alice",
+                    &format!("draft {n}"),
+                )
+                .await,
+            );
+        }
+        let mut rx = state.hub.subscribe();
+        let mut tasks = tokio::task::JoinSet::new();
+        for (n, post) in posts.iter().enumerate() {
+            let (editor, id) = (state.clone(), post.id);
+            tasks.spawn(async move {
+                edit_message(
+                    State(editor),
+                    Path(id),
+                    Authed(mem_user("alice", true)),
+                    Json(EditReq {
+                        content: format!("final {n} https://example.com/{n}"),
+                        media_alt: None,
+                    }),
+                )
+                .await
+                .map(|Json(m)| m.content)
+                .map_err(|ApiError(code, text, _)| (code, text))
+            });
+            let sender = state.clone();
+            tasks.spawn(async move {
+                say_to(
+                    &sender,
+                    (Some(cid), None, None),
+                    "bob",
+                    "meanwhile",
+                    None,
+                    true,
+                )
+                .await
+                .map(|m| m.content)
+                .map_err(|ApiError(code, text, _)| (code, text))
+            });
+        }
+        while let Some(done) = tasks.join_next().await {
+            done.expect("task").expect("written");
+        }
+        let updates = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter(|ev| matches!(ev, WsEvent::MessageUpdated { .. }))
+            .count();
+        assert_eq!(updates, posts.len(), "every edit reaches the viewers");
         done(state, path).await;
     }
 
