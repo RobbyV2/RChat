@@ -57,6 +57,7 @@ export const ADMIN_ROWS: AdminRow[] = [
   { key: "member_lists", env: "FEATURE_MEMBER_LISTS", group: "Servers", kind: "switch", label: "Member lists", line: "Allow users to view server member lists. Turning this off hides member lists across all servers." },
   { key: "profile_pictures", env: "FEATURE_PROFILE_PICTURES", group: "Accounts", kind: "switch", label: "Profile pictures", line: "Lets people upload a profile picture. Turning it off stops uploads and shows the built-in avatars." },
   { key: "animated_profile_pictures", env: "FEATURE_ANIMATED_PROFILE_PICTURES", group: "Accounts", under: "profile_pictures", kind: "switch", label: "Animated pictures", line: "Keeps the animation of an animated upload. Turning it off keeps and shows only the first frame." },
+  { key: "gifs", env: "FEATURE_GIFS", group: "Messages and files", kind: "switch", label: "GIF picker", line: "Lets people search for GIFs to send. Needs GIF_API_KEY; searches and files go through this server.", keywords: ["gif", "giphy", "klipy"] },
 ]
 
 export const BRAND_ROWS: BrandRow[] = [
@@ -241,6 +242,7 @@ export const CONTROL_KINDS: Record<string, string> = {
   server_profiles: "switch",
   profile_pictures: "switch",
   animated_profile_pictures: "switch",
+  gifs: "switch",
   docs: "switch",
   interactive_docs: "switch",
   member_lists: "switch",

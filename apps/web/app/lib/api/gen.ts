@@ -636,6 +636,7 @@ export interface Embed {
   color: string | null
   description: string | null
   image_url: string | null
+  media_kind: PreviewKind | null
   ord: number
   site_name: string | null
   title: string | null
@@ -798,6 +799,20 @@ export interface FriendSummary {
 
 export interface Friendship {
   status: Relation
+}
+
+export interface Gif {
+  height: number
+  id: string
+  preview: string
+  title: string
+  url: string
+  width: number
+}
+
+export interface GifPage {
+  items: Gif[]
+  next: string | null
 }
 
 export type GroupBy = 'server' | 'member' | 'reporter' | 'role' | 'channel' | 'reason' | 'status' | 'assignee' | 'day' | 'form'
@@ -1480,6 +1495,8 @@ export interface Posted {
   message: Message
   session: string
 }
+
+export type PreviewKind = 'image' | 'gif'
 
 export interface Privacy {
   dms: DmPolicy
@@ -2280,6 +2297,7 @@ export interface Settings {
   e2ee?: boolean
   e2ee_compliance?: boolean
   friend_requests?: boolean
+  gifs?: boolean
   guest_chat_enabled?: boolean
   guest_voice_enabled?: boolean
   guests_enabled: boolean
@@ -2335,6 +2353,7 @@ export interface SettingsPatch {
   e2ee?: boolean | null
   e2ee_compliance?: boolean | null
   friend_requests?: boolean | null
+  gifs?: boolean | null
   guest_chat_enabled?: boolean | null
   guest_voice_enabled?: boolean | null
   guests_enabled?: boolean | null
@@ -3195,6 +3214,8 @@ export interface Decoded {
   FriendRequest: FriendRequest
   FriendSummary: FriendSummary
   Friendship: Friendship
+  Gif: Gif
+  GifPage: GifPage
   GroupBy: GroupBy
   GroupKind: GroupKind
   GroupMention: GroupMention
@@ -3301,6 +3322,7 @@ export interface Decoded {
   PollResults: PollResults
   PollVoter: PollVoter
   Posted: Posted
+  PreviewKind: PreviewKind
   Privacy: Privacy
   PrivacyPatch: PrivacyPatch
   ProfanityTargets: ProfanityTargets
@@ -3565,7 +3587,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   DmSummary: ref((): Schema<DmSummary> => obj({ closed: bool, friend: bool, id: int(), is_self: bool, last_message_at: orNull(int()), last_message_id: orNull(int()), other: ref(() => decode.UserRef), seal: ref(() => decode.SealView) }) as Schema<DmSummary>),
   EditReq: ref((): Schema<EditReq> => obj({ content: str(), embeds: opt(nullable(arr(ref(() => decode.RichEmbed)))), media_alt: opt(nullable(str())) }) as Schema<EditReq>),
   EditStub: ref((): Schema<EditStub> => obj({ edited_at: orNull(int()), id: int(), stub: bool, thread_root_id: orNull(int()) }) as Schema<EditStub>),
-  Embed: ref((): Schema<Embed> => obj({ banner_removed: bool, color: orNull(str()), description: orNull(str()), image_url: orNull(str()), ord: int(), site_name: orNull(str()), title: orNull(str()), url: str() }) as Schema<Embed>),
+  Embed: ref((): Schema<Embed> => obj({ banner_removed: bool, color: orNull(str()), description: orNull(str()), image_url: orNull(str()), media_kind: orNull(ref(() => decode.PreviewKind)), ord: int(), site_name: orNull(str()), title: orNull(str()), url: str() }) as Schema<Embed>),
   EmbedAuthor: ref((): Schema<EmbedAuthor> => obj({ name: str(), url: opt(nullable(str())) }) as Schema<EmbedAuthor>),
   EmbedField: ref((): Schema<EmbedField> => obj({ inline: opt(bool), name: str(), value: str() }) as Schema<EmbedField>),
   EmbedFooter: ref((): Schema<EmbedFooter> => obj({ text: str() }) as Schema<EmbedFooter>),
@@ -3589,6 +3611,8 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   FriendRequest: ref((): Schema<FriendRequest> => obj({ created_at: int(), incoming: bool, user: ref(() => decode.UserRef) }) as Schema<FriendRequest>),
   FriendSummary: ref((): Schema<FriendSummary> => obj({ incoming: int(), outgoing: int(), pings: int(), pings_until: int() }) as Schema<FriendSummary>),
   Friendship: ref((): Schema<Friendship> => obj({ status: ref(() => decode.Relation) }) as Schema<Friendship>),
+  Gif: ref((): Schema<Gif> => obj({ height: int(), id: str(), preview: str(), title: str(), url: str(), width: int() }) as Schema<Gif>),
+  GifPage: ref((): Schema<GifPage> => obj({ items: arr(ref(() => decode.Gif)), next: orNull(str()) }) as Schema<GifPage>),
   GroupBy: ref((): Schema<GroupBy> => choice('server', 'member', 'reporter', 'role', 'channel', 'reason', 'status', 'assignee', 'day', 'form') as Schema<GroupBy>),
   GroupKind: ref((): Schema<GroupKind> => choice('everyone', 'here', 'role') as Schema<GroupKind>),
   GroupMention: ref((): Schema<GroupMention> => obj({ kind: ref(() => decode.GroupKind), role_id: orNull(int()) }) as Schema<GroupMention>),
@@ -3695,6 +3719,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   PollResults: ref((): Schema<PollResults> => obj({ average: orNull(num()), counts: arr(ref(() => decode.OptionCount)), distribution: arr(int()), rounds: arr(ref(() => decode.RunoffRound)), winner: orNull(int()) }) as Schema<PollResults>),
   PollVoter: ref((): Schema<PollVoter> => obj({ user: ref(() => decode.UserRef), voted_at: int() }) as Schema<PollVoter>),
   Posted: ref((): Schema<Posted> => obj({ message: ref(() => decode.Message), session: str() }) as Schema<Posted>),
+  PreviewKind: ref((): Schema<PreviewKind> => choice('image', 'gif') as Schema<PreviewKind>),
   Privacy: ref((): Schema<Privacy> => obj({ dms: ref(() => decode.DmPolicy), friend_requests: ref(() => decode.RequestPolicy), profile: opt(ref(() => decode.ProfilePolicy)) }) as Schema<Privacy>),
   PrivacyPatch: ref((): Schema<PrivacyPatch> => obj({ dms: opt(nullable(ref(() => decode.DmPolicy))), friend_requests: opt(nullable(ref(() => decode.RequestPolicy))), profile: opt(nullable(ref(() => decode.ProfilePolicy))) }) as Schema<PrivacyPatch>),
   ProfanityTargets: ref((): Schema<ProfanityTargets> => obj({ bios: opt(bool), category_names: opt(bool), channel_names: bool, channel_topics: opt(bool), file_names: bool, links: bool, messages: bool, role_names: bool, server_names: bool, usernames: bool }) as Schema<ProfanityTargets>),
@@ -3805,8 +3830,8 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   ServerSummaryLite: ref((): Schema<ServerSummaryLite> => obj({ banner_color: orNull(str()), creator: orNull(str()), description: orNull(str()), display_name: str(), guest_chat: opt(bool), guest_voice: opt(bool), has_password: bool, hide_members: opt(bool), icon_image: orNull(str()), icon_kind: opt(ref(() => decode.IconKind)), join_mode: opt(ref(() => decode.JoinMode)), listed: opt(bool), members_visible: opt(bool), name: str(), name_color: orNull(str()), profiles_mode: opt(ref(() => decode.ProfilesMode)), public_read: orNull(bool), seal: ref(() => decode.SealView) }) as Schema<ServerSummaryLite>),
   ServerUpdated: ref((): Schema<ServerUpdated> => merged(ref(() => decode.ServerSummaryLite), obj({ kept: int(), removed: int() })) as Schema<ServerUpdated>),
   Session: ref((): Schema<Session> => obj({ mode: ref(() => decode.Mode), ticket: str() }) as Schema<Session>),
-  Settings: ref((): Schema<Settings> => obj({ animated_profile_pictures: opt(bool), asset_previews: bool, asset_uploads: bool, backup_phrase: opt(bool), builtin_server: opt(ref(() => decode.Builtin)), calls: opt(bool), client_other_instances: opt(bool), display_names: opt(bool), dm_creation: opt(ref(() => decode.DmCreation)), docs: opt(bool), e2ee: opt(bool), e2ee_compliance: opt(bool), friend_requests: opt(bool), guest_chat_enabled: opt(bool), guest_voice_enabled: opt(bool), guests_enabled: bool, incoming_webhooks: opt(bool), instance_reports: opt(bool), interactive_docs: opt(bool), member_lists: opt(bool), onboarding: opt(bool), outgoing_webhooks: opt(bool), p2p: opt(bool), p2p_attachments: opt(bool), p2p_backup: opt(bool), password_change: opt(ref(() => decode.TempChange)), password_login: opt(bool), profanity_filter: bool, profanity_strict_file_names: opt(bool), profanity_targets: opt(ref(() => decode.ProfanityTargets)), profile_choices: opt(ref(() => decode.ProfileChoices)), profile_pictures: opt(bool), profile_visibility: opt(ref(() => decode.Level)), public_reading: opt(bool), registration: opt(ref(() => decode.Registration)), scheduled_messages: opt(bool), server_creation: opt(ref(() => decode.ServerCreation)), server_joining: opt(ref(() => decode.ServerJoining)), server_profiles: opt(bool), server_reports: opt(bool), server_search: opt(bool), sfu: opt(bool), temp_password_hours: opt(int()), upload_expiry_max_days: opt(int()), widget_bridge: opt(bool), widget_chat: opt(bool), widget_read_links: opt(bool), widgets: opt(bool) }) as Schema<Settings>),
-  SettingsPatch: ref((): Schema<SettingsPatch> => obj({ animated_profile_pictures: opt(nullable(bool)), app_name: opt(nullable(str())), app_short_name: opt(nullable(str())), asset_previews: opt(nullable(bool)), asset_uploads: opt(nullable(bool)), backup_phrase: opt(nullable(bool)), brand_about: opt(nullable(str())), brand_links: opt(nullable(arr(ref(() => decode.Link)))), calls: opt(nullable(bool)), client_other_instances: opt(nullable(bool)), default_servers: opt(nullable(arr(str()))), display_names: opt(nullable(bool)), dm_creation: opt(nullable(ref(() => decode.DmCreation))), docs: opt(nullable(bool)), e2ee: opt(nullable(bool)), e2ee_compliance: opt(nullable(bool)), friend_requests: opt(nullable(bool)), guest_chat_enabled: opt(nullable(bool)), guest_voice_enabled: opt(nullable(bool)), guests_enabled: opt(nullable(bool)), incoming_webhooks: opt(nullable(bool)), instance_name: opt(nullable(str())), instance_reports: opt(nullable(bool)), instance_suggestions: opt(nullable(ref(() => decode.Suggestions))), interactive_docs: opt(nullable(bool)), login_note: opt(nullable(str())), member_lists: opt(nullable(bool)), onboarding: opt(nullable(bool)), outgoing_webhooks: opt(nullable(bool)), p2p: opt(nullable(bool)), p2p_attachments: opt(nullable(bool)), p2p_backup: opt(nullable(bool)), password_change: opt(nullable(ref(() => decode.TempChange))), password_login: opt(nullable(bool)), profanity_filter: opt(nullable(bool)), profanity_strict_file_names: opt(nullable(bool)), profanity_targets: opt(ref(() => decode.ProfanityTargetsPatch)), profile_choices: opt(nullable(ref(() => decode.ProfileChoices))), profile_pictures: opt(nullable(bool)), profile_visibility: opt(nullable(ref(() => decode.Level))), public_reading: opt(nullable(bool)), registration: opt(nullable(ref(() => decode.Registration))), scheduled_messages: opt(nullable(bool)), server_creation: opt(nullable(ref(() => decode.ServerCreation))), server_creators: opt(nullable(arr(str()))), server_joining: opt(nullable(ref(() => decode.ServerJoining))), server_profiles: opt(nullable(bool)), server_reports: opt(nullable(bool)), server_search: opt(nullable(bool)), sfu: opt(nullable(bool)), temp_password_hours: opt(nullable(int())), upload_expiry_max_days: opt(nullable(int())), widget_bridge: opt(nullable(bool)), widget_chat: opt(nullable(bool)), widget_read_links: opt(nullable(bool)), widgets: opt(nullable(bool)) }) as Schema<SettingsPatch>),
+  Settings: ref((): Schema<Settings> => obj({ animated_profile_pictures: opt(bool), asset_previews: bool, asset_uploads: bool, backup_phrase: opt(bool), builtin_server: opt(ref(() => decode.Builtin)), calls: opt(bool), client_other_instances: opt(bool), display_names: opt(bool), dm_creation: opt(ref(() => decode.DmCreation)), docs: opt(bool), e2ee: opt(bool), e2ee_compliance: opt(bool), friend_requests: opt(bool), gifs: opt(bool), guest_chat_enabled: opt(bool), guest_voice_enabled: opt(bool), guests_enabled: bool, incoming_webhooks: opt(bool), instance_reports: opt(bool), interactive_docs: opt(bool), member_lists: opt(bool), onboarding: opt(bool), outgoing_webhooks: opt(bool), p2p: opt(bool), p2p_attachments: opt(bool), p2p_backup: opt(bool), password_change: opt(ref(() => decode.TempChange)), password_login: opt(bool), profanity_filter: bool, profanity_strict_file_names: opt(bool), profanity_targets: opt(ref(() => decode.ProfanityTargets)), profile_choices: opt(ref(() => decode.ProfileChoices)), profile_pictures: opt(bool), profile_visibility: opt(ref(() => decode.Level)), public_reading: opt(bool), registration: opt(ref(() => decode.Registration)), scheduled_messages: opt(bool), server_creation: opt(ref(() => decode.ServerCreation)), server_joining: opt(ref(() => decode.ServerJoining)), server_profiles: opt(bool), server_reports: opt(bool), server_search: opt(bool), sfu: opt(bool), temp_password_hours: opt(int()), upload_expiry_max_days: opt(int()), widget_bridge: opt(bool), widget_chat: opt(bool), widget_read_links: opt(bool), widgets: opt(bool) }) as Schema<Settings>),
+  SettingsPatch: ref((): Schema<SettingsPatch> => obj({ animated_profile_pictures: opt(nullable(bool)), app_name: opt(nullable(str())), app_short_name: opt(nullable(str())), asset_previews: opt(nullable(bool)), asset_uploads: opt(nullable(bool)), backup_phrase: opt(nullable(bool)), brand_about: opt(nullable(str())), brand_links: opt(nullable(arr(ref(() => decode.Link)))), calls: opt(nullable(bool)), client_other_instances: opt(nullable(bool)), default_servers: opt(nullable(arr(str()))), display_names: opt(nullable(bool)), dm_creation: opt(nullable(ref(() => decode.DmCreation))), docs: opt(nullable(bool)), e2ee: opt(nullable(bool)), e2ee_compliance: opt(nullable(bool)), friend_requests: opt(nullable(bool)), gifs: opt(nullable(bool)), guest_chat_enabled: opt(nullable(bool)), guest_voice_enabled: opt(nullable(bool)), guests_enabled: opt(nullable(bool)), incoming_webhooks: opt(nullable(bool)), instance_name: opt(nullable(str())), instance_reports: opt(nullable(bool)), instance_suggestions: opt(nullable(ref(() => decode.Suggestions))), interactive_docs: opt(nullable(bool)), login_note: opt(nullable(str())), member_lists: opt(nullable(bool)), onboarding: opt(nullable(bool)), outgoing_webhooks: opt(nullable(bool)), p2p: opt(nullable(bool)), p2p_attachments: opt(nullable(bool)), p2p_backup: opt(nullable(bool)), password_change: opt(nullable(ref(() => decode.TempChange))), password_login: opt(nullable(bool)), profanity_filter: opt(nullable(bool)), profanity_strict_file_names: opt(nullable(bool)), profanity_targets: opt(ref(() => decode.ProfanityTargetsPatch)), profile_choices: opt(nullable(ref(() => decode.ProfileChoices))), profile_pictures: opt(nullable(bool)), profile_visibility: opt(nullable(ref(() => decode.Level))), public_reading: opt(nullable(bool)), registration: opt(nullable(ref(() => decode.Registration))), scheduled_messages: opt(nullable(bool)), server_creation: opt(nullable(ref(() => decode.ServerCreation))), server_creators: opt(nullable(arr(str()))), server_joining: opt(nullable(ref(() => decode.ServerJoining))), server_profiles: opt(nullable(bool)), server_reports: opt(nullable(bool)), server_search: opt(nullable(bool)), sfu: opt(nullable(bool)), temp_password_hours: opt(nullable(int())), upload_expiry_max_days: opt(nullable(int())), widget_bridge: opt(nullable(bool)), widget_chat: opt(nullable(bool)), widget_read_links: opt(nullable(bool)), widgets: opt(nullable(bool)) }) as Schema<SettingsPatch>),
   SharedConfig: ref((): Schema<SharedConfig> => obj({ blob: str(), expires_at: int() }) as Schema<SharedConfig>),
   ShowResults: ref((): Schema<ShowResults> => choice('always', 'after_vote', 'after_close') as Schema<ShowResults>),
   ShownSource: ref((): Schema<ShownSource> => obj({ channel: orNull(str()), server: str() }) as Schema<ShownSource>),

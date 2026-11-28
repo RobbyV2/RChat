@@ -156,6 +156,8 @@ pub struct AppConfig {
     pub s3_access_key: Option<String>,
     pub s3_secret_key: Option<String>,
     pub s3_region: Option<String>,
+    /// The GIF provider, when `GIF_API_KEY` is set.
+    pub gifs: Option<crate::api::gifs::GifConfig>,
     pub rchat_roles: Option<String>,
     pub redis_url: Option<String>,
     pub redis_prefix: String,
@@ -341,6 +343,7 @@ impl AppConfig {
             s3_access_key: given(&st::S3_ACCESS_KEY),
             s3_secret_key: given(&st::S3_SECRET_KEY),
             s3_region: e.value(&st::S3_REGION),
+            gifs: crate::api::gifs::GifConfig::from_env(&e)?,
             rchat_roles: cli.roles.clone().or_else(|| e.value(&st::RCHAT_ROLES)),
             redis_url: given(&st::REDIS_URL),
             redis_prefix: or(&st::REDIS_PREFIX),

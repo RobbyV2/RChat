@@ -48,9 +48,10 @@ import {
   type GridPos,
 } from '../lib/emoji'
 import { type Align, type Side } from '../lib/autocomplete'
-import { IconButton, EmojiCell } from './controls'
+import { IconButton, EmojiCell, Tab } from './controls'
+import { GifPanel } from './gif_picker'
 import { Anchored, useEscapeInside } from './ui'
-import { Stack, Surface, Inset, Grid } from './layout'
+import { Stack, Surface, Inset, Grid, Row } from './layout'
 import { time } from '../lib/platform/time'
 import { useLive } from '../lib/place/react'
 import { Loaded, useLoad } from './loaded'
@@ -118,6 +119,8 @@ interface EmojiPickerProps {
   side?: Side
   align?: Align
   label?: string
+  // Takes the link of a GIF picked on its tab; without it there is no GIF tab.
+  onGif?: (url: string) => void
 }
 
 interface Group {
@@ -135,7 +138,11 @@ export function EmojiPicker({
   side = 'top',
   align = 'end',
   label = 'Emoji picker',
+  onGif,
 }: EmojiPickerProps) {
+  const gifsOn = useStore(s => s.settings.gifs)
+  const [tab, setTab] = useState<'emoji' | 'gifs'>('emoji')
+  const gifs = onGif && gifsOn ? onGif : null
   const closeRef = useRef(onClose)
   const pickRef = useRef(onPick)
   useEffect(() => {
@@ -160,7 +167,30 @@ export function EmojiPicker({
       onClose={onClose}
     >
       {sheet => (
-        <PickerBody sheet={sheet} label={label} onPick={relay.pick} onClose={relay.close} />
+        <Stack gap="none" place="min-h-0 flex-1">
+          {gifs && (
+            <Inset pad="xs" inset="bar">
+              <Row gap="xs" role="tablist" aria-label="Emoji or GIFs">
+                <Tab selected={tab === 'emoji'} onClick={() => setTab('emoji')}>
+                  Emoji
+                </Tab>
+                <Tab selected={tab === 'gifs'} onClick={() => setTab('gifs')} data-gif-tab>
+                  GIFs
+                </Tab>
+              </Row>
+            </Inset>
+          )}
+          {gifs && tab === 'gifs' ? (
+            <GifPanel
+              onPick={url => {
+                gifs(url)
+                relay.close()
+              }}
+            />
+          ) : (
+            <PickerBody sheet={sheet} label={label} onPick={relay.pick} onClose={relay.close} />
+          )}
+        </Stack>
       )}
     </Anchored>
   )

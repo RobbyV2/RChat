@@ -346,6 +346,8 @@ pub struct SettingsPatch {
     profile_pictures: Option<bool>,
     /// Animated profile and server pictures.
     animated_profile_pictures: Option<bool>,
+    /// The GIF picker.
+    gifs: Option<bool>,
     /// Who may create an account with a password: `open`, `sso` (only through single sign-on) or
     /// `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and `password_login`
     /// is on.
@@ -513,6 +515,7 @@ pub(crate) async fn patch_settings(
         member_lists,
         profile_pictures,
         animated_profile_pictures,
+        gifs,
         registration,
         upload_expiry_max_days,
         server_creation,
@@ -655,6 +658,7 @@ pub(crate) async fn patch_settings(
         Feature::MemberLists => member_lists,
         Feature::ProfilePictures => profile_pictures,
         Feature::AnimatedProfilePictures => animated_profile_pictures,
+        Feature::Gifs => gifs,
     };
     let switches = [
         ("profanity_filter", profanity_filter),

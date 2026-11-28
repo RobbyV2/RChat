@@ -9655,6 +9655,47 @@ async fn sealed_pictures_are_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn picture_links_are_added_to_an_old_database() {
+    on_each_database("picture_links_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for sql in [
+            "INSERT INTO embeds(url, site_name, title, description, image_url, color, fetched_at) VALUES('https://example.com/', 'Example', 'Kept', NULL, NULL, '#123456', 9)",
+            "ALTER TABLE embeds DROP COLUMN media_kind",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind((super::migrate::PICTURE_LINKS_VERSION - 1).to_string())
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM embeds WHERE url = 'https://example.com/' AND title = 'Kept' AND color = '#123456' AND fetched_at = 9").await,
+                1,
+                "{round}: the old preview keeps its values"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM embeds WHERE media_kind IS NULL").await,
+                i64::from(round == 0),
+                "{round}: an old preview is a page"
+            );
+            if round == 0 {
+                sqlx::query("UPDATE embeds SET media_kind = 'gif'")
+                    .execute(&db)
+                    .await
+                    .expect("kind");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn link_preview_colors_are_added_to_an_old_database() {
     on_each_database("embed_color_upgrade", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");

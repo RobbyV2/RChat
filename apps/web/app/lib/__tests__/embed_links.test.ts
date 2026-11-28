@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { postedLinks, postedUrl, scrubUrl } from '../embed_links'
+import { pictureLinkOnly, postedLinks, postedUrl, scrubUrl } from '../embed_links'
 
 describe('embed links', () => {
   test('scrubs exactly like the server (embeds.rs scrubbed_urls_match_the_client)', () => {
@@ -26,5 +26,20 @@ describe('embed links', () => {
     )
     expect(postedUrl(content, 'https://site.example/page')).toBe('https://site.example/page?code=1')
     expect(postedUrl(content, 'https://other.example/')).toBe('https://other.example/')
+  })
+})
+
+describe('a message that is only a picture link', () => {
+  const gif = [{ url: 'https://media.example/cat.gif', media_kind: 'gif' }]
+  test('shows only the picture when the whole message is its link', () => {
+    expect(pictureLinkOnly('  https://media.example/cat.gif ', gif)).toBe(true)
+  })
+  test('keeps the text with words around it, in angle brackets, or for a page', () => {
+    expect(pictureLinkOnly('look https://media.example/cat.gif', gif)).toBe(false)
+    expect(pictureLinkOnly('<https://media.example/cat.gif>', gif)).toBe(false)
+    expect(
+      pictureLinkOnly('https://media.example/cat.gif', [{ url: gif[0].url, media_kind: null }])
+    ).toBe(false)
+    expect(pictureLinkOnly('', gif)).toBe(false)
   })
 })

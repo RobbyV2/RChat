@@ -31,10 +31,11 @@ pub enum Feature {
     MemberLists,
     ProfilePictures,
     AnimatedProfilePictures,
+    Gifs,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 25] = [
+    pub const ALL: [Feature; 26] = [
         Feature::ServerReports,
         Feature::InstanceReports,
         Feature::Widgets,
@@ -60,6 +61,7 @@ impl Feature {
         Feature::MemberLists,
         Feature::ProfilePictures,
         Feature::AnimatedProfilePictures,
+        Feature::Gifs,
     ];
 
     /// Its registry item: the env name, the key and the value when nothing sets it.
@@ -90,6 +92,7 @@ impl Feature {
             Feature::MemberLists => &st::FEATURE_MEMBER_LISTS,
             Feature::ProfilePictures => &st::FEATURE_PROFILE_PICTURES,
             Feature::AnimatedProfilePictures => &st::FEATURE_ANIMATED_PROFILE_PICTURES,
+            Feature::Gifs => &st::FEATURE_GIFS,
         }
     }
 
@@ -188,6 +191,7 @@ mod tests {
                     "FEATURE_ANIMATED_PROFILE_PICTURES",
                     true
                 ),
+                ("gifs", "FEATURE_GIFS", false),
             ]
         );
         assert_eq!(

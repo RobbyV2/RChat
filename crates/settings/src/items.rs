@@ -204,6 +204,10 @@ settings! {
     AVATAR_ANIMATION_MAX_FRAMES: Number<u64> = number(250, 2, 2000);
     AVATAR_ANIMATION_MAX_SECS: Number<u64> = number(20, 1, 120);
     AVATAR_ANIMATION_MAX_MEGAPIXELS: Number<u64> = number(400, 1, 4000);
+    FEATURE_GIFS: Switch = switch(false).live("gifs");
+    GIF_PROVIDER: Choice = choice(&["klipy", "giphy"], "klipy");
+    GIF_API_KEY: Secret = secret();
+    GIF_RATING: Choice = choice(&["g", "pg", "pg-13", "r"], "pg-13");
     FEATURE_DOCS: Switch = switch(true).live("docs");
     FEATURE_INTERACTIVE_DOCS: Switch = switch(true).live("interactive_docs");
     DOCS_DIR: Value = value_or("docs/dist");

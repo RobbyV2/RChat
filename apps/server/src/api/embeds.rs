@@ -13,7 +13,7 @@ use url::Url;
 use utoipa::IntoParams;
 
 use crate::api::access::{Proof, resolve_message};
-use crate::api::{ApiError, ApiErrorBody, Authed, Embed, OkResp, Settings, ok};
+use crate::api::{ApiError, ApiErrorBody, Authed, Embed, OkResp, PreviewKind, Settings, ok};
 use crate::db::{Db, now};
 use crate::instance::Instance;
 use crate::limits::Limits;
@@ -34,7 +34,22 @@ pub(crate) fn preview_policy() -> Policy {
     crate::api::webhooks::previews_policy()
 }
 
-async fn fetch_html(start: &Url, policy: &Policy) -> anyhow::Result<(Url, String)> {
+/// What a link leads to: a page, or a picture (`image/png`, `image/jpeg`, `image/webp`, or
+/// `image/gif` for a GIF) shown in place of a card.
+enum Page {
+    Html(Url, String),
+    Picture(&'static str),
+}
+
+/// The picture types a link may lead to.
+fn picture_type(content_type: &str) -> Option<&'static str> {
+    let main = content_type.split(';').next().unwrap_or("").trim();
+    ["image/png", "image/jpeg", "image/webp", "image/gif"]
+        .into_iter()
+        .find(|t| main.eq_ignore_ascii_case(t))
+}
+
+async fn fetch_html(start: &Url, policy: &Policy) -> anyhow::Result<Page> {
     let mut url = start.clone();
     for _ in 0..4 {
         let checked = crate::net_guard::check(&url, policy).await?;
@@ -62,6 +77,9 @@ async fn fetch_html(start: &Url, policy: &Policy) -> anyhow::Result<(Url, String
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
+        if let Some(picture) = picture_type(ct) {
+            return Ok(Page::Picture(picture));
+        }
         if !ct.contains("html") {
             anyhow::bail!("not html");
         }
@@ -72,7 +90,7 @@ async fn fetch_html(start: &Url, policy: &Policy) -> anyhow::Result<(Url, String
                 break;
             }
         }
-        return Ok((url, String::from_utf8_lossy(&buf).into_owned()));
+        return Ok(Page::Html(url, String::from_utf8_lossy(&buf).into_owned()));
     }
     anyhow::bail!("too many redirects")
 }
@@ -491,7 +509,7 @@ async fn resolve(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Option<E
 }
 
 async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Option<Embed>> {
-    let embed = |site_name, title, description, image_url, color| Embed {
+    let embed = |site_name, title, description, image_url, color, media_kind| Embed {
         ord: 0,
         url: url.to_string(),
         site_name,
@@ -500,9 +518,10 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
         image_url,
         banner_removed: false,
         color,
+        media_kind,
     };
     let cached = sqlx::query(
-        "SELECT site_name, title, description, image_url, color FROM embeds WHERE url = $1 AND fetched_at > $2",
+        "SELECT site_name, title, description, image_url, color, media_kind FROM embeds WHERE url = $1 AND fetched_at > $2",
     )
     .bind(url)
     .bind(now() - CACHE_TTL)
@@ -515,13 +534,42 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
             r.try_get(2)?,
             r.try_get(3)?,
             r.try_get(4)?,
+            PreviewKind::parse(r.try_get::<Option<String>, _>(5)?.as_deref()),
         )));
     }
     let parsed = Url::parse(url)?;
     let fetching = fetches().fetching.clone();
     let _permit = fetching.acquire().await?;
-    let (final_url, html) =
-        tokio::time::timeout(Duration::from_secs(5), fetch_html(&parsed, policy)).await??;
+    let (final_url, html) = match tokio::time::timeout(
+        Duration::from_secs(5),
+        fetch_html(&parsed, policy),
+    )
+    .await??
+    {
+        Page::Html(at, html) => (at, html),
+        Page::Picture(mime) => {
+            let kind = match mime {
+                "image/gif" => PreviewKind::Gif,
+                _ => PreviewKind::Image,
+            };
+            sqlx::query(
+                    "INSERT INTO embeds(url, site_name, title, description, image_url, color, media_kind, fetched_at) VALUES($1, NULL, NULL, NULL, $1, NULL, $2, $3) ON CONFLICT(url) DO UPDATE SET site_name = NULL, title = NULL, description = NULL, image_url = excluded.image_url, color = NULL, media_kind = excluded.media_kind, fetched_at = excluded.fetched_at",
+                )
+                .bind(url)
+                .bind(kind.as_str())
+                .bind(now())
+                .execute(db)
+                .await?;
+            return Ok(Some(embed(
+                None,
+                None,
+                None,
+                Some(url.to_string()),
+                None,
+                Some(kind),
+            )));
+        }
+    };
     let meta = parse_meta(&html, &final_url);
     if meta.is_empty() {
         return Ok(None);
@@ -534,7 +582,7 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
         color,
     } = meta;
     sqlx::query(
-        "INSERT INTO embeds(url, site_name, title, description, image_url, color, fetched_at) VALUES($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(url) DO UPDATE SET site_name = excluded.site_name, title = excluded.title, description = excluded.description, image_url = excluded.image_url, color = excluded.color, fetched_at = excluded.fetched_at",
+        "INSERT INTO embeds(url, site_name, title, description, image_url, color, media_kind, fetched_at) VALUES($1, $2, $3, $4, $5, $6, NULL, $7) ON CONFLICT(url) DO UPDATE SET site_name = excluded.site_name, title = excluded.title, description = excluded.description, image_url = excluded.image_url, color = excluded.color, media_kind = NULL, fetched_at = excluded.fetched_at",
     )
     .bind(url)
     .bind(&site_name)
@@ -545,7 +593,14 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
     .bind(now())
     .execute(db)
     .await?;
-    Ok(Some(embed(site_name, title, description, image, color)))
+    Ok(Some(embed(
+        site_name,
+        title,
+        description,
+        image,
+        color,
+        None,
+    )))
 }
 
 async fn live_server(db: &Db, message_id: i64) -> sqlx::Result<Option<Option<String>>> {
@@ -1136,6 +1191,7 @@ mod tests {
             image_url: None,
             banner_removed: false,
             color: None,
+            media_kind: None,
         };
         let count = |db: Db| async move {
             sqlx::query("SELECT COUNT(*) FROM message_embeds WHERE message_id = $1")
@@ -1197,6 +1253,38 @@ mod tests {
         let mut instance = std::sync::Arc::into_inner(Instance::ephemeral()).expect("instance");
         instance.public_url = Some(Url::parse("https://chat.example").expect("url"));
         state.with_instance(std::sync::Arc::new(instance))
+    }
+
+    #[tokio::test]
+    async fn a_link_to_a_picture_becomes_a_picture_preview() {
+        use crate::api::preview_images::fake::{png, response, upstream};
+        let (state, path) = crate::api::test_util::temp_state("unfurl_picture").await;
+        let db = state.db.clone();
+        let picture = upstream(response(
+            "200 OK",
+            &[("content-type", "image/gif".to_string())],
+            &png(4, 4),
+        ))
+        .await;
+        let url = picture.url("/cat.gif");
+        let embed = resolve_once(&db, &url, &picture.policy())
+            .await
+            .expect("resolve")
+            .expect("a preview");
+        assert_eq!(embed.media_kind, Some(PreviewKind::Gif));
+        assert_eq!(
+            (embed.title, embed.image_url.as_deref()),
+            (None, Some(url.as_str()))
+        );
+        let cached = resolve_once(&db, &url, &picture.policy())
+            .await
+            .expect("cached")
+            .expect("a preview");
+        assert_eq!(cached.media_kind, Some(PreviewKind::Gif));
+        assert_eq!(picture.hits(), 1, "the second answer came from the cache");
+        assert_eq!(picture_type("image/png; charset=binary"), Some("image/png"));
+        assert_eq!(picture_type("image/svg+xml"), None, "no vector pictures");
+        crate::api::test_util::done(state, path).await;
     }
 
     #[tokio::test]

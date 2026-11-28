@@ -171,7 +171,21 @@ export function ComposerField({
   return (
     <>
       {pickerOpen && (
-        <EmojiPicker anchor={emojiRef.current} onPick={insertEmoji} onClose={closePicker} />
+        <EmojiPicker
+          anchor={emojiRef.current}
+          onPick={insertEmoji}
+          onClose={closePicker}
+          onGif={
+            !cards.can
+              ? undefined
+              : url => {
+                  if (compose.getText().trim() === '') {
+                    compose.setText(url)
+                    onSend()
+                  } else insertEmoji(` ${url} `)
+                }
+          }
+        />
       )}
       {bar}
       {cards.can && (

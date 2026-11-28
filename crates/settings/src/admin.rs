@@ -692,6 +692,14 @@ pub const ROWS: &[Row] = &[
         View::Switch { off: None },
     ),
     row(
+        &FEATURE_GIFS.setting,
+        features("Messages and files"),
+        "GIF picker",
+        "Lets people search for GIFs to send. Needs GIF_API_KEY; searches and files go through this server.",
+        &["gif", "giphy", "klipy"],
+        View::Switch { off: None },
+    ),
+    row(
         &INSTANCE_NAME.setting,
         Place::Branding,
         "Instance name",

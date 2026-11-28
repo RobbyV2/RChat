@@ -82,3 +82,15 @@ export const spoileredUrls = (content: string) => {
   const shown = new Set(links(false))
   return unique(links(true)).filter(u => !shown.has(u))
 }
+
+// Whether a message is a single link whose preview is the picture it leads to: then only the
+// picture shows. Text around the link, or a link in `<...>`, keeps the text.
+export const pictureLinkOnly = (
+  content: string,
+  embeds: readonly { url: string; media_kind?: string | null }[]
+) => {
+  const text = content.trim()
+  if (text === '' || /\s/.test(text) || text.startsWith('<')) return false
+  const url = scrubUrl(text)
+  return url !== null && embeds.some(e => e.url === url && !!e.media_kind)
+}

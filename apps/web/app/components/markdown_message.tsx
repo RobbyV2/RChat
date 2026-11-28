@@ -1,6 +1,6 @@
 'use client'
 
-import { IconButton, IconLink, CardButton, Hotspot, MediaButton } from './controls'
+import { IconButton, IconLink, CardButton, Hotspot, MediaButton, Pill } from './controls'
 import { ask, mediaUrlOf, sendTo } from '../lib/asks'
 import { Name, useNameLabel, useNameLabels } from './name'
 import { handleName, labelWith, personCalled, unnamed, type Said, notAName } from '../lib/names'
@@ -89,6 +89,7 @@ import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard, WidgetLinkCards, WidgetMessageLinkCard } from './message_link_card'
 import { RichEmbeds } from './webhooks'
 import { cardsOf } from '../lib/rich_embeds'
+import { pictureLinkOnly } from '../lib/embed_links'
 import { previewAccent } from '../lib/embed_colors'
 import { ProfileButton } from './profile_card'
 import { EditedMark } from './message_editor'
@@ -1175,6 +1176,42 @@ function EmbedCard({
   const theme = useStore(s => s.theme)
   const accent = previewAccent(embed, theme)
 
+  if (embed.media_kind)
+    return (
+      <div
+        {...(canDelete ? longPress(menu) : {})}
+        data-picture-link={embed.media_kind}
+        className="msg-part group/embed relative w-fit max-w-md"
+      >
+        {src && broken !== src ? (
+          <img
+            src={src}
+            alt=""
+            referrerPolicy="no-referrer"
+            loading="lazy"
+            onError={() => setBroken(src)}
+            className="max-h-80 max-w-full rounded-md"
+          />
+        ) : (
+          <MessageLink href={url} className="text-sm break-all text-primary hover:underline">
+            {url}
+          </MessageLink>
+        )}
+        {embed.media_kind === 'gif' && src && broken !== src && (
+          <Pill place="absolute top-2 left-2 pointer-events-none">GIF</Pill>
+        )}
+        {canDelete && (
+          <IconButton
+            icon={EllipsisVertical}
+            label="Embed options"
+            size="sm"
+            onClick={e => menu(e.clientX, e.clientY)}
+            place="absolute top-1.5 right-1.5 opacity-0 group-focus-within/embed:opacity-100 group-hover/embed:opacity-100 max-md:opacity-100"
+          />
+        )}
+      </div>
+    )
+
   return (
     <div
       className="contents"
@@ -1402,6 +1439,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     (key: string, ok: boolean) => setRemoteOk(m => (m[key] === ok ? m : { ...m, [key]: ok })),
     []
   )
+  const pictureOnly = previews && chat.fetches && !edited && pictureLinkOnly(content, embeds)
   const links = useMemo(
     () =>
       embeds.filter(e => {
@@ -1418,7 +1456,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
       <div className="min-w-0 text-sm leading-relaxed break-words">
         {!editor && !widget && <PeerCodeButton text={content} peer={!chat.fetches} />}
         {editor ??
-          (content.trim() !== '' ? (
+          (content.trim() !== '' && !pictureOnly ? (
             <MaskPlain>
               <MaskedWords>
                 <SpoilerPieces>

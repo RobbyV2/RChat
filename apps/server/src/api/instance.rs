@@ -90,6 +90,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         member_lists: _,
         profile_pictures: _,
         animated_profile_pictures: _,
+        gifs: _,
         registration,
         upload_expiry_max_days: _,
         server_creation: _,

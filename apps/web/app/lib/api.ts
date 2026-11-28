@@ -79,6 +79,7 @@ import type {
   ServerUpdated,
   SiteSettings,
   SiteSettingsPatch,
+  GifPage,
   RichEmbed,
   StoredSeal,
   Unread,
@@ -1303,6 +1304,10 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('POST', `/admin/users/${seg(username)}/sign_out`),
   adminAddToServer: (username: string, body: AccountServer) =>
     c.req<unknown>('POST', `/admin/users/${seg(username)}/servers`, body),
+  searchGifs: (q: string, next: string | null = null) =>
+    c.req<GifPage>('GET', `/gifs/search?q=${seg(q)}${next ? `&next=${seg(next)}` : ''}`),
+  trendingGifs: (next: string | null = null) =>
+    c.req<GifPage>('GET', `/gifs/trending${next ? `?next=${seg(next)}` : ''}`),
   adminServers: (cursor: string | null, q: string) =>
     c.page<ServerSummaryLite>(withCursor(`/admin/servers?limit=50&q=${seg(q)}`, cursor)),
   adminDeleteServer: (name: string) => c.req<unknown>('DELETE', `/admin/servers/${seg(name)}`),

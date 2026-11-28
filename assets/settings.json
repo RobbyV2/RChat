@@ -1919,6 +1919,47 @@
     ],
     [
       {
+        "note": "# GIFs"
+      },
+      {
+        "note": "# Admin page: the GIF picker, on or off. It needs GIF_API_KEY: searches and GIF files go through this server, so the provider never sees who asks."
+      },
+      {
+        "env": "FEATURE_GIFS",
+        "name": "FEATURE_GIFS",
+        "set": false,
+        "value": "off"
+      },
+      {
+        "note": "# Where GIF searches go: klipy or giphy."
+      },
+      {
+        "env": "GIF_PROVIDER",
+        "name": "GIF_PROVIDER",
+        "set": false,
+        "value": "klipy"
+      },
+      {
+        "note": "# The API key of your account with the provider. Without it the picker stays off."
+      },
+      {
+        "env": "GIF_API_KEY",
+        "name": "GIF_API_KEY",
+        "set": false,
+        "value": ""
+      },
+      {
+        "note": "# The highest content rating searches return: g, pg, pg-13 or r."
+      },
+      {
+        "env": "GIF_RATING",
+        "name": "GIF_RATING",
+        "set": false,
+        "value": "pg-13"
+      }
+    ],
+    [
+      {
         "note": "# Docs"
       },
       {
@@ -4147,6 +4188,33 @@
       "max": 4000,
       "min": 1,
       "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "FEATURE_GIFS",
+      "key": "gifs",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "klipy",
+      "env": "GIF_PROVIDER",
+      "kind": "choice",
+      "scope": "start",
+      "words": ["klipy", "giphy"]
+    },
+    {
+      "env": "GIF_API_KEY",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "default": "pg-13",
+      "env": "GIF_RATING",
+      "kind": "choice",
+      "scope": "start",
+      "words": ["g", "pg", "pg-13", "r"]
     },
     {
       "default": "on",

@@ -50,6 +50,7 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   member_lists: true,
   profile_pictures: true,
   animated_profile_pictures: true,
+  gifs: true,
   registration: true,
   upload_expiry_max_days: true,
   server_joining: true,

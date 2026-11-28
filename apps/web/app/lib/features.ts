@@ -29,6 +29,7 @@ export const FEATURE_KEYS = [
   'member_lists',
   'profile_pictures',
   'animated_profile_pictures',
+  'gifs',
 ] as const
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number]
@@ -61,6 +62,7 @@ const BEFORE_SWITCHES: Record<FeatureKey, boolean> = {
   member_lists: true,
   profile_pictures: false,
   animated_profile_pictures: false,
+  gifs: false,
 }
 
 const registrationOf = (value: unknown): Registration => {

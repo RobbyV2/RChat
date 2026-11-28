@@ -93,6 +93,9 @@ export type {
   RelayStatus,
   ReplyRef,
   RichEmbed,
+  Gif,
+  GifPage,
+  PreviewKind,
   Role,
   RoleLimits,
   RunoffRound,
@@ -259,6 +262,8 @@ export interface SiteSettings {
   member_lists: boolean
   profile_pictures: boolean
   animated_profile_pictures: boolean
+  // The GIF picker: searches and files go through the instance.
+  gifs: boolean
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number

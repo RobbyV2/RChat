@@ -23,6 +23,7 @@ pub mod error;
 pub mod features;
 pub mod form_heads;
 pub mod friends;
+pub mod gifs;
 pub mod guest_chat;
 pub mod guest_switch;
 pub mod guest_voice;
@@ -973,6 +974,36 @@ pub struct Embed {
     #[serde(default)]
     #[schema(example = "#ff0000")]
     pub color: Option<String>,
+    /// Set when the link leads straight to a picture: `image`, or `gif` for a GIF. Its file is
+    /// `image_url` through the preview proxy, and clients show it in place of a card (a message
+    /// that is only the link shows only the picture). `null` for a page.
+    #[serde(default)]
+    pub media_kind: Option<PreviewKind>,
+}
+
+/// What a link preview shows when its link leads straight to a picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PreviewKind {
+    Image,
+    Gif,
+}
+
+impl PreviewKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PreviewKind::Image => "image",
+            PreviewKind::Gif => "gif",
+        }
+    }
+
+    pub fn parse(stored: Option<&str>) -> Option<PreviewKind> {
+        match stored? {
+            "image" => Some(PreviewKind::Image),
+            "gif" => Some(PreviewKind::Gif),
+            _ => None,
+        }
+    }
 }
 
 /// What happened to a direct-message call.
@@ -1627,6 +1658,11 @@ pub struct Settings {
     /// 404, and clients draw the stills.
     #[serde(default = "yes")]
     pub animated_profile_pictures: bool,
+    /// The GIF picker: searches (`GET /api/v1/gifs/search`) and their files go through this
+    /// server. Off by default; it also needs `GIF_API_KEY` (without it searches answer 404 with
+    /// reason `off_site`).
+    #[serde(default)]
+    pub gifs: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1829,6 +1865,7 @@ impl Settings {
         member_lists: false,
         profile_pictures: false,
         animated_profile_pictures: false,
+        gifs: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
@@ -1915,6 +1952,7 @@ impl Settings {
             member_lists: feature(Feature::MemberLists),
             profile_pictures: feature(Feature::ProfilePictures),
             animated_profile_pictures: feature(Feature::AnimatedProfilePictures),
+            gifs: feature(Feature::Gifs),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -2008,6 +2046,7 @@ impl Settings {
             member_lists,
             profile_pictures,
             animated_profile_pictures,
+            gifs,
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
@@ -2050,6 +2089,7 @@ impl Settings {
             Feature::MemberLists => member_lists,
             Feature::ProfilePictures => profile_pictures,
             Feature::AnimatedProfilePictures => animated_profile_pictures,
+            Feature::Gifs => gifs,
         }
     }
 
@@ -2897,6 +2937,9 @@ fn api_routes(
                 .delete(reactions::remove_reaction),
         )
         .route("/messages/{id}/embeds/{ord}", delete(embeds::delete_embed))
+        .route("/gifs/search", get(gifs::search_gifs))
+        .route("/gifs/trending", get(gifs::trending_gifs))
+        .route("/gifs/file", get(gifs::gif_file))
         .route(
             "/messages/{id}/embeds/{ord}/image",
             get(preview_images::preview_image),

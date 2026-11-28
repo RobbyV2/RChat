@@ -953,7 +953,7 @@ pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), A
     }
     let ph: Vec<String> = (1..=msgs.len()).map(|n| format!("${n}")).collect();
     let sql = format!(
-        "SELECT me.message_id, me.ord, me.url, me.banner_removed, e.site_name, e.title, e.description, e.image_url, e.color FROM message_embeds me JOIN embeds e ON e.url = me.url WHERE me.removed = 0 AND me.message_id IN ({}) ORDER BY me.message_id, me.ord",
+        "SELECT me.message_id, me.ord, me.url, me.banner_removed, e.site_name, e.title, e.description, e.image_url, e.color, e.media_kind FROM message_embeds me JOIN embeds e ON e.url = me.url WHERE me.removed = 0 AND me.message_id IN ({}) ORDER BY me.message_id, me.ord",
         ph.join(", ")
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -978,6 +978,9 @@ pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), A
                 .map(|source| crate::api::embeds::proxied_image(message_id, ord, &source)),
             banner_removed,
             color: r.try_get(8)?,
+            media_kind: crate::api::PreviewKind::parse(
+                r.try_get::<Option<String>, _>(9)?.as_deref(),
+            ),
         });
     }
     for m in msgs.iter_mut() {

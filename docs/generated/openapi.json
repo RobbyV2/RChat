@@ -5865,6 +5865,297 @@
         ]
       }
     },
+    "/api/v1/gifs/file": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Get a GIF preview",
+        "description": "A file a GIF search named as `preview`, fetched from the provider by this server: only\naddresses a search answer signed, only images recognized from their bytes, at most 5 MiB.\nCached for a day. No authentication: the signature is the permission. 404 while the `gifs`\nswitch is off. General rate-limit bucket.",
+        "operationId": "gif_file",
+        "parameters": [
+          {
+            "name": "u",
+            "in": "query",
+            "description": "The provider's file address, as a search answer names it.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "s",
+            "in": "query",
+            "description": "Its signature, as a search answer names it.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image",
+            "content": {
+              "image/gif": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: a signature that does not match, or the switch is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The provider's file can't be fetched. Also `Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/gifs/search": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Search GIFs",
+        "description": "GIFs matching `q` from the provider this site set up (`GIF_PROVIDER`, `GIF_API_KEY`), 24 a\npage. The provider is asked by this server; the previews are files on this server. Requires\na bearer token and the `gifs` switch. General rate-limit bucket.",
+        "operationId": "search_gifs",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "What to look for, 1 to 100 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "next",
+            "in": "query",
+            "description": "The `next` of the page before.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of GIFs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GifPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`q` is blank or over 100 characters (`reason.field` `q`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`GIFs are turned off on this site` (`reason.kind` `off_site`, `reason.control` `gifs`): the switch is off or no provider key is set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The provider can't be reached or answered with something unreadable. Also `Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/gifs/trending": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Trending GIFs",
+        "description": "What trends at the provider this site set up, 24 a page, as `GET /api/v1/gifs/search`\nanswers it. Requires a bearer token and the `gifs` switch. General rate-limit bucket.",
+        "operationId": "trending_gifs",
+        "parameters": [
+          {
+            "name": "next",
+            "in": "query",
+            "description": "The `next` of the page before.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of GIFs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GifPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`GIFs are turned off on this site` (`reason.kind` `off_site`, `reason.control` `gifs`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The provider can't be reached or answered with something unreadable. Also `Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -30446,6 +30737,17 @@
             ],
             "description": "Path on this instance that serves the preview image\n(`/api/messages/{id}/embeds/{ord}/image?v=...`), or `null` when there is none or it was\nremoved. The instance fetches the image itself; the page's image host is never named."
           },
+          "media_kind": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PreviewKind",
+                "description": "Set when the link leads straight to a picture: `image`, or `gif` for a GIF. Its file is\n`image_url` through the preview proxy, and clients show it in place of a card (a message\nthat is only the link shows only the picture). `null` for a page."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "ord": {
             "type": "integer",
             "format": "int64",
@@ -31237,6 +31539,71 @@
           "status": {
             "$ref": "#/components/schemas/Relation",
             "description": "The relation."
+          }
+        }
+      },
+      "Gif": {
+        "type": "object",
+        "description": "One GIF of a search.",
+        "required": [
+          "id",
+          "title",
+          "url",
+          "preview",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pixels down of the preview.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The provider's id."
+          },
+          "preview": {
+            "type": "string",
+            "description": "A smaller version for the picker, through `GET /api/v1/gifs/file` on this server."
+          },
+          "title": {
+            "type": "string",
+            "description": "What the provider calls it; may be empty."
+          },
+          "url": {
+            "type": "string",
+            "description": "The link to send: the GIF file at the provider. A message holding it shows the GIF."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pixels across of the preview.",
+            "minimum": 0
+          }
+        }
+      },
+      "GifPage": {
+        "type": "object",
+        "description": "A page of GIFs.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Gif"
+            },
+            "description": "Up to 24, in the provider's order."
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `next` for the page after this one; `null` on the last page."
           }
         }
       },
@@ -34628,6 +34995,14 @@
             "description": "Private credential for this guest in this server. Keep it inside the client."
           }
         }
+      },
+      "PreviewKind": {
+        "type": "string",
+        "description": "What a link preview shows when its link leads straight to a picture.",
+        "enum": [
+          "image",
+          "gif"
+        ]
       },
       "Privacy": {
         "type": "object",
@@ -38162,6 +38537,10 @@
           "friend_requests": {
             "type": "boolean",
             "description": "New friend requests. Off: `POST /api/v1/friends/requests` answers 404, except that it\nstill accepts a request the other user sent. Pending requests can be accepted or\ndenied, and friends stay."
+          },
+          "gifs": {
+            "type": "boolean",
+            "description": "The GIF picker: searches (`GET /api/v1/gifs/search`) and their files go through this\nserver. Off by default; it also needs `GIF_API_KEY` (without it searches answer 404 with\nreason `off_site`)."
           },
           "guest_chat_enabled": {
             "type": "boolean",

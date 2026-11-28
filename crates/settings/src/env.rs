@@ -778,6 +778,19 @@ pub const BLOCKS: &[&[Line]] = &[
         shown(&AVATAR_ANIMATION_MAX_MEGAPIXELS.setting, "400"),
     ],
     &[
+        n("# GIFs"),
+        n(
+            "# Admin page: the GIF picker, on or off. It needs GIF_API_KEY: searches and GIF files go through this server, so the provider never sees who asks.",
+        ),
+        shown(&FEATURE_GIFS.setting, "off"),
+        n("# Where GIF searches go: klipy or giphy."),
+        shown(&GIF_PROVIDER.setting, "klipy"),
+        n("# The API key of your account with the provider. Without it the picker stays off."),
+        shown(&GIF_API_KEY.setting, ""),
+        n("# The highest content rating searches return: g, pg, pg-13 or r."),
+        shown(&GIF_RATING.setting, "pg-13"),
+    ],
+    &[
         n("# Docs"),
         n("# Admin page: the documentation at /docs, on or off."),
         shown(&FEATURE_DOCS.setting, "on"),

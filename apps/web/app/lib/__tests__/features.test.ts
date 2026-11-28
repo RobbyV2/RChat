@@ -53,6 +53,7 @@ const SWITCHES = [
   'member_lists',
   'profile_pictures',
   'animated_profile_pictures',
+  'gifs',
 ]
 
 describe('feature switches', () => {

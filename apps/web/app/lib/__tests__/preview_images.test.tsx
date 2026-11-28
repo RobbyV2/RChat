@@ -62,6 +62,7 @@ describe('link preview images', () => {
     image_url,
     banner_removed: false,
     color: null,
+    media_kind: null,
   })
   const render = (image_url: string | null) =>
     renderToStaticMarkup(
@@ -81,6 +82,27 @@ describe('link preview images', () => {
     expect(html).toContain('Page')
     expect(html.includes('tracker.example')).toBe(false)
     expect(html.includes('<img')).toBe(false)
+  })
+
+  test('a lone GIF link shows only the GIF, with its badge', () => {
+    const url = 'https://media.example/cat.gif'
+    const gif = {
+      ...embed('/api/messages/5/embeds/0/image?v=0123456789abcdef'),
+      url,
+      title: null,
+      media_kind: 'gif' as const,
+    }
+    const alone = renderToStaticMarkup(
+      <MarkdownMessage message={msg(5, { content: url, embeds: [gif] })} />
+    )
+    expect(alone).toContain('data-picture-link="gif"')
+    expect(alone).toContain('>GIF<')
+    expect(alone.includes(`>${url}<`)).toBe(false)
+    const said = renderToStaticMarkup(
+      <MarkdownMessage message={msg(5, { content: `look ${url}`, embeds: [gif] })} />
+    )
+    expect(said).toContain('look')
+    expect(said).toContain('data-picture-link="gif"')
   })
 
   const file = (filename: string): MessageMedia => ({
