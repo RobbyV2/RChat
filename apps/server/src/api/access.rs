@@ -2168,10 +2168,59 @@ async fn dm_pair(db: &Db, id: i64, live: bool) -> sqlx::Result<Option<Vec<String
     }
 }
 
-pub async fn resolve_dm(db: &Db, id: i64, user: &User) -> Result<Vec<String>, ApiError> {
+pub async fn resolve_dm(db: &Db, id: i64, user: &User) -> Result<DmAccess, ApiError> {
     match dm_pair(db, id, true).await? {
-        Some(users) if users.contains(&user.username) => Ok(users),
+        Some(users) if users.contains(&user.username) => Ok(DmAccess {
+            id,
+            users,
+            viewer: user.username.clone(),
+        }),
         _ => Err(not_found()),
+    }
+}
+
+/// A live DM the viewer takes part in. Only `resolve_dm` makes one.
+pub struct DmAccess {
+    id: i64,
+    users: Vec<String>,
+    viewer: String,
+}
+
+impl DmAccess {
+    pub fn id(&self) -> i64 {
+        self.id
+    }
+
+    pub fn users(&self) -> &[String] {
+        &self.users
+    }
+
+    /// Writing in this DM: neither participant blocked the other, and the other's DM rules
+    /// take the viewer's messages.
+    pub async fn writable(&self, db: &Db) -> Result<DmWrite, ApiError> {
+        if let Some(other) = self.users.iter().find(|u| **u != self.viewer) {
+            crate::api::blocks::check_dm(db, &self.viewer, other).await?;
+        }
+        Ok(DmWrite {
+            id: self.id,
+            users: self.users.clone(),
+        })
+    }
+}
+
+/// The decision that the viewer may write in a DM now. Only `DmAccess::writable` makes one.
+pub struct DmWrite {
+    id: i64,
+    users: Vec<String>,
+}
+
+impl DmWrite {
+    pub fn id(&self) -> i64 {
+        self.id
+    }
+
+    pub fn users(&self) -> &[String] {
+        &self.users
     }
 }
 
@@ -2364,28 +2413,28 @@ impl ResolvedMessage {
 
     /// Writing into the live DM `did` (reactions, pins, edits): a participant that neither
     /// blocked the other nor was blocked by them, paced.
-    async fn dm_writer(&self, db: &Db, did: i64) -> Result<(), ApiError> {
-        match (dm_pair(db, did, true).await?, &self.user) {
-            (Some(users), Some(user)) if users.contains(&user.username) => {
-                crate::api::blocks::check_dm_write(db, &user.username, &users).await?;
-                pace(db, Some(user))
-            }
-            (_, _) => Err(not_found()),
-        }
+    async fn dm_writer(&self, db: &Db, did: i64) -> Result<DmWrite, ApiError> {
+        let Some(user) = &self.user else {
+            return Err(not_found());
+        };
+        let write = resolve_dm(db, did, user).await?.writable(db).await?;
+        pace(db, Some(user))?;
+        Ok(write)
     }
 
     /// Adding a reaction: in a channel a signed-in member with its Add reactions permission, in
     /// a DM being a participant while both accounts are live and neither blocked the other.
-    pub async fn react_gate(&self, db: &Db) -> Result<(), ApiError> {
+    /// The DM write decision comes back for a DM message.
+    pub async fn react_gate(&self, db: &Db) -> Result<Option<DmWrite>, ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
                 channel
                     .require_held(db, held::REACT, "No permission to react in this channel")
                     .await?;
-                channel.timeout_gate(db).await
+                channel.timeout_gate(db).await.map(|()| None)
             }
-            (None, Some(did)) => self.dm_writer(db, did).await,
+            (None, Some(did)) => self.dm_writer(db, did).await.map(Some),
             (None, None) => Err(not_found()),
         }
     }
@@ -2405,7 +2454,7 @@ impl ResolvedMessage {
                 }
                 channel.timeout_gate(db).await
             }
-            (None, Some(did)) => self.dm_writer(db, did).await,
+            (None, Some(did)) => self.dm_writer(db, did).await.map(|_| ()),
             (None, None) => Err(not_found()),
         }
     }
@@ -2432,7 +2481,7 @@ impl ResolvedMessage {
                     false => Err(refused()),
                 }
             }
-            (None, Some(did)) if self.own() => self.dm_writer(db, did).await.map(|()| false),
+            (None, Some(did)) if self.own() => self.dm_writer(db, did).await.map(|_| false),
             (None, Some(_)) => Err(refused()),
             (None, None) => Err(not_found()),
         }
@@ -2459,7 +2508,7 @@ impl ResolvedMessage {
                     )),
                 }
             }
-            (None, Some(did)) => self.dm_writer(db, did).await,
+            (None, Some(did)) => self.dm_writer(db, did).await.map(|_| ()),
             (None, None) => Err(not_found()),
         }
     }
@@ -2486,7 +2535,7 @@ impl ResolvedMessage {
                 }
                 channel.timeout_gate(db).await
             }
-            (None, Some(did)) => self.dm_writer(db, did).await,
+            (None, Some(did)) => self.dm_writer(db, did).await.map(|_| ()),
             (None, None) => Err(not_found()),
         }
     }
@@ -3161,10 +3210,13 @@ pub(crate) async fn ws_typing_place(
         display_name: display_name.clone(),
     };
     let dm = async |id: i64| {
-        let users = resolve_dm(db, id, &user).await.ok()?;
-        crate::api::blocks::check_dm_write(db, username, &users)
+        let write = resolve_dm(db, id, &user)
+            .await
+            .ok()?
+            .writable(db)
             .await
             .ok()?;
+        let users = write.users().to_vec();
         Some(TypingPlace {
             server: None,
             channel_id: None,
@@ -3756,6 +3808,53 @@ mod tests {
 
     fn diff(after: (u64, u64), before: (u64, u64)) -> (u64, u64) {
         (after.0 - before.0, after.1 - before.1)
+    }
+
+    #[tokio::test]
+    async fn dm_writes_need_the_dm_decision() {
+        let (state, path) = temp_state("dm_write").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol"] {
+            user(db, name).await;
+        }
+        let id = id_of(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        let alice = mem_user("alice", false);
+        assert_eq!(
+            resolve_dm(db, id, &mem_user("carol", false))
+                .await
+                .err()
+                .map(|e| e.0),
+            Some(StatusCode::NOT_FOUND)
+        );
+        let dm = resolve_dm(db, id, &alice).await.expect("participant");
+        assert_eq!(dm.users(), ["alice", "bob"]);
+        let write = dm.writable(db).await.expect("open");
+        assert_eq!(
+            (write.id(), write.users()),
+            (id, &["alice".to_string(), "bob".to_string()][..])
+        );
+        let blocked = |by: &str, name: &str| {
+            format!("INSERT INTO blocks(blocker, blocked, created_at) VALUES('{by}', '{name}', 0)")
+        };
+        for (by, name) in [("alice", "bob"), ("bob", "alice")] {
+            let sql = blocked(by, name);
+            exec(db, &sql).await;
+            assert!(dm.writable(db).await.is_err(), "{by} blocked {name}");
+            exec(db, "DELETE FROM blocks").await;
+        }
+        exec(
+            db,
+            "INSERT INTO privacy(username, dms) VALUES('bob', 'friends')",
+        )
+        .await;
+        assert!(dm.writable(db).await.is_err(), "friends only");
+        exec(db, "INSERT INTO friends(username, friend, created_at) VALUES('alice', 'bob', 0), ('bob', 'alice', 0)").await;
+        assert!(dm.writable(db).await.is_ok(), "friends");
+        done(state, path).await;
     }
 
     #[tokio::test]
@@ -7079,7 +7178,11 @@ mod tests {
             resolved.react_gate(db).await.expect("within the pace");
         }
         assert_eq!(
-            resolved.react_gate(db).await.map_err(|e| e.0.as_u16()),
+            resolved
+                .react_gate(db)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.0.as_u16()),
             Err(429)
         );
         done(state, path).await;

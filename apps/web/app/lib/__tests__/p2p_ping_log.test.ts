@@ -45,7 +45,7 @@ describe('the P2P ping log against real conversations', () => {
     const arrived: EventRecord[] = []
     b.dms.onArrive(x => x.ping && arrived.push(x.rec))
     for (const body of ['hey @Bob', 'and @Bob again', 'one more @Bob'])
-      await a.dms.send(room, { body })
+      await a.dms.send(await a.dms.room(room), { body })
     await eventually(async () => (await b.store.room(room))?.pings === 3, 'pinged')
     await eventually(() => arrived.length === 3, 'arrivals')
 
@@ -98,7 +98,7 @@ describe('the P2P ping log against real conversations', () => {
     const room = await friends(a, b)
     const arrived: EventRecord[] = []
     b.dms.onArrive(x => x.ping && arrived.push(x.rec))
-    await a.dms.send(room, { body: 'hi @Bob' })
+    await a.dms.send(await a.dms.room(room), { body: 'hi @Bob' })
     await eventually(() => arrived.length === 1, 'arrival')
     const { log } = logOf(b, clock)
     // Sent while we were offline: an hour old by the sender's clock, arriving now.
@@ -111,7 +111,7 @@ describe('the P2P ping log against real conversations', () => {
     expect(await pingAlive(b.store, list[0])).toBe(true)
     expect((await pingText(b.store, list[0]))?.content).toBe('hi @Bob')
     // Deleted by its author: the list can no longer show it.
-    await a.dms.redact(room, late.id)
+    await a.dms.redact(await a.dms.room(room), late.id)
     await eventually(async () => !(await pingAlive(b.store, list[0])), 'deleted here')
     expect(await pingText(b.store, list[0])).toBe(null)
   })

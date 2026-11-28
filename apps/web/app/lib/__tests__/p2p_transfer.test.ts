@@ -170,16 +170,16 @@ const scene = async (opts: { server?: boolean } = {}) => {
   const b = await makePeer(hub, 'Bob', clock)
   await friends(a, b)
   const room = dmRoomId(a.node.ik, b.node.ik)
-  const first = await a.dms.send(room, { body: 'hello Bob' })
+  const first = await a.dms.send(await a.dms.room(room), { body: 'hello Bob' })
   await eventually(async () => (await bodies(b, a.node.ik)).length === 1, 'first message')
-  await b.dms.send(room, { body: 'hi Alice', reply: first })
-  await a.dms.react(room, first, '👍', true)
-  await a.dms.pin(room, first, true)
-  await a.dms.edit(room, first, 'hello there Bob')
+  await b.dms.send(await b.dms.room(room), { body: 'hi Alice', reply: first })
+  await a.dms.react(await a.dms.room(room), first, '👍', true)
+  await a.dms.pin(await a.dms.room(room), first, true)
+  await a.dms.edit(await a.dms.room(room), first, 'hello there Bob')
   const file = new Uint8Array(3000).map((_, i) => i % 251)
   const hashed = await hashBytes(file)
   await a.dms.blobs.putOwn(new Blob([file as BlobPart]), hashed)
-  await a.dms.send(room, {
+  await a.dms.send(await a.dms.room(room), {
     body: 'a file',
     att: [{ h: hashed.h, size: 3000, blocks: 1, name: 'notes.txt', mime: 'text/plain' }],
   })
@@ -205,7 +205,7 @@ const scene = async (opts: { server?: boolean } = {}) => {
   }
   await b.node.setPaused(true)
   await waitFor(() => !a.dms.online(room), 'Bob away')
-  await a.dms.send(room, { body: 'sent while Bob was away' })
+  await a.dms.send(await a.dms.room(room), { body: 'sent while Bob was away' })
   return { clock, hub, a, b, room, server }
 }
 
@@ -637,7 +637,7 @@ describe('import cases', () => {
     await b.node.setPaused(false)
     b.node.schedule(true)
     await caughtUp(a, b)
-    await b.dms.send(room, { body: 'later from Bob' })
+    await b.dms.send(await b.dms.room(room), { body: 'later from Bob' })
     await eventually(
       async () => (await bodies(a, b.node.ik)).includes('later from Bob'),
       'Bob later'
@@ -746,13 +746,13 @@ describe('after the move', () => {
     ])
     // Bob writes to the new device; it answers.
     await waitFor(() => linked(a2, b), 'new link', SLOW)
-    await b.dms.send(room, { body: 'welcome back' })
+    await b.dms.send(await b.dms.room(room), { body: 'welcome back' })
     await eventually(
       async () => (await bodies(a2, b.node.ik)).includes('welcome back'),
       'to A2',
       SLOW
     )
-    await a2.dms.send(room, { body: 'from the new device' })
+    await a2.dms.send(await a2.dms.room(room), { body: 'from the new device' })
     await eventually(
       async () => (await bodies(b, a.node.ik)).includes('from the new device'),
       'from A2',
@@ -798,7 +798,7 @@ describe('after the move', () => {
     const oldDms = new Dms({ node: a.node, store: a.store, clock })
     live.push({ node: a.node, store: a.store, dms: oldDms, db: a.db })
     expect(
-      await oldDms.send(room, { body: 'still here?' }).then(
+      await oldDms.send(await oldDms.room(room), { body: 'still here?' }).then(
         () => 'sent',
         (e: Error) => e.message
       )
@@ -952,23 +952,23 @@ describe('moving safely', () => {
       .messages
     // Another tab made the export: the stored record is what counts.
     await a.store.updateSelf(cur => ({ ...cur!, moving: { at: clock.now() }, exported: 1 }))
-    expect(await failure(a.dms.send(room, { body: 'paused?' }))).toBe(MOVING_TEXT)
+    expect(await failure(a.dms.send(await a.dms.room(room), { body: 'paused?' }))).toBe(MOVING_TEXT)
     expect(a.node.view().movingAt).toBe(clock.now())
     await a.node.resumeSending()
-    await a.dms.send(room, { body: 'resumed' })
+    await a.dms.send(await a.dms.room(room), { body: 'resumed' })
     await eventually(async () => (await bodies(b, a.node.ik)).includes('resumed'), 'resumed')
 
     await exportP2p(a.store.db, PASS, KDF)
     await a.node.markExported(clock.now())
     for (const act of [
-      () => a.dms.send(room, { body: 'no' }),
-      () => a.dms.edit(room, first.id, 'no'),
-      () => a.dms.react(room, first.id, '👍', false),
-      () => a.dms.pin(room, first.id, false),
-      () => a.dms.redact(room, first.id),
+      async () => a.dms.send(await a.dms.room(room), { body: 'no' }),
+      async () => a.dms.edit(await a.dms.room(room), first.id, 'no'),
+      async () => a.dms.react(await a.dms.room(room), first.id, '👍', false),
+      async () => a.dms.pin(await a.dms.room(room), first.id, false),
+      async () => a.dms.redact(await a.dms.room(room), first.id),
     ])
       expect(await failure(act())).toBe(MOVING_TEXT)
-    await b.dms.send(room, { body: 'still reaches you' })
+    await b.dms.send(await b.dms.room(room), { body: 'still reaches you' })
     await eventually(async () => (await bodies(a, b.node.ik)).includes('still reaches you'), 'in')
     expect(await bodies(b, a.node.ik)).not.toContain('no')
   }, 60_000)
@@ -980,7 +980,7 @@ describe('moving safely', () => {
     await caughtUp(a, b)
     const dump = await unlockP2p(await exportP2p(a.store.db, PASS, KDF), PASS)
     await a.node.markExported(clock.now())
-    await b.dms.send(room, { body: 'after the export' })
+    await b.dms.send(await b.dms.room(room), { body: 'after the export' })
     await eventually(async () => (await bodies(a, b.node.ik)).includes('after the export'), 'old')
     a.dms.stop()
     a.node.stop()
@@ -1043,7 +1043,7 @@ describe('moving safely', () => {
     expect(x.node.view().alertAt).not.toBeNull()
     const xs = await selfOf(x.store)
     expect([xs.ik.sk.length, xs.dk.sk.length]).toEqual([0, 0])
-    expect(await failure(x.dms.send(room, { body: 'mine' }))).toBe(MOVED_TEXT)
+    expect(await failure(x.dms.send(await x.dms.room(room), { body: 'mine' }))).toBe(MOVED_TEXT)
     // A reset here starts a new identity the thief doesn't hold.
     await x.node.resetIdentity()
     expect(x.node.ik).not.toBe(a.node.ik)

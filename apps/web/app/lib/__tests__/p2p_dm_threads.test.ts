@@ -78,12 +78,12 @@ const main = async (p: Peer, peer: Peer, room: string) =>
 describe('conversation threads', () => {
   test('replies show in their thread, not the conversation, with counts on both sides', async () => {
     const { clock, a, b, room } = await pair()
-    const root = await a.dms.send(room, { body: 'Plans for Saturday' })
-    const other1 = await a.dms.send(room, { body: 'Unrelated' })
+    const root = await a.dms.send(await a.dms.room(room), { body: 'Plans for Saturday' })
+    const other1 = await a.dms.send(await a.dms.room(room), { body: 'Unrelated' })
     await eventually(async () => (await main(b, a, room)).length === 2, 'roots at Bob')
-    const r1 = await b.dms.send(room, { body: 'Hiking?', thread: root })
+    const r1 = await b.dms.send(await b.dms.room(room), { body: 'Hiking?', thread: root })
     await clock.advance(1000)
-    const r2 = await a.dms.send(room, { body: 'Yes', thread: root, reply: r1 })
+    const r2 = await a.dms.send(await a.dms.room(room), { body: 'Yes', thread: root, reply: r1 })
     for (const p of [a, b]) {
       const peer = other(p, a, b)
       await eventually(
@@ -114,7 +114,7 @@ describe('conversation threads', () => {
     const first = await a.store.firstMessageAfter(room, 0, a.node.ik)
     expect(first).toBeNull()
     // A deleted reply comes off the count; the thread stays while one shows.
-    await b.dms.redact(room, r1)
+    await b.dms.redact(await b.dms.room(room), r1)
     await eventually(
       async () => (await main(a, b, room))[0].replies === 1,
       'count after the delete'
@@ -123,14 +123,14 @@ describe('conversation threads', () => {
 
   test('threads start only on top-level messages of the same conversation', async () => {
     const { a, room } = await pair()
-    const root = await a.dms.send(room, { body: 'root' })
-    const reply = await a.dms.send(room, { body: 'reply', thread: root })
-    expect(await failure(a.dms.send(room, { body: 'nested', thread: reply }))).toBe(
-      THREAD_ROOT_TEXT
-    )
-    expect(await failure(a.dms.send(room, { body: 'nowhere', thread: 'x'.repeat(43) }))).toBe(
-      THREAD_ROOT_TEXT
-    )
+    const root = await a.dms.send(await a.dms.room(room), { body: 'root' })
+    const reply = await a.dms.send(await a.dms.room(room), { body: 'reply', thread: root })
+    expect(
+      await failure(a.dms.send(await a.dms.room(room), { body: 'nested', thread: reply }))
+    ).toBe(THREAD_ROOT_TEXT)
+    expect(
+      await failure(a.dms.send(await a.dms.room(room), { body: 'nowhere', thread: 'x'.repeat(43) }))
+    ).toBe(THREAD_ROOT_TEXT)
     expect(await loadDmThread(a.store.db, room, reply, a.node.ik, '')).toBeNull()
   })
 
@@ -179,10 +179,10 @@ describe('conversation threads', () => {
       arrivals.push(x.thread)
       if (x.ping) log.note(x.room, null, x.ping, x.rec, x.thread)
     })
-    const root = await a.dms.send(room, { body: 'root' })
+    const root = await a.dms.send(await a.dms.room(room), { body: 'root' })
     await eventually(async () => (await main(b, a, room)).length === 1, 'root at Bob')
-    const mention = await b.dms.send(room, { body: '@Alice look', thread: root })
-    await b.dms.send(room, { body: 'plain reply', thread: root })
+    const mention = await b.dms.send(await b.dms.room(room), { body: '@Alice look', thread: root })
+    await b.dms.send(await b.dms.room(room), { body: 'plain reply', thread: root })
     const counts = async () => {
       const r = (await a.store.room(room))!
       return { unread: r.unread, pings: r.pings, threads: r.threads ?? {} }
@@ -194,7 +194,7 @@ describe('conversation threads', () => {
     // Reading the conversation leaves the thread's ping.
     await a.dms.markRead(room)
     expect(await counts()).toEqual({ unread: 0, pings: 0, threads: { [root]: 1 } })
-    const top = await b.dms.send(room, { body: '@Alice and here' })
+    const top = await b.dms.send(await b.dms.room(room), { body: '@Alice and here' })
     await eventually(async () => (await counts()).pings === 1, 'top-level ping')
     expect(await counts()).toEqual({ unread: 1, pings: 1, threads: { [root]: 1 } })
     // Reading the thread takes off its ping only.
@@ -226,7 +226,7 @@ describe('conversation threads', () => {
 
   test('typing in a thread shows in that thread only', async () => {
     const { a, b, room } = await pair()
-    const root = await a.dms.send(room, { body: 'root' })
+    const root = await a.dms.send(await a.dms.room(room), { body: 'root' })
     b.dms.typing(room, true, root)
     await eventually(async () => a.dms.typingIn(room, root).length === 1, 'typing in the thread')
     expect(a.dms.typingIn(room, root)).toEqual([b.node.ik])
@@ -237,16 +237,18 @@ describe('conversation threads', () => {
 
   test('a deleted root takes no replies', async () => {
     const { a, room } = await pair()
-    const root = await a.dms.send(room, { body: 'root' })
-    await a.dms.redact(room, root)
-    expect(await failure(a.dms.send(room, { body: 'late', thread: root }))).toBe(THREAD_ROOT_TEXT)
+    const root = await a.dms.send(await a.dms.room(room), { body: 'root' })
+    await a.dms.redact(await a.dms.room(room), root)
+    expect(await failure(a.dms.send(await a.dms.room(room), { body: 'late', thread: root }))).toBe(
+      THREAD_ROOT_TEXT
+    )
   })
 
   test('replies stored without their thread mark move into their thread, each once', async () => {
     const { a, b, room } = await pair()
-    const root = await a.dms.send(room, { body: 'root' })
-    const first = await a.dms.send(room, { body: 'first', thread: root })
-    const second = await a.dms.send(room, { body: 'second', thread: root })
+    const root = await a.dms.send(await a.dms.room(room), { body: 'root' })
+    const first = await a.dms.send(await a.dms.room(room), { body: 'first', thread: root })
+    const second = await a.dms.send(await a.dms.room(room), { body: 'second', thread: root })
     const unmark = async (id: string) => {
       const old = { ...(await a.store.event(id))! }
       delete old.thread
@@ -290,14 +292,20 @@ describe('conversation threads', () => {
       now: clock.now,
     })
     a.dms.onArrive(x => x.ping && log.note(x.room, null, x.ping, x.rec, x.thread))
-    const root = await a.dms.send(room, { body: 'root' })
-    const other = await a.dms.send(room, { body: 'other root' })
+    const root = await a.dms.send(await a.dms.room(room), { body: 'root' })
+    const other = await a.dms.send(await a.dms.room(room), { body: 'other root' })
     await eventually(async () => (await main(b, a, room)).length === 2, 'roots at Bob')
-    const gone = await b.dms.send(room, { body: '@Alice gone soon', thread: root })
-    const kept = await b.dms.send(room, { body: '@Alice still here', thread: other })
+    const gone = await b.dms.send(await b.dms.room(room), {
+      body: '@Alice gone soon',
+      thread: root,
+    })
+    const kept = await b.dms.send(await b.dms.room(room), {
+      body: '@Alice still here',
+      thread: other,
+    })
     const threads = async () => (await a.store.room(room))!.threads ?? {}
     await eventually(async () => Object.keys(await threads()).length === 2, 'thread pings')
-    await b.dms.redact(room, gone)
+    await b.dms.redact(await b.dms.room(room), gone)
     await eventually(async () => !!(await a.store.event(gone))?.redacted, 'deleted at Alice')
     const counts = await a.dms.threadCounts(room)
     const pings = await log.threadPings(room, null)
@@ -310,12 +318,12 @@ describe('conversation threads', () => {
 
   test('a thread ping whose root is deleted comes off when the conversation is read', async () => {
     const { a, b, room } = await pair()
-    const root = await a.dms.send(room, { body: 'root' })
+    const root = await a.dms.send(await a.dms.room(room), { body: 'root' })
     await eventually(async () => (await main(b, a, room)).length === 1, 'root at Bob')
-    const reply = await b.dms.send(room, { body: '@Alice look', thread: root })
+    const reply = await b.dms.send(await b.dms.room(room), { body: '@Alice look', thread: root })
     const threads = async () => (await a.store.room(room))!.threads ?? {}
     await eventually(async () => (await threads())[root] === 1, 'thread ping')
-    await a.dms.redact(room, root)
+    await a.dms.redact(await a.dms.room(room), root)
     const counts = await a.dms.threadCounts(room)
     const dead = await a.dms.readConversation(room, [{ id: reply, thread: root }], counts)
     expect(dead).toEqual([reply])
@@ -324,8 +332,8 @@ describe('conversation threads', () => {
 
   test('a reaction to a thread reply counts in its thread', async () => {
     const { a, b, room } = await pair()
-    const root = await a.dms.send(room, { body: 'root' })
-    const reply = await a.dms.send(room, { body: 'mine', thread: root })
+    const root = await a.dms.send(await a.dms.room(room), { body: 'root' })
+    const reply = await a.dms.send(await a.dms.room(room), { body: 'mine', thread: root })
     await eventually(
       async () =>
         !!(await loadDmThread(b.store.db, room, root, b.node.ik, a.node.ik))?.messages.length,
@@ -333,7 +341,7 @@ describe('conversation threads', () => {
     )
     const arrived: (string | null)[] = []
     a.dms.onArrive(x => void (x.ping === 'reaction' && arrived.push(x.thread)))
-    await b.dms.react(room, reply, '👍', true)
+    await b.dms.react(await b.dms.room(room), reply, '👍', true)
     await eventually(async () => arrived.length === 1, 'reaction at Alice')
     expect(arrived).toEqual([root])
     expect(await a.store.room(room)).toMatchObject({ pings: 0, threads: { [root]: 1 } })

@@ -147,15 +147,6 @@ pub(crate) async fn check_dm(db: &Db, sender: &str, other: &str) -> Result<(), A
     Ok(())
 }
 
-/// The one guard for every write into a DM with participants `users` (messages, edits,
-/// reactions, pins, calls, call signalling, typing): `check_dm` against the other participant.
-pub(crate) async fn check_dm_write(db: &Db, actor: &str, users: &[String]) -> Result<(), ApiError> {
-    match users.iter().find(|u| u.as_str() != actor) {
-        Some(other) => check_dm(db, actor, other).await,
-        None => Ok(()),
-    }
-}
-
 /// Whether `user` may see the account `name`, as for its profile card.
 async fn sees(state: &AppState, user: &User, name: &str) -> Result<bool, ApiError> {
     let caller = Caller {

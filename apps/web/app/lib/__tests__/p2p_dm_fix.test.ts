@@ -121,17 +121,24 @@ describe('own events are validated before they are stored or sent', () => {
     const sessB = sessionOf(b, room)
     // Short enough in characters, too big once control characters are escaped.
     const heavy = '\u0001'.repeat(3000)
-    expect(await failure(a.dms.send(room, { body: heavy }))).toBe(TOO_LONG)
+    expect(await failure(a.dms.send(await a.dms.room(room), { body: heavy }))).toBe(TOO_LONG)
     expect(dm.bodyTooLong(heavy)).toBe(true)
     expect(dm.bodyTooLong('x'.repeat(EV.body))).toBe(false)
-    const ok = await a.dms.send(room, { body: 'short' })
-    expect(await failure(a.dms.edit(room, ok, 'x'.repeat(EV.body + 1)))).toBe(TOO_LONG)
+    const ok = await a.dms.send(await a.dms.room(room), { body: 'short' })
+    expect(await failure(a.dms.edit(await a.dms.room(room), ok, 'x'.repeat(EV.body + 1)))).toBe(
+      TOO_LONG
+    )
     const longName = 'n'.repeat(100)
     expect(
-      await failure(a.dms.send(room, { body: '', fwd: { name: longName, ts: 1, body: 'q' } }))
+      await failure(
+        a.dms.send(await a.dms.room(room), { body: '', fwd: { name: longName, ts: 1, body: 'q' } })
+      )
     ).toBe(TOO_LONG)
     expect(Array.from(dm.clipName(longName)).length).toBe(EV.name)
-    await a.dms.send(room, { body: '', fwd: { name: dm.clipName(longName), ts: 1, body: 'q' } })
+    await a.dms.send(await a.dms.room(room), {
+      body: '',
+      fwd: { name: dm.clipName(longName), ts: 1, body: 'q' },
+    })
     await eventually(async () => (await bodies(b, a)).length === 2, 'two messages')
     expect(await bodies(a, b)).toEqual(['short', ''])
     expect((await view(b, a))[1].fwd?.name).toBe('n'.repeat(EV.name))
@@ -147,13 +154,13 @@ describe('own events are validated before they are stored or sent', () => {
     await a.dms.recheckOutbox()
     const v = await view(a, b)
     expect(v.map(m => [m.pending, m.failed])).toEqual([[true, true]])
-    expect(await failure(a.dms.retry(room, bad.id))).toBe(
+    expect(await failure(a.dms.retry(await a.dms.room(room), bad.id))).toBe(
       "This message can't be sent. Delete it instead."
     )
-    await a.dms.redact(room, bad.id)
+    await a.dms.redact(await a.dms.room(room), bad.id)
     expect(await view(a, b)).toEqual([])
     expect(await a.store.db.get('outbox', bad.id)).toBeUndefined()
-    await a.dms.send(room, { body: 'after' })
+    await a.dms.send(await a.dms.room(room), { body: 'after' })
     await b.node.setPaused(false)
     b.node.schedule(true)
     await waitFor(() => linked(a, b), 'back')
@@ -177,7 +184,8 @@ describe('own events are validated before they are stored or sent', () => {
 describe('storage limits', () => {
   test('bytes are capped per room; the sender hears "full" and stops pushing', async () => {
     const { a, b, room } = await pair({}, { roomBytes: 6000 })
-    for (let i = 0; i < 6; i += 1) await a.dms.send(room, { body: `${i}`.padEnd(1500, 'x') })
+    for (let i = 0; i < 6; i += 1)
+      await a.dms.send(await a.dms.room(room), { body: `${i}`.padEnd(1500, 'x') })
     await eventually(async () => !!(await a.store.room(room))?.peerFull, 'their storage is full')
     const rb = (await b.store.room(room))!
     expect(rb.full).toBe(true)
@@ -190,7 +198,7 @@ describe('storage limits', () => {
     expect((await view(a, b)).some(m => m.pending)).toBe(true)
     expect(sessionOf(a, room).strikes + sessionOf(b, room).strikes).toBe(0)
     // Bob's own messages are refused with a clear reason.
-    expect(await failure(b.dms.send(room, { body: 'b' }))).toBe(
+    expect(await failure(b.dms.send(await b.dms.room(room), { body: 'b' }))).toBe(
       'This conversation reached the storage limit of 6 KB on this device.'
     )
     expect(LOCAL.dag.roomBytes).toBe(200 * 1024 * 1024)
@@ -200,7 +208,8 @@ describe('storage limits', () => {
   test('a full conversation takes messages again after a start with a higher limit', async () => {
     const lim = { limits: { peerFullMs: 2000 } }
     const { a, b, room, hub, clock } = await pair(lim, { ...lim, roomBytes: 6000 })
-    for (let i = 0; i < 6; i += 1) await a.dms.send(room, { body: `${i}`.padEnd(1500, 'x') })
+    for (let i = 0; i < 6; i += 1)
+      await a.dms.send(await a.dms.room(room), { body: `${i}`.padEnd(1500, 'x') })
     await eventually(async () => !!(await a.store.room(room))?.peerFull, 'their storage is full')
     expect((await b.store.room(room))?.full).toBe(true)
     expect((await bodies(b, a)).length).toBeLessThan(6)
@@ -220,7 +229,7 @@ describe('storage limits', () => {
     expect((await again.store.room(room))?.full).toBe(false)
     await n.node.start()
     await waitFor(() => linked(a, again), 'back')
-    expect(await failure(dms.send(room, { body: 'from bob' }))).toBe('ok')
+    expect(await failure(dms.send(await dms.room(room), { body: 'from bob' }))).toBe('ok')
     await clock.advance(3000)
     a.node.schedule(true)
     await eventually(async () => (await bodies(again, a)).length === 7, 'all of them')
@@ -347,8 +356,10 @@ describe('storage limits', () => {
 
   test('a send refused for the total of every conversation says so', async () => {
     const { a, room } = await pair({ totalCap: 3 }, {})
-    for (const t of ['1', '2', '3']) await a.dms.send(room, { body: t })
-    expect(await failure(a.dms.send(room, { body: '4' }))).toBe(dm.DMS_FULL_TEXT(3))
+    for (const t of ['1', '2', '3']) await a.dms.send(await a.dms.room(room), { body: t })
+    expect(await failure(a.dms.send(await a.dms.room(room), { body: '4' }))).toBe(
+      dm.DMS_FULL_TEXT(3)
+    )
     expect((await a.store.room(room))?.fullWhy).toBe('events')
   })
 
@@ -365,17 +376,17 @@ describe('storage limits', () => {
         throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
       return real(names as never, mode)
     }
-    await a.dms.send(room, { body: 'one' })
+    await a.dms.send(await a.dms.room(room), { body: 'one' })
     await eventually(async () => b.dms.storageFull, 'quota noticed')
     await eventually(async () => a.dms.sync.linksOf(room)[0].inFlight.length === 0, 'drained')
     await eventually(async () => !!(await a.store.room(room))?.peerFull, 'peer full')
     expect(sessionOf(b, room).strikes).toBe(0)
-    expect(await failure(b.dms.send(room, { body: 'b' }))).toBe(
+    expect(await failure(b.dms.send(await b.dms.room(room), { body: 'b' }))).toBe(
       "Storage on this device is full. New messages can't be saved."
     )
     quota = false
     await clock.advance(61_000)
-    await a.dms.send(room, { body: 'two' })
+    await a.dms.send(await a.dms.room(room), { body: 'two' })
     await eventually(async () => (await bodies(b, a)).join() === 'one,two', 'both arrive')
     expect(b.dms.storageFull).toBe(false)
     await eventually(async () => !(await a.store.room(room))?.peerFull, 'cleared')
@@ -398,7 +409,7 @@ describe('storage limits, after a full pause', () => {
         throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
       return real(names as never, mode)
     }
-    await a.dms.send(room, { body: 'one' })
+    await a.dms.send(await a.dms.room(room), { body: 'one' })
     await eventually(async () => !!(await a.store.room(room))?.peerFull, 'peer full')
     quota = false
     await clock.advance(61_001)
@@ -511,7 +522,7 @@ describe('events a peer pushes', () => {
 
   test("edits and deletes of someone else's message are refused and struck", async () => {
     const { a, b, room } = await pair()
-    const mine = await a.dms.send(room, { body: 'mine' })
+    const mine = await a.dms.send(await a.dms.room(room), { body: 'mine' })
     await eventually(async () => (await bodies(b, a)).length === 1, 'arrived')
     const bob = b.node.author()!
     const sessB = sessionOf(b, room)
@@ -523,7 +534,7 @@ describe('events a peer pushes', () => {
     await sessB.send({ t: 'push', room, ev: del.wire })
     await waitFor(() => sessA.strikes === 2, 'redact struck')
     // Reactions and pins only go on messages.
-    const react = await a.dms.react(room, mine, '🎉', true)
+    const react = await a.dms.react(await a.dms.room(room), mine, '🎉', true)
     for (const [type, content] of [
       ['react', { target: react, key: '👍', on: true }],
       ['pin', { target: react, on: true }],
@@ -572,7 +583,7 @@ describe('events a peer pushes', () => {
     await waitFor(() => sessA.strikes === 1, 'struck')
     expect(await a.store.event(deep.id)).toBeUndefined()
     // Alice can still send, and Bob accepts it.
-    await a.dms.send(room, { body: 'still fine' })
+    await a.dms.send(await a.dms.room(room), { body: 'still fine' })
     await eventually(async () => (await bodies(b, a)).join() === 'still fine', 'delivered')
   })
 
@@ -590,18 +601,18 @@ describe('events a peer pushes', () => {
     )
     await sessionOf(b, room).send({ t: 'push', room, ev: ahead.wire })
     await eventually(async () => (await bodies(a, b)).length === 1, 'ahead')
-    await a.dms.send(room, { body: 'now' })
+    await a.dms.send(await a.dms.room(room), { body: 'now' })
     const v = await view(a, b)
     expect(v.find(m => m.body === 'now')?.ts).toBe(clock.now())
   })
 
   test('a reply to something that is not a message never pings', async () => {
     const { a, b, room } = await pair()
-    const mine = await a.dms.send(room, { body: 'mine' })
-    const react = await a.dms.react(room, mine, '🎉', true)
+    const mine = await a.dms.send(await a.dms.room(room), { body: 'mine' })
+    const react = await a.dms.react(await a.dms.room(room), mine, '🎉', true)
     await eventually(async () => (await bodies(b, a)).length === 1, 'arrived')
     await a.dms.markRead(room)
-    await b.dms.send(room, { body: 'odd reply', reply: react })
+    await b.dms.send(await b.dms.room(room), { body: 'odd reply', reply: react })
     await eventually(async () => (await bodies(a, b)).length === 2, 'reply')
     expect((await a.store.room(room))?.pings).toBe(0)
   })
@@ -611,11 +622,11 @@ describe('events a peer pushes', () => {
     const sess = sessionOf(a, room)
     const realSend = sess.send.bind(sess)
     sess.send = msg => (msg.t === 'push' ? Promise.resolve() : realSend(msg))
-    await a.dms.send(room, { body: 'first' })
-    const secret = await a.dms.send(room, { body: 'secret' })
+    await a.dms.send(await a.dms.room(room), { body: 'first' })
+    const secret = await a.dms.send(await a.dms.room(room), { body: 'secret' })
     const link = a.dms.sync.linksOf(room)[0]
     expect(link.waiting.find(w => w.id === secret)?.wire.c).not.toBeNull()
-    await a.dms.redact(room, secret)
+    await a.dms.redact(await a.dms.room(room), secret)
     expect((link.waiting.find(w => w.id === secret)?.wire as Wire).c).toBeNull()
   })
 })

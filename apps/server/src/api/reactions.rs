@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::api::access::{Proof, ResolvedMessage, resolve_message};
+use crate::api::access::{DmWrite, Proof, ResolvedMessage, resolve_message};
 use crate::api::messages::{Quotes, load_message};
 use crate::api::pings::{PingKind, PingScope, PingSpec, RETRACTED, announce_counts, create_pings};
 use crate::api::{
@@ -97,6 +97,7 @@ pub(crate) async fn attach_reactions(
 struct Target {
     resolved: ResolvedMessage,
     message: Message,
+    dm: Option<DmWrite>,
 }
 
 /// The message `user` reacts to. Reading it is enough to take a reaction back; adding one also
@@ -108,13 +109,18 @@ async fn react_target(
     adding: bool,
 ) -> Result<Target, ApiError> {
     let resolved = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
-    if adding {
-        resolved.react_gate(&state.db).await?;
-    }
+    let dm = match adding {
+        true => resolved.react_gate(&state.db).await?,
+        false => None,
+    };
     let message = load_message(&state.db, id, Quotes::Skip)
         .await?
         .ok_or_else(crate::api::access::not_found)?;
-    Ok(Target { resolved, message })
+    Ok(Target {
+        resolved,
+        message,
+        dm,
+    })
 }
 
 /// Serializes reaction writes on one message (Postgres row lock; SQLite has a single writer),
@@ -187,19 +193,19 @@ fn reaction_event(
 }
 
 async fn ping_author(state: &AppState, target: &Target, actor: &User, emoji: &str) {
-    let Target { resolved, message } = target;
+    let Target {
+        resolved,
+        message,
+        dm,
+    } = target;
     let author = &message.author.username;
     if *author == actor.username {
         return;
     }
-    let scope = match (
-        resolved.channel(),
-        &resolved.scope().dm_users(),
-        message.dm_id,
-    ) {
-        (Some(channel), _, _) => PingScope::Channel(channel),
-        (None, Some(users), Some(id)) => PingScope::Dm { id, users },
-        (None, _, _) => return,
+    let scope = match (resolved.channel(), dm) {
+        (Some(channel), _) => PingScope::Channel(channel),
+        (None, Some(dm)) => PingScope::Dm(dm),
+        (None, None) => return,
     };
     let run = async {
         let known = sqlx::query(

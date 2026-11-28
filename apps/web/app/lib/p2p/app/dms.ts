@@ -18,6 +18,7 @@ import {
   loadPins,
   threadPingTotal,
   type Arrival,
+  type DmRoom,
 } from '../dm'
 import type { Attachment, Fwd } from '../content'
 import type { PageOpts } from '../jump'
@@ -343,12 +344,12 @@ export function createDmsPart(
   // Runs a DM action or a server one for a draft key.
   const onTarget = <T>(
     key: string,
-    dm: (d: Dms, room: string, thread: string | null) => Promise<T>,
+    dm: (d: Dms, room: DmRoom, thread: string | null) => Promise<T>,
     server: (s: Servers, room: string, ch: string, thread: string | null) => Promise<T>
   ): Promise<T | null> => {
     const t = targetOf(key)
     return t.kind === 'dm'
-      ? withDms(d => dm(d, t.room, t.thread))
+      ? withDms(async d => dm(d, await d.room(t.room), t.thread))
       : parts.servers.withServers(s => server(s, t.room, t.ch, t.thread))
   }
 
@@ -655,7 +656,7 @@ export function createDmsPart(
       if (t.kind === 'dm') {
         const d = state.dms
         if (!d) throw new DmError(parts.calls.ELSEWHERE_TEXT)
-        return d.send(t.room, msg)
+        return d.send(await d.room(t.room), msg)
       }
       const sv = state.servers
       if (!sv) throw new ServerError(parts.calls.ELSEWHERE_TEXT)

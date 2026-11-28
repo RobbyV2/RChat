@@ -214,7 +214,7 @@ describe('encrypting the earlier messages of a P2P conversation', () => {
     await a.dms.open(b.node.ik)
     await b.dms.open(a.node.ik)
     const room = a.dms.roomFor(b.node.ik)
-    await a.dms.send(room, { body: 'said before' })
+    await a.dms.send(await a.dms.room(room), { body: 'said before' })
     await pump(clock, async () => (await forms(b, room)).plain > 0, 'bob has it')
     await b.dms.setStore(room, true, true)
     for (const m of [a, b]) await pump(clock, done(m, room), 'done')

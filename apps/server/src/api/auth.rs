@@ -836,11 +836,7 @@ pub(crate) async fn add_account(
         let notice = post_system(tx, server, key, SystemKind::Join).await?;
         joined.push((server.clone(), notice));
     }
-    sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2)")
-        .bind(key)
-        .bind(key)
-        .execute(&mut **tx)
-        .await?;
+    crate::api::dms::open_own(tx, key).await?;
     Ok(joined)
 }
 

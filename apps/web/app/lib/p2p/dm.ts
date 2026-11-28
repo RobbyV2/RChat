@@ -46,6 +46,7 @@ import { fmtSize } from '../bytes'
 import { maskCode } from '../mentions'
 import { keyBytes } from './keys'
 import type { P2pNode } from './node'
+import { writable } from './contacts'
 import { LOCAL, type Local } from './limits'
 import { realClock, type Clock } from './session'
 import { around, type PageOpts } from './jump'
@@ -693,6 +694,20 @@ export const backfillThreadsSafely = (db: P2pDatabase) => backfillThreads(db).ca
 
 export class DmError extends Error {}
 
+export const NOT_WRITABLE_TEXT = "You can't write in this conversation"
+
+const WRITE: unique symbol = Symbol('dm write')
+
+// A conversation the account may write in: made only by `Dms.writable`, which checks the
+// contact, and checked again by every write that takes it.
+export class DmRoom {
+  readonly id: string
+  constructor(key: typeof WRITE, id: string) {
+    if (key !== WRITE) throw new DmError(NOT_WRITABLE_TEXT)
+    this.id = id
+  }
+}
+
 export const FULL_TEXT = (n: number) =>
   `This conversation reached the limit of ${n.toLocaleString()} stored events on this device.`
 export const FULL_BYTES_TEXT = (bytes: number) =>
@@ -1141,7 +1156,8 @@ export class Dms {
   }
 
   // Sends a failed message again, if it can be accepted at all.
-  async retry(room: string, id: string) {
+  async retry(w: DmRoom, id: string) {
+    const room = await this.live(w)
     const r = await this.db.get('events', id)
     const rec = await this.deps.store.room(room)
     const o = await this.db.get('outbox', id)
@@ -1152,10 +1168,31 @@ export class Dms {
     this.changed(room)
   }
 
+  // The handle to write in `room`, or null while its contact is blocked, ignored or an
+  // unanswered request.
+  async writable(room: string): Promise<DmRoom | null> {
+    const rec = await this.deps.store.room(room)
+    if (!rec || !writable(this.deps.node.contact(rec.peer))) return null
+    return new DmRoom(WRITE, room)
+  }
+
+  // `writable`, throwing when the conversation can't be written in.
+  async room(room: string): Promise<DmRoom> {
+    const w = await this.writable(room)
+    if (!w) throw new DmError(NOT_WRITABLE_TEXT)
+    return w
+  }
+
+  // The room id of a handle, once the contact still allows writing.
+  private async live(room: DmRoom) {
+    return (await this.room(room.id)).id
+  }
+
   async send(
-    room: string,
+    w: DmRoom,
     msg: { body: string; reply?: string; fwd?: Fwd; att?: Attachment[]; thread?: string }
   ) {
+    const room = await this.live(w)
     const rec = await this.deps.store.room(room)
     const content: MsgContent = { body: msg.body }
     if (msg.thread) {
@@ -1173,7 +1210,8 @@ export class Dms {
   }
 
   // The log row of a call we made.
-  async logCall(room: string, call: CallContent) {
+  async logCall(w: DmRoom, call: CallContent) {
+    const room = await this.live(w)
     return this.create(room, 'call', { ...call })
   }
 
@@ -1190,14 +1228,16 @@ export class Dms {
     return r
   }
 
-  async edit(room: string, target: string, body: string, alts?: Record<string, string>) {
+  async edit(w: DmRoom, target: string, body: string, alts?: Record<string, string>) {
+    const room = await this.live(w)
     const r = await this.ownMessage(room, target)
     if (r.sender !== this.me || (r.wire.c as MsgContent | null)?.fwd)
       throw new DmError("You can't edit this message")
     return this.create(room, 'edit', alts ? { target, body, alts } : { target, body })
   }
 
-  async redact(room: string, target: string) {
+  async redact(w: DmRoom, target: string) {
+    const room = await this.live(w)
     const r = await this.db.get('events', target)
     if (!r || r.room !== room || r.sender !== this.me)
       throw new DmError("You can't delete this message")
@@ -1209,12 +1249,14 @@ export class Dms {
     return id
   }
 
-  async react(room: string, target: string, key: string, on: boolean) {
+  async react(w: DmRoom, target: string, key: string, on: boolean) {
+    const room = await this.live(w)
     await this.ownMessage(room, target)
     return this.create(room, 'react', { target, key, on })
   }
 
-  async pin(room: string, target: string, on: boolean) {
+  async pin(w: DmRoom, target: string, on: boolean) {
+    const room = await this.live(w)
     await this.ownMessage(room, target)
     if (on) {
       const pins = await loadPins(this.db, room, this.me, '', this.local)

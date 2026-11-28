@@ -680,8 +680,11 @@ pub(crate) async fn put_dm_seal(
     Path(id): Path<i64>,
     Json(SealReq { on }): Json<SealReq>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let users = resolve_dm(&state.db, id, &user).await?;
-    super::blocks::check_dm_write(&state.db, &user.username, &users).await?;
+    let write = resolve_dm(&state.db, id, &user)
+        .await?
+        .writable(&state.db)
+        .await?;
+    let users = write.users();
     super::messages::message_rate(&state, &user).await?;
     if on {
         make_ready(&state).await?;
@@ -723,10 +726,10 @@ pub(crate) async fn put_dm_seal(
     .view();
     state.hub.broadcast(WsEvent::DmUpdated {
         dm_id: id,
-        dm_users: users.clone(),
+        dm_users: users.to_vec(),
         seal,
     });
-    super::system_messages::announce_storage_dm(&state, id, users, notice).await;
+    super::system_messages::announce_storage_dm(&state, id, users.to_vec(), notice).await;
     Ok(ok())
 }
 

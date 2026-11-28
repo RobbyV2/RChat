@@ -1063,7 +1063,7 @@ describe('invite codes', () => {
     await pump(clock, () => d.node.contact(a.node.ik)?.state === 'incoming', 'request')
     await d.node.accept(a.node.ik)
     await pump(clock, () => a.node.contact(d.node.ik)?.state === 'mutual', 'mutual')
-    const dm = await d.dms.send((await d.dms.open(a.node.ik)).id, { body: 'hi' })
+    const dm = await d.dms.send(await d.dms.room((await d.dms.open(a.node.ik)).id), { body: 'hi' })
     const rec = await d.store.db.getAll('rooms')
     const dmRoom = rec.find(r => r.kind === 'dm')!
     const { encodeCode } = await import('../p2p/server')

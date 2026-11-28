@@ -892,7 +892,10 @@ const sendFile = async (from: Peer, to: Peer, data: Uint8Array, name = 'pic.png'
     name,
     mime: 'image/png',
   }
-  const id = await from.dms.send(from.dms.roomFor(to.node.ik), { body: '', att: [att] })
+  const id = await from.dms.send(await from.dms.room(from.dms.roomFor(to.node.ik)), {
+    body: '',
+    att: [att],
+  })
   return { att, id }
 }
 
@@ -979,7 +982,10 @@ describe('attachments in direct messages', () => {
     const data = bytes(2 * BLOCK, 81)
     const { att, id } = await sendFile(a, b, data)
     // Carol learned its hash elsewhere and posts it in her conversation with Alice.
-    const planted = await c.dms.send(c.dms.roomFor(a.node.ik), { body: '', att: [att] })
+    const planted = await c.dms.send(await c.dms.room(c.dms.roomFor(a.node.ik)), {
+      body: '',
+      att: [att],
+    })
     await eventually(async () => (await messagesOf(a, c)).some(m => m.id === planted), 'planted')
     expect(await a.dms.entitled(c.node.ik, att.h)).toBe(false)
     // Asking gets exactly what a file Alice never had gets.
@@ -1004,14 +1010,14 @@ describe('attachments in direct messages', () => {
     expect(await c.store.db.count('blob_parts')).toBe(0)
     // Carol takes hers back (a reference by anyone but the conversation's peer would keep
     // Alice's copy, which gives nobody access).
-    await c.dms.redact(c.dms.roomFor(a.node.ik), planted)
+    await c.dms.redact(await c.dms.room(c.dms.roomFor(a.node.ik)), planted)
     await eventually(async () => !(await messagesOf(a, c)).some(m => m.id === planted), 'unplanted')
     expect((await a.dms.blobs.record(att.h))?.done).toBe(true)
     // Bob does the same in his own conversation with Alice: his message doesn't keep Alice's
     // copy once she deletes hers.
-    await b.dms.send(b.dms.roomFor(a.node.ik), { body: 'mine now', att: [att] })
+    await b.dms.send(await b.dms.room(b.dms.roomFor(a.node.ik)), { body: 'mine now', att: [att] })
     await eventually(async () => (await messagesOf(a, b)).length === 2, 'Bob posts it')
-    await a.dms.redact(a.dms.roomFor(b.node.ik), id)
+    await a.dms.redact(await a.dms.room(a.dms.roomFor(b.node.ik)), id)
     await eventually(async () => (await a.dms.blobs.record(att.h)) === undefined, 'deleted')
     expect(await a.dms.entitled(b.node.ik, att.h)).toBe(false)
   }, 60_000)
@@ -1028,7 +1034,7 @@ describe('attachments in direct messages', () => {
       await a.dms.blobs.putOwn(new Blob([f as BlobPart]), await hashBytes(f))
       atts.push(await attOf(f, `f${i}.bin`))
     }
-    await a.dms.send(a.dms.roomFor(b.node.ik), { body: 'five', att: atts })
+    await a.dms.send(await a.dms.room(a.dms.roomFor(b.node.ik)), { body: 'five', att: atts })
     await eventually(
       async () => (await Promise.all(atts.map(x => b.dms.blobs.record(x.h)))).every(r => r?.done),
       'auto downloads'
@@ -1049,15 +1055,18 @@ describe('attachments in direct messages', () => {
     await b.dms.blobs.download(first.att)
     await eventually(async () => !!(await b.dms.blobs.record(first.att.h))?.done, 'download')
     // The same file once more, then the first message is deleted: both keep it.
-    await a.dms.send(a.dms.roomFor(b.node.ik), { body: 'again', att: [first.att] })
+    await a.dms.send(await a.dms.room(a.dms.roomFor(b.node.ik)), {
+      body: 'again',
+      att: [first.att],
+    })
     await eventually(async () => (await messagesOf(b, a)).length === 2, 'second')
-    await a.dms.redact(a.dms.roomFor(b.node.ik), first.id)
+    await a.dms.redact(await a.dms.room(a.dms.roomFor(b.node.ik)), first.id)
     await eventually(async () => (await messagesOf(b, a)).length === 1, 'redacted')
     expect((await a.dms.blobs.record(first.att.h))?.done).toBe(true)
     expect((await b.dms.blobs.record(first.att.h))?.done).toBe(true)
     // Deleting the last one removes the file and its blocks everywhere.
     const second = (await messagesOf(a, b))[0].id
-    await a.dms.redact(a.dms.roomFor(b.node.ik), second)
+    await a.dms.redact(await a.dms.room(a.dms.roomFor(b.node.ik)), second)
     await eventually(
       async () => (await b.dms.blobs.record(first.att.h)) === undefined,
       'gone at Bob'
@@ -1204,7 +1213,7 @@ describe('many files from one holder, with a slow gate', () => {
         return onMessage.call(this, m, l)
       }
       for (let at = 0; at < n; at += EV.att)
-        await a.dms.send(a.dms.roomFor(b.node.ik), {
+        await a.dms.send(await a.dms.room(a.dms.roomFor(b.node.ik)), {
           body: `files ${at}`,
           att: atts.slice(at, at + EV.att),
         })
@@ -1375,7 +1384,7 @@ describe('images, the gate, forwards, late chunks, auto-download limits', () => 
     const fromCarol = await sendFile(c, a, bytes(4000, 401))
     const toCarol = await sendFile(a, c, bytes(4000, 402))
     const planted = await attOf(bytes(4000, 403))
-    await b.dms.send(b.dms.roomFor(a.node.ik), { body: '', att: [planted] })
+    await b.dms.send(await b.dms.room(b.dms.roomFor(a.node.ik)), { body: '', att: [planted] })
     const unknown = await attOf(bytes(4000, 404))
     await eventually(
       async () => (await messagesOf(a, c)).length === 2 && (await messagesOf(a, b)).length === 1,
@@ -1452,7 +1461,10 @@ describe('images, the gate, forwards, late chunks, auto-download limits', () => 
     await a.dms.blobs.download(att)
     await eventually(async () => !!(await a.dms.blobs.record(att.h))?.done, 'download')
     // Alice forwards it to Bob, then deletes the forward.
-    const fwd = await a.dms.send(a.dms.roomFor(b.node.ik), { body: 'look', att: [att] })
+    const fwd = await a.dms.send(await a.dms.room(a.dms.roomFor(b.node.ik)), {
+      body: 'look',
+      att: [att],
+    })
     await eventually(async () => (await messagesOf(b, a)).length === 1, 'forwarded')
     // The deletion's release of its files has run (and kept this one) before the check.
     const blobs = a.dms.blobs as unknown as { release: (...x: unknown[]) => Promise<unknown> }
@@ -1465,7 +1477,7 @@ describe('images, the gate, forwards, late chunks, auto-download limits', () => 
         released += 1
       }
     }
-    await a.dms.redact(a.dms.roomFor(b.node.ik), fwd)
+    await a.dms.redact(await a.dms.room(a.dms.roomFor(b.node.ik)), fwd)
     await eventually(async () => (await messagesOf(a, b)).length === 0, 'deleted')
     await eventually(async () => released > 0, 'released')
     expect((await a.dms.blobs.record(att.h))?.done).toBe(true)
@@ -1562,7 +1574,7 @@ describe('images, the gate, forwards, late chunks, auto-download limits', () => 
       await a.dms.blobs.putOwn(new Blob([f as BlobPart]), await hashBytes(f))
       atts.push(await attOf(f))
     }
-    await a.dms.send(a.dms.roomFor(b.node.ik), { body: 'three', att: atts })
+    await a.dms.send(await a.dms.room(a.dms.roomFor(b.node.ik)), { body: 'three', att: atts })
     await eventually(async () => !!(await b.dms.blobs.record(atts[1].h))?.done, 'two fit')
     await eventually(async () => b.dms.paused.get(atts[2].h) === 'daily', 'third paused')
     expect((await b.dms.blobs.record(atts[0].h))?.done).toBe(true)
@@ -1572,7 +1584,7 @@ describe('images, the gate, forwards, late chunks, auto-download limits', () => 
     const fc = bytes(5000, 440)
     await c.dms.blobs.putOwn(new Blob([fc as BlobPart]), await hashBytes(fc))
     const ac = await attOf(fc)
-    await c.dms.send(c.dms.roomFor(b.node.ik), { body: 'one', att: [ac] })
+    await c.dms.send(await c.dms.room(c.dms.roomFor(b.node.ik)), { body: 'one', att: [ac] })
     await eventually(async () => !!(await b.dms.blobs.record(ac.h))?.done, 'Carol fits')
     // A click still downloads the paused file.
     await b.dms.blobs.download(atts[2])
@@ -1583,14 +1595,14 @@ describe('images, the gate, forwards, late chunks, auto-download limits', () => 
     const fd = bytes(3000, 441)
     await a.dms.blobs.putOwn(new Blob([fd as BlobPart]), await hashBytes(fd))
     const ad = await attOf(fd)
-    await a.dms.send(a.dms.roomFor(b.node.ik), { body: 'more', att: [ad] })
+    await a.dms.send(await a.dms.room(a.dms.roomFor(b.node.ik)), { body: 'more', att: [ad] })
     await eventually(async () => b.dms.paused.get(ad.h) === 'space', 'space floor')
     expect(await b.dms.blobs.record(ad.h)).toBeUndefined()
     free = 4 * 1024 ** 3
     const fe = bytes(3000, 442)
     await a.dms.blobs.putOwn(new Blob([fe as BlobPart]), await hashBytes(fe))
     const ae = await attOf(fe)
-    await a.dms.send(a.dms.roomFor(b.node.ik), { body: 'new day', att: [ae] })
+    await a.dms.send(await a.dms.room(a.dms.roomFor(b.node.ik)), { body: 'new day', att: [ae] })
     await eventually(async () => !!(await b.dms.blobs.record(ae.h))?.done, 'new day')
   }, 60_000)
 })

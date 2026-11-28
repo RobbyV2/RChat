@@ -329,6 +329,11 @@ export const overflowRequests = (all: Contact[], max: number) => {
   return pending.slice(0, Math.max(0, pending.length - max)).map(c => c.ik)
 }
 
+// Whether we may write to `c` in our conversation: not blocked, not ignored, and not a request
+// we have not answered. A peer we hold no record of may be written to.
+export const writable = (c: Contact | undefined) =>
+  !c || !(c.state === 'blocked' || c.state === 'incoming' || c.ignored)
+
 // Devices we may dial: certified and not revoked.
 export const dialable = (c: Contact) =>
   c.state === 'blocked' || c.state === 'incoming' || c.ignored

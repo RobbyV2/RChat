@@ -2064,12 +2064,12 @@ async fn deliver(
             None,
             None,
         ),
-        PingScope::Dm { id, users } => (None, None, Some(*id), Some(users.to_vec())),
+        PingScope::Dm(dm) => (None, None, Some(dm.id()), Some(dm.users().to_vec())),
     };
     let db = &state.db;
     let rights = match &scope {
         PingScope::Channel(channel) => Some(channel.member_rights(db).await?),
-        PingScope::Dm { id: _, users: _ } => None,
+        PingScope::Dm(_) => None,
     };
     let lacks = |bits| rights.is_some_and(|held| !held.holds(bits));
     let plain = lacks(held::EMBED);
@@ -2211,17 +2211,16 @@ pub(crate) async fn send_to(
                     .await
                 }
                 ThreadHome::Dm { id: dm, users: _ } => {
-                    let users = resolve_dm(&state.db, dm, user).await?;
-                    crate::api::blocks::check_dm_write(&state.db, &user.username, &users).await?;
+                    let write = resolve_dm(&state.db, dm, user)
+                        .await?
+                        .writable(&state.db)
+                        .await?;
                     deliver(
                         state,
                         user,
                         req,
                         Place::Thread(id),
-                        PingScope::Dm {
-                            id: dm,
-                            users: &users,
-                        },
+                        PingScope::Dm(&write),
                         claim,
                     )
                     .await
@@ -2229,14 +2228,16 @@ pub(crate) async fn send_to(
             }
         }
         SendTo::Dm(id) => {
-            let users = resolve_dm(&state.db, id, user).await?;
-            crate::api::blocks::check_dm_write(&state.db, &user.username, &users).await?;
+            let write = resolve_dm(&state.db, id, user)
+                .await?
+                .writable(&state.db)
+                .await?;
             deliver(
                 state,
                 user,
                 req,
                 Place::Dm(id),
-                PingScope::Dm { id, users: &users },
+                PingScope::Dm(&write),
                 claim,
             )
             .await

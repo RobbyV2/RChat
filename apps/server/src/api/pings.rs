@@ -85,21 +85,21 @@ pub struct Ping {
 #[derive(Clone, Copy)]
 pub enum PingScope<'a> {
     Channel(&'a ResolvedChannel),
-    Dm { id: i64, users: &'a [String] },
+    Dm(&'a crate::api::access::DmWrite),
 }
 
 impl PingScope<'_> {
     pub fn key(&self) -> String {
         match self {
             PingScope::Channel(channel) => format!("c{}", channel.id()),
-            PingScope::Dm { id, users: _ } => format!("d{id}"),
+            PingScope::Dm(dm) => format!("d{}", dm.id()),
         }
     }
 
     pub fn server(&self) -> Option<String> {
         match self {
             PingScope::Channel(channel) => Some(channel.server().name().to_string()),
-            PingScope::Dm { id: _, users: _ } => None,
+            PingScope::Dm(_) => None,
         }
     }
 
@@ -118,9 +118,9 @@ impl PingScope<'_> {
                     .viewers_among(db, names, message.thread_root_id)
                     .await
             }
-            PingScope::Dm { id: _, users } => Ok(names
+            PingScope::Dm(dm) => Ok(names
                 .iter()
-                .filter(|n| users.contains(n))
+                .filter(|n| dm.users().contains(n))
                 .cloned()
                 .collect()),
         }

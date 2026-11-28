@@ -27,6 +27,7 @@ import {
   loadPins,
   mentionsIn,
   reactionsOf,
+  NOT_WRITABLE_TEXT,
 } from '../p2p/dm'
 import { insertEvent } from '../p2p/dag'
 import { LOCAL } from '../p2p/limits'
@@ -383,11 +384,11 @@ describe('ordering', () => {
 
   test('display order is effTs, then depth, then id; late arrivals are marked', async () => {
     const { a, b, room, clock } = await pair()
-    await a.dms.send(room, { body: 'one' })
+    await a.dms.send(await a.dms.room(room), { body: 'one' })
     await eventually(async () => (await bodies(b, a)).length === 1, 'one')
     // Bob was offline when Alice wrote this: it arrives five minutes after she sent it.
     await b.node.setPaused(true)
-    await a.dms.send(room, { body: 'two' })
+    await a.dms.send(await a.dms.room(room), { body: 'two' })
     await clock.advance(5 * 60_000)
     await b.node.setPaused(false)
     b.node.schedule(true)
@@ -408,10 +409,10 @@ describe('P2P DMs', () => {
     const theirs: string[][] = []
     a.dms.onAimed(t => mine.push(t))
     b.dms.onAimed(t => theirs.push(t))
-    const m1 = await a.dms.send(room, { body: 'hi bob' })
-    await a.dms.react(room, m1, '👍', true)
-    await a.dms.edit(room, m1, 'hi bob!')
-    await a.dms.redact(room, m1)
+    const m1 = await a.dms.send(await a.dms.room(room), { body: 'hi bob' })
+    await a.dms.react(await a.dms.room(room), m1, '👍', true)
+    await a.dms.edit(await a.dms.room(room), m1, 'hi bob!')
+    await a.dms.redact(await a.dms.room(room), m1)
     expect(mine).toEqual([[m1], [m1]])
     await eventually(async () => theirs.flat().filter(x => x === m1).length === 2, 'aimed at Bob')
     expect(theirs.flat().every(x => x === m1)).toBe(true)
@@ -419,12 +420,12 @@ describe('P2P DMs', () => {
 
   test('messages, replies, edits, reactions, pins and deletes both ways', async () => {
     const { a, b, room } = await pair()
-    const m1 = await a.dms.send(room, { body: 'hi bob' })
+    const m1 = await a.dms.send(await a.dms.room(room), { body: 'hi bob' })
     await eventually(async () => (await bodies(b, a)).length === 1, 'first message')
-    const m2 = await b.dms.send(room, { body: 'hi alice', reply: m1 })
-    await b.dms.react(room, m1, '👍', true)
-    await a.dms.edit(room, m1, 'hi bob!')
-    await b.dms.pin(room, m1, true)
+    const m2 = await b.dms.send(await b.dms.room(room), { body: 'hi alice', reply: m1 })
+    await b.dms.react(await b.dms.room(room), m1, '👍', true)
+    await a.dms.edit(await a.dms.room(room), m1, 'hi bob!')
+    await b.dms.pin(await b.dms.room(room), m1, true)
     await eventually(async () => {
       const v = await view(a, b)
       return v.length === 2 && v[0].pinned !== null && v[0].reactions.length === 1
@@ -443,23 +444,27 @@ describe('P2P DMs', () => {
       expect(line?.system).toEqual({ kind: 'pin', ik: b.node.ik, target: m1 })
     }
     // Only the author edits or deletes.
-    expect(await failure(b.dms.edit(room, m1, 'mine now'))).toBe("You can't edit this message")
-    expect(await failure(b.dms.redact(room, m1))).toBe("You can't delete this message")
-    await b.dms.redact(room, m2)
+    expect(await failure(b.dms.edit(await b.dms.room(room), m1, 'mine now'))).toBe(
+      "You can't edit this message"
+    )
+    expect(await failure(b.dms.redact(await b.dms.room(room), m1))).toBe(
+      "You can't delete this message"
+    )
+    await b.dms.redact(await b.dms.room(room), m2)
     await eventually(async () => (await view(a, b)).length === 1, 'delete at Alice')
     expect((await view(b, a)).length).toBe(1)
     // The quote of a deleted message says so.
-    const m3 = await b.dms.send(room, { body: 'again', reply: m2 })
+    const m3 = await b.dms.send(await b.dms.room(room), { body: 'again', reply: m2 })
     await eventually(async () => (await view(a, b)).length === 2, 'quote')
     expect((await view(a, b))[1]).toMatchObject({ id: m3, reply: { id: m2, body: null } })
   })
 
   test('redaction removes the content on both sides and keeps the event verifiable', async () => {
     const { a, b, room } = await pair()
-    const m = await a.dms.send(room, { body: 'secret' })
-    await a.dms.edit(room, m, 'secret v2')
+    const m = await a.dms.send(await a.dms.room(room), { body: 'secret' })
+    await a.dms.edit(await a.dms.room(room), m, 'secret v2')
     await eventually(async () => (await bodies(b, a))[0] === 'secret v2', 'edit')
-    await a.dms.redact(room, m)
+    await a.dms.redact(await a.dms.room(room), m)
     await eventually(async () => (await bodies(b, a)).length === 0, 'redaction')
     for (const p of [a, b]) {
       const all = await p.store.db.getAll('events')
@@ -584,7 +589,7 @@ describe('P2P DMs', () => {
     const { a, b, room } = await pair()
     await b.node.setPaused(true)
     await waitFor(() => !a.dms.online(room), 'Bob away')
-    for (const t of ['one', 'two', 'three']) await a.dms.send(room, { body: t })
+    for (const t of ['one', 'two', 'three']) await a.dms.send(await a.dms.room(room), { body: t })
     let v = await view(a, b)
     expect(v.map(m => [m.body, m.pending])).toEqual([
       ['one', true],
@@ -606,7 +611,7 @@ describe('P2P DMs', () => {
     const sessA = a.dms.sync.linksOf(room)[0].session
     const realSend = sessA.send.bind(sessA)
     sessA.send = msg => (msg.t === 'push' ? Promise.resolve() : realSend(msg))
-    await a.dms.send(room, { body: 'lost in transit' })
+    await a.dms.send(await a.dms.room(room), { body: 'lost in transit' })
     await settle()
     expect((await view(a, b))[0].pending).toBe(true)
     expect((await bodies(b, a)).length).toBe(0)
@@ -621,19 +626,19 @@ describe('P2P DMs', () => {
 
   test('pings: mentions, replies and reactions to you; edits never ping', async () => {
     const { a, b, room } = await pair()
-    const mine = await b.dms.send(room, { body: 'from bob' })
+    const mine = await b.dms.send(await b.dms.room(room), { body: 'from bob' })
     await eventually(async () => (await bodies(a, b)).length === 1, 'bob msg')
     await a.dms.markRead(room)
     expect(mentionsIn('hey @bob!', ['Bob'])).toBe(true)
     expect(mentionsIn('mail bob@bob.com', ['bob'])).toBe(false)
     expect(mentionsIn('`@bob`', ['bob'])).toBe(false)
-    await a.dms.send(room, { body: 'hey @Bob' })
-    await a.dms.send(room, { body: 'reply', reply: mine })
-    await a.dms.react(room, mine, '🎉', true)
+    await a.dms.send(await a.dms.room(room), { body: 'hey @Bob' })
+    await a.dms.send(await a.dms.room(room), { body: 'reply', reply: mine })
+    await a.dms.react(await a.dms.room(room), mine, '🎉', true)
     // Any short key is admitted, but text (with a bidi override here) is inert: no ping, no chip.
-    await a.dms.react(room, mine, 'Pay \u202eher\u202c now', true)
-    const plain = await a.dms.send(room, { body: 'plain' })
-    await a.dms.edit(room, plain, 'plain @Bob edited')
+    await a.dms.react(await a.dms.room(room), mine, 'Pay \u202eher\u202c now', true)
+    const plain = await a.dms.send(await a.dms.room(room), { body: 'plain' })
+    await a.dms.edit(await a.dms.room(room), plain, 'plain @Bob edited')
     await eventually(async () => (await bodies(b, a)).length === 4, 'all')
     await eventually(async () => (await view(b, a))[3].edited !== null, 'edit')
     const r = await roomOf(b, room)
@@ -660,7 +665,10 @@ describe('P2P DMs', () => {
     const read = await roomOf(b, room)
     expect([read.pings, read.unread, read.readSeq]).toEqual([0, 0, read.lastSeq])
     // Forwarded text never pings.
-    await a.dms.send(room, { body: '', fwd: { name: 'Zed', ts: 1, body: '@Bob hi' } })
+    await a.dms.send(await a.dms.room(room), {
+      body: '',
+      fwd: { name: 'Zed', ts: 1, body: '@Bob hi' },
+    })
     await eventually(async () => (await bodies(b, a)).length === 5, 'forward')
     expect((await roomOf(b, room)).pings).toBe(0)
     expect((await roomOf(b, room)).unread).toBe(1)
@@ -674,7 +682,7 @@ describe('P2P DMs', () => {
     expect(b.dms.typingIn(room)).toEqual([])
     a.dms.typing(room, true)
     await waitFor(() => b.dms.typingIn(room).length === 1, 'typing again')
-    await a.dms.send(room, { body: 'done typing' })
+    await a.dms.send(await a.dms.room(room), { body: 'done typing' })
     await waitFor(() => b.dms.typingIn(room).length === 0, 'cleared by the message')
     a.dms.typing(room, true)
     await waitFor(() => b.dms.typingIn(room).length === 1, 'typing a third time')
@@ -689,7 +697,7 @@ describe('P2P DMs', () => {
     const b = await makePeer(hub, 'Bob', clock)
     await friends(a, b)
     const room = dmRoomId(a.node.ik, b.node.ik)
-    await a.dms.send(room, { body: 'kept' })
+    await a.dms.send(await a.dms.room(room), { body: 'kept' })
     await eventually(async () => (await bodies(b, a)).length === 1, 'kept')
     b.dms.stop()
     b.node.stop()
@@ -703,23 +711,33 @@ describe('P2P DMs', () => {
     const { a, b, room } = await pair()
     await a.node.block(b.node.ik)
     await waitFor(() => !a.dms.online(room) && !b.dms.online(room), 'cut')
-    await b.dms.send(room, { body: 'let me in' })
-    await a.dms.send(room, { body: 'not for you' })
+    await b.dms.send(await b.dms.room(room), { body: 'let me in' })
+    expect(await a.dms.writable(room)).toBeNull()
+    expect(await failure(a.dms.room(room))).toBe(NOT_WRITABLE_TEXT)
     b.node.schedule(true)
     a.node.schedule(true)
     await settle(50)
-    expect(await bodies(a, b)).toEqual(['not for you'])
+    expect(await bodies(a, b)).toEqual([])
     expect(await bodies(b, a)).toEqual(['let me in'])
-    expect((await view(a, b))[0].pending).toBe(true)
+    expect((await view(b, a))[0].pending).toBe(true)
+  })
+
+  test('a handle taken before a block writes nothing after it', async () => {
+    const { a, b, room } = await pair()
+    const w = await a.dms.room(room)
+    await a.dms.send(w, { body: 'before' })
+    await a.node.block(b.node.ik)
+    expect(await failure(a.dms.send(w, { body: 'after' }))).toBe(NOT_WRITABLE_TEXT)
+    expect(await bodies(a, b)).toEqual(['before'])
   })
 
   test('a full room refuses more events with a clear reason', async () => {
     const { a, b, room } = await pair({ dms: { roomCap: 3 } })
-    for (const t of ['1', '2', '3']) await a.dms.send(room, { body: t })
-    expect(await failure(a.dms.send(room, { body: '4' }))).toBe(FULL_TEXT(3))
+    for (const t of ['1', '2', '3']) await a.dms.send(await a.dms.room(room), { body: t })
+    expect(await failure(a.dms.send(await a.dms.room(room), { body: '4' }))).toBe(FULL_TEXT(3))
     await eventually(async () => (await bodies(b, a)).length === 3, 'three')
     // Bob's room is full too: his own message can't be stored, nor more of Alice's.
-    expect(await failure(b.dms.send(room, { body: 'b' }))).toBe(FULL_TEXT(3))
+    expect(await failure(b.dms.send(await b.dms.room(room), { body: 'b' }))).toBe(FULL_TEXT(3))
     expect((await roomOf(b, room)).full).toBe(true)
     expect(LOCAL.dag.roomCap).toBeGreaterThanOrEqual(100_000)
   })
@@ -738,7 +756,7 @@ describe('sync limits', () => {
     await waitFor(() => !a.dms.online(room), 'away')
     const text = (i: number) => `${i} `.padEnd(3900, 'x')
     // About 1.6 MiB of messages wait in Alice's outbox.
-    for (let i = 0; i < 400; i += 1) await a.dms.send(room, { body: text(i) })
+    for (let i = 0; i < 400; i += 1) await a.dms.send(await a.dms.room(room), { body: text(i) })
     await b.node.setPaused(false)
     b.node.schedule(true)
     await waitFor(() => linked(a, b), 'back')
@@ -746,7 +764,7 @@ describe('sync limits', () => {
     const sessB = linkB.session
     const sessA = a.dms.sync.linksOf(room)[0].session
     // Live messages on top, while the backlog is pulled.
-    for (let i = 400; i < 460; i += 1) await a.dms.send(room, { body: text(i) })
+    for (let i = 400; i < 460; i += 1) await a.dms.send(await a.dms.room(room), { body: text(i) })
     // Time passes for the session rate limits too.
     await eventually(
       async () => {
@@ -847,7 +865,7 @@ describe('sync limits', () => {
     const room = dmRoomId(a.node.ik, b.node.ik)
     await b.node.setPaused(true)
     await waitFor(() => !a.dms.online(room), 'away')
-    for (let i = 0; i < 120; i += 1) await a.dms.send(room, { body: `m${i}` })
+    for (let i = 0; i < 120; i += 1) await a.dms.send(await a.dms.room(room), { body: `m${i}` })
     await b.node.setPaused(false)
     b.node.schedule(true)
     await waitFor(() => linked(a, b), 'back')
@@ -899,12 +917,17 @@ describe('simulation', () => {
             if (!p.node.paused) for (const q of peers) q.node.schedule(true)
           } else if (r < 0.2 && sent[who].length) {
             const target = sent[who][Math.floor(rand() * sent[who].length)]
-            await p.dms.react(room, target, rand() < 0.5 ? '👍' : '❤️', rand() < 0.7)
+            await p.dms.react(
+              await p.dms.room(room),
+              target,
+              rand() < 0.5 ? '👍' : '❤️',
+              rand() < 0.7
+            )
           } else if (r < 0.25 && sent[who].length) {
             const target = sent[who][Math.floor(rand() * sent[who].length)]
-            await p.dms.edit(room, target, `edited ${step}`)
+            await p.dms.edit(await p.dms.room(room), target, `edited ${step}`)
           } else {
-            sent[who].push(await p.dms.send(room, { body: `${who}:${step}` }))
+            sent[who].push(await p.dms.send(await p.dms.room(room), { body: `${who}:${step}` }))
           }
           await clock.advance(Math.floor(rand() * 3000))
           if (rand() < 0.3) await settle(5)

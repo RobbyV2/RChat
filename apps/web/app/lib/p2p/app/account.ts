@@ -487,7 +487,10 @@ export function createAccountPart(
       hidesIp,
       consent: hosts => account.relays.consent(hosts),
       log: async (room, call) => {
-        if (await s.room(room)) await d.logCall(room, call)
+        if (await s.room(room)) {
+          const w = await d.writable(room)
+          if (w) await d.logCall(w, call)
+        }
       },
       missed: (room, m) => void parts.calls.noteMissed(s, room, m).catch(() => {}),
       busy: () => client.calls.current() !== null,

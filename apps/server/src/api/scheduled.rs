@@ -396,8 +396,7 @@ async fn gate(db: &Db, user: &User, to: SendTo) -> Result<Spot, ApiError> {
                     })
                 }
                 ThreadHome::Dm { id: dm, users: _ } => {
-                    let users = resolve_dm(db, dm, user).await?;
-                    crate::api::blocks::check_dm_write(db, &user.username, &users).await?;
+                    resolve_dm(db, dm, user).await?.writable(db).await?;
                     Ok(Spot {
                         to,
                         server: None,
@@ -409,8 +408,7 @@ async fn gate(db: &Db, user: &User, to: SendTo) -> Result<Spot, ApiError> {
             }
         }
         SendTo::Dm(id) => {
-            let users = resolve_dm(db, id, user).await?;
-            crate::api::blocks::check_dm_write(db, &user.username, &users).await?;
+            resolve_dm(db, id, user).await?.writable(db).await?;
             Ok(Spot {
                 to,
                 server: None,
@@ -757,7 +755,7 @@ async fn places(
         if let Some(dm) = dm
             && let Some(users) = allowed(resolve_dm(db, dm, user).await)?
         {
-            dms.push((row.scope(), other(&users, user)));
+            dms.push((row.scope(), other(users.users(), user)));
         }
     }
     let names: Vec<String> = dms.iter().map(|(_, name)| name.clone()).collect();

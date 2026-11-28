@@ -346,7 +346,7 @@ const makePeer = async (hub: Hub, name: string, clock: ManualClock, opts: PeerOp
     },
     log: async (room, call) => {
       p.logs.push(call)
-      await dms.logCall(room, call)
+      await dms.logCall(await dms.room(room), call)
     },
     missed: (_room, m) => p.missed.push(m),
     busy: () => p.opts.busy === true,

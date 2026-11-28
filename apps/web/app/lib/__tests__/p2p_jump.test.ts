@@ -47,7 +47,7 @@ describe('jumping to a message', () => {
     const ids: string[] = []
     for (let i = 0; i < COUNT; i += 1) {
       clock.t += 1
-      ids.push((await a.dms.send(room, { body: `m${i}` })) as string)
+      ids.push((await a.dms.send(await a.dms.room(room), { body: `m${i}` })) as string)
     }
     const got = await loadAround(a.store.db, room, a.node.ik, b.node.ik, ids[AT])
     expect(got).not.toBeNull()

@@ -568,6 +568,16 @@ pub(crate) async fn open_dm(
     Ok(Json(dm))
 }
 
+/// The new account `key`'s DM with itself, in the transaction that adds the account.
+pub(crate) async fn open_own(tx: &mut sqlx::AnyConnection, key: &str) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2)")
+        .bind(key)
+        .bind(key)
+        .execute(tx)
+        .await?;
+    Ok(())
+}
+
 async fn set_closed(db: &Db, id: i64, username: &str, closed: bool) -> Result<bool, ApiError> {
     let mut changed = false;
     for (col, side) in [("closed_a", "user_a"), ("closed_b", "user_b")] {

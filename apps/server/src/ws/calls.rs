@@ -340,7 +340,11 @@ pub(super) async fn voice_msg(
                 Some(CallKind::P2p) => crate::p2p::relay_hosts(relays)?,
                 Some(CallKind::Rtc) | None => Vec::new(),
             };
-            crate::api::blocks::check_dm_write(&state.db, user, &[a, b]).await?;
+            let other = match a == user {
+                true => &b,
+                false => &a,
+            };
+            crate::api::blocks::check_dm(&state.db, user, other).await?;
             let (log_id, dm_users) = state
                 .hub
                 .call_accept_from(user, conn, dm_id, (peer_id, relays))

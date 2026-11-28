@@ -305,7 +305,14 @@ async fn resolve_place(
             }
             Ok(Place::Thread(id, Box::new(root)))
         }
-        _ => Ok(Place::Dm(id, resolve_dm(db, id, user).await.map_err(hide)?)),
+        _ => Ok(Place::Dm(
+            id,
+            resolve_dm(db, id, user)
+                .await
+                .map_err(hide)?
+                .users()
+                .to_vec(),
+        )),
     }
 }
 
