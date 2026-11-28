@@ -2157,6 +2157,77 @@ impl<'a> ThreadRight<'a> {
     }
 }
 
+macro_rules! message_right {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        pub struct $name<'a> {
+            message: &'a ResolvedMessage,
+        }
+
+        impl<'a> $name<'a> {
+            pub fn message(&self) -> &'a ResolvedMessage {
+                self.message
+            }
+        }
+    };
+}
+
+message_right!(
+    /// The decision that the viewer may pin or unpin a message now.
+    PinRight
+);
+message_right!(
+    /// The decision that the viewer may edit a message now.
+    EditRight
+);
+message_right!(
+    /// The decision that the viewer may delete a message now.
+    DeleteRight
+);
+message_right!(
+    /// The decision that the viewer may vote in a poll now.
+    VoteRight
+);
+
+/// The decision that the viewer may react to a message now, with the DM write decision for a
+/// DM message.
+pub struct ReactRight<'a> {
+    message: &'a ResolvedMessage,
+    dm: Option<DmWrite>,
+}
+
+impl<'a> ReactRight<'a> {
+    pub fn message(&self) -> &'a ResolvedMessage {
+        self.message
+    }
+
+    pub fn dm(&self) -> Option<&DmWrite> {
+        self.dm.as_ref()
+    }
+
+    /// The DM write decision, for the pings the reaction raises.
+    pub fn into_dm(self) -> Option<DmWrite> {
+        self.dm
+    }
+}
+
+/// The decision that the viewer may close or reopen a poll now: as its author, or as a
+/// moderator acting on someone else's poll.
+pub struct PollManage<'a> {
+    message: &'a ResolvedMessage,
+    moderator: bool,
+}
+
+impl<'a> PollManage<'a> {
+    pub fn message(&self) -> &'a ResolvedMessage {
+        self.message
+    }
+
+    pub fn moderator(&self) -> bool {
+        self.moderator
+    }
+}
+
 /// Where a message goes, decided: the only input `deliver` takes.
 pub enum Dest<'a> {
     Channel(SendRight<'a>),
@@ -2457,6 +2528,45 @@ impl ResolvedMessage {
         }
     }
 
+    /// Reacting to this message now.
+    pub async fn react_right(&self, db: &Db) -> Result<ReactRight<'_>, ApiError> {
+        let dm = self.react_gate(db).await?;
+        Ok(ReactRight { message: self, dm })
+    }
+
+    /// Voting in this poll now.
+    pub async fn vote_right(&self, db: &Db) -> Result<VoteRight<'_>, ApiError> {
+        self.vote_gate(db).await?;
+        Ok(VoteRight { message: self })
+    }
+
+    /// Closing or reopening this poll now.
+    pub async fn poll_manage(&self, db: &Db) -> Result<PollManage<'_>, ApiError> {
+        let moderator = self.poll_manage_gate(db).await?;
+        Ok(PollManage {
+            message: self,
+            moderator,
+        })
+    }
+
+    /// Pinning or unpinning this message now.
+    pub async fn pin_right(&self, db: &Db) -> Result<PinRight<'_>, ApiError> {
+        self.pin_gate(db).await?;
+        Ok(PinRight { message: self })
+    }
+
+    /// Editing this message now.
+    pub async fn edit_right(&self, db: &Db) -> Result<EditRight<'_>, ApiError> {
+        self.edit_gate(db).await?;
+        Ok(EditRight { message: self })
+    }
+
+    /// Deleting this message now.
+    pub async fn delete_right(&self, db: &Db) -> Result<DeleteRight<'_>, ApiError> {
+        self.require_can_delete(db).await?;
+        Ok(DeleteRight { message: self })
+    }
+
     fn own(&self) -> bool {
         self.user
             .as_ref()
@@ -2477,7 +2587,7 @@ impl ResolvedMessage {
     /// Adding a reaction: in a channel a signed-in member with its Add reactions permission, in
     /// a DM being a participant while both accounts are live and neither blocked the other.
     /// The DM write decision comes back for a DM message.
-    pub async fn react_gate(&self, db: &Db) -> Result<Option<DmWrite>, ApiError> {
+    async fn react_gate(&self, db: &Db) -> Result<Option<DmWrite>, ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
@@ -2494,7 +2604,7 @@ impl ResolvedMessage {
     /// Voting in a poll or adding an option: like reacting (a signed-in member with the
     /// channel's send permission who is not timed out, or a participant of a live DM where
     /// neither blocked the other).
-    pub async fn vote_gate(&self, db: &Db) -> Result<(), ApiError> {
+    async fn vote_gate(&self, db: &Db) -> Result<(), ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
@@ -2516,7 +2626,7 @@ impl ResolvedMessage {
     /// in a channel a member with the Manage messages (`DeleteMessages`) permission there. Nobody
     /// who is timed out in the channel's server. `Ok(true)` when a moderator acts on someone
     /// else's poll.
-    pub async fn poll_manage_gate(&self, db: &Db) -> Result<bool, ApiError> {
+    async fn poll_manage_gate(&self, db: &Db) -> Result<bool, ApiError> {
         let refused = || ApiError::perm("Only the author or a moderator can do this", "author");
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
@@ -2542,7 +2652,7 @@ impl ResolvedMessage {
     /// Pinning or unpinning: in a channel a signed-in member with its Pin messages and Send
     /// messages permissions, in a DM either participant while both accounts are live and neither
     /// blocked the other.
-    pub async fn pin_gate(&self, db: &Db) -> Result<(), ApiError> {
+    async fn pin_gate(&self, db: &Db) -> Result<(), ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
@@ -2568,7 +2678,7 @@ impl ResolvedMessage {
     /// Editing: only the author, and only while they could still send there (a member with the
     /// channel's send permission, or a participant of a live DM where neither blocked the other).
     /// Slow mode does not apply.
-    pub async fn edit_gate(&self, db: &Db) -> Result<(), ApiError> {
+    async fn edit_gate(&self, db: &Db) -> Result<(), ApiError> {
         if !self.own() {
             return Err(ApiError::perm(
                 "You can only edit your own messages",
@@ -2594,7 +2704,7 @@ impl ResolvedMessage {
 
     /// Your own message, or one in a channel where you hold Manage messages whose author you
     /// rank above.
-    pub async fn require_can_delete(&self, db: &Db) -> Result<(), ApiError> {
+    async fn require_can_delete(&self, db: &Db) -> Result<(), ApiError> {
         let own = self.own();
         let allowed = own
             || match &self.channel {
@@ -2649,7 +2759,7 @@ pub(crate) async fn may_delete_in(
         channel: Some(channel),
         user: Some(actor.clone()),
     };
-    match message.require_can_delete(db).await {
+    match message.delete_right(db).await.map(|_| ()) {
         Ok(()) => Ok(Some(true)),
         Err(e) if e.failed() => Err(e),
         Err(_) => Ok(Some(false)),
@@ -7200,7 +7310,11 @@ mod tests {
             .await
             .expect("message");
         assert_eq!(
-            resolved.pin_gate(db).await.map_err(|e| e.0.as_u16()),
+            resolved
+                .pin_right(db)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.0.as_u16()),
             Err(403),
             "pinning needs Pin messages as a member"
         );
@@ -7222,7 +7336,7 @@ mod tests {
             .await
             .expect("message");
         assert_eq!(
-            resolved.pin_gate(db).await.map_err(|e| e.1),
+            resolved.pin_right(db).await.map(|_| ()).map_err(|e| e.1),
             Err("No permission to send in this channel".to_string())
         );
         let general: i64 = id_of(
@@ -7235,11 +7349,11 @@ mod tests {
             .await
             .expect("message");
         for _ in 1..ACTIONS_MAX {
-            resolved.react_gate(db).await.expect("within the pace");
+            resolved.react_right(db).await.expect("within the pace");
         }
         assert_eq!(
             resolved
-                .react_gate(db)
+                .react_right(db)
                 .await
                 .map(|_| ())
                 .map_err(|e| e.0.as_u16()),

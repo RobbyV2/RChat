@@ -727,7 +727,7 @@ pub(crate) async fn delete_embed(
     Authed(user): Authed,
 ) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
-    message.require_can_delete(&state.db).await?;
+    message.delete_right(&state.db).await?;
     let scope = message.scope();
     let banner = q.banner == Some(1);
     let col = match banner {

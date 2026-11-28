@@ -337,7 +337,7 @@ async fn judge(
     if !place.holds(message.scope()) {
         return Ok(Verdict::Missing);
     }
-    match allowed(message.require_can_delete(db).await)? {
+    match allowed(message.delete_right(db).await.map(|_| ()))? {
         Some(()) => Ok(Verdict::Allowed(Box::new(message))),
         None => Ok(Verdict::Others),
     }

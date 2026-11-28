@@ -2799,7 +2799,7 @@ pub(crate) async fn delete_message(
     Authed(user): Authed,
 ) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
-    message.require_can_delete(&state.db).await?;
+    message.delete_right(&state.db).await?;
     let audit = moderated(&state.db, id, &message, &user, true).await?;
     let scope = message.scope();
     let pinged = pinged_by(&state.db, id).await?;
@@ -2869,8 +2869,8 @@ pub(crate) async fn moderated(
     let bypassed = match server.as_member().as_ref().and_then(|m| m.viewer()) {
         Some(member) => match resolve_message(db, id, Some(member), &Proof::none()).await {
             Ok(m) => match others_only {
-                true => m.require_can_delete(db).await.is_err(),
-                false => m.pin_gate(db).await.is_err(),
+                true => m.delete_right(db).await.is_err(),
+                false => m.pin_right(db).await.is_err(),
             },
             Err(_) => true,
         },
@@ -2919,7 +2919,7 @@ pub(crate) async fn edit_message(
 ) -> Result<Json<Message>, ApiError> {
     let EditReq { content, media_alt } = req;
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
-    message.edit_gate(&state.db).await?;
+    message.edit_right(&state.db).await?;
     let row = sqlx::query("SELECT kind, media_removed, fwd_source_id FROM messages WHERE id = $1")
         .bind(id)
         .fetch_optional(&state.db)

@@ -1295,7 +1295,7 @@ pub(crate) async fn delete_media(
     Authed(user): Authed,
 ) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
-    message.require_can_delete(&state.db).await?;
+    message.delete_right(&state.db).await?;
     let audit = crate::api::messages::moderated(&state.db, id, &message, &user, true).await?;
     let msg = message.scope();
     let (channel_id, dm_id, author, media_id, media_kind, server, dm_users) = (

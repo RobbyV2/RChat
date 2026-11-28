@@ -110,7 +110,7 @@ async fn react_target(
 ) -> Result<Target, ApiError> {
     let resolved = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
     let dm = match adding {
-        true => resolved.react_gate(&state.db).await?,
+        true => resolved.react_right(&state.db).await?.into_dm(),
         false => None,
     };
     let message = load_message(&state.db, id, Quotes::Skip)

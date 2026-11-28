@@ -4,14 +4,14 @@ use axum::http::{HeaderMap, StatusCode};
 use sqlx::Row;
 
 use crate::api::access::{
-    MsgScope, Proof, ResolvedMessage, not_found, resolve_channel, resolve_dm, resolve_message,
+    PinRight, Proof, not_found, resolve_channel, resolve_dm, resolve_message,
 };
 use crate::api::audit;
 use crate::api::messages::{Quotes, load_broadcast, load_message, moderated, pinned_messages};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, now_ms, ok, require_guest_ok,
 };
-use crate::db::{Db, User, is_sqlite};
+use crate::db::{Db, is_sqlite};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -36,13 +36,6 @@ pub(crate) async fn pinned_at(db: &Db, id: i64) -> Result<Option<i64>, ApiError>
     }
 }
 
-/// The message `user` pins or unpins: readable by them, and `pin_gate` passes.
-async fn pin_target(state: &AppState, id: i64, user: &User) -> Result<ResolvedMessage, ApiError> {
-    let resolved = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
-    resolved.pin_gate(&state.db).await?;
-    Ok(resolved)
-}
-
 struct Place {
     column: &'static str,
     lock: &'static str,
@@ -50,7 +43,8 @@ struct Place {
     full: &'static str,
 }
 
-fn place_of(scope: &MsgScope) -> Result<Place, ApiError> {
+fn place_of(right: &PinRight<'_>) -> Result<Place, ApiError> {
+    let scope = right.message().scope();
     match (scope.channel_id(), scope.dm_id()) {
         (Some(key), _) => Ok(Place {
             column: "channel_id",
@@ -92,7 +86,8 @@ pub(crate) async fn pin_message(
     Path(id): Path<i64>,
     Authed(user): Authed,
 ) -> Result<Json<OkResp>, ApiError> {
-    let resolved = pin_target(&state, id, &user).await?;
+    let resolved = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
+    let right = resolved.pin_right(&state.db).await?;
     let message = load_message(&state.db, id, Quotes::Skip)
         .await?
         .ok_or_else(not_found)?;
@@ -106,7 +101,7 @@ pub(crate) async fn pin_message(
         lock,
         key,
         full,
-    } = place_of(scope)?;
+    } = place_of(&right)?;
     let at = now_ms();
     let mut tx = state.db.begin().await?;
     if !is_sqlite(&state.db) {
@@ -222,8 +217,9 @@ pub(crate) async fn unpin_message(
     Path(id): Path<i64>,
     Authed(user): Authed,
 ) -> Result<Json<OkResp>, ApiError> {
-    let resolved = pin_target(&state, id, &user).await?;
-    let audit = moderated(&state.db, id, &resolved, &user, false).await?;
+    let resolved = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
+    let right = resolved.pin_right(&state.db).await?;
+    let audit = moderated(&state.db, id, right.message(), &user, false).await?;
     let mut tx = state.db.begin().await?;
     let unpinned = sqlx::query(
         "UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = $1 AND pinned_at IS NOT NULL",

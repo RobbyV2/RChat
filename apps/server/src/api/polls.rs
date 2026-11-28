@@ -12,7 +12,7 @@ use sha2::Sha256;
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::api::access::{Proof, ResolvedMessage, not_found, resolve_message};
+use crate::api::access::{Proof, ResolvedMessage, VoteRight, not_found, resolve_message};
 use crate::api::audit;
 use crate::api::reactions::canonical_emoji;
 use crate::api::{
@@ -1411,8 +1411,11 @@ pub(crate) async fn forget_voter(
 /// member who may send in the channel, or a DM participant past the DM write guard (blocks and
 /// friends-only DMs). A member timed out in the channel's server is refused (DMs know no
 /// timeouts).
-pub(crate) async fn can_vote(db: &Db, resolved: &ResolvedMessage) -> Result<(), ApiError> {
-    resolved.vote_gate(db).await
+pub(crate) async fn can_vote<'a>(
+    db: &Db,
+    resolved: &'a ResolvedMessage,
+) -> Result<VoteRight<'a>, ApiError> {
+    resolved.vote_right(db).await
 }
 
 /// The audit log context of a moderator closing or reopening someone else's channel poll: the
@@ -1432,7 +1435,7 @@ async fn moderated(
     let server = channel.server();
     let bypassed = match server.as_member().as_ref().and_then(|m| m.viewer()) {
         Some(member) => match resolve_message(db, id, Some(member), &Proof::none()).await {
-            Ok(m) => !matches!(m.poll_manage_gate(db).await, Ok(true)),
+            Ok(m) => !m.poll_manage(db).await.is_ok_and(|right| right.moderator()),
             Err(_) => true,
         },
         None => false,
@@ -1781,7 +1784,7 @@ async fn set_closed(
     close: bool,
 ) -> Result<Json<Poll>, ApiError> {
     let resolved = poll_target(state, id, user).await?;
-    let moderator = resolved.poll_manage_gate(&state.db).await?;
+    let moderator = resolved.poll_manage(&state.db).await?.moderator();
     let db = &state.db;
     let audit = match moderator {
         true => moderated(db, id, &resolved).await?,

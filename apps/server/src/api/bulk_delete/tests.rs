@@ -144,7 +144,7 @@ async fn single(db: &Db, user: &str, id: i64) -> u16 {
     let Authed(u) = who(user);
     match resolve_message(db, id, Some(&u), &Proof::none()).await {
         Err(ApiError(code, _, _)) => code.as_u16(),
-        Ok(m) => match m.require_can_delete(db).await {
+        Ok(m) => match m.delete_right(db).await.map(|_| ()) {
             Ok(()) => 0,
             Err(ApiError(code, _, _)) => code.as_u16(),
         },
