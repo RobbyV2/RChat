@@ -227,10 +227,7 @@ pub fn issue(secret: &str, user: &str, now: i64) -> Credential {
 }
 
 fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::clock::Clock::system().unix().max(0) as u64
 }
 
 /// How much the relay may carry. Allocations are per process.

@@ -7,7 +7,7 @@ use super::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, check};
 use super::seal::SealJob;
 use super::{ApiError, Authed};
 use crate::crypt::ring::{BACKED_UP_SETTING, RingStatus};
-use crate::db::{Db, now};
+use crate::db::Db;
 use crate::state::AppState;
 
 #[derive(Serialize)]
@@ -46,7 +46,7 @@ pub struct SealedPlaces {
 /// 2 seconds while a job runs.
 const PLACES_FOR: std::time::Duration = std::time::Duration::from_secs(30);
 
-type Counted = std::collections::HashMap<String, (std::time::Instant, SealedPlaces)>;
+type Counted = std::collections::HashMap<String, (tokio::time::Instant, SealedPlaces)>;
 
 static PLACES: std::sync::Mutex<Option<Counted>> = std::sync::Mutex::new(None);
 
@@ -67,7 +67,7 @@ async fn sealed_places(db: &Db) -> sqlx::Result<SealedPlaces> {
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .get_or_insert_with(Counted::new)
-        .insert(key, (std::time::Instant::now(), places));
+        .insert(key, (tokio::time::Instant::now(), places));
     Ok(places)
 }
 
@@ -151,7 +151,7 @@ pub(crate) async fn post_rotate(
         "encryption.rotate",
         None,
         serde_json::json!({"purposes": rotation.purposes}),
-        now(),
+        state.clock.unix(),
     )
     .await?;
     Ok(Json(rotation))
@@ -183,7 +183,7 @@ pub(crate) async fn put_backed_up(
         Purpose::KeysSaved,
     )
     .await?;
-    let at = now();
+    let at = state.clock.unix();
     let mut tx = state.db.begin().await?;
     sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         .bind(BACKED_UP_SETTING)

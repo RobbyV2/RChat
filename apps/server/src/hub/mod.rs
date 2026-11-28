@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::time::Instant;
 
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -72,10 +72,7 @@ pub fn owner(conn: u64) -> u32 {
 }
 
 fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    crate::clock::Clock::system().unix_ms()
 }
 
 /// A voice room someone is in: the address a guest came from (`budget::group`), and whether

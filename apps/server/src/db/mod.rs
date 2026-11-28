@@ -11,8 +11,6 @@ pub(crate) mod status;
 mod sweep;
 mod touch;
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::{Deserialize, Serialize};
 use sqlx::any::AnyRow;
 use sqlx::{AnyConnection, Row};
@@ -513,11 +511,10 @@ pub async fn recount_members(db: &Db, server: &str) -> sqlx::Result<()> {
     tx.commit().await
 }
 
+/// The machine's time in Unix seconds, for code that has no `AppState` (its `clock` is the one
+/// tests set).
 pub fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::clock::Clock::system().unix()
 }
 
 #[cfg(test)]

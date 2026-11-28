@@ -1,0 +1,5 @@
+disallowed-methods = [
+  { path = "std::time::SystemTime::now", reason = "wall time comes from the Clock (src/clock.rs)" },
+  { path = "std::time::Instant::now", reason = "use tokio::time::Instant, which tests pause" },
+  { path = "std::thread::sleep", reason = "use tokio::time::sleep, which tests pause" },
+]

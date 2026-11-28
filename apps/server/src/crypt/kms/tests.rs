@@ -359,7 +359,7 @@ async fn an_outage_while_running_reads_unheld_keys_as_missing_and_keeps_held_one
         );
         stub.set_down(true);
         let fresh = ring(config.clone(), None, false);
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         assert!(fresh.key_by_id(&db, made).await.expect("read").is_none());
         assert!(fresh.key_by_id(&db, made).await.expect("read").is_none());
         assert!(started.elapsed() < std::time::Duration::from_secs(5));

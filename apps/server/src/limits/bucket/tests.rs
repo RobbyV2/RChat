@@ -506,10 +506,9 @@ fn a_bucket_says_how_long_to_wait() {
     let quick: Keyed = Keyed::new(Policy::per_minute(1, 10_000), 10);
     assert!(quick.take("k", 1.0, Instant::now()));
     assert!(!quick.take("k", 1.0, Instant::now()));
-    std::thread::sleep(Duration::from_millis(20));
     assert!(
-        quick.take("k", 1.0, Instant::now()),
-        "by the real clock too"
+        quick.take("k", 1.0, Instant::now() + Duration::from_millis(20)),
+        "and again 20 ms later"
     );
 }
 

@@ -334,13 +334,13 @@ async fn finish(state: &AppState, rotation: Rotation, was: &str) -> Result<bool,
     }
     let settled_at = rotation.started_at + settle();
     if rotation.moved > 0 || rotation.pass_at < settled_at {
-        if now() < settled_at {
+        if state.clock.unix() < settled_at {
             return Ok(false);
         }
         let again = Rotation {
             step: 0,
             at: String::new(),
-            pass_at: now(),
+            pass_at: state.clock.unix(),
             moved: 0,
             left: 0,
             lost: 0,
@@ -362,7 +362,7 @@ async fn finish(state: &AppState, rotation: Rotation, was: &str) -> Result<bool,
         sqlx::query(
             "UPDATE data_keys SET state = 'retired', retired_at = $1 WHERE purpose = $2 AND state = 'retiring'",
         )
-        .bind(now())
+        .bind(state.clock.unix())
         .bind(purpose.name())
         .execute(&mut *tx)
         .await?;
@@ -394,7 +394,7 @@ pub async fn keep_up(state: &AppState) -> Result<(), ApiError> {
         Ok(false) => {}
         Err(ApiError(_, e, _)) => tracing::warn!("asking which keys the copies hold failed: {e}"),
     }
-    if let Err(ApiError(_, e, _)) = destroy_due(state, now() - DESTROY_AFTER).await {
+    if let Err(ApiError(_, e, _)) = destroy_due(state, state.clock.unix() - DESTROY_AFTER).await {
         tracing::warn!("destroying retired data keys failed: {e}");
     }
     let retiring: Vec<String> =

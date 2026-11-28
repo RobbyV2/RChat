@@ -5,7 +5,8 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use super::ring::{DATABASE_KEK, Ring};
 use super::{Key, MAGIC, Purpose, SERVER_RECORD, bus_aad, header, open, seal};

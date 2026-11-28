@@ -267,8 +267,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn backoff_grows_and_hot_keys_get_fewer_tries() {
+    #[tokio::test(start_paused = true)]
+    async fn backoff_grows_and_hot_keys_get_fewer_tries() {
         let b = Backoff::new(5, 3, Duration::from_secs(3600), 10);
         for _ in 0..5 {
             assert!(b.reserve("ip\nvault", false));
@@ -294,7 +294,7 @@ mod tests {
         let quick = Backoff::new(1, 1, Duration::from_millis(5), 10);
         assert!(quick.reserve("k", false));
         assert!(!quick.reserve("k", false));
-        std::thread::sleep(Duration::from_millis(10));
+        tokio::time::advance(Duration::from_millis(10)).await;
         assert!(quick.reserve("k", false), "an idle key starts over");
     }
 

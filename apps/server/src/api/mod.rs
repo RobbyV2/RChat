@@ -132,9 +132,7 @@ pub(crate) fn allowed<T>(res: Result<T, ApiError>) -> Result<Option<T>, ApiError
 
 /// Unix milliseconds, for timestamps that must keep their order within one second.
 pub(crate) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
+    crate::clock::Clock::system().unix_ms()
 }
 
 /// A user as shown next to messages and in lists. A deleted account still appears, as its

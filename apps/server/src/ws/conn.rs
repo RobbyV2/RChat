@@ -381,9 +381,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     access.sync(&state.hub, conn);
     loop {
         let until_expiry = access.password_expires.map(|at| {
-            let epoch = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
+            let epoch = std::time::Duration::from_millis(state.clock.unix_ms().max(0) as u64);
             std::time::Duration::from_secs(at.max(0) as u64).saturating_sub(epoch)
         });
         if until_expiry == Some(std::time::Duration::ZERO) {

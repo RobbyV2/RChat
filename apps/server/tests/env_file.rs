@@ -3,6 +3,8 @@
 //! its settings. A file it takes sets each of its settings as dotenvy reads them, and no setting
 //! takes in the lines after it outside a value quoted from its first character.
 #![cfg(unix)]
+// This test waits for another process, on the machine's clock.
+#![allow(clippy::disallowed_methods)]
 
 use std::collections::BTreeMap;
 use std::fs;

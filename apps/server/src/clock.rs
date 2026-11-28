@@ -1,5 +1,8 @@
 //! Wall time as the server sees it. Code that needs the time takes it from the `Clock` of its
 //! `AppState`, so a test sets it. Durations and timers use `tokio::time`, which tests pause.
+//! Only this module reads the machine's clock.
+
+#![allow(clippy::disallowed_methods)]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};

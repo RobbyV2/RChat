@@ -1943,11 +1943,7 @@ pub(crate) fn step_delay(since_epoch: Duration) -> Duration {
 /// `schedule_update` after a vote or a vote taken back.
 fn schedule_vote(state: &AppState, id: i64, anonymous: bool) {
     let wait = match anonymous {
-        true => step_delay(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default(),
-        ),
+        true => step_delay(Duration::from_millis(state.clock.unix_ms().max(0) as u64)),
         false => Duration::ZERO,
     };
     schedule(state, id, wait);

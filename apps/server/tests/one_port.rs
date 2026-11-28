@@ -1,5 +1,7 @@
 //! One address: the server binary with default settings listens on one TCP port and holds no UDP
 //! socket. The relay's own switch is what opens more.
+// This test waits for another process, on the machine's clock.
+#![allow(clippy::disallowed_methods)]
 #![cfg(target_os = "linux")]
 
 use std::collections::HashSet;
