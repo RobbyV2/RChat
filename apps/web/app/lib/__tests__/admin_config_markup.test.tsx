@@ -70,7 +70,7 @@ test('a pinned row is locked and names its setting in the server config', () => 
   const p2p = row(page('features'), 'p2p')
   expect(p2p).toContain('data-source="pinned"')
   expect(p2p).toContain('Set in the server config (<code class="font-mono">FEATURE_P2P</code>)')
-  expect(/<button[^>]*role="switch"[^>]*disabled=""/.test(p2p)).toBe(true)
+  expect(/<button(?=[^>]*role="switch")(?=[^>]*disabled="")/.test(p2p)).toBe(true)
   expect(p2p).not.toContain('Use it')
 })
 
