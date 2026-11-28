@@ -141,6 +141,16 @@ describe('loading and caching', () => {
     expect(maskProfanity('fuck')).toBe('****')
   })
 
+  test('a load still running when masking starts over installs nothing', async () => {
+    let finish: (m: Matcher) => void = () => {}
+    const slow = setMasking(true, () => new Promise<Matcher>(done => void (finish = done)))
+    resetMasking()
+    expect(await setMasking(true, () => Promise.resolve(t => t.replace(/new/g, '***')))).toBe(true)
+    finish(t => t.replace(/old/g, '***'))
+    expect(await slow).toBe(false)
+    expect(maskProfanity('old new')).toBe('old ***')
+  })
+
   test('the cache is bounded and keeps recent strings', async () => {
     const cache = lru<number>(2)
     cache.set('a', 1)

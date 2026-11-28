@@ -114,16 +114,21 @@ export const setMasking = (on: boolean, load: () => Promise<Matchers> = wasmMatc
   active = on && capabilities().wasm
   if (!active) return Promise.resolve(false)
   if (matcher !== null) return Promise.resolve(true)
-  loading ??= load().then(
-    m => {
-      matcher = typeof m === 'function' ? { text: m, file: m } : m
-      return true
-    },
-    () => {
-      loading = null
-      return false
-    }
-  )
+  if (loading === null) {
+    // A load that `resetMasking` overtook installs nothing.
+    const started: Promise<boolean> = load().then(
+      m => {
+        if (loading !== started) return false
+        matcher = typeof m === 'function' ? { text: m, file: m } : m
+        return true
+      },
+      () => {
+        if (loading === started) loading = null
+        return false
+      }
+    )
+    loading = started
+  }
   return loading.then(ok => ok && active)
 }
 

@@ -7,10 +7,11 @@ import { fixtureScopes } from './fixture'
 // Every test file runs in this one process, so what one test changes the next one sees. After
 // each test its fixtures are undone and real timers and the time zone are put back. After each
 // file its file fixtures are undone, real timers and the time zone are put back, and the store
-// starts over (if the file loaded it).
+// starts over and the display filter is unloaded (if the file loaded them).
 
 const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
 const STORE = fileURLToPath(new URL('../../store.ts', import.meta.url))
+const PROFANITY = fileURLToPath(new URL('../../profanity.ts', import.meta.url))
 
 const putBack = () => {
   jest.useRealTimers()
@@ -51,6 +52,9 @@ const fileEnds = async () => {
   putBack()
   const store = require.cache[STORE]?.exports as typeof import('../../store') | undefined
   await later(() => store?.resetSessionCaches())
+  const profanity = require.cache[PROFANITY]?.exports as
+    typeof import('../../profanity') | undefined
+  await later(() => profanity?.resetMasking())
 }
 
 // A test file ends where the next one starts to load, or with the run.

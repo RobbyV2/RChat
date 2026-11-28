@@ -13,7 +13,7 @@ import {
   serverName,
   type NameValue,
 } from '../names'
-import { setMasking } from '../profanity'
+import { resetMasking, setMasking } from '../profanity'
 import { useStore } from '../store'
 import { shownUser } from '../people'
 import type { UserRef } from '../types'
@@ -25,9 +25,9 @@ const shown = (username: string, over: Partial<UserRef> = {}) =>
 const initial = useStore.getInitialState()
 const saved = { ...initial }
 
-afterEach(async () => {
+afterEach(() => {
   Object.assign(initial, saved)
-  await setMasking(false)
+  resetMasking()
 })
 
 const masking = async () => {
