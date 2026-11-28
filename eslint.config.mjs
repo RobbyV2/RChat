@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
 import buttons from './apps/web/eslint/buttons.mjs'
+import overlays from './apps/web/eslint/overlays.mjs'
 import spacing from './apps/web/eslint/spacing.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
@@ -37,7 +38,10 @@ const SPACING_SOURCES = [
 // The controls: the only files that write a button element.
 const CONTROL_SOURCES = ['apps/web/app/components/{controls,ui}.tsx']
 
-const rchat = { rules: { spacing, buttons } }
+// The overlay primitives: the only file that pins a box over the window.
+const OVERLAY_SOURCES = ['apps/web/app/components/ui.tsx']
+
+const rchat = { rules: { spacing, buttons, overlays } }
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
 
@@ -155,6 +159,12 @@ export default tseslint.config(
     ignores: [...CONTROL_SOURCES, ...TEST_FILES],
     plugins: { rchat },
     rules: { 'rchat/buttons': 'error' },
+  },
+  {
+    files: ['apps/web/app/**/*.{ts,tsx}'],
+    ignores: [...OVERLAY_SOURCES, ...TEST_FILES],
+    plugins: { rchat },
+    rules: { 'rchat/overlays': 'error' },
   },
   {
     files: ['apps/web/app/**/*.{ts,tsx}', 'docs/src/**/*.{ts,tsx}'],

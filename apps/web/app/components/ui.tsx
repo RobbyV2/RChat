@@ -433,8 +433,10 @@ export function Dialog({
 // `onOpen` adds behaviour to the open element and returns what undoes it. An `onTop` dialog opens
 // after everything else mounted with it, so it sits above another top dialog opened at once (a
 // consent prompt over the app it guards). A `wide` one lays its children out as a column.
+// It is named by the element `labelledBy` points to, or by `label` when it shows no title.
 export function TopDialog({
   labelledBy,
+  label,
   describedBy,
   wide = false,
   backdrop = false,
@@ -444,8 +446,7 @@ export function TopDialog({
   onKeyDown,
   onOpen,
   children,
-}: {
-  labelledBy: string
+}: ({ labelledBy: string; label?: undefined } | { labelledBy?: undefined; label: string }) & {
   describedBy?: string
   wide?: boolean
   backdrop?: boolean
@@ -478,6 +479,7 @@ export function TopDialog({
       ref={ref}
       aria-modal="true"
       aria-labelledby={labelledBy}
+      aria-label={label}
       aria-describedby={describedBy}
       onCancel={e => {
         e.preventDefault()

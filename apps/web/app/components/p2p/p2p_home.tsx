@@ -13,7 +13,7 @@ import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 
-import { useLayoutEffect, useRef, useSyncExternalStore, useState } from 'react'
+import { useSyncExternalStore, useState } from 'react'
 import {
   Ban,
   Check,
@@ -52,7 +52,7 @@ import { TypingEllipsis } from '../typing_indicator'
 import { MutedIcon } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
-import { Dialog, fieldCls, Masked, useBackdrop } from '../ui'
+import { Dialog, fieldCls, Masked, TopDialog } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
@@ -316,30 +316,10 @@ function EnableDialogBody() {
   const { p2p } = identity
 
   const account = useAccount()
-  const frame = useRef<HTMLDialogElement>(null)
-  const backdrop = useBackdrop(p2p.closeDialog)
-  useLayoutEffect(() => {
-    const dialog = frame.current!
-    dialog.showModal()
-    return () => dialog.close()
-  }, [])
   return (
-    <dialog
-      ref={frame}
-      aria-label="Add a P2P identity"
-      aria-modal="true"
-      onCancel={event => {
-        event.preventDefault()
-        p2p.closeDialog()
-      }}
-      onKeyDown={event => event.stopPropagation()}
-      className="fixed inset-0 m-auto max-h-dvh-85 w-dialog max-w-full overflow-y-auto rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
-      {...backdrop}
-    >
-      <Surface pad="md" tone="plain" radius="none">
-        <IdentityEnrollment account={account} cancel={p2p.closeDialog} />
-      </Surface>
-    </dialog>
+    <TopDialog label="Add a P2P identity" wide backdrop onCancel={p2p.closeDialog}>
+      <IdentityEnrollment account={account} cancel={p2p.closeDialog} />
+    </TopDialog>
   )
 }
 

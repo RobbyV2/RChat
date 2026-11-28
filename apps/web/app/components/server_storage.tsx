@@ -1,4 +1,5 @@
 'use client'
+import { Button } from './controls'
 import { ask, sendTo } from '../lib/asks'
 import { time } from '../lib/platform/time'
 import { useCallback, useEffect, useState } from 'react'
@@ -19,7 +20,7 @@ import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
 import { Stack } from './layout'
 import { SignInLinks } from './sso/sign_in_methods'
 import { StorageSettings } from './storage_settings'
-import { Dialog, textBtn } from './ui'
+import { Dialog } from './ui'
 
 // The newest job of `place` in `direction`: asked when shown, taken from its progress as it
 // arrives (to whoever started it), and asked again every 2 seconds while it runs. A job that
@@ -154,9 +155,9 @@ function SealEarlierPanel({ place }: { place: string }) {
         )}
         {started ? (
           <div className="flex justify-end">
-            <button type="button" onClick={closeDialog} className={textBtn}>
+            <Button type="button" onClick={closeDialog}>
               Close
-            </button>
+            </Button>
           </div>
         ) : (
           <SealJobConfirm
