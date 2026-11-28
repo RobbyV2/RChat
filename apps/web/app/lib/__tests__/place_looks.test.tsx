@@ -1,0 +1,115 @@
+import { expect, test } from 'bun:test'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { AuthorRow } from '../../components/message_row'
+import { AccountProvider } from '../client/react'
+import { P2pProvider } from '../client/p2p_react'
+import { nameText } from '../names'
+import type { P2pMessage } from '../p2p/dm'
+import type { ServerView } from '../p2p/server'
+import { featureAt, isUnsupported } from '../place/feature'
+import { looks } from '../place/looks'
+import { PlaceProvider } from '../place/react'
+import { useAuthor } from '../place/use_looks'
+import type { Message } from '../types'
+import { member, msg, paged, serverDetail, user } from './fixtures'
+import { placeContract, type ContractWorld } from './helpers/place_contract'
+
+// Ann's side with a message from Bob, who holds a colored role where the place has roles.
+const seat = (world: ContractWorld) => {
+  const { place } = world.ann
+  let m: Message
+  let event: string | undefined
+  if (place.kind === 'hostedServer' || place.kind === 'hostedDm') {
+    const role = {
+      id: 4,
+      name: 'Mods',
+      color: '#ff0000',
+      position: 1,
+      hoist: false,
+      permissions: 0,
+    }
+    world.ann.account.store.setState({
+      servers: { [world.server]: serverDetail(world.server, { roles: [role] as never }) },
+      members: { [world.server]: paged([member('ann'), { ...member('bob'), role_ids: [4] }]) },
+    })
+    m = msg(5, { author: user('bob') })
+  } else {
+    const p = { id: 'e5', sender: 'B', ts: 5_000, body: 'hi', att: [], reactions: [] }
+    const view = {
+      id: world.room,
+      owner: 'A',
+      owners: [],
+      members: [{ ik: 'B', name: 'Bob', roles: ['r4'] }],
+      roles: [
+        { id: 'r4', name: 'Mods', color: 0xff0000, pos: 1, icon: null, tint: true, dpos: null },
+      ],
+    } as unknown as ServerView
+    const state = {
+      me: 'A',
+      servers: place.kind === 'p2pRoom' ? { [world.room]: view } : {},
+      chat: {
+        room: world.room,
+        ch: place.kind === 'p2pRoom' ? 'c1' : null,
+        peer: place.kind === 'p2pDm' ? 'B' : '',
+        messages: [p as unknown as P2pMessage],
+        more: false,
+        loading: false,
+        readSeq: 0,
+        missed: [],
+      },
+    }
+    place.app.useP2p.setState(state as never)
+    Object.assign(place.app.useP2p.getInitialState(), state)
+    m = msg(5, { author: { ...user('Bob'), display_name: 'Bob' } })
+    event = 'e5'
+  }
+  const here = featureAt(looks, place)
+  if (isUnsupported(here)) throw new Error(here.line)
+  return { here, m, event }
+}
+
+function Row({ m, event }: { m: Message; event?: string }) {
+  return (
+    <AuthorRow face={useAuthor(m, event)} size={36} meta={null}>
+      hi
+    </AuthorRow>
+  )
+}
+
+placeContract(looks, (kind, world) => {
+  const hosted = kind === 'hostedServer' || kind === 'hostedDm'
+
+  test('an author is an account on a hosted side and a key on a P2P one', () => {
+    const { here, m, event } = seat(world())
+    const face = here.author(m, event)
+    const now = face.get()
+    expect(face.get()).toBe(now)
+    expect(now.who.kind).toBe(hosted ? 'account' : 'key')
+    expect(now.who.person.username).toBe(hosted ? 'bob' : 'B')
+    expect(nameText(now.name).toLowerCase()).toContain('bob')
+  })
+
+  test('roles color a name only where the place has roles', () => {
+    const { here, m, event } = seat(world())
+    const colored = kind === 'hostedServer' || kind === 'p2pRoom'
+    expect(here.author(m, event).get().color !== undefined).toBe(colored)
+    if (kind === 'hostedServer') expect(here.color(user('bob')).get()).not.toBeUndefined()
+    expect(here.color(user('nobody')).get()).toBeUndefined()
+  })
+
+  test('one row draws either author, and only an account opens a profile', () => {
+    const { m, event } = seat(world())
+    const { ann } = world()
+    const html = renderToStaticMarkup(
+      <AccountProvider session={ann.account}>
+        <P2pProvider identity={ann.app}>
+          <PlaceProvider place={ann.place}>
+            <Row m={m} event={event} />
+          </PlaceProvider>
+        </P2pProvider>
+      </AccountProvider>
+    )
+    expect(html.toLowerCase()).toContain('bob')
+    expect(html.includes('View profile')).toBe(hosted)
+  })
+})

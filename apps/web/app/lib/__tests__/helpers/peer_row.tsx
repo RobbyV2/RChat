@@ -71,9 +71,6 @@ export function PeerRow({
           flash={false}
           editing={false}
           {...rowOf(p, all, app)}
-          color={undefined}
-          icon={undefined}
-          iconRole={undefined}
           on={NO_HANDLERS}
         />
       </CanFetchContext.Provider>

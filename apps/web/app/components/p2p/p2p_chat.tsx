@@ -60,7 +60,7 @@ import { ThreadsWindow } from '../threads'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker } from '../emoji_picker'
 import { useChatScroll, useFocusMessage } from '../viewport_height'
-import { authorLook, type RowHandlers } from '../message_row'
+import { type RowHandlers } from '../message_row'
 import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
@@ -71,7 +71,6 @@ import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
 import { P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
-import type { Look } from '../../lib/role_looks'
 import { Row, Stack, Surface, Inset, Dock } from '../layout'
 
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
@@ -157,7 +156,6 @@ export const rowOf = (p: P2pMessage, rules: RowRules, identity: P2pApp) => {
   const can = messageActs(p, write, mine)
   return {
     event: p.id,
-    ik: p.sender,
     server: null,
     local: true,
     Files: RowFiles,
@@ -664,7 +662,6 @@ export interface ChatBodyProps {
   forwardSkip: string | null
   dataAttr: Record<string, string>
   // How senders' names look, in a server.
-  lookOf?: (ik: string) => Look
 }
 
 function IdentityChatBody(props: ChatBodyProps) {
@@ -861,7 +858,6 @@ function IdentityChatBody(props: ChatBodyProps) {
                   flash={flash === m.id}
                   editing={editing && editingState?.id === p.id ? editing : false}
                   {...rowOf(p, rules, identity)}
-                  {...authorLook(props.lookOf?.(p.sender))}
                   hidden={p.removed ? 'removed' : p.slowHidden ? 'slow' : undefined}
                   pinned={p.system?.target ?? null}
                   on={on}

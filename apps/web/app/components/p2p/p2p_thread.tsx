@@ -7,17 +7,14 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 import { useAccount } from '../../lib/client/react'
 import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
 import { CAN_ALL, type ChannelCan } from '../../lib/channel_perms'
-import type { Look } from '../../lib/role_looks'
 
 import { Fragment, useCallback, useMemo, type ReactNode } from 'react'
-import { useMask } from '../../lib/store'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
 import type { ServerView } from '../../lib/p2p/server'
 import type { Message } from '../../lib/types'
 import { PlaceProvider, useLive, useP2pRoom } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
-import { authorLook } from '../message_row'
 import { ListedRow } from '../listed_row'
 import { ThreadPanelView, ThreadTail, useThreadScroll } from '../thread_panel'
 import { openThreadAt } from '../../lib/place/use_thread'
@@ -30,8 +27,6 @@ import {
   useP2pFlash,
   useP2pList,
 } from './p2p_chat'
-import { memberLooks } from '../../lib/p2p/roles'
-import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { sendBlockFor } from './p2p_server_view'
 import { usePeerTimeoutEnds } from '../timeout_dialog'
 import { useDmFacts } from './p2p_dm_pane'
@@ -60,8 +55,6 @@ interface ThreadFacts {
   timedOut?: boolean
   // What we hold in a server thread's channel; a conversation holds nothing back.
   can?: ChannelCan
-  // How a server member's name shows (role color and icon); a conversation shows names plainly.
-  lookOf?: (ik: string) => Look
 }
 
 function P2pThreadPanelBody() {
@@ -85,10 +78,6 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
   const typers = useP2p(s => s.serverTyping[threadKey(t)] ?? NONE)
   const room = v.id
   const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
-  const members = v.members
-  const roles = v.roles
-  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
-  const lookOf = useMemo(() => memberLooks({ members, roles }, mask), [members, roles, mask])
   const timedOut = usePeerTimeoutEnds(v.timedOutUntil)
   const held = useChannelCan(useP2pRoom(v.id), t.ch)
   const moderator = held.manage && timedOut === null
@@ -115,7 +104,6 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
         canAct,
         timedOut: timedOut !== null,
         can: held,
-        lookOf,
       }}
     />
   )
@@ -249,7 +237,6 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
         inThread
         editing={editing && editingState?.id === p.id ? editing : false}
         {...rowOf(p, root ? rootRules : rules, identity)}
-        {...authorLook(f.lookOf?.(p.sender))}
         hidden={p.removed ? 'removed' : p.slowHidden ? 'slow' : undefined}
         on={root ? onRoot : onReply}
       />

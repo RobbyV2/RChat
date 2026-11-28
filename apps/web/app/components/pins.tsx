@@ -33,7 +33,7 @@ import { Button, IconButton } from './controls'
 import { CloseButton, Masked, Sheet, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
 import { Name } from './name'
-import { personCalled } from '../lib/names'
+import { useAuthor } from '../lib/place/use_looks'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { Row, Stack, Surface, Inset } from './layout'
@@ -143,22 +143,19 @@ export function PinNotice({
   m,
   event,
   target,
-  server,
-  ik,
   divider,
   onMenu,
 }: {
   m: Message
   event?: string
   target: string | null
-  server: string | null
-  // The author's identity key, where the place knows people by key.
-  ik?: string
   divider: ReactNode
   onMenu: (m: Message, x: number, y: number) => void
 }) {
   const store = useStoreApi()
   const place = usePlace()
+  const face = useAuthor(m, event)
+  const { who } = face
   return (
     <PinLine
       row={{
@@ -170,20 +167,13 @@ export function PinNotice({
       divider={divider}
       press={longPress((x, y) => onMenu(m, x, y))}
       name={
-        ik === undefined ? (
-          <ShownName
-            user={m.author}
-            server={server}
-            link
-            {...profileTrigger(store, m.author, server)}
-            look="font-medium text-on-surface"
-          />
-        ) : (
-          <Name
-            of={personCalled(m.author.display_name, m.author.username)}
-            look="font-medium text-on-surface"
-          />
-        )
+        <Name
+          of={face.name}
+          withUsername
+          link={who.kind === 'account'}
+          {...(who.kind === 'account' ? profileTrigger(store, who.person, who.server) : {})}
+          look="font-medium text-on-surface"
+        />
       }
       place={place !== null && inDm(place) ? 'conversation' : 'channel'}
       ts={m.created_at}

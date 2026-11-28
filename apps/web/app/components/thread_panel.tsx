@@ -10,7 +10,7 @@ import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { actionPress, openActionMenu } from '../lib/actions/menu'
-import { myRank, roleColor, roleLook, threadKey, useStore } from '../lib/store'
+import { myRank, threadKey, useStore } from '../lib/store'
 import { outranksKnown } from '../lib/hierarchy'
 import { useShallow } from 'zustand/react/shallow'
 import type { Message } from '../lib/types'
@@ -27,7 +27,7 @@ import {
   useMemberLookup,
   usePeopleKey,
 } from './message_pane'
-import { authorLook, MessageRow, type RowHandlers } from './message_row'
+import { MessageRow, type RowHandlers } from './message_row'
 import { useMedia } from './context_menu'
 import {
   EdgeSentinel,
@@ -396,12 +396,6 @@ export default function ThreadPanel() {
       flash={flash === m.id}
       inThread
       server={server}
-      {...authorLook(roleLook(roles, memberFor(m.author.username)?.role_ids ?? []))}
-      quoteColor={
-        m.reply_to?.author
-          ? roleColor(roles, memberFor(m.reply_to.author.username)?.role_ids ?? [])
-          : undefined
-      }
       canEdit={canEdit(m)}
       canReply={canReply(m)}
       canForward={forwardable(m)}

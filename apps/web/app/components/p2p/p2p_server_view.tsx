@@ -77,7 +77,7 @@ import { NoteBar, P2pChatBody, P2pIntro } from './p2p_chat'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
 import { TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
-import { hex, memberLooks } from '../../lib/p2p/roles'
+import { hex } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
 import { serversLoading } from '../../lib/p2p/conversations'
 import { ChannelListSkeleton, Held, MessageListSkeleton, ServerRailSkeleton } from '../skeletons'
@@ -771,12 +771,6 @@ function P2pChannelPaneBody({
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const mask = useMask(own)
   const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
-  const members = v?.members
-  const roles = v?.roles
-  const lookOf = useMemo(
-    () => (members && roles ? memberLooks({ members, roles }, mask) : undefined),
-    [members, roles, mask]
-  )
   const timedOut = usePeerTimeoutEnds(v?.timedOutUntil)
   const held = useChannelCan(useP2pRoom(v?.id ?? null), chat?.ch ?? null)
   const moderator = held.manage && timedOut === null
@@ -985,7 +979,6 @@ function P2pChannelPaneBody({
         disabled={disabled}
         canAct={canAct}
         timedOut={timedOut !== null}
-        lookOf={lookOf}
         title={`#${mask(channel.name)}`}
         placeholder={`Message #${mask(channel.name)}`}
         pendingTip="Waiting for a member to come online"

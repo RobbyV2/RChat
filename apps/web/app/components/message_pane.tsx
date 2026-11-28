@@ -37,8 +37,6 @@ import {
   byUsername,
   confirmDeleteMessage,
   myRank,
-  roleColor,
-  roleLook,
   useStore,
   viewKey,
   allPings,
@@ -73,7 +71,8 @@ import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
 import { ForwardCard } from './forwards'
 import { MessageList, NewerOnSight } from './message_list'
-import { AuthorRow, authorLook, GroupedRow, type RowHandlers } from './message_row'
+import { AuthorRow, GroupedRow, type RowHandlers } from './message_row'
+import { useFace } from '../lib/place/use_looks'
 import { useMessages } from '../lib/place/use_messages'
 import { PinsButton, PinsWindow, useCanPin } from './pins'
 import { ListedRow } from './listed_row'
@@ -199,6 +198,7 @@ export function OutgoingRow({
 }) {
   const failed = o.status === 'failed'
   const label = outgoingLabel(o.status)
+  const face = useFace(author)
   const body = (
     <>
       {o.msg.forward ? (
@@ -226,8 +226,7 @@ export function OutgoingRow({
       {o.msg.reply_to && <ReplyPreview quote={o.msg.reply_to} avatar={size} onJump={onJump} />}
       {place.first ? (
         <AuthorRow
-          author={author}
-          server={server}
+          face={face}
           size={size}
           meta={
             <span
@@ -851,17 +850,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     canForward={forwardable(m)}
                     editing={editingId === m.id}
                     server={memberServer}
-                    {...authorLook(
-                      roleLook(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])
-                    )}
-                    quoteColor={
-                      m.reply_to?.author
-                        ? roleColor(
-                            detail?.roles,
-                            memberFor(m.reply_to.author.username)?.role_ids ?? []
-                          )
-                        : undefined
-                    }
                     on={rowHandlers}
                   />
                 </Selectable>

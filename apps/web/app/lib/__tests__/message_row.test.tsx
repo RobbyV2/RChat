@@ -17,9 +17,6 @@ const row = (over: Partial<RowProps> = {}) =>
         divider={false}
         flash={false}
         server={null}
-        color={undefined}
-        icon={undefined}
-        iconRole={undefined}
         canEdit={false}
         canReply={false}
         canForward={false}
@@ -61,11 +58,8 @@ describe('a message row', () => {
     )
   })
 
-  test('an account opens a profile, a key does not', () => {
+  test('an account opens a profile', () => {
     expect(row()).toContain('title="View profile"')
-    const keyed = row({ ik: 'KEY', local: true })
-    expect(keyed.includes('View profile')).toBe(false)
-    expect(keyed).toContain('data-row')
   })
 
   test('says how far your own send got', () => {

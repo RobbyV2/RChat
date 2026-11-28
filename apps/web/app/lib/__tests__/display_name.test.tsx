@@ -18,6 +18,7 @@ import { MaskedWords } from '../../components/ui'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { DmPeer } from '../../components/message_pane'
 import { AuthorRow } from '../../components/message_row'
+import { useFace } from '../place/use_looks'
 import { SystemNotice } from '../../components/system_messages'
 import { ActorHit } from '../../components/audit_log'
 import { PreviewLine } from '../../components/invite_card'
@@ -170,20 +171,20 @@ test('text and mentions name the account a display name belongs to', () => {
   )
 })
 
-test('message headers show the username next to a display name, fitted to the row', () => {
-  const html = render(
-    <AuthorRow author={impostor} server={null} size={36} meta={null}>
+function FaceRow() {
+  return (
+    <AuthorRow face={useFace(impostor)} size={36} meta={null}>
       hi
     </AuthorRow>
   )
+}
+
+test('message headers show the username next to a display name, fitted to the row', () => {
+  const html = render(<FaceRow />)
   expect(html).toContain(`title="alice (bob)" role="button"`)
   expect(html).toContain(FITTED('alice', 'bob'))
   Object.assign(initial, { streamer: true })
-  const streamer = render(
-    <AuthorRow author={impostor} server={null} size={36} meta={null}>
-      hi
-    </AuthorRow>
-  )
+  const streamer = render(<FaceRow />)
   expect(streamer.includes('title="alice (bob)"')).toBe(false)
 })
 

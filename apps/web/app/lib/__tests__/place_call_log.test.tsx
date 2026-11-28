@@ -116,9 +116,6 @@ placeContract(callLog, (kind, world) => {
               divider
               flash={false}
               server={null}
-              color={undefined}
-              icon={undefined}
-              iconRole={undefined}
               canEdit={false}
               canReply={false}
               canForward={false}

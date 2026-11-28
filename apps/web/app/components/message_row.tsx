@@ -6,9 +6,8 @@ import { Check, CircleAlert, Clock, EyeOff, MessageSquareText, Reply, Trash2 } f
 import { useStoreApi } from '../lib/client/react'
 import { hiddenRemovedText, SLOW_HIDDEN_TEXT } from '../lib/p2p/flows'
 import { canQuote } from '../lib/replies'
-import type { Look } from '../lib/role_looks'
 import { isNotice } from '../lib/system_messages'
-import type { Message, UserRef } from '../lib/types'
+import type { Message } from '../lib/types'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { longPress } from './context_menu'
 import { ForwardCard, forwardAction } from './forwards'
@@ -16,8 +15,9 @@ import { groupPadCls, gutterTimeCls } from './grouped_row'
 import { Inset, Row, Surface } from './layout'
 import { MarkdownMessage } from './markdown_message'
 import { Name } from './name'
-import { personCalled, personName } from '../lib/names'
-import { shownUser } from '../lib/people'
+import type { Face } from '../lib/place/looks'
+import { useAuthor, useNameColor } from '../lib/place/use_looks'
+import { personCalled } from '../lib/names'
 import { MessageEditor, editAction, type EditBinding } from './message_editor'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { KeyAvatar } from './p2p/p2p_badge'
@@ -26,9 +26,7 @@ import { profileTrigger } from './profile_card'
 import { ReactionBar } from './reactions'
 import { ReplyPreview } from './replies'
 import { RoleIcon } from './role_icon'
-import { ShownName, useShown } from './shown_user'
 import { MessageTime, ShortTime } from './timestamp'
-import { Masked } from './ui'
 import { UnreadDivider } from './unread_banner'
 import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
@@ -38,41 +36,27 @@ export const avatarTriggerCls =
 
 // Avatar on the left; name and `meta` (the time) above `children` on the right.
 export function AuthorRow({
-  author,
-  server,
-  ik,
+  face,
   size,
-  color,
-  icon,
   meta,
   children,
 }: {
-  author: UserRef
-  server: string | null
-  // The author's identity key, where the place knows people by key: the row shows the key's
-  // picture and opens no profile.
-  ik?: string
+  face: Face
   size: number
-  color?: string
-  icon?: Look['icon']
   meta: ReactNode
   children: ReactNode
 }) {
   const store = useStoreApi()
-  const shown = useShown(author, server)
-  if (ik !== undefined)
+  const { who, name, color, icon } = face
+  if (who.kind === 'key')
     return (
       <Row gap="md" align="stretch">
         <div className="shrink-0">
-          <KeyAvatar person={shownUser({ ...author, username: ik }, null)} size={size} />
+          <KeyAvatar person={who.person} size={size} />
         </div>
         <div className="min-w-0 flex-1">
           <Row gap="sm" align="baseline" wrap>
-            <Name
-              of={personCalled(author.display_name, author.username)}
-              color={color}
-              look="min-w-0 truncate text-sm font-medium"
-            />
+            <Name of={name} color={color} look="min-w-0 truncate text-sm font-medium" />
             <RoleIcon emoji={icon?.emoji} role={icon?.role} />
             {meta}
           </Row>
@@ -80,6 +64,7 @@ export function AuthorRow({
         </div>
       </Row>
     )
+  const { person: author, server } = who
   return (
     <Row gap="md" align="stretch">
       <div className="shrink-0">
@@ -88,13 +73,13 @@ export function AuthorRow({
           title="View profile"
           className={avatarTriggerCls}
         >
-          <UserAvatar person={shown} size={size} />
+          <UserAvatar person={author} size={size} />
         </span>
       </div>
       <div className="min-w-0 flex-1">
         <Row gap="sm" align="baseline" wrap place="min-w-0">
           <Name
-            of={personName(shown)}
+            of={name}
             withUsername
             fit
             link
@@ -162,13 +147,6 @@ export const replyAction = (onClick: () => void): ToolbarAction => ({
   onClick,
 })
 
-// The name color and role icon of a row's author, as row props.
-export const authorLook = (look: Look | undefined) => ({
-  color: look?.color,
-  icon: look?.icon?.emoji,
-  iconRole: look?.icon?.role,
-})
-
 // What a list does for its rows. One object per list, kept between renders, so a row draws again
 // only when the row itself changes.
 export interface RowHandlers {
@@ -197,15 +175,8 @@ export interface RowProps {
   flash: boolean
   // A row of a thread panel: a smaller picture, and its delete says "reply".
   inThread?: boolean
-  // The server whose member looks and profile cards the author shows; null without one.
+  // The server whose members the row's notices name; null without one.
   server: string | null
-  // The author's identity key, where the place knows people by key.
-  ik?: string
-  color: string | undefined
-  // The emoji of the author's role icon and the role's name.
-  icon: string | undefined
-  iconRole: string | undefined
-  quoteColor?: string
   canEdit: boolean
   canReply: boolean
   canForward: boolean
@@ -289,7 +260,9 @@ function Sent({ m, sent, sentTip, canRetry, canDrop, on }: RowProps) {
 // One message of a list, in a hosted channel or DM, a P2P room or conversation, or a thread of
 // any of them.
 export const MessageRow = memo(function MessageRow(props: RowProps) {
-  const { m, first, last, mentioned, divider, flash, server, ik, on } = props
+  const { m, first, last, mentioned, divider, flash, on } = props
+  const face = useAuthor(m, props.event)
+  const quoteColor = useNameColor(m.reply_to?.author)
   const { inThread = false, local = false, chip = false, canTrim = false, editing, Files } = props
   const { canReact, canDelete } = props
   const size = inThread ? 30 : 36
@@ -368,23 +341,15 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
           <ReplyPreview
             quote={m.reply_to}
             avatar={size}
-            color={props.quoteColor}
+            color={quoteColor}
             local={local}
             onJump={on.jump}
           />
         )}
         {first ? (
           <AuthorRow
-            author={m.author}
-            server={server}
-            ik={ik}
+            face={face}
             size={size}
-            color={props.color}
-            icon={
-              props.icon && props.iconRole !== undefined
-                ? { emoji: props.icon, role: props.iconRole }
-                : undefined
-            }
             meta={
               <>
                 {timeMeta(m.created_at)}
@@ -405,13 +370,7 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
           </AuthorRow>
         ) : (
           <GroupedRow
-            name={
-              ik === undefined ? (
-                <ShownName user={m.author} server={server} />
-              ) : (
-                <Masked text={m.author.display_name} by={m.author.username} />
-              )
-            }
+            name={<Name of={face.name} withUsername />}
             ts={m.created_at}
             size={size}
             status={props.sent === 'pending' ? status : undefined}

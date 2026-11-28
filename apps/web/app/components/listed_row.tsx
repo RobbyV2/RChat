@@ -20,22 +20,12 @@ export const ListedRow = memo(function ListedRow(
     pinned?: string | null
   }
 ) {
-  const { m, event, server, ik, divider, on, hidden, pinned = null, local = false } = props
+  const { m, event, server, divider, on, hidden, pinned = null, local = false } = props
   if (hidden === 'removed') return <RemovedRow m={m} divider={divider} />
   if (hidden === 'slow') return <SlowHiddenRow m={m} divider={divider} />
   const mark = divider && unreadDivider
   if (m.kind === 'pin')
-    return (
-      <PinNotice
-        m={m}
-        event={event}
-        target={pinned}
-        server={server}
-        ik={ik}
-        divider={mark}
-        onMenu={on.menu}
-      />
-    )
+    return <PinNotice m={m} event={event} target={pinned} divider={mark} onMenu={on.menu} />
   if (isSystem(m))
     return (
       <SystemNotice
