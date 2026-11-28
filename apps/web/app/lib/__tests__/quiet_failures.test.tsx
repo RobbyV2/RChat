@@ -164,7 +164,7 @@ describe('people a mention looks up on the instance', () => {
     expect(people.trouble.get()).toBe(null)
   })
 
-  test('an answer for what is no longer typed changes nothing', async () => {
+  test('an answer for text that was replaced changes nothing', async () => {
     const { clock, people } = place(() => Promise.reject(new ApiError('Busy', 503)))
     people.ask('al')
     clock.advance(SUGGEST_DEBOUNCE)

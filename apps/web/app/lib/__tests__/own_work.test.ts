@@ -65,7 +65,7 @@ describe('work tried again quietly', () => {
     expect(clock.pending).toBe(0)
   })
 
-  test('work that no longer matters is not tried again', async () => {
+  test('work that stopped mattering is not tried again', async () => {
     const clock = new ManualTime(0)
     const work = failing(9)
     let live = true
@@ -133,7 +133,7 @@ describe('ending a session on the way out', () => {
     expect(told).toEqual([SESSION_LEFT_OPEN])
   })
 
-  test('a session the instance no longer knows is ended', async () => {
+  test('a session the instance does not know is ended', async () => {
     const clock = new ManualTime(0)
     const work = failing(9, new ApiError('Unauthorized', 401))
     const { told } = leave(clock, work.run)
