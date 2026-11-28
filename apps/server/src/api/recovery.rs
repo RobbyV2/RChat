@@ -188,10 +188,7 @@ pub(crate) async fn recover_at(
     if changed != 1 {
         return Err(wrong_phrase());
     }
-    sqlx::query("DELETE FROM tokens WHERE username = $1")
-        .bind(&user.username)
-        .execute(&mut *tx)
-        .await?;
+    crate::api::auth::end_sessions(&mut tx, &user.username, None, t).await?;
     crate::api::temp_passwords::clear(&mut tx, &user.username).await?;
     sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
         .bind(secret_key(&token))
@@ -338,11 +335,7 @@ pub(crate) async fn set_phrase_at(
     if stored != 1 || !holds(&mut tx, &user.username, &token).await? {
         return Err(unauthorized());
     }
-    sqlx::query("DELETE FROM tokens WHERE username = $1 AND token <> $2")
-        .bind(&user.username)
-        .bind(secret_key(&token))
-        .execute(&mut *tx)
-        .await?;
+    crate::api::auth::end_sessions(&mut tx, &user.username, Some(&secret_key(&token)), t).await?;
     tx.commit().await?;
     state.hub.broadcast(WsEvent::TokensRevoked {
         username: user.username,

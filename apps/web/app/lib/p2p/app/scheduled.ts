@@ -166,6 +166,8 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
       if (!sch) return NOT_HERE
       return sch.sendNow(idOf(key))
     },
+    // Device rows are never paused: only this device schedules them.
+    resume: async (): Promise<string | null> => 'Not available here',
     // Whether this tab sends this identity's scheduled messages.
     here: () => state.scheduled !== null,
   }

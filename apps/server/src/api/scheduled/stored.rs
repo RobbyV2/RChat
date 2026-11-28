@@ -16,7 +16,7 @@ pub const UNREADABLE: &str = "This site can't read it anymore";
 const BATCH: i64 = 200;
 
 /// The states a row is sealed or unsealed in: one being sent is left to its sender.
-const PENDING: &str = "status IN ('waiting', 'failed')";
+const PENDING: &str = "status IN ('waiting', 'failed', 'paused')";
 
 /// The text of a row, opened. Only `Texts::open` makes one.
 pub(super) struct Text(Option<String>);

@@ -88,10 +88,14 @@ fn refusal(e: ApiError) -> (u16, String, Option<ReasonKind>, Option<String>) {
 
 /// Schedules `content` from alice to `place` due 60 seconds after `t`.
 async fn due(state: &AppState, to: Value, content: &str, t: i64) -> ScheduledMessage {
+    due_as(state, "alice", to, content, t).await
+}
+
+async fn due_as(state: &AppState, who: &str, to: Value, content: &str, t: i64) -> ScheduledMessage {
     let mut body = to;
     body["content"] = json!(content);
     body["at"] = json!(t + 60);
-    schedule(state, "alice", body, t).await.expect("schedule")
+    schedule(state, who, body, t).await.expect("schedule")
 }
 
 async fn status_of(db: &Db, id: i64) -> (String, Option<String>, Option<i64>) {
@@ -577,6 +581,7 @@ async fn patch_and_delete_refuse_a_row_being_sent() {
     let edit = ScheduledPatch {
         content: Some("other".into()),
         at: None,
+        resume: false,
         remove_reply: false,
     };
     let refused = patch_at(&state, &alice, row.id, edit, now())
@@ -603,6 +608,7 @@ async fn patch_and_delete_refuse_a_row_being_sent() {
     let edit = ScheduledPatch {
         content: Some("other".into()),
         at: None,
+        resume: false,
         remove_reply: false,
     };
     let refused = patch_at(&state, &alice, row.id, edit, now())
@@ -623,6 +629,7 @@ async fn scheduled_routes_are_own_rows_only() {
     let edit = ScheduledPatch {
         content: Some("theirs".into()),
         at: None,
+        resume: false,
         remove_reply: false,
     };
     assert_eq!(
@@ -651,6 +658,7 @@ async fn scheduled_routes_are_own_rows_only() {
     let edit = ScheduledPatch {
         content: Some("changed".into()),
         at: Some(t + 600),
+        resume: false,
         remove_reply: true,
     };
     let edited = patch_at(&state, &alice, row.id, edit, t)
@@ -803,6 +811,7 @@ async fn scheduled_range_and_caps() {
     let revive = ScheduledPatch {
         content: None,
         at: Some(t + 300),
+        resume: false,
         remove_reply: false,
     };
     let e = patch_at(&capped, &alice, first.id, revive, t)
@@ -853,6 +862,7 @@ async fn switch_off_refuses_new_and_keeps_sending() {
     let edit = ScheduledPatch {
         content: Some("edited".into()),
         at: None,
+        resume: false,
         remove_reply: false,
     };
     patch_at(&state, &alice, kept.id, edit, now())
@@ -1171,6 +1181,7 @@ async fn a_sealed_place_stores_no_plain_scheduled_text() {
         let patch = ScheduledPatch {
             content: Some("edited secret".into()),
             at: None,
+            resume: false,
             remove_reply: false,
         };
         let edited = patch_at(&state, &alice, rows[0].id, patch, t)
@@ -1323,4 +1334,245 @@ async fn waiting_rows_follow_a_place_into_and_out_of_sealed_storage() {
         );
         temp.done(state).await;
     }
+}
+
+#[tokio::test]
+async fn ending_every_session_pauses_what_the_account_scheduled() {
+    let (state, path) = temp_state("scheduled_paused").await;
+    let db = &state.db;
+    let p = place(&state).await;
+    let alice = user(db, "alice").await;
+    let t = now();
+    let first = due(&state, json!({ "channel_id": p.general }), "first", t).await;
+    let second = due(&state, json!({ "dm_id": p.dm }), "second", t).await;
+    let failed = due(&state, json!({ "channel_id": p.general }), "failed", t).await;
+    exec(
+        db,
+        &format!(
+            "UPDATE scheduled_messages SET status = 'failed', error = 'Gone' WHERE id = {}",
+            failed.id
+        ),
+    )
+    .await;
+    let flying = due(
+        &state,
+        json!({ "channel_id": p.general }),
+        "in flight",
+        t - 30,
+    )
+    .await;
+    let claimed = claim_due(db, flying.id, Stored::Waiting, t + 31)
+        .await
+        .expect("claim")
+        .expect("due");
+    let others = due_as(
+        &state,
+        "bob",
+        json!({ "channel_id": p.general }),
+        "bob's",
+        t,
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO tokens(token, username, created_at) VALUES('kept', 'alice', 1), ('gone', 'alice', 1), ('bobs', 'bob', 1)",
+    )
+    .await;
+
+    let mut conn = db.acquire().await.expect("conn");
+    let ended = crate::api::auth::end_sessions(&mut conn, "alice", Some("kept"), t + 5)
+        .await
+        .expect("end");
+    drop(conn);
+    assert_eq!(ended, 1);
+    assert_eq!(
+        num(
+            db,
+            "SELECT COUNT(*) FROM tokens WHERE token IN ('kept', 'bobs')"
+        )
+        .await,
+        2
+    );
+    assert_eq!(status_of(db, first.id).await.0, "paused");
+    assert_eq!(status_of(db, second.id).await.0, "paused");
+    assert_eq!(status_of(db, failed.id).await.0, "failed");
+    assert_eq!(status_of(db, flying.id).await.0, "paused");
+    let before = num(db, "SELECT COUNT(*) FROM messages").await;
+    let req = SendReq::text("in flight".into(), None);
+    let to = SendTo::Channel(p.general);
+    let lost = send_to(&state, &alice, to, req, Some(&claimed.claim)).await;
+    assert!(lost.is_err(), "the send that was under way stores nothing");
+    assert_eq!(num(db, "SELECT COUNT(*) FROM messages").await, before);
+    let busy: Result<Message, ApiError> = Err(ApiError::unavailable("busy", Some(1)));
+    let retry = settle_of(&busy, claimed.due_at, claimed.attempts, t + 32);
+    settle(&state, &claimed.claim, "alice", retry, t + 32)
+        .await
+        .expect("settle");
+    assert_eq!(
+        status_of(db, flying.id).await.0,
+        "paused",
+        "a retry does not make it wait again"
+    );
+    assert_eq!(status_of(db, others.id).await.0, "waiting");
+
+    assert_eq!(
+        run_due_at(&state, t + 61).await.expect("run"),
+        1,
+        "only bob's"
+    );
+    assert_eq!(status_of(db, first.id).await.0, "paused");
+
+    let page = list(
+        State(state.clone()),
+        Authed(alice.clone()),
+        Query(ScheduledQuery {
+            scope: None,
+            status: Some("failed".into()),
+            after: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("list")
+    .0;
+    assert_eq!((page.waiting, page.failed, page.items.len()), (0, 4, 4));
+    assert_eq!(
+        page.items
+            .iter()
+            .filter(|m| m.status == ScheduledStatus::Paused)
+            .count(),
+        3
+    );
+
+    let (code, text, _, _) = send_now_at(&state, &alice, first.id, t + 62)
+        .await
+        .map(|_| ())
+        .map_err(refusal)
+        .expect_err("paused");
+    assert_eq!((code, text.as_str()), (409, PAUSED));
+
+    let resume = |id: i64| {
+        let (state, alice) = (state.clone(), alice.clone());
+        async move {
+            let patch = ScheduledPatch {
+                content: None,
+                at: None,
+                resume: true,
+                remove_reply: false,
+            };
+            patch_at(&state, &alice, id, patch, t + 70)
+                .await
+                .map_err(refusal)
+        }
+    };
+    let resumed = resume(first.id).await.expect("resume");
+    assert_eq!(resumed.status, ScheduledStatus::Waiting);
+    assert_eq!((resumed.at, resumed.next_at), (first.at, first.at));
+    let same = resume(failed.id).await.expect("a failed one stays");
+    assert_eq!(same.status, ScheduledStatus::Failed);
+    assert_eq!(run_due_at(&state, t + 71).await.expect("run"), 1);
+    assert_eq!(status_of(db, first.id).await.0, "sent");
+
+    let later = ScheduledPatch {
+        content: None,
+        at: Some(t + 500),
+        resume: false,
+        remove_reply: false,
+    };
+    let moved = patch_at(&state, &alice, second.id, later, t + 72)
+        .await
+        .map_err(refusal)
+        .expect("a new time resumes");
+    assert_eq!(
+        (moved.status, moved.at),
+        (ScheduledStatus::Waiting, t + 500)
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_paused_message_counts_against_the_cap_when_it_resumes() {
+    let (state, path) = temp_state("scheduled_paused_cap").await;
+    let state = state.with_limits(Arc::new(Limits {
+        scheduled_per_account: 1,
+        ..Limits::default()
+    }));
+    let db = &state.db;
+    let p = place(&state).await;
+    let alice = user(db, "alice").await;
+    let t = now();
+    let held = due(&state, json!({ "channel_id": p.general }), "held", t).await;
+    let mut conn = db.acquire().await.expect("conn");
+    crate::api::scheduled::pause_account(&mut conn, "alice", t)
+        .await
+        .expect("pause");
+    drop(conn);
+    due(&state, json!({ "channel_id": p.general }), "new", t).await;
+    let patch = ScheduledPatch {
+        content: None,
+        at: None,
+        resume: true,
+        remove_reply: false,
+    };
+    let (code, _, kind, control) = patch_at(&state, &alice, held.id, patch, t)
+        .await
+        .map(|_| ())
+        .map_err(refusal)
+        .expect_err("full");
+    assert_eq!(
+        (code, kind, control.as_deref()),
+        (400, Some(ReasonKind::Limit), Some("scheduled_per_account"))
+    );
+    assert_eq!(status_of(db, held.id).await.0, "paused");
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_server_failure_waits_out_each_backoff_step_then_fails() {
+    let (state, path) = temp_state("scheduled_backoff_rows").await;
+    let db = &state.db;
+    let p = place(&state).await;
+    let t = now();
+    let row = due(&state, json!({ "channel_id": p.general }), "retry me", t).await;
+    let failed: Result<Message, ApiError> = Err(ApiError::internal("test"));
+    let mut at = t + 60;
+    for (tried, wait) in RETRY_BACKOFF_SECS.iter().enumerate() {
+        let claimed = claim_due(db, row.id, Stored::Waiting, at)
+            .await
+            .expect("claim")
+            .expect("due");
+        assert_eq!(claimed.attempts, tried as i64 + 1);
+        let result = settle_of(&failed, claimed.due_at, claimed.attempts, at);
+        assert_eq!(result, Settle::Retry(at + wait));
+        settle(&state, &claimed.claim, "alice", result, at)
+            .await
+            .expect("settle");
+        let r = load(db, row.id).await.expect("load").expect("row");
+        assert_eq!(
+            (r.status, r.next_at, r.attempts, r.due_at),
+            (Stored::Waiting, at + wait, tried as i64 + 1, row.at)
+        );
+        assert!(
+            claim_due(db, row.id, Stored::Waiting, at + wait - 1)
+                .await
+                .expect("early")
+                .is_none(),
+            "not before its wait is over"
+        );
+        at += wait;
+    }
+    let claimed = claim_due(db, row.id, Stored::Waiting, at)
+        .await
+        .expect("claim")
+        .expect("due");
+    let result = settle_of(&failed, claimed.due_at, claimed.attempts, at);
+    assert_eq!(result, Settle::Fail(SERVER_FAILED.to_string()));
+    settle(&state, &claimed.claim, "alice", result, at)
+        .await
+        .expect("settle");
+    assert_eq!(
+        status_of(db, row.id).await,
+        ("failed".to_string(), Some(SERVER_FAILED.to_string()), None)
+    );
+    crate::api::test_util::done(state, path).await;
 }

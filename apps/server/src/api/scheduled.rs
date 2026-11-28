@@ -45,6 +45,7 @@ const PAGE_MAX: i64 = 50;
 pub const TURNED_OFF: &str = "Scheduled messages are turned off on this site";
 pub const BEING_SENT: &str = "It is being sent";
 pub const ALREADY_SENT: &str = "It was already sent";
+pub const PAUSED: &str = "It is paused. Resume it first";
 pub const WAITING_SLOW: &str = "Waiting for slow mode";
 pub const SLOW_FAILED: &str = "Slow mode kept it from sending";
 pub const SERVER_FAILED: &str = "Something went wrong. Try again.";
@@ -54,13 +55,15 @@ const TOO_LATE: &str = "Pick a time within a year";
 const ONE_PLACE: &str = "Give one of channel_id, dm_id and thread_root_id";
 
 /// Where a scheduled message is: `waiting` for its time (also while slow mode holds it, with
-/// `error` saying so), `sending` right now, or `failed` with `error` saying why.
+/// `error` saying so), `sending` right now, `failed` with `error` saying why, or `paused`: held
+/// back since the account's sessions were ended, until its owner resumes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduledStatus {
     Waiting,
     Sending,
     Failed,
+    Paused,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +72,7 @@ enum Stored {
     Sending,
     Sent,
     Failed,
+    Paused,
 }
 
 impl Stored {
@@ -78,6 +82,7 @@ impl Stored {
             "sending" => Some(Stored::Sending),
             "sent" => Some(Stored::Sent),
             "failed" => Some(Stored::Failed),
+            "paused" => Some(Stored::Paused),
             _ => None,
         }
     }
@@ -88,6 +93,7 @@ impl Stored {
             Stored::Sending => "sending",
             Stored::Sent => "sent",
             Stored::Failed => "failed",
+            Stored::Paused => "paused",
         }
     }
 
@@ -96,6 +102,7 @@ impl Stored {
             Stored::Waiting => Some(ScheduledStatus::Waiting),
             Stored::Sending => Some(ScheduledStatus::Sending),
             Stored::Failed => Some(ScheduledStatus::Failed),
+            Stored::Paused => Some(ScheduledStatus::Paused),
             Stored::Sent => None,
         }
     }
@@ -183,9 +190,13 @@ pub struct ScheduledPatch {
     /// New text: not blank, at most `limits.message_chars` characters.
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// A new time (unix seconds), as for scheduling. A failed message waits again.
+    /// A new time (unix seconds), as for scheduling. A failed or paused message waits again.
     #[serde(default)]
     pub(crate) at: Option<i64>,
+    /// `true` makes a paused message wait for its time again; one whose time passed is sent
+    /// right away. Other messages stay as they are.
+    #[serde(default)]
+    pub(crate) resume: bool,
     /// `true` makes it a plain message instead of a reply.
     #[serde(default)]
     pub(crate) remove_reply: bool,
@@ -200,7 +211,7 @@ pub struct ScheduledPage {
     pub next: Option<String>,
     /// How many wait to be sent (also the ones being sent), with `scope` only there.
     pub waiting: i64,
-    /// How many failed, with `scope` only there.
+    /// How many failed or are paused, with `scope` only there.
     pub failed: i64,
 }
 
@@ -209,7 +220,7 @@ pub struct ScheduledPage {
 pub struct ScheduledQuery {
     /// Only the messages of one place: `c<channel_id>`, `t<root_id>` or `d<dm_id>`.
     scope: Option<String>,
-    /// Only `waiting` ones (with those being sent) or only `failed` ones.
+    /// Only `waiting` ones (with those being sent) or only `failed` ones (with the paused).
     status: Option<String>,
     /// `next` of the page before.
     after: Option<String>,
@@ -248,6 +259,23 @@ pub(crate) async fn finish_in(
         0 => Err(being_sent()),
         _ => Ok(()),
     }
+}
+
+/// Pauses the messages `username` scheduled that wait for their time or are being sent, inside
+/// the transaction that ends the account's sessions: whoever held one of them may have
+/// scheduled these, so none is sent until the owner resumes it. A message being sent loses its
+/// claim, so its send stores nothing (`finish_in`) and no later step makes it wait again.
+pub(crate) async fn pause_account(
+    conn: &mut sqlx::AnyConnection,
+    username: &str,
+    t: i64,
+) -> sqlx::Result<u64> {
+    sqlx::query("UPDATE scheduled_messages SET status = 'paused', claim = NULL, updated_at = $1 WHERE username = $2 AND status IN ('waiting', 'sending')")
+        .bind(t)
+        .bind(username)
+        .execute(&mut *conn)
+        .await
+        .map(|r| r.rows_affected())
 }
 
 fn being_sent() -> ApiError {
@@ -628,8 +656,8 @@ fn scope_sql(scope: &str) -> Result<(&'static str, i64), ApiError> {
 
 /// List your scheduled messages
 ///
-/// Your messages waiting to be sent, being sent and failed, soonest first, 50 at a time, with
-/// how many wait and how many failed. `place` names each place you can still open, through the
+/// Your messages waiting to be sent, being sent, failed and paused, soonest first, 50 at a time,
+/// with how many wait and how many failed or are paused. `place` names each place you can still open, through the
 /// same access checks as reading it; it is `null` for the rest. Sent messages are not listed.
 /// Requires a bearer token. General rate-limit bucket.
 #[utoipa::path(get, path = "/api/v1/me/scheduled", operation_id = "list_scheduled", tag = "Scheduled messages", params(ScheduledQuery), responses((status = 200, description = "A page of your scheduled messages", body = ScheduledPage), (status = 400, description = "`Invalid scope`, `Invalid status` or `Invalid cursor`", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
@@ -650,9 +678,9 @@ pub(crate) async fn list(
         None => ("$2 = 0", 0),
     };
     let statuses = match status.as_deref() {
-        None => "status IN ('waiting', 'sending', 'failed')",
+        None => "status IN ('waiting', 'sending', 'failed', 'paused')",
         Some("waiting") => "status IN ('waiting', 'sending')",
-        Some("failed") => "status = 'failed'",
+        Some("failed") => "status IN ('failed', 'paused')",
         Some(_) => return Err(ApiError::invalid("Invalid status", "status")),
     };
     let (from_at, from_id) = match after.as_deref() {
@@ -692,7 +720,7 @@ pub(crate) async fn list(
         (_, _) => None,
     };
     let sql = format!(
-        "SELECT COUNT(CASE WHEN status IN ('waiting', 'sending') THEN 1 END), COUNT(CASE WHEN status = 'failed' THEN 1 END) FROM scheduled_messages WHERE username = $1 AND {place} AND status IN ('waiting', 'sending', 'failed')"
+        "SELECT COUNT(CASE WHEN status IN ('waiting', 'sending') THEN 1 END), COUNT(CASE WHEN status IN ('failed', 'paused') THEN 1 END) FROM scheduled_messages WHERE username = $1 AND {place} AND status IN ('waiting', 'sending', 'failed', 'paused')"
     );
     let counts = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(&user.username)
@@ -818,7 +846,7 @@ async fn insert(
 /// Refuses a row that is not waiting or failed.
 fn changeable(row: &Entry) -> Result<(), ApiError> {
     match row.status {
-        Stored::Waiting | Stored::Failed => Ok(()),
+        Stored::Waiting | Stored::Failed | Stored::Paused => Ok(()),
         Stored::Sending => Err(being_sent()),
         Stored::Sent => Err(already_sent()),
     }
@@ -826,12 +854,15 @@ fn changeable(row: &Entry) -> Result<(), ApiError> {
 
 /// Edit a scheduled message
 ///
-/// Changes the text or the time of one of your messages that waits or failed, or makes it a
-/// plain message instead of a reply. A new time makes a failed message wait again, and then it
-/// counts against `SCHEDULED_PER_ACCOUNT`. In channels and threads the profanity filter checks
+/// Changes the text or the time of one of your messages that waits, failed or is paused, or
+/// makes it a plain message instead of a reply. A new time makes a failed or paused message
+/// wait again, and so does `resume` for a paused one; it then counts against
+/// `SCHEDULED_PER_ACCOUNT`. Messages are paused when every session of the account is ended
+/// (a password change or reset, signing out everywhere, a temporary password, a suspension):
+/// nothing is sent until you resume them. In channels and threads the profanity filter checks
 /// new text when it is on. Works while the `scheduled_messages` switch is off. Requires a bearer
 /// token. Emits `scheduled_updated` to your own connections. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/v1/me/scheduled/{id}", operation_id = "update_scheduled", tag = "Scheduled messages", params(("id" = i64, Path, description = "Scheduled message id")), request_body = ScheduledPatch, responses((status = 200, description = "The scheduled message", body = ScheduledMessage), (status = 400, description = "With reason `invalid`: a time out of range (field `at`) or `Message is empty` (field `content`). Text over `limits.message_chars` characters or blocked by the profanity filter. `You can have at most 100 scheduled messages waiting` (reason `limit`, control `scheduled_per_account`) for a failed message given a new time. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no scheduled message of yours with that id", body = ApiErrorBody), (status = 409, description = "`It is being sent` or `It was already sent` (reason `conflict`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/v1/me/scheduled/{id}", operation_id = "update_scheduled", tag = "Scheduled messages", params(("id" = i64, Path, description = "Scheduled message id")), request_body = ScheduledPatch, responses((status = 200, description = "The scheduled message", body = ScheduledMessage), (status = 400, description = "With reason `invalid`: a time out of range (field `at`) or `Message is empty` (field `content`). Text over `limits.message_chars` characters or blocked by the profanity filter. `You can have at most 100 scheduled messages waiting` (reason `limit`, control `scheduled_per_account`) for a failed or paused message that waits again. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no scheduled message of yours with that id", body = ApiErrorBody), (status = 409, description = "`It is being sent` or `It was already sent` (reason `conflict`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn patch(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -853,6 +884,7 @@ pub(crate) async fn patch_at(
     let ScheduledPatch {
         content,
         at,
+        resume,
         remove_reply,
     } = req;
     let db = &state.db;
@@ -878,13 +910,22 @@ pub(crate) async fn patch_at(
             ", due_at = ${n}, next_at = ${n}, status = 'waiting', error = NULL, attempts = 0, finished_at = NULL"
         ));
     }
+    let resumes = resume && at.is_none() && row.status == Stored::Paused;
+    if resumes {
+        sql.push_str(", status = 'waiting', next_at = due_at");
+    }
     sql.push_str(&format!(
-        " WHERE id = ${} AND username = ${} AND status IN ('waiting', 'failed')",
+        " WHERE id = ${} AND username = ${} AND status = ${}",
         n + 1,
-        n + 2
+        n + 2,
+        n + 3
     ));
     let mut tx = write_tx(db).await?;
-    if at.is_some() && row.status == Stored::Failed {
+    let revived = match row.status {
+        Stored::Failed | Stored::Paused => at.is_some() || resumes,
+        Stored::Waiting | Stored::Sending | Stored::Sent => false,
+    };
+    if revived {
         room_for(&mut tx, state, &user.username).await?;
     }
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(t);
@@ -894,6 +935,7 @@ pub(crate) async fn patch_at(
     let changed = query
         .bind(id)
         .bind(&user.username)
+        .bind(row.status.as_str())
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -940,7 +982,7 @@ fn failure_text(text: &str) -> &str {
 /// failed one takes the new reason) and the refusal is the answer. Works while the
 /// `scheduled_messages` switch is off. Requires a bearer token. Emits the `message` events of
 /// sending and `scheduled_removed` to your own connections. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/me/scheduled/{id}/send", operation_id = "send_scheduled_now", tag = "Scheduled messages", params(("id" = i64, Path, description = "Scheduled message id")), responses((status = 200, description = "The posted message", body = Message), (status = 400, description = "A refusal of the send path, such as `Cannot reply to that message` or the profanity filter. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "A refusal of the send path: not a member, no permission to send, timed out, banned or blocked", body = ApiErrorBody), (status = 404, description = "`Not found`: no scheduled message of yours with that id, or a place you cannot open; identical responses", body = ApiErrorBody), (status = 409, description = "`It is being sent` or `It was already sent` (reason `conflict`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), `Sending too fast, try again in a moment` (reason `rate`), or too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/me/scheduled/{id}/send", operation_id = "send_scheduled_now", tag = "Scheduled messages", params(("id" = i64, Path, description = "Scheduled message id")), responses((status = 200, description = "The posted message", body = Message), (status = 400, description = "A refusal of the send path, such as `Cannot reply to that message` or the profanity filter. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "A refusal of the send path: not a member, no permission to send, timed out, banned or blocked", body = ApiErrorBody), (status = 404, description = "`Not found`: no scheduled message of yours with that id, or a place you cannot open; identical responses", body = ApiErrorBody), (status = 409, description = "`It is being sent`, `It was already sent` or `It is paused. Resume it first` (reason `conflict`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), `Sending too fast, try again in a moment` (reason `rate`), or too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_now(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -960,6 +1002,9 @@ pub(crate) async fn send_now_at(
     let db = &state.db;
     let row = own_row(db, user, id).await?;
     changeable(&row)?;
+    if row.status == Stored::Paused {
+        return Err(ApiError::conflict(StatusCode::CONFLICT, PAUSED));
+    }
     let to = row.to().ok_or_else(not_found)?;
     let content = row.content.read().ok_or_else(unreadable)?.to_string();
     let token = crate::identity::random_id();
@@ -991,7 +1036,7 @@ pub(crate) async fn send_now_at(
         Err(e) => {
             let (error, at) = match row.status {
                 Stored::Failed => (Some(failure_of(&e)), t),
-                Stored::Waiting | Stored::Sending | Stored::Sent => {
+                Stored::Waiting | Stored::Sending | Stored::Sent | Stored::Paused => {
                     (row.error.clone(), row.updated_at)
                 }
             };
@@ -1028,7 +1073,7 @@ pub(crate) async fn delete(
     let db = &state.db;
     let row = own_row(db, &user, id).await?;
     changeable(&row)?;
-    let n = sqlx::query("DELETE FROM scheduled_messages WHERE id = $1 AND username = $2 AND status IN ('waiting', 'failed')")
+    let n = sqlx::query("DELETE FROM scheduled_messages WHERE id = $1 AND username = $2 AND status IN ('waiting', 'failed', 'paused')")
         .bind(id)
         .bind(&user.username)
         .execute(db)

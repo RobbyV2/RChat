@@ -3,6 +3,7 @@ import {
   applyHosted,
   BLOCKED,
   chipText,
+  isUnsent,
   chipTitle,
   countsFor,
   DEFER_MAX_MS,
@@ -214,6 +215,8 @@ describe('list state', () => {
     expect(stateText(item({}))).toBeNull()
     expect(stateText(item({ deferred: true }))).toBe('Waiting for slow mode')
     expect(stateText(item({ state: 'sending' }))).toBe('Sending')
+    expect(stateText(item({ state: 'paused' }))).toBe('Paused when you were signed out everywhere')
+    expect(isUnsent(item({ state: 'paused' }))).toBe(true)
     expect(stateText(item({ state: 'failed', error: 'Nope' }))).toBe('Not sent: Nope')
     expect(stateText(item({ state: 'missed' }))).toBe('Not sent while the app was closed')
   })

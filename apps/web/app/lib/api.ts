@@ -224,6 +224,7 @@ export interface ScheduleReq {
 }
 
 export interface ScheduledPatch {
+  resume?: boolean
   content?: string
   at?: number
   remove_reply?: boolean

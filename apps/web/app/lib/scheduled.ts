@@ -110,7 +110,8 @@ export const fromLocalInput = (v: string): number | null => {
 }
 
 export type ScheduledSide = 'hosted' | 'device'
-export type ScheduledState = 'waiting' | 'sending' | 'failed' | 'missed'
+// `paused`: held back when the account's sessions were ended, until its owner resumes it.
+export type ScheduledState = 'waiting' | 'sending' | 'failed' | 'missed' | 'paused'
 
 // Where a scheduled message goes, as far as its owner can name it now; null when they can't
 // open it.
@@ -141,11 +142,11 @@ export interface ScheduledItem {
   label: ScheduledLabel | null
 }
 
-const UNSENT: readonly ScheduledState[] = ['failed', 'missed']
+const UNSENT: readonly ScheduledState[] = ['failed', 'missed', 'paused']
 
 export const isUnsent = (i: Pick<ScheduledItem, 'state'>) => UNSENT.includes(i.state)
 
-// Failed and missed ones first, then by time.
+// Failed, missed and paused ones first, then by time.
 export const sortItems = (items: ScheduledItem[]): ScheduledItem[] =>
   [...items].sort(
     (a, b) => Number(isUnsent(b)) - Number(isUnsent(a)) || a.at - b.at || a.key.localeCompare(b.key)
@@ -175,9 +176,12 @@ export const chipTitle = (c: { waiting: number; unsent: number }) => {
   return n === 1 ? '1 scheduled message here' : `${n} scheduled messages here`
 }
 
+export const PAUSED_TEXT = 'Paused when you were signed out everywhere'
+
 export const stateText = (i: ScheduledItem): string | null => {
   if (i.state === 'failed') return `Not sent: ${i.error ?? SEND_FAILED}`
   if (i.state === 'missed') return 'Not sent while the app was closed'
+  if (i.state === 'paused') return PAUSED_TEXT
   if (i.state === 'sending') return 'Sending'
   return i.deferred ? WAITING_SLOW : null
 }
@@ -271,6 +275,7 @@ export interface ScheduledRow {
   item: ScheduledItem
   edit(): void
   sendNow(): Promise<void>
+  resume(): Promise<void>
   reschedule(at: number): Promise<void>
   pick(): void
   remove(): Promise<void>
@@ -285,6 +290,8 @@ export interface ScheduledOps {
   removeReply(key: string): Promise<string | null>
   reschedule(key: string, at: number): Promise<string | null>
   sendNow(key: string): Promise<string | null>
+  // A paused one waits for its time again.
+  resume(key: string): Promise<string | null>
   remove(key: string): Promise<string | null>
 }
 

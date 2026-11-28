@@ -108,6 +108,7 @@ describe('send later rows', () => {
       },
       edit: () => calls.push('edit'),
       sendNow: async () => void calls.push('send'),
+      resume: async () => void calls.push('resume'),
       reschedule: async () => void calls.push('reschedule'),
       pick: () => calls.push('pick'),
       remove: async () => void calls.push('remove'),
@@ -124,10 +125,18 @@ describe('send later rows', () => {
     action('scheduled_edit').run(ctx(t), {})
     expect(calls).toEqual(['pick', 'reschedule', 'edit'])
     expect(action('scheduled_delete').args?.[0].kind).toBe('confirm')
+    expect(action('scheduled_resume').available(ctx(t))).toBe(false)
+    state = 'paused'
+    expect(action('scheduled_resume').available(ctx(t))).toBe(true)
+    expect(action('scheduled_send_now').available(ctx(t))).toBe(false)
+    expect(action('scheduled_edit').available(ctx(t))).toBe(true)
+    action('scheduled_resume').run(ctx(t), {})
+    expect(calls).toEqual(['pick', 'reschedule', 'edit', 'resume'])
     state = 'sending'
     for (const id of [
       'scheduled_edit',
       'scheduled_send_now',
+      'scheduled_resume',
       'scheduled_reschedule',
       'scheduled_delete',
     ])

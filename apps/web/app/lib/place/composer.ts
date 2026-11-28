@@ -557,6 +557,7 @@ const hosted = (account: AccountSession): Composer =>
             removeReply: k => store.getState().removeScheduledReply(k),
             reschedule: (k, at) => store.getState().rescheduleScheduled(k, at),
             sendNow: k => store.getState().sendScheduledNow(k),
+            resume: k => store.getState().resumeScheduled(k),
             remove: k => store.getState().deleteScheduled(k),
           },
           fetched,
@@ -1033,6 +1034,7 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
       removeReply: k => app.p2pScheduled.removeReply(k),
       reschedule: (k, at) => app.p2pScheduled.reschedule(k, at),
       sendNow: k => app.p2pScheduled.sendNow(k),
+      resume: () => app.p2pScheduled.resume(),
       remove: k => app.p2pScheduled.remove(k),
     }
     const later = (initial: boolean) =>

@@ -17,7 +17,7 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from 'react'
-import { CalendarClock, Pencil, RotateCcw, SendHorizontal, Trash2 } from 'lucide-react'
+import { CalendarClock, Pencil, Play, RotateCcw, SendHorizontal, Trash2 } from 'lucide-react'
 import { useAccount, useClock } from '../lib/client/react'
 import { useP2p, useP2pApp } from '../lib/client/p2p_react'
 import type { AccountSession } from '../lib/client/session'
@@ -103,7 +103,7 @@ export const useSendLater = (read: () => ComposerDraft | null) => {
 }
 
 // The composers' Send button: a click sends, right-click, long-press and the menu key open Send
-// later.
+// later. While it can't send (`disabled`) it stays reachable, so Send later still opens.
 export function SendButton({
   title,
   disabled,
@@ -128,13 +128,13 @@ export function SendButton({
       ref={buttonRef}
       icon={SendHorizontal}
       label="Send"
-      tooltip={fine && !disabled ? `${title} (right-click to send later)` : title}
+      tooltip={fine ? `${title} (right-click to send later)` : title}
       tone="filled"
       tight
       aria-haspopup="menu"
       data-send-button
-      disabled={disabled}
-      onClick={onSend}
+      aria-disabled={disabled || undefined}
+      onClick={disabled ? undefined : onSend}
       {...press}
     />
   )
@@ -147,10 +147,11 @@ export const useHostedOps = (): ScheduledOps => {
   const removeReply = useStore(s => s.removeScheduledReply)
   const reschedule = useStore(s => s.rescheduleScheduled)
   const sendNow = useStore(s => s.sendScheduledNow)
+  const resume = useStore(s => s.resumeScheduled)
   const remove = useStore(s => s.deleteScheduled)
   return useMemo(
-    () => ({ side: 'hosted', max, edit, removeReply, reschedule, sendNow, remove }),
-    [max, edit, removeReply, reschedule, sendNow, remove]
+    () => ({ side: 'hosted', max, edit, removeReply, reschedule, sendNow, resume, remove }),
+    [max, edit, removeReply, reschedule, sendNow, resume, remove]
   )
 }
 
@@ -167,6 +168,7 @@ export const useDeviceOps = (): ScheduledOps | null => {
       removeReply: p.removeReply,
       reschedule: p.reschedule,
       sendNow: p.sendNow,
+      resume: p.resume,
       remove: p.remove,
     }
   }, [identity])
@@ -271,6 +273,7 @@ function ScheduledRowView({
       onEdit(item.key)
     },
     sendNow: async () => setError(await ops.sendNow(item.key)),
+    resume: async () => setError(await ops.resume(item.key)),
     reschedule: async at => setError(await ops.reschedule(item.key, at)),
     pick: () => onPick(item.key),
     remove: async () => setError(await ops.remove(item.key)),
@@ -317,12 +320,16 @@ function ScheduledRowView({
         {!editing && item.state !== 'sending' && (
           <Row gap="3xs" place="shrink-0">
             <IconButton icon={Pencil} label="Edit" size="sm" onClick={() => row.edit()} />
-            <IconButton
-              icon={unsent ? RotateCcw : SendHorizontal}
-              label={unsent ? 'Retry' : 'Send now'}
-              size="sm"
-              onClick={run('scheduled_send_now')}
-            />
+            {item.state === 'paused' ? (
+              <IconButton icon={Play} label="Resume" size="sm" onClick={run('scheduled_resume')} />
+            ) : (
+              <IconButton
+                icon={unsent ? RotateCcw : SendHorizontal}
+                label={unsent ? 'Retry' : 'Send now'}
+                size="sm"
+                onClick={run('scheduled_send_now')}
+              />
+            )}
             <IconButton
               icon={CalendarClock}
               label="Reschedule"

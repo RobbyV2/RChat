@@ -179,6 +179,12 @@ export const scheduledSlice = (d: ScheduledDeps) => {
         const row = await api.patchScheduled(idOf(key), { at: Math.ceil(at / 1000) })
         patch(h => ({ ...h, items: { ...h.items, [key]: keepLabel(h.items[key], row) } }))
       }),
+    resumeScheduled: (key: string) =>
+      run(async () => {
+        const row = await api.patchScheduled(idOf(key), { resume: true })
+        patch(h => ({ ...h, items: { ...h.items, [key]: keepLabel(h.items[key], row) } }))
+        recountSoon()
+      }),
     sendScheduledNow: (key: string) =>
       run(async () => {
         await api.sendScheduled(idOf(key))

@@ -82,11 +82,8 @@ pub(crate) async fn sign_out(
         return Err(not_found());
     };
     let mut tx = state.db.begin().await?;
-    let ended = sqlx::query("DELETE FROM tokens WHERE username = $1")
-        .bind(&target.username)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
+    let ended =
+        crate::api::auth::end_sessions(&mut tx, &target.username, None, state.clock.unix()).await?;
     crate::api::instance_audit::record_in(
         &mut tx,
         &user.username,

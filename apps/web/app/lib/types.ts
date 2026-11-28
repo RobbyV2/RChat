@@ -607,7 +607,7 @@ export interface ScheduledMessage {
   content: string
   at: number
   next_at: number
-  status: 'waiting' | 'sending' | 'failed'
+  status: 'waiting' | 'sending' | 'failed' | 'paused'
   error: string | null
   place: ScheduledPlace | null
   created_at: number

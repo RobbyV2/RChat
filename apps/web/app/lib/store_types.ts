@@ -637,6 +637,7 @@ export interface RChatState {
   removeScheduledReply: (key: string) => Promise<string | null>
   rescheduleScheduled: (key: string, at: number) => Promise<string | null>
   sendScheduledNow: (key: string) => Promise<string | null>
+  resumeScheduled: (key: string) => Promise<string | null>
   deleteScheduled: (key: string) => Promise<string | null>
   reloadLayout: () => void
   noteEmoji: (base: string, picked: string) => void

@@ -34,7 +34,11 @@ const page = (items: ScheduledMessage[], next: string | null = null): ScheduledP
 
 // A slice on a small state of alice's, with an API that answers from `answers`.
 const rig = () => {
-  const calls: { listed: ScheduledQuery[]; created: ScheduleReq[] } = { listed: [], created: [] }
+  const calls: {
+    listed: ScheduledQuery[]
+    created: ScheduleReq[]
+    patched: [number, { resume?: boolean }][]
+  } = { listed: [], created: [], patched: [] }
   const toasts: [string, string | undefined][] = []
   const pages: ScheduledPage[] = []
   let state = {
@@ -59,6 +63,10 @@ const rig = () => {
     listScheduled: async (q: ScheduledQuery = {}) => {
       calls.listed.push(q)
       return pages.shift() ?? page([])
+    },
+    patchScheduled: async (id: number, patch: { resume?: boolean }) => {
+      calls.patched.push([id, patch])
+      return row({ id, status: patch.resume ? 'waiting' : 'paused' })
     },
     createScheduled: async (req: ScheduleReq) => {
       calls.created.push(req)
@@ -103,6 +111,16 @@ describe('hosted scheduled messages', () => {
     expect(r.get().scheduled.pages.c3).toBeNull()
     await r.slice.actions.loadScheduled('c3', true)
     expect(r.calls.listed.length).toBe(2)
+  })
+
+  test('resuming a paused one asks the site and shows it waiting again', async () => {
+    const r = rig()
+    r.pages.push(page([row({ id: 4, status: 'paused' })]))
+    await r.slice.actions.loadScheduled('')
+    expect(r.get().scheduled.items['h:4'].state).toBe('paused')
+    expect(await r.slice.actions.resumeScheduled('h:4')).toBeNull()
+    expect(r.calls.patched).toEqual([[4, { resume: true }]])
+    expect(r.get().scheduled.items['h:4'].state).toBe('waiting')
   })
 
   test('scheduling the draft sends it as written and clears the draft and reply', async () => {

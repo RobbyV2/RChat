@@ -131,10 +131,7 @@ pub(crate) async fn reset(
         return Err(not_found());
     }
     mark(&mut tx, username, by.username(), expires_at, t).await?;
-    sqlx::query("DELETE FROM tokens WHERE username = $1")
-        .bind(username)
-        .execute(&mut *tx)
-        .await?;
+    crate::api::auth::end_sessions(&mut tx, username, None, t).await?;
     by.record(
         &mut tx,
         "user.temp_password",

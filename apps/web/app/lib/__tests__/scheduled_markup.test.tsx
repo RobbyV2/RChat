@@ -13,6 +13,7 @@ const ops: ScheduledOps = {
   removeReply: async () => null,
   reschedule: async () => null,
   sendNow: async () => null,
+  resume: async () => null,
   remove: async () => null,
 }
 
@@ -45,7 +46,9 @@ describe('scheduled markup', () => {
     const off = renderToStaticMarkup(
       <SendButton title="Message is too long" disabled onSend={() => {}} draft={() => null} />
     )
-    expect(off).toContain('disabled=""')
+    expect(off).not.toContain('disabled=""')
+    expect(off).toContain('aria-disabled="true"')
+    expect(off).toContain('data-long-press')
     expect(off).toContain('title="Message is too long"')
   })
 
@@ -57,6 +60,7 @@ describe('scheduled markup', () => {
         items={[
           item({}),
           item({ key: 'h:2', state: 'failed', error: 'Gone', label: null }),
+          item({ key: 'h:4', state: 'paused' }),
           item({
             key: 'd:3',
             side: 'device',
@@ -65,10 +69,11 @@ describe('scheduled markup', () => {
         ]}
       />
     )
-    for (const label of ['Edit', 'Send now', 'Retry', 'Reschedule', 'Delete'])
+    for (const label of ['Edit', 'Send now', 'Retry', 'Resume', 'Reschedule', 'Delete'])
       expect([label, labelled(html, label)]).toEqual([label, true])
     expect(html).toContain('see you soon')
     expect(html).toContain('Not sent: Gone')
+    expect(html).toContain('Paused when you were signed out everywhere')
     expect(html).toContain('Somewhere you can&#x27;t open now')
     expect(html).toContain('general')
     expect(html.match(/class="streamer"/g)?.length).toBeGreaterThanOrEqual(3)

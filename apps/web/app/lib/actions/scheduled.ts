@@ -7,6 +7,7 @@ import {
   CalendarDays,
   Clock,
   Pencil,
+  Play,
   RotateCcw,
   SendHorizontal,
   Sunrise,
@@ -173,9 +174,19 @@ export const scheduledActions: Action[] = [
     },
     available: ctx => {
       const r = rowOf(ctx)
-      return r !== null && r.item.state !== 'sending'
+      return r !== null && r.item.state !== 'sending' && r.item.state !== 'paused'
     },
     run: ctx => void rowOf(ctx)?.sendNow(),
+  },
+  {
+    id: 'scheduled_resume',
+    title: 'Resume',
+    icon: Play,
+    scope: 'message',
+    targets: ['scheduled'],
+    order: 110,
+    available: ctx => rowOf(ctx)?.item.state === 'paused',
+    run: ctx => void rowOf(ctx)?.resume(),
   },
   {
     id: 'scheduled_reschedule',

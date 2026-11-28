@@ -523,10 +523,7 @@ pub(crate) async fn set_active_in(
         sqlx::query("UPDATE users SET suspended_at=$2 WHERE username=$1 AND suspended_at IS NULL AND password_hash <> '!purging'").bind(username).bind(now()).execute(&mut *tx).await?
     }.rows_affected() != 0;
     if changed && !active {
-        sqlx::query("DELETE FROM tokens WHERE username=$1")
-            .bind(username)
-            .execute(tx)
-            .await?;
+        crate::api::auth::end_sessions(tx, username, None, now()).await?;
     }
     Ok(changed)
 }

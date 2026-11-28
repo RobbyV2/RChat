@@ -1916,6 +1916,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       try {
         await api.changePassword(current, next, reauth)
         if (at !== sessionMark()) return null
+        // The change ended the other sessions, which pauses what the account scheduled.
+        scheduledHub.reload()
         const temporary = get().me?.password_temporary ?? null
         set(s =>
           s.me

@@ -1184,11 +1184,7 @@ async fn change_password_at(
         .execute(&mut *tx)
         .await?;
     }
-    sqlx::query("DELETE FROM tokens WHERE username = $1 AND token <> $2")
-        .bind(&user.username)
-        .bind(secret_key(&token))
-        .execute(&mut *tx)
-        .await?;
+    end_sessions(&mut tx, &user.username, Some(&secret_key(&token)), t).await?;
     if crate::api::temp_passwords::clear(&mut tx, &user.username).await? {
         crate::api::instance_audit::record_in(
             &mut tx,
@@ -1589,6 +1585,25 @@ pub(crate) async fn profile_changed(
         scope: crate::api::access::user_scope(&state.read(), &stored.username).await,
     });
     me_updated(&state.db, stored).await
+}
+
+/// Ends every session of `username`, except the one whose stored token is `keep`, and pauses
+/// the messages the account scheduled, inside the caller's transaction. Returns how many
+/// sessions ended.
+pub(crate) async fn end_sessions(
+    conn: &mut sqlx::AnyConnection,
+    username: &str,
+    keep: Option<&str>,
+    t: i64,
+) -> sqlx::Result<u64> {
+    let ended = sqlx::query("DELETE FROM tokens WHERE username = $1 AND token <> $2")
+        .bind(username)
+        .bind(keep.unwrap_or_default())
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    crate::api::scheduled::pause_account(conn, username, t).await?;
+    Ok(ended)
 }
 
 #[cfg(test)]
