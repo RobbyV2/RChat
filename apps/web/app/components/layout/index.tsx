@@ -206,9 +206,21 @@ export function FirstLine({ children }: { children: ReactNode }) {
 }
 
 // The place of a bar at the bottom of a pane (the composer, or what stands in for it): inset from
-// the sides and above the home indicator, or the keyboard while it is open.
-export function Dock({ children }: { children: ReactNode }) {
-  return <div className={dockLook}>{children}</div>
+// the sides and above the home indicator, or the keyboard while it is open. What it holds is a
+// column, `gap` apart.
+export function Dock({
+  gap = 'none',
+  children,
+  ...rest
+}: Omit<AllHTMLAttributes<HTMLDivElement>, 'className' | 'style'> & {
+  gap?: Space
+  children: ReactNode
+}) {
+  return (
+    <div {...rest} className={`flex ${dockLook(gap)}`}>
+      {children}
+    </div>
+  )
 }
 
 // Pulls its content up over what is above it (an avatar over a banner).

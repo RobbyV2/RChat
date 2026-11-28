@@ -56,7 +56,7 @@ import type { PollTarget } from '../lib/polls_store'
 import { RelayPicker } from './relay_settings'
 import type { RelayChoice } from '../lib/relays'
 import { useInstanceLabel } from './instance_badge'
-import { Dock, Row, Stack, Surface } from './layout'
+import { Dock, Row, Stack, Surface, Inset } from './layout'
 import { ScheduledChip, SendLaterDialog, useHostedItems, useHostedOps } from './scheduled'
 import { laterBlocked, type ComposerDraft } from '../lib/scheduled'
 
@@ -102,13 +102,9 @@ function ExpiryDialog({
           <RelayPicker value={relay} onChange={setRelay} prefs={prefs} />
           <Row gap="sm" align="stretch" wrap>
             {PRESETS.map(p => (
-              <button
-                key={p.label}
-                onClick={() => onPick(p.seconds, relay)}
-                className="rounded-full border border-outline px-3 py-1.5 text-sm hover:bg-surface-container-highest"
-              >
+              <Button key={p.label} variant="tonal" onClick={() => onPick(p.seconds, relay)}>
                 {p.label}
-              </button>
+              </Button>
             ))}
           </Row>
         </Stack>
@@ -218,22 +214,33 @@ function SiteFilterNote() {
   const seen = useHome(s => s.prefs.tips.includes(SITE_FILTER_NOTE))
   if (!on || owner === null || seen) return null
   return (
-    <p
+    <Surface
       data-filter-note
-      className="mb-2 flex items-center gap-2 rounded-2xl bg-surface-container px-3 py-1.5 text-xs text-on-surface-variant"
+      as="p"
+      row
+      pad="md"
+      inset="chip"
+      gap="sm"
+      tone="base"
+      text="xs"
+      ink="muted"
     >
       <ShieldAlert size={14} className="shrink-0" />
       <span className="min-w-0 flex-1">
         <span className="streamer">{label}</span> filters some words in server messages.
       </span>
-      <button
+      <Inset
         type="button"
         onClick={() => home.hideTip(SITE_FILTER_NOTE)}
-        className="shrink-0 cursor-pointer rounded-full px-2 py-0.5 font-medium text-primary hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary"
+        as="button"
+        pad="sm"
+        inset="chip"
+        look="cursor-pointer rounded-full font-medium text-primary hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary"
+        place="shrink-0"
       >
         Got it
-      </button>
-    </p>
+      </Inset>
+    </Surface>
   )
 }
 
@@ -340,10 +347,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   if (guest) {
     if (posting === 'ready' && view?.kind === 'channel' && channelId !== null && draftKey) {
       return (
-        <div
-          data-guest-editor
-          className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3"
-        >
+        <Dock data-guest-editor gap="sm">
           <TextComposer
             key={draftKey}
             inputRef={inputRef}
@@ -369,7 +373,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               cancelReply(draftKey)
             }}
           />
-        </div>
+        </Dock>
       )
     }
     return (
@@ -542,7 +546,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   }
 
   return (
-    <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
+    <Dock gap="sm">
       <PeerCodeButton text={text} />
       {pollOpen && pollTarget && (
         <CreatePollDialog target={pollTarget} onClose={() => setPollOpen(false)} />
@@ -568,51 +572,66 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         />
       )}
       {pending && (
-        <div className="relative mb-2 flex h-24 w-48 flex-col justify-between rounded-xl border border-outline-variant bg-surface-container p-3">
-          <button
+        <Surface
+          pad="md"
+          tone="base"
+          radius="lg"
+          border
+          justify="between"
+          look="h-24 w-48"
+          place="relative"
+        >
+          <Surface
             title="Remove file"
             onClick={() => attach(null)}
-            className="absolute -top-2 -right-2 rounded-full bg-error-container p-1 text-on-error-container shadow-elevation-1"
+            as="button"
+            pad="2xs"
+            tone="error"
+            radius="full"
+            elevation={1}
+            place="absolute -top-2 -right-2"
           >
             <X size={12} />
-          </button>
+          </Surface>
           <div className="flex items-center justify-between">
             <FileIcon size={20} className="text-primary" />
             <Row gap="2xs">
-              <button
+              <Surface
                 title={modeTitle(pending.mode, switchable, uploadHint)}
                 onClick={() => draftKey && toggleUploadMode(draftKey)}
                 disabled={!switchable}
-                className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium disabled:cursor-default ${
-                  pending.mode === 'p2p'
-                    ? 'bg-tertiary-container text-on-tertiary-container'
-                    : 'bg-surface-container-highest text-on-surface-variant'
-                }`}
+                as="button"
+                row
+                pad="sm"
+                inset="chip"
+                gap="2xs"
+                tone="plain"
+                radius="full"
+                text="xs"
+                look={`font-medium disabled:cursor-default ${pending.mode === 'p2p' ? 'bg-tertiary-container text-on-tertiary-container' : 'bg-surface-container-highest text-on-surface-variant'}`}
               >
                 {pending.mode === 'p2p' ? <Share2 size={12} /> : <Server size={12} />}
                 {pending.mode === 'p2p' ? 'P2P' : 'Server'}
-              </button>
-              <button
+              </Surface>
+              <Inset
                 title={pending.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
                 onClick={() => draftKey && toggleSpoiler(draftKey)}
-                className={`rounded-full p-1 ${
-                  pending.spoiler
-                    ? 'bg-primary-container text-on-primary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container-high'
-                }`}
+                as="button"
+                pad="2xs"
+                look={`rounded-full ${pending.spoiler ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
               >
                 {pending.spoiler ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
+              </Inset>
             </Row>
           </div>
           <span className="truncate text-xs">
             {pending.spoiler ? 'Spoiler · ' : ''}
             {pending.file.name}
           </span>
-        </div>
+        </Surface>
       )}
       {pending && describableFile(pending.file.name, pending.file.type) && (
-        <div data-alt-field className="mb-2 w-72 max-w-full">
+        <div data-alt-field className="w-72 max-w-full">
           <AltField
             value={pending.alt ?? ''}
             onChange={v => draftKey && setUploadAlt(draftKey, v)}
@@ -620,13 +639,21 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         </div>
       )}
       {slowLeft > 0 && (
-        <p
+        <Inset
           role="status"
-          className="mb-1 flex items-center justify-end gap-1 px-3 text-xs text-on-surface-variant tabular-nums"
+          as="p"
+          row
+          pad="md"
+          inset="sides"
+          gap="2xs"
+          justify="end"
+          text="xs"
+          ink="muted"
+          look="tabular-nums"
         >
           <Clock size={12} className="shrink-0" />
           Slow mode: {clock(slowLeft)}
-        </p>
+        </Inset>
       )}
       {draftKey && <ScheduledChip place={draftKey} items={scheduledItems} ops={scheduledOps} />}
       {!thread && <SiteFilterNote />}
@@ -681,6 +708,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           </>
         }
       />
-    </div>
+    </Dock>
   )
 }

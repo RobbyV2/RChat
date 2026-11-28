@@ -35,29 +35,27 @@ import { Row, Stack, Surface } from './layout'
 import { Sentinel, useOwn } from './ui'
 import { time } from '../lib/platform/time'
 
-function ThreadsToggle({ threads, className }: { threads: Threads; className: string }) {
+function ThreadsToggle({ threads, narrowHidden }: { threads: Threads; narrowHidden: boolean }) {
   const open = useLive(threads.state).open !== null
   return (
-    <button
+    <IconButton
+      icon={MessagesSquare}
+      label={THREADS_TITLE}
+      size="lg"
+      tone={open ? 'primary' : 'inherit'}
       data-threads-button
-      title={THREADS_TITLE}
-      aria-label={THREADS_TITLE}
       aria-haspopup="dialog"
       aria-expanded={open}
       onClick={() => (open ? threads.close() : threads.open())}
-      className={`rounded-full p-1.5 hover:bg-surface-container-high ${
-        open ? 'bg-surface-container-high text-primary' : ''
-      } ${className}`}
-    >
-      <MessagesSquare size={20} />
-    </button>
+      place={narrowHidden ? '@max-sm:hidden' : undefined}
+    />
   )
 }
 
 // The header button of the place around it.
-export function ThreadsButton({ className = '' }: { className?: string }) {
+export function ThreadsButton({ narrowHidden = false }: { narrowHidden?: boolean }) {
   const here = useFeature(threadsFeature)
-  return isUnsupported(here) ? null : <ThreadsToggle threads={here} className={className} />
+  return isUnsupported(here) ? null : <ThreadsToggle threads={here} narrowHidden={narrowHidden} />
 }
 
 interface ListState {

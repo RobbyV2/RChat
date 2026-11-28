@@ -345,8 +345,8 @@ export const firstLineLook = 'h-lh shrink-0 items-center'
 
 // Where a bar at the bottom of a pane sits (the composer, or what stands in for it): inset from the
 // sides, and above the home indicator or, while it is open, the on-screen keyboard.
-export const dockLook =
-  'mx-(--space-md) mb-[max(var(--space-md),env(safe-area-inset-bottom))] shrink-0 keyboard:mb-(--space-md)'
+export const dockLook = (gap: Space = 'none') =>
+  `mx-(--space-md) mb-[max(var(--space-md),env(safe-area-inset-bottom))] min-w-0 shrink-0 flex-col ${GAP[gap]} keyboard:mb-(--space-md)`
 
 // How far a box is pulled up over what is above it (an avatar over a banner).
 export type LiftBy = 'lg' | '2xl' | '3xl'

@@ -22,7 +22,7 @@ import { CloseButton, Masked, Sheet, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset } from './layout'
 
 // Pinning and unpinning: either DM participant, or a member with Pin messages in the channel.
 export function useCanPin() {
@@ -38,29 +38,27 @@ export function useCanPin() {
   return can && !timedOut
 }
 
-function PinsToggle({ pins, className }: { pins: Pins; className: string }) {
+function PinsToggle({ pins, narrowHidden }: { pins: Pins; narrowHidden: boolean }) {
   const open = useLive(pins.state).open
   return (
-    <button
+    <IconButton
+      icon={Pin}
+      label={PINS_TITLE}
+      size="lg"
+      tone={open ? 'primary' : 'inherit'}
       data-pins-button
-      title={PINS_TITLE}
-      aria-label={PINS_TITLE}
       aria-haspopup="dialog"
       aria-expanded={open}
       onClick={() => (open ? pins.close() : pins.open())}
-      className={`rounded-full p-1.5 hover:bg-surface-container-high ${
-        open ? 'bg-surface-container-high text-primary' : ''
-      } ${className}`}
-    >
-      <Pin size={20} />
-    </button>
+      place={narrowHidden ? '@max-sm:hidden' : undefined}
+    />
   )
 }
 
 // The header button of the place around it.
-export function PinsButton({ className = '' }: { className?: string }) {
+export function PinsButton({ narrowHidden = false }: { narrowHidden?: boolean }) {
   const here = useFeature(pinsFeature)
-  return isUnsupported(here) ? null : <PinsToggle pins={here} className={className} />
+  return isUnsupported(here) ? null : <PinsToggle pins={here} narrowHidden={narrowHidden} />
 }
 
 const pinLinkCls =
@@ -92,12 +90,17 @@ export function PinLine({
   return (
     <div {...row}>
       {divider}
-      <div
+      <Inset
         {...inner}
         {...press}
-        className="flex items-start gap-3 px-4 py-1 hover:bg-surface-container-low"
+        row
+        pad="lg"
+        inset="line"
+        gap="md"
+        align="start"
+        look="hover:bg-surface-container-low"
       >
-        <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
+        <span className="flex h-lh w-9 shrink-0 items-center justify-center text-on-surface-variant">
           <Pin size={16} />
         </span>
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
@@ -113,9 +116,9 @@ export function PinLine({
           <button type="button" onClick={() => pins?.open()} className={pinLinkCls}>
             pinned messages
           </button>
-          .<MessageTime ts={ts} className="ml-2 text-xs opacity-70" />
+          . <MessageTime ts={ts} className="text-xs opacity-70" />
         </p>
-      </div>
+      </Inset>
     </div>
   )
 }
@@ -158,7 +161,7 @@ function PinMedia({ m, server }: { m: Message; server: string | null }) {
   const media = m.media
   if (!media) return null
   if (media.removed)
-    return <p className="mt-1 text-xs text-on-surface-variant italic">Attachment removed</p>
+    return <p className="text-xs text-on-surface-variant italic">Attachment removed</p>
   const preview = (
     <PinMediaContent media={media} server={server} by={m.webhook ? null : m.author.username} />
   )
@@ -190,16 +193,27 @@ function PinMediaContent({
         src={src}
         alt={filename(media.filename)}
         loading="lazy"
-        className="mt-1.5 max-h-28 max-w-full rounded-lg"
+        className="max-h-28 max-w-full rounded-lg"
       />
     )
   return (
-    <span className="mt-1 flex w-fit max-w-full items-center gap-1.5 rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface-variant">
+    <Surface
+      as="span"
+      row
+      pad="sm"
+      inset="chip"
+      gap="xs"
+      tone="highest"
+      radius="md"
+      fit
+      text="xs"
+      ink="muted"
+    >
       <FileText size={12} className="shrink-0 text-primary" />
       <span className="truncate">
         <Masked text={media.filename} file by={by} />
       </span>
-    </span>
+    </Surface>
   )
 }
 
@@ -228,11 +242,19 @@ function PinEntry({
     onJump(key)
   }
   return (
-    <li
+    <Surface
       onClick={onClick}
-      className="group/pin relative cursor-pointer rounded-xl border border-outline-variant bg-surface-container px-3 py-2.5 hover:bg-surface-container-highest"
+      as="li"
+      pad="md"
+      inset="bar"
+      gap="2xs"
+      tone="base"
+      radius="lg"
+      border
+      look="cursor-pointer hover:bg-surface-container-highest"
+      place="group/pin relative"
     >
-      <div className="flex min-w-0 items-center gap-2 pr-20 pointer-coarse:min-h-11 pointer-coarse:pr-30">
+      <Row gap="sm" look="pointer-coarse:min-h-11" place="min-w-0">
         <ShownAvatar user={m.author} server={server} size={24} />
         <ShownName
           user={m.author}
@@ -243,26 +265,27 @@ function PinEntry({
           look="truncate text-sm font-medium text-on-surface"
         />
         <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
-      </div>
-      {m.forward && <p className="mt-1 text-xs text-on-surface-variant italic">Forwarded</p>}
+        <span aria-hidden className="w-20 shrink-0 pointer-coarse:w-30" />
+      </Row>
+      {m.forward && <p className="text-xs text-on-surface-variant italic">Forwarded</p>}
       {(m.kind === 'poll' || m.poll?.snapshot) && (
-        <p className="mt-1 flex items-center gap-1 text-xs font-medium text-primary">
+        <Row as="p" gap="2xs" text="xs" ink="primary" look="font-medium">
           <ChartColumn size={12} />
           Poll
-        </p>
+        </Row>
       )}
       {access === 'open' ? (
         <>
-          <div className="mt-1 max-h-36 overflow-hidden">
+          <div className="max-h-36 overflow-hidden">
             <MarkdownMessage message={text} />
           </div>
           <PinMedia m={m} server={server} />
         </>
       ) : (
-        <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1 text-sm text-on-surface-variant">
+        <Row as="p" gap="2xs" wrap text="sm" ink="muted" place="min-w-0">
           <span className="italic">Forwarded message</span>
           {target && <RevealChannelPreview target={target} />}
-        </p>
+        </Row>
       )}
       <Row gap="2xs" place="absolute top-2 right-2">
         <Button
@@ -282,7 +305,7 @@ function PinEntry({
           />
         )}
       </Row>
-    </li>
+    </Surface>
   )
 }
 
@@ -360,13 +383,13 @@ export function HeaderPopover({
 
   const body = (
     <>
-      <div className="flex shrink-0 items-center gap-2 px-4 pb-2">
+      <Inset row pad="lg" inset="bar" gap="sm" place="shrink-0">
         <Icon size={18} className="text-on-surface-variant" />
         <h2 id={titleId} className="flex-1 text-base font-medium text-on-surface">
           {title}
         </h2>
         {(!sheet || sheetClose) && <CloseButton onClick={onClose} />}
-      </div>
+      </Inset>
       {children}
     </>
   )
@@ -392,7 +415,7 @@ export function HeaderPopover({
       role="dialog"
       aria-labelledby={titleId}
       data-popover
-      className="absolute top-14 right-2 z-popover flex max-h-[min(36rem,calc(100%-4.5rem))] w-104 max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
+      className="absolute top-14 right-2 z-popover flex max-h-popover w-104 max-w-popover flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3"
     >
       {body}
     </div>

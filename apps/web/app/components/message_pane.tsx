@@ -997,9 +997,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         <Row gap="2xs" place="ml-auto shrink-0">
           {dm && !dm.is_self && !guest && !otherBlocked && <CallButtons dm={dm} />}
           <StatusClock timeCls="@max-lg:hidden" />
-          {scope && <SelectButton scope={scope} className="@max-sm:hidden" />}
-          {scope && <PinsButton className="@max-sm:hidden" />}
-          {scope && <ThreadsButton className="@max-sm:hidden" />}
+          {scope && <SelectButton scope={scope} narrowHidden />}
+          {scope && <PinsButton narrowHidden />}
+          {scope && <ThreadsButton narrowHidden />}
           {!guest && <InboxButton />}
           {view?.kind === 'channel' && !isVoice && (
             <IconButton

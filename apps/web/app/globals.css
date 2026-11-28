@@ -672,6 +672,15 @@ body {
   max-width: calc(100vw - 2rem);
 }
 
+/* A panel hung under a pane's header: inside the pane, under the header line. */
+@utility max-h-popover {
+  max-height: min(36rem, calc(100% - 4.5rem));
+}
+
+@utility max-w-popover {
+  max-width: calc(100% - 1rem);
+}
+
 @utility anchor-none {
   overflow-anchor: none;
 }

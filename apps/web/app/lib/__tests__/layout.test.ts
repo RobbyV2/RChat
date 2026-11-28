@@ -137,8 +137,9 @@ test('a surface can sit its children apart along its line, and draw a dashed edg
 })
 
 test('a docked bar sits inside the pane, above the home indicator or the keyboard', () => {
-  has(dockLook, 'mx-(--space-md)', 'keyboard:mb-(--space-md)', 'shrink-0')
-  expect(dockLook.includes('env(safe-area-inset-bottom)')).toBe(true)
+  has(dockLook(), 'mx-(--space-md)', 'keyboard:mb-(--space-md)', 'shrink-0')
+  has(dockLook('sm'), 'flex-col', 'gap-(--space-sm)')
+  expect(dockLook().includes('env(safe-area-inset-bottom)')).toBe(true)
 })
 
 test('a box gives its text a type step and a color from the tokens', () => {

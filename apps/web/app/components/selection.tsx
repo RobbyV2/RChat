@@ -21,7 +21,7 @@ import { canDeleteIn } from '../lib/selection_store'
 import { allKey, selectKey } from '../lib/shortcuts'
 import type { Message, UserRef } from '../lib/types'
 import { useMedia } from './context_menu'
-import { Row } from './layout'
+import { Row, Surface, Inset } from './layout'
 
 // Clicks on these never pick a row.
 const INTERACTIVE =
@@ -149,7 +149,7 @@ export function Selectable({
       }
     >
       {state > 0 && (
-        <button
+        <Inset
           type="button"
           role="checkbox"
           aria-checked={state === 2}
@@ -159,7 +159,12 @@ export function Selectable({
             e.stopPropagation()
             pick(e, true)
           }}
-          className="flex shrink-0 items-start pt-2.5 pl-3 outline-none"
+          as="button"
+          row
+          pad="md"
+          align="start"
+          look="outline-none"
+          place="shrink-0"
         >
           <span
             className={`flex h-5 w-5 items-center justify-center rounded-md border-2 ${
@@ -170,7 +175,7 @@ export function Selectable({
           >
             {state === 2 && <Check size={14} strokeWidth={3} />}
           </span>
-        </button>
+        </Inset>
       )}
       <div className={state ? 'min-w-0 flex-1' : undefined}>
         <RowSelecting.Provider value={state > 0}>{children}</RowSelecting.Provider>
@@ -183,10 +188,10 @@ export function Selectable({
 // "Select message" enters the mode there, and the header needs the room.
 export function SelectButton({
   scope,
-  className = '',
+  narrowHidden = false,
 }: {
   scope: string | null
-  className?: string
+  narrowHidden?: boolean
 }) {
   const acct = useAccount()
   const on = useStore(s => scope !== null && s.selection?.scope === scope)
@@ -194,19 +199,25 @@ export function SelectButton({
   if (!scope || !signedIn) return null
   const label = on ? 'Stop selecting' : 'Select messages'
   return (
-    <button
-      title={label}
-      aria-label={label}
-      aria-pressed={on}
+    <IconButton
+      icon={SquareCheckBig}
+      label={label}
+      size="lg"
+      tone="inherit"
+      pressed={on}
       onClick={() => {
         const s = acct.store.getState()
         if (on) s.exitSelection()
         else s.startSelection(scope)
       }}
-      className={`rounded-full p-1.5 ${on ? 'bg-secondary-container text-on-secondary-container' : `hidden hover:bg-surface-container-high md:inline-flex ${className}`}`}
-    >
-      <SquareCheckBig size={20} />
-    </button>
+      place={
+        on
+          ? undefined
+          : narrowHidden
+            ? 'hidden md:inline-flex @max-sm:hidden'
+            : 'hidden md:inline-flex'
+      }
+    />
   )
 }
 
@@ -247,8 +258,7 @@ export function useSelectionKeys(
   }, [acct, scope, thread])
 }
 
-const barBtn =
-  'flex shrink-0 items-center gap-1.5 rounded-full py-1.5 text-sm font-medium hover:bg-surface-container-highest disabled:opacity-50'
+const barLook = 'font-medium hover:bg-surface-container-highest disabled:opacity-50'
 
 // The bar shown while selecting in `scope`: sticky above the list on wide screens, a bottom
 // sheet (in place of the composer) on narrow ones.
@@ -307,71 +317,113 @@ export function SelectionBar({
     </span>
   )
   const buttons = primary.map(a => (
-    <button
+    <Surface
       key={a.id}
       title={a.label}
       aria-label={a.label}
       disabled={busy !== null}
       onClick={a.run}
-      className={`${barBtn} ${compact ? 'px-2' : 'px-3'} ${a.danger ? 'text-error' : ''}`}
+      as="button"
+      row
+      pad={compact ? 'sm' : 'md'}
+      inset="chip"
+      gap="xs"
+      tone="plain"
+      radius="full"
+      text="sm"
+      look={`${barLook} ${a.danger ? 'text-error' : ''}`}
+      place="shrink-0"
     >
       {a.icon && <a.icon size={16} />}
       <span className={sheet || compact ? 'sr-only' : 'hidden lg:inline'}>{a.label}</span>
-    </button>
+    </Surface>
   ))
   const moreBtn = more.length > 0 && (
-    <button
+    <Surface
       title="More actions"
       aria-label="More actions"
       disabled={busy !== null}
       onClick={openMore}
-      className={`${barBtn} ${compact ? 'px-2' : 'px-3'}`}
+      as="button"
+      row
+      pad={compact ? 'sm' : 'md'}
+      inset="chip"
+      gap="xs"
+      tone="plain"
+      radius="full"
+      text="sm"
+      look={barLook}
+      place="shrink-0"
     >
       <Ellipsis size={16} />
-    </button>
+    </Surface>
   )
   if (sheet)
     return (
-      <div
+      <Surface
         role="toolbar"
         aria-label="Selected messages"
-        className="shrink-0 rounded-t-2xl border-t border-outline-variant bg-surface-container-high px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-elevation-2"
+        pad="md"
+        gap="2xs"
+        tone="high"
+        radius="none"
+        border="top"
+        safe
+        elevation={2}
+        look="rounded-t-2xl"
+        place="shrink-0"
       >
         <Row gap="sm">
           {exit}
           {status}
-          <button
+          <Surface
             aria-pressed={selection.ranging}
             title="Select range: tap the first and the last message"
             onClick={() => acct.store.getState().toggleSelectRange()}
-            className={`${barBtn} px-3 ${selection.ranging ? 'bg-secondary-container text-on-secondary-container' : ''}`}
+            as="button"
+            row
+            pad="md"
+            inset="chip"
+            gap="xs"
+            tone="plain"
+            radius="full"
+            text="sm"
+            look={`${barLook} ${selection.ranging ? 'bg-secondary-container text-on-secondary-container' : ''}`}
+            place="shrink-0"
           >
             <ListChecks size={16} />
             Select range
-          </button>
+          </Surface>
         </Row>
         {selection.ranging && (
-          <p className="px-2 pt-1 text-xs text-on-surface-variant">
+          <p className="text-xs text-on-surface-variant">
             {selection.anchor === null ? 'Tap the first message' : 'Tap the last message'}
           </p>
         )}
-        <div className="mt-1 flex items-center justify-around gap-1">
+        <Row gap="2xs" justify="around">
           {buttons}
           {moreBtn}
-        </div>
-      </div>
+        </Row>
+      </Surface>
     )
   return (
-    <div
+    <Surface
       role="toolbar"
       aria-label="Selected messages"
-      className={`z-raised flex shrink-0 items-center border-b border-outline-variant bg-surface-container-high py-1.5 ${compact ? 'gap-0.5 px-1.5' : 'gap-1 px-3'}`}
+      row
+      pad={compact ? 'xs' : 'md'}
+      inset="chip"
+      gap={compact ? '3xs' : '2xs'}
+      tone="high"
+      radius="none"
+      border="bottom"
+      place="z-raised shrink-0"
     >
       {exit}
       {status}
       {buttons}
       {moreBtn}
-    </div>
+    </Surface>
   )
 }
 
@@ -383,19 +435,31 @@ export function BulkJobBar({ scope }: { scope: string | null }) {
   const done = job.deleted.toLocaleString('en-US')
   const of = job.estimate.toLocaleString('en-US')
   return (
-    <div
+    <Surface
       role="status"
-      className="z-raised flex shrink-0 items-center gap-3 border-b border-outline-variant bg-secondary-container px-4 py-1.5 text-sm text-on-secondary-container"
+      row
+      pad="lg"
+      inset="chip"
+      gap="md"
+      tone="secondary"
+      radius="none"
+      border="bottom"
+      text="sm"
+      place="z-raised shrink-0"
     >
       <span className="min-w-0 flex-1 truncate">
         Deleting messages: {done} of about {of}
       </span>
-      <button
+      <Inset
         onClick={() => void acct.store.getState().cancelBulkJob(scope)}
-        className="shrink-0 rounded-full px-3 py-1 font-medium hover:bg-on-secondary-container/10"
+        as="button"
+        pad="md"
+        inset="chip"
+        look="rounded-full font-medium hover:bg-on-secondary-container/10"
+        place="shrink-0"
       >
         Cancel
-      </button>
-    </div>
+      </Inset>
+    </Surface>
   )
 }
