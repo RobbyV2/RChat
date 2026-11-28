@@ -56,14 +56,17 @@ describe('ICE config', () => {
     )
     expect(outside.map(o => rel(o.f))).toEqual([])
     const peerjs = files.filter(({ src }) => /from\s+['"]peerjs['"]/.test(src))
-    // P2P files and calls (p2p.ts) and P2P messaging (p2p/transport.ts), each with its own Peer.
-    expect(peerjs.map(o => rel(o.f)).sort()).toEqual(['p2p.ts', 'transport.ts'])
+    // P2P files and calls (p2p.ts) and P2P messaging (p2p/transport.ts), each with its own Peer,
+    // made by the one opener (api/peer.ts).
+    expect(peerjs.map(o => rel(o.f)).sort()).toEqual(['p2p.ts', 'peer.ts', 'transport.ts'])
+    const made = files.filter(({ src }) => /\bnew\s+Peer(Class)?\s*\(/.test(src))
+    expect(made.map(o => o.f.slice(o.f.lastIndexOf('/lib/')))).toEqual(['/lib/api/peer.ts'])
     const rtc = files.find(({ f }) => f.endsWith('/lib/rtc.ts'))
     const connections = [...(rtc?.src ?? '').matchAll(/new RTCPeerConnection\((.*)\)/g)]
     expect(connections.map(match => match[1])).toEqual(['this.ice()'])
     for (const name of ['/lib/p2p.ts', '/p2p/transport.ts']) {
       const file = files.find(({ f }) => f.endsWith(name))
-      const peers = [...(file?.src ?? '').matchAll(/new\s+Peer\s*\(([^;]*?)\)\s*(?:\n|;|$)/g)]
+      const peers = [...(file?.src ?? '').matchAll(/\bopenPeer\s*\(([^;]*?)\)\s*(?:\n|;|$)/g)]
       expect(peers.length > 0).toBe(true)
       // P2P peers get the instance config plus the user's own relays (relays.ts builds it on ice),
       // relayed candidates only when offers can't be checked (transport.ts answerConfig).
