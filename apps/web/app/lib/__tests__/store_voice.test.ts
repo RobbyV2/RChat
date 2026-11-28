@@ -80,7 +80,9 @@ beforeEach(() => {
   })
 })
 
-afterEach(() => {
+afterEach(async () => {
+  // A change of ours still waiting to be said is said (to nobody) before the clock goes.
+  await clock.pass(AUDIO_SEND_MS)
   rtc.leave()
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: realNavigator })
   ws.sendVoice = realSend
