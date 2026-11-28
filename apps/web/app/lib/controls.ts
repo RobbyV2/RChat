@@ -146,7 +146,14 @@ export type Look<S extends string> = S & LookTokens<S>
 
 const words = (s: string) => s.split(/\s+/).filter(Boolean)
 
-const DISPLAY: readonly string[] = ['hidden', 'flex', 'inline-flex', 'inline-block']
+const DISPLAY: readonly string[] = [
+  'hidden',
+  'flex',
+  'inline-flex',
+  'inline-block',
+  'grid',
+  'block',
+]
 const POSITION: readonly string[] = ['absolute', 'relative', 'fixed', 'sticky']
 
 // The control's own display and position (`base`), its look and its placement as one class list.

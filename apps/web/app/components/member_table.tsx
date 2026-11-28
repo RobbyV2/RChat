@@ -19,8 +19,8 @@ import {
 } from '../lib/member_filters'
 import { longPress } from './context_menu'
 import { Button, Chip, IconButton } from './controls'
-import { Row, Stack, Surface } from './layout'
-import { fieldCls } from './ui'
+import { Row, Stack, Surface, Inset } from './layout'
+import { fieldCls, smallFieldCls } from './ui'
 
 // The member search of server settings, the same on hosted servers and P2P rooms: a search
 // field, filters shown as removable chips, and rows that open the member's action menu by
@@ -69,7 +69,7 @@ function DayRange({
           type="date"
           value={after === null ? '' : dayOf(after)}
           onChange={e => onChange(dayStart(e.target.value), before)}
-          className={`${fieldCls} max-w-40 flex-none py-1`}
+          className={`${smallFieldCls} max-w-40 flex-none`}
         />
         <label htmlFor={`${id}t`} className="text-xs text-on-surface-variant">
           To
@@ -79,7 +79,7 @@ function DayRange({
           type="date"
           value={before === null ? '' : lastDay(before)}
           onChange={e => onChange(after, dayEnd(e.target.value))}
-          className={`${fieldCls} max-w-40 flex-none py-1`}
+          className={`${smallFieldCls} max-w-40 flex-none`}
         />
       </Row>
     </Stack>
@@ -119,7 +119,7 @@ export function MemberFilterBar({
           onChange={e => onChange({ ...value, sort: e.target.value as MemberSort })}
           aria-label="Sort members"
           title="Sort members"
-          className="rounded-xl border border-outline bg-surface-container-high px-2 py-2 text-base text-on-surface md:text-sm"
+          className={`${smallFieldCls} text-on-surface`}
         >
           {sorts.map(s => (
             <option key={s} value={s}>
@@ -131,9 +131,17 @@ export function MemberFilterBar({
       {chips.length > 0 && (
         <Row as="ul" aria-label="Filters in use" gap="xs" wrap>
           {chips.map(c => (
-            <li
+            <Surface
               key={`${c.kind}${c.id ?? ''}`}
-              className="flex max-w-full items-center gap-1 rounded-full bg-secondary-container py-0.5 pr-0.5 pl-3 text-sm text-on-secondary-container"
+              as="li"
+              row
+              pad="md"
+              inset="sides"
+              gap="2xs"
+              tone="secondary"
+              radius="full"
+              text="sm"
+              place="max-w-full"
             >
               <span className="truncate">{c.label}</span>
               <IconButton
@@ -143,7 +151,7 @@ export function MemberFilterBar({
                 size="sm"
                 onClick={() => onChange(dropChip(value, c))}
               />
-            </li>
+            </Surface>
           ))}
         </Row>
       )}
@@ -189,7 +197,7 @@ export function MemberFilterBar({
               <select
                 value={value.via ?? ''}
                 onChange={e => onChange({ ...value, via: e.target.value || null })}
-                className="max-w-full rounded-xl border border-outline bg-surface-container-high px-2 py-2 text-base text-on-surface md:text-sm"
+                className={`${smallFieldCls} max-w-full text-on-surface`}
               >
                 <option value="">Any way</option>
                 {choices.via.map(v => (
@@ -212,9 +220,9 @@ export function MemberFilterBar({
 }
 
 const columns = (created: boolean, joined: boolean) => {
-  if (created && joined) return 'sm:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_2.25rem]'
-  if (created || joined) return 'sm:grid-cols-[minmax(0,1fr)_6.5rem_2.25rem]'
-  return 'sm:grid-cols-[minmax(0,1fr)_2.25rem]'
+  if (created && joined) return 'sm:cols-member-2'
+  if (created || joined) return 'sm:cols-member-1'
+  return 'sm:cols-member-0'
 }
 
 export function MemberTable({
@@ -231,9 +239,15 @@ export function MemberTable({
 }) {
   return (
     <Stack role="table" aria-label={label} data-member-table gap="none">
-      <div
+      <Inset
         role="row"
-        className={`hidden gap-x-3 px-2 pb-1 text-xs font-medium text-on-surface-variant sm:grid ${columns(created, joined)}`}
+        pad="sm"
+        inset="sides"
+        gap="md"
+        text="xs"
+        ink="muted"
+        look={`font-medium ${columns(created, joined)}`}
+        place="hidden sm:grid"
       >
         <span role="columnheader">Member</span>
         {joined && <span role="columnheader">Joined</span>}
@@ -241,7 +255,7 @@ export function MemberTable({
         <span role="columnheader" className="sr-only">
           Actions
         </span>
-      </div>
+      </Inset>
       <Stack role="rowgroup" gap="none">
         {children}
       </Stack>
@@ -280,11 +294,18 @@ export function MemberTableRow({
     .filter(Boolean)
     .join(' · ')
   return (
-    <div
+    <Surface
       role="row"
       data-member-row={rowKey}
       {...longPress(menu)}
-      className={`grid grid-cols-[minmax(0,1fr)_2.25rem] items-center gap-x-3 rounded-xl px-2 py-1.5 hover:bg-surface-container-highest ${columns(created, dated)}`}
+      pad="sm"
+      inset="bar"
+      gap="md"
+      tone="plain"
+      radius="lg"
+      align="center"
+      look={`cols-member-0 hover:bg-surface-container-highest ${columns(created, dated)}`}
+      place="grid"
     >
       <Row role="cell" gap="sm">
         {avatar}
@@ -317,6 +338,6 @@ export function MemberTableRow({
           }}
         />
       </Row>
-    </div>
+    </Surface>
   )
 }

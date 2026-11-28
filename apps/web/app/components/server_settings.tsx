@@ -107,7 +107,7 @@ import {
   contrastWarning,
   headerColors,
 } from '../lib/server_colors'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset } from './layout'
 import {
   Dialog,
   FieldError,
@@ -125,6 +125,7 @@ import { endsText } from '../lib/durations'
 import { ServerSettingsPage } from './server_settings_page'
 import { HostedServer } from '../lib/place/place'
 import { type ServerSettingsSection } from '../lib/server_settings_sections'
+import { Button } from './controls'
 
 function HostedSystemMessages({ server }: { server: string }) {
   const place = useHostedServer(server)
@@ -878,13 +879,20 @@ export function ServerAppearance({
           />
           <Surface pad="sm" gap="3xs" tone="plain" radius="none" aria-hidden>
             {preview.map(c => (
-              <span
+              <Inset
                 key={c.id}
-                className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-on-surface-variant"
+                as="span"
+                row
+                pad="sm"
+                inset="chip"
+                gap="xs"
+                text="sm"
+                ink="muted"
+                look="rounded-lg"
               >
                 <Hash size={16} className="shrink-0" />
                 <span className="truncate">{c.name}</span>
-              </span>
+              </Inset>
             ))}
           </Surface>
         </div>
@@ -916,7 +924,7 @@ export function ServerAppearance({
         )}
         {warning && (
           <Row as="p" role="status" gap="xs" align="start">
-            <TriangleAlert size={14} className="mt-px shrink-0 text-error" aria-hidden />
+            <TriangleAlert size={14} className="shrink-0 text-error" aria-hidden />
             <span className="text-xs text-error">{warning}</span>
           </Row>
         )}
@@ -1297,30 +1305,37 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
                       value={c.value}
                       checked={c.value === choice}
                       onChange={() => setChoice(c.value)}
-                      className="mt-0.5 shrink-0 accent-primary"
+                      className="shrink-0 accent-primary"
                     />
                     <span className="min-w-0">
                       <span className="block text-sm font-medium text-on-surface">{c.label}</span>
-                      <span className="block pt-0.5 text-xs text-on-surface-variant">
-                        {c.detail}
-                      </span>
+                      <span className="block text-xs text-on-surface-variant">{c.detail}</span>
                     </span>
                   </Surface>
                   {c.option && c.value === choice && (
-                    <label className="flex cursor-pointer gap-3 border-t border-outline-variant py-2.5 pr-3 pl-9">
+                    <Inset
+                      as="label"
+                      row
+                      pad="md"
+                      inset="bar"
+                      gap="md"
+                      align="stretch"
+                      border="top"
+                      look="cursor-pointer"
+                    >
                       <input
                         type="checkbox"
                         checked={optionOn}
                         onChange={e => setOptionOn(e.target.checked)}
-                        className="mt-0.5 shrink-0 accent-primary"
+                        className="shrink-0 accent-primary"
                       />
                       <span className="min-w-0">
                         <span className="block text-sm text-on-surface">{c.option.label}</span>
-                        <span className="block pt-0.5 text-xs text-on-surface-variant">
+                        <span className="block text-xs text-on-surface-variant">
                           {c.option.detail}
                         </span>
                       </span>
-                    </label>
+                    </Inset>
                   )}
                 </div>
               ))}
@@ -1627,14 +1642,14 @@ function Settings({ server, section }: { server: string; section: ServerSettings
                       </span>
                     </>,
                     editingAdmin === m.username && (
-                      <div className="pl-9">
+                      <Inset pad="2xl" inset="sides">
                         <AdminPermsEditor
                           server={server}
                           username={m.username}
                           perms={m.perms}
                           limit={limit}
                         />
-                      </div>
+                      </Inset>
                     )
                   )
                 )}
@@ -1722,7 +1737,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
             Deletes the server with all of its channels and messages for everyone. This cannot be
             undone.
           </p>
-          <button
+          <Button
             onClick={() =>
               askConfirm({
                 title: 'Delete Server',
@@ -1734,10 +1749,11 @@ function Settings({ server, section }: { server: string; section: ServerSettings
                 },
               })
             }
-            className="rounded-full border border-error px-4 py-2 text-sm font-medium text-error hover:bg-error-container hover:text-on-error-container"
+            variant="danger"
+            size="md"
           >
             Delete server
-          </button>
+          </Button>
         </Row>
       </>
     ),

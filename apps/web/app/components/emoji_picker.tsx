@@ -52,7 +52,7 @@ import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { useMedia } from './context_menu'
 import { Button, IconButton } from './controls'
 import { Sheet } from './ui'
-import { Stack, Surface } from './layout'
+import { Stack, Surface, Inset, Grid } from './layout'
 import { time } from '../lib/platform/time'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
@@ -457,13 +457,19 @@ const PickerBody = memo(function PickerBody({
   }
 
   const rail = groups.length > 0 && !query.trim() && (
-    <nav
+    <Surface
       aria-label="Emoji categories"
-      className={
-        sheet
-          ? 'flex shrink-0 justify-between gap-0.5 px-3 pb-2'
-          : 'flex w-12 shrink-0 flex-col items-center gap-0.5 overflow-y-auto bg-surface-container py-2 scrollbar-none'
-      }
+      as="nav"
+      row={sheet}
+      pad={sheet ? 'md' : '2xs'}
+      inset={sheet ? 'bar' : 'even'}
+      gap="3xs"
+      tone={sheet ? 'plain' : 'base'}
+      radius="none"
+      justify={sheet ? 'between' : 'start'}
+      align={sheet ? 'stretch' : 'center'}
+      look={sheet ? '' : 'w-12 scrollbar-none'}
+      place={sheet ? 'shrink-0' : 'shrink-0 overflow-y-auto'}
     >
       {CATEGORIES.filter(c => groups.some(g => g.id === c.id)).map(c => {
         const Icon = ICONS[c.id]
@@ -488,7 +494,7 @@ const PickerBody = memo(function PickerBody({
           </button>
         )
       })}
-    </nav>
+    </Surface>
   )
 
   const grid = useMemo(
@@ -501,18 +507,21 @@ const PickerBody = memo(function PickerBody({
           }}
           role="group"
           aria-label={g.label}
-          className="pb-1"
           style={{
             contentVisibility: 'auto',
             containIntrinsicHeight: `${sectionHeight(g.items.length, cols, cell, HEADER)}px`,
           }}
         >
-          <div
+          <Inset
             aria-hidden
-            className="sticky top-0 z-raised h-7.5 bg-surface-container-high/95 px-2 pt-2 pb-1.5 text-xs font-medium tracking-wide text-on-surface-variant uppercase backdrop-blur-sm"
+            row
+            pad="sm"
+            inset="sides"
+            look="h-7.5 bg-surface-container-high/95 text-xs font-medium tracking-wide text-on-surface-variant uppercase backdrop-blur-sm"
+            place="sticky top-0 z-raised"
           >
             {g.label}
-          </div>
+          </Inset>
           <div className="grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
             {g.items.map((e, i) => (
               <button
@@ -565,18 +574,21 @@ const PickerBody = memo(function PickerBody({
     )
   } else if (!data) {
     content = (
-      <div
-        aria-label="Loading emoji"
-        className="grid gap-1 p-2"
-        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
-      >
-        {Array.from({ length: cols * 6 }, (_, i) => (
-          <div
-            key={i}
-            className="aspect-square animate-pulse rounded-lg bg-surface-container-highest/60"
-          />
-        ))}
-      </div>
+      <Inset pad="sm">
+        <Grid
+          aria-label="Loading emoji"
+          cols={1}
+          gap="2xs"
+          at={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+        >
+          {Array.from({ length: cols * 6 }, (_, i) => (
+            <div
+              key={i}
+              className="aspect-square animate-pulse rounded-lg bg-surface-container-highest/60"
+            />
+          ))}
+        </Grid>
+      </Inset>
     )
   } else if (!hasGrid) {
     content = (
@@ -613,7 +625,7 @@ const PickerBody = memo(function PickerBody({
 
   return (
     <>
-      <div className={`flex shrink-0 items-center gap-2 ${sheet ? 'px-3 pb-2' : 'p-3 pb-2'}`}>
+      <Inset row pad="md" inset={sheet ? 'bar' : 'even'} gap="sm" place="shrink-0">
         <Surface
           pad="md"
           inset="sides"
@@ -674,10 +686,15 @@ const PickerBody = memo(function PickerBody({
             {toneHand(tone)}
           </button>
           {toneOpen && (
-            <div
+            <Surface
               role="menu"
               aria-label="Skin tone"
-              className="absolute top-full right-0 z-float mt-1 flex flex-col gap-0.5 rounded-3xl bg-surface-container-highest p-1 shadow-elevation-2"
+              pad="2xs"
+              gap="3xs"
+              tone="highest"
+              radius="hero"
+              elevation={2}
+              place="absolute top-full right-0 z-float translate-y-1"
             >
               {TONE_NAMES.map((name, t) => (
                 <button
@@ -701,23 +718,34 @@ const PickerBody = memo(function PickerBody({
                   {toneHand(t)}
                 </button>
               ))}
-            </div>
+            </Surface>
           )}
         </div>
-      </div>
+      </Inset>
       {sheet && rail}
       <div className="flex min-h-0 flex-1">
         {!sheet && rail}
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          {content}
+          <Inset pad="sm" inset="sides">
+            {content}
+          </Inset>
         </div>
       </div>
       {!sheet && (
-        <div className="flex h-14 shrink-0 items-center gap-3 border-t border-outline-variant/60 bg-surface-container px-4">
+        <Surface
+          row
+          pad="lg"
+          inset="sides"
+          gap="md"
+          tone="base"
+          radius="none"
+          look="h-14 border-t border-outline-variant/60"
+          place="shrink-0"
+        >
           {preview && (
             <>
               <span aria-hidden className="font-emoji text-3xl leading-none">
@@ -731,7 +759,7 @@ const PickerBody = memo(function PickerBody({
               </div>
             </>
           )}
-        </div>
+        </Surface>
       )}
     </>
   )

@@ -71,8 +71,8 @@ import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { useLook } from './shown_user'
 import { UserAvatar } from './user_avatar'
 import { Button, IconButton, LinkButton, ListRow } from './controls'
-import { Row, Stack, Surface } from './layout'
-import { Masked, Sheet, useCopied, useOwnServer } from './ui'
+import { Row, Stack, Surface, Inset, Lift } from './layout'
+import { Masked, Sheet, useCopied, useOwnServer, fieldCls } from './ui'
 import { dmPlaceholder } from '../lib/display_name'
 import { ProfileFriendButton } from './friends'
 import { COARSE_QUERY, useMedia } from './context_menu'
@@ -87,9 +87,15 @@ export function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; childr
       ? 'bg-primary-container text-on-primary-container'
       : 'bg-tertiary-container text-on-tertiary-container'
   return (
-    <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-3xs font-medium ${cls}`}>
+    <Inset
+      as="span"
+      pad="xs"
+      inset="chip"
+      look={`rounded-md text-3xs font-medium ${cls}`}
+      place="shrink-0"
+    >
       {children}
-    </span>
+    </Inset>
   )
 }
 
@@ -539,12 +545,12 @@ function Card({ target }: { target: ProfileTarget }) {
           <div className="absolute top-2 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-surface-container-highest/80 ring-1 ring-outline-variant" />
         )}
       </div>
-      <div className={sheet ? 'px-5' : 'px-4'}>
+      <Inset pad="lg" inset="sides">
         <Stack gap="md">
           <Stack gap="sm">
-            <div className="-mt-12">
+            <Lift by="3xl">
               <Row gap="sm" align="end" justify="between">
-                <span className="relative block shrink-0 rounded-full bg-surface-container-high p-1.5">
+                <Surface as="span" pad="xs" tone="high" radius="full" place="relative shrink-0">
                   <UserAvatar person={placed} size={80} />
                   {member && (
                     <span
@@ -554,7 +560,7 @@ function Card({ target }: { target: ProfileTarget }) {
                       }`}
                     />
                   )}
-                </span>
+                </Surface>
                 {member && (member.is_creator || member.is_admin) && (
                   <Surface as="span" tone="plain" radius="none" pad="2xs">
                     <Row as="span" gap="2xs" justify="end">
@@ -564,7 +570,7 @@ function Card({ target }: { target: ProfileTarget }) {
                   </Surface>
                 )}
               </Row>
-            </div>
+            </Lift>
             <Stack gap="2xs">
               <Stack gap="none">
                 <p
@@ -675,18 +681,25 @@ function Card({ target }: { target: ProfileTarget }) {
                     <p className={labelCls}>{roles.length === 1 ? 'Role' : 'Roles'}</p>
                     <Row gap="xs" wrap>
                       {roles.map(r => (
-                        <span
+                        <Surface
                           key={r.id}
-                          className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full bg-surface-container-highest py-0.5 pr-1 pl-2 text-xs font-medium text-on-surface"
+                          as="span"
+                          row
+                          pad="sm"
+                          inset="chip"
+                          gap="xs"
+                          tone="highest"
+                          radius="full"
+                          text="xs"
+                          look="font-medium"
+                          place="inline-flex max-w-full min-w-0"
                         >
                           <span
                             aria-hidden
                             style={{ background: r.color }}
                             className="h-2.5 w-2.5 shrink-0 rounded-full"
                           />
-                          <span
-                            className={`truncate ${editRoles && roleEditable(input, r, true) ? '' : 'pr-1'}`}
-                          >
+                          <span className="truncate">
                             <Masked text={r.name} own={ownServer} />
                           </span>
                           {editRoles && roleEditable(input, r, true) && (
@@ -698,7 +711,7 @@ function Card({ target }: { target: ProfileTarget }) {
                               onClick={() => roleChange(r, false)}
                             />
                           )}
-                        </span>
+                        </Surface>
                       ))}
                       {addable.length > 0 && (
                         <button
@@ -808,14 +821,14 @@ function Card({ target }: { target: ProfileTarget }) {
                     }}
                     aria-label="Send a direct message"
                     placeholder={dmPlaceholder(user, streamer) + suffix}
-                    className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2 text-base text-on-surface outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm"
+                    className={`w-full ${fieldCls} bg-surface-container-low text-on-surface`}
                   />
                 )}
               </div>
             )}
           </Stack>
         </Stack>
-      </div>
+      </Inset>
     </>
   )
 
@@ -847,7 +860,7 @@ function Card({ target }: { target: ProfileTarget }) {
         top: pos?.y ?? y,
         visibility: pos ? 'visible' : 'hidden',
       }}
-      className="fixed z-top flex max-h-screen-inset w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high pb-4 shadow-elevation-3 outline-none"
+      className="fixed z-top flex max-h-screen-inset w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high shadow-elevation-3 outline-none"
     >
       {body}
     </div>

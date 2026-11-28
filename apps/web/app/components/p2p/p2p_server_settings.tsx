@@ -26,7 +26,7 @@ import { voiceNotice } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { fieldCls, filledBtn, Masked, Sentinel, textBtn } from '../ui'
-import { Row, Stack, Surface } from '../layout'
+import { Row, Stack, Surface, Inset } from '../layout'
 import { ServerSettingsPage } from '../server_settings_page'
 import { page, PAGE } from '../../lib/paging'
 import { MemberAvatar } from './p2p_badge'
@@ -58,6 +58,7 @@ import { relativeTime } from '../../lib/timestamps'
 import type { LogPage } from '../../lib/p2p/server/modlog'
 import { usePermissionRules } from '../use_permission_rules'
 import { time } from '../../lib/platform/time'
+import { Button } from '../controls'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
@@ -266,7 +267,7 @@ function Channels({ v }: { v: ServerView }) {
                 className={`${fieldCls} min-w-0 flex-1`}
               />
               {edit && (voice || texts.length > 1) && (
-                <button
+                <Inset
                   title={`Delete ${voice ? mask(c.name) : `#${mask(c.name)}`}`}
                   aria-label={`Delete ${label}`}
                   onClick={() =>
@@ -279,10 +280,12 @@ function Channels({ v }: { v: ServerView }) {
                       action: () => void p2pServer.removeChannel(v.id, c.id),
                     })
                   }
-                  className="rounded-full p-1.5 text-error hover:bg-surface-container-highest"
+                  as="button"
+                  pad="xs"
+                  look="rounded-full text-error hover:bg-surface-container-highest"
                 >
                   <Trash2 size={16} />
-                </button>
+                </Inset>
               )}
             </Row>
             <input
@@ -577,7 +580,7 @@ function Bans({ v }: { v: ServerView }) {
               </button>
             )}
             {(timedBan(m) || (lift && m.banReason)) && (
-              <span className="basis-full pl-11 text-xs break-words text-on-surface-variant">
+              <span className="basis-full text-xs break-words text-on-surface-variant">
                 {[banStateText(m, now), lift ? m.banReason : null].filter(Boolean).join(' · ')}
               </span>
             )}
@@ -656,12 +659,17 @@ function ModerationLog({ v }: { v: ServerView }) {
   return (
     <Stack data-p2p-modlog gap="sm">
       {lines.length === 0 && pages.length > 0 && <Note>Nothing yet.</Note>}
-      <ul aria-label="Moderation log" className="flex flex-col gap-1">
+      <Stack aria-label="Moderation log" as="ul" gap="2xs">
         {lines.map(l => (
-          <li
+          <Surface
             key={l.id}
             data-p2p-log={l.act}
-            className="flex flex-col gap-0.5 rounded-xl bg-surface-container px-3 py-2"
+            as="li"
+            pad="md"
+            inset="bar"
+            gap="3xs"
+            tone="base"
+            radius="lg"
           >
             <Row gap="sm" align="start" place="min-w-0">
               <MemberAvatar members={v.members} ik={l.a} size={20} />
@@ -683,20 +691,20 @@ function ModerationLog({ v }: { v: ServerView }) {
                 {relativeTime(l.at, now)}
               </time>
             </Row>
-            {l.undone && <p className="pl-7 text-xs text-on-surface-variant">Not in force</p>}
+            {l.undone && <p className="text-xs text-on-surface-variant">Not in force</p>}
             {l.reason && (
-              <p className="pl-7 text-xs text-on-surface-variant">
+              <p className="text-xs text-on-surface-variant">
                 Reason: <Masked text={l.reason} own={l.a === me} />
               </p>
             )}
             {l.facts.map(([k, val]) => (
-              <p key={k} className="pl-7 text-xs text-on-surface-variant">
+              <p key={k} className="text-xs text-on-surface-variant">
                 {k}: <span className={k === 'For' ? 'streamer' : ''}>{val}</span>
               </p>
             ))}
-          </li>
+          </Surface>
         ))}
-      </ul>
+      </Stack>
       <Row gap="sm" align="stretch" wrap>
         {next !== null && (
           <button onClick={more} disabled={loading} className={textBtn}>
@@ -730,7 +738,7 @@ function Leave({ v }: { v: ServerView }) {
               ? 'You own this server. If you leave, nobody can rename it, change channels or ban people any more.'
               : 'Someone who can invite has to let you in again.'}
           </Note>
-          <button
+          <Button
             onClick={() =>
               ask({
                 title: 'Leave Server',
@@ -739,10 +747,11 @@ function Leave({ v }: { v: ServerView }) {
                 action: () => void p2pServer.leave(v.id),
               })
             }
-            className="rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error"
+            variant="filled-danger"
+            size="md"
           >
             Leave server
-          </button>
+          </Button>
         </>
       ) : (
         <>
@@ -750,7 +759,7 @@ function Leave({ v }: { v: ServerView }) {
             You aren&apos;t a member any more. What you have of it stays on this device until you
             remove it.
           </Note>
-          <button
+          <Button
             onClick={() =>
               ask({
                 title: 'Remove Server',
@@ -762,10 +771,11 @@ function Leave({ v }: { v: ServerView }) {
                 },
               })
             }
-            className="rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error"
+            variant="filled-danger"
+            size="md"
           >
             Remove from this device
-          </button>
+          </Button>
         </>
       )}
     </Stack>
@@ -800,7 +810,7 @@ function ServerSettingsDialogBody({ room, tab: first }: { room: string; tab?: Se
         render={tab => <TabBody v={v} room={room} tab={tab} />}
         actor={<PeerActorTag header />}
         lead={
-          <div className="mb-3 empty:hidden">
+          <div className="empty:hidden">
             <ServerNotices v={v} flush />
           </div>
         }

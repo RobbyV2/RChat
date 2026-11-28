@@ -238,15 +238,23 @@ export function ActorHit({
 }) {
   const m = useShownMembers(server)(account)
   return (
-    <button
+    <Surface
       type="button"
       onMouseDown={e => e.preventDefault()}
       onClick={() => onPick(m)}
-      className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left hover:bg-surface-container-high"
+      as="button"
+      row
+      pad="sm"
+      inset="chip"
+      gap="sm"
+      tone="plain"
+      radius="md"
+      look="text-left hover:bg-surface-container-high"
+      place="w-full"
     >
       <UserAvatar person={m} size={20} />
       <Name of={personName(m)} withUsername look="min-w-0 flex-1 truncate text-sm" />
-    </button>
+    </Surface>
   )
 }
 
@@ -285,21 +293,30 @@ function ActorField({
         placeholder="Done by"
         title="Only entries by this member. Press Enter to use a username."
         aria-label="Done by"
-        className={`${smallField} ${value ? 'streamer pr-9' : ''}`}
+        className={`${smallField} ${value ? 'streamer' : ''}`}
       />
       {value && (
-        <button
+        <Inset
           type="button"
           title="Clear member filter"
           aria-label="Clear member filter"
           onClick={() => pick('', '')}
-          className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest"
+          as="button"
+          pad="2xs"
+          look="rounded-full text-on-surface-variant hover:bg-surface-container-highest"
+          place="absolute top-1/2 right-1.5 -translate-y-1/2"
         >
           <X size={14} />
-        </button>
+        </Inset>
       )}
       {open && found.active && hits.length > 0 && (
-        <div className="absolute inset-x-0 top-full z-10 mt-1 rounded-xl bg-surface-container-highest p-1 shadow-elevation-2">
+        <Surface
+          pad="2xs"
+          tone="highest"
+          radius="lg"
+          elevation={2}
+          place="absolute inset-x-0 top-full z-raised translate-y-1"
+        >
           {hits.map(m => (
             <ActorHit
               key={m.username}
@@ -308,7 +325,7 @@ function ActorField({
               onPick={shown => pick(shown.username, nameWithUsername(shown))}
             />
           ))}
-        </div>
+        </Surface>
       )}
     </div>
   )
@@ -350,9 +367,9 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
   const ms = entry.created_at * 1000
   const body = (
     <>
-      <span className="shrink-0 rounded-full bg-secondary-container p-1.5 text-on-secondary-container">
+      <Surface as="span" pad="xs" tone="secondary" radius="full" place="shrink-0">
         <Icon size={16} aria-hidden />
-      </span>
+      </Surface>
       <Stack as="span" gap="none" place="flex-1">
         <span className="block text-sm break-words text-on-surface">
           {sentence(entry).map((p, i) =>
@@ -399,7 +416,7 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
           <ChevronDown
             size={16}
             aria-hidden
-            className={`mt-1 shrink-0 text-on-surface-variant transition-transform ${open ? 'rotate-180' : ''}`}
+            className={`shrink-0 text-on-surface-variant transition-transform ${open ? 'rotate-180' : ''}`}
           />
         </Inset>
       ) : (
@@ -410,9 +427,9 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
         </Surface>
       )}
       {open && expandable && (
-        <div className="pr-2 pb-2 pl-12">
+        <Inset pad="sm">
           <Surface tone="base" radius="md" pad="sm">
-            <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+            <Grid as="dl" cols="pair" gap="md" lineGap="2xs" text="xs">
               {changes.map((c, i) => (
                 <div key={`c${i}`} className="contents">
                   <dt className="text-on-surface-variant">{fieldLabel(c.field)}</dt>
@@ -449,9 +466,9 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
                   </dd>
                 </div>
               ))}
-            </dl>
+            </Grid>
           </Surface>
-        </div>
+        </Inset>
       )}
     </li>
   )

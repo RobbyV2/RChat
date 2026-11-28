@@ -613,6 +613,19 @@ body {
   font-weight: 500;
 }
 
+/* The columns of the member table: the member, up to two dates, the row's menu. */
+@utility cols-member-0 {
+  grid-template-columns: minmax(0, 1fr) 2.25rem;
+}
+
+@utility cols-member-1 {
+  grid-template-columns: minmax(0, 1fr) 6.5rem 2.25rem;
+}
+
+@utility cols-member-2 {
+  grid-template-columns: minmax(0, 1fr) 6.5rem 6.5rem 2.25rem;
+}
+
 /* A column of a page that has two side by side on wide screens; on narrow ones its cards join the
    page's single column. */
 .split-column {
