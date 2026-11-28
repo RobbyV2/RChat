@@ -1,6 +1,8 @@
 'use client'
 
-import { Loaded, useRequest } from './loaded'
+import { Loaded, useAccountRequest, useRequest } from './loaded'
+import { orMissing } from '../lib/api_errors'
+import type { AccountSession } from '../lib/client/session'
 import { Name } from './name'
 import { handleName, personCalled } from '../lib/names'
 import { asAccount } from '../lib/people'
@@ -28,7 +30,6 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { ApiError } from '../lib/api'
 import { messageFriend } from '../lib/actions/member'
 import { openActionMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
@@ -675,35 +676,28 @@ function AccountFriendsSection({ max }: { max: number }) {
   )
 }
 
-// Mini profiles and relations of `names`, loaded once per name list.
-export function useFriendPreviews(names: string[]) {
-  const { api } = useAccount()
-  const key = names.join(' ')
-  const [previews, setPreviews] = useState<Record<string, FriendPreviewState>>({})
-  useEffect(() => {
-    let live = true
-    for (const name of key.split(' ').filter(Boolean)) {
-      void Promise.all([
-        api.userProfile(name, null).then(
-          p => ({ profile: p, hidden: false }),
-          (e: unknown) => ({
-            profile: null,
-            hidden: e instanceof ApiError && e.status === 404,
-          })
-        ),
-        api.friendship(name).then(
-          r => r.status,
-          () => 'none' as const
-        ),
-      ]).then(([p, relation]) => {
-        if (live) setPreviews(cur => ({ ...cur, [name]: { ...p, relation } }))
-      })
-    }
-    return () => {
-      live = false
-    }
-  }, [key, api])
-  return previews
+// The mini profile of `name` and how the account stands with them. A profile that cannot be
+// seen is `hidden`; any other failure is the load's.
+const previewOf = async (api: AccountSession['api'], name: string): Promise<FriendPreviewState> => {
+  const [seen, relation] = await Promise.all([
+    api
+      .userProfile(name, null)
+      .then(profile => ({ profile, hidden: false }), orMissing({ profile: null, hidden: true })),
+    api.friendship(name).then(r => r.status, orMissing('none' as const)),
+  ])
+  return { ...seen, relation }
+}
+
+function PreviewLoading({ name }: { name: string }) {
+  return (
+    <div className="flex h-20 items-center rounded-2xl bg-surface-container">
+      <Surface tone="plain" radius="none" pad="lg">
+        <p className="text-sm text-on-surface-variant">
+          Loading <Name of={handleName(name)} before="@" />
+        </p>
+      </Surface>
+    </div>
+  )
 }
 
 export function FriendPreview({
@@ -712,19 +706,9 @@ export function FriendPreview({
   result,
 }: {
   name: string
-  preview: FriendPreviewState | undefined
+  preview: FriendPreviewState
   result?: SendResult
 }) {
-  if (!preview)
-    return (
-      <div className="flex h-20 items-center rounded-2xl bg-surface-container">
-        <Surface tone="plain" radius="none" pad="lg">
-          <p className="text-sm text-on-surface-variant">
-            Loading <Name of={handleName(name)} before="@" />
-          </p>
-        </Surface>
-      </div>
-    )
   const { profile, relation, hidden } = preview
   const status = result
     ? result.ok
@@ -752,14 +736,7 @@ export function FriendPreview({
         {statusLine}
       </Surface>
     )
-  if (!profile)
-    return (
-      <Surface tone="base" pad="lg">
-        <p className="text-sm text-on-surface-variant">
-          Couldn&apos;t load <Name of={handleName(name)} before="@" />
-        </p>
-      </Surface>
-    )
+  if (!profile) return null
   return (
     <div data-preview={name} className="overflow-hidden rounded-2xl bg-surface-container">
       <div
@@ -792,15 +769,51 @@ export function AddFriendsDialog() {
   return <AddFriends key={account.renderKey + '/' + dialog.id} dialog={dialog} />
 }
 
-function AddFriends({ dialog }: { dialog: Extract<ActiveDialog, { kind: 'add_friends' }> }) {
+type AddFriendsAsk = Extract<ActiveDialog, { kind: 'add_friends' }>
+
+function AddFriends({ dialog }: { dialog: AddFriendsAsk }) {
+  const { names } = dialog
+  const closeDialog = useStore(s => s.closeDialog)
+  const single = names.length === 1
+  const load = useAccountRequest(
+    async api =>
+      Object.fromEntries(
+        await Promise.all(names.map(async name => [name, await previewOf(api, name)] as const))
+      ),
+    [names.join(' ')]
+  )
+  return (
+    <Dialog title={single ? 'Add friend' : 'Add friends'} onClose={closeDialog}>
+      <Loaded
+        load={load}
+        what={single ? 'this profile' : 'these profiles'}
+        skeleton={
+          <Stack gap="sm">
+            {names.map(n => (
+              <PreviewLoading key={n} name={n} />
+            ))}
+          </Stack>
+        }
+      >
+        {previews => <AddFriendsForm dialog={dialog} previews={previews} />}
+      </Loaded>
+    </Dialog>
+  )
+}
+
+function AddFriendsForm({
+  dialog,
+  previews,
+}: {
+  dialog: AddFriendsAsk
+  previews: Record<string, FriendPreviewState>
+}) {
   const { names } = dialog
   const { store, lifetime } = useAccount()
   const closeDialog = useStore(s => s.closeDialog)
   const sendFriendRequests = useStore(s => s.sendFriendRequests)
-  const previews = useFriendPreviews(names)
   const [results, setResults] = useState<Record<string, SendResult> | null>(null)
   const [busy, setBusy] = useState(false)
-  const ready = names.every(n => previews[n])
   const targets = names.filter(n => sendable(previews[n]))
   const single = names.length === 1
   const send = async () => {
@@ -819,37 +832,35 @@ function AddFriends({ dialog }: { dialog: Extract<ActiveDialog, { kind: 'add_fri
       ? 'Accept friend request'
       : 'Send friend request'
   return (
-    <Dialog title={single ? 'Add friend' : 'Add friends'} onClose={closeDialog}>
-      <Stack gap="xl">
-        <Stack gap="none">
-          <div className="max-h-dvh-50 overflow-y-auto">
-            <Stack gap="sm">
-              {names.map(n => (
-                <FriendPreview key={n} name={n} preview={previews[n]} result={results?.[n]} />
-              ))}
-            </Stack>
-          </div>
-          {ready && !targets.length && !results && (
-            <FieldError message="There is no one to send a request to." />
-          )}
-        </Stack>
-        <Row gap="sm" justify="end">
-          <Button size="md" onClick={closeDialog}>
-            {results ? 'Done' : 'Cancel'}
-          </Button>
-          {!results && (
-            <Button
-              variant="filled"
-              size="md"
-              onClick={() => void send()}
-              disabled={!ready || !targets.length || busy}
-            >
-              {confirm}
-            </Button>
-          )}
-        </Row>
+    <Stack gap="xl">
+      <Stack gap="none">
+        <div className="max-h-dvh-50 overflow-y-auto">
+          <Stack gap="sm">
+            {names.map(n => (
+              <FriendPreview key={n} name={n} preview={previews[n]} result={results?.[n]} />
+            ))}
+          </Stack>
+        </div>
+        {!targets.length && !results && (
+          <FieldError message="There is no one to send a request to." />
+        )}
       </Stack>
-    </Dialog>
+      <Row gap="sm" justify="end">
+        <Button size="md" onClick={closeDialog}>
+          {results ? 'Done' : 'Cancel'}
+        </Button>
+        {!results && (
+          <Button
+            variant="filled"
+            size="md"
+            onClick={() => void send()}
+            disabled={!targets.length || busy}
+          >
+            {confirm}
+          </Button>
+        )}
+      </Row>
+    </Stack>
   )
 }
 

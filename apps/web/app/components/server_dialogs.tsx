@@ -1,4 +1,5 @@
 'use client'
+import { background } from '../lib/api_errors'
 
 import { PeerCodeDialog } from './p2p/peer_code_dialog'
 import { openPeerLink, peerCode } from '../lib/client/peer_links'
@@ -90,8 +91,9 @@ function AddServerDialog({
           const result = await api.serverAvailable(id, controller.signal)
           if (valid()) setTaken({ id, taken: !result.available })
         }
-      } catch {
-        /* Availability is optional. Submit still checks with the server. */
+      } catch (error) {
+        // The hint is optional: submit checks with the server again.
+        background('checking a server name failed')(error)
       }
     })
     return () => {

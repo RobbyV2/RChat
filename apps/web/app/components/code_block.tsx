@@ -1,4 +1,5 @@
 'use client'
+import { Refreshed, useAccountRequest } from './loaded'
 
 import { IconButton } from './controls'
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
@@ -109,39 +110,38 @@ export const blobText = async (blob: Blob): Promise<TextFile | null> => {
   return text === null ? null : { text, cut }
 }
 
-// The start of an uploaded text file: undefined while it loads, null when it is not text or
-// could not be loaded.
-export const useServerText = (id: string, server: string | undefined, wanted: boolean) => {
+// The start of an uploaded text file for `children`: undefined while it loads, null when it is
+// not text or did not come. `notice` says why it did not come, with a way to ask again.
+export function ServerText({
+  id,
+  server,
+  children,
+}: {
+  id: string
+  server: string | undefined
+  children: (file: TextFile | null | undefined, notice: ReactNode) => ReactNode
+}) {
   const account = useAccount()
-  const { api, textPreviews } = account
-  const mark = account.lifetime.sessionMark()
+  const { textPreviews } = account
   const key = JSON.stringify([account.conn.origin, 'media', server, id])
-  const [got, setGot] = useState<{ key: string; mark: object; file: TextFile | null } | null>(null)
-  useEffect(() => {
-    if (!wanted || textPreviews.get(key) !== undefined) return
-    const stop = new AbortController()
-    api
-      .mediaStart(id, server, PREVIEW_TEXT_MAX, stop.signal)
-      .then(({ bytes, cut, total }) => {
-        const text = decodeText(bytes, cut)
-        return text === null ? null : { text, cut, total }
-      })
-      .then(
-        file => {
-          if (stop.signal.aborted || mark !== account.lifetime.sessionMark()) return
-          textPreviews.keep(key, file)
-          setGot({ key, mark, file })
-        },
-        () => {
-          if (!stop.signal.aborted && mark === account.lifetime.sessionMark())
-            setGot({ key, mark, file: null })
-        }
-      )
-    return () => stop.abort()
-  }, [id, key, server, wanted, account, api, textPreviews, mark])
-  const cached = textPreviews.get(key)
-  if (cached !== undefined) return cached
-  return got?.key === key && got.mark === mark ? got.file : undefined
+  const load = useAccountRequest<TextFile | null | undefined>(
+    async (api, signal) => {
+      const kept = textPreviews.get(key)
+      if (kept !== undefined) return kept
+      const mark = account.lifetime.sessionMark()
+      const { bytes, cut, total } = await api.mediaStart(id, server, PREVIEW_TEXT_MAX, signal)
+      const text = decodeText(bytes, cut)
+      const file = text === null ? null : { text, cut, total }
+      if (mark === account.lifetime.sessionMark()) textPreviews.keep(key, file)
+      return file
+    },
+    [id, server, key, textPreviews]
+  )
+  return (
+    <Refreshed load={load} known={textPreviews.get(key)} what="the preview">
+      {(file, notice) => children(load.status === 'failed' ? null : file, notice)}
+    </Refreshed>
+  )
 }
 
 export function CodePreviewLoading({ filename }: { filename: string }) {

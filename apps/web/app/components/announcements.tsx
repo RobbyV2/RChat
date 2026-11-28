@@ -5,7 +5,7 @@ import { useAccount, useStoreApi, useConn } from '../lib/client/react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { X } from 'lucide-react'
 import { device } from '../lib/platform'
-import { ApiError } from '../lib/api'
+import { background, missing } from '../lib/api_errors'
 import {
   activeOnArrival,
   guestDismissals,
@@ -111,10 +111,11 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
         timer = time().after(refreshDelay(data, elapsed), load)
       } catch (error) {
         if (!current()) return
-        if (error instanceof ApiError && error.status === 404) {
+        if (missing(error)) {
           setFeed(null)
           return
         }
+        background('loading announcements failed')(error)
         timer = time().after(5000, load)
       }
     }

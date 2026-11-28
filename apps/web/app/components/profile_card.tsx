@@ -6,7 +6,11 @@ import { askKick, openBan, openTimeout } from '../lib/place/moderation'
 import { HostedServer } from '../lib/place/place'
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactNode,
+} from 'react'
 import {
   ArrowRightLeft,
   Ban,
@@ -27,7 +31,8 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { ApiError } from '../lib/api'
+import { missing } from '../lib/api_errors'
+import { Refreshed, useAccountRequest } from './loaded'
 import { formatQualified, isHomeHost } from '../lib/qualified'
 import { InstanceChip } from './instance_badge'
 import {
@@ -215,15 +220,80 @@ export function ProfileCard() {
   return <Card key={`${user.username}\n${server ?? ''}\n${x},${y}`} target={target} />
 }
 
+// What the lookup of a profile says: the profile, or that it is hidden from the viewer.
+interface Seen {
+  profile: Profile | null
+  hidden: boolean
+}
+
 function Card({ target }: { target: ProfileTarget }) {
+  const {
+    store,
+    lifetime: { sessionMark },
+  } = useAccount()
+  const { noteTimeout } = store.menu
+  const { server, rev } = target
+  const username = target.user.username
+  const hook = isWebhookAuthor(username)
+  const [known] = useState<Seen>(() => ({
+    profile: cachedProfile(profileKey(username, server), sessionMark()),
+    hidden: false,
+  }))
+  const load = useAccountRequest<Seen>(
+    async api => {
+      if (hook) return known
+      const key = profileKey(username, server)
+      const at = sessionMark()
+      try {
+        const p = await api.userProfile(username, server)
+        const mark = sessionMark()
+        rememberProfile(key, p, at, mark)
+        if (at !== mark) return { profile: p, hidden: false }
+        const s = store.getState()
+        if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
+        if (server && p.member) noteTimeout(server, username, p.member.timeout)
+        if (server && p.member) s.noteProfileLock(server, username, p.member.profile_locked_until)
+        if (server && p.member) s.notePresence(server, username, p.member.online)
+        store.setState(st =>
+          st.profile?.user.username === username ? { profile: { ...st.profile, user: p.user } } : {}
+        )
+        return { profile: p, hidden: false }
+      } catch (e) {
+        if (!missing(e)) throw e
+        if (at === sessionMark()) forgetProfile(key, at)
+        return { profile: null, hidden: true }
+      }
+    },
+    [username, server, rev, hook]
+  )
+  return (
+    <Refreshed load={load} known={known} what="this profile">
+      {(seen, notice) => (
+        <CardBody target={target} seen={seen} failed={load.status === 'failed'} notice={notice} />
+      )}
+    </Refreshed>
+  )
+}
+
+function CardBody({
+  target,
+  seen: { profile, hidden },
+  failed,
+  notice,
+}: {
+  target: ProfileTarget
+  seen: Seen
+  // Whether the lookup was refused: what the card says of the member is then what the app held.
+  failed: boolean
+  notice: ReactNode
+}) {
   const account = useAccount()
   const {
-    api,
     store,
-    lifetime: { inSession, sessionMark },
+    lifetime: { inSession },
   } = account
-  const { confirmTransfer, noteTimeout, revokeAdminFor } = store.menu
-  const { server, x, y, rev } = target
+  const { confirmTransfer, revokeAdminFor } = store.menu
+  const { server, x, y } = target
   const username = target.user.username
   const close = useStore(s => s.closeProfile)
   const view = useStore(s => s.view)
@@ -264,55 +334,11 @@ function Card({ target }: { target: ProfileTarget }) {
   const titleId = useId()
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<Point | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(() =>
-    cachedProfile(profileKey(username, server), sessionMark())
-  )
-  const [hidden, setHidden] = useState(false)
-  const [failed, setFailed] = useState(false)
   const [text, setText] = useState('')
   const [adding, setAdding] = useState(false)
   const [copied, flashCopied] = useCopied()
   const opened = useRef({ view, dialog })
   const inside = useRef(false)
-
-  useEffect(() => {
-    if (hook) return
-    let current = true
-    const key = profileKey(username, server)
-    const at = sessionMark()
-    api
-      .userProfile(username, server)
-      .then(p => {
-        const mark = sessionMark()
-        rememberProfile(key, p, at, mark)
-        if (!current || at !== mark) return
-        setProfile(p)
-        setHidden(false)
-        setFailed(false)
-        const s = store.getState()
-        if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
-        if (server && p.member) noteTimeout(server, username, p.member.timeout)
-        if (server && p.member) s.noteProfileLock(server, username, p.member.profile_locked_until)
-        if (server && p.member) s.notePresence(server, username, p.member.online)
-        store.setState(st =>
-          st.profile?.user.username === username ? { profile: { ...st.profile, user: p.user } } : {}
-        )
-      })
-      .catch((e: unknown) => {
-        if (!(e instanceof ApiError && e.status === 404)) {
-          if (current) setFailed(true)
-          return
-        }
-        if (at !== sessionMark()) return
-        forgetProfile(key, at)
-        if (!current) return
-        setProfile(null)
-        setHidden(true)
-      })
-    return () => {
-      current = false
-    }
-  }, [username, server, rev, hook, api, store, sessionMark, noteTimeout])
 
   useEffect(() => {
     if (view !== opened.current.view || dialog !== opened.current.dialog) close()
@@ -631,6 +657,7 @@ function Card({ target }: { target: ProfileTarget }) {
             </Stack>
           </Stack>
           <Stack gap="sm">
+            {notice}
             {hidden && member === null ? (
               <Surface tone="low" radius="lg" pad="md">
                 <p className="text-sm text-on-surface-variant">{HIDDEN_PROFILE}</p>

@@ -1,4 +1,5 @@
 'use client'
+import { background } from '../lib/api_errors'
 
 import { Name } from './name'
 import { handleName, personCalled } from '../lib/names'
@@ -97,7 +98,7 @@ function useMentionSearch(listKey: string | null, query: string | null) {
           cache.set(key, found)
           setTick(n => n + 1)
         })
-        .catch(() => {})
+        .catch(background('loading member suggestions failed'))
     })
     return () => t?.()
   }, [api, cache, server, query])

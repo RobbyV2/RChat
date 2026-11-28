@@ -1,8 +1,7 @@
 'use client'
+import { Refreshed, useAccountRequest } from './loaded'
 
-import { refusalOf, type Refusal } from '../lib/api_errors'
-import { ErrorNotice } from './notices'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useAccount } from '../lib/client/react'
 import { openActionMenu } from '../lib/actions/menu'
 import { errorText, roleColor, useStore } from '../lib/store'
@@ -129,6 +128,8 @@ function HitRow({ server, hit, roles }: { server: string; hit: MemberHit; roles:
   )
 }
 
+const NO_PASSWORDS: ServerPassword[] = []
+
 export function HostedMembers({
   server,
   roles,
@@ -138,27 +139,40 @@ export function HostedMembers({
   roles: Role[]
   perms: number
 }) {
-  const { api } = useAccount()
   const invites = hasPerm(perms, Perm.ManageInvites)
+  const load = useAccountRequest(
+    async api => (invites ? (await api.listPasswords(server)).passwords : NO_PASSWORDS),
+    [server, invites]
+  )
+  return (
+    <Refreshed load={load} known={NO_PASSWORDS} what="the invites to filter by">
+      {(passwords, notice) => (
+        <MemberSearch
+          server={server}
+          roles={roles}
+          invites={invites}
+          passwords={passwords}
+          notice={notice}
+        />
+      )}
+    </Refreshed>
+  )
+}
+
+function MemberSearch({
+  server,
+  roles,
+  invites,
+  passwords,
+  notice,
+}: {
+  server: string
+  roles: Role[]
+  invites: boolean
+  passwords: ServerPassword[]
+  notice: ReactNode
+}) {
   const [filters, setFilters] = useState<MemberFilters>(NO_FILTERS)
-  const [passwords, setPasswords] = useState<ServerPassword[]>([])
-  const [refused, setRefused] = useState<Refusal | null>(null)
-  const [asked, setAsked] = useState(0)
-  useEffect(() => {
-    if (!invites) return
-    let live = true
-    api.listPasswords(server).then(
-      p => {
-        if (!live) return
-        setPasswords(p.passwords)
-        setRefused(null)
-      },
-      (e: unknown) => live && setRefused(refusalOf(e))
-    )
-    return () => {
-      live = false
-    }
-  }, [api, server, invites, asked])
   const shown = allowedFilters(filters, { created: true, via: invites })
   const found = useHostedSearch(server, hostedQuery(shown))
   const choices = useMemo(
@@ -174,13 +188,7 @@ export function HostedMembers({
   return (
     <Stack data-hosted-members gap="sm">
       <MemberFilterBar value={shown} onChange={setFilters} choices={choices} />
-      {refused && (
-        <ErrorNotice
-          refusal={refused}
-          lead="Could not load the invites to filter by."
-          retry={() => setAsked(n => n + 1)}
-        />
-      )}
+      {notice}
       <Stack gap="none">
         <MemberTable created label="Members">
           {found.list.map(hit => (

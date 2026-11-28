@@ -1,11 +1,12 @@
 'use client'
+import { Loaded, useAccountRequest } from '../loaded'
 import { ApiError } from '../../lib/api'
 import {
   recentConfirmation,
   takeRecentConfirmation,
   watchProviderConfirmation,
 } from '../../lib/provider_confirmation'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAccount, useStore } from '../../lib/client/react'
 import { seed, derive } from '../../lib/backup_phrase'
 import { b64u, utf8 } from '../../lib/p2p/canonical'
@@ -40,28 +41,16 @@ export function ReAuthPrompt({
     auth = useStore(s => s.instance?.auth)
   const proof = useStore(s => s.providerConfirmation)
   const checkPhrase = ways.includes('phrase')
-  const [hasPhrase, setHasPhrase] = useState(false)
   const [phraseOpen, setPhraseOpen] = useState(false)
   const [words, setWords] = useState<string[] | null>(null)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false),
     pending = useRef(false)
-  useEffect(() => {
-    let live = true
-    if (checkPhrase)
-      acct.api
-        .recoveryStatus()
-        .then(s => {
-          if (live && current()) setHasPhrase(s.set)
-        })
-        .catch(e => {
-          if (live && current()) setError(errorText(e))
-        })
-    return () => {
-      live = false
-    }
-  }, [acct, checkPhrase, current])
+  const phrase = useAccountRequest(
+    async api => (checkPhrase ? (await api.recoveryStatus()).set : false),
+    [checkPhrase]
+  )
   const confirm = async (get: () => Promise<ReAuthBody>, freshProvider?: string) => {
     if (!current() || pending.current) return
     pending.current = true
@@ -162,37 +151,40 @@ export function ReAuthPrompt({
               Sign in with {name}
             </button>
           ))}
-      {hasPhrase &&
-        ways.includes('phrase') &&
-        (phraseOpen ? (
-          <>
-            <PhraseInput label="Current backup phrase" onWords={setWords} />
-            <button
-              type="button"
-              className={filledBtn}
-              disabled={!words}
-              onClick={() =>
-                void confirm(async () => {
-                  const { nonce, username } = await acct.api.recoveryChallenge(me.username)
-                  const key = derive(await seed(words!), 'account')
-                  const sig = b64u(
-                    sign(
-                      key,
-                      utf8(['rchat-recovery1', purpose, username, nonce, context].join('\0'))
+      <Loaded load={phrase} skeleton={null} what="whether a backup phrase is set">
+        {hasPhrase =>
+          hasPhrase &&
+          (phraseOpen ? (
+            <>
+              <PhraseInput label="Current backup phrase" onWords={setWords} />
+              <button
+                type="button"
+                className={filledBtn}
+                disabled={!words}
+                onClick={() =>
+                  void confirm(async () => {
+                    const { nonce, username } = await acct.api.recoveryChallenge(me.username)
+                    const key = derive(await seed(words!), 'account')
+                    const sig = b64u(
+                      sign(
+                        key,
+                        utf8(['rchat-recovery1', purpose, username, nonce, context].join('\0'))
+                      )
                     )
-                  )
-                  return { phrase: { nonce, sig } }
-                })
-              }
-            >
-              Confirm backup phrase
+                    return { phrase: { nonce, sig } }
+                  })
+                }
+              >
+                Confirm backup phrase
+              </button>
+            </>
+          ) : (
+            <button type="button" className={textBtn} onClick={() => setPhraseOpen(true)}>
+              Use backup phrase
             </button>
-          </>
-        ) : (
-          <button type="button" className={textBtn} onClick={() => setPhraseOpen(true)}>
-            Use backup phrase
-          </button>
-        ))}
+          ))
+        }
+      </Loaded>
       <FieldError message={error} />
     </Stack>
   )

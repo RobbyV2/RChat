@@ -93,7 +93,7 @@ import {
   CodePreview,
   CodePreviewLoading,
   nodeText,
-  useServerText,
+  ServerText,
   type TextFile,
 } from './code_block'
 import { Stamp } from './timestamp'
@@ -939,7 +939,6 @@ export function MediaAttachment({
   const mounted = video !== null && !hidden && (near || playing || played)
   const videoSrc = useVideoSrc(id, server, mounted, media.size ?? 0, inView)
   const lang = previews && !image && video === null ? fileLang(filename) : null
-  const text = useServerText(id, server, lang !== null && !removed && !hidden)
   const save = () =>
     void saveMedia(id, server, filename).catch((err: unknown) => {
       if (!(err instanceof Ended)) account.store.getState().setError(errorText(err))
@@ -1080,46 +1079,58 @@ export function MediaAttachment({
         )}
       </div>
     )
-  if (lang !== null && text === undefined) return <CodePreviewLoading filename={filename} />
-  if (lang !== null && text) {
+  if (lang !== null && !removed && !hidden) {
     const iconBtn =
       'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary'
     return (
-      <CodePreview
-        filename={filename}
-        size={media.size}
-        lang={lang}
-        file={text}
-        actions={
-          fetched ? (
-            <button
-              title={`Download ${filename}`}
-              aria-label="Download"
-              onClick={save}
-              className={iconBtn}
-            >
-              <Download size={14} />
-            </button>
+      <ServerText id={id} server={server}>
+        {(text, notice) =>
+          text === undefined ? (
+            <CodePreviewLoading filename={filename} />
+          ) : text ? (
+            <CodePreview
+              filename={filename}
+              size={media.size}
+              lang={lang}
+              file={text}
+              actions={
+                fetched ? (
+                  <button
+                    title={`Download ${filename}`}
+                    aria-label="Download"
+                    onClick={save}
+                    className={iconBtn}
+                  >
+                    <Download size={14} />
+                  </button>
+                ) : (
+                  <a
+                    href={api.mediaUrl(id)}
+                    download={filename}
+                    title={`Download ${filename}`}
+                    aria-label="Download"
+                    className={iconBtn}
+                  >
+                    <Download size={14} />
+                  </a>
+                )
+              }
+              footer={
+                expiry && (
+                  <Inset pad="md" inset="bar">
+                    {expiry}
+                  </Inset>
+                )
+              }
+            />
           ) : (
-            <a
-              href={api.mediaUrl(id)}
-              download={filename}
-              title={`Download ${filename}`}
-              aria-label="Download"
-              className={iconBtn}
-            >
-              <Download size={14} />
-            </a>
+            <>
+              {card}
+              {notice}
+            </>
           )
         }
-        footer={
-          expiry && (
-            <Inset pad="md" inset="bar">
-              {expiry}
-            </Inset>
-          )
-        }
-      />
+      </ServerText>
     )
   }
   return card
