@@ -1112,11 +1112,6 @@ describe('forwarding', () => {
       list: 'main',
       draftKey,
       scope: `d:${draftKey}`,
-      canAct: true,
-      mayPin: false,
-      mayDelete: () => false,
-      forwardSkip: ALICE,
-      threads: false,
     })
     return null
   }

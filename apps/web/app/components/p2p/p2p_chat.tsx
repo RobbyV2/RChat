@@ -6,8 +6,6 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
-import { ChannelCanContext } from '../../lib/place/use_rights'
-import { type ChannelCan } from '../../lib/channel_perms'
 
 import {
   createContext,
@@ -22,7 +20,6 @@ import {
   type RefObject,
 } from 'react'
 import { CircleAlert, History, X } from 'lucide-react'
-import { useStore } from '../../lib/store'
 import { actionPress, openActionMenu } from '../../lib/actions/menu'
 import type { Target } from '../../lib/actions/types'
 import { peerChat } from '../../lib/actions/p2p_chat'
@@ -48,7 +45,8 @@ import { PinsWindow } from '../pins'
 import { useGate } from '../composer_gate'
 import { GateNote } from '../gate_note'
 import { composeAt } from '../../lib/place/use_composer'
-import { ListedRow, useRowFlags } from '../listed_row'
+import { ListedRow } from '../listed_row'
+import { useRowFlags } from '../row_flags'
 import { rowsAt } from '../../lib/place/use_rows'
 import { ThreadsWindow } from '../threads'
 import { TypingLine } from '../typing_indicator'
@@ -161,42 +159,25 @@ export interface ListOpts {
   list: ListKind
   draftKey: string
   scope: string
-  canAct: boolean
-  timedOut?: boolean
-  mayPin: boolean
-  mayDelete: (p: P2pMessage) => boolean
-  forwardSkip: string | null
-  // A server channel's own list: its messages can start threads.
-  threads: boolean
-  // What we hold in the list's channel, where its caller knows it (else the context's).
-  can?: ChannelCan
 }
 
-export function useP2pList({
-  ownName,
-  room,
-  ch,
-  list,
-  draftKey,
-  scope,
-  canAct,
-  timedOut = false,
-  mayPin,
-  mayDelete,
-  forwardSkip,
-  threads,
-  can,
-}: ListOpts) {
+export function useP2pList({ ownName, room, ch, list, draftKey, scope }: ListOpts) {
   const identity = useP2pApp()!
   const { p2pDm } = identity
-  const around = useContext(ChannelCanContext)
-  const held = can ?? around
-
   const acct = useAccount()
 
   const editingState = useP2p(s => (s.editing?.room === draftKey ? s.editing : null))
   const place = ch === null ? P2pDm.open(identity, room, list) : P2pRoom.open(identity, room, list)
   const { me, user, name, messages, rows, num, idOf } = useLive(shownOf(place))
+  const flags = useRowFlags(rowsAt(place, list))
+  // The contact a forward from their own conversation skips, and the message heading the thread.
+  const forwardSkip = useP2p(s =>
+    ch === null && list === 'main'
+      ? ((s.chat?.room === room ? s.chat.peer : s.rooms[room]?.peer) ?? null)
+      : null
+  )
+  const rootId = useP2p(s => (list === 'thread' ? (s.thread?.root ?? null) : null))
+  const isRoot = (p: P2pMessage) => p.id === rootId
   const picking = reactPickOf(place)
   const picker = useLive(picking)
   const setPicker = picking.set
@@ -237,17 +218,8 @@ export function useP2pList({
     kind: 'p2p_message',
     p,
     m,
-    chat: {
-      draftKey,
-      canAct,
-      timedOut,
-      can: held,
-      mayPin,
-      mayDelete,
-      forwardSkip,
-      threads,
-      ownName,
-    },
+    row: flags.of(m, isRoot(p)),
+    chat: { draftKey, forwardSkip, ownName },
   })
   const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
     if (p.system?.kind === 'pin')
@@ -256,7 +228,7 @@ export function useP2pList({
       x,
       y,
       rowTarget(p, m),
-      canAct && !timedOut && held.react && !p.archived
+      flags.of(m).canReact
         ? {
             header: (
               <PlaceProvider place={place}>
@@ -327,6 +299,7 @@ export function useP2pList({
     num,
     idOf,
     place,
+    flags,
     react,
     editing,
     editingState,
@@ -339,38 +312,25 @@ export function useP2pList({
 }
 
 export interface ChatBodyProps {
-  channelTextOnly?: boolean
   chat: P2pChat
   // The header row, and what goes between it and the list (call bars, the stage).
   header: ReactNode
   above?: ReactNode
   intro?: ReactNode
-  // In place of the composer, with the reason; null when sending works.
-  canAct: boolean
-  // A timeout of ours: messages can be deleted and files downloaded, nothing more.
-  timedOut?: boolean
-  pendingTip: string
   peerFull: boolean
   gap: boolean
   online: boolean
   // What the gap note says while nobody who has older history is online.
   gapOffline: ReactNode
   empty: ReactNode
-  // Others' messages a moderator may delete, and whether pins may change.
-  mayDelete: (p: P2pMessage) => boolean
-  mayPin: boolean
-  // Forward targets other than this conversation (contacts).
-  forwardSkip: string | null
   dataAttr: Record<string, string>
-  // How senders' names look, in a server.
 }
 
 function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
   const { profileName, p2pDm, p2pFiles } = identity
 
-  const { chat, canAct, mayDelete, mayPin, forwardSkip } = props
-  const timedOut = props.timedOut ?? false
+  const { chat } = props
   const key = chatKey(chat)
   const me = useP2p(s => s.me)
   const movingAt = useP2p(s => s.movingAt)
@@ -379,9 +339,6 @@ function IdentityChatBody(props: ChatBodyProps) {
   const storageFull = useP2p(s => s.storageFull)
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const siteTextOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
-  const held = useContext(ChannelCanContext)
-  const textOnly = props.channelTextOnly || siteTextOnly || !held.attach
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
 
@@ -392,7 +349,6 @@ function IdentityChatBody(props: ChatBodyProps) {
   const scope = identityScopeKey(identity.localId, chatScope(chat.room, chat.ch))
   const ownRoom = chat.ch ? chat.room : undefined
   const ownName = useCallback((ik: string) => profileName(ik, ownRoom), [ownRoom])
-  const canDrop = canAct && !timedOut && !textOnly && movingAt === null
 
   const {
     messages,
@@ -401,6 +357,7 @@ function IdentityChatBody(props: ChatBodyProps) {
     num,
     idOf,
     place,
+    flags,
     react,
     editing,
     editingState,
@@ -415,13 +372,10 @@ function IdentityChatBody(props: ChatBodyProps) {
     list: 'main',
     draftKey: key,
     scope,
-    canAct,
-    timedOut,
-    mayPin,
-    mayDelete,
-    forwardSkip,
-    threads: true,
   })
+  const { acts: canAct, timedOut } = flags
+  const takesFiles = useLive(composeAt(place, 'main').files).add !== null
+  const canDrop = canAct && !timedOut && takesFiles && movingAt === null
 
   const lastNum = shared[shared.length - 1]?.id
   const ownCount = useMemo(() => messages.filter(m => m.sender === me).length, [messages, me])
@@ -461,8 +415,6 @@ function IdentityChatBody(props: ChatBodyProps) {
   )
   const on = useMemo(() => rowOn(rowJump), [rowOn, rowJump])
   const { shut } = useGate(composeAt(place, 'main'))
-  const flags = useRowFlags(rowsAt(place, 'main'))
-
   const gapNote = props.gap && !chat.more && (
     <Surface data-p2p-gap pad="lg" tone="plain" radius="none">
       <Row gap="sm" justify="center" wrap>
@@ -573,7 +525,7 @@ function IdentityChatBody(props: ChatBodyProps) {
             )}
             <Composer />
           </div>
-          <PinsWindow canUnpin={canAct && !timedOut && mayPin} />
+          <PinsWindow />
           <ThreadsWindow />
           {picker && (
             <EmojiPicker

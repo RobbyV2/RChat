@@ -7,6 +7,8 @@ import { useStoreApi } from '../lib/client/react'
 import { isUnsupported } from '../lib/place/feature'
 import { pins as pinsFeature, type Pinned, type Pins, type PinsState } from '../lib/place/pins'
 import { useFeature, useLive, usePlace } from '../lib/place/react'
+import { useRows } from '../lib/place/use_rows'
+import { useRowFlags } from './row_flags'
 import { inDm } from '../lib/place/place'
 import {
   useEffect,
@@ -22,7 +24,7 @@ import { ChartColumn, FileText, Pin, X, type LucideIcon } from 'lucide-react'
 import { PreviewSpoiler, RevealChannelPreview } from './preview_reveal'
 import { useMediaSrc } from '../lib/media_src'
 import { PINS_TITLE } from '../lib/pins'
-import { channelCan, useMask, useStore } from '../lib/store'
+import { useMask, useStore } from '../lib/store'
 import { useForwardAccess } from '../lib/forward_access'
 import type { Message, MessageMedia } from '../lib/types'
 import { longPress, useMedia } from './context_menu'
@@ -35,22 +37,7 @@ import { ShownAvatar, ShownName } from './shown_user'
 import { Name } from './name'
 import { useAuthor } from '../lib/place/use_looks'
 import { MessageTime } from './timestamp'
-import { useMyTimeoutEnds } from './timeout_dialog'
 import { Row, Stack, Surface, Inset } from './layout'
-
-// Pinning and unpinning: either DM participant, or a member with Pin messages in the channel.
-export function useCanPin() {
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const timedOut = useMyTimeoutEnds(server) !== null
-  const can = useStore(s => {
-    const v = s.view
-    if (!v || !s.me || s.guest) return false
-    if (v.kind === 'dm') return true
-    const held = channelCan(s, v.server, v.channelId)
-    return s.me.servers.some(x => x.name === v.server) && held.pin && held.send
-  })
-  return can && !timedOut
-}
 
 function PinsToggle({ pins, narrowHidden }: { pins: Pins; narrowHidden: boolean }) {
   const open = useLive(pins.state).open
@@ -338,10 +325,11 @@ function PinsList({ pins, canUnpin }: { pins: Pins; canUnpin: boolean }) {
 }
 
 // The pinned messages of the conversation on screen in the place around it, while they are
-// open. `canUnpin`: whether you may change the pins there now.
-export function PinsWindow({ canUnpin }: { canUnpin: boolean }) {
+// open.
+export function PinsWindow() {
   const here = useFeature(pinsFeature)
-  return isUnsupported(here) ? null : <PinsList pins={here} canUnpin={canUnpin} />
+  const { mayPin } = useRowFlags(useRows('main'))
+  return isUnsupported(here) ? null : <PinsList pins={here} canUnpin={mayPin} />
 }
 
 // A list that drops down from a conversation's header button (`button`, a selector of it), as a

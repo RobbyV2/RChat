@@ -7,11 +7,10 @@ import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'reac
 import type { OpenThread, ThreadState } from '../lib/place/thread'
 import { useRows } from '../lib/place/use_rows'
 import { useLoadedPeople } from '../lib/place/use_looks'
-import { useRowFlags } from './listed_row'
+import { useRowFlags } from './row_flags'
 import { useThread } from '../lib/place/use_thread'
 import { MessageSquareText } from 'lucide-react'
 import { useLive } from '../lib/place/react'
-import { messageRights } from '../lib/actions/message'
 import { actionPress, openActionMenu } from '../lib/actions/menu'
 import { threadKey, useStore } from '../lib/store'
 import type { Message } from '../lib/types'
@@ -334,7 +333,7 @@ export default function ThreadPanel() {
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
     if (m.id !== root.id && openSelectionMenu(key, m, x, y, acct)) return
-    const react = messageRights(store.getState(), m, key).react
+    const react = flags.of(m, m.id === root.id).canReact
     openActionMenu(
       x,
       y,

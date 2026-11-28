@@ -23,89 +23,26 @@ import {
   Trash2,
   Users,
 } from 'lucide-react'
-import { guestPostingStatus } from '../guest_chat'
 import { isGuestName } from '../guest_voice'
-import { canForward } from '../forward'
 import { locatedNow } from '../forward_locate'
 import { hostedPill } from '../forward_pill'
 import { messageLinkUrl } from '../message_links'
 import { openMessageLink } from '../link_open'
 import { sharing } from '../platform'
-import { canPin } from '../pins'
 import { pollClosed, votersShown } from '../polls'
-import { canQuote } from '../replies'
-import { canEdit as ownEditable } from '../sed'
 import { selectable } from '../selection'
 import { canDeleteIn } from '../selection_store'
-import { channelCan, messageServer, myPerms, myTimeoutEnds, outranksMember } from '../store'
+import { channelCan, messageServer, myPerms, myTimeoutEnds } from '../store'
 import type { RChatState } from '../store_types'
 import { isNotice } from '../system_messages'
 import { messageStampToken } from '../timestamps'
 import { Perm, hasPerm, type Message } from '../types'
 import { isWebhookMessage, webhookIdOf } from '../webhooks'
+import { messageFlags } from '../place/rows'
 import { signedIn } from './global'
 import type { Action, ActionCtx } from './types'
 
 const copy = (text: string) => void sharing().copyText(text)
-
-export interface MessageRights {
-  react: boolean
-  edit: boolean
-  delete: boolean
-  pin: boolean
-  forward: boolean
-  quote: boolean
-  thread: boolean
-}
-
-// Quoting, and opening threads: in a channel or a DM (`dm`), where threads need an account.
-export function replyAccess(
-  s: RChatState,
-  server: string | null,
-  channelId: number | null,
-  canReact: boolean,
-  dm = false
-) {
-  const guestWrites = guestPostingStatus(s, server, channelId) === 'ready'
-  return {
-    quote: canReact || guestWrites,
-    thread: dm ? signedIn(s) : channelId !== null && (signedIn(s) || guestWrites),
-  }
-}
-
-// What you may do to a message in `list`. A thread list never pins.
-export const messageRights = (s: RChatState, m: Message, list: string): MessageRights => {
-  const me = s.me
-  const signed = signedIn(s)
-  const dm = list.startsWith('d')
-  const server = dm ? null : messageServer(s, m)
-  const member = server !== null && !!me?.servers.some(x => x.name === server)
-  const free = myTimeoutEnds(s, server) === null
-  const can = channelCan(s, server, m.channel_id)
-  const write = signed && (dm || (member && can.send && free))
-  const replies = replyAccess(s, server, m.channel_id, write, dm)
-  return {
-    react: signed && (dm || (member && can.react && free)),
-    edit: write && ownEditable(m, me?.username),
-    quote: canQuote(m) && replies.quote,
-    thread:
-      !list.startsWith('t') &&
-      canQuote(m) &&
-      replies.thread &&
-      (m.reply_count > 0 || !member || can.threads),
-    forward: signed && canForward(m),
-    delete:
-      signed &&
-      (m.author.username === me?.username ||
-        (server !== null && can.manage && outranksMember(s, server, m.author.username))),
-    pin:
-      signed &&
-      !list.startsWith('t') &&
-      (dm || (member && can.pin && can.send)) &&
-      free &&
-      canPin(m),
-  }
-}
 
 // The author, or in a channel someone with Manage messages, may close and reopen. Nobody while
 // timed out in the poll's server.
@@ -129,9 +66,10 @@ const threadRow = (ctx: ActionCtx) => {
   return at && at.list.startsWith('t') ? { root: at.m.id === Number(at.list.slice(1)) } : null
 }
 
-const rights = (ctx: ActionCtx) => {
+// What the message's row may do.
+const flags = (ctx: ActionCtx) => {
   const at = onMessage(ctx)
-  return at && messageRights(ctx.s, at.m, at.list)
+  return at && messageFlags(ctx.s, at.m, at.list)
 }
 
 // Signed-out readers copy anything; signed-in ones copy only the id of a notice.
@@ -192,7 +130,7 @@ export const messageActions: Action[] = [
     icon: Pencil,
     ...message,
     order: 100,
-    available: ctx => !!rights(ctx)?.edit,
+    available: ctx => !!flags(ctx)?.canEdit,
     run: withMessage((m, list, ctx) => ctx.acct.store.getState().startEdit(list, m)),
   },
   {
@@ -201,7 +139,7 @@ export const messageActions: Action[] = [
     icon: Reply,
     ...message,
     order: 110,
-    available: ctx => !!rights(ctx)?.quote,
+    available: ctx => !!flags(ctx)?.canReply,
     run: withMessage((m, list, ctx) => ctx.acct.store.getState().startReply(list, m)),
   },
   {
@@ -210,7 +148,7 @@ export const messageActions: Action[] = [
     icon: Forward,
     ...message,
     order: 120,
-    available: ctx => !!rights(ctx)?.forward,
+    available: ctx => !!flags(ctx)?.canForward,
     run: withMessage((m, _list, ctx) => ctx.acct.store.getState().copyForward(m)),
   },
   {
@@ -243,7 +181,7 @@ export const messageActions: Action[] = [
     icon: MessageSquareText,
     ...message,
     order: 130,
-    available: ctx => !!rights(ctx)?.thread,
+    available: ctx => !!flags(ctx)?.thread,
     run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().openThread(m)),
   },
   {
@@ -252,7 +190,7 @@ export const messageActions: Action[] = [
     icon: Pin,
     ...message,
     order: 300,
-    available: ctx => !!rights(ctx)?.pin && !ctx.message?.pinned_at,
+    available: ctx => !!flags(ctx)?.canPin && !ctx.message?.pinned_at,
     run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().pinMessage(m.id)),
   },
   {
@@ -261,7 +199,7 @@ export const messageActions: Action[] = [
     icon: PinOff,
     ...message,
     order: 300,
-    available: ctx => !!rights(ctx)?.pin && !!ctx.message?.pinned_at,
+    available: ctx => !!flags(ctx)?.canPin && !!ctx.message?.pinned_at,
     run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().unpinMessage(m.id)),
   },
   {
@@ -329,7 +267,7 @@ export const messageActions: Action[] = [
     ...message,
     order: 510,
     orderFor: ctx => (ctx.message && isNotice(ctx.message) ? 495 : 510),
-    available: ctx => !!rights(ctx)?.delete && !threadRow(ctx)?.root,
+    available: ctx => !!flags(ctx)?.canDelete,
     run: withMessage((m, _list, ctx) => ctx.acct.store.menu.confirmDeleteMessage(m.id)),
   },
   {
@@ -384,7 +322,7 @@ export const messageActions: Action[] = [
 
 const onEmbed = (ctx: ActionCtx) => {
   const t = ctx.target
-  return t.kind === 'embed' && ctx.list !== null && messageRights(ctx.s, t.message, ctx.list).delete
+  return t.kind === 'embed' && ctx.list !== null && messageFlags(ctx.s, t.message, ctx.list).canTrim
     ? t
     : null
 }

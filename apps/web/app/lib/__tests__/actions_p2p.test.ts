@@ -40,7 +40,8 @@ import { paletteCommands } from '../actions/palette'
 import { memberMenu } from '../../components/p2p/p2p_server_view'
 import { roleItems, roleMenuItems } from '../../components/p2p/p2p_server_roles'
 import { allActions } from '../actions/registry'
-import type { ChatFacts, Target } from '../actions/types'
+import type { Target } from '../actions/types'
+import { peerFlags } from '../place/rows'
 import { P2P_IP_HINT } from '../call_choice'
 import { emptyLayout, type Folder } from '../nav_layout'
 import { EMPTY_NOTIFY, MUTE_CHOICES, setMute, type NotifyPrefs } from '../notify'
@@ -965,23 +966,36 @@ const msg = (over: Partial<P2pMessage> = {}): P2pMessage => ({
 
 const shown = { id: 7, created_at: TS / 1000 } as Message
 
-const facts = (over: Partial<ChatFacts> = {}): ChatFacts => ({
-  draftKey: 'room-d',
-  canAct: true,
-  can: CAN_ALL,
-  mayPin: false,
-  mayDelete: () => false,
-  forwardSkip: CAROL,
-  threads: false,
-  ownName: ik => (ik === BOB ? 'Bob Own' : 'Me Own'),
+// Where the row under a menu is listed. By default a conversation's thread, where nothing
+// pins and only your own messages go.
+interface Listed {
+  acts: boolean
+  timedOut: boolean
+  // A room's main list, where the reader holds every channel permission.
+  room: boolean
+}
+
+const facts = (over: Partial<Listed> = {}): Listed => ({
+  acts: true,
+  timedOut: false,
+  room: false,
   ...over,
 })
 
-const onMessage = (p: P2pMessage, chat = facts()): Target => ({
+const onMessage = (p: P2pMessage, at = facts()): Target => ({
   kind: 'p2p_message',
   p,
   m: shown,
-  chat,
+  row: peerFlags(
+    p,
+    { me: ME, acts: at.acts, held: CAN_ALL, room: at.room, thread: !at.room },
+    { timedOut: at.timedOut }
+  ),
+  chat: {
+    draftKey: 'room-d',
+    forwardSkip: CAROL,
+    ownName: ik => (ik === BOB ? 'Bob Own' : 'Me Own'),
+  },
 })
 
 const chatState = () => {
@@ -1091,20 +1105,23 @@ describe("a P2P message's menu", () => {
 
   test('without the right to act: forward and copies only, and no header row of reactions', () => {
     chatState()
-    expect(labels(onMessage(msg(), facts({ canAct: false })))).toEqual([
+    expect(labels(onMessage(msg(), facts({ acts: false })))).toEqual([
       'Forward',
       'Copy Text',
       'Copy Timestamp',
       'Copy Message ID',
     ])
-    expect(
-      labels(onMessage(msg({ archived: true }), facts({ mayPin: true, threads: true })))
-    ).toEqual(['Forward', 'Copy Text', 'Copy Timestamp', 'Copy Message ID'])
+    expect(labels(onMessage(msg({ archived: true }), facts({ room: true })))).toEqual([
+      'Forward',
+      'Copy Text',
+      'Copy Timestamp',
+      'Copy Message ID',
+    ])
   })
 
   test('your own message in a channel you moderate: edit, thread, unpin and delete', async () => {
     chatState()
-    const chat = facts({ mayPin: true, mayDelete: () => true, threads: true })
+    const chat = facts({ room: true })
     const t = onMessage(msg({ sender: ME, pinned: 5 }), chat)
     expect(items(t).map(shape)).toEqual([
       ['Reply', false, Reply],
@@ -1145,12 +1162,7 @@ describe("a P2P message's menu", () => {
 
   test('timed out: your own message can be deleted and its file downloaded, nothing written', async () => {
     chatState()
-    const chat = facts({
-      timedOut: true,
-      mayPin: true,
-      mayDelete: p => p.sender === ME,
-      threads: true,
-    })
+    const chat = facts({ timedOut: true, room: true })
     const own = onMessage(msg({ sender: ME, pinned: 5, att: [att('h1', 'a.txt')] }), chat)
     shownPeer().useP2p.setState({ files: { h1: file('none') } as never })
     expect(labels(own)).toEqual([
@@ -1174,7 +1186,7 @@ describe("a P2P message's menu", () => {
 
   test('a message whose body is not here: pin, delete and the stamps only', () => {
     chatState()
-    const chat = facts({ mayPin: true, mayDelete: () => true, threads: true })
+    const chat = facts({ room: true })
     expect(labels(onMessage(msg({ unavailable: true, body: '' }), chat))).toEqual([
       'Pin Message',
       'Delete Message',
@@ -1210,7 +1222,7 @@ describe("a P2P message's menu", () => {
     shownPeer().useP2p.setState({ files: {} })
     expect(row(one, 'Download attachment')?.disabled).toBe(true)
     shownPeer().useP2p.setState({ files: { h1: file('none') } as never })
-    const offline = onMessage(msg({ att: [att('h1', 'a.txt')] }), facts({ canAct: false }))
+    const offline = onMessage(msg({ att: [att('h1', 'a.txt')] }), facts({ acts: false }))
     expect(row(offline, 'Download attachment')?.disabled).toBe(true)
   })
 

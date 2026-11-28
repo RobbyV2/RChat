@@ -27,7 +27,6 @@ import { escapeMarksRead } from '../lib/follow'
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
-import { messageRights } from '../lib/actions/message'
 import { actionPress, openActionMenu } from '../lib/actions/menu'
 import { HeaderMore } from './header_more'
 import {
@@ -67,8 +66,9 @@ import { useFace } from '../lib/place/use_looks'
 import { useRows } from '../lib/place/use_rows'
 import { useLoadedPeople } from '../lib/place/use_looks'
 import { useMessages } from '../lib/place/use_messages'
-import { PinsButton, PinsWindow, useCanPin } from './pins'
-import { ListedRow, useRowFlags } from './listed_row'
+import { PinsButton, PinsWindow } from './pins'
+import { ListedRow } from './listed_row'
+import { useRowFlags } from './row_flags'
 import { ThreadsButton, ThreadsWindow } from './threads'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { isNotice } from '../lib/system_messages'
@@ -280,7 +280,7 @@ function SelfDmEmpty() {
 }
 
 function OpenPins() {
-  return <PinsWindow canUnpin={useCanPin()} />
+  return <PinsWindow />
 }
 
 // A channel the site admin has not opened as staff, in place of its messages.
@@ -413,9 +413,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     if (older.loading || newer.loading) snapEdge()
   }
 
+  const flags = useRowFlags(useRows('main'))
   const messageMenu = (msg: Message, x: number, y: number) => {
     if (!scope || openSelectionMenu(scope, msg, x, y, acct)) return
-    const react = !isNotice(msg) && messageRights(acct.store.getState(), msg, scope).react
+    const react = !isNotice(msg) && flags.of(msg).canReact
     openActionMenu(
       x,
       y,
@@ -425,7 +426,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     )
   }
 
-  const flags = useRowFlags(useRows('main'))
   const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
 
   const replyTo = (msg: Message) => {

@@ -17,7 +17,7 @@ import {
 } from '../p2p/dm'
 import { PingLog } from '../p2p/ping_log'
 import { threadKey } from '../p2p/app'
-import { threadAct } from '../actions/p2p_chat'
+import { threadAct } from '../place/rows'
 
 // Threads in P2P conversations: replies live in their thread, on both sides.
 

@@ -1,7 +1,7 @@
 'use client'
 import { IconButton, CardButton } from '../controls'
 import { Name, useNameLabel } from '../name'
-import { guestCalled, labelWith, p2pName, type NameValue } from '../../lib/names'
+import { guestCalled, p2pName, type NameValue } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { StoredLock } from '../storage_settings'
 import { longPress } from '../context_menu'
@@ -12,14 +12,13 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
-import { useCallback, useId, useMemo, type ReactNode } from 'react'
+import { useId, useMemo, type ReactNode } from 'react'
 import { ArrowLeft, Menu } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_DM_INTRO } from '../../lib/home'
 
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
-import { type P2pMessage } from '../../lib/p2p/dm'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
 import { HeaderMore } from '../header_more'
@@ -72,7 +71,6 @@ export function useDmFacts() {
   )
   const online = presence === 'online'
   const canAct = !reader && !elsewhere && peer?.state === 'mutual' && status !== 'moved'
-  const mayDelete = useCallback((p: P2pMessage) => p.sender === me, [me])
 
   return {
     me,
@@ -83,7 +81,6 @@ export function useDmFacts() {
     online,
     room,
     canAct,
-    mayDelete,
   }
 }
 
@@ -109,7 +106,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   const facts = useDmFacts()
   const { peer, peerIk, peerCalled, presence, online, room, canAct } = facts
   const peerLabel = useNameLabel(peerCalled, 'Contact')
-  const { mayDelete } = facts
   const chip = useHasChip(peerIk)
   const sealAll = useP2p(s => s.seal.everything)
 
@@ -235,8 +231,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       header={header}
       above={above}
       intro={<IntroBanner name={peerCalled} />}
-      canAct={canAct}
-      pendingTip={labelWith`Waiting for ${peerLabel} to come online`}
       peerFull={room?.peerFull === true}
       gap={room?.gap === true}
       online={online}
@@ -253,9 +247,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
           </span>
         </>
       }
-      mayDelete={mayDelete}
-      mayPin
-      forwardSkip={peerIk}
       dataAttr={{ 'data-p2p-dm': '' }}
     />
   )

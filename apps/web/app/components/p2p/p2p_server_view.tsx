@@ -20,7 +20,7 @@ import { VoiceRow } from '../voice_row'
 import { Button, IconButton, LinkButton, Tile, CardButton } from '../controls'
 import MemberSidebar from '../member_sidebar'
 
-import { useCallback, useMemo, type ComponentProps, type CSSProperties } from 'react'
+import { useMemo, type CSSProperties } from 'react'
 import {
   Clock,
   Folder as FolderIcon,
@@ -40,7 +40,6 @@ import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
 import { serverScope } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
-import { type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import { serverPings, serverUnread } from '../../lib/p2p/alerts'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
@@ -52,9 +51,7 @@ import { ctxFor } from '../../lib/actions/ctx'
 import { registerAppActions } from '../../lib/actions'
 import { menuItems, openActionMenu } from '../../lib/actions/menu'
 import { peerServer } from '../../lib/actions/p2p_server'
-import { composeAt } from '../../lib/place/use_composer'
 import { P2pRoom } from '../../lib/place/place'
-import { useGate } from '../composer_gate'
 import type { DropTarget } from '../../lib/drag'
 import { AboutLine, ServerIcon } from '../server_about'
 import { P2pServerGlyph } from './p2p_server_glyph'
@@ -75,7 +72,6 @@ import { SYNCING_TEXT } from '../../lib/p2p/flows'
 import { P2pChatBody, P2pIntro } from './p2p_chat'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
-import { usePeerTimeoutEnds } from '../timeout_dialog'
 import { hex } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
 import { serversLoading } from '../../lib/p2p/conversations'
@@ -570,10 +566,7 @@ function P2pChannelPaneBody({
   const channel = voiceCh ?? v?.channels.find(c => c.id === chat?.ch)
   const room = v?.id ?? ''
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const timedOut = usePeerTimeoutEnds(v?.timedOutUntil)
   const held = useChannelCan(useP2pRoom(v?.id ?? null), chat?.ch ?? null)
-  const moderator = held.manage && timedOut === null
-  const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
 
   if (!v)
     return (
@@ -762,16 +755,11 @@ function P2pChannelPaneBody({
 
   return (
     <ChannelCanContext.Provider value={held}>
-      <RoomChatBody
-        identity={identity}
-        room={v.id}
+      <P2pChatBody
         chat={chat}
-        channelTextOnly={channel.text_only}
         header={header}
         above={<ServerNotices v={v} />}
         intro={<ServerIntro />}
-        timedOut={timedOut !== null}
-        pendingTip="Waiting for a member to come online"
         peerFull={false}
         gap={v.gap}
         online={others}
@@ -786,26 +774,10 @@ function P2pChannelPaneBody({
             </span>
           </>
         }
-        mayDelete={mayDelete}
-        mayPin={held.pin && timedOut === null}
-        forwardSkip={null}
         dataAttr={{ 'data-p2p-channel-pane': '' }}
       />
     </ChannelCanContext.Provider>
   )
-}
-
-// The chat of an open room channel, with what the room's composer gate lets the reader do.
-function RoomChatBody({
-  identity,
-  room,
-  ...body
-}: Omit<ComponentProps<typeof P2pChatBody>, 'canAct'> & {
-  identity: Parameters<typeof P2pRoom.open>[0]
-  room: string
-}) {
-  const { acts } = useGate(composeAt(P2pRoom.open(identity, room), 'main'))
-  return <P2pChatBody {...body} canAct={acts} />
 }
 
 // Invites from contacts, for the P2P home.

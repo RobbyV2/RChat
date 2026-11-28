@@ -47,15 +47,6 @@ import type { Message } from '../types'
 import { hidesIp } from './voice'
 import type { Action, ActionCtx, ArgChoice } from './types'
 import { identityActions } from './identity'
-export const threadAct = (p: P2pMessage, canAct: boolean) =>
-  p.system || p.call || p.thread || p.noThread || p.archived
-    ? null
-    : p.replies
-      ? 'View thread'
-      : canAct && !p.unavailable
-        ? 'Create thread'
-        : null
-
 export const peerChat = identityActions(identity => {
   const copy = (text: string) => void sharing().copyText(text)
 
@@ -216,20 +207,11 @@ export const peerChat = identityActions(identity => {
 
   const rowOf = ({ target }: ActionCtx) => (target.kind === 'p2p_message' ? target : null)
 
-  // What may be done with the message: `act` (not read-only, nor from an old copy), `write` (no
-  // timeout of ours either), and its acts.
-  const actsOf = (ctx: ActionCtx) => {
-    const t = rowOf(ctx)
-    if (!t) return null
-    const act = t.chat.canAct && !t.p.archived
-    const write = act && !t.chat.timedOut
-    const me = identity().useP2p.getState().me
-    return { ...t, act, write, can: messageActs(t.p, write, t.p.sender === me) }
-  }
-
   const filesOf = (ctx: ActionCtx) => {
     const t = rowOf(ctx)
-    return t ? (t.p.fwd?.att ?? t.p.att).map(att => fileRow(att, t.chat.canAct, ctx.acct)) : []
+    return t
+      ? (t.p.fwd?.att ?? t.p.att).map(att => fileRow(att, t.row.canFetch === true, ctx.acct))
+      : []
   }
 
   const oneFile = (ctx: ActionCtx) => {
@@ -277,7 +259,7 @@ export const peerChat = identityActions(identity => {
       icon: Reply,
       ...onMessage,
       order: 100,
-      available: ctx => !!actsOf(ctx)?.can.reply,
+      available: ctx => !!rowOf(ctx)?.row.canReply,
       run: ctx => {
         const t = rowOf(ctx)
         if (t) identity().p2pDm.startReply(t.chat.draftKey, t.p.id)
@@ -289,7 +271,7 @@ export const peerChat = identityActions(identity => {
       icon: Pencil,
       ...onMessage,
       order: 110,
-      available: ctx => !!actsOf(ctx)?.can.edit,
+      available: ctx => !!rowOf(ctx)?.row.canEdit,
       run: ctx => {
         const t = rowOf(ctx)
         if (t) identity().p2pDm.startEdit(t.chat.draftKey, t.p.id)
@@ -302,7 +284,7 @@ export const peerChat = identityActions(identity => {
       ...onMessage,
       order: 120,
       args: [{ kind: 'choice', name: 'to', prompt: 'Forward to', choices: forwardChoices }],
-      available: ctx => !!actsOf(ctx)?.can.forward,
+      available: ctx => !!rowOf(ctx)?.row.canForward,
       run: (ctx, { to }) => {
         const t = rowOf(ctx)
         if (!t) return
@@ -341,17 +323,11 @@ export const peerChat = identityActions(identity => {
     {
       id: 'p2p_message_thread',
       title: 'Open thread',
-      label: ctx => {
-        const t = actsOf(ctx)
-        return (t && threadAct(t.p, t.write && t.chat.can.threads)) ?? 'Open thread'
-      },
+      label: ctx => rowOf(ctx)?.row.thread ?? 'Open thread',
       icon: MessageSquareText,
       ...onMessage,
       order: 130,
-      available: ctx => {
-        const t = actsOf(ctx)
-        return !!t && t.chat.threads && threadAct(t.p, t.write && t.chat.can.threads) !== null
-      },
+      available: ctx => !!rowOf(ctx)?.row.thread,
       run: ctx => {
         const t = rowOf(ctx)
         if (t) void identity().p2pThread.open(t.p.id)
@@ -364,8 +340,8 @@ export const peerChat = identityActions(identity => {
       ...onMessage,
       order: 300,
       available: ctx => {
-        const t = actsOf(ctx)
-        return !!t && t.write && t.chat.mayPin && !t.p.thread && t.p.pinned === null
+        const t = rowOf(ctx)
+        return !!t && t.row.canPin && t.p.pinned === null
       },
       run: ctx => {
         const t = rowOf(ctx)
@@ -379,8 +355,8 @@ export const peerChat = identityActions(identity => {
       ...onMessage,
       order: 300,
       available: ctx => {
-        const t = actsOf(ctx)
-        return !!t && t.write && t.chat.mayPin && !t.p.thread && t.p.pinned !== null
+        const t = rowOf(ctx)
+        return !!t && t.row.canPin && t.p.pinned !== null
       },
       run: ctx => {
         const t = rowOf(ctx)
@@ -394,10 +370,7 @@ export const peerChat = identityActions(identity => {
       danger: true,
       ...onMessage,
       order: 510,
-      available: ctx => {
-        const t = actsOf(ctx)
-        return !!t && t.act && t.chat.mayDelete(t.p)
-      },
+      available: ctx => !!rowOf(ctx)?.row.canDelete,
       run: ctx => {
         const t = rowOf(ctx)
         if (t) confirmDelete(t.p.id, undefined, ctx.acct)
@@ -454,7 +427,10 @@ export const peerChat = identityActions(identity => {
       icon: Copy,
       ...onMessage,
       order: 800,
-      available: ctx => !!actsOf(ctx)?.can.copy,
+      available: ctx => {
+        const t = rowOf(ctx)
+        return !!t && messageActs(t.p, false, false).copy
+      },
       run: ctx => {
         const t = rowOf(ctx)
         if (t) copy(t.p.fwd ? t.p.fwd.body : t.p.body)
@@ -610,6 +586,6 @@ export const peerChat = identityActions(identity => {
     ...placeActions,
   ]
 
-  return { actions: p2pChatActions, threadAct, confirmDelete, copyForP2p, forwardTo, startDownload }
+  return { actions: p2pChatActions, confirmDelete, copyForP2p, forwardTo, startDownload }
 })
 export const p2pChatActions = peerChat.actions

@@ -1,16 +1,26 @@
-import { replyAccess } from '../actions/message'
-import { threadAct } from '../actions/p2p_chat'
 import type { AccountSession } from '../client/session'
-import { CAN_ALL, canOf, p2pMask } from '../channel_perms'
+import { CAN_ALL, canOf, p2pMask, type ChannelCan } from '../channel_perms'
+import { time } from '../platform/time'
 import { canForward } from '../forward'
+import { guestPostingStatus } from '../guest_chat'
 import { outranksKnown } from '../hierarchy'
 import { mentionsUser } from '../mentions'
 import { displayName } from '../p2p/contacts'
-import { messageActs } from '../p2p/dm'
+import { messageActs, type P2pMessage } from '../p2p/dm'
+import { canPin } from '../pins'
 import { canQuote, repliesToMe } from '../replies'
 import { canEdit as ownEditable } from '../sed'
-import { byUsername, channelCan, groupMentionsMe, myRank } from '../selectors'
+import {
+  byUsername,
+  channelCan,
+  groupMentionsMe,
+  messageServer,
+  myRank,
+  myTimeoutEnds,
+  outranksMember,
+} from '../selectors'
 import { maskOf } from '../store'
+import type { RChatState } from '../store_types'
 import type { Message } from '../types'
 import { composer, type ComposerList, type GateState } from './composer'
 import { defineFeature, featureAt, isUnsupported } from './feature'
@@ -38,6 +48,10 @@ export interface RowFlags {
   canReact: boolean
   canUnreact: boolean
   canVote?: boolean
+  // Whether the reader may pin the message, or unpin it once pinned.
+  canPin: boolean
+  // Whether the files the place keeps with the message can be fetched.
+  canFetch?: boolean
   sent?: 'failed' | 'pending' | 'delivered'
   sentTip?: string
   canRetry?: boolean
@@ -62,6 +76,8 @@ export interface RowsState {
   until: number | null
   // Whether the reader may act on the rows at all, a timeout aside.
   acts: boolean
+  // Whether the reader may change the pins of the list, a timeout aside.
+  pins: boolean
   of: (m: Message, at: RowAt) => RowFlags
 }
 
@@ -87,6 +103,111 @@ const perList = (make: (list: ComposerList) => Live<RowsState>): Rows => {
       return known
     },
   }
+}
+
+const signedIn = (s: RChatState) => s.me !== null && !s.guest
+
+// Quoting, and opening threads: in a channel or a DM (`dm`), where threads need an account.
+export function replyAccess(
+  s: RChatState,
+  server: string | null,
+  channelId: number | null,
+  canWrite: boolean,
+  dm = false
+) {
+  const guestWrites = guestPostingStatus(s, server, channelId) === 'ready'
+  return {
+    quote: canWrite || guestWrites,
+    thread: dm ? signedIn(s) : channelId !== null && (signedIn(s) || guestWrites),
+  }
+}
+
+// Pinning and unpinning: either DM participant, or a member with Pin messages in the channel. A
+// thread never pins.
+const hostedPins = (
+  signed: boolean,
+  thread: boolean,
+  inDm: boolean,
+  member: boolean,
+  can: ChannelCan
+) => signed && !thread && (inDm || (member && can.pin && can.send))
+
+// Where a hosted message is listed, and what the reader holds there.
+interface HostedWhere {
+  server: string | null
+  channel: number | null
+  inDm: boolean
+  // The list is a thread; `rootId` heads it.
+  thread: boolean
+  rootId: number | null
+  // The reader is a member of `server`, or the conversation takes their messages.
+  acts: boolean
+  // The reader may change the list's pins, a timeout aside.
+  pins: boolean
+  can: ChannelCan
+  outranks: (username: string) => boolean
+}
+
+const hostedFlags = (s: RChatState, m: Message, w: HostedWhere, timedOut: boolean): RowFlags => {
+  const me = s.me
+  const signed = signedIn(s)
+  const { server, channel, thread, can } = w
+  const acting = w.acts && (w.inDm || !timedOut)
+  const canWrite = acting && can.send
+  const access = replyAccess(s, server, channel, canWrite, w.inDm)
+  const canDelete =
+    signed && me !== null && (m.author.username === me.username || w.outranks(m.author.username))
+  const member = server !== null && w.acts
+  return {
+    server,
+    mentioned: mentionsMe(m, me?.username) || (!thread && groupMentionsMe(s, m)),
+    canEdit: canWrite && ownEditable(m, me?.username),
+    canReply: access.quote && canQuote(m),
+    canForward: signed && canForward(m),
+    thread:
+      !thread && canQuote(m) && access.thread && (m.reply_count > 0 || !member || can.threads)
+        ? 'Reply in thread'
+        : null,
+    chip: !thread,
+    canDelete: canDelete && !(thread && m.id === w.rootId),
+    canTrim: canDelete,
+    canReact: acting && can.react,
+    canUnreact: signed,
+    canVote: canWrite,
+    canPin: w.pins && !timedOut && canPin(m),
+  }
+}
+
+// What the reader may do to a hosted message of `list` (a list key), wherever it shows: the
+// flags its row has.
+export const messageFlags = (
+  s: RChatState,
+  m: Message,
+  list: string,
+  now = time().now()
+): RowFlags => {
+  const thread = list.startsWith('t')
+  const inDm = list.startsWith('d') || m.dm_id !== null
+  const server = inDm ? null : messageServer(s, m)
+  const dm = thread && m.dm_id !== null ? s.dms.find(d => d.id === m.dm_id) : undefined
+  const member = server !== null && !!s.me?.servers.some(x => x.name === server)
+  const can = channelCan(s, server, m.channel_id)
+  return hostedFlags(
+    s,
+    m,
+    {
+      server,
+      channel: m.channel_id,
+      inDm,
+      thread,
+      rootId: thread ? Number(list.slice(1)) : null,
+      acts: signedIn(s) && (inDm ? !(dm && s.blocked[dm.other.username]) : member),
+      pins: hostedPins(signedIn(s), thread, inDm, member, can),
+      can,
+      outranks: username => server !== null && can.manage && outranksMember(s, server, username),
+    },
+    myTimeoutEnds(s, server, now) !== null
+  )
 }
 
 const hosted = (account: AccountSession): Rows =>
@@ -152,34 +273,32 @@ const hosted = (account: AccountSession): Rows =>
             here &&
             (inDm ? !shutDm : server !== null && mine !== undefined) &&
             (thread || v?.kind === 'dm' || v?.kind === 'channel')
-          const moderates = (m: Message) =>
-            (thread || v?.kind === 'channel') &&
-            can.manage &&
-            outranksKnown(rank, memberFor(m.author.username), detail?.roles)
+          const pins = hostedPins(signed, thread, inDm, mine !== undefined, can)
+          const where: HostedWhere = {
+            server,
+            channel,
+            inDm,
+            thread,
+            rootId,
+            acts,
+            pins,
+            can,
+            outranks: username =>
+              (thread || v?.kind === 'channel') &&
+              can.manage &&
+              outranksKnown(rank, memberFor(username), detail?.roles),
+          }
           return {
             until,
             acts,
-            of: (m, at) => {
-              const s = initial ? store.getInitialState() : store.getState()
-              const acting = acts && (inDm || !at.timedOut)
-              const canWrite = acting && can.send
-              const access = replyAccess(s, server, channel, canWrite, inDm)
-              const canDelete = me !== null && (m.author.username === me.username || moderates(m))
-              return {
-                server,
-                mentioned: mentionsMe(m, me?.username) || (!thread && groupMentionsMe(s, m)),
-                canEdit: canWrite && ownEditable(m, me?.username),
-                canReply: thread ? access.quote && canQuote(m) : access.quote,
-                canForward: signed && canForward(m),
-                thread: !thread && access.thread ? 'Reply in thread' : null,
-                chip: !thread,
-                canDelete: canDelete && !(thread && m.id === rootId),
-                canTrim: canDelete,
-                canReact: acting && can.react,
-                canUnreact: signed,
-                canVote: canWrite,
-              }
-            },
+            pins,
+            of: (m, at) =>
+              hostedFlags(
+                initial ? store.getInitialState() : store.getState(),
+                m,
+                where,
+                at.timedOut
+              ),
           }
         }
       )
@@ -194,6 +313,77 @@ const hosted = (account: AccountSession): Rows =>
 // aside.
 const actsUnder = ({ first, then }: GateState) =>
   first === null && (then === null || then.kind === 'noThreads')
+
+// Where a P2P message is listed, and what the reader holds there.
+export interface PeerWhere {
+  me: string | null
+  // Whether the reader may act on the list's rows at all, a timeout aside.
+  acts: boolean
+  held: ChannelCan
+  // A room's list (its moderators delete, its channel says who pins); else a conversation's.
+  room: boolean
+  thread: boolean
+  sentTip?: string
+}
+
+const NOT_STORED: RowFlags = {
+  server: null,
+  local: true,
+  mentioned: false,
+  canEdit: false,
+  canReply: false,
+  canForward: false,
+  thread: null,
+  canDelete: false,
+  canReact: false,
+  canUnreact: false,
+  canPin: false,
+}
+
+// What the reader may do to a stored P2P message: the flags its row has.
+export const peerFlags = (p: P2pMessage, w: PeerWhere, at: RowAt): RowFlags => {
+  const { me, held } = w
+  const mine = p.sender === me
+  // From the old copy: read-only here.
+  const act = w.acts && !p.archived
+  const write = act && !at.timedOut
+  const can = messageActs(p, write, mine)
+  return {
+    event: p.id,
+    server: null,
+    local: true,
+    mentioned:
+      !mine &&
+      ((me !== null && p.mentions.includes(me)) || p.reply?.sender === me || p.everyone === true),
+    canEdit: can.edit,
+    canReply: can.reply,
+    canForward: can.forward,
+    thread: w.thread ? null : threadAct(p, write && held.threads),
+    chip: !w.thread && !p.archived,
+    canDelete: act && !at.root && (mine || (w.room && held.manage && !at.timedOut)),
+    canReact: write && held.react,
+    canUnreact: write,
+    canPin: write && !w.thread && !p.thread && (!w.room || held.pin),
+    canFetch: w.acts,
+    sent: mine ? (p.failed ? 'failed' : p.pending ? 'pending' : 'delivered') : undefined,
+    sentTip: w.sentTip,
+    canRetry: w.acts && !at.timedOut,
+    canDrop: w.acts,
+    lateAt: p.late ? p.sentTs : undefined,
+    hidden: p.removed ? 'removed' : p.slowHidden ? 'slow' : undefined,
+    pinned: p.system?.target ?? null,
+  }
+}
+
+// What starting or opening the thread of a stored message is called; null when it offers none.
+export const threadAct = (p: P2pMessage, canAct: boolean) =>
+  p.system || p.call || p.thread || p.noThread || p.archived
+    ? null
+    : p.replies
+      ? 'View thread'
+      : canAct && !p.unavailable
+        ? 'Create thread'
+        : null
 
 const peer = (place: P2pRoom | P2pDm): Rows =>
   perList(list => {
@@ -238,65 +428,22 @@ const peer = (place: P2pRoom | P2pDm): Rows =>
               : peerFull
                 ? 'Their storage is full'
                 : `Waiting for ${masked(contact ? displayName(contact) : 'Contact')} to come online`
+          const facts: PeerWhere = {
+            me,
+            acts,
+            held,
+            room: place.kind === 'p2pRoom',
+            thread: list === 'thread',
+            sentTip,
+          }
           return {
             until,
             acts,
+            pins: acts && list === 'main' && (place.kind === 'p2pDm' || held.pin),
             of: (m, at) => {
               const id = rows.idOf(m.id)
               const p = id === null ? undefined : rows.message(id)
-              if (!p)
-                return {
-                  server: null,
-                  local: true,
-                  mentioned: false,
-                  canEdit: false,
-                  canReply: false,
-                  canForward: false,
-                  thread: null,
-                  canDelete: false,
-                  canReact: false,
-                  canUnreact: false,
-                }
-              const mine = p.sender === me
-              // From the old copy: read-only here.
-              const act = acts && !p.archived
-              const write = act && !at.timedOut
-              const can = messageActs(p, write, mine)
-              const threads = list === 'main'
-              return {
-                event: p.id,
-                server: null,
-                local: true,
-                mentioned:
-                  !mine &&
-                  ((me !== null && p.mentions.includes(me)) ||
-                    p.reply?.sender === me ||
-                    p.everyone === true),
-                canEdit: can.edit,
-                canReply: can.reply,
-                canForward: can.forward,
-                thread: threads ? threadAct(p, write && held.threads) : null,
-                chip: threads && !p.archived,
-                canDelete:
-                  act &&
-                  !at.root &&
-                  (mine || (place.kind === 'p2pRoom' && held.manage && !at.timedOut)),
-                canReact: write && held.react,
-                canUnreact: write,
-                sent: mine
-                  ? p.failed
-                    ? 'failed'
-                    : p.pending
-                      ? 'pending'
-                      : 'delivered'
-                  : undefined,
-                sentTip,
-                canRetry: acts && !at.timedOut,
-                canDrop: acts,
-                lateAt: p.late ? p.sentTs : undefined,
-                hidden: p.removed ? 'removed' : p.slowHidden ? 'slow' : undefined,
-                pinned: p.system?.target ?? null,
-              }
+              return p ? peerFlags(p, facts, at) : NOT_STORED
             },
           }
         }

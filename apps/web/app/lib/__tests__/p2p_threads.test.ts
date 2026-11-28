@@ -21,7 +21,7 @@ import { LOCAL } from '../p2p/limits'
 import { P2pStore } from '../p2p/db'
 import { heldKey, purgeServer } from '../p2p/dag'
 import { shareKey, shareLive, shareTotal } from '../p2p/shares'
-import { threadAct } from '../actions/p2p_chat'
+import { threadAct } from '../place/rows'
 import { channelReadSkips, threadsSig } from '../p2p/app'
 import { SEARCH_META, SEARCH_STALE, SERVER_TOTAL_BYTES } from '../p2p/db'
 import {

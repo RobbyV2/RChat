@@ -8,6 +8,7 @@ import type { Folder } from '../nav_layout'
 import type { Contact } from '../p2p/contacts'
 import type { P2pMessage } from '../p2p/dm'
 import type { Pins } from '../place/pins'
+import type { RowFlags } from '../place/rows'
 import type { Threads } from '../place/threads'
 import type {
   CategoryView,
@@ -18,7 +19,6 @@ import type {
   ServerView,
 } from '../p2p/server/types'
 import type { PaletteGroup } from '../palette'
-import type { ChannelCan } from '../channel_perms'
 import type { RChatState } from '../store_types'
 import type { Category, Channel, DmSummary, Message, Role, Separator, UserRef } from '../types'
 
@@ -43,19 +43,11 @@ export type Args = Record<string, string>
 export type MemberWhere =
   'list' | 'author' | 'friend' | 'request' | 'interacted' | 'dm' | 'profile' | 'palette' | 'admin'
 
-// What a P2P message list knows about its rows: where replies and edits go, who may do what, the
-// contact a forward skips, whether rows start threads, and a sender's own profile name.
-// `timedOut`: a timeout of ours leaves deleting and downloads only.
+// What a P2P message list knows beside its rows' flags: where replies and edits go, the contact
+// a forward skips, and a sender's own profile name.
 export interface ChatFacts {
   draftKey: string
-  canAct: boolean
-  timedOut?: boolean
-  // What the viewer holds in the channel the message is in.
-  can: ChannelCan
-  mayPin: boolean
-  mayDelete(p: P2pMessage): boolean
   forwardSkip: string | null
-  threads: boolean
   ownName(ik: string): string
 }
 
@@ -132,7 +124,8 @@ export type Target =
   | { kind: 'p2p_category'; v: ServerView; cat: CategoryView }
   | { kind: 'p2p_separator'; v: ServerView; sep: SeparatorView }
   // A P2P message as its list shows it (`m`), and a line that says a message was pinned.
-  | { kind: 'p2p_message'; p: P2pMessage; m: Message; chat: ChatFacts }
+  // `row`: what the message's row may do.
+  | { kind: 'p2p_message'; p: P2pMessage; m: Message; row: RowFlags; chat: ChatFacts }
   | { kind: 'p2p_pin_line'; p: P2pMessage; m: Message }
   // The chevron of a P2P contact's call or video call button.
   | { kind: 'p2p_call'; peer: string; video: boolean }

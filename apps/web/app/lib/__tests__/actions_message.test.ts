@@ -28,7 +28,7 @@ import {
 } from 'lucide-react'
 import { ctxFor, paletteCtx, refreshCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
-import { messageRights } from '../actions/message'
+import { messageFlags } from '../place/rows'
 import { menuItems, openActionMenu } from '../actions/menu'
 import { locateOnce } from '../forward_locate'
 import { paletteCommands } from '../actions/palette'
@@ -542,7 +542,7 @@ test('guest replies follow the channel and its participation settings', () => {
   expect(replies(at(pinNotice))).toEqual([])
   expect(replies(at(readOnlyBob, 'c2'))).toEqual([])
   expect(replies(at(dmBob, 'd9'))).toEqual([])
-  expect(messageRights(useStore.getState(), bobs, 'c1').react).toBe(false)
+  expect(messageFlags(useStore.getState(), bobs, 'c1').canReact).toBe(false)
   change(false, true)
   expect(replies(at(bobs))).toEqual([])
   change(true, false)
@@ -837,9 +837,9 @@ test('a channel that says what you hold decides each action', () => {
   expect(news(Perm.DeleteMessages)).toEqual([...rest, 'Delete Message', ...COPY_ALL])
   expect(news(B.AddReactions)).toEqual([...rest, ...COPY_ALL])
   state({ view: 'c2', news: seen + B.AddReactions })
-  expect(messageRights(useStore.getState(), readOnlyBob, 'c2').react).toBe(true)
+  expect(messageFlags(useStore.getState(), readOnlyBob, 'c2').canReact).toBe(true)
   state({ view: 'c2', news: seen + B.SendMessages })
-  expect(messageRights(useStore.getState(), readOnlyBob, 'c2').react).toBe(false)
+  expect(messageFlags(useStore.getState(), readOnlyBob, 'c2').canReact).toBe(false)
 })
 
 test('in a DM: threads and no moderation', () => {
@@ -1156,7 +1156,18 @@ test('each embed and timestamp row runs its action', async () => {
 })
 
 test('message rights follow membership and channel permissions', () => {
-  const rights = (m: Message, list = listOf(m)) => messageRights(useStore.getState(), m, list)
+  const rights = (m: Message, list = listOf(m)) => {
+    const f = messageFlags(useStore.getState(), m, list)
+    return {
+      react: f.canReact,
+      edit: f.canEdit,
+      quote: f.canReply,
+      thread: f.thread !== null,
+      forward: f.canForward,
+      delete: f.canDelete,
+      pin: f.canPin,
+    }
+  }
   state()
   expect(rights(own)).toEqual({
     react: true,
@@ -1171,7 +1182,8 @@ test('message rights follow membership and channel permissions', () => {
   expect(rights(pinNotice)).toMatchObject({ react: true, quote: false, forward: false })
   state({ perms: Perm.DeleteMessages })
   expect(rights(bobs)).toMatchObject({ delete: true, pin: true })
-  expect(rights(root, 't30')).toMatchObject({ delete: true, pin: false })
+  expect(rights(root, 't30')).toMatchObject({ delete: false, pin: false })
+  expect(messageFlags(useStore.getState(), root, 't30').canTrim).toBe(true)
   state({ meTimedOut: true, perms: Perm.DeleteMessages })
   expect(rights(own)).toMatchObject({ react: false, edit: false, forward: true, pin: false })
   state({ view: 'c2' })

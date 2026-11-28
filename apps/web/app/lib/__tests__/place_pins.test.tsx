@@ -12,7 +12,7 @@ import type { View } from '../view'
 import { msg, user } from './fixtures'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
 
-// Ann's side with one message pinned by Bob in the conversation on screen, and what the side is
+// Ann's side, where she may change the pins, with one message pinned by Bob in the conversation on screen, and what the side is
 // asked recorded.
 const seat = (world: ContractWorld, calls: unknown[][], open = true) => {
   const { place } = world.ann
@@ -24,6 +24,14 @@ const seat = (world: ContractWorld, calls: unknown[][], open = true) => {
     const key = place.kind === 'hostedServer' ? 'c1' : `d${world.dmId}`
     const state = {
       view,
+      guest: false,
+      me: { ...user('ann'), servers: [{ name: world.server }] },
+      servers: {
+        [world.server]: {
+          channels: [{ id: 1, name: 'deck', my_perms: 2n ** 40n - 1n }],
+          roles: [],
+        },
+      },
       pins: open
         ? { key, list: [msg(5, { author: user('bob'), content: 'bring the map' })], failed: false }
         : null,
@@ -48,7 +56,11 @@ const seat = (world: ContractWorld, calls: unknown[][], open = true) => {
       pinned: 6_000,
     } as unknown as P2pMessage
     const state = {
-      chat: { room: world.room, ch: place.kind === 'p2pRoom' ? 'c1' : null },
+      me: 'A',
+      status: 'ready',
+      contacts: [{ ik: 'B', name: 'Bob', state: 'mutual' }],
+      rooms: { [world.room]: { peer: 'B' } },
+      chat: { room: world.room, ch: place.kind === 'p2pRoom' ? 'c1' : null, peer: 'B' },
       pins: open ? { room: world.room, list: [pinned] } : null,
     }
     place.app.useP2p.setState(state as never)
@@ -113,7 +125,7 @@ placeContract(pins, (kind, world) => {
         <P2pProvider identity={ann.app}>
           <PlaceProvider place={ann.place}>
             <PinsButton />
-            <PinsWindow canUnpin />
+            <PinsWindow />
           </PlaceProvider>
         </P2pProvider>
       </AccountProvider>

@@ -50,6 +50,12 @@ const seat = (world: ContractWorld, list: ComposerList) => {
       view,
       guest: false,
       me: { ...user('ann'), servers: [{ name: world.server }] },
+      servers: {
+        [world.server]: {
+          channels: [{ id: 1, name: 'deck', my_perms: 2n ** 40n - 1n }],
+          roles: [],
+        },
+      },
       panel: { kind: 'thread', root: theirs },
     } as unknown as Partial<RChatState>
     account.store.setState(state)
@@ -161,6 +167,17 @@ placeContract(rows, (kind, world) => {
     expect(flags.of(thread.own, free).thread).toBeNull()
     expect(flags.of(thread.own, free).canDelete).toBe(true)
     expect(flags.of(thread.theirs, { timedOut: false, root: true }).canDelete).toBe(false)
+  })
+
+  test('the conversation takes pins from who may pin there, a thread from nobody', () => {
+    const main = seat(world(), 'main')
+    expect(main.rows.get().pins).toBe(true)
+    expect(main.rows.get().of(main.theirs, free).canPin).toBe(true)
+    if (kind === 'hostedServer' || kind === 'p2pRoom')
+      expect(main.rows.get().of(main.theirs, { timedOut: true }).canPin).toBe(false)
+    const thread = seat(world(), 'thread')
+    expect(thread.rows.get().pins).toBe(false)
+    expect(thread.rows.get().of(thread.own, free).canPin).toBe(false)
   })
 
   test('a timeout leaves your own row its delete and nothing else', () => {

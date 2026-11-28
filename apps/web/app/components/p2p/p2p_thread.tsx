@@ -12,8 +12,7 @@ import type { P2pMessage } from '../../lib/p2p/dm'
 import type { Message } from '../../lib/types'
 import { PlaceProvider, useLive } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
-import { ListedRow, useRowFlags } from '../listed_row'
-import { rowsAt } from '../../lib/place/use_rows'
+import { ListedRow } from '../listed_row'
 import { ThreadPanelView, ThreadTail, useThreadScroll } from '../thread_panel'
 import { openThreadAt } from '../../lib/place/use_thread'
 import { P2pDm, P2pRoom } from '../../lib/place/place'
@@ -44,10 +43,7 @@ function ThreadBody({ t }: { t: P2pThread }) {
   const scope = identityScopeKey(identity.localId, threadScope(t))
   const focus = useP2p(s => (s.focus?.room === key ? s.focus : null))
   const home = t.ch ? P2pRoom.open(identity, t.room) : P2pDm.open(identity, t.room)
-  const { acts: canAct, timedOut } = useRowFlags(rowsAt(home, 'thread'))
   const held = useChannelCan(home, t.ch)
-  const moderator = t.ch !== null && held.manage && !timedOut
-  const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
   const ownRoom = t.ch ? t.room : undefined
   const ownName = useCallback((ik: string) => profileName(ik, ownRoom), [profileName, ownRoom])
   const replies = t.messages ?? EMPTY
@@ -56,6 +52,7 @@ function ThreadBody({ t }: { t: P2pThread }) {
     num,
     idOf,
     place,
+    flags,
     react,
     editing,
     editingState,
@@ -70,14 +67,8 @@ function ThreadBody({ t }: { t: P2pThread }) {
     list: 'thread',
     draftKey: key,
     scope,
-    canAct,
-    timedOut,
-    mayPin: false,
-    mayDelete,
-    forwardSkip: null,
-    threads: false,
-    can: held,
   })
+  const canAct = flags.acts
   const thread = openThreadAt(place)
   const state = useLive(thread.state)
   const head = t.head ? rows[0] : null
@@ -122,7 +113,6 @@ function ThreadBody({ t }: { t: P2pThread }) {
 
   const onRoot = useMemo(() => rowOn(jumpMain), [rowOn, jumpMain])
   const onReply = useMemo(() => rowOn(jumpHere), [rowOn, jumpHere])
-  const flags = useRowFlags(rowsAt(place, 'thread'))
 
   const row = (r: { p: P2pMessage; m: Message }, root: boolean, place: GroupPlace) => {
     const { p, m } = r
