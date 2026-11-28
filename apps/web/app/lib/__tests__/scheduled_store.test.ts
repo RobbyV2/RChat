@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ManualTime } from '../clock'
+import { ManualTime } from './helpers/test_clock'
 import type { ScheduledQuery, ScheduleReq } from '../api'
 import type { AccountSession } from '../client/session'
 import { hostedTarget, scheduledInitial, scheduledSlice } from '../scheduled_store'

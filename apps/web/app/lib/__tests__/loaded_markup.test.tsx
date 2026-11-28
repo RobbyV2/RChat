@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Loaded } from '../../components/loaded'
 import { ApiError } from '../api'
-import { ManualTime } from '../clock'
+import { ManualTime } from './helpers/test_clock'
 import { LOAD_DEADLINE_MS, fromStore, type Load, type LoadMaker } from '../load'
 import { setTime } from '../platform/time'
 

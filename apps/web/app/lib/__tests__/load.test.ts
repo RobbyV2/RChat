@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { ApiError } from '../api'
-import { ManualTime } from '../clock'
+import { ManualTime } from './helpers/test_clock'
 import {
   LOAD_DEADLINE_MS,
   fromLive,

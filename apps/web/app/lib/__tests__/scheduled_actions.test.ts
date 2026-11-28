@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ManualTime } from '../clock'
+import { ManualTime } from './helpers/test_clock'
 import { scheduledActions, setOpenComposer } from '../actions/scheduled'
 import type { ActionCtx, Target } from '../actions/types'
 import type { AccountSession } from '../client/session'

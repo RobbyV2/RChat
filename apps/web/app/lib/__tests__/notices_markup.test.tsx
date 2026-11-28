@@ -10,7 +10,7 @@ import {
 } from '../../components/notices'
 import { ApiError } from '../api'
 import { refusalOf } from '../api_errors'
-import { ManualTime } from '../clock'
+import { ManualTime } from './helpers/test_clock'
 import { setTime } from '../platform/time'
 
 afterEach(() => setTime())
