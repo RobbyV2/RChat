@@ -428,10 +428,11 @@ describe('size and layering', () => {
     expect(docFits(loop)).toBe(false)
   })
 
-  test('the module is pure: it loads only the canonical codec and byte helpers', () => {
+  test('the module is pure: it loads only the canonical codec, the schema and byte helpers', () => {
     expect([...importsOf('apps/web/app/lib/p2p/automation_docs.ts')].sort()).toEqual([
       'apps/web/app/lib/bytes.ts',
       'apps/web/app/lib/p2p/canonical.ts',
+      'apps/web/app/lib/schema.ts',
     ])
   })
 })
