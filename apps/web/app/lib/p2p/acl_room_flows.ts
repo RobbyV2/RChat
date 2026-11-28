@@ -1,3 +1,4 @@
+import type { ResetFact } from '../profile_reset'
 import type { EvalResult } from './acl/facts'
 import {
   authority,
@@ -113,6 +114,11 @@ export function carried(cx: RoomCtx, up: string): Carried | null {
     separators: separatorsOf(F),
     settings: F.setting ?? null,
     memberList: F.memberList ?? null,
+    profileMode: F.profileMode ?? null,
+    about: F.about ?? null,
+    store: F.store ?? null,
+    resets: Object.assign(dict<ResetFact>(), Object.fromEntries(F.profileReset)),
+    timeouts: Object.assign(dict<number>(), Object.fromEntries(F.timeouts)),
   }
 }
 

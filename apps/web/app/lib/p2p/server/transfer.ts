@@ -1,8 +1,9 @@
 import { isRecord } from '../../bytes'
 import { parseP2pMemberList } from '../../member_list'
 import { genesisBundle } from '../acl/binding'
-import { knownRules, RULES_VERSION } from '../acl/rules'
-import { emptySummary, type RoleSum } from '../acl/summary'
+import { lockState, RESET_FIELDS } from '../../profile_reset'
+import { knownRules, RULES_VERSION, timedBans, timeouts, type AclContent } from '../acl/rules'
+import { emptySummary, type MemberSum, type RoleSum, type Summary } from '../acl/summary'
 import type { Carried } from '../acl_room'
 import { b64u, canonical, randomBytes } from '../canonical'
 import { blankRoom } from '../dag'
@@ -33,6 +34,157 @@ const carriedRole = (role: RoleSum) => {
   delete out.extra
   return out
 }
+
+// A register of the old copy that the new one keeps. Its owner signs the content of each key the
+// upgrade carries again (a register a room has once has the one key ''), unless the new copy has
+// that key already. Deleted entries are not among the keys. `roles` names each role of the old
+// copy as the new one has it; a register that reads it comes after the roles.
+export interface CarryRegister {
+  type: string
+  step: (k: string) => string
+  keys: (s: Carried) => string[]
+  content: (s: Carried, k: string, roles: Record<string, string>) => Record<string, unknown>
+  has: (cur: Summary, k: string) => boolean
+  afterRoles?: true
+}
+
+const once = (
+  type: string,
+  step: string,
+  at: (s: Carried) => AclContent | null | undefined,
+  has: (cur: Summary) => boolean,
+  content: (c: AclContent, roles: Record<string, string>) => Record<string, unknown> = c => ({
+    ...c,
+  })
+): CarryRegister => ({
+  type,
+  step: () => step,
+  keys: s => (at(s) ? [''] : []),
+  content: (s, _k, roles) => content(at(s) as AclContent, roles),
+  has,
+})
+
+// Every register a room upgrade carries. A commit that adds a register adds its entry here.
+export const CARRY_REGISTERS: readonly CarryRegister[] = [
+  // Stored sealed from the start: what the new copy stored before this write is sealed too.
+  once(
+    'store',
+    'store',
+    s => (s.store?.on === true ? s.store : null),
+    cur => cur.store !== null,
+    c => ({ ...c, on: true, earlier: true })
+  ),
+  {
+    type: 'category',
+    step: id => `k:${id}`,
+    keys: s => Object.keys(s.categories ?? {}),
+    content: (s, id) => {
+      const cat = s.categories![id]
+      return {
+        ...cat.extra,
+        id,
+        name: cat.name,
+        pos: cat.pos,
+        ...(cat.style ? { style: cat.style } : {}),
+      }
+    },
+    has: (cur, id) => !!cur.categories?.[id],
+  },
+  {
+    type: 'chcat',
+    step: ch => `h:${ch}`,
+    keys: s => Object.keys(s.chcats ?? {}),
+    content: (s, ch) => {
+      const cc = s.chcats![ch]
+      return { ...cc.extra, ch, cat: cc.cat, sync: cc.sync }
+    },
+    has: (cur, ch) => !!cur.chcats?.[ch],
+  },
+  {
+    type: 'chsep',
+    step: id => `p:${id}`,
+    keys: s => Object.keys(s.separators ?? {}),
+    content: (s, id) => separatorContent(id, s.separators![id]),
+    has: (cur, id) => !!cur.separators?.[id],
+  },
+  once(
+    'profile_mode',
+    'profile_mode',
+    s => s.profileMode,
+    cur => cur.profiles !== null
+  ),
+  once(
+    'about',
+    'about',
+    s => s.about,
+    cur => cur.about !== null
+  ),
+  {
+    // Its roles are named as the new copy has them.
+    ...once(
+      'member_list',
+      'l',
+      s => s.memberList,
+      cur => cur.memberList !== null,
+      (c, made) => {
+        const roles = parseP2pMemberList(c).roles
+        return roles === null ? { ...c } : { ...c, allow_roles: roles.flatMap(r => made[r] ?? []) }
+      }
+    ),
+    afterRoles: true,
+  },
+]
+
+// A register about one member that the new copy keeps once that member has joined it: the
+// content its owner signs then, or null when nothing of it is left. `was` is the old copy as the
+// upgrade carries it, `old` as it is now (what ended there since is not brought back), `at` the
+// time in ms.
+export interface CarryMemberRegister {
+  type: string
+  content: (
+    was: Carried,
+    ik: string,
+    old: Summary,
+    cur: Summary,
+    at: number
+  ) => Record<string, unknown> | null
+  has: (cur: Summary, ik: string) => boolean
+}
+
+export const CARRY_MEMBER_REGISTERS: readonly CarryMemberRegister[] = [
+  {
+    // The parts a moderator cleared, with the lock while it runs.
+    type: 'profile_reset',
+    content: (was, ik, old, _cur, at) => {
+      const reset = was.resets?.[ik]
+      if (!reset || !old.members[ik]?.reset) return null
+      const locked = lockState(reset.lock?.until, Math.floor(at / 1000)).locked
+      const held = locked ? (reset.lock?.fields ?? []) : []
+      const fields = RESET_FIELDS.filter(f => reset.hide.includes(f) || held.includes(f))
+      if (!fields.length) return null
+      return { to: ik, fields, ...(locked ? { until: reset.lock?.until } : {}) }
+    },
+    has: (cur, ik) => !!cur.members[ik]?.reset,
+  },
+  {
+    // A timeout still running, in a copy whose rules read timeouts.
+    type: 'timeout',
+    content: (was, ik, old, cur, at) => {
+      const until = was.timeouts?.[ik]
+      const now = old.members[ik]
+      if (!timeouts(cur.rules) || until === undefined || until <= at) return null
+      if (now?.timeoutUntil !== until) return null
+      return { to: ik, until, ...(now.timeoutReason ? { reason: now.timeoutReason } : {}) }
+    },
+    has: (cur, ik) => cur.members[ik]?.timeoutUntil !== undefined,
+  },
+]
+
+// What a carried ban keeps of the old one: its reason, and its end in a copy whose rules read it.
+const carriedBan = (old: MemberSum | undefined, rules: number | null) => ({
+  ...(old?.banReason ? { reason: old.banReason } : {}),
+  ...(timedBans(rules) && old?.banUntil !== undefined ? { until: old.banUntil } : {}),
+})
 
 export function transferAsks(cx: ServerCtx) {
   return [...cx.xferAsks].map(([key, a]) => ({
@@ -334,37 +486,17 @@ export async function carryOver(cx: ServerCtx, to: string) {
             await cx.emit(to, 'channel', () => ({ ...knownChannel(c), id: c.id }))
         },
       ])
-    // Categories and the category of each channel, with their ids.
-    for (const [id, cat] of Object.entries(s.categories ?? {}))
-      steps.push([
-        `k:${id}`,
-        async () => {
-          if (!cur().categories?.[id])
-            await cx.emit(to, 'category', () => ({
-              ...cat.extra,
-              id,
-              name: cat.name,
-              pos: cat.pos,
-              ...(cat.style ? { style: cat.style } : {}),
-            }))
-        },
-      ])
-    for (const [ch, cc] of Object.entries(s.chcats ?? {}))
-      steps.push([
-        `h:${ch}`,
-        async () => {
-          if (!cur().chcats?.[ch])
-            await cx.emit(to, 'chcat', () => ({ ...cc.extra, ch, cat: cc.cat, sync: cc.sync }))
-        },
-      ])
-    // The separators of the channel list, with their ids.
-    for (const [id, sep] of Object.entries(s.separators ?? {}))
-      steps.push([
-        `p:${id}`,
-        async () => {
-          if (!cur().separators?.[id]) await cx.emit(to, 'chsep', () => separatorContent(id, sep))
-        },
-      ])
+    const register = (reg: CarryRegister) => {
+      for (const k of reg.keys(s))
+        steps.push([
+          reg.step(k),
+          async () => {
+            if (!reg.has(cur(), k))
+              await cx.emit(to, reg.type, () => reg.content(s, k, carry.roles))
+          },
+        ])
+    }
+    for (const reg of CARRY_REGISTERS) if (!reg.afterRoles) register(reg)
     if (s.settings)
       steps.push([
         'settings',
@@ -404,24 +536,17 @@ export async function carryOver(cx: ServerCtx, to: string) {
             }))
           },
         ])
-    // Who sees the member list, its roles named as the new copy has them.
-    if (s.memberList)
-      steps.push([
-        'l',
-        async () => {
-          if (cur().memberList) return
-          const roles = parseP2pMemberList(s.memberList).roles
-          const content: Record<string, unknown> = { ...s.memberList }
-          if (roles !== null) content.allow_roles = roles.flatMap(r => carry.roles[r] ?? [])
-          await cx.emit(to, 'member_list', () => content)
-        },
-      ])
+    for (const reg of CARRY_REGISTERS) if (reg.afterRoles) register(reg)
     for (const ik of s.bans)
       steps.push([
         `b:${ik}`,
         async () => {
           if (membershipOf(cur(), ik) !== 'ban')
-            await cx.emit(to, 'ban', () => ({ to: ik, seen: {} }))
+            await cx.emit(to, 'ban', () => ({
+              to: ik,
+              seen: {},
+              ...carriedBan(cx.sumOf(from).members[ik], cur().rules),
+            }))
         },
       ])
     steps.push([
@@ -731,6 +856,19 @@ export async function giveRoles(cx: ServerCtx, room: string) {
       given.add(key)
       if (!cur.members[ik]?.roles.includes(role))
         await cx.emit(room, 'assign', () => ({ to: ik, role }))
+      await cx.updateRoom(room, x =>
+        x.carry ? { ...x, carry: { ...x.carry, given: [...(x.carry.given ?? []), key] } } : x
+      )
+    }
+  for (const reg of CARRY_MEMBER_REGISTERS)
+    for (const ik of old.members) {
+      const key = `\n${reg.type}\n${ik}`
+      const cur = cx.sumOf(room)
+      if (given.has(key) || ik === cx.me || cur.members[ik]?.m !== 'join') continue
+      if (cx.rooms.get(room)?.carry?.given?.includes(key)) continue
+      given.add(key)
+      const content = reg.has(cur, ik) ? null : reg.content(old, ik, now, cur, cx.clock.now())
+      if (content) await cx.emit(room, reg.type, () => content)
       await cx.updateRoom(room, x =>
         x.carry ? { ...x, carry: { ...x.carry, given: [...(x.carry.given ?? []), key] } } : x
       )

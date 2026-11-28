@@ -15,6 +15,7 @@ import {
   samePacked,
   type StDelta,
 } from './acl/packed'
+import type { ResetFact } from '../profile_reset'
 import type { EvalResult } from './acl/facts'
 import type { Drop } from './acl/storage'
 import {
@@ -330,6 +331,13 @@ export interface Carried {
   separators?: Record<string, SeparatorSum>
   settings: AclContent | null
   memberList?: AclContent | null
+  // The `profile_mode`, `about` and `store` registers as written, the resets of members' room
+  // profiles that count, and when each member's timeout in force ends (ms).
+  profileMode?: AclContent | null
+  about?: AclContent | null
+  store?: AclContent | null
+  resets?: Record<string, ResetFact>
+  timeouts?: Record<string, number>
 }
 
 export interface Purgeable {
