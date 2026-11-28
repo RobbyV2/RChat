@@ -26,7 +26,7 @@ import type { ServerCtx } from './context'
 import { followStore } from './sealing'
 import { storeDue } from './storage'
 import { sizeOfWire, type ServerArrival } from './types'
-import { type Rt } from './rt'
+import { type Rt, syncPart } from './rt'
 import { malformed, unentitled } from '../strike'
 
 // The wire checks: schema, sizes, id, `ch` and the device's signature. Everything else is
@@ -182,7 +182,7 @@ export function park(cx: ServerCtx, room: string, id: string, w: CheckedWire2, m
   if (rt.pending.has(id)) return
   const size = sizeOfWire(w)
   rt.pending.set(id, { wire: w, missing: new Set(missing), size })
-  rt.pendingBytes += size
+  syncPart(rt).pendingBytes += size
   for (const p of missing) {
     const s = rt.waits.get(p) ?? new Set<string>()
     s.add(id)
@@ -200,7 +200,7 @@ export function unpark(cx: ServerCtx, rt: Rt, id: string) {
   const p = rt.pending.get(id)
   if (!p) return
   rt.pending.delete(id)
-  rt.pendingBytes -= p.size
+  syncPart(rt).pendingBytes -= p.size
   for (const m of p.missing) {
     const s = rt.waits.get(m)
     s?.delete(id)
@@ -368,7 +368,7 @@ export async function purgeRedacted(cx: ServerCtx, room: string, rec: EventRecor
 export async function applyDelta(cx: ServerCtx, room: string, delta: SumDelta) {
   const rt = cx.ensureRt(room)
   const before = rt.sum
-  rt.sum = applySummary(rt.sum, delta)
+  syncPart(rt).sum = applySummary(rt.sum, delta)
   if (delta.top && 'store' in delta.top) await followStore(cx, room)
   // Only removals of the last day, and not from an empty copy (a start without a cache).
   const reached = before.count ? reachedBy(before, rt.sum, cx.me, cx.clock.now()) : []
@@ -425,12 +425,12 @@ export function vouch(cx: ServerCtx, room: string, rt: Rt, now: number) {
     const to = Object.entries(s.members).find(([, m]) => m.adds?.includes(add))
     return !!to && membershipOf(s, by) === 'join'
   })
-  rt.vouch = new Map(live)
+  syncPart(rt).vouch = new Map(live)
   const due = live.filter(
     ([, by]) => now - (cx.vouchedBy.get(by) ?? -Infinity) >= lim.vouchInviterMs
   )
   if (!due.length) return
-  rt.vouchedAt = now
+  syncPart(rt).vouchedAt = now
   for (const [add, by] of due) {
     cx.vouchedBy.set(by, now)
     rt.vouch.delete(add)

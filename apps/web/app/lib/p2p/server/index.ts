@@ -61,7 +61,7 @@ import {
   type ChannelPatch,
   type Outgoing,
 } from './types'
-import { type Rt } from './rt'
+import { type Rt, type RtParts, syncPart, viewPart } from './rt'
 import * as views from './views'
 import * as search from './search'
 import * as messages from './messages'
@@ -136,7 +136,7 @@ export class Servers {
   readonly gossip: Gossip
   readonly voice: Voice
   private clock: Clock
-  private rts = new Map<string, Rt>()
+  private rts = new Map<string, RtParts>()
   private idents = new Map<string, IdentRecord>()
   private rooms = new Map<string, RoomRecord>()
   private changeFns = new Set<(room: string) => void>()
@@ -502,7 +502,7 @@ export class Servers {
   }
 
   private ensureRt(room: string): Rt {
-    let rt = this.rts.get(room)
+    let rt: RtParts | undefined = this.rts.get(room)
     if (!rt) {
       rt = {
         sum: emptySummary(),
@@ -558,7 +558,7 @@ export class Servers {
   private locked<T>(room: string, fn: () => Promise<T>): Promise<T> {
     const rt = this.ensureRt(room)
     const run = rt.lock.then(fn, fn)
-    rt.lock = run.catch(() => {})
+    syncPart(rt).lock = run.catch(() => {})
     return run
   }
 
@@ -673,7 +673,7 @@ export class Servers {
     if (r?.prev && r.joining && membershipOf(rt.sum, this.me) !== 'join')
       for (const m of membersOf(this.sumOf(r.prev)))
         if (m.m === 'join' && m.ik !== this.me && !list.includes(m.ik)) list.push(m.ik)
-    rt.others = { sum: rt.sum, list }
+    viewPart(rt).others = { sum: rt.sum, list }
     return list
   }
 
@@ -708,7 +708,7 @@ export class Servers {
       })
       .map(m => m.ik)
     const out = extra.length ? [...list, ...extra] : list
-    rt.candidates = { sum: rt.sum, old, list: out }
+    viewPart(rt).candidates = { sum: rt.sum, old, list: out }
     return out
   }
 

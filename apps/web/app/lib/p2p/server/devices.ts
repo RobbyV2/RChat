@@ -8,6 +8,7 @@ import { keyId } from '../keys'
 import { memberOf } from '../state'
 import type { ServerCtx } from './context'
 import { ServerError, RESIGN_ACL, type LostRoom } from './types'
+import { modPart, xferPart } from './rt'
 
 // Re-applies our denies the current state doesn't count, each checked again as it is signed;
 // those refused are reported with why.
@@ -24,7 +25,7 @@ export async function reapplyAll(cx: ServerCtx, room: string) {
       })
       .catch((e: unknown) => failed.push(e instanceof Error ? e.message : String(e)))
   }
-  rt.reapply = await cx.reapplyOf(room)
+  modPart(rt).reapply = await cx.reapplyOf(room)
   cx.changed(room)
   if (failed.length)
     throw new ServerError(
@@ -48,7 +49,7 @@ export async function reapplyOf(cx: ServerCtx, room: string) {
   const prev = cx.rooms.get(room)?.prev
   const rt = cx.ensureRt(room)
   const up = prev && cx.rooms.has(prev) ? (rt.upgrade ?? (await cx.upgradeOf(prev, room))) : null
-  if (up) rt.upgrade = up
+  if (up) xferPart(rt).upgrade = up
   const list = await cx.host.reapply(
     room,
     cx.me,
@@ -338,7 +339,7 @@ export function conflicted(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
   const dev = cx.myDev()
   if (!dev || rt.conflict) return
-  rt.conflict = true
+  modPart(rt).conflict = true
   void cx.updateRoom(room, cur => ({ ...cur, conflict: dev })).catch(() => {})
   cx.changed(room)
 }
@@ -347,7 +348,7 @@ export async function newDevice(cx: ServerCtx) {
   await cx.deps.node.rekey()
   for (const room of cx.rooms.keys()) {
     const rt = cx.rt(room)
-    if (rt) rt.conflict = false
+    if (rt) modPart(rt).conflict = false
     await cx.refreshMe(room).catch(() => {})
     cx.changed(room)
   }

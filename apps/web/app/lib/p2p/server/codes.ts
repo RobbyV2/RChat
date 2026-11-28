@@ -21,6 +21,7 @@ import {
 } from './types'
 import { clip } from '../rate'
 import { badSignature, malformed, unentitled, volume } from '../strike'
+import { syncPart } from './rt'
 
 export async function issueCode(cx: ServerCtx, room: string, ttl: number, label = '') {
   const s = cx.sumOf(room)
@@ -154,7 +155,7 @@ export async function redeem(cx: ServerCtx, text: string): Promise<string> {
       since: now,
     })
   else await cx.updateRoom(code.room, cur => ({ ...cur, joining: { at: now, via: 'code' } }))
-  cx.ensureRt(code.room).joinPosted = false
+  syncPart(cx.ensureRt(code.room)).joinPosted = false
   let why: string | null = null
   for (const peer of code.peers) {
     const s = await cx.deps.node.dialPeer(peer, { rci: code.room })
@@ -405,7 +406,7 @@ export async function acceptInvite(cx: ServerCtx, room: string) {
     joining: { at: now, via: 'invite', ev: cur.invite?.wire },
     since: now,
   }))
-  cx.ensureRt(room).joinPosted = false
+  syncPart(cx.ensureRt(room)).joinPosted = false
   cx.prefer(room, from)
   void cx.locked(room, () => cx.takeInvite(room)).catch(() => {})
   cx.deps.node.schedule(true)

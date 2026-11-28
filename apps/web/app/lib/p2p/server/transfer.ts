@@ -39,7 +39,7 @@ import { channelsOf, knownChannel, knownSettings, membershipOf, EVERYONE, nameOf
 import { separatorContent } from './categories'
 import type { ServerCtx } from './context'
 import { SYNC_TEXT, OLD_GONE_TEXT, ServerError, type Migrated } from './types'
-import { type Rt } from './rt'
+import { type Rt, syncPart, xferPart } from './rt'
 import { clip } from '../rate'
 import { malformed } from '../strike'
 
@@ -388,7 +388,7 @@ export async function successorOf(cx: ServerCtx, room: string): Promise<WireV2> 
 export async function follow(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
   if (rt.following) return
-  rt.following = true
+  xferPart(rt).following = true
   try {
     const s = cx.sumOf(room)
     const r = cx.rooms.get(room)
@@ -398,7 +398,7 @@ export async function follow(cx: ServerCtx, room: string) {
     const g = cx.successorOk(room, (serverWire(up).c as { g?: unknown } | null)?.g)
     if (g) await cx.followTo(room, g)
   } finally {
-    rt.following = false
+    xferPart(rt).following = false
   }
 }
 
@@ -433,7 +433,7 @@ export async function followTo(cx: ServerCtx, room: string, g: WireV2) {
     })
     void cx.carryOver(next).catch(() => {})
   } else {
-    cx.ensureRt(next).joinPosted = false
+    syncPart(cx.ensureRt(next)).joinPosted = false
     cx.prefer(next, g.ev.a)
     cx.deps.node.schedule(true)
   }
@@ -455,7 +455,7 @@ export async function carryOver(cx: ServerCtx, to: string) {
   const rec = cx.rooms.get(to)
   if (rt.carrying || !rec?.carry || rec.carry.state === 'done') return
   if (cx.sumOf(to).owners[0] !== cx.me) return
-  rt.carrying = true
+  xferPart(rt).carrying = true
   let carry = rec.carry
   const save = async (patch: Partial<Carry>) => {
     carry = { ...carry, ...patch }
@@ -468,12 +468,12 @@ export async function carryOver(cx: ServerCtx, to: string) {
     await cx.ensureRt(from).loading
     const up = carry.up ?? (await cx.upgradeOf(from, to))
     const s = up ? await cx.carriedOf(from, up) : null
-    if (up && s) rt.carryTries = 0
+    if (up && s) xferPart(rt).carryTries = 0
     if (!up || !s) {
       if (cx.started && !cx.rooms.has(from))
         return await save({ state: 'failed', why: OLD_GONE_TEXT })
       // The old copy isn't loaded here yet: again in a moment (for an hour; then on a change).
-      if ((rt.carryTries = (rt.carryTries ?? 0) + 1) <= cx.local.server.carryTries)
+      if ((xferPart(rt).carryTries = (rt.carryTries ?? 0) + 1) <= cx.local.server.carryTries)
         cx.clock.set(() => void cx.carryOver(to).catch(() => {}), cx.local.server.carryRetryMs)
       return carry.state === 'waiting' && carry.why === SYNC_TEXT
         ? undefined
@@ -582,7 +582,7 @@ export async function carryOver(cx: ServerCtx, to: string) {
     await save({ state: 'done' })
     await cx.carryRoles(to)
   } finally {
-    rt.carrying = false
+    xferPart(rt).carrying = false
   }
 }
 
@@ -605,13 +605,13 @@ export async function upgradeOf(cx: ServerCtx, from: string, to: string) {
 
 // The old copy as the upgrade `up` carries it, kept while it is in use.
 export async function carriedOf(cx: ServerCtx, from: string, up: string) {
-  const rt = cx.ensureRt(from)
-  if (rt.carried?.up !== up) {
+  const x = xferPart(cx.ensureRt(from))
+  if (x.carried?.up !== up) {
     const s = await cx.host.carried(from, up)
     if (!s) return null
-    rt.carried = { up, s }
+    x.carried = { up, s }
   }
-  return rt.carried.s
+  return x.carried.s
 }
 
 // `migrate` content: the members and bans the upgrade carries, and the last message
@@ -645,14 +645,14 @@ export async function migratedOf(cx: ServerCtx, room: string): Promise<Migrated 
   const rt = cx.ensureRt(room)
   if (rt.migrated !== undefined) return rt.migrated
   const out = await cx.readMigrated(room)
-  rt.migrated = out
+  xferPart(rt).migrated = out
   return out
 }
 
 // A new `migrate` chunk: read and compared again.
 export function migrateArrived(cx: ServerCtx, rt: Rt) {
-  rt.migrated = undefined
-  rt.migrateChecked = false
+  xferPart(rt).migrated = undefined
+  xferPart(rt).migrateChecked = false
 }
 
 export async function readMigrated(cx: ServerCtx, room: string): Promise<Migrated | null> {
@@ -698,6 +698,7 @@ export async function readMigrated(cx: ServerCtx, room: string): Promise<Migrate
 // what the carry-over holds (the old copy at the upgrade, which we hold too) or whose carry-over
 // made no progress here for a day while we ran. The baseline and count are in the room record.
 export function ackCarry(cx: ServerCtx, room: string, rt: Rt) {
+  const x = xferPart(rt)
   const r = cx.rooms.get(room)
   const s = cx.sumOf(room)
   const now = cx.clock.now()
@@ -706,43 +707,43 @@ export function ackCarry(cx: ServerCtx, room: string, rt: Rt) {
   if (s.owners.includes(cx.me)) return
   // The day counts from the last owner event that arrived, or our start: the owner may be
   // waiting for a mark we never got to post while closed.
-  if (rt.carrySeen === null || s.ownerCount > rt.carrySeen) {
-    rt.carrySeen = s.ownerCount
-    rt.carryAt = now
+  if (x.carrySeen === null || s.ownerCount > x.carrySeen) {
+    x.carrySeen = s.ownerCount
+    x.carryAt = now
   }
-  if (rt.carryAckCount === null) {
+  if (x.carryAckCount === null) {
     const a = r.acks
     const kept = !!a && Number.isSafeInteger(a.base) && Number.isSafeInteger(a.n) && a.n >= 0
     // Never acknowledged before (just joined): a mark at once, as what we hold unacknowledged
     // may be all the owner can still post.
-    rt.carryAckCount = kept ? a.base : s.ownerCount - lim.carryAck
-    rt.carryAcks = kept ? a.n : 0
+    x.carryAckCount = kept ? a.base : s.ownerCount - lim.carryAck
+    x.carryAcks = kept ? a.n : 0
   }
-  if (rt.carryDone || rt.carryAcks >= (rt.carryMax ?? r.carryMax ?? lim.carryAcksMax)) return
-  if (now - rt.carryAt > lim.carryWindowMs) return
-  if (s.ownerCount - rt.carryAckCount < lim.carryAck) return
+  if (x.carryDone || x.carryAcks >= (x.carryMax ?? r.carryMax ?? lim.carryAcksMax)) return
+  if (now - x.carryAt > lim.carryWindowMs) return
+  if (s.ownerCount - x.carryAckCount < lim.carryAck) return
   const later = (ms: number) =>
-    (rt.carryAckLater ??= cx.clock.set(() => {
-      rt.carryAckLater = undefined
+    (x.carryAckLater ??= cx.clock.set(() => {
+      x.carryAckLater = undefined
       cx.ackCarry(room, rt)
     }, ms))
   // Too soon after the last one: later, as the owner may be waiting for it (nothing new comes).
   const gap = lim.carryAckGapMs
-  if (now - rt.carryAckAt < gap) return void later(gap - (now - rt.carryAckAt))
-  const base = rt.carryAckCount
-  const acks = { base: s.ownerCount, n: rt.carryAcks + 1 }
-  rt.carryAckAt = now
-  rt.carryAckCount = acks.base
-  rt.carryAcks = acks.n
+  if (now - x.carryAckAt < gap) return void later(gap - (now - x.carryAckAt))
+  const base = x.carryAckCount
+  const acks = { base: s.ownerCount, n: x.carryAcks + 1 }
+  x.carryAckAt = now
+  x.carryAckCount = acks.base
+  x.carryAcks = acks.n
   void cx
     .emit(room, 'mark', () => ({}))
     .then(
       () => cx.updateRoom(room, cur => ({ ...cur, acks })),
       () => {
         // Not posted: still owed, again in a minute.
-        if (rt.carryAckCount !== acks.base) return
-        rt.carryAckCount = base
-        rt.carryAcks = acks.n - 1
+        if (x.carryAckCount !== acks.base) return
+        x.carryAckCount = base
+        x.carryAcks = acks.n - 1
         later(60_000)
       }
     )
@@ -756,17 +757,17 @@ export async function checkMigrated(cx: ServerCtx, room: string, prev: string, t
   // Done and compared: nothing here changes any more.
   if (rt.migrateChecked) return
   const m = await cx.migratedOf(room)
-  rt.carryDone = m?.done ?? false
+  xferPart(rt).carryDone = m?.done ?? false
   if (!cx.rooms.has(prev)) return
   await cx.ensureRt(prev).loading
   const up = rt.upgrade ?? (await cx.upgradeOf(prev, room))
-  if (up) rt.upgrade = up
+  if (up) xferPart(rt).upgrade = up
   const at = up ? await cx.carriedOf(prev, up) : null
   if (!at) {
     // The old copy isn't loaded here yet: again in a moment (for a minute).
     if (!rt.checkLater && tries < cx.local.server.checkTries)
-      rt.checkLater = cx.clock.set(() => {
-        rt.checkLater = undefined
+      xferPart(rt).checkLater = cx.clock.set(() => {
+        xferPart(rt).checkLater = undefined
         void cx.checkMigrated(room, prev, tries + 1).catch(() => {})
       }, cx.local.server.checkRetryMs)
     return
@@ -789,23 +790,23 @@ export async function checkMigrated(cx: ServerCtx, room: string, prev: string, t
     Object.values(at.overwrites ?? {}).reduce((n, o) => n + Object.keys(o).length, 0) +
     chunks +
     8
-  rt.carryMax = Math.ceil(size / cx.local.server.carryAck) + 5
+  xferPart(rt).carryMax = Math.ceil(size / cx.local.server.carryAck) + 5
   // Known from now on, also at a start that loads this copy before the old one.
   if (cx.rooms.get(room)?.carryMax !== rt.carryMax) {
     const carryMax = rt.carryMax
     await cx.updateRoom(room, cur => ({ ...cur, carryMax }))
   }
   if (!m) return
-  rt.carriedMembers = new Set(m.members)
+  xferPart(rt).carriedMembers = new Set(m.members)
   const was = new Set(at.members)
   const added = m.members.filter(ik => !was.has(ik)).sort()
   const removed = at.members.filter(ik => !rt.carriedMembers?.has(ik)).sort()
   const diff = added.length || removed.length ? { added, removed } : null
   if (JSON.stringify(diff) !== JSON.stringify(rt.migrateDiff)) {
-    rt.migrateDiff = diff
+    xferPart(rt).migrateDiff = diff
     cx.changed(room)
   }
-  if (m.done) rt.migrateChecked = true
+  if (m.done) xferPart(rt).migrateChecked = true
 }
 
 // Runs `step`, waiting out the limits that clear by themselves (another member's ACL event, or
@@ -840,17 +841,17 @@ export async function untilAllowed(
 export async function carryRoles(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
   if (rt.givingRoles) {
-    rt.giveAgain = true
+    xferPart(rt).giveAgain = true
     return
   }
-  rt.givingRoles = true
+  xferPart(rt).givingRoles = true
   try {
     do {
-      rt.giveAgain = false
+      xferPart(rt).giveAgain = false
       await cx.giveRoles(room)
     } while (rt.giveAgain)
   } finally {
-    rt.givingRoles = false
+    xferPart(rt).givingRoles = false
   }
 }
 

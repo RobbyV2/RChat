@@ -31,6 +31,7 @@ import { searchForm } from '../sealed_db'
 import type { ServerCtx } from './context'
 import { followStore } from './sealing'
 import { heldBare, storeDue } from './storage'
+import { modPart, syncPart, xferPart } from './rt'
 
 export const cachedSummary = (kept: ServerCache | null | undefined) =>
   kept?.impl === IMPL && kept.shape === SUM_SHAPE ? fromStored(kept.sum) : null
@@ -42,14 +43,14 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
   const rt = cx.ensureRt(r.id)
   const legacy = async () => {
     if (!r.legacy) await cx.updateRoom(r.id, cur => ({ ...cur, legacy: true }))
-    rt.sum = emptySummary()
+    syncPart(rt).sum = emptySummary()
     cx.changed(r.id)
   }
   if (r.legacy) return legacy()
   // Older builds kept the cache in the room record.
   const kept = ((await cx.db.get('meta', cacheKey(r.id))) as ServerCache | undefined) ?? r.server
   const cached = cachedSummary(kept)
-  if (cached && records) rt.sum = cached
+  if (cached && records) syncPart(rt).sum = cached
   // Imported rows: the wire checks first (an import is trusted no more than a peer).
   const g = await cx.db.get('events', r.id)
   const gr = g?.room === r.id ? serverWire(g).c?.rules : undefined
@@ -68,7 +69,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
   let old = false
   // One record at a time: content goes to the evaluator trimmed to what it reads.
   rt.evictFrom.clear()
-  rt.migrated = undefined
+  xferPart(rt).migrated = undefined
   const tx = cx.db.transaction('events')
   const range = IDBKeyRange.bound([r.id, -Infinity], [r.id, Infinity])
   for (
@@ -171,7 +172,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
     rt.views.clear()
     storeDue(rt)
     const before = rt.sum
-    rt.sum = applySummary(emptySummary(), out.delta)
+    syncPart(rt).sum = applySummary(emptySummary(), out.delta)
     // A wrong restore shows in the state: the cache was written with these same events.
     if (
       records &&
@@ -180,7 +181,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
       kept?.count === rt.sum.count &&
       !sameSummary(cached, rt.sum)
     ) {
-      rt.sum = before
+      syncPart(rt).sum = before
       return cx.load(r, false)
     }
     await followStore(cx, r.id)
@@ -216,7 +217,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
     await cx.saveCache(r.id)
     await cx.afterState(r.id, before)
   })()
-  rt.loading = run.catch(() => {})
+  syncPart(rt).loading = run.catch(() => {})
   await run
 }
 
@@ -390,7 +391,7 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
       cascade: null,
       joining: { at: cx.clock.now(), via: 'invite' },
     }))
-    cx.ensureRt(room).joinPosted = false
+    syncPart(cx.ensureRt(room)).joinPosted = false
     cx.maybeJoin(room)
   }
   if (now === 'join' && r?.cascade) await cx.updateRoom(room, cur => ({ ...cur, cascade: null }))
@@ -409,18 +410,18 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
   const dev = cx.myDev()
   if (dev && cx.sumOf(room).forks?.includes(dev)) cx.conflicted(room)
   // Our denies the state doesn't count that we may still make.
-  rt.reapply = now === 'join' && !cx.frozen(room) ? await cx.reapplyOf(room) : []
+  modPart(rt).reapply = now === 'join' && !cx.frozen(room) ? await cx.reapplyOf(room) : []
   // A change in an old copy can be one of ours the new copy didn't get.
   const nx = cx.rooms.get(room)?.next
   if (nx && cx.rooms.has(nx) && cx.myMembership(nx) === 'join' && !cx.frozen(nx)) {
-    cx.ensureRt(nx).reapply = await cx.reapplyOf(nx)
+    modPart(cx.ensureRt(nx)).reapply = await cx.reapplyOf(nx)
     cx.changed(nx)
   }
   cx.sync.announce(room)
   if (was === 'join' && now !== 'join') {
     cx.gossip.leave(room)
     cx.voice.forget(room)
-    cx.ensureRt(room).joinPosted = false
+    syncPart(cx.ensureRt(room)).joinPosted = false
   }
   cx.checkVoice(room)
   // Those someone else removed hear it from us.

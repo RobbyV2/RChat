@@ -1,6 +1,6 @@
 import eslint from '@eslint/js'
 import { includeIgnoreFile } from 'eslint/config'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
@@ -49,6 +49,37 @@ const MARK_OWNERS = [
 ]
 
 const rchat = { rules: { spacing, buttons, overlays, 'name-mark': nameMark } }
+
+// A P2P server room's runtime record reads as read-only (app/lib/p2p/server/rt.ts); each part is
+// written through its accessor, which only the modules that own the part may import.
+const RT_OWNERS = {
+  syncPart: ['codes.ts', 'index.ts', 'load.ts', 'receive.ts', 'storage.ts', 'transfer.ts'],
+  storePart: ['storage.ts'],
+  modPart: ['devices.ts', 'load.ts', 'moderation.ts'],
+  xferPart: ['devices.ts', 'load.ts', 'transfer.ts'],
+  viewPart: ['index.ts'],
+}
+const P2P_SERVER = 'apps/web/app/lib/p2p/server'
+const rtWriters = () =>
+  readdirSync(join(root, P2P_SERVER))
+    .filter(f => f.endsWith('.ts') && f !== 'rt.ts')
+    .map(f => ({
+      files: [`${P2P_SERVER}/${f}`],
+      rules: {
+        '@typescript-eslint/no-restricted-imports': [
+          'error',
+          {
+            paths: [
+              {
+                name: './rt',
+                importNames: Object.keys(RT_OWNERS).filter(a => !RT_OWNERS[a].includes(f)),
+                message: 'Only the modules that own a part of the runtime record write it.',
+              },
+            ],
+          },
+        ],
+      },
+    }))
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
 
@@ -398,6 +429,7 @@ export default tseslint.config(
     files: PROVERS,
     rules: { 'no-restricted-syntax': ['error', DATE_SYNTAX, ...motionSyntax, ...askSyntax] },
   },
+  ...rtWriters(),
   { files: REQUEST_SINKS, rules: sinkRule(['TO_REQUEST']) },
   { files: STORE_SINKS, rules: sinkRule(['TO_STORE']) },
   { files: SCREEN_SINKS, ignores: TEST_FILES, rules: sinkRule(['TO_SCREEN']) },

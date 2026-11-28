@@ -36,16 +36,16 @@ import { can, mayChangeProfile, mayResetProfile, memberOf, P } from '../state'
 import { MOVED_TEXT } from '../dm'
 import type { ServerCtx } from './context'
 import { ServerError, sizeOfWire } from './types'
-import { type Rt } from './rt'
+import { type Rt, storePart, syncPart } from './rt'
 
 // Storage work is due: the state or the held content changed.
 export const storeDue = (rt: Rt) => {
-  rt.storeDirty = true
+  storePart(rt).storeDirty = true
 }
 
 // The content a cold start found held without its body.
 export const heldBare = (rt: Rt, ids: Iterable<string>) => {
-  rt.bodiless = new Set(ids)
+  storePart(rt).bodiless = new Set(ids)
 }
 
 // A tick's storage work in room `r`: a storage pass when due, bodies still
@@ -54,12 +54,12 @@ export function tick(cx: ServerCtx, r: RoomRecord, rt: Rt, now: number) {
   const lim = cx.local.server
   const every = Object.keys(r.causes ?? {}).length ? lim.causesMs : Infinity
   if ((rt.storeDirty && now - rt.storeAt >= lim.storeMs) || now - rt.storeAt >= every) {
-    rt.storeDirty = false
-    rt.storeAt = now
+    storePart(rt).storeDirty = false
+    storePart(rt).storeAt = now
     void cx.locked(r.id, () => cx.storePass(r.id)).catch(() => {})
   }
   if ((rt.want.size || rt.viewed.size) && now - rt.wantAt >= lim.causesMs) {
-    rt.wantAt = now
+    storePart(rt).wantAt = now
     void cx.locked(r.id, () => cx.wantPass(r.id)).catch(() => {})
   }
   if (rt.proofs.size) cx.postProofs(r.id, rt, now)
@@ -165,14 +165,14 @@ export async function purge(
 // someone viewed: fetched by id from a peer that still holds them.
 export async function wantPass(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
-  rt.wantAt = cx.clock.now()
+  storePart(rt).wantAt = cx.clock.now()
   if (!rt.bodiless.size) return
   // Viewed bodies that no longer show aren't asked for any more.
   const viewed = [...rt.viewed]
   const still = await cx.host.restorable(room, viewed, true)
-  rt.viewed = new Set(viewed.filter((_id, i) => still[i]))
+  storePart(rt).viewed = new Set(viewed.filter((_id, i) => still[i]))
   const w = [...new Set([...(await cx.host.wanted(room)), ...rt.viewed])]
-  rt.want = new Set(w)
+  storePart(rt).want = new Set(w)
   if (w.length) {
     cx.sync.fetch(room, w)
     cx.changed(room)
@@ -196,7 +196,7 @@ export async function restoreBody(
   rt.want.delete(id)
   rt.viewed.delete(id)
   // What waited on it (its author's edits) may be wanted now.
-  rt.storeDirty = true
+  storePart(rt).storeDirty = true
   await cx.host.bodies(room, [id], true)
   await cx.refreshRoom(room)
   cx.changed(room)
@@ -259,19 +259,19 @@ export function noteRedaction(cx: ServerCtx, room: string) {
   const rand = cx.deps.random ?? Math.random
   const lim = cx.local.server
   const at = cx.clock.now() + Math.floor(rand() * lim.ackDelayMs)
-  rt.ackDue = Math.max(at, rt.ackAt + lim.ackMs)
+  storePart(rt).ackDue = Math.max(at, rt.ackAt + lim.ackMs)
 }
 
 // A mark only names redactions not yet acknowledged that can still be
 // (at least 2 identities other than their authors, us among them); with none, no mark.
 export function ackRedactions(cx: ServerCtx, room: string, rt: Rt, now: number) {
-  rt.ackDue = null
+  storePart(rt).ackDue = null
   if (cx.myMembership(room) !== 'join' || cx.frozen(room)) return
   void cx
     .locked(room, async () => {
       const ack = await cx.host.acks(room, cx.me)
       if (!ack.length) return
-      rt.ackAt = now
+      storePart(rt).ackAt = now
       await cx.emitNow(room, 'mark', () => ({ ack }))
     })
     .catch(() => {})
@@ -316,10 +316,10 @@ export async function evictForSpace(
 export async function postJoin(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
   if (rt.joinPosted) return
-  rt.joinPosted = true
+  syncPart(rt).joinPosted = true
   try {
     await cx.emit(room, 'join', plan => cx.joinContent(room, plan))
-    rt.joinWait = null
+    storePart(rt).joinWait = null
     await cx.updateRoom(room, cur => ({
       ...cur,
       joining: null,
@@ -328,11 +328,11 @@ export async function postJoin(cx: ServerCtx, room: string) {
     cx.changed(room)
     cx.deps.node.schedule()
   } catch (e) {
-    rt.joinPosted = false
+    syncPart(rt).joinPosted = false
     // The join waits for a third member's acknowledgement (shown, retried).
     const wait = e instanceof ServerError && e.message === VOUCH_WAIT_TEXT ? e.message : null
     if (wait !== rt.joinWait) {
-      rt.joinWait = wait
+      storePart(rt).joinWait = wait
       cx.changed(room)
     }
     throw e

@@ -115,5 +115,16 @@ export interface ViewRt {
 
 // The runtime record of a server room on this device (never stored), by the module that owns
 // each part: what it writes, the others read. A field written by more than one module sits with
-// the one that keeps its invariant (p2p_layering.test.ts checks the writers).
-export interface Rt extends SyncRt, StoreRt, ModRt, XferRt, ViewRt {}
+// the one that keeps its invariant.
+export interface RtParts extends SyncRt, StoreRt, ModRt, XferRt, ViewRt {}
+
+// The record as every server module reads it: no field of it can be assigned. A part's owners
+// write it through the part (`syncPart`, `storePart`, ...), whose imports eslint gives to
+// those modules alone.
+export type Rt = Readonly<RtParts>
+
+export const syncPart = (rt: Rt): SyncRt => rt as RtParts
+export const storePart = (rt: Rt): StoreRt => rt as RtParts
+export const modPart = (rt: Rt): ModRt => rt as RtParts
+export const xferPart = (rt: Rt): XferRt => rt as RtParts
+export const viewPart = (rt: Rt): ViewRt => rt as RtParts

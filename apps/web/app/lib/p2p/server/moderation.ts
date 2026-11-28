@@ -3,7 +3,7 @@ import { syncedSince as syncedIn, type HeadsReport, type Reached } from '../flow
 import { membershipOf } from '../state'
 import type { Link } from '../sync'
 import type { ServerCtx } from './context'
-import type { Rt } from './rt'
+import { type Rt, modPart } from './rt'
 
 // `run` (a moderation action) is signed only after a member sent us its heads since it was
 // asked for and we hold everything they named, or once the user applies it anyway. Null when
@@ -43,7 +43,7 @@ export function cancelMod(cx: ServerCtx, room: string, id: number) {
   const rt = cx.rt(room)
   const m = rt?.mods.find(x => x.id === id)
   if (!rt || !m) return
-  rt.mods = rt.mods.filter(x => x !== m)
+  modPart(rt).mods = rt.mods.filter(x => x !== m)
   m.done(null)
   cx.changed(room)
 }
@@ -59,7 +59,7 @@ export function heard(cx: ServerCtx, link: Link) {
 export async function runMods(cx: ServerCtx, room: string) {
   const rt = cx.rt(room)
   if (!rt || rt.modsBusy) return
-  rt.modsBusy = true
+  modPart(rt).modsBusy = true
   try {
     while (rt.mods.length) {
       // One applied anyway goes at once, wherever it waits; the others in order, once synced.
@@ -77,7 +77,7 @@ export async function runMods(cx: ServerCtx, room: string) {
       }
     }
   } finally {
-    rt.modsBusy = false
+    modPart(rt).modsBusy = false
   }
 }
 
@@ -106,7 +106,7 @@ export function noteReached(cx: ServerCtx, rt: Rt, list: Reached[]) {
 
 export function dismissReached(cx: ServerCtx, room: string, by: string) {
   const rt = cx.ensureRt(room)
-  rt.reached = rt.reached.filter(x => x.by !== by)
+  modPart(rt).reached = rt.reached.filter(x => x.by !== by)
   cx.changed(room)
 }
 
