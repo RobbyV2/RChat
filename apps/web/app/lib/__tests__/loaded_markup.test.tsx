@@ -80,7 +80,9 @@ describe('a load on screen', () => {
     )
     const html = draw(failed, { what: 'pins' })
     expect(html).toContain('role="alert"')
-    expect(html).toContain('Could not load pins. The database is busy')
+    expect(html).toContain(
+      'Could not load pins. The server cannot do that right now. Try again in a moment.'
+    )
     expect(html).toContain('>Try again</button>')
   })
 
@@ -88,6 +90,19 @@ describe('a load on screen', () => {
     const time = clock()
     const html = draw(load<number>(time, make => make.failed('no')))
     expect(html).toContain('role="alert"')
+    expect(html.includes('<button')).toBe(false)
+  })
+
+  test('a refusal that asking again cannot change shows no button', () => {
+    const time = clock()
+    const html = draw(
+      load<number>(
+        time,
+        make => make.failed(new ApiError('Not found', 404)),
+        () => {}
+      )
+    )
+    expect(html).toContain('This is not here, or you cannot open it.')
     expect(html.includes('<button')).toBe(false)
   })
 
