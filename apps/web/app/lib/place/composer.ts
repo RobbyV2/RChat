@@ -4,7 +4,9 @@ import { chatKey, threadKey } from '../p2p/app/store'
 import { LIMITS as P2P_LIMITS } from '../p2p/content'
 import { bodyTooLong, fullNote } from '../p2p/dm'
 import { peerServer } from '../actions/p2p_server'
-import { guestPostingStatus } from '../guest_chat'
+import { canOf, p2pMask } from '../channel_perms'
+import { guestPostingStatus, postGuestFrom } from '../guest_chat'
+import { outgoing } from '../link_safety'
 import { p2pName, personCalled, type P2pName, type PersonName } from '../names'
 import { displayName } from '../p2p/contacts'
 import { TRANSFERRED_TEXT } from '../p2p/flows'
@@ -42,8 +44,8 @@ export interface Replying {
 
 // Why nothing can be written to a list, as the bar in the composer's place says it.
 export type Gate =
-  // Not a member of the server yet.
-  | { kind: 'join'; server: string }
+  // Not a member of the server yet; `name` is what the server is called.
+  | { kind: 'join'; server: string; name: string }
   // A guest who may write here, in the guest's own field.
   | { kind: 'guestWrite' }
   | { kind: 'guest'; posting: 'off' | 'checking' | 'paused' | 'unavailable' }
@@ -79,6 +81,10 @@ export interface Compose {
   // Opens the copy that took a room's place, and removes a room you are out of from this device.
   openNext: () => void
   forget: () => void
+  // Joins the server whose `join` gate stands, with its password when it asks for one.
+  join: (password?: string) => Promise<void>
+  // Sends `content` as the guest whose `guestWrite` gate stands.
+  sendAsGuest: (content: string) => Promise<void>
   getText: () => string
   setText: (text: string) => void
   // Whether the text is too big to send although its character count fits.
@@ -163,6 +169,7 @@ const hosted = (account: AccountSession): Composer =>
           const can = server === null ? null : channelCan(s, server, channel)
           return [
             server,
+            server === null ? null : (s.servers[server]?.display_name ?? server),
             s.guest,
             !s.me || server === null || mine !== undefined,
             server === null ? null : guestPostingStatus(s, server, channel),
@@ -178,6 +185,7 @@ const hosted = (account: AccountSession): Composer =>
         },
         ([
           server,
+          name,
           guest,
           member,
           posting,
@@ -187,8 +195,8 @@ const hosted = (account: AccountSession): Composer =>
           threads,
           unstarted,
         ]): GateState => {
-          if (server !== null && !guest && !member)
-            return { ...OPEN, first: { kind: 'join', server } }
+          if (server !== null && name !== null && !guest && !member)
+            return { ...OPEN, first: { kind: 'join', server, name } }
           if (guest) {
             const kind = posting ?? 'unavailable'
             const first: Gate =
@@ -207,15 +215,46 @@ const hosted = (account: AccountSession): Composer =>
           }
         }
       )
+    const getGate = gate(false)
     return {
       state: { get, initial: state(true), subscribe: changed => store.subscribe(changed) },
       gate: {
-        get: gate(false),
+        get: getGate,
         initial: gate(true),
         subscribe: changed => store.subscribe(changed),
       },
       openNext: () => {},
       forget: () => {},
+      join: async password => {
+        const { first } = getGate()
+        if (first?.kind === 'join') await store.getState().joinServer(first.server, password)
+      },
+      sendAsGuest: async content => {
+        const s = store.getState()
+        const { key } = get()
+        const v = s.view
+        const root = list === 'thread' && s.panel?.kind === 'thread' ? s.panel.root : null
+        const channel =
+          list === 'thread' ? root?.channel_id : v?.kind === 'channel' ? v.channelId : null
+        if (getGate().first?.kind !== 'guestWrite' || key === null || v?.kind !== 'channel') return
+        if (channel === null || channel === undefined) return
+        const message = await account.lifetime.live(
+          postGuestFrom(account, v.server, `/channels/${channel}/guest-messages`, {
+            content: outgoing(s.linkPrefs, content),
+            reply_to: s.replying[key]?.message.id,
+            thread_root_id: root?.id,
+          })
+        )
+        store.getState().applyWsEvent({
+          type: 'message',
+          server: v.server,
+          channel_id: channel,
+          dm_id: null,
+          dm_users: null,
+          message,
+        })
+        store.getState().cancelReply(key)
+      },
       getText: () => get().text,
       setText: text => {
         const { key } = get()
@@ -288,6 +327,8 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
           const s = initial ? useP2p.getInitialState() : useP2p.getState()
           const ch = list === 'thread' ? s.thread?.ch : s.chat?.ch
           const v = place.kind === 'p2pRoom' ? s.servers[room] : undefined
+          const t = list === 'thread' && s.thread?.room === room ? s.thread : null
+          const mask = v && ch ? p2pMask(v, ch) : null
           const peerIk = s.chat?.room === room ? s.chat.peer : s.rooms[room]?.peer
           return [
             s.reader || s.elsewhere,
@@ -296,11 +337,24 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
             s.movingAt !== null,
             v,
             v && ch ? v.channels.find(c => c.id === ch)?.send : undefined,
+            t !== null && !t.loading && !t.head?.replies && !t.messages?.length,
+            mask === null || canOf(mask).threads,
             place.kind === 'p2pDm' ? s.rooms[room] : undefined,
             place.kind === 'p2pDm' ? s.contacts.find(c => c.ik === peerIk) : undefined,
           ] as const
         },
-        ([elsewhere, moved, movedAt, moving, v, send, conversation, contact]): GateState => {
+        ([
+          elsewhere,
+          moved,
+          movedAt,
+          moving,
+          v,
+          send,
+          unstarted,
+          threads,
+          conversation,
+          contact,
+        ]): GateState => {
           const away: Gate | null = elsewhere
             ? { kind: 'elsewhere' }
             : moved
@@ -352,7 +406,9 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
                 ? { kind: 'noSend' }
                 : v.full
                   ? { kind: 'full', line: 'This server reached its storage limit on this device.' }
-                  : null,
+                  : unstarted && !threads
+                    ? { kind: 'noThreads' }
+                    : null,
           }
         }
       )
@@ -370,6 +426,8 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
         const v = useP2p.getState().servers[room]
         if (v) peerServer.forIdentity(app).confirmForget(v, place.account)
       },
+      join: async () => {},
+      sendAsGuest: async () => {},
       getText: () => get().text,
       setText: text => {
         const { key } = get()

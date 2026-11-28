@@ -9,7 +9,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
 import { ChannelCanContext } from '../../lib/place/use_rights'
-import { NO_THREADS_TEXT, type ChannelCan } from '../../lib/channel_perms'
+import { type ChannelCan } from '../../lib/channel_perms'
 
 import {
   createContext,
@@ -23,7 +23,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { CircleAlert, Clock, History, Lock, Plus, X } from 'lucide-react'
+import { CircleAlert, Clock, History, Plus, X } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { outgoing } from '../../lib/link_safety'
 import { actionPress, openActionMenu } from '../../lib/actions/menu'
@@ -216,14 +216,11 @@ function P2pComposerBody({
   draftKey: key,
   list = 'main',
   channelTextOnly = false,
-  unstarted = false,
   scope,
   title,
   placeholder,
 }: {
   channelTextOnly?: boolean
-  // A thread without replies: its first reply needs Start threads.
-  unstarted?: boolean
   // Where the draft, files, reply and sends go (a conversation, channel or thread).
   draftKey: string
   list?: ComposerList
@@ -256,16 +253,7 @@ function P2pComposerBody({
   const scheduledItems = useDeviceItems()
   const scheduledOps = useDeviceOps()
 
-  if (shut) return <ComposerGate compose={compose} />
-  if (unstarted && !held.threads)
-    return (
-      <GateNote data-no-send>
-        <Row as="span" gap="sm">
-          <Lock size={16} className="shrink-0" />
-          <span>{NO_THREADS_TEXT}</span>
-        </Row>
-      </GateNote>
-    )
+  if (shut) return <ComposerGate compose={compose} list={list} />
 
   const tooLong = !fits(compose, text, max)
   const send = () => {

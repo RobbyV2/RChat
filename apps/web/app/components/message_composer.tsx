@@ -1,9 +1,8 @@
 'use client'
-import { personName } from '../lib/names'
 import { OwnLoadNotice } from './own_load'
 
 import { Name } from './name'
-import { instanceName, serverCalled } from '../lib/names'
+import { instanceName } from '../lib/names'
 import { Button, IconButton, Chip } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, useViewActor } from './view_actor'
@@ -20,18 +19,14 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react'
-import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
+import { type UploadMode, useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
-import { postGuestFrom } from '../lib/guest_chat'
 import { useAccount } from '../lib/client/react'
-import { TextComposer } from './text_composer'
 import { outgoing } from '../lib/link_safety'
 import { altError, describableFile } from '../lib/alt_text'
 import { AltField } from './alt_text'
 import { charCount, messageFilterOn } from '../lib/rules'
-import { useShownOrNull, useViewServer } from './shown_user'
 import { dmPlaceholder } from '../lib/display_name'
-import { runJoinStep, type JoinStep } from '../lib/join_flow'
 import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
 import { parseSed } from '../lib/sed'
 import { useChannelCan } from '../lib/place/use_rights'
@@ -39,7 +34,7 @@ import { useHostedServer, useLive } from '../lib/place/react'
 import { textOnlyDestination } from '../lib/channel_content'
 import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
-import { Dialog, FieldError, fieldCls, useOwnServer } from './ui'
+import { Dialog, fieldCls, useOwnServer } from './ui'
 import { SITE_FILTER_NOTE } from '../lib/home'
 import { useUploadHint } from './upload_expiry'
 import { useHome } from '../lib/home_store'
@@ -139,68 +134,6 @@ function ExpiryDialog({
 const useSlowLeft = (channelId: number | null): number =>
   useCountdown(useStore(s => (channelId === null ? 0 : (s.slowUntil[channelId] ?? 0))))
 
-function JoinBar({ server }: { server: string }) {
-  const detail = useStore(s => s.servers[server])
-  const joinServer = useStore(s => s.joinServer)
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [step, setStep] = useState<JoinStep>('name')
-  const locked = step === 'password'
-  const ready = !busy && (!locked || password.trim() !== '')
-
-  const join = async () => {
-    if (!ready) return
-    setBusy(true)
-    setError(null)
-    const out = await runJoinStep(step, password, pw => joinServer(server, pw), errorText)
-    if (out.done) return
-    setStep(out.step)
-    setError(out.error)
-    setBusy(false)
-  }
-
-  return (
-    <Dock>
-      <Surface data-preview-bar pad="lg" tone="base" radius="xl" border="dashed">
-        <Row
-          as="form"
-          onSubmit={e => {
-            e.preventDefault()
-            void join()
-          }}
-          gap="sm"
-          wrap
-        >
-          <Row as="p" gap="sm" place="min-w-0 flex-1">
-            <Eye size={16} className="shrink-0 text-primary" />
-            <span className="min-w-48 text-sm text-on-surface-variant">
-              You&apos;re previewing{' '}
-              <Name
-                of={serverCalled(detail?.display_name ?? server)}
-                look="font-medium text-on-surface"
-              />
-            </span>
-          </Row>
-          {locked && (
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="Server password"
-              className={`${fieldCls} max-w-56`}
-            />
-          )}
-          <Button type="submit" variant="filled" size="md" disabled={!ready}>
-            Join server
-          </Button>
-        </Row>
-        <FieldError message={error} />
-      </Surface>
-    </Dock>
-  )
-}
-
 // Said once in server channels while the instance filter checks messages, until closed.
 function SiteFilterNote() {
   const { home } = useAccount()
@@ -264,7 +197,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const uploadMax = useStore(s => limitsOf(s.instance).upload_bytes)
   const compose = useCompose(thread ? 'thread' : 'main')
   const { text, max, replying } = useLive(compose.state)
-  const { gate, shut } = useGate(compose)
+  const { shut } = useGate(compose)
   const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
   const placeChannel = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
   const can = useChannelCan(
@@ -280,7 +213,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
   const linkPrefs = useStore(s => s.linkPrefs)
   const forwarding = useForwardClip() !== null
-  const cancelReply = useStore(s => s.cancelReply)
   const focusAsk = useStore(s => s.composerFocus)
   const sedEdit = useStore(s => s.sedEdit)
   const [expiryOpen, setExpiryOpen] = useState(false)
@@ -297,8 +229,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const focusSeen = useRef(focusAsk?.n ?? 0)
   const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
-  const quote = useStore(s => (draftKey ? s.replying[draftKey]?.message : undefined))
-  const shownQuote = useShownOrNull(quote?.author, useViewServer())
   const slowLeft = useSlowLeft(channelId)
 
   useEffect(() => {
@@ -313,41 +243,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   if (!thread && !view) return null
 
-  if (gate?.kind === 'join') return <JoinBar server={gate.server} />
-
-  if (gate?.kind === 'guestWrite' && view?.kind === 'channel' && channelId !== null && draftKey) {
-    return (
-      <Dock data-guest-editor gap="sm">
-        <TextComposer
-          key={draftKey}
-          inputRef={inputRef}
-          label={thread ? 'Reply in thread' : 'Message as a guest'}
-          reply={shownQuote ? personName(shownQuote) : undefined}
-          cancelReply={() => cancelReply(draftKey)}
-          send={async content => {
-            const message = await account.lifetime.live(
-              postGuestFrom(account, view.server, `/channels/${channelId}/guest-messages`, {
-                content: outgoing(linkPrefs, content),
-                reply_to: quote?.id,
-                thread_root_id: thread && rootId !== null ? rootId : undefined,
-              })
-            )
-            account.store.getState().applyWsEvent({
-              type: 'message',
-              server: view.server,
-              channel_id: channelId,
-              dm_id: null,
-              dm_users: null,
-              message,
-            })
-            cancelReply(draftKey)
-          }}
-        />
-      </Dock>
-    )
-  }
-
-  if (shut) return <ComposerGate compose={compose} />
+  if (shut)
+    return <ComposerGate compose={compose} list={thread ? 'thread' : 'main'} inputRef={inputRef} />
 
   const placeholder = thread
     ? 'Message thread'

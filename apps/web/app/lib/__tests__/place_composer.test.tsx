@@ -9,6 +9,8 @@ import { PlaceProvider } from '../place/react'
 import type { RChatState } from '../store_types'
 import type { View } from '../view'
 import { msg, user } from './fixtures'
+import { NO_THREADS_TEXT } from '../channel_perms'
+import { ChannelPermBit } from '../types'
 import { ReplyBar } from '../../components/replies'
 import { ComposerGate } from '../../components/composer_gate'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
@@ -222,7 +224,7 @@ placeContract(composer, (kind, world) => {
     return renderToStaticMarkup(
       <AccountProvider session={world().ann.account}>
         <P2pProvider identity={world().ann.app}>
-          <ComposerGate compose={main} />
+          <ComposerGate compose={main} list="main" />
         </P2pProvider>
       </AccountProvider>
     )
@@ -247,7 +249,9 @@ placeContract(composer, (kind, world) => {
         return
       }
       ann.account.store.setState({ me: { ...user('ann'), servers: [] } } as never)
-      expect(main.gate.get().first).toEqual({ kind: 'join', server })
+      expect(main.gate.get().first).toEqual({ kind: 'join', server, name: server })
+      expect(drawn(main)).toContain('data-preview-bar')
+      expect(drawn(main)).toContain('Join server')
       const until = Math.floor(Date.now() / 1000) + 600
       const mine = { name: server, timed_out_until: until }
       ann.account.store.setState({ me: { ...user('ann'), servers: [mine] } } as never)
@@ -259,6 +263,29 @@ placeContract(composer, (kind, world) => {
     expect(away.gate.get().first).toEqual({ kind: 'elsewhere' })
     const moved = gated(() => {}, { status: 'moved', movedAt: 5 })
     expect(moved.gate.get().first).toEqual({ kind: 'moved', at: 5 })
+    if (kind === 'p2pRoom') {
+      const { ann, room } = world()
+      const joined = (perms: number) => ({
+        servers: {
+          [room]: {
+            id: room,
+            me: 'join',
+            members: [],
+            channels: [{ id: 'c1', perms, send: true }],
+          },
+        },
+        thread: { room, ch: 'c1', root: 'r1', loading: false, head: null, messages: [] },
+      })
+      const seen = ChannelPermBit.ViewChannels + ChannelPermBit.SendMessages
+      gated(() => {}, joined(seen))
+      const here = featureAt(composer, ann.place)
+      if (isUnsupported(here)) throw new Error('a room has a composer')
+      const thread = here.at('thread')
+      expect(thread.gate.get().then).toEqual({ kind: 'noThreads' })
+      expect(drawn(thread)).toContain(NO_THREADS_TEXT)
+      ann.app?.useP2p.setState(joined(seen + ChannelPermBit.StartThreads) as never)
+      expect(thread.gate.get().then).toBeNull()
+    }
     if (kind === 'p2pDm') {
       const alone = gated(() => {}, { contacts: [] })
       expect(alone.gate.get().first).toEqual({ kind: 'noContact' })

@@ -210,12 +210,17 @@ export function ComposerBar({
   )
 }
 
-function Answered({ to }: { to: Replying['to'] }) {
+// The name of who a draft answers, as its place shows them; null with nobody answered.
+export function useAnswered(to: Replying['to'] | null) {
   const shown = useShownOrNull(
-    to.kind === 'account' ? to.user : null,
-    to.kind === 'account' ? to.server : null
+    to?.kind === 'account' ? to.user : null,
+    to?.kind === 'account' ? to.server : null
   )
-  const name = to.kind === 'named' ? to.name : shown ? personName(shown) : null
+  return to?.kind === 'named' ? to.name : shown ? personName(shown) : null
+}
+
+function Answered({ to }: { to: Replying['to'] }) {
+  const name = useAnswered(to)
   return name && <Name of={name} withUsername look="font-semibold text-on-surface" />
 }
 
