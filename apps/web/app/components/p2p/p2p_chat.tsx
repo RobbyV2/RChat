@@ -72,6 +72,7 @@ import { P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
 import { Row, Stack, Surface, Dock } from '../layout'
+import { playsOn } from '../../lib/motion/play'
 
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
 // channels: what differs (the header, who may do what, names, mentions) comes in as props.
@@ -728,6 +729,7 @@ function IdentityChatBody(props: ChatBodyProps) {
     <PlaceProvider place={place}>
       <CanFetchContext.Provider value={canAct}>
         <main
+          ref={playsOn('route', key)}
           {...props.dataAttr}
           className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
           data-share-drop-pane

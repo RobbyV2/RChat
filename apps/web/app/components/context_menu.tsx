@@ -38,6 +38,7 @@ import { IconButton, ListRow } from './controls'
 import { Inset, Row, Stack, Surface } from './layout'
 import { Overlay, Sheet } from './ui'
 import { time } from '../lib/platform/time'
+import { plays } from '../lib/motion/play'
 
 let press = idlePress
 let owner: HTMLElement | null = null
@@ -445,7 +446,7 @@ function Panel({
 
   return (
     <div
-      ref={ref}
+      ref={plays('menu', ref)}
       role="menu"
       data-menu-level={level}
       className="fixed max-h-screen-inset min-w-44 overflow-y-auto rounded-xl bg-surface-container-high shadow-elevation-2"
