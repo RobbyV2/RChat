@@ -4,6 +4,8 @@
 // button and chip, the lists, the date and time picker, the account-wide view and the prompt
 // for P2P messages that were due while the app was closed.
 
+import { Name } from './name'
+import { serverCalled } from '../lib/names'
 import {
   useCallback,
   useEffect,
@@ -235,9 +237,7 @@ function PlaceLine({ label }: { label: ScheduledLabel | null }) {
       {label.server && (
         <>
           {' · '}
-          <span className="streamer">
-            <Masked text={label.server} />
-          </span>
+          <Name of={serverCalled(label.server)} />
         </>
       )}
     </span>

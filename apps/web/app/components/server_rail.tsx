@@ -1,4 +1,6 @@
 'use client'
+import { useNameLabel } from './name'
+import { serverCalled, serverName } from '../lib/names'
 import { useAddingAllowed } from './add_instance'
 import { Globe } from 'lucide-react'
 import { voiceLabel } from '../lib/voice_rail'
@@ -28,7 +30,6 @@ import {
   scopeMuted,
   serverPingCount,
   serverUnread,
-  useMask,
   useStore,
 } from '../lib/store'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
@@ -157,9 +158,7 @@ function ServerTile({
   const openServer = useStore(s => s.openServer)
   const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
-  const mask = useMask(mine)
-  const streamer = useStore(s => s.streamer)
-  const shown = streamer ? 'Server' : mask(display_name)
+  const shown = useNameLabel(serverName({ name, display_name }, mine))
   const parent = folder === null ? null : folderKey(folder)
   return (
     <button
@@ -214,10 +213,9 @@ function PreviewTile() {
   const name = useStore(previewServer)
   const display = useStore(s => (name ? (s.servers[name]?.display_name ?? name) : ''))
   const openServer = useStore(s => s.openServer)
-  const mask = useMask(useOwnServer(name))
-  const streamer = useStore(s => s.streamer)
+  const shown = useNameLabel(serverCalled(display, useOwnServer(name)), 'a server')
   if (!name) return null
-  const label = streamer ? 'Previewing a server' : `Previewing ${mask(display)}`
+  const label = `Previewing ${shown}`
   return (
     <button
       data-preview-tile={name}

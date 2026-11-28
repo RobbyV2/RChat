@@ -1,6 +1,6 @@
 'use client'
 import { asAccount, pictured } from '../lib/people'
-import { personName } from '../lib/names'
+import { personName, serverCalled } from '../lib/names'
 import { Name } from './name'
 import type { ForwardDestination, ForwardSource } from '../lib/forward'
 import type { AccountSession } from '../lib/client/session'
@@ -257,9 +257,10 @@ export function ForwardBar({
           ) : shown ? (
             <>
               From{' '}
-              <span className="streamer font-semibold text-on-surface">
-                <Masked text={shown.server} own={ownSource} />
-              </span>
+              <Name
+                of={serverCalled(shown.server, ownSource)}
+                look="font-semibold text-on-surface"
+              />
               {shown.channel !== null && (
                 <>
                   {' > #'}
@@ -286,7 +287,7 @@ const CANT_OPEN = "You can't open this"
 
 function P2pInitial({ name, own }: { name: string; own: boolean }) {
   const mask = useMask(own)
-  return <span className="streamer">{serverInitial(mask(name))}</span>
+  return <Name of={serverCalled(serverInitial(mask(name)))} />
 }
 
 function PillGlyph({ server, own }: { server: PlaceNames['server']; own: boolean }) {

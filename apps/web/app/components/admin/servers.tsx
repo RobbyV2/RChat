@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { serverCalled } from '../../lib/names'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -144,7 +146,7 @@ function DefaultServers() {
                   <span className="w-5 shrink-0 text-right text-xs text-on-surface-variant">
                     {i + 1}
                   </span>
-                  <span className="streamer min-w-0 flex-1 truncate text-sm">{name}</span>
+                  <Name of={serverCalled(name)} look="min-w-0 flex-1 truncate text-sm" />
                   <Row gap="2xs">
                     <IconButton
                       icon={ChevronUp}

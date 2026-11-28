@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { serverCalled } from '../lib/names'
 import { useMemo, useState } from 'react'
 import { minidenticon } from 'minidenticons'
 import { useMask } from '../lib/store'
@@ -59,7 +61,7 @@ export function ServerIcon({
       {src ? (
         <img src={src} alt="" draggable={false} className="icon-inset h-full w-full" />
       ) : (
-        <span className="streamer">{serverInitial(mask(name))}</span>
+        <Name of={serverCalled(serverInitial(mask(name)))} />
       )}
     </span>
   )

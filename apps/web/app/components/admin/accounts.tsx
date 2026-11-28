@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from '../name'
+import { serverCalled } from '../../lib/names'
 import { useEffect, useId, useState } from 'react'
 import { Check, Copy, X } from 'lucide-react'
 import {
@@ -87,7 +89,7 @@ export function PasswordReveal({
           <Stack as="ul" gap="2xs">
             {failed.map((s, i) => (
               <li key={`${s.server}:${i}`} className="text-sm break-words text-error">
-                Not added to <span className="streamer">{s.server}</span>: {s.error ?? 'It failed.'}
+                Not added to <Name of={serverCalled(s.server)} />: {s.error ?? 'It failed.'}
               </li>
             ))}
           </Stack>
@@ -243,7 +245,7 @@ function ServerEntries({
           {servers.map(entry => (
             <Surface as="li" key={entry.server} tone="base" radius="lg" pad="md" gap="sm">
               <Row gap="sm">
-                <span className="streamer min-w-0 flex-1 truncate text-sm">{entry.server}</span>
+                <Name of={serverCalled(entry.server)} look="min-w-0 flex-1 truncate text-sm" />
                 <IconButton
                   icon={X}
                   label="Remove the server"
@@ -376,7 +378,7 @@ export function CreateAccountDialog() {
           <p className={labelCls}>Servers</p>
           {defaults.length > 0 && (
             <p className="text-sm break-words text-on-surface-variant">
-              Joins the default servers: <span className="streamer">{defaults.join(', ')}</span>.
+              Joins the default servers: <Name of={serverCalled(defaults.join(', '))} />.
             </p>
           )}
           <ServerEntries

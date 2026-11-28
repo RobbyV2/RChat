@@ -1,7 +1,7 @@
 'use client'
 
 import { asAccount } from '../lib/people'
-import { personName } from '../lib/names'
+import { personName, serverCalled } from '../lib/names'
 import { Name } from './name'
 import {
   useCallback,
@@ -58,7 +58,7 @@ import { AboutLine } from './server_about'
 import { aboutText } from '../lib/server_about'
 import { Button } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { Dialog, fieldCls, FieldError, LinkPage, Masked, useOwn } from './ui'
+import { Dialog, fieldCls, FieldError, LinkPage, useOwn } from './ui'
 import { SpoilerLine } from './replies'
 import { PreviewFilename, RevealChannelPreview } from './preview_reveal'
 import { InstanceChip } from './instance_badge'
@@ -286,12 +286,12 @@ function PasswordDialog({
             {unlock ? (
               <>
                 Enter the password for{' '}
-                <span className="streamer font-medium text-on-surface">{name}</span> to view this
+                <Name of={serverCalled(name)} look="font-medium text-on-surface" /> to view this
                 invite.
               </>
             ) : (
               <>
-                <span className="streamer font-medium text-on-surface">{name}</span> is password
+                <Name of={serverCalled(name)} look="font-medium text-on-surface" /> is password
                 protected. Enter its password to join.
               </>
             )}
@@ -876,10 +876,10 @@ export function InviteCard({
       return {
         icon: (
           <Tile big={big} tone="bg-primary-container text-on-primary-container">
-            <span className="streamer">{serverInitial(server)}</span>
+            <Name of={serverCalled(serverInitial(server))} />
           </Tile>
         ),
-        title: <span className={`streamer min-w-0 ${fit}`}>{server}</span>,
+        title: <Name of={serverCalled(server)} place="min-w-0" look={fit} />,
         sub: (
           <p className="text-xs text-on-surface-variant">Enter the password to view this invite</p>
         ),
@@ -932,11 +932,11 @@ export function InviteCard({
             {code ? (
               <Lock size={big ? 32 : 20} />
             ) : (
-              <span className="streamer">{serverInitial(server)}</span>
+              <Name of={serverCalled(serverInitial(server))} />
             )}
           </Tile>
         ),
-        title: code ? label : <span className={`streamer min-w-0 ${fit}`}>{server}</span>,
+        title: code ? label : <Name of={serverCalled(server)} place="min-w-0" look={fit} />,
         sub: <p className="text-xs text-on-surface-variant">Log in to see who&apos;s here.</p>,
         actions: (
           <Button variant="filled" size="md" onClick={() => logIn(true)} place={btn}>
@@ -966,9 +966,7 @@ export function InviteCard({
       icon: <ServerTile name={name} displayName={display_name} big={big} look={data.server} />,
       title: (
         <>
-          <span className={`streamer min-w-0 ${fit}`}>
-            <Masked text={display_name} />
-          </span>
+          <Name of={serverCalled(display_name)} place="min-w-0" look={fit} />
           {has_password && status !== 'member' && !sharedByCode(data.server.join_mode) && (
             <span title="Password protected" className="shrink-0 text-on-surface-variant">
               <Lock size={big ? 18 : 13} />
@@ -1260,10 +1258,10 @@ export function RemoteInviteCard({
       return {
         icon: (
           <Tile big={false} tone="bg-primary-container text-on-primary-container">
-            <span className="streamer">{serverInitial(invite.server)}</span>
+            <Name of={serverCalled(serverInitial(invite.server))} />
           </Tile>
         ),
-        title: <span className="streamer min-w-0 truncate">{invite.server}</span>,
+        title: <Name of={serverCalled(invite.server)} look="min-w-0 truncate" />,
         sub: (
           <Stack gap="2xs" align="start">
             {where}
@@ -1323,9 +1321,7 @@ export function RemoteInviteCard({
       ),
       title: (
         <>
-          <span className="streamer min-w-0 truncate">
-            <Masked text={display_name} />
-          </span>
+          <Name of={serverCalled(display_name)} look="min-w-0 truncate" />
           {has_password && (
             <span title="Password protected" className="shrink-0 text-on-surface-variant">
               <Lock size={13} />

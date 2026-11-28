@@ -11,9 +11,11 @@ import {
   nameTitle,
   p2pKey,
   p2pName,
+  personCalled,
   personName,
   revealKeyOf,
   roomName,
+  serverCalled,
   serverName,
   shownNameText,
   type NameView,
@@ -101,6 +103,16 @@ describe('each kind and the filter', () => {
     expect(roomName('Club').server).toBeNull()
     expect(shownNameText(roomName('darn club'), view())).toBe('**** club')
     expect(shownNameText(roomName('darn club', true), view({ own: true }))).toBe('darn club')
+  })
+
+  test('a server or a person by a name alone', () => {
+    expect(shownNameText(serverCalled('darn den'), view())).toBe('**** den')
+    expect(serverCalled('Den', true).own).toBe(true)
+    const named = personCalled('darn pat', 'pat')
+    expect(named.who).toBe('pat')
+    expect(nameParts(named, true)).toEqual({ main: 'darn pat', handle: null })
+    expect(personCalled('Pat', null, true).own).toBe(true)
+    expect(personCalled('Pat', 'pat', false).who).toBeNull()
   })
 
   test('an instance label is masked and an address is not', () => {

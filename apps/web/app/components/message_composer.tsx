@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { serverCalled } from '../lib/names'
 import { Button, IconButton } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, useViewActor } from './view_actor'
@@ -39,7 +41,7 @@ import { NO_THREADS_TEXT } from '../lib/channel_perms'
 import { textOnlyDestination } from '../lib/channel_content'
 import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
-import { Dialog, FieldError, fieldCls, Masked, useOwnServer } from './ui'
+import { Dialog, FieldError, fieldCls, useOwnServer } from './ui'
 import { SITE_FILTER_NOTE } from '../lib/home'
 import { useUploadHint } from './upload_expiry'
 import { useHome } from '../lib/home_store'
@@ -182,9 +184,10 @@ function JoinBar({ server }: { server: string }) {
             <Eye size={16} className="shrink-0 text-primary" />
             <span className="min-w-48 text-sm text-on-surface-variant">
               You&apos;re previewing{' '}
-              <span className="streamer font-medium text-on-surface">
-                <Masked text={detail?.display_name ?? server} />
-              </span>
+              <Name
+                of={serverCalled(detail?.display_name ?? server)}
+                look="font-medium text-on-surface"
+              />
             </span>
           </Row>
           {locked && (

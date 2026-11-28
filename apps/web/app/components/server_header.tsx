@@ -1,10 +1,12 @@
 'use client'
 
+import { Name } from './name'
+import { serverCalled } from '../lib/names'
 import type { CSSProperties } from 'react'
 import { Settings } from 'lucide-react'
 import { GEAR_CHIP_CSS, headerColors } from '../lib/server_colors'
 import { longPress } from './context_menu'
-import { Masked, useOwnServer } from './ui'
+import { useOwnServer } from './ui'
 
 const gearCls =
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-offset-2 focus-visible:outline-2'
@@ -52,13 +54,12 @@ export function ServerHeader({
       {server === 'rchat' ? (
         <img src="/rchat_logo.png" alt="RChat" className="h-8 w-auto" />
       ) : (
-        <span
+        <Name
+          of={serverCalled(displayName, own)}
           {...(onMenu ? longPress(onMenu) : {})}
-          style={colors?.fg ? { color: colors.fg } : undefined}
-          className="streamer truncate font-medium"
-        >
-          <Masked text={displayName} own={own} />
-        </span>
+          color={colors?.fg || undefined}
+          look="truncate font-medium"
+        />
       )}
       {preview
         ? showGear && (

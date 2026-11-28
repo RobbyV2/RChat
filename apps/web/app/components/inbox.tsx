@@ -1,7 +1,7 @@
 'use client'
 
 import { ScheduledButton } from './scheduled'
-import { personName } from '../lib/names'
+import { personName, serverCalled } from '../lib/names'
 import { Name } from './name'
 import { ViewActorTag } from './view_actor'
 import {
@@ -268,9 +268,7 @@ function Place({ entry }: { entry: InboxEntry }) {
         {w.thread ? ' (thread)' : ''}
       </span>
       <span className="shrink-0">·</span>
-      <span className="streamer truncate">
-        <Masked text={w.serverName} own={own} />
-      </span>
+      <Name of={serverCalled(w.serverName, own)} look="truncate" />
     </Row>
   )
 }

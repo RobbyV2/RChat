@@ -103,10 +103,19 @@ export const personName = (person: Person, own?: boolean): PersonName => {
 export const handleName = (username: string, own?: boolean): PersonName =>
   new PersonName(minted, username, null, own === undefined ? username : null, own, false)
 
+// A person by a name alone. `who` is the username or identity key the name belongs to, which
+// decides whether it is the viewer's own; `own` says it outright.
+export const personCalled = (text: string, who?: string | null, own?: boolean): PersonName =>
+  new PersonName(minted, text, null, own === undefined ? (who ?? null) : null, own, false)
+
 export const serverName = (
   server: { name: string; display_name?: string | null },
   own?: boolean
 ): ServerName => new ServerName(minted, server.display_name || server.name, server.name, own)
+
+// A hosted server by its shown name alone, where its record is not at hand.
+export const serverCalled = (text: string, own?: boolean): ServerName =>
+  new ServerName(minted, text, null, own)
 
 // A P2P room by the name this device has for it.
 export const roomName = (name: string, own?: boolean): ServerName =>

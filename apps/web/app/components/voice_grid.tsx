@@ -1,5 +1,5 @@
 'use client'
-import { handleName, p2pName } from '../lib/names'
+import { handleName, p2pName, serverName } from '../lib/names'
 import { asAccount, shownUser } from '../lib/people'
 import { personName } from '../lib/names'
 import { Name } from './name'
@@ -904,9 +904,7 @@ function VoiceDockBody() {
                 {voice && detail && (
                   <>
                     <span className="shrink-0">/</span>
-                    <span className="streamer truncate">
-                      <Masked text={detail.display_name} by={detail.creator} />
-                    </span>
+                    <Name of={serverName(detail)} look="truncate" />
                   </>
                 )}
                 {roomVoice && sv && (

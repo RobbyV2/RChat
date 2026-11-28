@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { serverCalled } from '../lib/names'
 import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -291,9 +293,7 @@ export function SearchView({
                       <Masked text={r.channel} own={r.ownPlace} />
                     </span>
                     <span className="shrink-0">·</span>
-                    <span className="streamer truncate">
-                      <Masked text={r.server} own={r.ownPlace} />
-                    </span>
+                    <Name of={serverCalled(r.server, r.ownPlace)} look="truncate" />
                   </Row>
                 </p>
                 <Row gap="sm">
