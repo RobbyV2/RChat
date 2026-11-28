@@ -98,7 +98,7 @@ export function ConfigSection() {
     <Loaded
       load={useConfigLoad()}
       what="the server config"
-      empty="This instance does not show its server config."
+      empty="The server config is not shown here."
     >
       {config => <ConfigBody config={config} />}
     </Loaded>

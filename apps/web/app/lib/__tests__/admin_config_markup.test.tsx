@@ -139,7 +139,7 @@ test('the config section says so when the view could not be loaded or the instan
   expect(refused).toContain('Try again')
   expect(page('features', null)).toContain('Could not load the server config.')
   configInitial.trouble = { absent: true }
-  expect(page('config', null)).toContain('This instance does not show its server config.')
+  expect(page('config', null)).toContain('The server config is not shown here.')
   expect(page('features', null)).not.toContain('server config.')
   configInitial.trouble = null
   expect(page('config', null)).toContain('Loading the server config')
