@@ -27,14 +27,11 @@ const excluded = () => {
   return file && existsSync(file) ? [includeIgnoreFile(file, 'git info/exclude')] : []
 }
 
-// The layout boxes, the controls and the name: they carry the spacing scale themselves.
+// The layout boxes and the controls: they carry the spacing scale themselves.
 const SPACING_SOURCES = [
-  'apps/web/app/components/{controls,ui,name}.tsx',
+  'apps/web/app/components/{controls,ui}.tsx',
   'apps/web/app/components/layout/index.tsx',
 ]
-
-// Screens that set spacing classes of their own. On every other screen one fails the lint.
-const HAND_SPACED = []
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
 
@@ -140,7 +137,7 @@ export default tseslint.config(
   },
   {
     files: ['apps/web/app/**/*.tsx', 'docs/src/**/*.tsx'],
-    ignores: [...SPACING_SOURCES, ...HAND_SPACED, ...TEST_FILES],
+    ignores: [...SPACING_SOURCES, ...TEST_FILES],
     plugins: { rchat: { rules: { spacing } } },
     rules: { 'rchat/spacing': 'error' },
   },
