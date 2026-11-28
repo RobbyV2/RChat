@@ -71,7 +71,9 @@ import {
   type Tap,
   type View,
 } from '../lib/media_lightbox'
-import { useMotionPlays } from '../lib/motion/use_motion'
+import { FUNCTIONAL } from '../lib/motion/functional'
+import { plays, playsBehind, playsOn } from '../lib/motion/play'
+import { useSlotBlurs, useSlotPlays } from '../lib/motion/use_motion'
 import { sharing } from '../lib/platform'
 import { useMask } from '../lib/store'
 import { AltBadge } from './alt_text'
@@ -446,7 +448,8 @@ export function LightboxView({
   entry: Entry
 }) {
   const acct = useAccount()
-  const moves = useMotionPlays()
+  const moves = useSlotPlays('lightbox')
+  const blurs = useSlotBlurs('lightbox')
   const { item, key } = entry
   const count = open.keys.length
   const shown = useMask(item.own, item.fileMask)(item.name)
@@ -692,13 +695,6 @@ export function LightboxView({
   const verb = menu?.verb ?? 'Download'
   const download = menu?.download ?? null
   const link = menu?.link ?? null
-  const slide = !moves
-    ? ''
-    : open.dir > 0
-      ? 'animate-lightbox-next'
-      : open.dir < 0
-        ? 'animate-lightbox-prev'
-        : 'animate-lightbox-zoom'
   const placed = stage !== null && img !== null
   const loaded = natural?.key === key
   const broken = failed === key
@@ -820,15 +816,16 @@ export function LightboxView({
 
   return (
     <>
-      {moves && (
+      {blurs && (
         <div
+          ref={playsBehind('lightbox')}
           aria-hidden
           data-lightbox-blur=""
-          className="pointer-events-none fixed inset-x-0 top-app z-lightbox h-app animate-lightbox-fade backdrop-blur-md"
+          className="pointer-events-none fixed inset-x-0 top-app z-lightbox h-app backdrop-blur-md"
         />
       )}
       <div
-        ref={rootRef}
+        ref={playsBehind('lightbox', rootRef)}
         role="dialog"
         aria-modal="true"
         aria-label="Image viewer"
@@ -843,7 +840,7 @@ export function LightboxView({
           openMenu?.(keyed ? r.left + r.width / 2 : e.clientX, keyed ? r.top : e.clientY)
         }}
         className={`fixed inset-x-0 top-app z-lightbox flex h-app flex-col text-on-surface outline-none ${
-          moves ? 'animate-lightbox-fade bg-scrim/80' : 'bg-scrim/85'
+          blurs ? 'bg-scrim/80' : 'bg-scrim/85'
         }`}
       >
         <Inset
@@ -869,7 +866,7 @@ export function LightboxView({
           <BarButton icon={X} label="Close" onClick={close} />
         </Inset>
         <div
-          ref={stageRef}
+          ref={plays('lightbox', stageRef)}
           data-lightbox-stage=""
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -879,69 +876,71 @@ export function LightboxView({
           {...(openMenu ? longPress(openMenu) : {})}
           className="relative min-h-0 flex-1 touch-none overflow-hidden select-none"
         >
-          <div key={key} className={`absolute inset-0 ${slide}`}>
-            {!loaded && !broken && (
-              <Surface
-                role="status"
-                aria-label="Loading image"
-                pad="2xl"
-                row
-                tone="plain"
-                radius="none"
-                justify="center"
-                place="absolute inset-0"
-              >
-                {item.placeholder ? (
+          <div ref={playsOn('lightbox.slide', open.at)} className="absolute inset-0">
+            <div key={key} className="absolute inset-0">
+              {!loaded && !broken && (
+                <Surface
+                  role="status"
+                  aria-label="Loading image"
+                  pad="2xl"
+                  row
+                  tone="plain"
+                  radius="none"
+                  justify="center"
+                  place="absolute inset-0"
+                >
+                  {item.placeholder ? (
+                    <img
+                      src={item.placeholder}
+                      alt=""
+                      className="max-h-full max-w-full rounded-lg object-contain opacity-80 blur-sm"
+                    />
+                  ) : (
+                    <span
+                      className={`size-16 rounded-2xl bg-surface-container-high/60 ${moves ? FUNCTIONAL.pulse : ''}`}
+                    />
+                  )}
+                </Surface>
+              )}
+              {broken ? (
+                <Inset
+                  role="alert"
+                  pad="2xl"
+                  gap="sm"
+                  align="center"
+                  justify="center"
+                  text="sm"
+                  ink="strong"
+                  look="text-center"
+                  place="absolute inset-0"
+                >
+                  <ImageOff size={32} aria-hidden className="text-on-surface-variant" />
+                  Couldn&apos;t load this image
+                </Inset>
+              ) : (
+                <div
+                  ref={imageRef}
+                  data-lightbox-image=""
+                  className={`absolute top-1/2 left-1/2 ${placed && loaded ? '' : 'opacity-0'} ${
+                    moves && !dragging ? 'transition-transform duration-150 ease-out' : ''
+                  } ${fits ? 'cursor-zoom-in' : dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+                  style={box}
+                >
                   <img
-                    src={item.placeholder}
-                    alt=""
-                    className="max-h-full max-w-full rounded-lg object-contain opacity-80 blur-sm"
+                    ref={imgRef}
+                    src={item.src}
+                    alt={alt ?? shown}
+                    draggable={false}
+                    onLoad={e => {
+                      const { naturalWidth: w, naturalHeight: h } = e.currentTarget
+                      setNatural({ key, box: { w: w || 300, h: h || 150 } })
+                    }}
+                    onError={() => setFailed(key)}
+                    className="block h-full w-full max-w-none select-none"
                   />
-                ) : (
-                  <span
-                    className={`size-16 rounded-2xl bg-surface-container-high/60 ${moves ? 'animate-pulse' : ''}`}
-                  />
-                )}
-              </Surface>
-            )}
-            {broken ? (
-              <Inset
-                role="alert"
-                pad="2xl"
-                gap="sm"
-                align="center"
-                justify="center"
-                text="sm"
-                ink="strong"
-                look="text-center"
-                place="absolute inset-0"
-              >
-                <ImageOff size={32} aria-hidden className="text-on-surface-variant" />
-                Couldn&apos;t load this image
-              </Inset>
-            ) : (
-              <div
-                ref={imageRef}
-                data-lightbox-image=""
-                className={`absolute top-1/2 left-1/2 ${placed && loaded ? '' : 'opacity-0'} ${
-                  moves && !dragging ? 'transition-transform duration-150 ease-out' : ''
-                } ${fits ? 'cursor-zoom-in' : dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
-                style={box}
-              >
-                <img
-                  ref={imgRef}
-                  src={item.src}
-                  alt={alt ?? shown}
-                  draggable={false}
-                  onLoad={e => {
-                    const { naturalWidth: w, naturalHeight: h } = e.currentTarget
-                    setNatural({ key, box: { w: w || 300, h: h || 150 } })
-                  }}
-                  onError={() => setFailed(key)}
-                  className="block h-full w-full max-w-none select-none"
-                />
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
           {count > 1 && open.at > 0 && (
             <div className="absolute top-1/2 left-safe-2 z-raised -translate-y-1/2">

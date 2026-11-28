@@ -2,7 +2,7 @@
 
 import { Check } from 'lucide-react'
 import { Inset, Row, Surface } from './layout'
-import { useMotionPlays } from '../lib/motion/use_motion'
+import { plays } from '../lib/motion/play'
 import { unreadBannerText, type UnreadSummary } from '../lib/unread_banner'
 import { Button } from './controls'
 
@@ -17,9 +17,9 @@ export function UnreadBanner({
   onJump: () => void
   onMarkRead: () => void
 }) {
-  const moves = useMotionPlays()
   return (
     <Surface
+      ref={plays('banner.unread')}
       data-unread-banner
       pad="2xs"
       gap="2xs"
@@ -28,7 +28,7 @@ export function UnreadBanner({
       radius="lg"
       elevation={2}
       text="sm"
-      look={`bg-primary text-on-primary ${moves ? 'animate-banner-in' : ''}`}
+      look="bg-primary text-on-primary"
       place="absolute inset-x-3 top-2 z-raised"
     >
       <Button

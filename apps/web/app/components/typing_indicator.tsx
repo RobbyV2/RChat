@@ -4,7 +4,7 @@ import { Name } from './name'
 
 import { memo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { useMotionPlays } from '../lib/motion/use_motion'
+import { look } from '../lib/motion/play'
 import { shownTypers } from '../lib/server_profile'
 import { useMask, useStore } from '../lib/store'
 import { rowTypers } from '../lib/typing_rows'
@@ -15,19 +15,14 @@ import { Inset, Row } from './layout'
 
 const NONE: string[] = []
 
-const DELAYS = ['0ms', '150ms', '300ms']
+const DOTS = [0, 1, 2]
 
 // Three dots that bounce while animations play and stand still otherwise.
-function Dots({ still }: { still: string }) {
-  const moves = useMotionPlays()
+function Dots() {
   return (
-    <Row as="span" gap="3xs" place="shrink-0" aria-hidden>
-      {DELAYS.map(d => (
-        <span
-          key={d}
-          style={moves ? { animationDelay: d } : undefined}
-          className={`size-1 rounded-full bg-current ${moves ? 'animate-typing-dot' : still}`}
-        />
+    <Row as="span" gap="3xs" place="shrink-0" aria-hidden {...look('typing.channel')}>
+      {DOTS.map(d => (
+        <span key={d} className="size-1 rounded-full bg-current" />
       ))}
     </Row>
   )
@@ -53,7 +48,7 @@ export const TypingEllipsis = memo(function TypingEllipsis({
       data-typing-dots
       className="flex shrink-0 items-center"
     >
-      <Dots still="opacity-80" />
+      <Dots />
     </span>
   )
 })
@@ -134,7 +129,7 @@ export function TypingIndicator({
       look={`h-4 leading-4 ${bg}`}
       place="pointer-events-none absolute inset-x-0 bottom-full"
     >
-      <Dots still="opacity-70" />
+      <Dots />
       <span aria-live="polite" className="min-w-0 truncate">
         {parts.map((p, i) =>
           p.name ? (

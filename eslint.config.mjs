@@ -45,8 +45,16 @@ const rchat = { rules: { spacing, buttons, overlays } }
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
 
+// Only the motion folder reaches the engine; a screen names a slot (app/lib/motion/play.ts).
+const ENGINE_IMPORTS = {
+  group: ['**/motion/wire', '**/motion/engine', '**/motion/dom', '**/motion/start'],
+  message:
+    'Only app/lib/motion reaches the engine. A screen names a slot (app/lib/motion/play.ts).',
+}
+const MOTION_FILES = ['apps/web/app/lib/motion/**']
+
 // Each secret sink may be imported only by the modules that are that sink.
-const sinkRule = allowed => ({
+const sinkRule = (allowed, engine = false) => ({
   'no-restricted-imports': [
     'error',
     {
@@ -56,6 +64,7 @@ const sinkRule = allowed => ({
           importNames: SINKS.filter(name => !allowed.includes(name)),
           message: 'Only the module that sends, stores or shows a secret may reveal it.',
         },
+        ...(engine ? [] : [ENGINE_IMPORTS]),
       ],
     },
   ],
@@ -111,12 +120,24 @@ const clockProperties = [
   { object: 'performance', property: 'now', message: CLOCK_MESSAGE },
   { object: 'AbortSignal', property: 'timeout', message: CLOCK_MESSAGE },
 ]
-const clockSyntax = {
-  'no-restricted-syntax': [
-    'error',
-    { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: CLOCK_MESSAGE },
-  ],
+const DATE_SYNTAX = {
+  selector: "NewExpression[callee.name='Date'][arguments.length=0]",
+  message: CLOCK_MESSAGE,
 }
+const clockOnly = { 'no-restricted-syntax': ['error', DATE_SYNTAX] }
+// An animation starts only in the motion engine: a screen names a slot (app/lib/motion/play.ts).
+const SLOT_MESSAGE =
+  'Animations play through a slot: plays, playsOn or look from app/lib/motion/play.ts. Keyframe classes that show a state are in app/lib/motion/functional.ts.'
+const KEYFRAME_CLASS = '/(^|[\\s:])animate-/'
+const motionSyntax = [
+  { selector: "CallExpression[callee.property.name='animate']", message: SLOT_MESSAGE },
+  { selector: "CallExpression[callee.property.name='getAnimations']", message: SLOT_MESSAGE },
+  { selector: `Literal[value=${KEYFRAME_CLASS}]`, message: SLOT_MESSAGE },
+  { selector: `TemplateElement[value.raw=${KEYFRAME_CLASS}]`, message: SLOT_MESSAGE },
+  { selector: 'JSXAttribute[name.name=/^data-motion/]', message: SLOT_MESSAGE },
+  { selector: 'Property[key.value=/^data-motion/]', message: SLOT_MESSAGE },
+]
+const clockSyntax = { 'no-restricted-syntax': ['error', DATE_SYNTAX, ...motionSyntax] }
 // A component names a request and hands it on; it never holds the client that sends it.
 const ASK_MESSAGE =
   'Components name a request with ask (app/lib/asks) and give it to a load (components/loaded.tsx) or to sendTo. They never hold the API client.'
@@ -224,6 +245,11 @@ export default tseslint.config(
         },
       ],
     },
+  },
+  {
+    files: MOTION_FILES,
+    ignores: TEST_FILES,
+    rules: { ...clockOnly, ...sinkRule([], true) },
   },
   { files: REQUEST_SINKS, rules: sinkRule(['TO_REQUEST']) },
   { files: STORE_SINKS, rules: sinkRule(['TO_STORE']) },

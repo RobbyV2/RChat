@@ -3,12 +3,13 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { Dialog } from '../../components/ui'
 import type { DialogFit } from '../dialog_size'
 import { useStore } from '../store'
-import type { AnimPrefs } from '../motion/setting'
+import { setLive } from '../motion/wire'
 
 const initial = useStore.getInitialState()
 const saved = { ...initial }
 
 afterEach(() => {
+  setLive(null)
   Object.assign(initial, saved)
   useStore.setState({ ...saved })
 })
@@ -20,7 +21,8 @@ const render = (props: Omit<DialogFit, 'raised' | 'blur'> & { blurBackdrop?: boo
     </Dialog>
   )
 
-const withAnim = (anim: AnimPrefs) => Object.assign(initial, { anim })
+// The dialog slot as the engine reports it: playing, and with its backdrop blurring or not.
+const playing = (blurs: boolean) => setLive(new Set(['dialog']), new Set(blurs ? ['dialog'] : []))
 
 const backdropOf = (html: string) => /^<div class="([^"]*)"/.exec(html)?.[1].split(' ') ?? []
 
@@ -78,30 +80,29 @@ describe('the backdrop blur', () => {
   const blurred = (html: string) => blurs(html).flatMap(b => b.classes)
 
   test('a large box blurs while animations play', () => {
-    withAnim({ on: true, motion: 'always', style: 'subtle', custom: {} })
+    playing(true)
     expect(blurred(render({ size: 'settings' }))).toEqual(['md:backdrop-blur-[6px]'])
     expect(blurred(render({ size: 'settings', blurBackdrop: false }))).toEqual([])
     expect(blurred(render())).toEqual([])
     expect(blurred(render({ blurBackdrop: true }))).toEqual(['backdrop-blur-[6px]'])
   })
 
-  test('the scrim stays plain while animations are off or set to Reduced', () => {
-    withAnim({ on: false, motion: 'always', style: 'subtle', custom: {} })
+  test('the scrim stays plain while nothing plays or the tab runs late', () => {
     expect(blurred(render({ size: 'settings' }))).toEqual([])
-    withAnim({ on: true, motion: 'still', style: 'subtle', custom: {} })
+    playing(false)
     expect(blurred(render({ size: 'settings' }))).toEqual([])
     expect(backdropOf(render({ size: 'settings' }))).toContain('bg-scrim/60')
   })
 
   test('the blur is an empty layer before the backdrop, so it holds no dialog', () => {
-    withAnim({ on: true, motion: 'always', style: 'subtle', custom: {} })
+    playing(true)
     const html = render({ size: 'settings' })
     expect(blurs(html)).toEqual([{ classes: ['md:backdrop-blur-[6px]'], layer: true }])
     expect(html.indexOf('backdrop-blur')).toBeLessThan(html.indexOf('bg-scrim/60'))
   })
 
   test('a dialog inside a blurred large dialog has no blurred ancestor', () => {
-    withAnim({ on: true, motion: 'always', style: 'subtle', custom: {} })
+    playing(true)
     const html = renderToStaticMarkup(
       <Dialog title="Outer" size="settings" chrome="bare" onClose={() => {}}>
         <Dialog title="Inner" compact blurBackdrop onClose={() => {}}>

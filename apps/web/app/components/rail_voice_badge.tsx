@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react'
 import { useAccount } from '../lib/client/react'
 import { useP2p, useP2pApp } from '../lib/client/p2p_react'
 import type { AccountSession } from '../lib/client/session'
-import { useMotionPlays } from '../lib/motion/use_motion'
+import { plays } from '../lib/motion/play'
 import type { P2pApp } from '../lib/p2p/app/runtime'
 import type { P2pState } from '../lib/p2p/app/store'
 import { useStore } from '../lib/store'
@@ -22,13 +22,13 @@ import type { RChatState } from '../lib/store_types'
 // The top-left badge of a server or folder tile while people are in its voice channels.
 export function RailVoiceBadge({ count }: { count: number }) {
   const streamer = useStore(s => s.streamer)
-  const moves = useMotionPlays()
   if (count <= 0) return null
   return (
     <span
+      ref={plays('badge')}
       data-voice-badge={count}
       title={voiceBadgeTitle(count, streamer)}
-      className={`absolute -top-1.5 -left-1.5 flex size-5 items-center justify-center rounded-full border-2 border-rail-cut bg-status-green text-surface ${moves ? 'animate-badge-pop' : ''}`}
+      className={`absolute -top-1.5 -left-1.5 flex size-5 items-center justify-center rounded-full border-2 border-rail-cut bg-status-green text-surface`}
     >
       <Volume2 size={11} strokeWidth={2.5} aria-hidden />
       <span className="sr-only">{voiceLabel(count)}</span>

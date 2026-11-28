@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { useStore } from '../client/react'
+import { motionAllowed, type MotionMode } from './setting'
 import type { SlotId } from './slots'
 import { blurringNow, liveNow, watchLive } from './wire'
 
@@ -34,21 +35,20 @@ export function useReducedMotion(asked = true) {
   )
 }
 
-const never = () => false
+// How much may move for the shown account on this device (see `motionAllowed`).
+export function useMotionAllowed(): MotionMode {
+  const motion = useStore(s => s.anim.motion)
+  return motionAllowed(motion, useReducedMotion(motion === 'device'))
+}
 
 // Whether `slot` moves now: a screen picks its moving or still look with it.
 export function useSlotPlays(slot: SlotId) {
-  return useSyncExternalStore(watchLive, () => liveNow().has(slot), never)
+  const plays = () => liveNow().has(slot)
+  return useSyncExternalStore(watchLive, plays, plays)
 }
 
 // Whether the backdrop of `slot` blurs now.
 export function useSlotBlurs(slot: SlotId) {
-  return useSyncExternalStore(watchLive, () => blurringNow().has(slot), never)
-}
-
-// Whether the shown account's animations play: callers pick their animated or still look with it.
-export function useMotionPlays() {
-  const motion = useStore(s => (s.anim.on ? s.anim.motion : null))
-  const reduced = useReducedMotion(motion === 'device')
-  return motion !== null && motion !== 'still' && !(motion === 'device' && reduced)
+  const blurs = () => blurringNow().has(slot)
+  return useSyncExternalStore(watchLive, blurs, blurs)
 }

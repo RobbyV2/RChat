@@ -22,6 +22,7 @@ import { sharing } from '../lib/platform'
 import { useChat } from '../lib/place/use_chat'
 import { Row, Surface, Inset } from './layout'
 import { time } from '../lib/platform/time'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 const CLASS = /^[a-z][\w-]*$/i
 
@@ -153,7 +154,7 @@ export function CodePreviewLoading({ filename }: { filename: string }) {
   return (
     <div
       aria-label={`Loading ${filename}`}
-      className="msg-part h-40 w-2xl max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container"
+      className={`msg-part h-40 w-2xl max-w-full rounded-xl bg-surface-container ${FUNCTIONAL.pulseSafe}`}
     />
   )
 }

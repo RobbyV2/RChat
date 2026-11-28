@@ -80,13 +80,17 @@ export const animValue = ({ on, motion, style, custom }: AnimPrefs) =>
 
 export const sameAnim = (a: AnimPrefs, b: AnimPrefs) => animValue(a) === animValue(b)
 
-// How much moves: nothing with the switch off or while Motion follows a device that asks for
-// reduced motion, fades only with Motion at Reduced, everything otherwise.
+// How much may move on this device: the Motion choice with what the device asks for. Nothing
+// while Motion follows a device that asks for reduced motion, fades and still pictures with
+// Motion at Reduced, everything otherwise. Animated pictures and video that plays by itself read
+// this, whatever the Animations switch says.
 export type MotionMode = 'off' | 'reduced' | 'full'
-export const motionMode = ({ on, motion }: AnimPrefs, reducedMotion: boolean): MotionMode => {
-  if (!on || (motion === 'device' && reducedMotion)) return 'off'
-  return motion === 'still' ? 'reduced' : 'full'
-}
+export const motionAllowed = (motion: MotionChoice, reducedMotion: boolean): MotionMode =>
+  motion === 'device' && reducedMotion ? 'off' : motion === 'still' ? 'reduced' : 'full'
+
+// How much the Animations setting moves: nothing with the switch off, else what Motion allows.
+export const motionMode = ({ on, motion }: AnimPrefs, reducedMotion: boolean): MotionMode =>
+  on ? motionAllowed(motion, reducedMotion) : 'off'
 
 // Whether things move.
 export const motionPlays = (p: AnimPrefs, reducedMotion: boolean) =>

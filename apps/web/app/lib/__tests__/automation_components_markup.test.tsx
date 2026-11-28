@@ -238,8 +238,11 @@ describe('menu picks', () => {
 })
 
 describe('layering', () => {
-  // The layout boxes and the controls take props only themselves.
+  // The layout boxes and the controls take props only themselves, and name their motion slots.
   const BOXES = [
+    'apps/web/app/lib/motion/functional.ts',
+    'apps/web/app/lib/motion/play.ts',
+    'apps/web/app/lib/motion/wire.ts',
     'apps/web/app/components/layout/index.tsx',
     'apps/web/app/components/controls.tsx',
     'apps/web/app/lib/controls.ts',

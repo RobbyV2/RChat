@@ -79,6 +79,7 @@ import {
 } from '../lib/invite_load'
 import { Loaded, useAccountWork, useRequest } from './loaded'
 import { ErrorNotice } from './notices'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 type InviteVariant = 'embed' | 'page'
 
@@ -705,7 +706,7 @@ function Skeleton({ big }: { big: boolean }) {
     </>
   )
   return (
-    <div aria-busy aria-label="Loading invite" className="animate-pulse">
+    <div aria-busy aria-label="Loading invite" className={FUNCTIONAL.pulse}>
       {big ? (
         <Stack gap="md" align="center">
           <span className="size-20 shrink-0 rounded-3xl bg-surface-container-highest" />

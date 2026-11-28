@@ -9,6 +9,7 @@ import {
   animValue,
   choiceOptions,
   cleanChoices,
+  motionAllowed,
   motionLabel,
   motionMode,
   motionPlays,
@@ -198,6 +199,15 @@ describe('the style and the Custom choices', () => {
     expect(motionMode({ ...ON, motion: 'still' }, false)).toBe('reduced')
     expect(motionMode({ ...ON, motion: 'still' }, true)).toBe('reduced')
     expect(motionMode(ON, true)).toBe('full')
+  })
+
+  test('what Motion allows on a device, whatever the Animations switch says', () => {
+    expect(motionAllowed('device', false)).toBe('full')
+    expect(motionAllowed('device', true)).toBe('off')
+    expect(motionAllowed('still', false)).toBe('reduced')
+    expect(motionAllowed('still', true)).toBe('reduced')
+    expect(motionAllowed('always', true)).toBe('full')
+    expect(motionAllowed('always', false)).toBe('full')
   })
 
   test('every style has a label', () => {

@@ -27,6 +27,7 @@ import { VideoAttachment } from '../video_attachment'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
 import { Row, Stack, Surface, Inset } from '../layout'
+import { FUNCTIONAL } from '../../lib/motion/functional'
 
 // P2P attachments in messages and in the composer. What a file is shown as comes from its
 // stored bytes only (sniff.ts): images, video and audio play inline, everything else (SVG and
@@ -402,7 +403,7 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
       </span>
       <Row as="span" gap="2xs">
         {!p.error && !ready && (
-          <Loader2 size={10} className="text-on-surface-variant motion-safe:animate-spin" />
+          <Loader2 size={10} className={`text-on-surface-variant ${FUNCTIONAL.spinSafe}`} />
         )}
         <span
           className={`text-2xs tabular-nums ${p.error ? 'text-error' : 'text-on-surface-variant'}`}

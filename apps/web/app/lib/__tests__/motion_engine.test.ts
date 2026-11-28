@@ -6,6 +6,7 @@ import {
   Engine,
   MAX_LEAVING,
   MAX_RUNNING,
+  behind,
   leaving,
   looksOf,
   mirrored,
@@ -81,6 +82,7 @@ const world = (config: Config = SUBTLE, step: 0 | 1 | 2 | 3 = 0, frameMs?: numbe
     tails: new Set<El>(),
     places: new Map<El, Place>(),
     unshot: new Set<El>(),
+    inside: new Map<El, El>(),
     ghosts: [] as El[],
     dropped: [] as El[],
     marks: [] as [string | null, readonly SlotId[]][],
@@ -91,6 +93,7 @@ const world = (config: Config = SUBTLE, step: 0 | 1 | 2 | 3 = 0, frameMs?: numbe
   const page: Page = {
     hidden: () => state.hidden,
     open: e => !state.shut.has(e as unknown as El),
+    within: (e, o) => state.inside.get(e as unknown as El) === (o as unknown as El),
     cameAlone: e => state.came.has(e as unknown as El),
     wentAlone: e => state.went.has(e as unknown as El),
     newTail: e => state.tails.has(e as unknown as El),
@@ -233,13 +236,48 @@ describe('the engine', () => {
     expect(engine.count).toBe(0)
   })
 
-  test('playing a slot again on an element cuts the one before short', () => {
+  test('an element enters once, however often its ref runs', () => {
     const { engine } = world()
     const a = el()
     engine.enter(dom(a), 'menu')
     engine.enter(dom(a), 'menu')
+    expect(a.played.map(p => p.state)).toEqual(['running'])
+  })
+
+  test('a slot that plays again on an element cuts the one before short', () => {
+    const { engine } = world()
+    const a = el()
+    engine.change(dom(a), 'reaction.count', 1)
+    engine.change(dom(a), 'reaction.count', 2)
+    engine.change(dom(a), 'reaction.count', 3)
     expect(a.played.map(p => p.state)).toEqual(['cancelled', 'running'])
     expect(engine.count).toBe(1)
+  })
+
+  test('what lies behind a slot fades in step with it, and never moves', () => {
+    const { engine } = world(LIVELY)
+    const scrim = el()
+    engine.enter(dom(scrim), 'dialog', true)
+    expect(scrim.played[0].keyframes).toEqual([{ opacity: 0 }, { opacity: 1 }])
+    expect(scrim.played[0].options.duration).toBe(PRESETS.lively.dialog.timing.duration)
+    expect(behind(PRESETS.subtle.sheet)).toBeNull()
+    const still = el()
+    engine.enter(dom(still), 'sheet', true)
+    expect(still.played).toHaveLength(0)
+  })
+
+  test('what leaves inside something that leaves goes with its copy', () => {
+    const { engine, state, settle } = world()
+    const scrim = el()
+    const panel = el()
+    state.inside.set(panel, scrim)
+    engine.leave(dom(panel), 'dialog')
+    engine.leave(dom(scrim), 'dialog', true)
+    panel.isConnected = false
+    scrim.isConnected = false
+    settle()
+    expect(state.ghosts).toHaveLength(1)
+    expect(state.ghosts[0].played[0].keyframes).toEqual([{ opacity: 1 }, { opacity: 0 }])
   })
 
   test(`at most ${MAX_RUNNING} run at once; one more shows in its end state`, () => {
@@ -248,8 +286,9 @@ describe('the engine', () => {
     for (const e of els) engine.enter(dom(e), 'dialog')
     expect(els.map(e => e.played.length)).toEqual([...Array(MAX_RUNNING).fill(1), 0])
     els[0].played[0].finish()
-    engine.enter(dom(els[MAX_RUNNING]), 'dialog')
-    expect(els[MAX_RUNNING].played).toHaveLength(1)
+    const next = el()
+    engine.enter(dom(next), 'dialog')
+    expect(next.played).toHaveLength(1)
   })
 
   test('nothing plays in a hidden page, where the page is shut, or after a stop', () => {

@@ -57,6 +57,7 @@ import { Stack, Surface, Inset, Grid } from './layout'
 import { time } from '../lib/platform/time'
 import { useLive } from '../lib/place/react'
 import { Loaded, useLoad } from './loaded'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
 
@@ -293,7 +294,7 @@ function LoadingGrid({ sheet }: { sheet: boolean }) {
         {Array.from({ length: cols * 6 }, (_, i) => (
           <div
             key={i}
-            className="aspect-square animate-pulse rounded-lg bg-surface-container-highest/60"
+            className={`aspect-square rounded-lg bg-surface-container-highest/60 ${FUNCTIONAL.pulse}`}
           />
         ))}
       </Grid>

@@ -46,6 +46,7 @@ import { KeyAvatar } from './p2p_badge'
 import { Row, Stack, Surface } from '../layout'
 import { andMore, fewOf, nextPage, page, PAGE } from '../../lib/paging'
 import { time as appTime } from '../../lib/platform/time'
+import { FUNCTIONAL } from '../../lib/motion/functional'
 
 // The flows of P2P servers the user takes part in: actions waiting for sync, removals
 // that took others along, moderation to apply again, a device that conflicts with a copy of
@@ -144,7 +145,7 @@ function ModNote({ v, m }: { v: ServerView; m: ServerView['mods'][number] }) {
 
   return (
     <Note role="status" data-p2p-mod>
-      <RefreshCw size={16} className="shrink-0 animate-spin text-tertiary" aria-hidden />
+      <RefreshCw size={16} className={`shrink-0 text-tertiary ${FUNCTIONAL.spin}`} aria-hidden />
       <span className="min-w-48 flex-1">
         {SYNC_WAIT_TEXT}{' '}
         <span className="text-on-surface">
@@ -389,7 +390,7 @@ function ServerNoticesBody({ v, flush = false }: { v: ServerView; flush?: boolea
           radius="none"
         >
           <Row as="span" gap="sm">
-            <RefreshCw size={12} className="animate-spin text-tertiary" aria-hidden />
+            <RefreshCw size={12} className={`text-tertiary ${FUNCTIONAL.spin}`} aria-hidden />
             <span className="text-xs text-on-surface-variant">{SYNCING_TEXT(v.syncing)}</span>
           </Row>
         </Surface>

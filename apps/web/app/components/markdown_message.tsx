@@ -115,6 +115,7 @@ import { Row, Surface, Inset } from './layout'
 import { time } from '../lib/platform/time'
 import { iconButtonLook } from '../lib/controls'
 import { embedNoteLook } from '../lib/controls'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -226,7 +227,9 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const { href, shown } = useLinkedSrc(src, server, fetches, previews && !plain)
   if (shown === undefined)
     return (
-      <span className="msg-block block h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
+      <span
+        className={`msg-block block h-40 w-60 max-w-full rounded-xl bg-surface-container ${FUNCTIONAL.pulseSafe}`}
+      />
     )
   if (shown)
     return <img src={shown} alt={alt ?? ''} className="msg-block max-h-80 max-w-full rounded-xl" />
@@ -965,7 +968,9 @@ export function MediaAttachment({
     ) : null
   if (image && src === undefined)
     return (
-      <div className="msg-part h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
+      <div
+        className={`msg-part h-40 w-60 max-w-full rounded-xl bg-surface-container ${FUNCTIONAL.pulseSafe}`}
+      />
     )
   if (image && typeof src === 'string') {
     if (hidden) {

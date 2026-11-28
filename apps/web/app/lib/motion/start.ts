@@ -11,8 +11,8 @@ export const start = (config: Config): Player => {
     set: (plays, blurs) => setLive(plays, blurs),
   })
   return {
-    enter: (el, slot) => engine.enter(el, slot),
-    leave: (el, slot) => engine.leave(el, slot),
+    enter: (el, slot, behind) => engine.enter(el, slot, behind),
+    leave: (el, slot, behind) => engine.leave(el, slot, behind),
     change: (el, slot, key) => engine.change(el, slot, key),
     stop() {
       engine.stop()

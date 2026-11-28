@@ -19,6 +19,7 @@ import {
 import { time } from '../lib/platform/time'
 import { Surface } from './layout'
 import { Button } from './controls'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 const KEYBOARD_MIN = 120
 
@@ -281,7 +282,7 @@ export function OlderLoading({
         text="xs"
         ink="muted"
       >
-        <LoaderCircle size={14} className="animate-spin" />
+        <LoaderCircle size={14} className={FUNCTIONAL.spin} />
         {newer ? 'Loading newer messages' : 'Loading older messages'}
       </Surface>
     </div>

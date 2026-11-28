@@ -59,6 +59,8 @@ import {
   type TriTone,
   type WindowButtonKind,
 } from '../lib/controls'
+import { FUNCTIONAL } from '../lib/motion/functional'
+import { look, plays } from '../lib/motion/play'
 
 type NativeButton = Omit<
   ButtonHTMLAttributes<HTMLButtonElement>,
@@ -78,7 +80,7 @@ function Busy({ busy, children }: { busy: boolean; children: ReactNode }) {
         {children}
       </span>
       <span className="col-start-1 row-start-1 flex items-center justify-center">
-        <LoaderCircle size={16} aria-hidden className="motion-safe:animate-spin" />
+        <LoaderCircle size={16} aria-hidden className={FUNCTIONAL.spinSafe} />
       </span>
     </span>
   )
@@ -452,7 +454,7 @@ export function Badge<const S extends string = never>({
   ...rest
 }: Span & Placed<S> & { tone?: BadgeTone; children: ReactNode }) {
   return (
-    <span {...rest} className={placed('inline-flex', badgeLook(tone), place)}>
+    <span {...rest} ref={plays('badge')} className={placed('inline-flex', badgeLook(tone), place)}>
       {children}
     </span>
   )
@@ -509,6 +511,7 @@ export function Tile<const S extends string = never>({
       aria-label={label}
       aria-pressed={pressed}
       style={tint}
+      {...look('hover')}
       className={placed('flex', tileLook(tone), place)}
     >
       {children}
@@ -657,6 +660,7 @@ export function CardButton<const S extends string = never>({
       aria-pressed={pressed}
       aria-current={current ? 'true' : undefined}
       aria-expanded={open}
+      {...look('hover')}
       className={placed('flex', cardButtonLook(tone, pad, column), place)}
     >
       {children}
@@ -790,7 +794,7 @@ export function SwitchRow({
           </span>
         )}
       </span>
-      <span aria-hidden className={`flex ${switchTrackLook}`}>
+      <span aria-hidden {...look('toggle')} className={`flex ${switchTrackLook}`}>
         <span className={switchThumbLook} />
       </span>
     </button>

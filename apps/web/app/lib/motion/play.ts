@@ -1,27 +1,74 @@
 // How a screen animates: it names a slot. `plays` and `playsOn` give an element to the engine as
 // it enters, leaves or changes; `look` marks an element the style sheet moves. With animations
 // off these are constants and calls that return at once: no state, effect or listener.
-import type { RefCallback } from 'react'
+import type { RefCallback, RefObject } from 'react'
 import type { LookSlot, PlaySlot } from './slots'
 import { playerNow } from './wire'
 
-const enters = new Map<PlaySlot, RefCallback<Element>>()
+type Other = RefCallback<never> | { current: unknown } | null | undefined
+
+const made = (slot: PlaySlot, behind: boolean): RefCallback<Element> => {
+  return el => {
+    const player = playerNow()
+    if (!el || !player) return
+    player.enter(el, slot, behind)
+    return () => playerNow()?.leave(el, slot, behind)
+  }
+}
+
+// `ref` and `also` as one ref.
+const joined = (ref: RefCallback<Element>, also: NonNullable<Other>): RefCallback<Element> => {
+  const other = also as RefCallback<Element> | RefObject<Element | null>
+  return el => {
+    const undo = ref(el)
+    if (typeof other !== 'function') {
+      other.current = el
+      return () => {
+        if (typeof undo === 'function') undo()
+        other.current = null
+      }
+    }
+    const undoOther = other(el)
+    return () => {
+      if (typeof undo === 'function') undo()
+      if (typeof undoOther === 'function') undoOther()
+      else other(null)
+    }
+  }
+}
+
+const cached = (
+  refs: Map<PlaySlot, RefCallback<Element>>,
+  joins: Map<PlaySlot, WeakMap<object, RefCallback<Element>>>,
+  behind: boolean
+) => {
+  return (slot: PlaySlot, also?: Other): RefCallback<Element> => {
+    let ref = refs.get(slot)
+    if (!ref) {
+      ref = made(slot, behind)
+      refs.set(slot, ref)
+    }
+    if (!also) return ref
+    let bySlot = joins.get(slot)
+    if (!bySlot) {
+      bySlot = new WeakMap()
+      joins.set(slot, bySlot)
+    }
+    let both = bySlot.get(also)
+    if (!both) {
+      both = joined(ref, also)
+      bySlot.set(also, both)
+    }
+    return both
+  }
+}
 
 // A ref for the element of `slot`: it plays as the element shows, and as it goes where the slot
-// has an exit.
-export const plays = (slot: PlaySlot): RefCallback<Element> => {
-  let ref = enters.get(slot)
-  if (!ref) {
-    ref = el => {
-      const player = playerNow()
-      if (!el || !player) return
-      player.enter(el, slot)
-      return () => playerNow()?.leave(el, slot)
-    }
-    enters.set(slot, ref)
-  }
-  return ref
-}
+// has an exit. `also` is another ref the element has.
+export const plays = cached(new Map(), new Map(), false)
+
+// A ref for what lies behind the element of `slot` (a scrim, a blur): it fades in step with it.
+export const playsBehind = cached(new Map(), new Map(), true)
 
 const KEPT = 512
 const changes = new Map<string, RefCallback<Element>>()

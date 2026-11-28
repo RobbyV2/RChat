@@ -15,6 +15,7 @@ import { registerAppActions } from '../actions/index'
 import { client } from '../client/client'
 import type { FileMenu } from '../file_card'
 import { createShelf } from '../media_lightbox'
+import { setLive } from '../motion/wire'
 import type { MediaMode } from '../media_src'
 import type { FileView } from '../p2p/app'
 import type { Attachment } from '../p2p/content'
@@ -485,20 +486,32 @@ describe('the viewer', () => {
     expect(/<button(?=[^>]*aria-disabled="true")[^>]*aria-label="Download"/.test(html)).toBe(true)
   })
 
-  test('with animations off the backdrop is a plain scrim, without blur', () => {
-    Object.assign(initial, { anim: { on: false, motion: 'device', style: 'subtle', custom: {} } })
+  test('while nothing plays the backdrop is a plain scrim, without blur', () => {
     const html = render([one()], 0)
     expect(html).toContain('bg-scrim/85')
     expect(html.includes('backdrop-blur')).toBe(false)
-    expect(html.includes('animate-lightbox')).toBe(false)
+    expect(html.includes('animate-')).toBe(false)
   })
 
-  test('with animations on the app behind blurs and the image zooms in', () => {
-    Object.assign(initial, { anim: { on: true, motion: 'always', style: 'subtle', custom: {} } })
-    const html = render([one()], 0)
-    expect(html).toContain('data-lightbox-blur=""')
-    expect(html).toContain('backdrop-blur-md')
-    expect(html).toContain('animate-lightbox-zoom')
+  test('while the viewer slot plays the app behind blurs', () => {
+    setLive(new Set(['lightbox']))
+    try {
+      const html = render([one()], 0)
+      expect(html).toContain('data-lightbox-blur=""')
+      expect(html).toContain('backdrop-blur-md')
+      expect(html).toContain('bg-scrim/80')
+    } finally {
+      setLive(null)
+    }
+  })
+
+  test('a tab that runs late keeps the plain scrim', () => {
+    setLive(new Set(['lightbox']), new Set())
+    try {
+      expect(render([one()], 0).includes('backdrop-blur')).toBe(false)
+    } finally {
+      setLive(null)
+    }
   })
 
   test("alt text is the image's alt, behind the same ALT pill as in messages", () => {

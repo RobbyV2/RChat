@@ -58,6 +58,7 @@ export const page = (doc: Document, time: Time): Page & { close(): void } => {
       const only = el.closest(`[${ONLY}]`)
       return !only || only.getAttribute(ONLY) === slot
     },
+    within: (el, other) => other !== el && other.contains(el),
     cameAlone(el) {
       seen()
       return came.has(el)

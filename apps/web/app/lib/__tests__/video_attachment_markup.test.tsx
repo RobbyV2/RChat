@@ -72,7 +72,6 @@ const base = {
   name: 'clip.mp4',
   shown: 'clip.mp4',
   primary: { label: 'Download' as const, onClick: () => {} },
-  moves: false,
   open: () => {},
   onError: () => {},
 }
@@ -81,7 +80,9 @@ const body = (over: Partial<Parameters<typeof VideoAttachmentBody>[0]> = {}) =>
   renderToStaticMarkup(<VideoAttachmentBody {...base} {...over} />)
 
 const pillOf = (html: string) =>
-  (/<div class="(absolute top-2 right-2[^"]*)">/.exec(html)?.[1] ?? '').split(' ')
+  (
+    /<div data-motion="toolbar.hover" class="(absolute top-2 right-2[^"]*)">/.exec(html)?.[1] ?? ''
+  ).split(' ')
 
 describe('video attachment', () => {
   test('plays inline with the passive player and one download button', () => {
@@ -112,7 +113,7 @@ describe('video attachment', () => {
     ])
       expect(cls).toContain(c)
     expect(cls.some(c => c.startsWith('transition'))).toBe(false)
-    expect(pillOf(body({ moves: true }))).toContain('transition-[opacity,scale]')
+    expect(cls).toContain('translate-y-1')
   })
 
   test('a link downloads by address; a hint goes in the title only; Save for a stored file', () => {
@@ -319,10 +320,12 @@ describe('a hosted video', () => {
     )
   })
 
-  test('the pill fades in only while animations play', () => {
-    expect(pillOf(render()).some(c => c.startsWith('transition'))).toBe(false)
+  test('the pill is in the hover toolbar slot, the same whatever the Animations setting', () => {
+    const off = render()
+    expect(pillOf(off).some(c => c.startsWith('transition'))).toBe(false)
+    expect(pillOf(off)).toContain('scale-95')
     Object.assign(initial, { anim: { on: true, motion: 'always', style: 'subtle', custom: {} } })
-    expect(pillOf(render())).toContain('transition-[opacity,scale]')
+    expect(render()).toBe(off)
   })
 
   test('with previews off it is a file card', () => {

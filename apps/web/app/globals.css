@@ -87,13 +87,6 @@
   --animate-speak: speak 1.6s ease-in-out infinite;
   --animate-ring: ring 1.4s ease-out infinite;
   --animate-notice-time: notice-time 5s linear forwards;
-  --animate-typing-dot: typing-dot 1.2s ease-in-out infinite;
-  --animate-banner-in: banner-in 200ms cubic-bezier(0.05, 0.7, 0.1, 1);
-  --animate-badge-pop: badge-pop 160ms cubic-bezier(0.05, 0.7, 0.1, 1);
-  --animate-lightbox-fade: lightbox-fade 200ms cubic-bezier(0.2, 0, 0, 1);
-  --animate-lightbox-zoom: lightbox-zoom 200ms cubic-bezier(0.05, 0.7, 0.1, 1);
-  --animate-lightbox-next: lightbox-next 120ms cubic-bezier(0.2, 0, 0, 1);
-  --animate-lightbox-prev: lightbox-prev 120ms cubic-bezier(0.2, 0, 0, 1);
 
   @keyframes sheet-up {
     from {
@@ -134,47 +127,6 @@
     30% {
       opacity: 1;
       transform: translateY(-2px);
-    }
-  }
-
-  @keyframes badge-pop {
-    from {
-      opacity: 0;
-      transform: scale(0.6);
-    }
-  }
-
-  @keyframes banner-in {
-    from {
-      opacity: 0;
-      transform: translateY(-100%);
-    }
-  }
-
-  @keyframes lightbox-fade {
-    from {
-      opacity: 0;
-    }
-  }
-
-  @keyframes lightbox-zoom {
-    from {
-      opacity: 0;
-      transform: scale(0.94);
-    }
-  }
-
-  @keyframes lightbox-next {
-    from {
-      opacity: 0;
-      transform: translateX(24px);
-    }
-  }
-
-  @keyframes lightbox-prev {
-    from {
-      opacity: 0;
-      transform: translateX(-24px);
     }
   }
 
@@ -466,14 +418,163 @@ body {
   }
 }
 
-/* A loading placeholder's blobs carry a sheen across them while animations play: the same
-   160 px band crosses every blob from its left edge at one speed, so rows sweep together. */
-[data-shimmer] [data-blob] {
+/* The slots the style sheet moves. While animations play the engine names the style on the root
+   (`data-motion`) and lists the slots that move (`data-motion-slots`); an element takes part
+   through its `data-motion` mark. With animations off, reduced, or the tab running late, neither
+   attribute is there and none of this applies. */
+
+/* press: every control gives a little while held, except in the composer and in a call. */
+:root[data-motion-slots~='press']
+  :is(button, [role='button'], [role='switch'], [role='tab'], [role='menuitem']):not(
+    :disabled,
+    [data-motion-none] *,
+    [data-motion-only] *
+  ) {
+  transition-property:
+    color, background-color, border-color, outline-color, opacity, box-shadow, scale;
+  transition-duration: var(--motion-short);
+  transition-timing-function: var(--motion-standard);
+}
+
+:root[data-motion-slots~='press']
+  :is(button, [role='button'], [role='switch'], [role='tab'], [role='menuitem']):active:not(
+    :disabled,
+    [data-motion-none] *,
+    [data-motion-only] *
+  ) {
+  scale: var(--motion-press);
+}
+
+/* hover: tiles and cards grow a little under a mouse. */
+@media (hover: hover) and (pointer: fine) {
+  :root[data-motion-slots~='hover'] [data-motion~='hover'] {
+    transition-property:
+      color, background-color, border-color, outline-color, opacity, box-shadow, scale;
+    transition-duration: var(--motion-short);
+    transition-timing-function: var(--motion-standard);
+  }
+
+  :root[data-motion-slots~='hover'] [data-motion~='hover']:hover:not(:active, :disabled) {
+    scale: var(--motion-hover);
+  }
+
+  :root[data-motion='lively'][data-motion-slots~='hover'] [data-motion~='hover'] {
+    transition-timing-function: var(--motion-spring-gentle, var(--motion-standard));
+  }
+}
+
+/* drag: what is being dragged lifts. */
+:root[data-motion-slots~='drag'] [data-motion~='drag'] {
+  transition:
+    scale var(--motion-short) var(--motion-standard),
+    opacity var(--motion-short) var(--motion-standard);
+}
+
+:root[data-motion-slots~='drag'] [data-motion~='drag'][data-lifted] {
+  scale: var(--motion-hover);
+  opacity: 0.9;
+}
+
+:root[data-motion='lively'][data-motion-slots~='drag'] [data-motion~='drag'] {
+  transition-timing-function: var(--motion-spring-bouncy, var(--motion-standard));
+}
+
+/* toggle: a switch's thumb slides to its side. */
+:root[data-motion-slots~='toggle'] [data-motion~='toggle'] {
+  justify-content: flex-start;
+  container-type: inline-size;
+}
+
+:root[data-motion-slots~='toggle'] [data-motion~='toggle'] > * {
+  transition:
+    translate var(--motion-short) var(--motion-standard),
+    background-color var(--motion-short) var(--motion-standard);
+}
+
+:root[data-motion-slots~='toggle'] [aria-checked='true'] [data-motion~='toggle'] > * {
+  translate: calc(100cqi - 100%) 0;
+}
+
+:root[data-motion='lively'][data-motion-slots~='toggle'] [data-motion~='toggle'] > * {
+  transition-timing-function: var(--motion-spring-bouncy, var(--motion-standard));
+}
+
+/* expand: a chevron turns as its section folds. */
+:root[data-motion-slots~='expand'] [data-motion~='expand'] {
+  transition: rotate var(--motion-short) var(--motion-standard);
+}
+
+/* toolbar.hover: a toolbar that shows on hover fades in and lifts into place from where its own
+   classes tuck it. */
+:root[data-motion-slots~='toolbar.hover'] [data-motion~='toolbar.hover'] {
+  transition:
+    opacity var(--motion-short) var(--motion-standard),
+    translate var(--motion-short) var(--motion-standard),
+    scale var(--motion-short) var(--motion-standard);
+}
+
+:root[data-motion='lively'][data-motion-slots~='toolbar.hover'] [data-motion~='toolbar.hover'] {
+  transition-timing-function: var(--motion-spring-gentle, var(--motion-standard));
+}
+
+/* nav.indicator: the marker of the open server, channel or tab glides and changes shape. */
+:root[data-motion-slots~='nav.indicator'] [data-motion~='nav.indicator'] {
+  transition:
+    translate var(--motion-short) var(--motion-standard),
+    scale var(--motion-short) var(--motion-standard),
+    opacity var(--motion-short) var(--motion-standard),
+    border-radius var(--motion-short) var(--motion-standard),
+    background-color var(--motion-short) var(--motion-standard);
+}
+
+:root[data-motion='lively'][data-motion-slots~='nav.indicator'] [data-motion~='nav.indicator'] {
+  transition-timing-function: var(--motion-spring-gentle, var(--motion-standard));
+}
+
+/* typing.channel: the three dots stand still, and bounce one after the other while this plays. */
+[data-motion~='typing.channel'] > * {
+  opacity: 0.8;
+}
+
+:root[data-motion-slots~='typing.channel'] [data-motion~='typing.channel'] > * {
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+
+:root[data-motion-slots~='typing.channel'] [data-motion~='typing.channel'] > :nth-child(2) {
+  animation-delay: 150ms;
+}
+
+:root[data-motion-slots~='typing.channel'] [data-motion~='typing.channel'] > :nth-child(3) {
+  animation-delay: 300ms;
+}
+
+:root[data-motion='lively'][data-motion-slots~='typing.channel']
+  [data-motion~='typing.channel']
+  > * {
+  animation-name: typing-wave;
+}
+
+@keyframes typing-wave {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(calc(-1 * var(--motion-lift)));
+  }
+}
+
+/* skeleton.shimmer: a loading placeholder's blobs carry a sheen across them: the same 160 px band
+   crosses every blob from its left edge at one speed, so rows sweep together. */
+:root[data-motion-slots~='skeleton.shimmer'] [data-motion~='skeleton.shimmer'] [data-blob] {
   position: relative;
   overflow: hidden;
 }
 
-[data-shimmer] [data-blob]::after {
+:root[data-motion-slots~='skeleton.shimmer'] [data-motion~='skeleton.shimmer'] [data-blob]::after {
   content: '';
   position: absolute;
   inset-block: 0;
@@ -486,13 +587,18 @@ body {
     transparent
   );
   transform: translateX(-160px);
-  animation: skeleton-shimmer 2s linear infinite;
+  animation: skeleton-shimmer 1.6s linear infinite;
 }
 
 @keyframes skeleton-shimmer {
   to {
     transform: translateX(1600px);
   }
+}
+
+/* A sheet rises by the engine while animations play, and by its own keyframes otherwise. */
+:root[data-motion] [data-sheet] {
+  animation: none;
 }
 
 @media (pointer: coarse) {

@@ -65,31 +65,33 @@ describe('hostedVideo', () => {
 
 describe('the download pill', () => {
   test('shows on hover and keyboard focus, and always on touch and narrow screens', () => {
-    for (const moves of [false, true]) {
-      const cls = pillClass(moves).split(' ')
-      for (const c of [
-        'opacity-0',
-        'group-hover/video:opacity-100',
-        'group-has-[:focus-visible]/video:opacity-100',
-        'max-md:opacity-100',
-        'pointer-coarse:opacity-100',
-        'absolute',
-        'top-2',
-        'right-2',
-      ])
-        expect(cls).toContain(c)
-    }
+    const cls = pillClass.split(' ')
+    for (const c of [
+      'opacity-0',
+      'group-hover/video:opacity-100',
+      'group-has-[:focus-visible]/video:opacity-100',
+      'max-md:opacity-100',
+      'pointer-coarse:opacity-100',
+      'absolute',
+      'top-2',
+      'right-2',
+    ])
+      expect(cls).toContain(c)
   })
 
-  test('fades and pops in only while animations play', () => {
-    const plain = pillClass(false)
-    expect(plain.includes('transition')).toBe(false)
-    expect(plain.includes('scale')).toBe(false)
-    const moving = pillClass(true).split(' ')
-    expect(moving).toContain('transition-[opacity,scale]')
-    expect(moving).toContain('scale-95')
-    expect(moving).toContain('group-hover/video:scale-100')
-    expect(moving).toContain('pointer-coarse:scale-100')
+  test('hidden it sits lower and smaller, and carries no transition of its own', () => {
+    const cls = pillClass.split(' ')
+    expect(pillClass.includes('transition')).toBe(false)
+    for (const c of [
+      'translate-y-1',
+      'scale-95',
+      'group-hover/video:translate-y-0',
+      'group-hover/video:scale-100',
+      'pointer-coarse:translate-y-0',
+      'pointer-coarse:scale-100',
+      'max-md:scale-100',
+    ])
+      expect(cls).toContain(c)
   })
 
   test('its label names the shown file; the sender hint goes in the title only', () => {

@@ -12,7 +12,7 @@ import {
 import { Download, X } from 'lucide-react'
 import { useAccount } from '../lib/client/react'
 import { cardMenu, pct, primaryText, type FileMenuOwn } from '../lib/file_card'
-import { useMotionPlays } from '../lib/motion/use_motion'
+import { look } from '../lib/motion/play'
 import { useMask } from '../lib/store'
 import {
   NEAR_SETTLE_MS,
@@ -26,6 +26,7 @@ import { useFileMenu, type FilePrimary } from './file_card'
 import { time } from '../lib/platform/time'
 import type { Cancel } from '../lib/clock'
 import { IconButton } from './controls'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 interface VideoProps {
   src: string
@@ -100,7 +101,6 @@ export function VideoAttachment({
 }: VideoAttachmentProps) {
   const { media } = useAccount()
   const shown = useMask(own, fileMask)(video.name)
-  const moves = useMotionPlays()
   const open = useFileMenu(cardMenu(shown, { ...video, progress: video.progress ?? null, menu }))
   const videoRef = usePlaying(onPlaying, onEnded)
   const known = () => remember !== undefined && media.videoFailures.has(remember.key)
@@ -111,7 +111,6 @@ export function VideoAttachment({
     <VideoAttachmentBody
       {...video}
       shown={shown}
-      moves={moves}
       open={open}
       videoRef={videoRef}
       onError={code =>
@@ -123,7 +122,7 @@ export function VideoAttachment({
   )
 }
 
-// The player for `shown`, the name as the filter shows it; `moves`: the pill fades in. `open`: its
+// The player for `shown`, the name as the filter shows it. `open`: its
 // menu, none when right-click and long-press belong to the row.
 export function VideoAttachmentBody({
   src,
@@ -136,13 +135,11 @@ export function VideoAttachmentBody({
   onBox,
   data,
   children,
-  moves,
   open,
   videoRef,
   onError,
 }: VideoProps & {
   shown: string
-  moves: boolean
   open: ((x: number, y: number) => void) | null
   videoRef?: (video: HTMLVideoElement | null) => void
   // With the media error code.
@@ -173,7 +170,7 @@ export function VideoAttachmentBody({
           }}
           className="block max-h-80 max-w-full rounded-xl"
         />
-        <div className={pillClass(moves)}>
+        <div {...look('toolbar.hover')} className={pillClass}>
           {progress && onCancel ? (
             <IconButton
               icon={X}
@@ -253,7 +250,7 @@ export function VideoPlaceholder({
       role={loading ? 'status' : 'group'}
       aria-label={loading ? `Loading ${shown}` : shown}
       style={style ?? undefined}
-      className={`msg-part max-w-full rounded-xl bg-surface-container ${loading ? 'motion-safe:animate-pulse' : ''} ${style ? '' : 'aspect-video w-80'}`}
+      className={`msg-part max-w-full rounded-xl bg-surface-container ${loading ? FUNCTIONAL.pulseSafe : ''} ${style ? '' : 'aspect-video w-80'}`}
     />
   )
 }

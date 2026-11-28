@@ -12,15 +12,15 @@ afterEach(() => {
 })
 
 describe('typing dots on rows', () => {
-  test('do not move with animations off, and bounce with them on', () => {
+  test('are three dots in the typing slot, which the style sheet bounces only while it plays', () => {
     const still = renderToStaticMarkup(<TypingEllipsis names={['Alice']} />)
     expect(still).toContain('aria-label="Alice is typing"')
     expect(still).toContain('title="Alice is typing"')
-    expect(still).not.toContain('animate-typing-dot')
+    expect(still).toContain('data-motion="typing.channel"')
+    expect(still.split('size-1 rounded-full bg-current')).toHaveLength(4)
+    expect(still).not.toContain('animate-')
     initial.anim = { on: true, motion: 'always', style: 'subtle', custom: {} }
-    expect(renderToStaticMarkup(<TypingEllipsis names={['Alice']} />)).toContain(
-      'animate-typing-dot'
-    )
+    expect(renderToStaticMarkup(<TypingEllipsis names={['Alice']} />)).toBe(still)
   })
 
   test('hide names in streamer mode', () => {

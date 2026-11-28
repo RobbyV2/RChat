@@ -99,6 +99,7 @@ import { useStable } from '../lib/stable_key'
 import { time } from '../lib/platform/time'
 import type { Cancel } from '../lib/clock'
 import { Button, CallButton, CardButton, Hotspot, IconButton, LinkButton } from './controls'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const seenShares = new WeakMap<object, ReadonlySet<string>>()
@@ -451,7 +452,7 @@ export function Tile({
               aria-hidden
               className={`absolute -inset-1 rounded-full ${
                 pending
-                  ? 'border-2 border-on-surface/40 motion-safe:animate-ring'
+                  ? `border-2 border-on-surface/40 ${FUNCTIONAL.ring}`
                   : 'ring-3 ring-status-green'
               }`}
             />
@@ -468,7 +469,7 @@ export function Tile({
       {speaking && !screen && (
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-xl inset-ring-3 inset-ring-status-green motion-safe:animate-speak"
+          className={`pointer-events-none absolute inset-0 rounded-xl inset-ring-3 inset-ring-status-green ${FUNCTIONAL.speak}`}
         />
       )}
       <Hotspot
@@ -659,7 +660,7 @@ function StageHeader({
           <span
             aria-hidden
             className={`h-2 w-2 shrink-0 rounded-full ${
-              active ? 'bg-status-green' : 'bg-status-yellow motion-safe:animate-pulse'
+              active ? 'bg-status-green' : `bg-status-yellow ${FUNCTIONAL.pulseSafe}`
             }`}
           />
           <Row as="span" gap="2xs">
@@ -999,7 +1000,7 @@ function SharePill() {
       >
         <Row gap="sm">
           <span aria-hidden className="relative flex h-2.5 w-2.5 shrink-0">
-            <span className="absolute inset-0 rounded-full bg-danger/60 motion-safe:animate-ring" />
+            <span className={`absolute inset-0 rounded-full bg-danger/60 ${FUNCTIONAL.ring}`} />
             <span className="relative h-2.5 w-2.5 rounded-full bg-danger" />
           </span>
           <Stack as="span" gap="none">
@@ -1346,7 +1347,7 @@ export function VoiceGrid({
                 className={`h-2 w-2 shrink-0 rounded-full ${
                   forDm.state === 'active'
                     ? 'bg-status-green'
-                    : 'bg-status-yellow motion-safe:animate-pulse'
+                    : `bg-status-yellow ${FUNCTIONAL.pulseSafe}`
                 }`}
               />
               <Row as="span" gap="2xs">
@@ -1625,11 +1626,11 @@ function RingAvatar({ user, size, streamer }: { user: UserRef; size: number; str
     <span className="relative flex shrink-0 rounded-full">
       <span
         aria-hidden
-        className="absolute inset-0 rounded-full bg-status-green/40 motion-safe:animate-ring"
+        className={`absolute inset-0 rounded-full bg-status-green/40 ${FUNCTIONAL.ring}`}
       />
       <span
         aria-hidden
-        className="absolute inset-0 rounded-full bg-status-green/30 animation-delay-700 motion-safe:animate-ring"
+        className={`absolute inset-0 rounded-full bg-status-green/30 ${FUNCTIONAL.ringLate}`}
       />
       <span className="relative flex rounded-full ring-2 ring-status-green">
         {streamer ? (

@@ -28,6 +28,7 @@ import { UserAvatar } from './user_avatar'
 import { Masked } from './ui'
 import { time } from '../lib/platform/time'
 import { Stack } from './layout'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
   return pieces.map((p, i) => {
@@ -61,7 +62,7 @@ function TimeBar({ notice, paused }: { notice: Notice; paused: boolean }) {
           animationPlayState: paused ? 'paused' : 'running',
           ['--notice-from' as string]: start / NOTICE_MS,
         }}
-        className="h-full origin-left animate-notice-time bg-primary motion-reduce:animate-none"
+        className={`h-full origin-left bg-primary ${FUNCTIONAL.countdown}`}
       />
     </div>
   )

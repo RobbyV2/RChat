@@ -42,12 +42,12 @@ const PILL =
 // screens.
 const SHOWN =
   'opacity-0 group-hover/video:opacity-100 group-has-[:focus-visible]/video:opacity-100 max-md:opacity-100 pointer-coarse:opacity-100'
-const MOVES =
-  'scale-95 transition-[opacity,scale] duration-150 ease-out group-hover/video:scale-100 group-has-[:focus-visible]/video:scale-100 max-md:scale-100 pointer-coarse:scale-100'
+// Hidden, it sits a little lower and smaller, so it lifts into place where that moves.
+const TUCKED =
+  'translate-y-1 scale-95 group-hover/video:translate-y-0 group-hover/video:scale-100 group-has-[:focus-visible]/video:translate-y-0 group-has-[:focus-visible]/video:scale-100 max-md:translate-y-0 max-md:scale-100 pointer-coarse:translate-y-0 pointer-coarse:scale-100'
 
-// The pill over a video's top right corner; `moves`: with its fade and pop.
-export const pillClass = (moves: boolean) =>
-  moves ? `${PILL} ${SHOWN} ${MOVES}` : `${PILL} ${SHOWN}`
+// The pill over a video's top right corner.
+export const pillClass = `${PILL} ${SHOWN} ${TUCKED}`
 
 // Tallest a video is shown, in pixels (`max-h-80`).
 export const VIDEO_MAX_H = 320

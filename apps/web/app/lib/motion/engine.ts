@@ -39,6 +39,8 @@ export interface Page {
   hidden(): boolean
   // Whether `slot` may play on `el` where it is (never in the composer; only tiles in a call).
   open(el: Element, slot: PlaySlot): boolean
+  // Whether `el` is inside `other`.
+  within(el: Element, other: Element): boolean
   // Whether `el` came into, or went out of, the page by itself in this update.
   cameAlone(el: Element): boolean
   wentAlone(el: Element): boolean
@@ -92,6 +94,18 @@ export const mirrored = (a: Animation): Animation => ({
   timing: a.timing,
 })
 
+// The animation of what lies behind a slot's element (a scrim, a blur): its fade alone, in step.
+export const behind = (a: Animation): Animation | null => {
+  const faded: Animation = {
+    keyframes: a.keyframes.map(({ offset, opacity }) => ({
+      ...(offset === undefined ? {} : { offset }),
+      opacity: opacity ?? 1,
+    })),
+    timing: a.timing,
+  }
+  return still(faded) ? null : faded
+}
+
 // A slot's animation under a config and a throttle step, or null when it shows still.
 export const resolve = (slot: PlaySlot, config: Config, step: Step): Animation | null => {
   if (step === 'none') return null
@@ -120,7 +134,9 @@ export class Engine implements Player {
   private keys = new WeakMap<Element, Map<PlaySlot, string | number>>()
   private places = new WeakMap<Element, Place>()
   private ghosts = new Set<Element>()
-  private going: { el: Element; slot: PlaySlot; shot: Shot | null }[] = []
+  private entered = new WeakSet<Element>()
+  private going: { el: Element; slot: PlaySlot; back: boolean; shot: Shot | null }[] = []
+  private behinds = new Map<PlaySlot, Animation | null>()
   private arrivals: number[] = []
   private watching: Cancel | null = null
   private stopped = false
@@ -144,6 +160,7 @@ export class Engine implements Player {
 
   private announce() {
     this.resolved.clear()
+    this.behinds.clear()
     const { config, step } = this
     const looks = looksOf(config, step)
     const style =
@@ -167,6 +184,17 @@ export class Engine implements Player {
       this.resolved.set(slot, a)
     }
     return a
+  }
+
+  private part(slot: PlaySlot, back: boolean) {
+    const a = this.animation(slot)
+    if (!a || !back) return a
+    let b = this.behinds.get(slot)
+    if (b === undefined) {
+      b = behind(a)
+      this.behinds.set(slot, b)
+    }
+    return b
   }
 
   private may(el: Element, slot: PlaySlot) {
@@ -234,22 +262,25 @@ export class Engine implements Player {
     return true
   }
 
-  enter(el: Element, slot: PlaySlot) {
+  // An element enters once: a ref that runs again for it plays nothing.
+  enter(el: Element, slot: PlaySlot, back = false) {
     const def = BY_ID.get(slot)
     if (!def || def.plays === 'exit' || def.plays === 'change') return
-    const a = this.animation(slot)
+    if (this.entered.has(el)) return
+    this.entered.add(el)
+    const a = this.part(slot, back)
     if (!a || !this.may(el, slot)) return
     if (def.solo && !this.page.cameAlone(el)) return
     if (def.tail && !(this.page.newTail(el) && this.arrives())) return
     this.run(el, slot, a, 'backwards')
   }
 
-  leave(el: Element, slot: PlaySlot) {
+  leave(el: Element, slot: PlaySlot, back = false) {
     const def = BY_ID.get(slot)
     if (!def || (def.plays !== 'both' && def.plays !== 'exit')) return
-    if (!this.animation(slot) || !this.may(el, slot)) return
+    if (!this.part(slot, back) || !this.may(el, slot)) return
     const shot = this.going.length < MAX_LEAVING ? this.page.shoot(el) : null
-    this.going.push({ el, slot, shot })
+    this.going.push({ el, slot, back, shot })
     if (this.going.length === 1) this.page.soon(() => this.leaves())
   }
 
@@ -257,10 +288,12 @@ export class Engine implements Player {
     const going = this.going
     this.going = []
     if (this.stopped || going.length > MAX_LEAVING) return
-    for (const { el, slot, shot } of going) {
+    for (const { el, slot, back, shot } of going) {
       const def = BY_ID.get(slot)
-      const a = this.animation(slot)
+      const a = this.part(slot, back)
       if (!def || !a || !shot || el.isConnected) continue
+      // What leaves inside something that leaves goes with its copy.
+      if (going.some(g => g.el !== el && !g.el.isConnected && this.page.within(el, g.el))) continue
       if (def.solo && !this.page.wentAlone(el)) continue
       if (this.running.size >= MAX_RUNNING) continue
       const ghost = this.page.ghost(el, shot)

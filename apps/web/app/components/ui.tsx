@@ -26,7 +26,10 @@ import type { AccountSession } from '../lib/client/session'
 import type { RChatState } from '../lib/store_types'
 import { layerCovered, type EscapeLayer } from '../lib/escape_layers'
 import { dialogBlurs, dialogLayout, type DialogChrome, type DialogSize } from '../lib/dialog_size'
-import { useMotionPlays } from '../lib/motion/use_motion'
+import { FUNCTIONAL } from '../lib/motion/functional'
+import { plays, playsBehind } from '../lib/motion/play'
+import type { PlaySlot } from '../lib/motion/slots'
+import { useSlotBlurs } from '../lib/motion/use_motion'
 import { maskOutsideCode, maskRuns } from '../lib/profanity'
 import { useMask, useStore } from '../lib/store'
 import { useChat } from '../lib/place/use_chat'
@@ -210,6 +213,7 @@ type DivAttrs = Omit<HTMLAttributes<HTMLDivElement>, 'className' | 'role'> & {
 export function Overlay({
   layer = 'top',
   backdrop = 'dim',
+  slot = 'menu',
   onClose,
   ref,
   children,
@@ -217,6 +221,8 @@ export function Overlay({
 }: DivAttrs & {
   layer?: OverlayLayer
   backdrop?: Backdrop
+  // The motion slot of what it holds: its dim backdrop fades in step with it.
+  slot?: PlaySlot
   onClose: () => void
   ref?: Ref<HTMLDivElement>
   children: ReactNode
@@ -229,6 +235,7 @@ export function Overlay({
     >
       {backdrop !== 'none' && (
         <div
+          ref={backdrop === 'dim' ? playsBehind(slot) : undefined}
           data-backdrop
           aria-hidden
           onClick={onClose}
@@ -363,14 +370,15 @@ export function Sheet({
   children: ReactNode
 }) {
   const backdrop = sheet ? 'dim' : (float?.backdrop ?? 'dim')
+  const slot: PlaySlot = sheet ? 'sheet' : role === 'menu' ? 'menu' : 'dialog'
   const look = sheet
-    ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} animate-sheet-up rounded-t-3xl safe-x pb-[max(var(--space-md),env(safe-area-inset-bottom))]`
+    ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} ${FUNCTIONAL.sheetUp} rounded-t-3xl safe-x pb-[max(var(--space-md),env(safe-area-inset-bottom))]`
     : `absolute ${float?.at ?? 'inset-0 m-auto h-fit max-h-[85%] w-[min(28rem,calc(100%-2rem))]'} ${FLOAT_SHAPE}`
   return (
-    <Overlay {...overlay} layer={layer} backdrop={backdrop} onClose={onClose}>
+    <Overlay {...overlay} layer={layer} backdrop={backdrop} slot={slot} onClose={onClose}>
       <div
         {...rest}
-        ref={ref}
+        ref={plays(slot, ref)}
         role={role}
         data-sheet={sheet ? '' : undefined}
         aria-modal={role === 'dialog' && backdrop !== 'none' ? 'true' : undefined}
@@ -450,7 +458,7 @@ export function Dialog({
 }) {
   const titleId = useId()
   const backdrop = useBackdrop(onClose)
-  const moves = useMotionPlays()
+  const blurs = useSlotBlurs('dialog')
   const panelRef = useRef<HTMLDivElement>(null)
   // Focus moves into the dialog as it opens, unless something in it took focus already. A bare
   // dialog's content places focus itself.
@@ -466,13 +474,14 @@ export function Dialog({
     compact,
     chrome,
     raised: top || layer === 'confirm',
-    blur: dialogBlurs(size, blurBackdrop, moves),
+    blur: dialogBlurs(size, blurBackdrop, blurs),
   })
   const panel =
     chrome === 'bare' ? (
       <div
         role="dialog"
         aria-modal="true"
+        ref={plays('dialog')}
         aria-label={title}
         tabIndex={-1}
         className={fit.panel}
@@ -482,7 +491,7 @@ export function Dialog({
       </div>
     ) : (
       <div
-        ref={panelRef}
+        ref={plays('dialog', panelRef)}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -502,8 +511,8 @@ export function Dialog({
     )
   return (
     <>
-      {fit.blur && <div aria-hidden className={fit.blur} />}
-      <div className={fit.backdrop} {...backdrop}>
+      {fit.blur && <div ref={playsBehind('dialog')} aria-hidden className={fit.blur} />}
+      <div ref={playsBehind('dialog')} className={fit.backdrop} {...backdrop}>
         {panel}
       </div>
     </>

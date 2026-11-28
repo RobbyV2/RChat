@@ -3,8 +3,9 @@
 import type { PlaySlot, SlotId } from './slots'
 
 export interface Player {
-  enter(el: Element, slot: PlaySlot): void
-  leave(el: Element, slot: PlaySlot): void
+  // `behind`: the element lies behind the slot's own (a scrim, a blur) and only fades with it.
+  enter(el: Element, slot: PlaySlot, behind?: boolean): void
+  leave(el: Element, slot: PlaySlot, behind?: boolean): void
   change(el: Element, slot: PlaySlot, key: string | number): void
   stop(): void
 }

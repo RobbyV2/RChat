@@ -58,13 +58,12 @@ describe('skeleton placeholders', () => {
     }
   })
 
-  test('the blobs hold their place with animations off or Motion at Reduced, and shimmer when on', () => {
+  test('the blobs carry the shimmer slot, which the style sheet moves only while it plays', () => {
     for (const [, , node] of KINDS) {
-      expect(renderToStaticMarkup(node)).not.toContain('data-shimmer')
-      initial.anim = { on: true, motion: 'still', style: 'subtle', custom: {} }
-      expect(renderToStaticMarkup(node)).not.toContain('data-shimmer')
+      const off = renderToStaticMarkup(node)
+      expect(off).toContain('data-motion="skeleton.shimmer"')
       initial.anim = { on: true, motion: 'always', style: 'subtle', custom: {} }
-      expect(renderToStaticMarkup(node)).toContain('data-shimmer')
+      expect(renderToStaticMarkup(node)).toBe(off)
       initial.anim = saved.anim
     }
     expect(renderToStaticMarkup(<RowsSkeleton rows={2} label="Loading" />)).not.toContain(

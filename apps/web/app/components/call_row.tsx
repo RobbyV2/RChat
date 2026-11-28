@@ -25,6 +25,7 @@ import { Inset, Row, Surface } from './layout'
 import { Name } from './name'
 import { P2pBadge } from './p2p/p2p_badge'
 import { MessageTime } from './timestamp'
+import { FUNCTIONAL } from '../lib/motion/functional'
 
 const callIcon = (tone: CallTone, video: boolean, incoming: boolean): LucideIcon => {
   if (video) return tone === 'missed' || tone === 'declined' ? VideoOff : Video
@@ -165,7 +166,7 @@ function CallLogLine({
         aria-label={direction}
         className={`flex w-9 shrink-0 justify-center ${iconCls}`}
       >
-        <Icon size={18} className={tone === 'ringing' ? 'motion-safe:animate-pulse' : ''} />
+        <Icon size={18} className={tone === 'ringing' ? FUNCTIONAL.pulseSafe : ''} />
       </span>
       <Row gap="sm" wrap lineGap="2xs" text="sm" ink="muted" place="min-w-0 flex-1">
         <span className="font-medium text-on-surface">{info.label}</span>

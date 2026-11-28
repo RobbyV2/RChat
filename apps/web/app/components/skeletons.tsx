@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
-import { useMotionPlays } from '../lib/motion/use_motion'
+import { look } from '../lib/motion/play'
 import { Row, Stack, Surface, Inset } from './layout'
 import {
   channelShapes,
@@ -35,14 +35,13 @@ function Frame({
   className?: string
   children: ReactNode
 }) {
-  const moves = useMotionPlays()
   return (
     <div
       role="status"
       aria-busy="true"
       aria-label={label}
       data-skeleton={kind}
-      data-shimmer={moves ? '' : undefined}
+      {...look('skeleton.shimmer')}
       className={`pointer-events-none select-none ${className}`}
     >
       {children}

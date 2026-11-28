@@ -110,12 +110,11 @@ describe('the rail voice badge', () => {
     expect(html).not.toContain('3 in voice')
   })
 
-  test('pops in only when animations play', () => {
-    expect(renderToStaticMarkup(<RailVoiceBadge count={1} />)).not.toContain('animate-badge-pop')
+  test('its markup is the same whatever the Animations setting, with no keyframe class', () => {
+    const off = renderToStaticMarkup(<RailVoiceBadge count={1} />)
     setState({ anim: { on: true, motion: 'always', style: 'subtle', custom: {} } })
-    expect(renderToStaticMarkup(<RailVoiceBadge count={1} />)).toContain('animate-badge-pop')
-    setState({ anim: { on: true, motion: 'still', style: 'subtle', custom: {} } })
-    expect(renderToStaticMarkup(<RailVoiceBadge count={1} />)).not.toContain('animate-badge-pop')
+    expect(renderToStaticMarkup(<RailVoiceBadge count={1} />)).toBe(off)
+    expect(off).not.toContain('animate-')
   })
 })
 

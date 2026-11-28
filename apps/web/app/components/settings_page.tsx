@@ -24,7 +24,7 @@ import {
 } from '../lib/settings_page'
 import { searchRows, type SearchHit, type SearchRow } from '../lib/settings_search'
 import type { EscapeLayer } from '../lib/escape_layers'
-import { useMotionPlays } from '../lib/motion/use_motion'
+import { useSlotPlays } from '../lib/motion/use_motion'
 import { IconButton, ListRow } from './controls'
 import { Row, Stack, Surface, Inset } from './layout'
 import { Dialog } from './ui'
@@ -84,7 +84,7 @@ export function PageRow({
   children: ReactNode
   className?: string
 }) {
-  const moves = useMotionPlays()
+  const moves = useSlotPlays('route')
   return (
     <div
       id={rowAnchor(id)}
@@ -243,7 +243,7 @@ export function SettingsPage({
   const [jumps, setJumps] = useState(0)
   // Where focus was as the page opened, before a field inside it took focus.
   const [opener] = useState(() => (typeof document === 'undefined' ? null : document.activeElement))
-  const moves = useMotionPlays()
+  const moves = useSlotPlays('route')
   const smooth = useRef(moves)
   useEffect(() => {
     smooth.current = moves

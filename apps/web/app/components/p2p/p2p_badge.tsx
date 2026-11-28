@@ -34,6 +34,7 @@ import { useStore } from '../../lib/store'
 import { longPress } from '../context_menu'
 import { Row, Stack, Surface } from '../layout'
 import { time } from '../../lib/platform/time'
+import { FUNCTIONAL } from '../../lib/motion/functional'
 
 // The one mark everything P2P carries: Waypoints, "P2P", a dashed outline in the tertiary color.
 export function P2pBadge({ label = 'P2P', title }: { label?: string; title?: string }) {
@@ -90,7 +91,7 @@ export function ContactShield({
 
 const DOT = {
   online: { cls: 'bg-status-green', text: 'Online' },
-  dialing: { cls: 'bg-outline animate-pulse', text: 'Connecting' },
+  dialing: { cls: `bg-outline ${FUNCTIONAL.pulse}`, text: 'Connecting' },
   offline: { cls: 'bg-outline', text: 'Offline' },
 } as const
 
