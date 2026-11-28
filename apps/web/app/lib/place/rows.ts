@@ -364,7 +364,7 @@ export const peerFlags = (p: P2pMessage, w: PeerWhere, at: RowAt): RowFlags => {
     canReact: write && held.react,
     canUnreact: write,
     canPin: write && !w.thread && !p.thread && (!w.room || held.pin),
-    canFetch: w.acts,
+    canFetch: w.acts && (w.thread || !p.archived),
     sent: mine ? (p.failed ? 'failed' : p.pending ? 'pending' : 'delivered') : undefined,
     sentTip: w.sentTip,
     canRetry: w.acts && !at.timedOut,

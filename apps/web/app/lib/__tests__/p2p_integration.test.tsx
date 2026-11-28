@@ -3,7 +3,6 @@ import { flush } from './helpers/test_clock'
 import { peerStorage } from '../client/keys'
 import { peerChat } from '../actions/p2p_chat'
 import { ForwardBar } from '../../components/forwards'
-import { P2pProvider, useP2pApp } from '../client/p2p_react'
 import { parseForward, forwardValue } from '../forward'
 import { testAccount, testSession } from './test_account'
 import { AccountProvider } from '../client/react'
@@ -16,7 +15,6 @@ const peerApp = createPeerFixture(peerOwner, 'bob')
 const {
   mirrorFrom,
   p2pAccount,
-  profileName,
   tellBadge,
   useP2p,
   put,
@@ -30,7 +28,7 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, beforeAll, describe, expect, test } from 'bun:test'
 import { openDB } from 'idb'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { useRef, type ReactElement } from 'react'
+import { type ReactElement } from 'react'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { ContextMenuItem } from '../store'
@@ -51,7 +49,11 @@ import { createP2pApp } from '../p2p/app/runtime'
 import { home, pinEmptyBook } from './home_instance'
 import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
 import type { Fwd } from '../p2p/content'
-import { useP2pList } from '../../components/p2p/p2p_chat'
+import { rowActs } from '../place/row_acts'
+import { featureAt, isUnsupported } from '../place/feature'
+import { P2pDm, P2pRoom } from '../place/place'
+import { shownOf } from '../place/shown'
+import type { P2pApp } from '../p2p/app/runtime'
 import { seedPeer } from './helpers/peer_place'
 import { asMessage } from '../p2p/shown_message'
 import type { Contact } from '../p2p/contacts'
@@ -1087,34 +1089,35 @@ describe('personal filter on P2P names', () => {
 
 describe('forwarding', () => {
   const stub = (t: string) => t.replace(/shit/gi, '****')
-  let list: ReturnType<typeof useP2pList> | null = null
-  function Probe({ messages, draftKey = ROOM }: { messages: P2pMessage[]; draftKey?: string }) {
-    const app = useP2pApp()!
-    const seeded = useRef(false)
-    if (!seeded.current) {
-      seeded.current = true
-      seedPeer(app, {
-        chat: {
-          room: draftKey,
-          peer: ALICE,
-          messages,
-          more: false,
-          loading: false,
-          readSeq: 0,
-          missed: [],
-        },
-      })
-    }
-    list = useP2pList({
-      ownName: ik => profileName(ik),
-      room: draftKey,
-      ch: null,
-      list: 'main',
-      draftKey,
-      scope: `d:${draftKey}`,
-    })
-    return null
+  // The list a draft key names (`room`, `room/channel`, or either with `#root` for a thread)
+  // holding `messages`: its rows, and what it does for them.
+  const probe = (app: P2pApp, messages: P2pMessage[], draftKey = ROOM) => {
+    const [conversation, root] = draftKey.split('#')
+    const [room, ch = null] = conversation.split('/')
+    const kind = root === undefined ? 'main' : 'thread'
+    seedPeer(
+      app,
+      root === undefined
+        ? {
+            chat: {
+              room,
+              ch: ch ?? undefined,
+              peer: ALICE,
+              messages,
+              more: false,
+              loading: false,
+              readSeq: 0,
+              missed: [],
+            },
+          }
+        : { thread: { room, ch, root, head: null, messages, more: false, loading: false } }
+    )
+    const place = ch === null ? P2pDm.open(app, room, kind) : P2pRoom.open(app, room, kind)
+    const here = featureAt(rowActs, place)
+    if (isUnsupported(here)) throw new Error(here.line)
+    return { rows: shownOf(place).get().rows, acts: here.at(kind) }
   }
+  let list: ReturnType<typeof probe> | null = null
 
   const message: P2pMessage = {
     id: 'm1',
@@ -1148,15 +1151,8 @@ describe('forwarding', () => {
     const target = work.peerTarget(work.useP2p.getState(), SRV, CH)!
     account.viewing.markPersonally(target, true)
     const copy = (app: typeof work, key: string) => {
-      render(
-        <AccountProvider session={account}>
-          <P2pProvider identity={app}>
-            <Probe messages={[message]} draftKey={key} />
-          </P2pProvider>
-        </AccountProvider>
-      )
-      const row = list!.rows[0]
-      list!.copyRow(row.p, row.m)
+      list = probe(app, [message], key)
+      list.acts.forward(list.rows[0].m)
     }
     const state = account.store.getState
     const sent: string[] = []
@@ -1249,11 +1245,11 @@ describe('forwarding', () => {
       HTMLElement: class {},
     })
     try {
-      render(<Probe messages={[m]} />)
-      const row = list!.rows[0]
+      list = probe(peerOwner.identities.get()!, [m])
+      const row = list.rows[0]
       // The row shows the petname, masked.
       expect(row.m.author.display_name).toBe('Mom')
-      list!.rowOn(() => {}).menu(row.m, 0, 0)
+      list.acts.menu(row.m, 0, 0, null)
       const fwdItem = items.find(x => x.label === 'Forward')!
       await fwdItem.submenu!.find(x => x.label === 'Carol')!.action!()
       await flush()
@@ -1261,7 +1257,7 @@ describe('forwarding', () => {
       // The forward clipboard carries the same name.
       fwdItem.submenu!.find(x => x.label === 'Copy for forwarding')!.action!()
       expect(accountStore.getState().forwardClip?.author?.display_name).toBe('Shitlord')
-      list!.copyRow(row.p, row.m)
+      list.acts.forward(row.m)
       expect(accountStore.getState().forwardClip?.author?.display_name).toBe('Shitlord')
     } finally {
       Object.assign(p2pDm, saved)

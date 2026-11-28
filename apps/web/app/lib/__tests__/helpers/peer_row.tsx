@@ -1,5 +1,4 @@
 import { MessageRow, type RowHandlers } from '../../../components/message_row'
-import { CanFetchContext, RowFiles } from '../../../components/p2p/p2p_chat'
 import type { P2pApp } from '../../p2p/app/runtime'
 import type { P2pMessage } from '../../p2p/dm'
 import { P2pDm } from '../../place/place'
@@ -55,19 +54,16 @@ export function PeerRow({
   const flags = rowsAt(place, 'main')
   return (
     <PlaceProvider place={place}>
-      <CanFetchContext.Provider value>
-        <MessageRow
-          m={row}
-          first={first}
-          last={last}
-          divider={false}
-          flash={false}
-          editing={false}
-          {...flags.get().of(row, { timedOut })}
-          Files={RowFiles}
-          on={NO_HANDLERS}
-        />
-      </CanFetchContext.Provider>
+      <MessageRow
+        m={row}
+        first={first}
+        last={last}
+        divider={false}
+        flash={false}
+        editing={false}
+        {...flags.get().of(row, { timedOut })}
+        on={NO_HANDLERS}
+      />
     </PlaceProvider>
   )
 }

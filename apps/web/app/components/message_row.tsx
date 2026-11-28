@@ -2,7 +2,7 @@
 
 import { Button, LinkButton } from './controls'
 import { UNREADABLE_TEXT } from '../lib/sealing'
-import { memo, type ComponentType, type ReactNode } from 'react'
+import { memo, type ReactNode } from 'react'
 import { Check, CircleAlert, Clock, EyeOff, MessageSquareText, Reply, Trash2 } from 'lucide-react'
 import { useStoreApi } from '../lib/client/react'
 import { hiddenRemovedText, SLOW_HIDDEN_TEXT } from '../lib/p2p/flows'
@@ -19,7 +19,9 @@ import { Name } from './name'
 import type { Face } from '../lib/place/looks'
 import { useAuthor, useNameColor } from '../lib/place/use_looks'
 import { personCalled } from '../lib/names'
-import { MessageEditor, editAction, type EditBinding } from './message_editor'
+import { MessageEditor, editAction } from './message_editor'
+import type { EditBinding } from '../lib/place/row_acts'
+import { RowFiles } from './row_files'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { PollCard } from './poll_card'
@@ -196,13 +198,13 @@ export interface RowProps {
   canReact: boolean
   canUnreact: boolean
   canVote?: boolean
-  // The edit in progress on this row: the account's own (`true`), or the place's binding.
-  editing: EditBinding | boolean
+  // The edit box of the row while it is edited in place.
+  editing: EditBinding | false
   // A place that loads nothing by itself: text shows only when there is some, and forwards
   // are drawn from the copy they carry.
   local?: boolean
-  // What draws the files the place keeps with the message.
-  Files?: ComponentType<{ m: Message }>
+  // Whether the files the place keeps with the message can be fetched.
+  canFetch?: boolean
   // How far one of your own sends got, where the place tells.
   sent?: 'failed' | 'pending' | 'delivered'
   sentTip?: string
@@ -267,7 +269,7 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
   const { m, first, last, mentioned, divider, flash, on } = props
   const face = useAuthor(m, props.event)
   const quoteColor = useNameColor(m.reply_to?.author)
-  const { inThread = false, local = false, chip = false, canTrim = false, editing, Files } = props
+  const { inThread = false, local = false, chip = false, canTrim = false, editing } = props
   const { canReact, canDelete } = props
   const size = inThread ? 30 : 36
   const actions: ToolbarAction[] = []
@@ -289,9 +291,7 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
       danger: true,
       onClick: e => on.remove(m, e.shiftKey),
     })
-  const editor = editing ? (
-    <MessageEditor binding={editing === true ? undefined : editing} />
-  ) : undefined
+  const editor = editing ? <MessageEditor binding={editing} /> : undefined
   const body = (
     <>
       {m.unreadable ? (
@@ -307,7 +307,7 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
           <MarkdownMessage message={m} canDelete={canTrim} editor={editor} />
         )
       )}
-      {Files && <Files m={m} />}
+      {local && <RowFiles m={m} canFetch={props.canFetch === true} />}
       <ReactionBar m={m} canReact={canReact} canRemove={props.canUnreact} />
       {chip && m.reply_count > 0 && (
         <div className="msg-part">

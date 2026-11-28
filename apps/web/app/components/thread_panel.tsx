@@ -8,10 +8,10 @@ import type { OpenThread, ThreadState } from '../lib/place/thread'
 import { useRows } from '../lib/place/use_rows'
 import { useLoadedPeople } from '../lib/place/use_looks'
 import { useRowFlags } from './row_flags'
+import { useRowHandlers } from './row_handlers'
 import { useThread } from '../lib/place/use_thread'
 import { MessageSquareText } from 'lucide-react'
 import { useLive } from '../lib/place/react'
-import { actionPress, openActionMenu } from '../lib/actions/menu'
 import { threadKey, useStore } from '../lib/store'
 import type { Message } from '../lib/types'
 import type { Outgoing } from '../lib/store_types'
@@ -19,8 +19,8 @@ import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
 import { Composer } from './composer'
 import { TypingLine } from './typing_indicator'
-import { OutboxRows, reactHeader } from './message_pane'
-import { MessageRow, type RowHandlers } from './message_row'
+import { OutboxRows } from './message_pane'
+import { MessageRow } from './message_row'
 import { useMedia } from './context_menu'
 import {
   EdgeSentinel,
@@ -34,7 +34,7 @@ import { PanelHeader, useEscape } from './ui'
 import { LightboxList } from './media_lightbox'
 import { BlockedComposer, BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
-import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
+import { BulkJobBar, Selectable, SelectionBar } from './selection'
 import { ChatWorkNotices } from './own_load'
 import { Inset, Row, Surface } from './layout'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
@@ -289,14 +289,6 @@ export default function ThreadPanel() {
   const state = useLive(thread.state)
   const focus = useStore(s => (key ? s.focus[key] : undefined))
   const outgoing = useStore(s => (key ? s.outbox[key] : undefined)) ?? NO_SENDS
-  const startReply = useStore(s => s.startReply)
-  const startEdit = useStore(s => s.startEdit)
-  const copyForward = useStore(s => s.copyForward)
-  const editingId = useStore(s =>
-    s.editing && s.panel?.kind === 'thread' && s.editing.key === threadKey(s.panel.root.id)
-      ? s.editing.id
-      : null
-  )
   const wide = useMedia('(min-width: 768px)')
   const detached = state.newer.more
   const selecting = useStore(s => key !== null && s.selection?.scope === key)
@@ -320,40 +312,9 @@ export default function ThreadPanel() {
   const rootAt = root?.created_at ?? null
 
   const flags = useRowFlags(useRows('thread'))
+  const { on: onReply, onRoot, forwardShown, editing } = useRowHandlers('thread')
 
   if (!root || !key) return null
-
-  const replyTo = (m: Message) => startReply(key, m)
-  const editMsg = (m: Message) => startEdit(key, m)
-  const jump = (id: number) => thread.jump(String(id))
-  const jumpMain = (id: number) => {
-    if (!wide) thread.close()
-    thread.jumpMain(String(id))
-  }
-
-  const rowMenu = (m: Message) => (x: number, y: number) => {
-    if (m.id !== root.id && openSelectionMenu(key, m, x, y, acct)) return
-    const react = flags.of(m, m.id === root.id).canReact
-    openActionMenu(
-      x,
-      y,
-      { kind: 'message', message: m, list: key },
-      react ? reactHeader(m, x, y) : undefined,
-      acct
-    )
-  }
-
-  const handlers = (root: boolean): RowHandlers => ({
-    menu: (m, x, y) => rowMenu(m)(x, y),
-    jump: root ? jumpMain : jump,
-    edit: editMsg,
-    reply: replyTo,
-    forward: copyForward,
-    thread: () => {},
-    remove: (m, skipConfirm) => store.menu.confirmDeleteMessage(m.id, skipConfirm),
-  })
-  const onRoot = handlers(true)
-  const onReply = handlers(false)
 
   const row = (m: Message, { first, last }: GroupPlace) => (
     <MessageRow
@@ -365,21 +326,13 @@ export default function ThreadPanel() {
       divider={false}
       flash={flash === m.id}
       inThread
-      editing={editingId === m.id}
+      editing={editing(m)}
       on={m.id === root.id ? onRoot : onReply}
     />
   )
 
   return (
-    <LightboxList
-      rows={() => ({ ids: replies.map(m => m.id), places })}
-      forward={id => {
-        const m = id === root.id ? root : replies.find(x => x.id === id)
-        return m
-          ? actionPress('message_forward', { kind: 'message', message: m, list: key }, acct)
-          : null
-      }}
-    >
+    <LightboxList rows={() => ({ ids: replies.map(m => m.id), places })} forward={forwardShown}>
       <ThreadPanelView
         thread={thread}
         state={state}

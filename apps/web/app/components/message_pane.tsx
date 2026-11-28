@@ -8,7 +8,7 @@ import { useP2pApp } from '../lib/client/p2p_react'
 
 import { useAccount, useStoreApi } from '../lib/client/react'
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Clock,
   Hash,
@@ -27,16 +27,9 @@ import { escapeMarksRead } from '../lib/follow'
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
-import { actionPress, openActionMenu } from '../lib/actions/menu'
+import { openActionMenu } from '../lib/actions/menu'
 import { HeaderMore } from './header_more'
-import {
-  confirmDeleteMessage,
-  useStore,
-  viewKey,
-  allPings,
-  type ContextMenuOptions,
-  type Outgoing,
-} from '../lib/store'
+import { useStore, viewKey, allPings, type ContextMenuOptions, type Outgoing } from '../lib/store'
 import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { UnreadDivider } from './unread_banner'
@@ -61,29 +54,22 @@ import { QuickReactions, rowAt } from './reactions'
 import { ReplyPreview } from './replies'
 import { ForwardCard } from './forwards'
 import { MessageList, NewerOnSight } from './message_list'
-import { AuthorRow, GroupedRow, type RowHandlers } from './message_row'
+import { AuthorRow, GroupedRow } from './message_row'
 import { useFace } from '../lib/place/use_looks'
 import { useRows } from '../lib/place/use_rows'
 import { useLoadedPeople } from '../lib/place/use_looks'
 import { useMessages } from '../lib/place/use_messages'
 import { PinsButton, PinsWindow } from './pins'
 import { ListedRow } from './listed_row'
+import { useRowHandlers } from './row_handlers'
 import { useRowFlags } from './row_flags'
 import { ThreadsButton, ThreadsWindow } from './threads'
 import { useMyTimeoutEnds } from './timeout_dialog'
-import { isNotice } from '../lib/system_messages'
 import { hostedDmSeal } from '../lib/sealing'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
 import { Row, Stack, Surface, Inset } from './layout'
-import {
-  BulkJobBar,
-  SelectButton,
-  Selectable,
-  SelectionBar,
-  openSelectionMenu,
-  useSelectionKeys,
-} from './selection'
+import { BulkJobBar, SelectButton, Selectable, SelectionBar, useSelectionKeys } from './selection'
 import { ChatWorkNotices } from './own_load'
 import { Button, IconButton, LinkButton } from './controls'
 import { playsOn } from '../lib/motion/play'
@@ -326,12 +312,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const focus = useStore(s => (s.view ? s.focus[viewKey(s.view)] : undefined))
   const menuPings = useStore(allPings)
   useLoadedPeople(messages, me ? [me.username] : NO_NAMES)
-  const jumpTo = useStore(s => s.jumpTo)
-  const startReply = useStore(s => s.startReply)
-  const startEdit = useStore(s => s.startEdit)
-  const editingId = useStore(s =>
-    s.editing && s.view && s.editing.key === viewKey(s.view) ? s.editing.id : null
-  )
   const askMarkAllRead = useStore(s => s.askMarkAllRead)
   const openSearch = useStore(s => s.openSearch)
   const uploadFile = useStore(s => s.uploadFile)
@@ -414,59 +394,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   }
 
   const flags = useRowFlags(useRows('main'))
-  const messageMenu = (msg: Message, x: number, y: number) => {
-    if (!scope || openSelectionMenu(scope, msg, x, y, acct)) return
-    const react = !isNotice(msg) && flags.of(msg).canReact
-    openActionMenu(
-      x,
-      y,
-      { kind: 'message', message: msg, list: scope },
-      react ? reactHeader(msg, x, y) : undefined,
-      acct
-    )
-  }
-
+  const { on: rowHandlers, forwardShown, editing } = useRowHandlers('main')
   const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
-
-  const replyTo = (msg: Message) => {
-    if (scope) startReply(scope, msg)
-  }
-
-  const editMsg = (msg: Message) => {
-    if (scope) startEdit(scope, msg)
-  }
-
-  const menuRef = useRef(messageMenu)
-  const replyRef = useRef(replyTo)
-  const editRef = useRef(editMsg)
-  useEffect(() => {
-    menuRef.current = messageMenu
-    replyRef.current = replyTo
-    editRef.current = editMsg
-  })
-  const rowMenu = useCallback(
-    (msg: Message, x: number, y: number) => menuRef.current(msg, x, y),
-    []
-  )
-  const rowJump = useCallback(
-    (id: number) => {
-      if (scope) void jumpTo(scope, id)
-    },
-    [scope, jumpTo]
-  )
-  const store = useStoreApi()
-  const rowHandlers = useMemo<RowHandlers>(
-    () => ({
-      menu: rowMenu,
-      jump: rowJump,
-      edit: msg => editRef.current(msg),
-      reply: msg => replyRef.current(msg),
-      forward: msg => store.getState().copyForward(msg),
-      thread: msg => void store.getState().openThread(msg),
-      remove: (msg, skipConfirm) => confirmDeleteMessage(msg.id, skipConfirm),
-    }),
-    [rowMenu, rowJump, store, confirmDeleteMessage]
-  )
 
   return (
     <main
@@ -697,16 +626,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             }
             lightbox={{
               rows: () => ({ ids: messages.map(m => m.id), places }),
-              forward: id => {
-                const m = messages.find(x => x.id === id)
-                return m && scope
-                  ? actionPress(
-                      'message_forward',
-                      { kind: 'message', message: m, list: scope },
-                      acct
-                    )
-                  : null
-              },
+              forward: forwardShown,
             }}
           >
             <BlockedList
@@ -723,7 +643,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     {...flags.of(m)}
                     divider={i === dividerIndex}
                     flash={flash === m.id}
-                    editing={editingId === m.id}
+                    editing={editing(m)}
                     on={rowHandlers}
                   />
                 </Selectable>

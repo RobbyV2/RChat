@@ -1,6 +1,7 @@
-import { expect, test } from 'bun:test'
+import { beforeAll, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ListedRow } from '../../components/listed_row'
+import { registerAppActions } from '../actions/index'
 import { AccountProvider } from '../client/react'
 import { P2pProvider } from '../client/p2p_react'
 import type { P2pMessage } from '../p2p/dm'
@@ -8,6 +9,7 @@ import type { ComposerList } from '../place/composer'
 import { featureAt, isUnsupported } from '../place/feature'
 import { P2pDm, P2pRoom } from '../place/place'
 import { PlaceProvider } from '../place/react'
+import { rowActs } from '../place/row_acts'
 import { rows } from '../place/rows'
 import { shownOf } from '../place/shown'
 import type { RChatState } from '../store_types'
@@ -16,6 +18,8 @@ import type { View } from '../view'
 import { msg, user } from './fixtures'
 import { NO_HANDLERS } from './helpers/peer_row'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
+
+beforeAll(registerAppActions)
 
 const said = (id: string, sender: string, over: Partial<P2pMessage> = {}) =>
   ({
@@ -213,5 +217,41 @@ placeContract(rows, (kind, world) => {
     )
     expect(html).toContain('aria-label="Edit"')
     expect(html).toContain('aria-label="Reply"')
+  })
+})
+
+placeContract(rowActs, (kind, world) => {
+  const hosted = kind === 'hostedServer' || kind === 'hostedDm'
+  const acts = (list: ComposerList) => {
+    const here = featureAt(rowActs, world().ann.place)
+    if (isUnsupported(here)) throw new Error(here.line)
+    return here.at(list)
+  }
+
+  test('a row asked to be edited gets its box in its own list, and the box writes the edit', () => {
+    const { own } = seat(world(), 'main')
+    const main = acts('main')
+    expect(main.editing.get()).toBeNull()
+    main.edit(own)
+    const edit = main.editing.get()
+    expect(edit?.key).toBe(hosted ? String(own.id) : 'e6')
+    expect(main.editing.get()).toBe(edit)
+    expect(acts('thread').editing.get()).toBeNull()
+    edit?.binding.setText('who brings the chart')
+    expect(main.editing.get()?.binding.text).toBe('who brings the chart')
+    expect(main.editing.get()?.binding.getText()).toBe('who brings the chart')
+    main.editing.get()?.binding.cancel(false)
+    expect(main.editing.get()).toBeNull()
+  })
+
+  test('the menu of a row is headed by quick reactions where the reader may react', () => {
+    const { theirs } = seat(world(), 'main')
+    const opened: unknown[] = []
+    world().ann.account.store.setState({
+      openContextMenu: (_x: number, _y: number, items: unknown[], opts?: { header?: unknown }) =>
+        void opened.push([items.length > 0, opts?.header]),
+    } as unknown as Partial<RChatState>)
+    acts('main').menu(theirs, 1, 2, 'quick')
+    expect(opened).toEqual([[true, 'quick']])
   })
 })
