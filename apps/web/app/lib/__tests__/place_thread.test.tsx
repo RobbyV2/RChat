@@ -1,6 +1,12 @@
 import { expect, test } from 'bun:test'
+import { renderToStaticMarkup } from 'react-dom/server'
+import ThreadPanel from '../../components/thread_panel'
+import { P2pProvider } from '../client/p2p_react'
+import { AccountProvider } from '../client/react'
 import type { P2pMessage } from '../p2p/dm'
 import { featureAt, isUnsupported } from '../place/feature'
+import { P2pDm, P2pRoom } from '../place/place'
+import { PlaceProvider } from '../place/react'
 import { thread } from '../place/thread'
 import type { RChatState } from '../store_types'
 import { msg, user } from './fixtures'
@@ -38,7 +44,18 @@ const seat = (world: ContractWorld, calls: unknown[][], open = true, placed = 1)
     Object.assign(world.ann.account.store.getInitialState(), world.ann.account.store.getState())
   } else {
     const said = (id: string, replies?: number) =>
-      ({ id, sender: 'B', ts: 5_000, body: 'who brings the map', att: [], replies }) as never
+      ({
+        id,
+        sender: 'B',
+        ts: 5_000,
+        sentTs: 5_000,
+        body: 'who brings the map',
+        att: [],
+        reactions: [],
+        mentions: [],
+        edited: null,
+        replies,
+      }) as never
     const ch = place.kind === 'p2pRoom' ? 'c1' : null
     const open_ = {
       room: world.room,
@@ -110,5 +127,43 @@ placeContract(thread, (kind, world) => {
         ? [['older'], ['jump', 't5', 6], ['jump', main(), 5], ['read', 5], ['close']]
         : [['older'], ['jump', 'e6'], ['main', 'e5'], ['read'], ['close']]
     )
+  })
+
+  test('the open thread lists its first message and the replies, keyed as the place writes them', () => {
+    const here = seat(world(), [])
+    const rows = here.rows.get()
+    expect(here.rows.get()).toBe(rows)
+    expect(rows.root?.content).toBe('who brings the map')
+    expect(rows.replies).toHaveLength(1)
+    expect(rows.keys).toEqual(hosted ? [6] : ['e6'])
+    expect(rows.places).toHaveLength(1)
+    expect(rows.picks).toBe(hosted ? 't5' : null)
+    expect(rows.focus).toBeUndefined()
+    const shut = seat(world(), [], false).rows.get()
+    expect([shut.root, shut.replies, shut.keys]).toEqual([null, [], []])
+  })
+
+  test('one panel draws the thread of either side', () => {
+    seat(world(), [])
+    const { account, app, place } = world().ann
+    const around =
+      place.kind === 'p2pRoom'
+        ? P2pRoom.open(place.app, world().room, 'thread')
+        : place.kind === 'p2pDm'
+          ? P2pDm.open(place.app, world().room, 'thread')
+          : place
+    const html = renderToStaticMarkup(
+      <AccountProvider session={account}>
+        <P2pProvider identity={app}>
+          <PlaceProvider place={around}>
+            <ThreadPanel />
+          </PlaceProvider>
+        </P2pProvider>
+      </AccountProvider>
+    )
+    expect(html).toContain('data-thread-panel')
+    expect(html).toContain('who brings the map')
+    expect(html).toContain('2 replies')
+    expect(html.match(/data-row/g)).toHaveLength(2)
   })
 })

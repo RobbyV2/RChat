@@ -1,13 +1,18 @@
 import type { AccountSession } from '../client/session'
+import type { MessageKey } from '../media_lightbox'
+import { groupPlaces, messagePlaces, p2pCue, type GroupPlace } from '../message_groups'
 import { identityScopeKey } from '../p2p/app/host'
 import { threadScope } from '../p2p/app/store'
+import { threadKey as peerThreadKey } from '../p2p/app/store'
 import { threadKey } from '../store'
+import type { Focus, Outgoing } from '../store_types'
 import type { Message } from '../types'
 import { findById } from '../window'
 import { defineFeature } from './feature'
 import { built, type Live } from './live'
 import type { ListEnd } from './messages'
-import type { P2pDm, P2pRoom } from './place'
+import { P2pDm, P2pRoom } from './place'
+import { shownOf } from './shown'
 
 export interface ThreadState {
   // The key the thread's scroll position and selection go by; null with no thread of the place
@@ -30,10 +35,35 @@ export interface ThreadState {
   unseen: boolean
 }
 
+// What the open thread lists.
+export interface ThreadRows {
+  // The message the thread hangs from, once it is here.
+  root: Message | null
+  replies: Message[]
+  // The replies' keys as the place writes them, in order.
+  keys: MessageKey[]
+  // Where each reply, then each send on its way, sits in its author's group.
+  places: GroupPlace[]
+  // The reader's sends on their way, drawn after the replies where the place lists them apart.
+  outgoing: readonly Outgoing[]
+  // The author name the reader's own rows carry, and how many rows of theirs are listed or on
+  // their way.
+  own: string | undefined
+  outCount: number
+  // The row a jump asks for.
+  focus: Focus | undefined
+  // The key the rows are picked by where several can be acted on at once; null where they
+  // cannot.
+  picks: string | null
+}
+
 // The thread open beside the conversation of a place. Messages are named by `key` (an id as the
 // place writes it).
 export interface OpenThread {
   state: Live<ThreadState>
+  rows: Live<ThreadRows>
+  // The row a jump asked for has been shown.
+  focused: () => void
   loadOlder: () => void
   loadNewer: () => void
   toPresent: () => void
@@ -56,6 +86,20 @@ const CLOSED: ThreadState = {
   stale: false,
   waiting: false,
   unseen: false,
+}
+
+const NO_REPLIES: Message[] = []
+const NO_SENDS: Outgoing[] = []
+const NO_ROWS: ThreadRows = {
+  root: null,
+  replies: NO_REPLIES,
+  keys: [],
+  places: [],
+  outgoing: NO_SENDS,
+  own: undefined,
+  outCount: 0,
+  focus: undefined,
+  picks: null,
 }
 
 const mainKey = (root: Message) =>
@@ -101,6 +145,43 @@ const hosted = (account: AccountSession): OpenThread => {
               unseen,
             }
     )
+  const rows = (initial: boolean) =>
+    built(
+      () => {
+        const s = initial ? store.getInitialState() : store.getState()
+        const root = rootOf(initial)
+        if (!root) return [null, NO_REPLIES, NO_SENDS, false, undefined, undefined, null] as const
+        const key = threadKey(root.id)
+        const main = mainKey(root)
+        return [
+          findById(main ? s.messages[main] : undefined, root.id) ?? root,
+          s.messages[key] ?? NO_REPLIES,
+          s.outbox[key] ?? NO_SENDS,
+          s.newer[key]?.more === true,
+          s.me?.username,
+          s.focus[key],
+          key,
+        ] as const
+      },
+      ([root, replies, outgoing, away, own, focus, key]): ThreadRows =>
+        root === null || key === null
+          ? NO_ROWS
+          : {
+              root,
+              replies,
+              keys: replies.map(m => m.id),
+              places: messagePlaces(
+                replies,
+                away ? new Set([replies.length]) : undefined,
+                outgoing
+              ),
+              outgoing,
+              own,
+              outCount: outgoing.length,
+              focus,
+              picks: key,
+            }
+    )
   const at = (run: (root: Message, key: string) => void) => {
     const root = rootOf(false)
     if (root) run(root, threadKey(root.id))
@@ -111,6 +192,12 @@ const hosted = (account: AccountSession): OpenThread => {
       initial: state(true),
       subscribe: changed => store.subscribe(changed),
     },
+    rows: {
+      get: rows(false),
+      initial: rows(true),
+      subscribe: changed => store.subscribe(changed),
+    },
+    focused: () => {},
     loadOlder: () => void store.getState().loadOlderThread(),
     loadNewer: () => void store.getState().loadNewerThread(),
     toPresent: () => at((_, key) => void store.getState().jumpToPresent(key)),
@@ -160,12 +247,49 @@ const peer = (place: P2pRoom | P2pDm): OpenThread => {
         }
       }
     )
+  const shown = shownOf(
+    place.kind === 'p2pRoom' ? P2pRoom.open(app, room, 'thread') : P2pDm.open(app, room, 'thread')
+  )
+  const rows = (initial: boolean) =>
+    built(
+      () => {
+        const s = initial ? useP2p.getInitialState() : useP2p.getState()
+        const t = s.thread !== null && s.thread.room === room ? s.thread : null
+        return [
+          t === null ? null : t.head !== null && t.head !== undefined,
+          initial && shown.initial ? shown.initial() : shown.get(),
+          t !== null && s.focus?.room === peerThreadKey(t) ? s.focus : null,
+        ] as const
+      },
+      ([headed, list, focus]): ThreadRows => {
+        if (headed === null) return NO_ROWS
+        const listed = headed ? list.rows.slice(1) : list.rows
+        const at = focus === null ? undefined : list.num.get(focus.id)
+        return {
+          root: headed ? (list.rows[0]?.m ?? null) : null,
+          replies: listed.map(r => r.m),
+          keys: listed.map(r => r.p.id),
+          places: groupPlaces(listed.map(r => p2pCue(r.p))),
+          outgoing: NO_SENDS,
+          own: list.me ?? undefined,
+          outCount: listed.filter(r => r.p.sender === list.me).length,
+          focus: at === undefined ? undefined : { id: at, flash: true },
+          picks: null,
+        }
+      }
+    )
   return {
     state: {
       get: state(false),
       initial: state(true),
       subscribe: changed => useP2p.subscribe(changed),
     },
+    rows: {
+      get: rows(false),
+      initial: rows(true),
+      subscribe: changed => useP2p.subscribe(changed),
+    },
+    focused: () => p2pDm.clearFocus(),
     loadOlder: () => void p2pThread.loadOlder(),
     loadNewer: () => {},
     toPresent: () => {},

@@ -11,16 +11,16 @@ import { useRowFlags } from './row_flags'
 import { useRowHandlers } from './row_handlers'
 import { useThread } from '../lib/place/use_thread'
 import { MessageSquareText } from 'lucide-react'
-import { useLive } from '../lib/place/react'
-import { threadKey, useStore } from '../lib/store'
+import { useLive, usePlace } from '../lib/place/react'
+import { isHosted } from '../lib/place/place'
+import { ListedRow } from './listed_row'
+import { ListReactPicker } from './list_picker'
+import { useStore } from '../lib/store'
 import type { Message } from '../lib/types'
-import type { Outgoing } from '../lib/store_types'
-import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
 import { Composer } from './composer'
 import { TypingLine } from './typing_indicator'
 import { OutboxRows } from './message_pane'
-import { MessageRow } from './message_row'
 import { useMedia } from './context_menu'
 import {
   EdgeSentinel,
@@ -37,11 +37,9 @@ import { MessageListSkeleton } from './skeletons'
 import { BulkJobBar, Selectable, SelectionBar } from './selection'
 import { ChatWorkNotices } from './own_load'
 import { Inset, Row, Surface } from './layout'
-import { messagePlaces, type GroupPlace } from '../lib/message_groups'
+import { type GroupPlace } from '../lib/message_groups'
 import { plays } from '../lib/motion/play'
 
-const EMPTY: Message[] = []
-const NO_SENDS: Outgoing[] = []
 const ALONE: GroupPlace = { first: true, last: true }
 
 // What the thread panel's list holds while it scrolls: its scroller, where it stands, and the
@@ -257,45 +255,41 @@ export function ThreadTail({
   )
 }
 
-export default function ThreadPanel() {
-  const acct = useAccount()
-  const { store } = acct
-
-  const root = useStore(s => {
-    if (s.panel?.kind !== 'thread') return null
-    const r = s.panel.root
-    const list =
-      r.channel_id !== null
-        ? s.messages[`c${r.channel_id}`]
-        : r.dm_id !== null
-          ? s.messages[`d${r.dm_id}`]
-          : undefined
-    return findById(list, r.id) ?? r
-  })
-  const replies =
-    useStore(s => (s.panel?.kind === 'thread' ? s.messages[`t${s.panel.root.id}`] : undefined)) ??
-    EMPTY
-  const me = useStore(s => s.me)
+// What a list with rows to pick shows above itself.
+function PickBars({ scope, wide }: { scope: string; wide: boolean }) {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  return (
+    <>
+      {wide && <SelectionBar scope={scope} sheet={false} compact />}
+      <BulkJobBar scope={scope} />
+      <ChatWorkNotices server={server} />
+    </>
+  )
+}
+
+// The thread open beside the conversation of the place around it: its first message, the
+// replies and the composer.
+export default function ThreadPanel() {
+  const { store } = useAccount()
+  const place = usePlace()
+  const thread = useThread()
+  const state = useLive(thread.state)
+  const { root, replies, keys, places, outgoing, own, outCount, focus, picks } = useLive(
+    thread.rows
+  )
+  const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
+  useLoadedPeople(people)
   const dmOther = useStore(s => {
     const id = s.panel?.kind === 'thread' ? s.panel.root.dm_id : null
     const dm = id !== null ? s.dms.find(d => d.id === id) : undefined
     return dm && s.blocked[dm.other.username] ? dm.other : null
   })
-  const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
-  useLoadedPeople(people)
-  const key = useStore(s => (s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : null))
-  const thread = useThread()
-  const state = useLive(thread.state)
-  const focus = useStore(s => (key ? s.focus[key] : undefined))
-  const outgoing = useStore(s => (key ? s.outbox[key] : undefined)) ?? NO_SENDS
   const wide = useMedia('(min-width: 768px)')
-  const detached = state.newer.more
-  const selecting = useStore(s => key !== null && s.selection?.scope === key)
+  const selecting = useStore(s => picks !== null && s.selection?.scope === picks)
   const at = useThreadScroll(thread, state, {
     replies,
-    own: me?.username,
-    outCount: outgoing.length,
+    own,
+    outCount,
     focus: focus !== undefined,
     escape: () => {
       if (!store.getState().selection) return false
@@ -303,52 +297,46 @@ export default function ThreadPanel() {
       return true
     },
   })
-
-  const flash = useFocusMessage(at.listRef, key, focus, replies, at.scroll.settle)
-  const places = useMemo(
-    () => messagePlaces(replies, detached ? new Set([replies.length]) : undefined, outgoing),
-    [replies, detached, outgoing]
-  )
-  const rootAt = root?.created_at ?? null
-
+  const flash = useFocusMessage(at.listRef, state.scope, focus, replies, at.scroll.settle)
+  useEffect(() => {
+    if (focus) thread.focused()
+  }, [thread, focus])
   const flags = useRowFlags(useRows('thread'))
-  const { on: onReply, onRoot, forwardShown, editing } = useRowHandlers('thread')
+  const { on, onRoot, forwardShown, editing } = useRowHandlers('thread')
 
-  if (!root || !key) return null
+  if (state.scope === null) return null
 
-  const row = (m: Message, { first, last }: GroupPlace) => (
-    <MessageRow
-      key={m.id}
-      m={m}
-      first={first}
-      last={last}
-      {...flags.of(m, m.id === root.id)}
-      divider={false}
-      flash={flash === m.id}
-      inThread
-      editing={editing(m)}
-      on={m.id === root.id ? onRoot : onReply}
-    />
-  )
+  const row = (m: Message, { first, last }: GroupPlace, head: boolean) => {
+    const of = flags.of(m, head)
+    return (
+      <ListedRow
+        key={m.id}
+        m={m}
+        first={first}
+        last={last}
+        {...of}
+        divider={false}
+        flash={flash === m.id}
+        inThread
+        editing={editing(m, of.event)}
+        on={head ? onRoot : on}
+      />
+    )
+  }
 
   return (
-    <LightboxList rows={() => ({ ids: replies.map(m => m.id), places })} forward={forwardShown}>
+    <LightboxList rows={() => ({ ids: keys, places })} forward={forwardShown}>
       <ThreadPanelView
         thread={thread}
         state={state}
         at={at}
-        bars={
-          <>
-            {wide && <SelectionBar scope={key} sheet={false} compact />}
-            <BulkJobBar scope={key} />
-            <ChatWorkNotices server={server} />
-          </>
-        }
-        root={row(root, ALONE)}
+        peer={place !== null && !isHosted(place)}
+        bars={picks !== null && <PickBars scope={picks} wide={wide} />}
+        root={root && row(root, ALONE, true)}
         composer={
-          selecting && !wide ? (
-            <SelectionBar scope={key} sheet />
-          ) : dmOther ? (
+          picks !== null && selecting && !wide ? (
+            <SelectionBar scope={picks} sheet />
+          ) : picks !== null && dmOther ? (
             <BlockedComposer user={dmOther} />
           ) : undefined
         }
@@ -356,26 +344,29 @@ export default function ThreadPanel() {
         <BlockedList
           messages={replies}
           focusId={focus?.id ?? null}
-          dayAbove={rootAt}
+          dayAbove={root?.created_at ?? null}
           row={(m, i) => (
-            <Selectable key={m.id} m={m} scope={key}>
-              {row(m, places[i] ?? ALONE)}
+            <Selectable key={m.id} m={m} scope={picks}>
+              {row(m, places[i] ?? ALONE, false)}
             </Selectable>
           )}
           tail={lastShownAt => (
             <>
               <ThreadTail thread={thread} state={state} at={at} />
-              <OutboxRows
-                msgKey={key}
-                outgoing={outgoing}
-                places={places.slice(replies.length)}
-                dayAbove={lastShownAt}
-                size={30}
-              />
+              {picks !== null && (
+                <OutboxRows
+                  msgKey={picks}
+                  outgoing={outgoing}
+                  places={places.slice(replies.length)}
+                  dayAbove={lastShownAt}
+                  size={30}
+                />
+              )}
             </>
           )}
         />
       </ThreadPanelView>
+      <ListReactPicker />
     </LightboxList>
   )
 }
