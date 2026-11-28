@@ -107,7 +107,7 @@ import { useNearView, VideoAttachment, VideoPlaceholder } from './video_attachme
 import { ViewableImage } from './media_lightbox'
 import { altText } from '../lib/alt_text'
 import { cause, logError } from '../lib/log'
-import { Row } from './layout'
+import { Row, Surface, Inset } from './layout'
 import { time } from '../lib/platform/time'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
@@ -220,10 +220,10 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const { href, shown } = useLinkedSrc(src, server, fetches, previews && !plain)
   if (shown === undefined)
     return (
-      <span className="my-1 block h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
+      <span className="msg-block block h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
     )
   if (shown)
-    return <img src={shown} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
+    return <img src={shown} alt={alt ?? ''} className="msg-block max-h-80 max-w-full rounded-xl" />
   if (!src) return <>{alt}</>
   if (inLink) return <>{alt || src}</>
   return <MessageLink href={href}>{alt || src}</MessageLink>
@@ -321,7 +321,7 @@ function Mention({ username }: { username: string }) {
       {...(card ? profileTrigger(store, user, card.server) : {})}
       data-mention={username}
       title={named === null || streamer ? undefined : mask(named)}
-      className={`streamer cursor-pointer rounded px-0.5 font-medium hover:underline ${
+      className={`md-mark streamer cursor-pointer hover:underline ${
         mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'
       }`}
     >
@@ -358,7 +358,7 @@ function GroupPill({ group, text }: { group: string; text: string }) {
       <span
         data-group={group}
         style={{ color: role.color, backgroundColor: `${role.color}26` }}
-        className="rounded px-0.5 font-medium"
+        className="md-mark"
       >
         @
         <MaskControl>
@@ -367,10 +367,7 @@ function GroupPill({ group, text }: { group: string; text: string }) {
       </span>
     )
   return (
-    <span
-      data-group={group}
-      className="rounded bg-on-surface/10 px-0.5 font-medium text-on-surface"
-    >
+    <span data-group={group} className="md-mark bg-on-surface/10 text-on-surface">
       {text}
     </span>
   )
@@ -481,18 +478,11 @@ const components: Components = {
     <MarkdownImage src={typeof src === 'string' ? src : undefined} alt={alt} />
   ),
   a: ({ node, ...props }) => <MessageLink {...props} />,
-  p: ({ node, ...props }) => <p {...props} className="my-0.5" />,
-  ul: ({ node, ...props }) => <ul {...props} className="my-1 list-disc pl-5" />,
-  ol: ({ node, ...props }) => <ol {...props} className="my-1 list-decimal pl-5" />,
-  blockquote: ({ node, ...props }) => (
-    <blockquote
-      {...props}
-      className="my-1 border-l-2 border-outline pl-3 text-on-surface-variant"
-    />
-  ),
-  code: ({ node, ...props }) => (
-    <code {...props} className="rounded bg-surface-container-high px-1 py-0.5 font-mono text-xs" />
-  ),
+  p: ({ node, ...props }) => <p {...props} className="md-p" />,
+  ul: ({ node, ...props }) => <ul {...props} className="md-list list-disc" />,
+  ol: ({ node, ...props }) => <ol {...props} className="md-list list-decimal" />,
+  blockquote: ({ node, ...props }) => <blockquote {...props} className="md-quote" />,
+  code: ({ node, ...props }) => <code {...props} className="md-code font-mono text-xs" />,
   pre: ({ node, ...props }) => {
     const code = node?.children[0]
     if (code?.type === 'element' && code.tagName === 'code')
@@ -502,25 +492,18 @@ const components: Components = {
           tag={fenceTag(code.properties.className)}
         />
       )
-    return (
-      <pre
-        {...props}
-        className="my-1 overflow-x-auto rounded-lg bg-surface-container-high p-2 [&_code]:bg-transparent [&_code]:p-0"
-      />
-    )
+    return <pre {...props} className="md-pre" />
   },
-  h1: ({ node, ...props }) => <h1 {...props} className="my-1 text-lg font-bold" />,
-  h2: ({ node, ...props }) => <h2 {...props} className="my-1 text-base font-bold" />,
-  h3: ({ node, ...props }) => <h3 {...props} className="my-1 text-sm font-bold" />,
+  h1: ({ node, ...props }) => <h1 {...props} className="md-heading text-lg" />,
+  h2: ({ node, ...props }) => <h2 {...props} className="md-heading text-base" />,
+  h3: ({ node, ...props }) => <h3 {...props} className="md-heading text-sm" />,
   table: ({ node, ...props }) => (
-    <div className="my-1 max-w-full overflow-x-auto">
+    <div className="msg-block max-w-full overflow-x-auto">
       <table {...props} className="border-collapse text-xs" />
     </div>
   ),
-  th: ({ node, ...props }) => (
-    <th {...props} className="border border-outline-variant px-2 py-1 text-left" />
-  ),
-  td: ({ node, ...props }) => <td {...props} className="border border-outline-variant px-2 py-1" />,
+  th: ({ node, ...props }) => <th {...props} className="md-cell text-left" />,
+  td: ({ node, ...props }) => <td {...props} className="md-cell" />,
 }
 
 const fmtExpiry = (ts: number | null) =>
@@ -529,18 +512,32 @@ const fmtExpiry = (ts: number | null) =>
 // The cover of a hidden spoiler attachment.
 export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => void }) {
   return (
-    <button
+    <Surface
       title={title}
       aria-label="Spoiler attachment, press to reveal"
       onClick={onReveal}
-      className="mt-1 flex w-fit items-center gap-2 rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
+      as="button"
+      row
+      pad="md"
+      inset="bar"
+      gap="sm"
+      tone="base"
+      radius="lg"
+      border
+      fit
+      look="msg-part hover:bg-surface-container-high"
     >
       <EyeOff size={18} className="shrink-0 text-on-surface-variant" />
-      <span className="rounded-full bg-spoiler px-2 py-0.5 text-xs font-medium tracking-wide text-white uppercase">
+      <Inset
+        as="span"
+        pad="sm"
+        inset="chip"
+        look="rounded-full bg-spoiler text-xs font-medium tracking-wide text-white uppercase"
+      >
         Spoiler
-      </span>
+      </Inset>
       <span className="text-sm text-on-surface-variant">Reveal</span>
-    </button>
+    </Surface>
   )
 }
 
@@ -701,14 +698,19 @@ export function P2pFile({
   }, [avail])
 
   const meta = (
-    <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-on-surface-variant">
-      <span
+    <Row as="span" gap="sm" lineGap="2xs" wrap text="xs" ink="muted" look="msg-part">
+      <Inset
         title="Hosted peer-to-peer from the sender's browser"
-        className="flex items-center gap-1 rounded bg-tertiary-container px-1.5 py-0.5 font-medium text-on-tertiary-container"
+        as="span"
+        row
+        pad="xs"
+        inset="chip"
+        gap="2xs"
+        look="rounded bg-tertiary-container font-medium text-on-tertiary-container"
       >
         <Share2 size={10} />
         P2P
-      </span>
+      </Inset>
       <span className="streamer truncate">
         <Masked text={hosterName} own={own} />
       </span>
@@ -725,7 +727,7 @@ export function P2pFile({
           {UNVERIFIED}
         </Row>
       )}
-    </span>
+    </Row>
   )
 
   if (hidden) {
@@ -733,7 +735,7 @@ export function P2pFile({
   }
 
   const saveButton = (
-    <button
+    <Inset
       title={
         streamer || hoster === null
           ? "Download from the sender's browser"
@@ -742,10 +744,13 @@ export function P2pFile({
       aria-label="Download"
       onClick={() => run(true)}
       disabled={busy || !online}
-      className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
+      as="button"
+      pad="2xs"
+      look="rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
+      place="shrink-0"
     >
       <Download size={14} />
-    </button>
+    </Inset>
   )
 
   if (text !== null && lang !== null) {
@@ -758,7 +763,11 @@ export function P2pFile({
         plain={text.verified === false}
         note={text.verified === false ? 'Not verified, so shown as plain text' : undefined}
         actions={saveButton}
-        footer={<div className="px-3 pb-2">{meta}</div>}
+        footer={
+          <Inset pad="md" inset="bar">
+            {meta}
+          </Inset>
+        }
       />
     )
   }
@@ -780,12 +789,14 @@ export function P2pFile({
     menu: { download: busy || !online ? null : () => run(true), link: null, remove },
   }
 
-  const failedLine = failed !== null && <p className="mt-2 text-xs text-error">{failed}</p>
+  const failedLine = failed !== null && (
+    <p className="msg-part-loose text-xs text-error">{failed}</p>
+  )
 
   if (shown?.kind === 'audio') {
     return (
       <FileCard {...card} progress={progress}>
-        <audio src={shown.url} controls className="mt-3 w-full" />
+        <audio src={shown.url} controls className="msg-part-loose w-full" />
         {meta}
       </FileCard>
     )
@@ -831,12 +842,12 @@ export function P2pFile({
         menu={cardMenu(filename, { ...card, progress })}
         className="max-h-80 max-w-full rounded-xl"
       >
-        <span className="mt-1 flex items-center gap-2">
+        <Row as="span" gap="sm" look="msg-part">
           <span className="max-w-60 truncate text-xs text-on-surface-variant">
             <Masked text={filename} file own={own} />
           </span>
           {saveButton}
-        </span>
+        </Row>
         {meta}
       </ViewableImage>
     )
@@ -852,7 +863,7 @@ export function P2pFile({
               ? 'File not available. Ask the sender to send it again.'
               : `File not available. Ask ${hosterName} to send it again.`
           }
-          className="mt-2 text-xs text-on-surface-variant italic"
+          className="msg-part-loose text-xs text-on-surface-variant italic"
         >
           File not available. Ask{' '}
           {hoster === null ? (
@@ -945,7 +956,7 @@ export function MediaAttachment({
   const menu = { download: save, link: mediaLink(account, id), remove }
   if (removed) {
     return (
-      <p className="mt-1 text-xs text-on-surface-variant italic">
+      <p className="msg-part text-xs text-on-surface-variant italic">
         {removed_by_author ? (
           'Attachment removed'
         ) : (
@@ -959,14 +970,14 @@ export function MediaAttachment({
   }
   const expiry =
     expires_at !== null ? (
-      <span className="mt-1.5 flex items-center gap-1 text-xs text-on-surface-variant">
+      <Row as="span" gap="2xs" text="xs" ink="muted" look="msg-part">
         <Clock size={10} />
         {fmtExpiry(expires_at)}
-      </span>
+      </Row>
     ) : null
   if (image && src === undefined)
     return (
-      <div className="mt-1 h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
+      <div className="msg-part h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
     )
   if (image && typeof src === 'string') {
     if (hidden) {
@@ -976,13 +987,18 @@ export function MediaAttachment({
           aria-label="Spoiler image, press to reveal"
           data-spoiler-media
           onClick={() => setRevealed(true)}
-          className="relative mt-1 block w-fit overflow-hidden rounded-xl"
+          className="msg-part relative block w-fit overflow-hidden rounded-xl"
         >
           <img src={src} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
           <span className="absolute inset-0 flex items-center justify-center">
-            <span className="rounded-full bg-scrim/70 px-3 py-1 text-xs font-medium tracking-wide text-white uppercase">
+            <Inset
+              as="span"
+              pad="md"
+              inset="chip"
+              look="rounded-full bg-scrim/70 text-xs font-medium tracking-wide text-white uppercase"
+            >
               Spoiler
-            </span>
+            </Inset>
           </span>
         </button>
       )
@@ -1102,7 +1118,13 @@ export function MediaAttachment({
             </a>
           )
         }
-        footer={expiry && <div className="px-3 pb-2">{expiry}</div>}
+        footer={
+          expiry && (
+            <Inset pad="md" inset="bar">
+              {expiry}
+            </Inset>
+          )
+        }
       />
     )
   }
@@ -1140,9 +1162,16 @@ function EmbedCard({
     openActionMenu(x, y, { kind: 'embed', message, ord, banner: path !== null }, undefined, acct)
 
   return (
-    <div
+    <Surface
       {...(canDelete ? longPress(menu) : {})}
-      className="group/embed relative mt-1 w-fit max-w-md rounded-lg border-l-4 border-primary bg-surface-container py-2 pr-8 pl-3"
+      pad="md"
+      inset="bar"
+      gap="2xs"
+      tone="base"
+      radius="md"
+      fit
+      look="msg-part border-l-4 border-primary"
+      place="group/embed relative max-w-md"
     >
       {site_name !== null && (
         <div className="text-xs text-on-surface-variant">
@@ -1157,7 +1186,7 @@ function EmbedCard({
         {title === null ? url : <Masked text={title} />}
       </MessageLink>
       {description !== null && (
-        <p className="mt-0.5 line-clamp-3 text-xs break-words text-on-surface-variant">
+        <p className="line-clamp-3 text-xs break-words text-on-surface-variant">
           <Masked text={description} />
         </p>
       )}
@@ -1168,20 +1197,23 @@ function EmbedCard({
           referrerPolicy="no-referrer"
           loading="lazy"
           onError={() => setBroken(src)}
-          className="mt-2 max-h-60 max-w-full rounded-md"
+          className="max-h-60 max-w-full rounded-md"
         />
       )}
       {canDelete && (
-        <button
+        <Inset
           title="Embed options"
           aria-label="Embed options"
           onClick={e => menu(e.clientX, e.clientY)}
-          className="absolute top-1.5 right-1.5 rounded-full p-1 text-on-surface-variant opacity-0 group-focus-within/embed:opacity-100 group-hover/embed:opacity-100 hover:bg-surface-container-highest max-md:opacity-100"
+          as="button"
+          pad="2xs"
+          look="rounded-full text-on-surface-variant hover:bg-surface-container-highest"
+          place="absolute top-1.5 right-1.5 opacity-0 group-focus-within/embed:opacity-100 group-hover/embed:opacity-100 max-md:opacity-100"
         >
           <EllipsisVertical size={14} />
-        </button>
+        </Inset>
       )}
-    </div>
+    </Surface>
   )
 }
 
@@ -1215,9 +1247,14 @@ function SpoilerLinkCard({ url }: { url: string }) {
       className={`${box} text-on-surface-variant hover:bg-surface-container-high`}
     >
       <EyeOff size={14} className="shrink-0" />
-      <span className="rounded-full bg-spoiler px-2 py-0.5 text-xs font-medium tracking-wide text-white uppercase">
+      <Inset
+        as="span"
+        pad="sm"
+        inset="chip"
+        look="rounded-full bg-spoiler text-xs font-medium tracking-wide text-white uppercase"
+      >
         Spoiler
-      </span>
+      </Inset>
       Link hidden
     </button>
   )
@@ -1366,7 +1403,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
             </MaskPlain>
           ) : (
             edited && (
-              <p className="my-0.5">
+              <p className="md-p">
                 <EditedMark at={edited} />
               </p>
             )
@@ -1374,10 +1411,10 @@ export const MarkdownMessage = memo(function MarkdownMessage({
         {media !== null && (
           <div className="group/att relative w-fit max-w-full">
             {!media.removed && attachmentsOff(media) ? (
-              <p className="mt-1 flex items-center gap-1.5 text-xs text-on-surface-variant italic">
+              <Row as="p" gap="xs" text="xs" ink="muted" look="msg-part italic">
                 <Ban size={12} className="shrink-0" />
                 {attachmentsOff(media)}
-              </p>
+              </Row>
             ) : media.kind === 'p2p' && !media.removed ? (
               <P2pFile media={media} messageId={message.id} remove={remove} />
             ) : (
@@ -1390,14 +1427,20 @@ export const MarkdownMessage = memo(function MarkdownMessage({
               />
             )}
             {remove && (
-              <button
+              <Surface
                 title="Remove attachment"
                 aria-label="Remove attachment"
                 onClick={remove}
-                className="absolute -top-1.5 -right-1.5 rounded-full bg-surface-container-highest p-1 text-on-surface-variant opacity-0 shadow-elevation-1 group-focus-within/att:opacity-100 group-hover/att:opacity-100 group-has-[[data-video-attachment]]/att:hidden hover:text-error max-md:opacity-100"
+                as="button"
+                pad="2xs"
+                tone="highest"
+                radius="full"
+                elevation={1}
+                look="text-on-surface-variant hover:text-error"
+                place="absolute -top-1.5 -right-1.5 opacity-0 group-focus-within/att:opacity-100 group-hover/att:opacity-100 group-has-[[data-video-attachment]]/att:hidden max-md:opacity-100"
               >
                 <X size={12} />
-              </button>
+              </Surface>
             )}
           </div>
         )}

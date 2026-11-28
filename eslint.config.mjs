@@ -59,7 +59,6 @@ const HAND_SPACED = [
   'apps/web/app/components/home.tsx',
   'apps/web/app/components/inbox.tsx',
   'apps/web/app/components/invite_card.tsx',
-  'apps/web/app/components/markdown_message.tsx',
   'apps/web/app/components/media_lightbox.tsx',
   'apps/web/app/components/member_sidebar.tsx',
   'apps/web/app/components/member_table.tsx',

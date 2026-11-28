@@ -560,6 +560,71 @@ body {
   padding-right: max(--spacing(--value(integer)), env(safe-area-inset-right));
 }
 
+/* Rendered message text: the space between its blocks and inside its marks, on the spacing scale. */
+.md-p {
+  margin-block: var(--space-3xs);
+}
+
+.md-list {
+  margin-block: var(--space-2xs);
+  padding-left: calc(var(--space-lg) + var(--space-2xs));
+}
+
+.md-quote {
+  margin-block: var(--space-2xs);
+  border-left: 2px solid var(--color-outline);
+  padding-left: var(--space-md);
+  color: var(--color-on-surface-variant);
+}
+
+.md-code {
+  border-radius: 0.25rem;
+  background: var(--color-surface-container-high);
+  padding: var(--space-3xs) var(--space-2xs);
+}
+
+.md-pre {
+  margin-block: var(--space-2xs);
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: var(--color-surface-container-high);
+  padding: var(--space-sm);
+}
+
+.md-pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.md-heading {
+  margin-block: var(--space-2xs);
+  font-weight: 700;
+}
+
+.md-cell {
+  border: 1px solid var(--color-outline-variant);
+  padding: var(--space-2xs) var(--space-sm);
+}
+
+.md-mark {
+  border-radius: 0.25rem;
+  padding-inline: var(--space-3xs);
+  font-weight: 500;
+}
+
+/* The parts of a message under its text (a picture, a file, a card, a note). */
+.msg-part {
+  margin-top: var(--space-2xs);
+}
+
+.msg-part-loose {
+  margin-top: var(--space-sm);
+}
+
+.msg-block {
+  margin-block: var(--space-2xs);
+}
+
 /* A part of the screen's height. */
 @utility h-dvh-* {
   height: calc(--value(integer) * 1dvh);

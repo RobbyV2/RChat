@@ -117,7 +117,7 @@ describe('a P2P file in a hosted message', () => {
     )
     const card = html.indexOf('data-file-card=""')
     expect(card).toBeGreaterThan(-1)
-    expect(html.indexOf('<audio src="blob:song" controls="" class="mt-3 w-full"></audio>')).toBe(
+    expect(html.indexOf('<audio src="blob:song" controls="" class="msg-part-loose w-full"></audio>')).toBe(
       html.indexOf('<audio', card)
     )
     expect(html).toContain('lucide-file-headphone')
@@ -214,7 +214,7 @@ describe('a P2P room or DM file', () => {
     expect(html).toContain('data-p2p-file="h1" data-file-card=""')
     expect(html.includes('data-state')).toBe(false)
     expect(html).toContain('border-dashed')
-    expect(html).toContain('<audio src="blob:song" controls="" class="mt-3 w-full"></audio>')
+    expect(html).toContain('<audio src="blob:song" controls="" class="msg-part-loose w-full"></audio>')
     expect(html).toContain('844 KB · 1:23')
     expect(html).toContain('aria-label="Save song.mp3"')
     expect(html).toContain('lucide-file-headphone')
