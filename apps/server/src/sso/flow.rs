@@ -325,15 +325,9 @@ pub async fn verify_fresh(
     provider: &str,
     code: &str,
 ) -> Result<(), ApiError> {
-    let denied = || {
-        ApiError(
-            axum::http::StatusCode::UNAUTHORIZED,
-            "Sign in again to continue".into(),
-            None,
-        )
-    };
+    let denied = || ApiError::sign_in("Sign in again to continue");
     let app = take_code(&state.db, code).await.map_err(|e| {
-        if e.0 == axum::http::StatusCode::BAD_REQUEST {
+        if e.status() == axum::http::StatusCode::BAD_REQUEST {
             denied()
         } else {
             e
@@ -440,12 +434,10 @@ pub async fn finish_response(
         (Return::Web, CallbackError::Failed)
     })?;
     let (data, sealed) = row.ok_or((Return::Web, CallbackError::Expired))?;
-    let data = pending(&state.db, &id, data, sealed)
-        .await
-        .map_err(|ApiError(_, e, _)| {
-            tracing::warn!(%e, "OIDC state lookup failed");
-            (Return::Web, CallbackError::Failed)
-        })?;
+    let data = pending(&state.db, &id, data, sealed).await.map_err(|e| {
+        tracing::warn!(%e, "OIDC state lookup failed");
+        (Return::Web, CallbackError::Failed)
+    })?;
     let p: Pending =
         serde_json::from_str(&data).map_err(|_| (Return::Web, CallbackError::Failed))?;
     let ret = p.flow.ret.clone();

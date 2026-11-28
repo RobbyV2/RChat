@@ -143,7 +143,7 @@ pub(crate) fn is_membership_limit(error: &ApiError) -> bool {
     use crate::api::ReasonKind;
     matches!(
         error
-            .2
+            .reason()
             .as_ref()
             .map(|reason| (reason.kind, reason.control.as_deref())),
         Some(
@@ -193,8 +193,8 @@ async fn reconcile_after_lookup(
                 Ok(access) => {
                     accesses.insert(server.clone(), access);
                 }
-                Err(e) if e.1 == access::BANNED => {}
-                Err(e) if e.0 == axum::http::StatusCode::NOT_FOUND => {
+                Err(e) if e.error() == access::BANNED => {}
+                Err(e) if e.status() == axum::http::StatusCode::NOT_FOUND => {
                     tracing::warn!(server, "Unknown SSO group map server");
                 }
                 Err(e) => return Err(e),
@@ -375,7 +375,7 @@ async fn reconcile_after_lookup(
         if let Err(error) =
             servers::announce_join(state, &server, creator.as_deref(), username, notice).await
         {
-            tracing::warn!(server, username, reason = %error.1, "Could not announce committed SSO join");
+            tracing::warn!(server, username, reason = %error.error(), "Could not announce committed SSO join");
         }
     }
     for (server, notice) in leaves {
@@ -418,7 +418,7 @@ pub async fn reconcile_all(state: &AppState) -> Result<u64, ApiError> {
             match reconcile(state, &name).await {
                 Ok(_) => count += 1,
                 Err(error) => {
-                    tracing::warn!(username = %name, reason = %error.1, "SSO account reconciliation failed");
+                    tracing::warn!(username = %name, reason = %error.error(), "SSO account reconciliation failed");
                     first_failure.get_or_insert(error);
                 }
             }

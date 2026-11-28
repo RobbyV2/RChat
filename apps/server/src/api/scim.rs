@@ -45,11 +45,11 @@ impl From<sqlx::Error> for ScimError {
 }
 impl From<ApiError> for ScimError {
     fn from(e: ApiError) -> Self {
-        match e.0 {
-            StatusCode::BAD_REQUEST if e.1 == "Username is taken" => Self::conflict(),
+        match e.status() {
+            StatusCode::BAD_REQUEST if e.error() == "Username is taken" => Self::conflict(),
             StatusCode::BAD_REQUEST => Self::invalid(),
             StatusCode::NOT_FOUND => Self::missing(),
-            StatusCode::SERVICE_UNAVAILABLE => Self::new(e.0, super::SERVER_BUSY),
+            StatusCode::SERVICE_UNAVAILABLE => Self::new(e.status(), super::SERVER_BUSY),
             status => Self::new(status, "Provisioning failed"),
         }
     }
@@ -804,7 +804,7 @@ pub(crate) async fn initialize_group_ownership(state: &AppState) -> anyhow::Resu
         }
         for user in users {
             if let Err(error) = crate::sso::groups::reconcile(state, &user).await {
-                tracing::warn!(username = %user, reason = %error.1, "SCIM startup reconciliation failed");
+                tracing::warn!(username = %user, reason = %error.error(), "SCIM startup reconciliation failed");
                 if !crate::sso::groups::is_membership_limit(&error) {
                     first_failure.get_or_insert_with(|| {
                         anyhow::anyhow!("SCIM startup reconciliation failed for {user}: {error:?}")

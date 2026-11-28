@@ -210,8 +210,7 @@ pub fn unmissed(state: &AppState, caller: Option<&User>) -> Result<Held, ApiErro
 /// Holds one of `user`'s misses for a ban of someone who is not a member of the server, like
 /// `unmissed`. Past its misses the ban is refused as a ban, whoever the name is.
 pub fn outside_ban(state: &AppState, user: &User) -> Result<Held, ApiError> {
-    unmissed(state, Some(user))
-        .map_err(|ApiError(code, _, reason)| ApiError(code, TOO_MANY_BANS.to_string(), reason))
+    unmissed(state, Some(user)).map_err(|e| e.retext(TOO_MANY_BANS))
 }
 
 /// Takes one lookup of `class` from the caller's budget, before the handler runs any query.
@@ -235,7 +234,10 @@ pub(super) fn reserve(
 /// Keeps the miss `held` for the answer of a lookup by name when it is a 404, and gives it
 /// back otherwise.
 pub fn counted<T>(mut held: Held, answer: Result<T, ApiError>) -> Result<T, ApiError> {
-    if let Err(ApiError(StatusCode::NOT_FOUND, _, _)) = &answer {
+    if answer
+        .as_ref()
+        .is_err_and(|e| e.status() == StatusCode::NOT_FOUND)
+    {
         held.start = None;
     }
     answer

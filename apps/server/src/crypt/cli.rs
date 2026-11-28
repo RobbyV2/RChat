@@ -415,7 +415,7 @@ async fn rotated(config: &AppConfig, purposes: &[Purpose]) -> anyhow::Result<Str
     let instance = crate::instance::Instance::load(&db, &config.instance()).await?;
     let state =
         crate::state::AppState::new(db, crate::ws::Hub::new(), config.s3()?, None, instance);
-    let fail = |crate::api::ApiError(_, e, _)| anyhow::anyhow!("{e}");
+    let fail = |e| anyhow::anyhow!("{e}");
     let rotation = crate::api::seal::rotate::begin(&state, purposes)
         .await
         .map_err(fail)?;
@@ -459,7 +459,7 @@ async fn unsealed(config: &AppConfig, target: &Target) -> anyhow::Result<String>
         crate::state::AppState::new(db, crate::ws::Hub::new(), config.s3()?, None, instance);
     let job = begin(&state, target, Direction::Unseal, None)
         .await
-        .map_err(|crate::api::ApiError(_, e, _)| anyhow::anyhow!("{e}"))?;
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     if !run_job(&state, job.id).await {
         crate::db::close(&state.db).await;
         anyhow::bail!(
@@ -473,7 +473,7 @@ async fn unsealed(config: &AppConfig, target: &Target) -> anyhow::Result<String>
         .await?;
     let left = still_sealed(&state.db, target)
         .await
-        .map_err(|crate::api::ApiError(_, e, _)| anyhow::anyhow!("{e}"))?;
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     crate::db::close(&state.db).await;
     if ended.as_deref() != Some("done") {
         anyhow::bail!("decrypting {} stopped; run it again to go on", target.key());

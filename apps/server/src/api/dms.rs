@@ -472,7 +472,7 @@ pub(crate) async fn open_dm(
 ) -> Result<Json<DmSummary>, ApiError> {
     let OpenDmReq { username } = req;
     let target = username.to_lowercase();
-    let unknown = || ApiError(StatusCode::NOT_FOUND, NO_CONVERSATION.to_string(), None);
+    let unknown = || crate::api::access::missing(NO_CONVERSATION);
     let (a, b) = match user.username <= target {
         true => (user.username.clone(), target.clone()),
         false => (target.clone(), user.username.clone()),
@@ -515,17 +515,13 @@ pub(crate) async fn open_dm(
             }
             if a != b && crate::api::friends::dm_refused(&state.db, &user.username, &target).await?
             {
-                return Err(ApiError(
-                    StatusCode::FORBIDDEN,
-                    YOU_FRIENDS_ONLY.to_string(),
-                    None,
-                ));
+                return Err(ApiError::conflict(StatusCode::FORBIDDEN, YOU_FRIENDS_ONLY));
             }
             if get_user(&state.db, &target).await?.is_none() {
                 return Err(unknown());
             }
             match check_dm(&state.db, &user.username, &target).await {
-                Err(ApiError(StatusCode::FORBIDDEN, text, _)) if text == NOT_ACCEPTING => {
+                Err(e) if e.status() == StatusCode::FORBIDDEN && e.error() == NOT_ACCEPTING => {
                     return Err(unknown());
                 }
                 checked => checked?,
@@ -601,7 +597,7 @@ async fn set_closed(db: &Db, id: i64, username: &str, closed: bool) -> Result<bo
 pub(crate) async fn reopen_for(state: &AppState, id: i64, actor: &str, recipients: &[String]) {
     let recipients = match not_blocking(&state.db, actor, recipients).await {
         Ok(users) => users,
-        Err(ApiError(_, e, _)) => {
+        Err(e) => {
             tracing::warn!("dm {id} not reopened: {e}");
             return;
         }
@@ -618,7 +614,7 @@ pub(crate) async fn reopen_for(state: &AppState, id: i64, actor: &str, recipient
                 dm_id: id,
             }),
             Ok(false) => {}
-            Err(ApiError(_, e, _)) => tracing::warn!("dm {id} not reopened: {e}"),
+            Err(e) => tracing::warn!("dm {id} not reopened: {e}"),
         }
     }
 }
@@ -812,7 +808,7 @@ mod tests {
             Some((
                 StatusCode::FORBIDDEN,
                 "You blocked this user. Unblock them to send messages.".to_string(),
-                None
+                Some(r#"{"kind":"conflict"}"#.to_string())
             )),
             "alice's own block says so"
         );
@@ -823,7 +819,7 @@ mod tests {
         let own = Some((
             StatusCode::FORBIDDEN,
             crate::api::blocks::YOU_FRIENDS_ONLY.to_string(),
-            None,
+            Some(r#"{"kind":"conflict"}"#.to_string()),
         ));
         for name in ["ghost", "zoe"] {
             assert_eq!(
@@ -884,7 +880,7 @@ mod tests {
             Some((
                 StatusCode::FORBIDDEN,
                 crate::api::blocks::NOT_ACCEPTING.to_string(),
-                None
+                Some(r#"{"kind":"conflict"}"#.to_string())
             )),
             "writing keeps today's answer"
         );
@@ -930,7 +926,7 @@ mod tests {
         let blocked = Some((
             StatusCode::FORBIDDEN,
             "You blocked this user. Unblock them to send messages.".to_string(),
-            None,
+            Some(r#"{"kind":"conflict"}"#.to_string()),
         ));
         for (name, dm) in theirs.into_iter().zip(dms.iter().copied()) {
             assert_eq!(write(dm).await, blocked, "{name}: alice's own block first");
@@ -952,7 +948,7 @@ mod tests {
         let own = Some((
             StatusCode::FORBIDDEN,
             crate::api::blocks::YOU_FRIENDS_ONLY.to_string(),
-            None,
+            Some(r#"{"kind":"conflict"}"#.to_string()),
         ));
         for (name, dm) in theirs.into_iter().zip(dms) {
             assert_eq!(write(dm).await, own, "{name}: alice's own DM setting first");

@@ -647,10 +647,9 @@ async fn file_name(
             .await?
             .ok_or_else(|| ApiError::invalid("Unknown media", "media_id"))?;
     if row.try_get::<Option<String>, _>(0)?.as_deref() != Some(username) {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "You can only attach files you uploaded".to_string(),
-            None,
+        return Err(ApiError::perm(
+            "You can only attach files you uploaded",
+            "author",
         ));
     }
     let taken: i64 = sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM messages WHERE media_id = $1 AND media_kind = 'server') + (SELECT COUNT(*) FROM scheduled_messages WHERE media_id = $1 AND status <> 'sent')")
@@ -1167,8 +1166,8 @@ pub(crate) async fn patch_at(
 
 /// The reason a refused send gives its row.
 fn failure_of(e: &ApiError) -> String {
-    let ApiError(status, text, _) = e;
-    if *status == StatusCode::NOT_FOUND {
+    let (status, text) = (e.status(), e.error());
+    if status == StatusCode::NOT_FOUND {
         return GONE.to_string();
     }
     if status.is_server_error() {
@@ -1339,8 +1338,8 @@ enum Settle {
 fn settle_of(outcome: &Result<Message, ApiError>, due_at: i64, attempts: i64, t: i64) -> Settle {
     match outcome {
         Ok(message) => Settle::Sent(message.id),
-        Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, reason)) => {
-            let wait = reason.as_ref().and_then(|r| r.retry_after).unwrap_or(1) as i64;
+        Err(e) if e.status() == StatusCode::TOO_MANY_REQUESTS => {
+            let wait = e.reason().and_then(|r| r.retry_after).unwrap_or(1) as i64;
             match t + wait <= due_at + DEFER_MAX_SECS {
                 true => Settle::Defer(t + wait),
                 false => Settle::Fail(SLOW_FAILED.to_string()),

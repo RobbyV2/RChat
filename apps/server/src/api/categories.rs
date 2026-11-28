@@ -78,7 +78,7 @@ pub struct LayoutReq {
 }
 
 fn conflict() -> ApiError {
-    ApiError(StatusCode::CONFLICT, STALE.to_string(), None)
+    ApiError::conflict(StatusCode::CONFLICT, STALE)
 }
 
 pub(crate) async fn server_categories(db: &Db, server: &str) -> Result<Vec<Category>, ApiError> {

@@ -902,9 +902,10 @@ pub(crate) async fn throttle_attempt(
         false => tx.rollback().await?,
     }
     match (locked, admitted) {
-        (true, _) => Err(ApiError(
+        (true, _) => Err(ApiError::locked_at(
             StatusCode::LOCKED,
-            "Account locked for the day".to_string(),
+            "Account locked for the day",
+            "sign_in",
             None,
         )),
         (false, true) => Ok(()),
@@ -933,11 +934,14 @@ pub(crate) async fn throttle_change(db: &Db, key: &str, t: i64) -> Result<(), Ap
     .await?;
     match admitted {
         None => Err(wait_between()),
-        Some(row) if row.try_get::<i64, _>(0)? >= PASSWORD_FAILURES_MAX => Err(ApiError(
-            StatusCode::LOCKED,
-            "Too many wrong passwords today".to_string(),
-            None,
-        )),
+        Some(row) if row.try_get::<i64, _>(0)? >= PASSWORD_FAILURES_MAX => {
+            Err(ApiError::locked_at(
+                StatusCode::LOCKED,
+                "Too many wrong passwords today",
+                "sign_in",
+                None,
+            ))
+        }
         Some(_) => Ok(()),
     }
 }
@@ -951,11 +955,7 @@ pub(crate) async fn note_change_failure(db: &Db, key: &str) -> Result<(), ApiErr
 }
 
 fn invalid_credentials() -> ApiError {
-    ApiError(
-        StatusCode::UNAUTHORIZED,
-        "Invalid credentials".to_string(),
-        None,
-    )
+    crate::api::access::refused_login("Invalid credentials")
 }
 
 async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
@@ -987,7 +987,7 @@ async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
 pub(crate) const SAME_AS_TEMPORARY: &str = "Choose a password different from the temporary one";
 
 fn wrong_password() -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, "Wrong password".to_string(), None)
+    crate::api::access::refused_login("Wrong password")
 }
 
 /// Log in
@@ -1134,19 +1134,15 @@ async fn change_password_at(
             ));
         }
         if !crate::sso::accounts::may_set_password(state, &user).await {
-            return Err(ApiError(
+            return Err(ApiError::off_site(
                 StatusCode::FORBIDDEN,
-                "Password sign-in is off".into(),
-                None,
+                "Password sign-in is off",
+                &rchat_settings::items::AUTH_PASSWORD_LOGIN,
             ));
         }
         let proof = reauth
             .ok_or_else(|| {
-                ApiError(
-                    StatusCode::UNAUTHORIZED,
-                    "Confirm with your provider or backup phrase".into(),
-                    None,
-                )
+                crate::api::access::refused_login("Confirm with your provider or backup phrase")
             })?
             .try_into()?;
         let (actor, created_at) = super::session_for_token(state, &token)
@@ -1569,7 +1565,7 @@ pub(crate) async fn patch_me(
 async fn stored_account(state: &AppState, username: &str) -> Result<User, ApiError> {
     get_user(&state.db, username)
         .await?
-        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None))
+        .ok_or_else(crate::api::access::unauthorized)
 }
 
 /// `user` as the answer to a change of their own profile.

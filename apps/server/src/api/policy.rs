@@ -481,8 +481,7 @@ impl Policy {
 pub(crate) fn refused(control: impl Into<Control>, answer: ApiError) -> ApiError {
     let control = control.into();
     tracing::debug!("refused by the {} setting", control.name());
-    let ApiError(status, error, _) = answer;
-    ApiError::off_site(status, error, control)
+    ApiError::off_site(answer.status(), answer.error(), control)
 }
 
 /// The answer to a request that the control `control` refuses because it leaves the caller
@@ -490,8 +489,7 @@ pub(crate) fn refused(control: impl Into<Control>, answer: ApiError) -> ApiError
 pub(crate) fn left_out(control: impl Into<Control>, answer: ApiError) -> ApiError {
     let control = control.into();
     tracing::debug!("left out by the {} setting", control.name());
-    let ApiError(status, error, _) = answer;
-    ApiError::off_account(status, error, control)
+    ApiError::off_account(answer.status(), answer.error(), control)
 }
 
 /// Whether `entry`, which names a role of `server`, also reads as a role of another server.

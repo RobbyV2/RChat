@@ -72,11 +72,7 @@ impl PollKind {
             "ranked" => Ok(PollKind::Ranked),
             "rating" => Ok(PollKind::Rating),
             "yes_no" => Ok(PollKind::YesNo),
-            other => Err(ApiError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("invalid poll kind: {other}"),
-                None,
-            )),
+            other => Err(ApiError::internal(format!("invalid poll kind: {other}"))),
         }
     }
 
@@ -116,11 +112,9 @@ impl ShowResults {
             "always" => Ok(ShowResults::Always),
             "after_vote" => Ok(ShowResults::AfterVote),
             "after_close" => Ok(ShowResults::AfterClose),
-            other => Err(ApiError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("invalid poll results setting: {other}"),
-                None,
-            )),
+            other => Err(ApiError::internal(format!(
+                "invalid poll results setting: {other}"
+            ))),
         }
     }
 }
@@ -1891,17 +1885,15 @@ pub(crate) async fn list_voters(
     .await?;
     let poll = view_for(db, id, user.as_ref()).await?;
     if poll.anonymous {
-        return Err(ApiError(
+        return Err(ApiError::conflict(
             StatusCode::FORBIDDEN,
-            "Votes in this poll are anonymous".to_string(),
-            None,
+            "Votes in this poll are anonymous",
         ));
     }
     if poll.results.is_none() {
-        return Err(ApiError(
+        return Err(ApiError::conflict(
             StatusCode::FORBIDDEN,
-            "Results are hidden".to_string(),
-            None,
+            "Results are hidden",
         ));
     }
     let limit = limit.unwrap_or(VOTERS_PAGE).clamp(1, VOTERS_PAGE);
@@ -2022,7 +2014,7 @@ fn schedule(state: &AppState, id: i64, wait: Duration) {
         match update_event(&state.db, id).await {
             Ok(Some(ev)) => state.hub.broadcast(ev),
             Ok(None) => {}
-            Err(ApiError(_, e, _)) => tracing::warn!("poll update failed: {e}"),
+            Err(e) => tracing::warn!("poll update failed: {e}"),
         }
     });
 }

@@ -128,7 +128,7 @@ pub(crate) async fn announce_storage_dm(state: &AppState, dm_id: i64, users: Vec
             message: Box::new(row),
         }),
         Ok(None) => {}
-        Err(ApiError(_, e, _)) => tracing::warn!("system message {id} not broadcast: {e}"),
+        Err(e) => tracing::warn!("system message {id} not broadcast: {e}"),
     }
 }
 
@@ -147,7 +147,7 @@ pub(crate) async fn announce_system(state: &AppState, server: &str, id: Option<i
             message: Box::new(row),
         }),
         Ok(None) => {}
-        Err(ApiError(_, e, _)) => tracing::warn!("system message {id} not broadcast: {e}"),
+        Err(e) => tracing::warn!("system message {id} not broadcast: {e}"),
     }
 }
 

@@ -157,8 +157,9 @@ pub(super) async fn check_copy(
     .await?;
     for r in &rows {
         let row = category_row(r)?;
-        if let Err(ApiError(StatusCode::FORBIDDEN, _, _)) =
-            guard_category_rule(db, access, &row.subject, None, Some(&row)).await
+        if guard_category_rule(db, access, &row.subject, None, Some(&row))
+            .await
+            .is_err_and(|e| e.status() == StatusCode::FORBIDDEN)
         {
             return Err(ApiError::perm(
                 "You can't make a channel with this category's permissions",

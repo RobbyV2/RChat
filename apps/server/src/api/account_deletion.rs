@@ -35,7 +35,7 @@ pub struct DeletionPending {
 }
 
 fn refusal() -> ApiError {
-    ApiError(StatusCode::FORBIDDEN, REFUSED.to_string(), None)
+    ApiError::conflict(StatusCode::FORBIDDEN, REFUSED)
 }
 
 /// Whether `user` may not delete itself: it is the only site admin that stays, or a sign-in

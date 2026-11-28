@@ -3,10 +3,19 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// An error answer: its status, its `error` text and, when it has one, its `reason`. A denial
-/// about a server, channel or message the caller can't open never has a reason.
+/// An error answer: its status, its `error` text and, when it has one, its `reason`. Every
+/// constructor gives a reason, except the gate's denials (`denied`, which takes the gate's
+/// `Denial`) and answers whose shape a protocol fixes (`spec`). Tests read and build the fields
+/// directly.
 #[derive(Debug)]
-pub struct ApiError(pub StatusCode, pub String, pub Option<Box<Reason>>);
+pub struct ApiError(
+    #[cfg(test)] pub StatusCode,
+    #[cfg(not(test))] StatusCode,
+    #[cfg(test)] pub String,
+    #[cfg(not(test))] String,
+    #[cfg(test)] pub Option<Box<Reason>>,
+    #[cfg(not(test))] Option<Box<Reason>>,
+);
 
 /// What kind of error it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -185,7 +194,7 @@ pub struct ApiErrorBody {
     /// A short, human-readable reason, e.g. `Server not found` or `Unauthorized`.
     pub error: String,
     /// What kind of error it is and which setting or limit caused it. Left out for denials about
-    /// a server, channel or message you can't open, and for errors that have no kind yet.
+    /// something you can't open and for answers whose shape a protocol fixes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<Reason>,
 }
@@ -204,11 +213,74 @@ impl ApiError {
     /// client.
     pub fn internal(cause: impl std::fmt::Display) -> ApiError {
         tracing::error!("request failed: {cause}");
-        ApiError(
+        ApiError::because(
             StatusCode::INTERNAL_SERVER_ERROR,
-            SERVER_ERROR.to_string(),
-            None,
+            SERVER_ERROR,
+            Reason::of(ReasonKind::Unavailable),
         )
+    }
+
+    /// A reason-less answer about something the caller can't open: only the gate makes the
+    /// `Denial` it takes.
+    pub fn denied(
+        status: StatusCode,
+        error: impl Into<String>,
+        _: &crate::api::access::Denial,
+    ) -> ApiError {
+        ApiError(status, error.into(), None)
+    }
+
+    /// An answer whose body a protocol specification fixes (the OpenID back-channel logout),
+    /// with no reason.
+    pub fn spec(status: StatusCode, error: &'static str) -> ApiError {
+        ApiError(status, error.to_string(), None)
+    }
+
+    /// Locked by `control` with another status than 403 (423 for a sign-in lock).
+    pub fn locked_at(
+        status: StatusCode,
+        error: impl Into<String>,
+        control: &str,
+        until: Option<i64>,
+    ) -> ApiError {
+        let reason = Reason {
+            until,
+            ..Reason::by(ReasonKind::Locked, control)
+        };
+        ApiError::because(status, error, reason)
+    }
+
+    /// The server can't do it right now, with another status than 503 (408 for a stalled
+    /// upload).
+    pub fn unavailable_at(status: StatusCode, error: impl Into<String>) -> ApiError {
+        ApiError::because(status, error, Reason::of(ReasonKind::Unavailable))
+    }
+
+    /// A 500 that names what failed, when the text is part of the contract (stored data that
+    /// can't be opened).
+    pub fn server(error: &'static str) -> ApiError {
+        ApiError::because(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error,
+            Reason::of(ReasonKind::Unavailable),
+        )
+    }
+
+    /// The same answer with another text.
+    pub fn retext(self, error: impl Into<String>) -> ApiError {
+        ApiError(self.0, error.into(), self.2)
+    }
+
+    pub fn status(&self) -> StatusCode {
+        self.0
+    }
+
+    pub fn error(&self) -> &str {
+        &self.1
+    }
+
+    pub fn reason(&self) -> Option<&Reason> {
+        self.2.as_deref()
     }
 
     fn because(status: StatusCode, error: impl Into<String>, reason: Reason) -> ApiError {
@@ -328,11 +400,7 @@ impl ApiError {
     /// 403: locked by `control` (a ban, a timeout, a pause or a suspension), until `until`
     /// when it is known.
     pub fn locked_by(error: impl Into<String>, control: &str, until: Option<i64>) -> ApiError {
-        let reason = Reason {
-            until,
-            ..Reason::by(ReasonKind::Locked, control)
-        };
-        ApiError::because(StatusCode::FORBIDDEN, error, reason)
+        ApiError::locked_at(StatusCode::FORBIDDEN, error, control, until)
     }
 
     /// Refused until the caller confirms `control` for `channel`.
@@ -371,6 +439,12 @@ impl ApiError {
     /// Whether the server failed, rather than the request being refused.
     pub fn failed(&self) -> bool {
         self.0.is_server_error()
+    }
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.1)
     }
 }
 
@@ -507,7 +581,7 @@ mod tests {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 None,
-                json!({ "error": SERVER_ERROR }).to_string()
+                json!({ "error": SERVER_ERROR, "reason": { "kind": "unavailable" } }).to_string()
             )
         );
         let mut files = vec![std::path::PathBuf::from(concat!(

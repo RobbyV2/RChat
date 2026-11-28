@@ -118,9 +118,8 @@ pub fn confirm_first(channel: i64) -> ApiError {
 
 /// Whether `e` is a `confirm_first` answer.
 pub fn asks_to_confirm(e: &ApiError) -> bool {
-    let ApiError(status, _, reason) = e;
-    *status == axum::http::StatusCode::FORBIDDEN
-        && reason.as_ref().is_some_and(|r| {
+    e.status() == axum::http::StatusCode::FORBIDDEN
+        && e.reason().is_some_and(|r| {
             r.kind == crate::api::ReasonKind::Confirm && r.control.as_deref() == Some(CONFIRM)
         })
 }
@@ -148,7 +147,7 @@ async fn write(
     let detail = with_reason_field(detail, reason()?);
     match instance_audit::record(&primary(db), actor, action, target, detail).await {
         Ok(()) => Ok(()),
-        Err(e) => Err(not_recorded(e.1)),
+        Err(e) => Err(not_recorded(e.error())),
     }
 }
 
@@ -362,7 +361,7 @@ pub(crate) async fn p2p_purge_in(
     );
     match instance_audit::record_in(conn, admin, P2P_DATA, Some(account), detail, t).await {
         Ok(()) => Ok(()),
-        Err(e) => Err(not_recorded(e.1)),
+        Err(e) => Err(not_recorded(e.error())),
     }
 }
 

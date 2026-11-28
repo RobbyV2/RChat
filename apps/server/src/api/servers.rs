@@ -964,7 +964,7 @@ async fn grouped_members(
 pub const CHANNEL_PERM_MAX: i64 = 500;
 
 fn not_found(msg: &str) -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, msg.to_string(), None)
+    crate::api::access::missing(msg)
 }
 
 pub(crate) async fn check_name(
@@ -2591,7 +2591,7 @@ pub(crate) async fn server_available(
     rare::take(&state, Rare::ServerName, Some(&user))?;
     let available = match name_free(&state.read(), &display.to_lowercase()).await {
         Ok(()) => true,
-        Err(ApiError(StatusCode::BAD_REQUEST | StatusCode::CONFLICT, _, _)) => false,
+        Err(e) if matches!(e.status(), StatusCode::BAD_REQUEST | StatusCode::CONFLICT) => false,
         Err(e) => return Err(e),
     };
     Ok(Json(ServerAvailable { available }))
@@ -2828,13 +2828,8 @@ async fn grant_network(db: &Db, limits: &crate::limits::Limits) -> Result<String
         }
     }
     let pepper = crate::db::pepper(db).await?;
-    let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(&pepper).map_err(|_| {
-        ApiError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "pepper".to_string(),
-            None,
-        )
-    })?;
+    let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(&pepper)
+        .map_err(|_| ApiError::internal("pepper"))?;
     mac.update(b"guest network\n");
     mac.update(wide.as_bytes());
     Ok(format!("n:{}", hex::encode(mac.finalize().into_bytes())))
@@ -3701,7 +3696,7 @@ pub(crate) async fn update_server(
     if new_key != key {
         rare::take(&state, Rare::ServerName, Some(&user))?;
         match (name_free(&state.db, &new_key).await, &name) {
-            (Err(ApiError(StatusCode::BAD_REQUEST, _, _)), None) => {
+            (Err(e), None) if e.status() == StatusCode::BAD_REQUEST => {
                 return Err(ApiError::invalid(NAME_FOR_JOINING, "name"));
             }
             (res, _) => res?,
@@ -4138,10 +4133,9 @@ async fn name_free(db: &Db, key: &str) -> Result<(), ApiError> {
     match row {
         None => Ok(()),
         Some(r) => match r.try_get::<Option<String>, _>(0)?.as_deref() {
-            Some(crate::db::PURGING_HASH) => Err(ApiError(
+            Some(crate::db::PURGING_HASH) => Err(ApiError::conflict(
                 StatusCode::CONFLICT,
-                "That name is not available yet".to_string(),
-                None,
+                "That name is not available yet",
             )),
             _ => Err(ApiError::conflict(
                 StatusCode::BAD_REQUEST,
@@ -7432,7 +7426,7 @@ const MOVE_NOT_WITHIN: &str = "You can't move a role that has permissions you do
 const MOVE_HELD_ABOVE: &str = "You can't move a role held by a member you can't moderate";
 
 fn order_stale() -> ApiError {
-    ApiError(StatusCode::CONFLICT, ORDER_STALE.to_string(), None)
+    ApiError::conflict(StatusCode::CONFLICT, ORDER_STALE)
 }
 
 /// The roles of `server` a caller with the permissions `bits` at `rank` may move: those below
@@ -8071,10 +8065,9 @@ pub(crate) async fn set_everyone_perms(
             .await?
             .rows_affected();
         if swapped == 0 {
-            return Err(ApiError(
+            return Err(ApiError::conflict(
                 StatusCode::CONFLICT,
-                "Permissions changed during this request".to_string(),
-                None,
+                "Permissions changed during this request",
             ));
         }
         audit::record(

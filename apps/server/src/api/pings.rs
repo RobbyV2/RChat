@@ -566,7 +566,7 @@ pub async fn ping_message_for(
         create_pings(state, &spec, &recipients).await.map(|_| ())
     };
     let res: Result<(), ApiError> = run.await;
-    if let Err(ApiError(_, e, _)) = res {
+    if let Err(e) = res {
         tracing::warn!("pings for message {} failed: {e}", message.id);
     }
 }
@@ -837,7 +837,7 @@ pub async fn store_group_pings(state: &AppState, channel: &ResolvedChannel, mess
         tx.commit().await?;
         Ok::<(), ApiError>(())
     };
-    if let Err(ApiError(_, e, _)) = run.await {
+    if let Err(e) = run.await {
         tracing::warn!("group pings for message {} failed: {e}", message.id);
     }
 }

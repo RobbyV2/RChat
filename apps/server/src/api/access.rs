@@ -57,23 +57,39 @@ pub use subjects::{
 pub const DENIED: &str = "Server not found or wrong password";
 pub const PASSWORD_REQUIRED: &str = "Password required";
 pub const NOT_FOUND: &str = "Not found";
+/// The gate's decision that the caller gets a reason-less denial. Only this module makes one.
+pub struct Denial(());
+
 pub const BANNED: &str = "You are banned from this server";
 pub const TIMED_OUT: &str = "You are timed out in this server";
 
 pub fn denied() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, DENIED.to_string(), None)
+    ApiError::denied(StatusCode::NOT_FOUND, DENIED, &Denial(()))
 }
 
 pub fn password_required() -> ApiError {
-    ApiError(
-        StatusCode::UNAUTHORIZED,
-        PASSWORD_REQUIRED.to_string(),
-        None,
-    )
+    ApiError::denied(StatusCode::UNAUTHORIZED, PASSWORD_REQUIRED, &Denial(()))
 }
 
 pub fn not_found() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, NOT_FOUND.to_string(), None)
+    ApiError::denied(StatusCode::NOT_FOUND, NOT_FOUND, &Denial(()))
+}
+
+/// A 404 that names what is missing, as uniform as `not_found` for things the caller can't
+/// open.
+pub fn missing(error: impl Into<String>) -> ApiError {
+    ApiError::denied(StatusCode::NOT_FOUND, error, &Denial(()))
+}
+
+/// The 401 of a request with no valid session.
+pub fn unauthorized() -> ApiError {
+    ApiError::denied(StatusCode::UNAUTHORIZED, "Unauthorized", &Denial(()))
+}
+
+/// The 401 of wrong credentials (a password, a backup phrase, a guest session), which says
+/// nothing more about the account.
+pub fn refused_login(error: impl Into<String>) -> ApiError {
+    ApiError::denied(StatusCode::UNAUTHORIZED, error, &Denial(()))
 }
 
 /// What a timed-out member keeps of their server permissions.
@@ -131,7 +147,7 @@ pub async fn timed_out<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
 }
 
 fn banned() -> ApiError {
-    ApiError(StatusCode::FORBIDDEN, BANNED.to_string(), None)
+    ApiError::locked_by(BANNED, "ban", None)
 }
 
 fn hidden(e: ApiError) -> ApiError {
@@ -317,7 +333,7 @@ pub async fn resolve_code(
             let proof = Proof::password(Some(&code)).and_grants(grants, limits);
             resolve_invite(db, &server, viewer, &proof)
                 .await
-                .map_err(|e| match e.0 {
+                .map_err(|e| match e.status() {
                     StatusCode::TOO_MANY_REQUESTS => e,
                     _ => hidden(e),
                 })
@@ -1858,7 +1874,8 @@ impl ResolvedChannel {
         let readable = match root {
             Some(id) => match message_row(db, id).await {
                 Ok((scope, created_at)) if scope.channel_id == Some(self.id) => Some(created_at),
-                Ok(_) | Err(ApiError(StatusCode::NOT_FOUND, _, _)) => return Ok(Vec::new()),
+                Ok(_) => return Ok(Vec::new()),
+                Err(e) if e.status() == StatusCode::NOT_FOUND => return Ok(Vec::new()),
                 Err(e) => return Err(e),
             },
             None => None,
@@ -1957,10 +1974,9 @@ impl ResolvedChannel {
         };
         self.server.require_member()?;
         if self.kind == ChannelKind::Voice {
-            return Err(ApiError(
-                StatusCode::BAD_REQUEST,
-                "Voice channels cannot receive messages".to_string(),
-                None,
+            return Err(ApiError::invalid(
+                "Voice channels cannot receive messages",
+                "channel_id",
             ));
         }
         if !self.member_rights(db).await?.send {
@@ -2312,11 +2328,7 @@ pub enum ThreadHome<'a> {
 }
 
 fn not_root() -> ApiError {
-    ApiError(
-        StatusCode::BAD_REQUEST,
-        "Threads only start on top-level messages".to_string(),
-        None,
-    )
+    ApiError::invalid("Threads only start on top-level messages", "thread_root_id")
 }
 
 async fn dm_pair(db: &Db, id: i64, live: bool) -> sqlx::Result<Option<Vec<String>>> {
@@ -3477,7 +3489,7 @@ pub(crate) async fn reference_channel_access(
 fn ws_result(res: Result<bool, ApiError>) -> sqlx::Result<bool> {
     match res {
         Ok(open) => Ok(open),
-        Err(e) if e.failed() => Err(sqlx::Error::Protocol(e.1)),
+        Err(e) if e.failed() => Err(sqlx::Error::Protocol(e.error().to_string())),
         Err(_) => Ok(false),
     }
 }
@@ -3542,7 +3554,7 @@ pub(crate) async fn ws_voice_channel(
     username: &str,
     id: i64,
 ) -> Result<ResolvedChannel, ApiError> {
-    let gone = || ApiError(StatusCode::NOT_FOUND, "Channel not found".to_string(), None);
+    let gone = || crate::api::access::missing("Channel not found");
     let user = crate::db::get_user(db, username).await?.ok_or_else(gone)?;
     match resolve_channel(db, id, Some(&user), &Proof::none()).await {
         Ok(channel) => Ok(channel),
@@ -3563,11 +3575,7 @@ pub(crate) async fn ws_guest_voice_channel(
     match resolve_channel(db, id, None, &proof).await {
         Ok(channel) => Ok(channel),
         Err(e) if e.failed() => Err(e),
-        Err(_) => Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "Channel not found".to_string(),
-            None,
-        )),
+        Err(_) => Err(crate::api::access::missing("Channel not found")),
     }
 }
 
@@ -4022,6 +4030,35 @@ mod tests {
 
     fn diff(after: (u64, u64), before: (u64, u64)) -> (u64, u64) {
         (after.0 - before.0, after.1 - before.1)
+    }
+
+    #[tokio::test]
+    async fn the_gate_denials_answer_as_they_always_did() {
+        use axum::response::IntoResponse;
+        let body = async |e: ApiError| {
+            let res = e.into_response();
+            let status = res.status().as_u16();
+            let bytes = axum::body::to_bytes(res.into_body(), 1024)
+                .await
+                .expect("body");
+            (status, String::from_utf8(bytes.to_vec()).expect("utf8"))
+        };
+        assert_eq!(
+            body(not_found()).await,
+            (404, r#"{"error":"Not found"}"#.to_string())
+        );
+        assert_eq!(
+            body(denied()).await,
+            (404, format!(r#"{{"error":"{DENIED}"}}"#))
+        );
+        assert_eq!(
+            body(password_required()).await,
+            (401, format!(r#"{{"error":"{PASSWORD_REQUIRED}"}}"#))
+        );
+        assert_eq!(
+            body(unauthorized()).await,
+            (401, r#"{"error":"Unauthorized"}"#.to_string())
+        );
     }
 
     #[tokio::test]

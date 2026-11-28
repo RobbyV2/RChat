@@ -43,7 +43,7 @@ pub async fn run(config: &AppConfig, command: UserCommand) -> anyhow::Result<Str
     let db = crate::db::open_with(config.database_url.as_deref(), &opts).await?;
     let out = act(&db, &config.limits, command).await;
     crate::db::close(&db).await;
-    out.map_err(|ApiError(_, error, _)| anyhow::anyhow!("{error}"))
+    out.map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 async fn act(db: &Db, limits: &Limits, command: UserCommand) -> Result<String, ApiError> {

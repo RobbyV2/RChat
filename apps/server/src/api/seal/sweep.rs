@@ -79,7 +79,7 @@ pub(crate) async fn seal_row(db: &Db, id: i64, earlier: bool) -> Result<bool, Ap
         sqlx::query("SAVEPOINT seal_file").execute(&mut *tx).await?;
         let undo = match crate::api::media::sealed::seal_file_on(db, &mut tx, media).await {
             Ok(_) => "RELEASE SAVEPOINT seal_file",
-            Err(ApiError(_, e, _)) => {
+            Err(e) => {
                 tracing::warn!("the file {media} of message {id} stays as it is: {e}");
                 "ROLLBACK TO SAVEPOINT seal_file"
             }

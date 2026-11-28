@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::{StatusCode, header};
+use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -61,7 +61,7 @@ fn row(r: &sqlx::any::AnyRow) -> sqlx::Result<Announcement> {
 }
 
 fn invalid(message: impl Into<String>) -> ApiError {
-    ApiError(StatusCode::BAD_REQUEST, message.into(), None)
+    ApiError::invalid(message, "body")
 }
 
 /// Get visible announcements.

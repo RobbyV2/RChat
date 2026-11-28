@@ -51,7 +51,7 @@ pub const WRONG_TARGET: &str = "This form takes another target";
 /// The answer to a forms document the instance refuses for what it says, and to a setting the
 /// server config holds.
 pub(crate) fn refused(msg: &str) -> ApiError {
-    ApiError(axum::http::StatusCode::BAD_REQUEST, msg.to_string(), None)
+    ApiError::invalid(msg, "answers")
 }
 
 /// The 400 answer to a report request whose value `field` is wrong.
@@ -1396,11 +1396,7 @@ enum Done {
 }
 
 fn server_gone() -> ApiError {
-    ApiError(
-        axum::http::StatusCode::NOT_FOUND,
-        "Server not found".to_string(),
-        None,
-    )
+    crate::api::access::missing("Server not found")
 }
 
 /// What `action` does to the server of the server report `row`, checked: nothing for the

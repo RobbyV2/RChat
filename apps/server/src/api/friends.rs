@@ -320,7 +320,7 @@ pub struct RequestListQuery {
 }
 
 fn refused() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, REFUSED.to_string(), None)
+    crate::api::access::missing(REFUSED)
 }
 
 fn target_name(raw: &str) -> String {
@@ -434,7 +434,7 @@ pub async fn tell_friends(state: &AppState, user: &str, online: bool) {
         }
         Ok::<(), ApiError>(())
     };
-    if let Err(ApiError(_, e, _)) = run.await {
+    if let Err(e) = run.await {
         tracing::warn!("friend presence of {user} not sent: {e}");
     }
 }
@@ -612,10 +612,8 @@ async fn befriend(state: &AppState, me: &User, other: &User) -> Result<Friend, A
         .await?
         .rows_affected();
     if taken == 0 || either_blocked(&mut tx, &me.username, &other.username).await? {
-        return Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "No friend request from this user".to_string(),
-            None,
+        return Err(crate::api::access::missing(
+            "No friend request from this user",
         ));
     }
     let most = state.limits.friends_max;
@@ -812,7 +810,7 @@ pub(crate) async fn announce_gone(state: &AppState, user: &str, gone: Gone) {
         });
     }
     for username in pinged {
-        if let Err(ApiError(_, e, _)) = announce_count(state, &username).await {
+        if let Err(e) = announce_count(state, &username).await {
             tracing::warn!("friend ping count of {username} not sent: {e}");
         }
     }
@@ -877,11 +875,7 @@ pub(crate) async fn send_request(
         return Err(refused());
     };
     if is_blocked(&state.db, &user.username, &other.username).await? {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            YOU_BLOCKED.to_string(),
-            None,
-        ));
+        return Err(ApiError::conflict(StatusCode::FORBIDDEN, YOU_BLOCKED));
     }
     let outcome = |status| {
         Ok(Json(RequestOutcome {
@@ -895,7 +889,7 @@ pub(crate) async fn send_request(
     if !on {
         return match befriend(&state, &user, &other).await {
             Ok(_) => outcome(RequestStatus::Accepted),
-            Err(ApiError(StatusCode::NOT_FOUND, _, _)) => Err(crate::api::policy::refused(
+            Err(e) if e.status() == StatusCode::NOT_FOUND => Err(crate::api::policy::refused(
                 &rchat_settings::items::FEATURE_FRIEND_REQUESTS,
                 refused(),
             )),
@@ -922,7 +916,7 @@ pub(crate) async fn send_request(
         if requested(&state.db, &other.username, &user.username).await? {
             return match befriend(&state, &user, &other).await {
                 Ok(_) => outcome(RequestStatus::Accepted),
-                Err(ApiError(StatusCode::NOT_FOUND, _, _)) => Err(refused()),
+                Err(e) if e.status() == StatusCode::NOT_FOUND => Err(refused()),
                 Err(e) => Err(e),
             };
         }
@@ -982,13 +976,7 @@ pub(crate) async fn accept_request(
     Authed(user): Authed,
     Path(username): Path<String>,
 ) -> Result<Json<Friend>, ApiError> {
-    let missing = || {
-        ApiError(
-            StatusCode::NOT_FOUND,
-            "No friend request from this user".to_string(),
-            None,
-        )
-    };
+    let missing = || crate::api::access::missing("No friend request from this user");
     let Some(other) = get_user(&state.db, &target_name(&username)).await? else {
         return Err(missing());
     };

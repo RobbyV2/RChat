@@ -6,7 +6,6 @@ use tokio::time::Instant;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::sync::Semaphore;
@@ -798,11 +797,7 @@ pub(crate) async fn delete_embed(
         .execute(&state.db)
         .await?;
     if res.rows_affected() == 0 {
-        return Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "Embed not found".to_string(),
-            None,
-        ));
+        return Err(crate::api::access::missing("Embed not found"));
     }
     state.hub.broadcast(WsEvent::EmbedsRemoved {
         server: scope.server().map(str::to_string),
@@ -819,6 +814,7 @@ pub(crate) async fn delete_embed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
 
     #[test]
     fn invite_links_and_secrets_never_reach_the_fetcher() {

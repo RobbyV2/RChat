@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
@@ -213,11 +212,7 @@ pub(crate) async fn set_timeout(
     }
     let reason = clean_reason(reason)?;
     if !access.member_in(&state.db, &target).await? {
-        return Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "Not a member".to_string(),
-            None,
-        ));
+        return Err(crate::api::access::missing("Not a member"));
     }
     let timeout = granted.moderate(&state.db, &target).await?;
     let (key, target, actor) = (timeout.server(), timeout.target(), timeout.actor());

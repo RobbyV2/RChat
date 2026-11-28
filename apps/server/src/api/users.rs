@@ -890,7 +890,14 @@ mod tests {
         let off = Some((
             StatusCode::UNAUTHORIZED,
             "Guest access is disabled".to_string(),
-            None,
+            Some(crate::api::error::Reason {
+                kind: crate::api::ReasonKind::OffSite,
+                control: Some("guests_enabled".to_string()),
+                retry_after: None,
+                field: None,
+                until: None,
+                channel: None,
+            }),
         ));
         for target in ["bob", "nobody"] {
             for ask in [
@@ -1582,7 +1589,14 @@ mod tests {
         let off = (
             StatusCode::UNAUTHORIZED,
             "Guest access is disabled".to_string(),
-            None,
+            Some(crate::api::error::Reason {
+                kind: crate::api::ReasonKind::OffSite,
+                control: Some("guests_enabled".to_string()),
+                retry_after: None,
+                field: None,
+                until: None,
+                channel: None,
+            }),
         );
         for (who, ask) in &callers[1..] {
             assert_eq!(

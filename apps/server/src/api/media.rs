@@ -411,7 +411,11 @@ where
             Stop::Over => too_large(max),
             Stop::Failed(e) => watch.error(
                 || too_large(max),
-                ApiError(StatusCode::PAYLOAD_TOO_LARGE, e, None),
+                ApiError::limit(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    e,
+                    &rchat_settings::items::UPLOAD_MAX_MIB,
+                ),
             ),
         })?;
     Ok(Buffered { data, _held: held })
@@ -514,10 +518,9 @@ where
 }
 
 fn stalled() -> ApiError {
-    ApiError(
+    ApiError::unavailable_at(
         StatusCode::REQUEST_TIMEOUT,
-        "The upload stopped sending data".to_string(),
-        None,
+        "The upload stopped sending data",
     )
 }
 
@@ -1141,10 +1144,10 @@ pub(crate) async fn upload_media(
     UploadForm(mut multipart, watch): UploadForm,
 ) -> Result<Json<MediaRef>, ApiError> {
     if !Settings::cached(&state.db).await.asset_uploads {
-        return Err(ApiError(
+        return Err(ApiError::off_site(
             StatusCode::FORBIDDEN,
-            "File uploads are disabled".to_string(),
-            None,
+            "File uploads are disabled",
+            &rchat_settings::items::FEATURE_FILE_UPLOADS,
         ));
     }
     let key = match place.as_deref() {
@@ -1162,12 +1165,7 @@ pub(crate) async fn upload_media(
     let max = state.limits.upload_bytes();
     let field = next_part(&mut multipart)
         .await
-        .map_err(|e| {
-            watch.error(
-                || too_large(max),
-                ApiError(StatusCode::BAD_REQUEST, e.to_string(), None),
-            )
-        })?
+        .map_err(|e| watch.error(|| too_large(max), ApiError::invalid(e.to_string(), "file")))?
         .ok_or_else(|| ApiError::invalid("No file provided", "file"))?;
     let filename = clean_filename(field.file_name().unwrap_or("file"));
     let mime = clean_mime(field.content_type().unwrap_or(NEUTRAL_MIME));
@@ -1310,11 +1308,7 @@ pub(crate) async fn delete_media(
     let media_id = match media_id {
         Some(media_id) => media_id,
         None => {
-            return Err(ApiError(
-                StatusCode::NOT_FOUND,
-                "No attachment".to_string(),
-                None,
-            ));
+            return Err(crate::api::access::missing("No attachment"));
         }
     };
     let entry = audit.map(|(server, actor, channel)| {
@@ -1389,7 +1383,7 @@ pub(crate) async fn delete_media(
 }
 
 fn media_hidden() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, "Media not found".to_string(), None)
+    crate::api::access::missing("Media not found")
 }
 
 /// Most messages that may carry one uploaded file. Forwards past this carry the file name
@@ -1819,10 +1813,10 @@ pub(crate) async fn download_media(
     let proof = Proof::headers(&headers, &state.limits);
     media_view_ok(&db, &proof, &id, user.as_ref()).await?;
     if Settings::cached(&db).await.text_only() {
-        return Err(ApiError(
+        return Err(ApiError::off_server(
             StatusCode::FORBIDDEN,
-            "Attachments are turned off on this server".to_string(),
-            None,
+            "Attachments are turned off on this server",
+            "uploads",
         ));
     }
     let row = sqlx::query(
@@ -1933,10 +1927,8 @@ pub(crate) async fn download_media(
             (body, wanted, stored)
         }
         (Some(_), _, false, None) => {
-            return Err(ApiError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Media stored in S3 but S3 is not configured".to_string(),
-                None,
+            return Err(ApiError::internal(
+                "Media stored in S3 but S3 is not configured",
             ));
         }
         (None, true, _, _) => {
@@ -2013,10 +2005,8 @@ pub(crate) async fn download_media(
             (body, wanted, stored)
         }
         (None, false, false, None) => {
-            return Err(ApiError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Media stored in S3 but S3 is not configured".to_string(),
-                None,
+            return Err(ApiError::internal(
+                "Media stored in S3 but S3 is not configured",
             ));
         }
     };

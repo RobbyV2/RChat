@@ -265,11 +265,11 @@ async fn switched_on(db: &Db) -> Result<(), ApiError> {
 }
 
 fn unknown() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, UNKNOWN.to_string(), None)
+    crate::api::access::missing(UNKNOWN)
 }
 
 fn unknown_message() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, UNKNOWN_MESSAGE.to_string(), None)
+    crate::api::access::missing(UNKNOWN_MESSAGE)
 }
 
 /// An incoming webhook as stored.
@@ -1166,7 +1166,7 @@ async fn read_execute(
     let mut file = None;
     while let Some(field) = media::next_part(&mut form)
         .await
-        .map_err(|e| watch.error(over, ApiError(StatusCode::BAD_REQUEST, e.to_string(), None)))?
+        .map_err(|e| watch.error(over, ApiError::invalid(e.to_string(), "body")))?
     {
         match field.name() {
             Some("payload_json") => {
@@ -2356,10 +2356,9 @@ pub(crate) async fn update_outgoing(
     )
     .await?;
     if !wrote {
-        return Err(ApiError(
+        return Err(ApiError::conflict(
             StatusCode::CONFLICT,
-            "This webhook was just changed, try again".to_string(),
-            None,
+            "This webhook was just changed, try again",
         ));
     }
     if details.has_changes() {
@@ -2447,10 +2446,9 @@ pub(crate) async fn reset_secret(
         .await?
         .rows_affected();
     if wrote != 1 {
-        return Err(ApiError(
+        return Err(ApiError::conflict(
             StatusCode::CONFLICT,
-            "This webhook was just changed, try again".to_string(),
-            None,
+            "This webhook was just changed, try again",
         ));
     }
     let details = match takes {
@@ -2665,7 +2663,7 @@ pub fn spawn(state: &AppState, deliver: bool) -> Vec<tokio::task::JoinHandle<()>
     let events = state.clone();
     let mut tasks = vec![tokio::spawn(async move {
         while let Some(ev) = rx.recv().await {
-            if let Err(ApiError(_, e, _)) = enqueue(&events, ev).await {
+            if let Err(e) = enqueue(&events, ev).await {
                 tracing::warn!("outgoing webhook event not queued: {e}");
             }
         }
@@ -2677,9 +2675,7 @@ pub fn spawn(state: &AppState, deliver: bool) -> Vec<tokio::task::JoinHandle<()>
             loop {
                 let _ = tokio::time::timeout(Duration::from_secs(2), WAKE.notified()).await;
                 let policy = outbound_policy();
-                if let Err(ApiError(_, e, _)) =
-                    dispatch(&worker, &policy, worker.clock.unix(), &pool).await
-                {
+                if let Err(e) = dispatch(&worker, &policy, worker.clock.unix(), &pool).await {
                     tracing::warn!("outgoing webhook deliveries failed: {e}");
                 }
             }
@@ -3434,7 +3430,7 @@ async fn dispatch(
         started.push(tokio::spawn(async move {
             let sent = match deliver(&state, &policy, id, at).await {
                 Ok(sent) => sent,
-                Err(ApiError(_, e, _)) => {
+                Err(e) => {
                     tracing::warn!("outgoing webhook delivery {id} failed: {e}");
                     false
                 }

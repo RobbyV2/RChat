@@ -219,7 +219,7 @@ pub(crate) async fn put_identity(
     let held = rare::hold(&state, Rare::P2pIdentity, Some(&session.user))?;
     let answer = put_at(&state, session, &ik, body, state.clock.unix()).await;
     match &answer {
-        Err(ApiError(StatusCode::UNAUTHORIZED, _, _)) => drop(held),
+        Err(e) if e.status() == StatusCode::UNAUTHORIZED => drop(held),
         Ok(_) | Err(_) => held.answered(answer.as_ref().err()),
     }
     answer

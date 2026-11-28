@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -189,13 +189,7 @@ pub(crate) async fn post(
     let reading = super::access::Reading::now(db).await;
     let mut tx = db.begin().await?;
     lock_server(&mut tx, server).await?;
-    let expired = || {
-        ApiError(
-            StatusCode::UNAUTHORIZED,
-            "Guest session expired".into(),
-            None,
-        )
-    };
+    let expired = || crate::api::access::refused_login("Guest session expired");
     let (session, author) = match headers.get("x-guest-session") {
         Some(raw) => {
             let raw = raw.to_str().map_err(|_| expired())?;

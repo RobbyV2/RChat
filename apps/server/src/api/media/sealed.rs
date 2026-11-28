@@ -21,11 +21,7 @@ pub(crate) const UNREADABLE: &str = "This file can't be opened";
 
 /// The answer for a stored file that does not open.
 pub(crate) fn unreadable() -> ApiError {
-    ApiError(
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        UNREADABLE.to_string(),
-        None,
-    )
+    ApiError::server(UNREADABLE)
 }
 
 /// The S3 object of a file stored sealed.
@@ -346,7 +342,7 @@ pub(crate) async fn sweep(state: &AppState) -> Result<usize, ApiError> {
     for id in &ids {
         match seal_object(state, id).await {
             Ok(changed) => done += usize::from(changed),
-            Err(ApiError(_, e, _)) => tracing::warn!("the file {id} could not be encrypted: {e}"),
+            Err(e) => tracing::warn!("the file {id} could not be encrypted: {e}"),
         }
     }
     Ok(done)
@@ -616,7 +612,7 @@ pub(crate) async fn unseal_now(state: &AppState, id: &str) -> Result<bool, ApiEr
 pub(crate) fn seal_later(state: &AppState, id: String) {
     let state = state.clone();
     tokio::spawn(async move {
-        if let Err(ApiError(_, e, _)) = seal_object(&state, &id).await {
+        if let Err(e) = seal_object(&state, &id).await {
             tracing::warn!("the file {id} could not be encrypted: {e}");
         }
     });

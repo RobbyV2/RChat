@@ -124,25 +124,13 @@ pub(crate) async fn check_dm(db: &Db, sender: &str, other: &str) -> Result<(), A
         return Ok(());
     }
     if is_blocked(db, sender, other).await? {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            YOU_BLOCKED.to_string(),
-            None,
-        ));
+        return Err(ApiError::conflict(StatusCode::FORBIDDEN, YOU_BLOCKED));
     }
     if friends::dm_refused(db, sender, other).await? {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            YOU_FRIENDS_ONLY.to_string(),
-            None,
-        ));
+        return Err(ApiError::conflict(StatusCode::FORBIDDEN, YOU_FRIENDS_ONLY));
     }
     if is_blocked(db, other, sender).await? || friends::dm_refused(db, other, sender).await? {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            NOT_ACCEPTING.to_string(),
-            None,
-        ));
+        return Err(ApiError::conflict(StatusCode::FORBIDDEN, NOT_ACCEPTING));
     }
     Ok(())
 }
@@ -214,7 +202,7 @@ pub(crate) async fn block_user(
     };
     let found = get_user(&state.db, &target)
         .await?
-        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "User not found".to_string(), None));
+        .ok_or_else(|| crate::api::access::missing("User not found"));
     let other = match (held, found) {
         (Some(held), Ok(other)) => {
             if !sees(&state, &user, &other.username).await? {

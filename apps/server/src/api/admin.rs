@@ -931,13 +931,7 @@ pub(crate) async fn put_report_forms(
         .as_deref()
         .and_then(ReportForms::from_stored)
         .unwrap_or_default();
-    let changed = || {
-        ApiError(
-            StatusCode::CONFLICT,
-            "The forms changed. Load them again".to_string(),
-            None,
-        )
-    };
+    let changed = || ApiError::conflict(StatusCode::CONFLICT, "The forms changed. Load them again");
     if rev.is_some_and(|rev| rev != before.rev) {
         return Err(changed());
     }
@@ -1317,11 +1311,7 @@ pub(crate) async fn delete_server(
     }
     match remove_server(&state, &name).await? {
         true => Ok(ok()),
-        false => Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "Server not found".to_string(),
-            None,
-        )),
+        false => Err(crate::api::access::missing("Server not found")),
     }
 }
 
@@ -1569,11 +1559,7 @@ pub(crate) async fn hide_user_in(
             .await?
             .is_some_and(|u| u.password_hash == PURGING_HASH);
         if !pending {
-            return Err(ApiError(
-                StatusCode::NOT_FOUND,
-                "User not found".to_string(),
-                None,
-            ));
+            return Err(crate::api::access::missing("User not found"));
         }
         let changed = match kind {
             PurgeKind::Ban => {
@@ -1904,7 +1890,9 @@ pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
             continue;
         };
         let claimed = match own != 0 {
-            true => begin_own(state, &key).await.map_err(|e| e.1),
+            true => begin_own(state, &key)
+                .await
+                .map_err(|e| e.error().to_string()),
             false => claim_purge(state, kind, &key, state.clock.unix())
                 .await
                 .map_err(|e| e.to_string()),

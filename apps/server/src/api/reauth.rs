@@ -1,5 +1,4 @@
 use axum::extract::FromRequestParts;
-use axum::http::StatusCode;
 use axum::http::request::Parts;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -212,7 +211,7 @@ impl Purpose {
 pub(crate) const CHANGE_TEMPORARY: &str = "Change your temporary password first";
 
 fn refused(msg: &str) -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, msg.to_string(), None)
+    crate::api::access::refused_login(msg)
 }
 
 async fn counted(state: &AppState, pace: &str, msg: &str) -> Result<(), ApiError> {

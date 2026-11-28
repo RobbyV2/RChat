@@ -262,7 +262,7 @@ async fn add_to_servers(
             },
             Err(e) => {
                 let failed = e.failed();
-                let ApiError(_, error, _) = e;
+                let error = e.error().to_string();
                 ServerResult {
                     server,
                     ok: false,

@@ -1170,10 +1170,9 @@ async fn claim_media(
     .await?
     .name;
     if claimed == 0 {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "You can only attach files you uploaded".to_string(),
-            None,
+        return Err(ApiError::perm(
+            "You can only attach files you uploaded",
+            "author",
         ));
     }
     let attached =
@@ -1202,10 +1201,10 @@ const P2P_SIZE_MAX: i64 = (1 << 53) - 1;
 const P2P_MIME_MAX: usize = 255;
 
 fn attachments_off(what: &str) -> ApiError {
-    ApiError(
+    ApiError::off_server(
         StatusCode::FORBIDDEN,
         format!("{what} are turned off on this server"),
-        None,
+        "uploads",
     )
 }
 
@@ -2578,7 +2577,7 @@ pub(crate) async fn locations(
         .await
         {
             Ok(location) => found.push(location),
-            Err(ApiError(code, _, _)) if code.is_client_error() => {}
+            Err(e) if e.status().is_client_error() => {}
             Err(e) => return Err(e),
         }
     }
@@ -5187,7 +5186,7 @@ pub(crate) async fn mark_read_batch(
     for (scope, target) in targets {
         match read_scope(&state, &user, &scope, target, ReadUpTo::Latest).await {
             Ok(_) => {}
-            Err(ApiError(code, _, _)) if code.is_client_error() => {}
+            Err(e) if e.status().is_client_error() => {}
             Err(e) => return Err(e),
         }
     }

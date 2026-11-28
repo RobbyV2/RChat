@@ -237,7 +237,7 @@ async fn ping_author(state: &AppState, target: &Target, actor: &User, emoji: &st
         create_pings(state, &spec, &recipients).await.map(|_| ())
     };
     let res: Result<(), ApiError> = run.await;
-    if let Err(ApiError(_, e, _)) = res {
+    if let Err(e) = res {
         tracing::warn!("reaction ping for message {} failed: {e}", message.id);
     }
 }

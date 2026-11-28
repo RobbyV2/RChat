@@ -95,7 +95,7 @@ pub async fn display_from_claim(db: &Db, raw: &str) -> Result<Option<String>, Ap
     let clipped: String = raw.trim().chars().take(auth::DISPLAY_NAME_MAX).collect();
     match auth::shaped_display_name(db, &clipped).await {
         Ok(name) => Ok(Some(name)),
-        Err(e) if e.0 == StatusCode::BAD_REQUEST => Ok(None),
+        Err(e) if e.status() == StatusCode::BAD_REQUEST => Ok(None),
         Err(e) => Err(e),
     }
 }
@@ -238,8 +238,8 @@ async fn sign_in_once(
             };
             let key = match auth::check_new_username(&mut tx, &settings, name).await {
                 Ok(key) => key,
-                Err(e) if picked.is_none() && e.0 == StatusCode::BAD_REQUEST => {
-                    let reason = match e.1.as_str() {
+                Err(e) if picked.is_none() && e.status() == StatusCode::BAD_REQUEST => {
+                    let reason = match e.error() {
                         "Username is taken"
                         | "Username is banned"
                         | "Content blocked by profanity filter" => NameIssue::Taken,

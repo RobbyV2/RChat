@@ -503,27 +503,19 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
                 tracing::warn!("reading the data keys' states failed: {e}");
             }
             if holds(&sealing, "seal-sweep", Duration::from_secs(290)).await {
-                if let Err(crate::api::ApiError(_, e, _)) =
-                    crate::api::seal::sweep(&sealing.db).await
-                {
+                if let Err(e) = crate::api::seal::sweep(&sealing.db).await {
                     tracing::warn!("the sweep for messages to encrypt failed: {e}");
                 }
-                if let Err(crate::api::ApiError(_, e, _)) =
-                    crate::api::scheduled::seal_pending(&sealing.db).await
-                {
+                if let Err(e) = crate::api::scheduled::seal_pending(&sealing.db).await {
                     tracing::warn!("the sweep for scheduled messages to encrypt failed: {e}");
                 }
-                if let Err(crate::api::ApiError(_, e, _)) =
-                    crate::api::media::sealed::sweep(&sealing).await
-                {
+                if let Err(e) = crate::api::media::sealed::sweep(&sealing).await {
                     tracing::warn!("the sweep for files to encrypt failed: {e}");
                 }
                 if let Err(e) = crate::api::seal::resume_jobs(&sealing).await {
                     tracing::warn!("resuming the jobs over stored messages failed: {e}");
                 }
-                if let Err(crate::api::ApiError(_, e, _)) =
-                    crate::api::seal::rotate::keep_up(&sealing).await
-                {
+                if let Err(e) = crate::api::seal::rotate::keep_up(&sealing).await {
                     tracing::warn!("keeping the data keys failed: {e}");
                 }
             }

@@ -62,7 +62,7 @@ static REQUESTS: LazyLock<Keyed> = LazyLock::new(|| {
 });
 
 fn not_found() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, "Image not found".to_string(), None)
+    crate::api::access::missing("Image not found")
 }
 
 fn busy() -> ApiError {

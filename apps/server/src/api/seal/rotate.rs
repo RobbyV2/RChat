@@ -267,7 +267,7 @@ static RUNNING: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(No
 pub fn spawn(state: &AppState) {
     let state = state.clone();
     tokio::spawn(async move {
-        if let Err(ApiError(_, e, _)) = run(&state).await {
+        if let Err(e) = run(&state).await {
             tracing::warn!("the key rotation stopped: {e}");
         }
     });
@@ -405,9 +405,9 @@ pub async fn keep_up(state: &AppState) -> Result<(), ApiError> {
             }
         }
         Ok(false) => {}
-        Err(ApiError(_, e, _)) => tracing::warn!("asking which keys the copies hold failed: {e}"),
+        Err(e) => tracing::warn!("asking which keys the copies hold failed: {e}"),
     }
-    if let Err(ApiError(_, e, _)) = destroy_due(state, state.clock.unix() - DESTROY_AFTER).await {
+    if let Err(e) = destroy_due(state, state.clock.unix() - DESTROY_AFTER).await {
         tracing::warn!("destroying retired data keys failed: {e}");
     }
     let retiring: Vec<String> =
@@ -988,7 +988,7 @@ async fn files(state: &AppState, retiring: &[u32], at: &str) -> Result<Tally, Ap
         match crate::api::media::sealed::reseal_now(state, id, retiring).await {
             Ok(Some(outcome)) => tally.add(outcome),
             Ok(None) => {}
-            Err(ApiError(_, e, _)) => {
+            Err(e) => {
                 tracing::warn!("the file {id} could not be sealed again: {e}");
                 tally.add(Outcome::Left);
             }

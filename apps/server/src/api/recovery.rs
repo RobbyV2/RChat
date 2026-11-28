@@ -98,11 +98,7 @@ pub struct RecoverReq {
 const NO_PHRASE: &str = "oXJCZk2tDDQf5yZ1GJ1xwFPccKmoe_Y-41erQ5o9Azw";
 
 fn wrong_phrase() -> ApiError {
-    ApiError(
-        StatusCode::UNAUTHORIZED,
-        "Wrong username or backup phrase".to_string(),
-        None,
-    )
+    crate::api::access::refused_login("Wrong username or backup phrase")
 }
 
 /// Sign in with a backup phrase

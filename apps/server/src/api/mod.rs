@@ -2099,10 +2099,10 @@ pub async fn require_guest_ok(db: &Db, user: Option<&User>) -> Result<(), ApiErr
         Some(_) => Ok(()),
         None => match Settings::cached(db).await.guests_enabled {
             true => Ok(()),
-            false => Err(ApiError(
+            false => Err(ApiError::off_site(
                 StatusCode::UNAUTHORIZED,
-                "Guest access is disabled".to_string(),
-                None,
+                "Guest access is disabled",
+                &rchat_settings::items::GUESTS_ENABLED,
             )),
         },
     }
@@ -2142,10 +2142,9 @@ pub const TOPIC_MAX: usize = 1024;
 
 pub fn check_len(text: &str, max: usize, what: &str) -> Result<(), ApiError> {
     match text.chars().count() > max {
-        true => Err(ApiError(
-            StatusCode::BAD_REQUEST,
+        true => Err(ApiError::invalid(
             format!("{what} must be at most {max} characters"),
-            None,
+            &what.to_lowercase().replace(' ', "_"),
         )),
         false => Ok(()),
     }
@@ -2334,7 +2333,7 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 pub(crate) fn unauthorized() -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None)
+    crate::api::access::unauthorized()
 }
 
 /// Marks that a request uses its session, unless it says it runs in the background.

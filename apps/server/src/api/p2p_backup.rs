@@ -209,19 +209,15 @@ fn too_many() -> ApiError {
     )
 }
 
-fn sending(ApiError(code, msg, reason): ApiError) -> ApiError {
-    match code {
-        StatusCode::TOO_MANY_REQUESTS => ApiError(
-            code,
-            "Too many backup transfers at once, try again in a moment".to_string(),
-            reason,
-        ),
-        StatusCode::SERVICE_UNAVAILABLE => ApiError(
-            code,
-            "Too many transfers right now, try again in a moment".to_string(),
-            reason,
-        ),
-        _ => ApiError(code, msg, reason),
+fn sending(e: ApiError) -> ApiError {
+    match e.status() {
+        StatusCode::TOO_MANY_REQUESTS => {
+            e.retext("Too many backup transfers at once, try again in a moment")
+        }
+        StatusCode::SERVICE_UNAVAILABLE => {
+            e.retext("Too many transfers right now, try again in a moment")
+        }
+        _ => e,
     }
 }
 
@@ -286,13 +282,9 @@ async fn send(
         Some(record) => {
             let binding = backup_binding(username, ik, version);
             let opener = Opener::of(&state.db, [record.as_slice()]).await?;
-            let mut plain = opener.open(BACKUPS, &binding, &record).ok_or_else(|| {
-                ApiError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    UNREADABLE.to_string(),
-                    None,
-                )
-            })?;
+            let mut plain = opener
+                .open(BACKUPS, &binding, &record)
+                .ok_or_else(|| ApiError::server(UNREADABLE))?;
             std::mem::take(&mut *plain)
         }
         None => row.try_get(0)?,

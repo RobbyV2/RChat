@@ -62,8 +62,10 @@ impl From<&str> for Refused {
 
 impl From<ApiError> for Refused {
     fn from(e: ApiError) -> Refused {
-        let ApiError(_, message, reason) = e;
-        Self::Error { message, reason }
+        Self::Error {
+            message: e.error().to_string(),
+            reason: e.reason().cloned().map(Box::new),
+        }
     }
 }
 

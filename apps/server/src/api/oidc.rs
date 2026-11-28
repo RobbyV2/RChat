@@ -474,7 +474,7 @@ async fn exchange_code(
             ExchangeResp::PickUsername { suggestion, reason }
         }
         Err(e) => {
-            if q.username.is_some() && e.0 == StatusCode::BAD_REQUEST {
+            if q.username.is_some() && e.status() == StatusCode::BAD_REQUEST {
                 flow::put_back(&state.db, &q.code, &app, app.expires_at).await?;
             }
             return Err(e);
@@ -562,11 +562,7 @@ pub(crate) async fn backchannel_logout(
 
 /// The OpenID back-channel logout refusal, in the shape that specification gives it.
 fn invalid_request() -> ApiError {
-    ApiError(
-        axum::http::StatusCode::BAD_REQUEST,
-        "invalid_request".to_string(),
-        None,
-    )
+    ApiError::spec(axum::http::StatusCode::BAD_REQUEST, "invalid_request")
 }
 
 #[cfg(test)]
@@ -615,10 +611,9 @@ pub(crate) async fn client_consent(
         .origin()
         .ascii_serialization();
     if headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) != Some(public.as_str()) {
-        return Err(ApiError(
+        return Err(ApiError::conflict(
             StatusCode::FORBIDDEN,
-            "Consent must come from this instance".into(),
-            None,
+            "Consent must come from this instance",
         ));
     }
     Ok((

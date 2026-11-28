@@ -160,16 +160,14 @@ impl Held {
     /// Keeps the request counted, unless `error` is a refusal by another limit or for capacity
     /// (423, 429, 503).
     pub fn answered(mut self, error: Option<&ApiError>) {
-        if !matches!(
-            error,
-            Some(ApiError(
+        if !error.is_some_and(|e| {
+            matches!(
+                e.status(),
                 StatusCode::LOCKED
                     | StatusCode::TOO_MANY_REQUESTS
-                    | StatusCode::SERVICE_UNAVAILABLE,
-                _,
-                _
-            ))
-        ) {
+                    | StatusCode::SERVICE_UNAVAILABLE
+            )
+        }) {
             self.hour = None;
             self.day = None;
         }

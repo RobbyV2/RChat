@@ -875,11 +875,7 @@ pub(crate) async fn revoke_password(
         .fetch_optional(&mut *tx)
         .await?;
     let Some(found) = found else {
-        return Err(ApiError(
-            axum::http::StatusCode::NOT_FOUND,
-            "Password not found".to_string(),
-            None,
-        ));
+        return Err(crate::api::access::missing("Password not found"));
     };
     let label: Option<String> = found.try_get(0)?;
     let revoked = sqlx::query(

@@ -1152,13 +1152,19 @@ pub(crate) async fn run_job(state: &AppState, id: i64) {
             Ok(false) => break,
             Err(e) if errors < RETRIES => {
                 errors += 1;
-                tracing::warn!("bulk delete job {id} batch failed, trying again: {}", e.1);
+                tracing::warn!(
+                    "bulk delete job {id} batch failed, trying again: {}",
+                    e.error()
+                );
                 tokio::time::sleep(PAUSE * 10 * 2u32.pow(errors)).await;
             }
             Err(e) => {
-                tracing::warn!("bulk delete job {id} failed: {}", e.1);
+                tracing::warn!("bulk delete job {id} failed: {}", e.error());
                 if let Err(e) = fail(state, id).await {
-                    tracing::warn!("marking bulk delete job {id} failed did not work: {}", e.1);
+                    tracing::warn!(
+                        "marking bulk delete job {id} failed did not work: {}",
+                        e.error()
+                    );
                 }
                 break;
             }

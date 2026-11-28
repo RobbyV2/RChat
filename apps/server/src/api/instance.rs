@@ -216,10 +216,9 @@ pub(crate) async fn assertion(
 ) -> Result<Json<Assertion>, ApiError> {
     let AssertionRequest { aud, nonce } = req;
     if user.username.contains('@') {
-        return Err(ApiError(
+        return Err(ApiError::conflict(
             StatusCode::FORBIDDEN,
-            "This username can't be used across instances".to_string(),
-            None,
+            "This username can't be used across instances",
         ));
     }
     let aud = aud.trim().to_string();
@@ -342,10 +341,9 @@ pub(crate) async fn p2p_binding(
     }
     rare::take(&state, Rare::P2pBinding, Some(&user))?;
     if user.username.contains('@') {
-        return Err(ApiError(
+        return Err(ApiError::conflict(
             StatusCode::FORBIDDEN,
-            "The badge isn't available for usernames with @".to_string(),
-            None,
+            "The badge isn't available for usernames with @",
         ));
     }
     let key = p2p_key(&ik)

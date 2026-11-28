@@ -466,7 +466,7 @@ pub(crate) async fn run_job(state: &AppState, id: i64) -> bool {
             Ok(true) => ran = true,
             Ok(false) => break,
             Err(e) => {
-                tracing::warn!("seal job {id} could not be held: {}", e.1);
+                tracing::warn!("seal job {id} could not be held: {}", e.error());
                 break;
             }
         }
@@ -478,13 +478,13 @@ pub(crate) async fn run_job(state: &AppState, id: i64) -> bool {
             Ok(false) => break,
             Err(e) if errors < RETRIES => {
                 errors += 1;
-                tracing::warn!("seal job {id} step failed, trying again: {}", e.1);
+                tracing::warn!("seal job {id} step failed, trying again: {}", e.error());
                 tokio::time::sleep(PAUSE * 10 * 2u32.pow(errors)).await;
             }
             Err(e) => {
-                tracing::warn!("seal job {id} failed: {}", e.1);
+                tracing::warn!("seal job {id} failed: {}", e.error());
                 if let Err(e) = end(state, id, JobState::Failed).await {
-                    tracing::warn!("marking seal job {id} failed did not work: {}", e.1);
+                    tracing::warn!("marking seal job {id} failed did not work: {}", e.error());
                 }
                 break;
             }
@@ -569,7 +569,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
         return Err(left.swap_remove(0));
     }
     for e in &left {
-        tracing::warn!("seal job {id} left a message as it is: {}", e.1);
+        tracing::warn!("seal job {id} left a message as it is: {}", e.error());
     }
     files(state, id, &ids, job.direction).await?;
     let last = match ids.last() {
@@ -687,7 +687,10 @@ async fn file(state: &AppState, job: i64, media: &str, direction: Direction) {
     })
     .await;
     if let Err(e) = done {
-        tracing::warn!("seal job {job} left the file {media} as it is: {}", e.1);
+        tracing::warn!(
+            "seal job {job} left the file {media} as it is: {}",
+            e.error()
+        );
     }
 }
 
