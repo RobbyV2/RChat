@@ -112,9 +112,9 @@ describe('the rail voice badge', () => {
 
   test('pops in only when animations play', () => {
     expect(renderToStaticMarkup(<RailVoiceBadge count={1} />)).not.toContain('animate-badge-pop')
-    setState({ anim: { on: true, motion: 'always' } })
+    setState({ anim: { on: true, motion: 'always', style: 'subtle', custom: {} } })
     expect(renderToStaticMarkup(<RailVoiceBadge count={1} />)).toContain('animate-badge-pop')
-    setState({ anim: { on: true, motion: 'still' } })
+    setState({ anim: { on: true, motion: 'still', style: 'subtle', custom: {} } })
     expect(renderToStaticMarkup(<RailVoiceBadge count={1} />)).not.toContain('animate-badge-pop')
   })
 })

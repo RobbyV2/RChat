@@ -16,3 +16,24 @@ export const SPRINGS = {
   gentle: { stiffness: 300, damping: 30 },
   bouncy: { stiffness: 300, damping: 15 },
 } as const
+
+// How far things travel, in px.
+export const DISTANCES = { settle: 2, lift: 4, rise: 6, slide: 16, swap: 24 } as const
+
+// How much a pressed and a hovered control scale.
+export const SCALES = { press: 0.97, hover: 1.03 } as const
+
+// The same values as the style sheet has them (`globals.css`).
+export const TOKEN_VARS = {
+  ...DURATION_VARS,
+  '--motion-standard': EASINGS.standard,
+  '--motion-decelerate': EASINGS.decelerate,
+  '--motion-accelerate': EASINGS.accelerate,
+  '--motion-settle': `${DISTANCES.settle}px`,
+  '--motion-lift': `${DISTANCES.lift}px`,
+  '--motion-rise': `${DISTANCES.rise}px`,
+  '--motion-slide': `${DISTANCES.slide}px`,
+  '--motion-swap': `${DISTANCES.swap}px`,
+  '--motion-press': `${SCALES.press}`,
+  '--motion-hover': `${SCALES.hover}`,
+} as const

@@ -25,16 +25,18 @@ afterEach(() => {
 
 describe('the Animations setting in the store', () => {
   test('starts off and is saved per account', () => {
-    expect(st().anim).toEqual({ on: false, motion: 'device' })
-    st().setAnim({ on: true, motion: 'always' })
-    expect(st().anim).toEqual({ on: true, motion: 'always' })
-    expect(storage.get('rchat_anim:alice')).toBe('{"v":1,"on":true,"motion":"always"}')
+    expect(st().anim).toEqual({ on: false, motion: 'device', style: 'subtle', custom: {} })
+    st().setAnim({ on: true, motion: 'always', style: 'subtle', custom: {} })
+    expect(st().anim).toEqual({ on: true, motion: 'always', style: 'subtle', custom: {} })
+    expect(storage.get('rchat_anim:alice')).toBe(
+      '{"v":1,"on":true,"motion":"always","style":"subtle","custom":{}}'
+    )
   })
 
   test('another tab changing it reloads it, and junk reads as the default', () => {
     storage.set('rchat_anim:alice', '{"v":1,"on":true,"motion":"still"}')
     st().reloadAnim()
-    expect(st().anim).toEqual({ on: true, motion: 'still' })
+    expect(st().anim).toEqual({ on: true, motion: 'still', style: 'subtle', custom: {} })
     storage.set('rchat_anim:alice', '{not json')
     st().reloadAnim()
     expect(st().anim).toEqual(ANIM_DEFAULT)
@@ -42,17 +44,24 @@ describe('the Animations setting in the store', () => {
 
   test('guests keep their own, and nobody signed in saves nothing', () => {
     useStore.setState({ me: null, guest: true })
-    st().setAnim({ on: true, motion: 'device' })
-    expect(storage.get('rchat_anim:guest')).toBe('{"v":1,"on":true,"motion":"device"}')
+    st().setAnim({ on: true, motion: 'device', style: 'subtle', custom: {} })
+    expect(storage.get('rchat_anim:guest')).toBe(
+      '{"v":1,"on":true,"motion":"device","style":"subtle","custom":{}}'
+    )
     useStore.setState({ me: null, guest: false, anim: ANIM_DEFAULT })
-    st().setAnim({ on: true, motion: 'device' })
+    st().setAnim({ on: true, motion: 'device', style: 'subtle', custom: {} })
     expect([...storage.keys()]).toEqual(['rchat_anim:guest'])
   })
 
   test('an imported config sets it', async () => {
-    const doc = { v: 1 as const, animations: { on: true, motion: 'still' as const } }
+    const doc = {
+      v: 1 as const,
+      animations: { on: true, motion: 'still' as const, style: 'lively' as const, custom: {} },
+    }
     expect(await st().applyConfig(doc, ['animations'])).toBeNull()
-    expect(st().anim).toEqual({ on: true, motion: 'still' })
-    expect(storage.get('rchat_anim:alice')).toBe('{"v":1,"on":true,"motion":"still"}')
+    expect(st().anim).toEqual({ on: true, motion: 'still', style: 'lively', custom: {} })
+    expect(storage.get('rchat_anim:alice')).toBe(
+      '{"v":1,"on":true,"motion":"still","style":"lively","custom":{}}'
+    )
   })
 })

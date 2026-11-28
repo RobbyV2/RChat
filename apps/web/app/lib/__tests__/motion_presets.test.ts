@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { BUILTINS, BUILTIN_NAMES, CHEVRON, PRESETS, PRESET_NAMES } from '../motion/presets'
-import { SLOT_IDS, type SlotId } from '../motion/slots'
+import { BUILTINS, BUILTIN_NAMES, PRESETS, PRESET_NAMES } from '../motion/presets'
+import { PLAY_IDS, type PlaySlot } from '../motion/slots'
 import { spring } from '../motion/spring'
 import { DURATIONS, EASINGS, SPRINGS } from '../motion/tokens'
 import { LIMITS, check, reduced, type Animation } from '../motion/validate'
@@ -13,15 +13,15 @@ const sprung = (a: Animation, s: { easing: string; duration: number }) =>
   a.timing.easing === s.easing && a.timing.duration === s.duration
 
 describe('the presets', () => {
-  test('Subtle and Lively each cover the 24 slots and nothing else', () => {
+  test('Subtle and Lively each cover the slots the engine plays and nothing else', () => {
     expect(PRESET_NAMES).toEqual(['subtle', 'lively'])
     for (const p of PRESET_NAMES)
-      expect(Object.keys(PRESETS[p]).sort()).toEqual([...SLOT_IDS].sort())
+      expect(Object.keys(PRESETS[p]).sort()).toEqual([...PLAY_IDS].sort())
   })
 
   test('every animation moves only transform and opacity, within the limits', () => {
     for (const p of PRESET_NAMES)
-      for (const slot of SLOT_IDS) {
+      for (const slot of PLAY_IDS) {
         const errors = check(PRESETS[p][slot])
         if (errors.length) throw new Error(`${p} ${slot}: ${errors.join(', ')}`)
       }
@@ -29,7 +29,7 @@ describe('the presets', () => {
 
   test('every slot has a reduced variant: opacity only, at most 150 ms', () => {
     for (const p of PRESET_NAMES)
-      for (const slot of SLOT_IDS) {
+      for (const slot of PLAY_IDS) {
         const r = reduced(PRESETS[p][slot])
         if (check(r).length) throw new Error(`${p} ${slot}`)
         if (r.keyframes.some(k => 'transform' in k)) throw new Error(`${p} ${slot} moves`)
@@ -39,13 +39,13 @@ describe('the presets', () => {
 
   test('nothing repeats', () => {
     for (const p of PRESET_NAMES)
-      for (const slot of SLOT_IDS) expect(PRESETS[p][slot].timing.iterations ?? 1).toBe(1)
+      for (const slot of PLAY_IDS) expect(PRESETS[p][slot].timing.iterations ?? 1).toBe(1)
   })
 
   test('Subtle takes its durations and easings from the tokens, with no spring', () => {
-    const medium: SlotId[] = ['dialog', 'sheet', 'panel', 'drawer', 'thread', 'message.arrive']
-    medium.push('reorder', 'toast', 'call.tile')
-    for (const slot of SLOT_IDS) {
+    const medium: PlaySlot[] = ['dialog', 'sheet', 'panel', 'drawer', 'thread', 'message.arrive']
+    medium.push('reorder', 'toast', 'call.tile', 'lightbox', 'image.reveal', 'banner.unread')
+    for (const slot of PLAY_IDS) {
       const { duration, easing } = PRESETS.subtle[slot].timing
       expect(duration).toBe(medium.includes(slot) ? DURATIONS.medium : DURATIONS.short)
       if (!(Object.values(EASINGS) as string[]).includes(easing ?? ''))
@@ -54,11 +54,11 @@ describe('the presets', () => {
   })
 
   test('Lively uses the gentle spring, the bouncy spring, or stays as Subtle, as the catalog says', () => {
-    const GENTLE: SlotId[] = ['dialog', 'menu', 'panel', 'drawer', 'thread', 'hover', 'reorder']
-    GENTLE.push('call.tile', 'palette')
-    const BOUNCY: SlotId[] = ['sheet', 'message.arrive', 'drag', 'toast', 'toggle']
-    const SAME: SlotId[] = ['tooltip', 'press', 'typing', 'expand']
-    for (const slot of SLOT_IDS) {
+    const GENTLE: PlaySlot[] = ['dialog', 'menu', 'panel', 'drawer', 'thread', 'reorder']
+    GENTLE.push('call.tile', 'palette', 'lightbox', 'lightbox.slide', 'banner.unread')
+    const BOUNCY: PlaySlot[] = ['sheet', 'message.arrive', 'toast']
+    const SAME: PlaySlot[] = ['tooltip', 'typing']
+    for (const slot of PLAY_IDS) {
       const a = PRESETS.lively[slot]
       if (GENTLE.includes(slot)) expect(sprung(a, gentle)).toBe(true)
       else if (BOUNCY.includes(slot)) expect(sprung(a, bouncy)).toBe(true)
@@ -126,28 +126,30 @@ describe("the catalog's numbers", () => {
     expect(first(lively['reaction.count']).transform).toBe('translateY(100%) scale(0.8)')
   })
 
-  test('a press is 0.97, a hover 1.03, a drag 1.03 at opacity 0.9', () => {
-    expect(last(subtle.press)).toEqual({ transform: 'scale(0.97)' })
-    expect(last(subtle.hover)).toEqual({ transform: 'scale(1.03)' })
-    expect(last(subtle.drag)).toEqual({ opacity: 0.9, transform: 'scale(1.03)' })
-    for (const a of [subtle.press, subtle.hover])
-      expect(first(a)).toEqual({ transform: 'scale(1)' })
-    expect(first(subtle.drag)).toEqual({ opacity: 1, transform: 'scale(1)' })
-  })
-
   test('reorders hold only their end state, the start is measured', () => {
     expect(subtle.reorder.keyframes).toEqual([{ transform: 'translate(0, 0)' }])
     expect(lively.reorder.keyframes).toEqual(subtle.reorder.keyframes)
   })
 
-  test('collapsing content fades with no size change, and the chevron turns a quarter', () => {
-    expect(subtle.expand.keyframes).toEqual([{ opacity: 0 }, { opacity: 1 }])
-    expect(CHEVRON.keyframes).toEqual([
-      { transform: 'rotate(-90deg)' },
-      { transform: 'rotate(0deg)' },
-    ])
-    expect(CHEVRON.timing).toEqual({ duration: DURATIONS.short, easing: EASINGS.standard })
-    expect(check(CHEVRON)).toEqual(['transform rotate(-90deg)'])
+  test('the media viewer scales from 0.94, or springs from 0.9, and swaps sideways by 24 px', () => {
+    expect(first(subtle.lightbox)).toEqual({ opacity: 0, transform: 'scale(0.94)' })
+    expect(first(lively.lightbox)).toEqual({ opacity: 0, transform: 'scale(0.9)' })
+    expect(first(subtle['lightbox.slide'])).toEqual({ opacity: 0, transform: 'translateX(24px)' })
+    expect(first(lively['lightbox.slide']).transform).toBe('translateX(24px) scale(0.98)')
+  })
+
+  test('images fade in, and settle from 1.015 when Lively', () => {
+    expect(subtle['image.reveal'].keyframes).toEqual([{ opacity: 0 }, { opacity: 1 }])
+    expect(first(lively['image.reveal'])).toEqual({ opacity: 0, transform: 'scale(1.015)' })
+    expect(lively['image.reveal'].timing.duration).toBe(DURATIONS.long)
+  })
+
+  test('the new messages banner drops in from its own height', () => {
+    for (const a of [subtle['banner.unread'], lively['banner.unread']])
+      expect(a.keyframes).toEqual([
+        { opacity: 0, transform: 'translateY(-100%)' },
+        { opacity: 1, transform: 'translateY(0)' },
+      ])
   })
 })
 
@@ -195,10 +197,10 @@ describe('the named animations', () => {
   })
 
   test('no animation is shared between the tables', () => {
-    const all = [CHEVRON, ...Object.values(BUILTINS)]
+    const all = [...Object.values(BUILTINS)]
     for (const p of PRESET_NAMES) all.push(...Object.values(PRESETS[p]))
-    expect(all).toHaveLength(57)
-    expect(new Set(all).size).toBe(57)
-    expect(new Set(all.map(a => a.timing)).size).toBe(57)
+    expect(all).toHaveLength(54)
+    expect(new Set(all).size).toBe(54)
+    expect(new Set(all.map(a => a.timing)).size).toBe(54)
   })
 })

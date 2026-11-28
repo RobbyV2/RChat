@@ -486,7 +486,7 @@ describe('the viewer', () => {
   })
 
   test('with animations off the backdrop is a plain scrim, without blur', () => {
-    Object.assign(initial, { anim: { on: false, motion: 'device' } })
+    Object.assign(initial, { anim: { on: false, motion: 'device', style: 'subtle', custom: {} } })
     const html = render([one()], 0)
     expect(html).toContain('bg-scrim/85')
     expect(html.includes('backdrop-blur')).toBe(false)
@@ -494,7 +494,7 @@ describe('the viewer', () => {
   })
 
   test('with animations on the app behind blurs and the image zooms in', () => {
-    Object.assign(initial, { anim: { on: true, motion: 'always' } })
+    Object.assign(initial, { anim: { on: true, motion: 'always', style: 'subtle', custom: {} } })
     const html = render([one()], 0)
     expect(html).toContain('data-lightbox-blur=""')
     expect(html).toContain('backdrop-blur-md')

@@ -1,24 +1,16 @@
-import type { SlotId } from './slots'
+import type { BuiltinName } from './names'
+import type { PlaySlot } from './slots'
 import { spring } from './spring'
-import { DURATIONS, EASINGS, SPRINGS } from './tokens'
+import { DISTANCES, DURATIONS, EASINGS, SPRINGS } from './tokens'
 import type { Animation, Frame, Timing } from './validate'
 
 export const PRESET_NAMES = ['subtle', 'lively'] as const
 export type PresetName = (typeof PRESET_NAMES)[number]
 
-export const BUILTIN_NAMES = [
-  'core.fade',
-  'core.fade-scale',
-  'core.slide',
-  'core.rise',
-  'core.pop',
-  'core.jiggle',
-  'core.spring-scale',
-  'core.crossfade',
-] as const
-export type BuiltinName = (typeof BUILTIN_NAMES)[number]
+export { BUILTIN_NAMES, type BuiltinName } from './names'
 
-const { short, medium } = DURATIONS
+const { short, medium, long } = DURATIONS
+const { settle, lift, rise, slide: slideBy, swap } = DISTANCES
 const { standard, decelerate } = EASINGS
 
 const eased = (duration: number, easing: string = standard): Timing => ({ duration, easing })
@@ -44,8 +36,6 @@ const slideFade = (axis: 'X' | 'Y', by: string, timing: Timing, from = 0) =>
     { opacity: 1, transform: `translate${axis}(0)` },
     timing
   )
-const scaleTo = (scale: number, timing: Timing) =>
-  tween({ transform: 'scale(1)' }, { transform: `scale(${scale})` }, timing)
 const pop = (timing: Timing) =>
   tween({ transform: 'scale(0.8)' }, { transform: 'scale(1)' }, timing)
 const popJiggle = (): Animation => ({
@@ -57,8 +47,6 @@ const popJiggle = (): Animation => ({
   ],
   timing: eased(medium),
 })
-const lift = (timing: Timing) =>
-  tween({ opacity: 1, transform: 'scale(1)' }, { opacity: 0.9, transform: 'scale(1.03)' }, timing)
 const flip = (timing: Timing): Animation => ({
   keyframes: [{ transform: 'translate(0, 0)' }],
   timing,
@@ -68,8 +56,8 @@ const flip = (timing: Timing): Animation => ({
 export const BUILTINS: Record<BuiltinName, Animation> = {
   'core.fade': fade(eased(short)),
   'core.fade-scale': fadeScale(0.96, eased(medium)),
-  'core.slide': slideFade('Y', '16px', eased(medium)),
-  'core.rise': slideFade('Y', '6px', eased(medium)),
+  'core.slide': slideFade('Y', `${slideBy}px`, eased(medium)),
+  'core.rise': slideFade('Y', `${rise}px`, eased(medium)),
   'core.pop': pop(eased(short)),
   'core.jiggle': {
     keyframes: [
@@ -83,44 +71,43 @@ export const BUILTINS: Record<BuiltinName, Animation> = {
   'core.crossfade': fade(eased(short)),
 }
 
-const SUBTLE: Record<SlotId, Animation> = {
+const SUBTLE: Record<PlaySlot, Animation> = {
   dialog: fadeScale(0.96, eased(medium)),
   sheet: slide('Y', '100%', eased(medium, decelerate)),
   menu: fadeScale(0.96, eased(short)),
   tooltip: fade({ duration: short, delay: 300, easing: standard }),
-  panel: slideFade('X', '16px', eased(medium)),
+  panel: slideFade('X', `${slideBy}px`, eased(medium)),
   drawer: slide('X', '-100%', eased(medium)),
-  thread: slideFade('X', '16px', eased(medium)),
+  thread: slideFade('X', `${slideBy}px`, eased(medium)),
   route: fade(eased(short)),
-  'message.arrive': slideFade('Y', '6px', eased(medium)),
+  'message.arrive': slideFade('Y', `${rise}px`, eased(medium)),
   'message.send': fade(eased(short), 0.6),
   'message.remove': tween({ opacity: 1 }, { opacity: 0 }, eased(short)),
   'reaction.add': pop(eased(short)),
   'reaction.count': slideFade('Y', '100%', eased(short)),
   badge: pop(eased(short)),
-  press: scaleTo(0.97, eased(short)),
-  hover: scaleTo(1.03, eased(short)),
   reorder: flip(eased(medium)),
-  drag: lift(eased(short)),
-  toast: slideFade('Y', '16px', eased(medium)),
+  toast: slideFade('Y', `${slideBy}px`, eased(medium)),
   typing: fade(eased(short)),
   'call.tile': fadeScale(0.96, eased(medium)),
   palette: fadeScale(0.98, eased(short)),
-  toggle: slide('X', '-100%', eased(short)),
-  expand: fade(eased(short)),
+  lightbox: fadeScale(0.94, eased(medium, decelerate)),
+  'lightbox.slide': slideFade('X', `${swap}px`, eased(short)),
+  'image.reveal': fade(eased(medium)),
+  'banner.unread': slideFade('Y', '-100%', eased(medium, decelerate)),
 }
 
-const LIVELY: Record<SlotId, Animation> = {
+const LIVELY: Record<PlaySlot, Animation> = {
   dialog: fadeScale(0.96, gentle()),
   sheet: slide('Y', '100%', bouncy()),
   menu: fadeScale(0.96, gentle()),
   tooltip: fade({ duration: short, delay: 300, easing: standard }),
-  panel: slideFade('X', '16px', gentle()),
+  panel: slideFade('X', `${slideBy}px`, gentle()),
   drawer: slide('X', '-100%', gentle()),
-  thread: slideFade('X', '16px', gentle()),
-  route: slideFade('Y', '4px', eased(short)),
-  'message.arrive': slideFade('Y', '6px', bouncy()),
-  'message.send': slideFade('Y', '2px', eased(short), 0.6),
+  thread: slideFade('X', `${slideBy}px`, gentle()),
+  route: slideFade('Y', `${lift}px`, eased(short)),
+  'message.arrive': slideFade('Y', `${rise}px`, bouncy()),
+  'message.send': slideFade('Y', `${settle}px`, eased(short), 0.6),
   'message.remove': tween(
     { opacity: 1, transform: 'scale(1)' },
     { opacity: 0, transform: 'scale(0.98)' },
@@ -133,28 +120,27 @@ const LIVELY: Record<SlotId, Animation> = {
     eased(short)
   ),
   badge: popJiggle(),
-  press: scaleTo(0.97, eased(short)),
-  hover: scaleTo(1.03, gentle()),
   reorder: flip(gentle()),
-  drag: lift(bouncy()),
-  toast: slideFade('Y', '16px', bouncy()),
+  toast: slideFade('Y', `${slideBy}px`, bouncy()),
   typing: fade(eased(short)),
   'call.tile': fadeScale(0.96, gentle()),
   palette: fadeScale(0.98, gentle()),
-  toggle: slide('X', '-100%', bouncy()),
-  expand: fade(eased(short)),
+  lightbox: fadeScale(0.9, gentle()),
+  'lightbox.slide': tween(
+    { opacity: 0, transform: `translateX(${swap}px) scale(0.98)` },
+    { opacity: 1, transform: 'translateX(0) scale(1)' },
+    gentle()
+  ),
+  'image.reveal': tween(
+    { opacity: 0, transform: 'scale(1.015)' },
+    { opacity: 1, transform: 'scale(1)' },
+    eased(long)
+  ),
+  'banner.unread': slideFade('Y', '-100%', gentle()),
 }
 
 // Each slot's animation as it plays (see the slot's `plays`).
-export const PRESETS: Record<PresetName, Record<SlotId, Animation>> = {
+export const PRESETS: Record<PresetName, Record<PlaySlot, Animation>> = {
   subtle: SUBTLE,
   lively: LIVELY,
 }
-
-// The chevron of the expand slot, beside its content fade. A quarter turn is more than a plugin
-// animation may rotate.
-export const CHEVRON: Animation = tween(
-  { transform: 'rotate(-90deg)' },
-  { transform: 'rotate(0deg)' },
-  eased(short)
-)

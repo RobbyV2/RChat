@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { OWNERS, SLOTS, SLOT_IDS, slotOf } from '../motion/slots'
+import { LOOK_IDS, OWNERS, PLAY_IDS, SLOTS, SLOT_IDS, isLook, slotOf } from '../motion/slots'
 
 describe('the slot catalog', () => {
-  test('24 slots, in the catalog order', () => {
+  test('32 slots, in the catalog order', () => {
     expect(SLOT_IDS).toEqual([
       'dialog',
       'sheet',
@@ -28,9 +28,17 @@ describe('the slot catalog', () => {
       'palette',
       'toggle',
       'expand',
+      'lightbox',
+      'lightbox.slide',
+      'skeleton.shimmer',
+      'image.reveal',
+      'banner.unread',
+      'toolbar.hover',
+      'nav.indicator',
+      'typing.channel',
     ])
     expect(SLOTS.map(s => s.id)).toEqual([...SLOT_IDS])
-    expect(new Set(SLOT_IDS).size).toBe(24)
+    expect(new Set(SLOT_IDS).size).toBe(32)
   })
 
   test('every slot says where it plays and which components own it', () => {
@@ -40,9 +48,9 @@ describe('the slot catalog', () => {
     }
   })
 
-  test('the 20 component groups each own at least one slot', () => {
-    expect(OWNERS).toHaveLength(20)
-    expect(new Set(OWNERS).size).toBe(20)
+  test('the 27 component groups each own at least one slot', () => {
+    expect(OWNERS).toHaveLength(27)
+    expect(new Set(OWNERS).size).toBe(27)
     const used = new Set<string>(SLOTS.map(s => s.owner))
     for (const o of OWNERS) if (!used.has(o)) throw new Error(o)
   })
@@ -50,7 +58,8 @@ describe('the slot catalog', () => {
   test('each slot says when its animation plays', () => {
     const plays = (id: string) => SLOTS.find(s => s.id === id)?.plays
     for (const s of SLOTS)
-      if (!['both', 'enter', 'exit', 'change', 'hold'].includes(s.plays)) throw new Error(s.id)
+      if (!['both', 'enter', 'exit', 'change', 'hold', 'loop'].includes(s.plays))
+        throw new Error(s.id)
     expect(plays('dialog')).toBe('both')
     expect(plays('message.arrive')).toBe('enter')
     expect(plays('message.remove')).toBe('exit')
@@ -59,6 +68,41 @@ describe('the slot catalog', () => {
     expect(plays('press')).toBe('hold')
     expect(plays('hover')).toBe('hold')
     expect(plays('drag')).toBe('hold')
+  })
+
+  test('the style sheet moves what is held or loops, and the engine plays the rest', () => {
+    expect([...LOOK_IDS]).toEqual([
+      'press',
+      'hover',
+      'drag',
+      'toggle',
+      'expand',
+      'skeleton.shimmer',
+      'toolbar.hover',
+      'nav.indicator',
+      'typing.channel',
+    ])
+    expect(PLAY_IDS).toHaveLength(23)
+    expect([...PLAY_IDS, ...LOOK_IDS].sort()).toEqual([...SLOT_IDS].sort())
+    for (const s of SLOTS)
+      if ((s.plays === 'hold' || s.plays === 'loop') && !isLook(s.id)) throw new Error(s.id)
+  })
+
+  test('every slot has a name of its own for Settings', () => {
+    expect(new Set(SLOTS.map(s => s.label)).size).toBe(32)
+    for (const s of SLOTS) expect(s.label.length).toBeGreaterThan(3)
+  })
+
+  test('what comes and goes with its screen plays only on its own', () => {
+    expect(SLOTS.filter(s => s.solo).map(s => s.id)).toEqual([
+      'message.remove',
+      'reaction.add',
+      'badge',
+      'toast',
+      'typing',
+      'call.tile',
+    ])
+    expect(SLOTS.filter(s => s.tail).map(s => s.id)).toEqual(['message.arrive'])
   })
 
   test('only reorder measures its start at run time', () => {

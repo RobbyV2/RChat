@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { useStore } from '../client/react'
-import { motionPlays } from './setting'
+import type { SlotId } from './slots'
+import { blurringNow, liveNow, watchLive } from './wire'
 
 const REDUCED = '(prefers-reduced-motion: reduce)'
 
@@ -33,9 +34,21 @@ export function useReducedMotion(asked = true) {
   )
 }
 
+const never = () => false
+
+// Whether `slot` moves now: a screen picks its moving or still look with it.
+export function useSlotPlays(slot: SlotId) {
+  return useSyncExternalStore(watchLive, () => liveNow().has(slot), never)
+}
+
+// Whether the backdrop of `slot` blurs now.
+export function useSlotBlurs(slot: SlotId) {
+  return useSyncExternalStore(watchLive, () => blurringNow().has(slot), never)
+}
+
 // Whether the shown account's animations play: callers pick their animated or still look with it.
 export function useMotionPlays() {
   const motion = useStore(s => (s.anim.on ? s.anim.motion : null))
   const reduced = useReducedMotion(motion === 'device')
-  return motion !== null && motionPlays({ on: true, motion }, reduced)
+  return motion !== null && motion !== 'still' && !(motion === 'device' && reduced)
 }

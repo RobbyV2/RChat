@@ -190,6 +190,24 @@
   }
 }
 
+/* Motion tokens: every duration, easing and distance an animation uses (`lib/motion/tokens.ts`
+   holds the same values for the engine). */
+:root {
+  --motion-short: 120ms;
+  --motion-medium: 200ms;
+  --motion-long: 320ms;
+  --motion-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --motion-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --motion-settle: 2px;
+  --motion-lift: 4px;
+  --motion-rise: 6px;
+  --motion-slide: 16px;
+  --motion-swap: 24px;
+  --motion-press: 0.97;
+  --motion-hover: 1.03;
+}
+
 :root[data-theme='light'] {
   --color-spoiler: #2b2930;
   --color-primary: #6750a4;

@@ -17,7 +17,7 @@ describe('typing dots on rows', () => {
     expect(still).toContain('aria-label="Alice is typing"')
     expect(still).toContain('title="Alice is typing"')
     expect(still).not.toContain('animate-typing-dot')
-    initial.anim = { on: true, motion: 'always' }
+    initial.anim = { on: true, motion: 'always', style: 'subtle', custom: {} }
     expect(renderToStaticMarkup(<TypingEllipsis names={['Alice']} />)).toContain(
       'animate-typing-dot'
     )

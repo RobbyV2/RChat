@@ -59,6 +59,7 @@ import SearchPanel from '../components/search_panel'
 import FriendsPanel, { AddFriendsDialog } from '../components/friends'
 import { InboxHost, useTotalInboxCount } from '../components/inbox'
 import { PaletteHost } from '../components/palette'
+import { MotionHost } from '../components/motion_host'
 import { usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
 import { MissedDialog, ScheduledDialog } from '../components/scheduled'
@@ -573,6 +574,7 @@ function Chat() {
         <AdminHost />
         <InboxHost />
         <PaletteHost />
+        <MotionHost />
         <ViewingPrompt />
         <P2pDialogs />
       </div>

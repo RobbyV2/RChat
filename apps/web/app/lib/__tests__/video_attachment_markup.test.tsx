@@ -321,7 +321,7 @@ describe('a hosted video', () => {
 
   test('the pill fades in only while animations play', () => {
     expect(pillOf(render()).some(c => c.startsWith('transition'))).toBe(false)
-    Object.assign(initial, { anim: { on: true, motion: 'always' } })
+    Object.assign(initial, { anim: { on: true, motion: 'always', style: 'subtle', custom: {} } })
     expect(pillOf(render())).toContain('transition-[opacity,scale]')
   })
 

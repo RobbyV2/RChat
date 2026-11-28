@@ -61,9 +61,9 @@ describe('skeleton placeholders', () => {
   test('the blobs hold their place with animations off or Motion at Reduced, and shimmer when on', () => {
     for (const [, , node] of KINDS) {
       expect(renderToStaticMarkup(node)).not.toContain('data-shimmer')
-      initial.anim = { on: true, motion: 'still' }
+      initial.anim = { on: true, motion: 'still', style: 'subtle', custom: {} }
       expect(renderToStaticMarkup(node)).not.toContain('data-shimmer')
-      initial.anim = { on: true, motion: 'always' }
+      initial.anim = { on: true, motion: 'always', style: 'subtle', custom: {} }
       expect(renderToStaticMarkup(node)).toContain('data-shimmer')
       initial.anim = saved.anim
     }

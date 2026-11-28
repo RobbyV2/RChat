@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'bun:test'
-import { DURATIONS, DURATION_VARS, EASINGS, SPRINGS } from '../motion/tokens'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import {
+  DISTANCES,
+  DURATIONS,
+  DURATION_VARS,
+  EASINGS,
+  SCALES,
+  SPRINGS,
+  TOKEN_VARS,
+} from '../motion/tokens'
 import { check } from '../motion/validate'
 
 describe('motion tokens', () => {
@@ -27,5 +37,17 @@ describe('motion tokens', () => {
       gentle: { stiffness: 300, damping: 30 },
       bouncy: { stiffness: 300, damping: 15 },
     })
+  })
+})
+
+describe('the style sheet', () => {
+  test('holds the same tokens as the engine', () => {
+    const css = readFileSync(fileURLToPath(new URL('../../globals.css', import.meta.url)), 'utf8')
+    expect(DISTANCES).toEqual({ settle: 2, lift: 4, rise: 6, slide: 16, swap: 24 })
+    expect(SCALES).toEqual({ press: 0.97, hover: 1.03 })
+    for (const [name, value] of Object.entries(TOKEN_VARS))
+      if (!css.includes(`\n  ${name}: ${value};\n`)) throw new Error(`${name}: ${value}`)
+    const declared = [...css.matchAll(/^ {2}(--motion-[a-z-]+):/gm)].map(m => m[1])
+    expect(declared.sort()).toEqual(Object.keys(TOKEN_VARS).sort())
   })
 })

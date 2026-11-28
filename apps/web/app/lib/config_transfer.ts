@@ -23,7 +23,14 @@ import {
   type SelfPin,
 } from './nav_layout'
 import { parseNotify, type NotifyPrefs } from './notify'
-import { isMotionChoice, motionLabel, type AnimPrefs } from './motion/setting'
+import {
+  ANIM_DEFAULT,
+  cleanChoices,
+  isMotionChoice,
+  isStyle,
+  motionLabel,
+  type AnimPrefs,
+} from './motion/setting'
 import {
   MAX_USED,
   TONES,
@@ -238,7 +245,12 @@ export const buildConfig = (src: ConfigSource, include: ReadonlySet<SectionKey>)
   if (on('calls') && src.calls) doc.calls = src.calls
   if (on('typing') && src.typing !== null) doc.typing = src.typing
   if (on('animations') && src.animations)
-    doc.animations = { on: src.animations.on, motion: src.animations.motion }
+    doc.animations = {
+      on: src.animations.on,
+      motion: src.animations.motion,
+      style: src.animations.style,
+      custom: src.animations.custom,
+    }
   if (on('profanity') && src.profanity !== null) doc.profanity = src.profanity
   if (on('spoilers') && src.spoilers !== null) doc.spoilers = src.spoilers
   if (on('relays') && src.relays) doc.relays = exportRelays(src.relays)
@@ -345,7 +357,12 @@ const cleanEmoji = (x: unknown, now: number): EmojiPrefs | undefined => {
 // Both fields or nothing, so an import never half-applies the setting.
 const cleanAnimations = (x: unknown): AnimPrefs | null =>
   isRecord(x) && typeof x.on === 'boolean' && isMotionChoice(x.motion)
-    ? { on: x.on, motion: x.motion }
+    ? {
+        on: x.on,
+        motion: x.motion,
+        style: isStyle(x.style) ? x.style : ANIM_DEFAULT.style,
+        custom: cleanChoices(x.custom),
+      }
     : null
 
 export type Decoded = { ok: true; doc: ConfigDoc } | { ok: false; error: string }

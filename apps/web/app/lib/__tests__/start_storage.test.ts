@@ -218,13 +218,13 @@ describe('start-up with working storage', () => {
     memoryStorage.setItem('rchat_anim:guest', '{"v":1,"on":true,"motion":"still"}')
     try {
       await st().login({ username: 'bob', password: 'x' } as never)
-      expect(st().anim).toEqual({ on: true, motion: 'always' })
+      expect(st().anim).toEqual({ on: true, motion: 'always', style: 'subtle', custom: {} })
       st().logout()
-      expect(st().anim).toEqual({ on: false, motion: 'device' })
+      expect(st().anim).toEqual({ on: false, motion: 'device', style: 'subtle', custom: {} })
       await st().enterGuest()
-      expect(st().anim).toEqual({ on: true, motion: 'still' })
+      expect(st().anim).toEqual({ on: true, motion: 'still', style: 'subtle', custom: {} })
       st().logout()
-      expect(st().anim).toEqual({ on: false, motion: 'device' })
+      expect(st().anim).toEqual({ on: false, motion: 'device', style: 'subtle', custom: {} })
     } finally {
       memoryStorage.removeItem('rchat_anim:bob')
       memoryStorage.removeItem('rchat_anim:guest')

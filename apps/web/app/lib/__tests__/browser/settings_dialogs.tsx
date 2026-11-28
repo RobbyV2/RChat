@@ -59,7 +59,12 @@ shown.store.setState(s => ({
   guest: false,
   settings: { ...s.settings, p2p: true },
   instanceHost: 'chat.a.test',
-  anim: { on: location.search.includes('anim'), motion: 'always' },
+  anim: {
+    on: location.search.includes('anim'),
+    motion: 'always',
+    style: 'subtle',
+    custom: {},
+  },
   servers: {
     garden: {
       name: 'garden',

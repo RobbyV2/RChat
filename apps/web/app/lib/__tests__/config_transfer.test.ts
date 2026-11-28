@@ -53,7 +53,7 @@ const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
     emoji,
     calls: 'p2p',
     typing: false,
-    animations: { on: true, motion: 'always' },
+    animations: { on: true, motion: 'always', style: 'subtle', custom: {} },
     profanity: true,
     spoilers: 'always',
     relays: null,
@@ -501,7 +501,10 @@ describe('preview', () => {
   test('animations travel with their Motion choice, whole or not at all', async () => {
     const only = new Set<SectionKey>(['animations'])
     const doc = buildConfig(source(), only)
-    expect(doc).toEqual({ v: 1, animations: { on: true, motion: 'always' } })
+    expect(doc).toEqual({
+      v: 1,
+      animations: { on: true, motion: 'always', style: 'subtle', custom: {} },
+    })
     expect(buildConfig(source({ animations: null }), ALL).animations).toBeUndefined()
     expect(await decodeConfig(await encodeConfig(doc))).toEqual({ ok: true, doc })
     for (const animations of [
@@ -516,10 +519,13 @@ describe('preview', () => {
       expect([animations, out.ok && out.doc.animations]).toEqual([animations, undefined])
     }
     const out = sanitizeConfig({ v: 1, animations: { on: false, motion: 'still', extra: 1 } })
-    expect(out).toEqual({ ok: true, doc: { v: 1, animations: { on: false, motion: 'still' } } })
+    expect(out).toEqual({
+      ok: true,
+      doc: { v: 1, animations: { on: false, motion: 'still', style: 'subtle', custom: {} } },
+    })
     const rows = describeChanges(
-      { v: 1, animations: { on: false, motion: 'still' } },
-      source({ animations: { on: true, motion: 'device' } })
+      { v: 1, animations: { on: false, motion: 'still', style: 'subtle', custom: {} } },
+      source({ animations: { on: true, motion: 'device', style: 'subtle', custom: {} } })
     )
     expect(rows).toEqual([
       {
