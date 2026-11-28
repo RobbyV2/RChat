@@ -183,7 +183,7 @@ impl<'a> Proof<'a> {
         }
     }
 
-    pub(crate) fn managed() -> Proof<'static> {
+    pub(crate) fn managed(_: &crate::sso::groups::GroupJoin) -> Proof<'static> {
         Proof {
             managed: true,
             ..Self::none()

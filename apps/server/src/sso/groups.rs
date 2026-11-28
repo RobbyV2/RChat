@@ -58,6 +58,9 @@ pub async fn effective_groups<'e>(
     Ok(rows.into_iter().collect())
 }
 
+/// The IdP group map's decision that an account belongs in the servers it names.
+pub struct GroupJoin(());
+
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Reconciled {
     pub joined: Vec<String>,
@@ -184,8 +187,9 @@ async fn reconcile_after_lookup(
             }
         }
         let mut accesses = BTreeMap::new();
+        let join = GroupJoin(());
         for server in targets.keys() {
-            match access::resolve_server(db, server, Some(&user), &Proof::managed()).await {
+            match access::resolve_server(db, server, Some(&user), &Proof::managed(&join)).await {
                 Ok(access) => {
                     accesses.insert(server.clone(), access);
                 }
