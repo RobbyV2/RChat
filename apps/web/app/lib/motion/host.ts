@@ -17,7 +17,7 @@ export const applyMotion = async (prefs: AnimPrefs, reducedMotion: boolean, from
   }
   const { start } = await from()
   if (turn !== asked) return
-  setPlayer(start({ style: prefs.style, custom: prefs.custom, reduced: mode === 'reduced' }))
+  setPlayer(() => start({ style: prefs.style, custom: prefs.custom, reduced: mode === 'reduced' }))
 }
 
 export const stopMotion = () => {

@@ -79,13 +79,22 @@ describe('the engine is there only while animations are on', () => {
     expect(playerNow()).toBeNull()
   })
 
-  test('a new setting replaces the running player', async () => {
+  test('a new setting stops the running player before the next one starts', async () => {
     const a = loader()
-    const b = loader()
     await applyMotion(ON, false, a.load)
-    await applyMotion({ ...ON, style: 'lively' }, false, b.load)
+    const order: string[] = []
+    const next = recorder()
+    const load: Load = async () => ({
+      start: () => {
+        order.push(`start after ${a.rec.calls.length} stop`)
+        return next.player
+      },
+    })
+    await applyMotion({ ...ON, style: 'lively' }, false, load)
     expect(a.rec.calls).toEqual([['stop']])
-    expect(playerNow()).toBe(b.rec.player)
+    expect(order).toEqual(['start after 1 stop'])
+    expect(playerNow()).toBe(next.player)
+    expect(next.calls).toEqual([])
   })
 })
 

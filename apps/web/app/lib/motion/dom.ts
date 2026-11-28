@@ -59,18 +59,22 @@ export const page = (doc: Document, time: Time): Page & { close(): void } => {
       return !only || only.getAttribute(ONLY) === slot
     },
     within: (el, other) => other !== el && other.contains(el),
-    cameAlone(el) {
+    addedWith(el) {
       seen()
-      return came.has(el)
+      let found: Element | null = null
+      for (let n: Node | null = el; n && n !== doc.body; n = n.parentNode)
+        if (came.has(n)) found = n as Element
+      return found
     },
-    wentAlone(el) {
+    removedWith(el) {
       seen()
-      return went.has(el)
+      let top: Node = el
+      while (top.parentNode) top = top.parentNode
+      return went.has(top) ? (top as Element) : null
     },
-    newTail(el) {
-      seen()
-      const before = el.previousElementSibling
-      return came.has(el) && !el.nextElementSibling && before !== null && !came.has(before)
+    lastOfOld(added) {
+      const before = added.previousElementSibling
+      return !added.nextElementSibling && before !== null && !came.has(before)
     },
     place(el): Place {
       const box = el as HTMLElement

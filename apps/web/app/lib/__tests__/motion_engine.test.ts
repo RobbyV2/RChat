@@ -4,6 +4,7 @@ import { DESKTOP, FxThrottle } from '../fx/particles'
 import {
   ARRIVALS,
   Engine,
+  MAX_ENTERING,
   MAX_LEAVING,
   MAX_RUNNING,
   behind,
@@ -77,8 +78,8 @@ const world = (config: Config = SUBTLE, step: 0 | 1 | 2 | 3 = 0, frameMs?: numbe
   const state = {
     hidden: false,
     shut: new Set<El>(),
-    came: new Set<El>(),
-    went: new Set<El>(),
+    came: new Map<El, El>(),
+    went: new Map<El, El>(),
     tails: new Set<El>(),
     places: new Map<El, Place>(),
     unshot: new Set<El>(),
@@ -94,9 +95,9 @@ const world = (config: Config = SUBTLE, step: 0 | 1 | 2 | 3 = 0, frameMs?: numbe
     hidden: () => state.hidden,
     open: e => !state.shut.has(e as unknown as El),
     within: (e, o) => state.inside.get(e as unknown as El) === (o as unknown as El),
-    cameAlone: e => state.came.has(e as unknown as El),
-    wentAlone: e => state.went.has(e as unknown as El),
-    newTail: e => state.tails.has(e as unknown as El),
+    addedWith: e => (state.came.get(e as unknown as El) as unknown as Element) ?? null,
+    removedWith: e => (state.went.get(e as unknown as El) as unknown as Element) ?? null,
+    lastOfOld: e => state.tails.has(e as unknown as El),
     place: e => state.places.get(e as unknown as El) ?? { x: 0, y: 0 },
     shoot: e => (state.unshot.has(e as unknown as El) ? null : {}),
     ghost: () => {
@@ -320,30 +321,83 @@ describe('the engine', () => {
     expect(engine.count).toBe(0)
   })
 
-  test('a badge pops only when it came on its own', () => {
-    const { engine, state } = world()
-    const withScreen = el()
+  test('a badge pops once the update ends, when it is the one badge in what was added', () => {
+    const { engine, state, settle } = world()
+    const old = el()
     const alone = el()
-    state.came.add(alone)
-    engine.enter(dom(withScreen), 'badge')
-    engine.enter(dom(alone), 'badge')
-    expect(withScreen.played).toHaveLength(0)
+    const wrapped = el()
+    const wrapper = el()
+    state.came.set(alone, alone)
+    state.came.set(wrapped, wrapper)
+    for (const e of [old, alone, wrapped]) engine.enter(dom(e), 'badge')
+    expect(alone.played).toHaveLength(0)
+    settle()
+    expect(old.played).toHaveLength(0)
     expect(alone.played).toHaveLength(1)
+    expect(wrapped.played).toHaveLength(1)
+  })
+
+  test('badges that come together with their screen stay as they are', () => {
+    const { engine, state, settle } = world()
+    const sidebar = el()
+    const badges = [el(), el(), el()]
+    for (const e of badges) {
+      state.came.set(e, sidebar)
+      engine.enter(dom(e), 'badge')
+    }
+    settle()
+    expect(badges.map(e => e.played.length)).toEqual([0, 0, 0])
+  })
+
+  test('what enters inside something else that enters stays as it is', () => {
+    const { engine, state, settle } = world()
+    const row = el()
+    const chip = el()
+    state.came.set(row, row)
+    state.came.set(chip, row)
+    state.inside.set(chip, row)
+    engine.enter(dom(chip), 'reaction.add')
+    engine.enter(dom(row), 'message.arrive')
+    settle()
+    expect(chip.played).toHaveLength(0)
+    const later = el()
+    state.came.set(later, later)
+    state.inside.set(later, row)
+    engine.enter(dom(later), 'reaction.add')
+    settle()
+    expect(later.played).toHaveLength(1)
+  })
+
+  test(`a screen of more than ${MAX_ENTERING} entering elements pops nothing`, () => {
+    const { engine, state, settle } = world()
+    const alone = el()
+    state.came.set(alone, alone)
+    engine.enter(dom(alone), 'badge')
+    for (let i = 0; i < MAX_ENTERING; i++) engine.enter(dom(el()), 'route')
+    settle()
+    expect(alone.played).toHaveLength(0)
   })
 
   test(`messages arrive moving only at the end of a list, ${ARRIVALS.count} per ${ARRIVALS.within} ms`, () => {
     const { engine, state, time } = world()
     const loaded = el()
+    state.came.set(loaded, loaded)
     engine.enter(dom(loaded), 'message.arrive')
+    const older = el()
+    engine.enter(dom(older), 'message.arrive')
     expect(loaded.played).toHaveLength(0)
+    expect(older.played).toHaveLength(0)
     const burst = Array.from({ length: 5 }, el)
     for (const e of burst) {
-      state.tails.add(e)
+      const wrapper = el()
+      state.came.set(e, wrapper)
+      state.tails.add(wrapper)
       engine.enter(dom(e), 'message.arrive')
     }
     expect(burst.map(e => e.played.length)).toEqual([1, 1, 1, 0, 0])
     time.advance(ARRIVALS.within)
     const next = el()
+    state.came.set(next, next)
     state.tails.add(next)
     engine.enter(dom(next), 'message.arrive')
     expect(next.played).toHaveLength(1)
@@ -382,13 +436,16 @@ describe('the engine', () => {
 
   test('a removed message goes only when it went on its own, with its own exit', () => {
     const { engine, state, settle } = world()
-    const withList = el()
+    const list = el()
+    const withList = [el(), el()]
     const deleted = el()
-    state.went.add(deleted)
-    engine.leave(dom(withList), 'message.remove')
-    engine.leave(dom(deleted), 'message.remove')
-    withList.isConnected = false
-    deleted.isConnected = false
+    const wrapper = el()
+    state.went.set(deleted, wrapper)
+    for (const e of withList) state.went.set(e, list)
+    for (const e of [...withList, deleted]) {
+      engine.leave(dom(e), 'message.remove')
+      e.isConnected = false
+    }
     settle()
     expect(state.ghosts).toHaveLength(1)
     expect(state.ghosts[0].played[0].keyframes).toEqual(PRESETS.subtle['message.remove'].keyframes)

@@ -16,6 +16,8 @@ export const MAX_RUNNING = 12
 export const ARRIVALS = { count: 3, within: 500 } as const
 // More elements than this leaving in one update is a screen change, which plays no exits.
 export const MAX_LEAVING = 4
+// More elements than this entering in one update is a screen that mounts, where nothing pops.
+export const MAX_ENTERING = 300
 // A reorder farther than this (px) is a jump, not a glide.
 export const MAX_GLIDE = 600
 
@@ -41,11 +43,12 @@ export interface Page {
   open(el: Element, slot: PlaySlot): boolean
   // Whether `el` is inside `other`.
   within(el: Element, other: Element): boolean
-  // Whether `el` came into, or went out of, the page by itself in this update.
-  cameAlone(el: Element): boolean
-  wentAlone(el: Element): boolean
-  // Whether `el` is the one new element after the last of a list that was already there.
-  newTail(el: Element): boolean
+  // What came into, or went out of, the page in this update holding `el` (or `el` itself); null
+  // when `el` was there before, or is there after.
+  addedWith(el: Element): Element | null
+  removedWith(el: Element): Element | null
+  // Whether `added` stands after the last of a list that was already there.
+  lastOfOld(added: Element): boolean
   place(el: Element): Place
   // Taken while `el` is still in the page; null when it can't be shown going.
   shoot(el: Element): Shot | null
@@ -135,6 +138,8 @@ export class Engine implements Player {
   private places = new WeakMap<Element, Place>()
   private ghosts = new Set<Element>()
   private entered = new WeakSet<Element>()
+  private batch: Element[] = []
+  private waiting: { el: Element; slot: PlaySlot; a: Animation }[] = []
   private going: { el: Element; slot: PlaySlot; back: boolean; shot: Shot | null }[] = []
   private behinds = new Map<PlaySlot, Animation | null>()
   private arrivals: number[] = []
@@ -268,11 +273,34 @@ export class Engine implements Player {
     if (!def || def.plays === 'exit' || def.plays === 'change') return
     if (this.entered.has(el)) return
     this.entered.add(el)
+    this.batch.push(el)
+    if (this.batch.length === 1) this.page.soon(() => this.settles())
     const a = this.part(slot, back)
     if (!a || !this.may(el, slot)) return
-    if (def.solo && !this.page.cameAlone(el)) return
-    if (def.tail && !(this.page.newTail(el) && this.arrives())) return
-    this.run(el, slot, a, 'backwards')
+    if (def.tail) {
+      const added = this.page.addedWith(el)
+      if (!added || !this.page.lastOfOld(added) || !this.arrives()) return
+    }
+    if (def.solo) this.waiting.push({ el, slot, a })
+    else this.run(el, slot, a, 'backwards')
+  }
+
+  // What plays only on its own waits for the update to end: it plays when it is the one element
+  // of its slot in what was added, and nothing else that entered holds it.
+  private settles() {
+    const batch = this.batch
+    const waiting = this.waiting
+    this.batch = []
+    this.waiting = []
+    if (this.stopped || batch.length > MAX_ENTERING) return
+    const added = waiting.map(w => this.page.addedWith(w.el))
+    waiting.forEach((w, i) => {
+      const root = added[i]
+      if (!root) return
+      if (waiting.some((o, j) => j !== i && o.slot === w.slot && added[j] === root)) return
+      if (batch.some(o => o !== w.el && this.page.within(w.el, o))) return
+      this.run(w.el, w.slot, w.a, 'backwards')
+    })
   }
 
   leave(el: Element, slot: PlaySlot, back = false) {
@@ -288,13 +316,16 @@ export class Engine implements Player {
     const going = this.going
     this.going = []
     if (this.stopped || going.length > MAX_LEAVING) return
-    for (const { el, slot, back, shot } of going) {
+    const removed = going.map(g => (g.el.isConnected ? null : this.page.removedWith(g.el)))
+    for (const [i, { el, slot, back, shot }] of going.entries()) {
       const def = BY_ID.get(slot)
       const a = this.part(slot, back)
       if (!def || !a || !shot || el.isConnected) continue
       // What leaves inside something that leaves goes with its copy.
       if (going.some(g => g.el !== el && !g.el.isConnected && this.page.within(el, g.el))) continue
-      if (def.solo && !this.page.wentAlone(el)) continue
+      const root = removed[i]
+      const shared = going.some((o, j) => j !== i && o.slot === slot && removed[j] === root)
+      if (def.solo && (!root || shared)) continue
       if (this.running.size >= MAX_RUNNING) continue
       const ghost = this.page.ghost(el, shot)
       if (!ghost) continue
@@ -342,6 +373,8 @@ export class Engine implements Player {
     for (const ghost of [...this.ghosts]) this.page.drop(ghost)
     this.ghosts.clear()
     this.going = []
+    this.batch = []
+    this.waiting = []
     this.page.mark(null, [])
   }
 }

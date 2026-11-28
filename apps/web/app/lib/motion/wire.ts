@@ -38,8 +38,14 @@ export const setLive = (
   for (const w of [...watchers]) w()
 }
 
-export const setPlayer = (next: Player | null) => {
-  if (player && player !== next) player.stop()
-  player = next
-  if (!next) setLive(null)
+// Puts `make`'s player in place of the one running, which stops first, so what the new one
+// tells the page is not undone.
+export const setPlayer = (make: (() => Player) | null) => {
+  player?.stop()
+  player = null
+  if (!make) {
+    setLive(null)
+    return
+  }
+  player = make()
 }
