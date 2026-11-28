@@ -1,7 +1,8 @@
 'use client'
 
+import { Loaded, useRequest } from '../loaded'
 import { KeyRound, TriangleAlert } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import {
   BACKUP_WARNING,
   fingerprints,
@@ -15,7 +16,6 @@ import {
   type AdminEncryption,
 } from '../../lib/admin_encryption'
 import { useAccount } from '../../lib/client/react'
-import { errorText, useStore } from '../../lib/store'
 import { Pill } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { PageRow } from '../settings_page'
@@ -100,45 +100,19 @@ export function EncryptionStatus({
   )
 }
 
-export const LOAD_FAILED = "The key status can't be shown right now."
-
-// What the section shows: the status once it arrived, `failed` when it can't be read.
-export function EncryptionBody({ view }: { view: AdminEncryption | 'failed' | null }) {
-  if (view === 'failed')
-    return (
-      <p data-load="failed" className="text-sm text-on-surface-variant">
-        {LOAD_FAILED}
-      </p>
-    )
-  if (view === null) return <p className="text-sm text-on-surface-variant">Loading</p>
-  return <EncryptionStatus view={view} />
-}
-
 export function EncryptionSection() {
   const owner = useAccount()
-  const setError = useStore(s => s.setError)
-  const [view, setView] = useState<AdminEncryption | 'failed' | null>(null)
-  useEffect(() => {
-    let live = true
-    owner.api
-      .adminEncryption()
-      .then(answer => {
-        if (live) setView(parseAdminEncryption(answer) ?? 'failed')
-      })
-      .catch(
-        owner.lifetime.inSession((e: unknown) => {
-          if (live) setView('failed')
-          setError(errorText(e))
-        })
-      )
-    return () => {
-      live = false
-    }
-  }, [owner, setError])
+  const load = useRequest(async () => {
+    const view = parseAdminEncryption(await owner.api.adminEncryption())
+    if (!view) throw new Error('The key status came back in a form this page cannot read')
+    return view
+  }, [owner])
   return (
     <PageRow id="keys">
       <Surface tone="plain" pad="sm">
-        <EncryptionBody view={view} />
+        <Loaded load={load} what="the key status">
+          {view => <EncryptionStatus view={view} />}
+        </Loaded>
       </Surface>
     </PageRow>
   )

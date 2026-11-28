@@ -1,7 +1,10 @@
 'use client'
 
+import { Loaded, useRequest } from './loaded'
+import { instanceName } from '../lib/names'
+import { Name } from './name'
 import { useAccount } from '../lib/client/react'
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import { limitsOf } from '../lib/instance_limits'
 import { errorText, useStore } from '../lib/store'
 import { durationText } from '../lib/timeouts'
@@ -52,34 +55,29 @@ const UNITS: { value: ExpiryUnit; label: string }[] = [
 
 // How long files uploaded in a server stay. For people with the Delete server permission.
 export function ServerUploadExpiry({ server }: { server: string }) {
+  const { api } = useAccount()
+  const load = useRequest(() => api.uploadExpiry(server), [api, server])
+  return (
+    <>
+      <p className={sectionCls}>File expiry</p>
+      <Loaded load={load} what="this setting">
+        {first => <ExpiryFields server={server} first={first} />}
+      </Loaded>
+    </>
+  )
+}
+
+function ExpiryFields({ server, first }: { server: string; first: UploadExpiryState }) {
   const { store, api, lifetime } = useAccount()
   const { label } = useInstanceLabel()
   const base = useStore(s => limitsOf(s.instance).media_retention_secs)
   const cap = useStore(s => s.settings.upload_expiry_max_days ?? 0)
-  const [saved, setSaved] = useState<UploadExpiryState | null>(null)
-  const [form, setForm] = useState<ExpiryForm | null>(null)
-  const [failed, setFailed] = useState(false)
+  const [saved, setSaved] = useState<UploadExpiryState>(first)
+  const [form, setForm] = useState<ExpiryForm>(() => expiryChoice(first.upload_expiry))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
-  const [tick, setTick] = useState(0)
   const amountId = useId()
-  useEffect(() => {
-    let live = true
-    api.uploadExpiry(server).then(
-      s => {
-        if (!live) return
-        setSaved(s)
-        setForm(expiryChoice(s.upload_expiry))
-      },
-      () => {
-        if (live) setFailed(true)
-      }
-    )
-    return () => {
-      live = false
-    }
-  }, [api, server, tick])
   // `revert`: a chip saved at once goes back to the stored choice when the save fails.
   const save = (next: ExpiryForm, revert = false) => {
     const choice = expiryFromChoice(next)
@@ -102,13 +100,12 @@ export function ServerUploadExpiry({ server }: { server: string }) {
         }),
         (err: unknown) => {
           setError(errorText(err))
-          if (revert && saved) setForm(expiryChoice(saved.upload_expiry))
+          if (revert) setForm(expiryChoice(saved.upload_expiry))
         }
       )
       .finally(() => setSaving(false))
   }
   const pick = (mode: ExpiryMode) => {
-    if (!form) return
     const next = { ...form, mode }
     setForm(next)
     if (mode !== 'custom') save(next, true)
@@ -116,97 +113,78 @@ export function ServerUploadExpiry({ server }: { server: string }) {
   const modes: { value: ExpiryMode; label: string }[] = [
     { value: 'default', label: `Default (${durationText(base)})` },
     { value: 'custom', label: 'Custom' },
-    ...(cap === 0 || form?.mode === 'never' ? [{ value: 'never' as const, label: 'Never' }] : []),
+    ...(cap === 0 || form.mode === 'never' ? [{ value: 'never' as const, label: 'Never' }] : []),
   ]
-  const now = saved ? serverLifetime(saved, cap, base) : null
-  const kept = keptSpace(saved?.kept)
-  const owner = ownerKept(saved?.owner_kept)
+  const now = serverLifetime(saved, cap, base)
+  const kept = keptSpace(saved.kept)
+  const owner = ownerKept(saved.owner_kept)
   const full = keptFullText(kept, owner, now, base)
   return (
-    <>
-      <p className={sectionCls}>File expiry</p>
-      {saved && form ? (
-        <Stack data-upload-expiry gap="sm">
-          <p className="text-xs text-on-surface-variant">
-            How long files uploaded here stay. Direct messages always use the default.
-          </p>
-          <Chips label="File expiry" value={form.mode} options={modes} onChange={pick} />
-          {form.mode === 'custom' && (
-            <Row
-              as="form"
-              gap="sm"
-              wrap
-              onSubmit={e => {
-                e.preventDefault()
-                save(form)
-              }}
-            >
-              <label htmlFor={amountId} className="sr-only">
-                Time
-              </label>
-              <input
-                id={amountId}
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={form.unit === 'days' ? 365 : 8760}
-                value={Number.isFinite(form.amount) ? form.amount : ''}
-                onChange={e => setForm({ ...form, amount: e.target.valueAsNumber })}
-                className={`${fieldCls} max-w-24 flex-none`}
-              />
-              <Chips
-                label="Unit"
-                value={form.unit}
-                options={UNITS}
-                onChange={unit => setForm({ ...form, unit })}
-              />
-              <Button type="submit" variant="filled" size="md" disabled={saving}>
-                Save
-              </Button>
-            </Row>
-          )}
-          <p data-upload-expiry-now className="text-xs text-on-surface-variant">
-            New files: {newFilesText(kept, owner, now, base)}.
-            {cap > 0 && (
-              <>
-                {' '}
-                <span className="streamer">{label}</span> removes files after{' '}
-                {durationText(cap * 86400)} at most.
-              </>
-            )}
-          </p>
-          {kept && keptShown(kept, now, base) && (
-            <p data-upload-kept className="text-xs text-on-surface-variant">
-              {keptText(kept, owner)}.
-            </p>
-          )}
-          {full && (
-            <p data-upload-kept-full className="text-xs text-on-surface">
-              {full}
-            </p>
-          )}
-          {done && !error && (
-            <span role="status" className="text-xs text-on-surface">
-              {savedText(saved.extended, base)}
-            </span>
-          )}
-          <FieldError message={error} />
-        </Stack>
-      ) : failed ? (
-        <Row as="p" gap="sm">
-          <span className="text-sm text-on-surface-variant">Couldn&apos;t load this setting.</span>
-          <Button
-            onClick={() => {
-              setFailed(false)
-              setTick(t => t + 1)
-            }}
-          >
-            Retry
+    <Stack data-upload-expiry gap="sm">
+      <p className="text-xs text-on-surface-variant">
+        How long files uploaded here stay. Direct messages always use the default.
+      </p>
+      <Chips label="File expiry" value={form.mode} options={modes} onChange={pick} />
+      {form.mode === 'custom' && (
+        <Row
+          as="form"
+          gap="sm"
+          wrap
+          onSubmit={e => {
+            e.preventDefault()
+            save(form)
+          }}
+        >
+          <label htmlFor={amountId} className="sr-only">
+            Time
+          </label>
+          <input
+            id={amountId}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={form.unit === 'days' ? 365 : 8760}
+            value={Number.isFinite(form.amount) ? form.amount : ''}
+            onChange={e => setForm({ ...form, amount: e.target.valueAsNumber })}
+            className={`${fieldCls} max-w-24 flex-none`}
+          />
+          <Chips
+            label="Unit"
+            value={form.unit}
+            options={UNITS}
+            onChange={unit => setForm({ ...form, unit })}
+          />
+          <Button type="submit" variant="filled" size="md" disabled={saving}>
+            Save
           </Button>
         </Row>
-      ) : (
-        <p className="text-sm text-on-surface-variant">Loading…</p>
       )}
-    </>
+      <p data-upload-expiry-now className="text-xs text-on-surface-variant">
+        New files: {newFilesText(kept, owner, now, base)}.
+        {cap > 0 && (
+          <>
+            {' '}
+            <Name of={instanceName(label)} /> removes files after {durationText(cap * 86400)} at
+            most.
+          </>
+        )}
+      </p>
+      {kept && keptShown(kept, now, base) && (
+        <p data-upload-kept className="text-xs text-on-surface-variant">
+          {keptText(kept, owner)}.
+        </p>
+      )}
+      {full && (
+        <p data-upload-kept-full className="text-xs text-on-surface">
+          {full}
+        </p>
+      )}
+      {done && !error && (
+        <span role="status" className="text-xs text-on-surface">
+          {savedText(saved.extended, base)}
+        </span>
+      )}
+      <FieldError message={error} />
+    </Stack>
   )
 }

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { EncryptionBody, EncryptionStatus, LOAD_FAILED } from '../../components/admin/encryption'
+import { EncryptionStatus } from '../../components/admin/encryption'
 import {
   BACKUP_WARNING,
   fingerprints,
@@ -188,12 +188,4 @@ test('the page says which tokens were reset and when, for a month', () => {
   expect(
     renderToStaticMarkup(<EncryptionStatus view={reset(['relay_secret'])} now={gone} />)
   ).not.toContain('data-warning')
-})
-
-test('the section says when the status cannot be read', () => {
-  expect(renderToStaticMarkup(<EncryptionBody view={null} />)).toContain('Loading')
-  const failed = renderToStaticMarkup(<EncryptionBody view="failed" />)
-  expect(failed).toContain(LOAD_FAILED.replace("'", '&#x27;'))
-  expect(failed).not.toContain('Loading')
-  expect(renderToStaticMarkup(<EncryptionBody view={view()} />)).toContain('data-key-source')
 })
