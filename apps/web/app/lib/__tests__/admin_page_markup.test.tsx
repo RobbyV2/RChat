@@ -4,6 +4,7 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import AdminRoot from '../../components/admin/admin_page'
 import { AdminHost } from '../../components/admin/admin_host'
+import { AccountRows } from '../../components/admin/users'
 import { ServerRail } from '../../components/server_rail'
 import { ADMIN_ROWS } from '../admin_rows'
 import { paletteCtx } from '../actions/ctx'
@@ -15,6 +16,7 @@ import { useStore } from '../store'
 import type { AdminPlace } from '../store_types'
 import { ADMIN_SECTIONS } from '../view'
 import { me, paged, user } from './fixtures'
+import { pagesOf } from './helpers/loads'
 import { Secret } from '../secret'
 
 const initial = useStore.getInitialState()
@@ -140,9 +142,9 @@ test('the overview shows sign-up and the counts', () => {
 })
 
 test('names on the page are marked for streamer mode', () => {
-  const users = page(place('users'), true, {
-    adminUsers: paged([user('bob', { display_name: 'Bobby' })]),
-  })
+  const users = renderToStaticMarkup(
+    <AccountRows pages={pagesOf([user('bob', { display_name: 'Bobby' })])} />
+  )
   expect(/class="streamer[^"]*"[^>]*>Bobby/.test(users)).toBe(true)
   const one = page(place('users', 'bob'), true, {
     adminUsers: paged([user('bob', { display_name: 'Bobby' })]),
