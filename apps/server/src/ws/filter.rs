@@ -6,7 +6,7 @@ use super::access::{Access, InThread, Rooted, channel_gate, deleted_gate};
 use super::conn::{forget_server, join, leave};
 use super::event::{EditStub, Updated, WsEvent};
 
-use crate::api::access::{is_member, typing_scope, ws_sees_reports, ws_sees_timeouts};
+use crate::api::access::{typing_scope, ws_is_member, ws_sees_reports, ws_sees_timeouts};
 use crate::db::MediaKind;
 use crate::state::AppState;
 
@@ -36,7 +36,7 @@ pub(super) async fn on_event(
     }
     if let (Some(server), Some(user)) = (self_grant(ev, access.user.as_deref()), &access.user) {
         let started = Instant::now();
-        match is_member(&state.read(), server, user).await {
+        match ws_is_member(&state.read(), server, user).await {
             Ok(true) => {}
             Ok(false) => return Some(false),
             Err(e) => return access.hold(e, started).then_some(false),

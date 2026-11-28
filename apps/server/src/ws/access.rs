@@ -18,8 +18,8 @@ use super::{
 
 use crate::api::access::members::ws_rosterless;
 use crate::api::access::{
-    ViewRules, is_member, is_membership_notice, presence_mode, ws_channel_now, ws_channel_policy,
-    ws_channel_seen, ws_closed_servers, ws_grant_deadline, ws_member_servers,
+    ViewRules, is_membership_notice, presence_mode, ws_channel_now, ws_channel_policy,
+    ws_channel_seen, ws_closed_servers, ws_grant_deadline, ws_is_member, ws_member_servers,
     ws_server_password_hash, ws_thread_start, ws_view_under,
 };
 use crate::api::policy::{ServerJoining, TempChange};
@@ -1112,7 +1112,7 @@ pub(super) async fn still_held(
     }
     match &access.user {
         Some(user) => {
-            if access.member_servers.contains(name) && !is_member(db, name, user).await? {
+            if access.member_servers.contains(name) && !ws_is_member(db, name, user).await? {
                 return Ok(false);
             }
             authed_sub_ok(db, name, user, access.site_admin).await

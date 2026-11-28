@@ -34,7 +34,9 @@ use super::{
 };
 
 use crate::api::Settings;
-use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws_member_servers};
+use crate::api::access::{
+    presence_mode, ws_banned, ws_is_member, ws_live_hosted, ws_member_servers,
+};
 use crate::db::setting_on;
 use crate::fanout::Topic;
 use crate::hub::{AUDIO_EVERY, AddrSlot, Hub, SlotRefused};
@@ -757,7 +759,9 @@ pub(super) async fn look(
             state
                 .hub
                 .listen(conn, &[Topic::View(s.clone()), Topic::Server(s.clone())]);
-            let member = is_member(&state.read(), &s, &user).await.unwrap_or(false);
+            let member = ws_is_member(&state.read(), &s, &user)
+                .await
+                .unwrap_or(false);
             let open = !member
                 && !access.retry.pending()
                 && authed_sub_ok(&state.read(), &s, &user, access.site_admin)

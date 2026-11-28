@@ -915,6 +915,26 @@ pub async fn resolve_reading(
 }
 
 impl ServerAccess {
+    /// Whether `username` is a member of this server, read on `ex`.
+    pub(crate) async fn member_in<'e, E>(&self, ex: E, username: &str) -> sqlx::Result<bool>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Any>,
+    {
+        is_member(ex, self.name(), username).await
+    }
+
+    /// The admin flag and stored permission bits of `username` in this server, read on `ex`.
+    pub(crate) async fn role_in<'e, E>(
+        &self,
+        ex: E,
+        username: &str,
+    ) -> sqlx::Result<Option<(bool, i64)>>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Any>,
+    {
+        member_role(ex, self.name(), username).await
+    }
+
     pub fn name(&self) -> &str {
         &self.lite.name
     }
@@ -1736,6 +1756,11 @@ async fn channel_list_part(
 }
 
 impl ResolvedChannel {
+    /// The view rules of this channel as stored now.
+    pub(crate) async fn view_rules(&self, db: &Db) -> sqlx::Result<ViewRules> {
+        ws_view_rules(db, self.id()).await
+    }
+
     pub fn id(&self) -> i64 {
         self.id
     }
@@ -3159,8 +3184,30 @@ pub(crate) async fn ws_guest_voice_channel(
     }
 }
 
+/// Realtime gates and reposts: whether `username` is a member of `server`. Never answers a
+/// client.
+pub(crate) async fn ws_is_member<'e, E>(ex: E, server: &str, username: &str) -> sqlx::Result<bool>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    is_member(ex, server, username).await
+}
+
+/// Realtime reposts: the admin flag and stored permission bits of `username` in `server`.
+/// Never answers a client.
+pub(crate) async fn ws_member_role<'e, E>(
+    ex: E,
+    server: &str,
+    username: &str,
+) -> sqlx::Result<Option<(bool, i64)>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    member_role(ex, server, username).await
+}
+
 /// Whether `username` is a member of `server`. Never answers a client.
-pub(crate) async fn is_member<'e, E>(ex: E, server: &str, username: &str) -> sqlx::Result<bool>
+async fn is_member<'e, E>(ex: E, server: &str, username: &str) -> sqlx::Result<bool>
 where
     E: sqlx::Executor<'e, Database = sqlx::Any>,
 {
@@ -3176,7 +3223,7 @@ where
 
 /// The admin flag and stored permission bits of `username` in `server`, `None` for a
 /// non-member. Never answers a client.
-pub(crate) async fn member_role<'e, E>(
+async fn member_role<'e, E>(
     ex: E,
     server: &str,
     username: &str,
@@ -3539,16 +3586,6 @@ mod tests {
         "live_grant_servers(",
     ];
 
-    /// Calls outside `ws/` that run after the gate decided: (file, function, call).
-    const AFTER_THE_GATE: [(&str, &str, &str); 6] = [
-        ("api/servers.rs", "insert_member_locked", "is_member("),
-        ("api/servers.rs", "ban_member", "is_member("),
-        ("api/servers.rs", "set_admin", "member_role("),
-        ("api/servers.rs", "assign_role", "is_member("),
-        ("api/servers.rs", "delete_channel", "ws_view_rules("),
-        ("api/timeouts.rs", "set_timeout", "is_member("),
-    ];
-
     fn free_calls<'a>(code: &'a str, token: &'a str) -> impl Iterator<Item = usize> + 'a {
         code.match_indices(token).map(|(at, _)| at).filter(|&at| {
             !code[..at].ends_with("fn ")
@@ -3608,9 +3645,7 @@ mod tests {
             let within = code[..at]
                 .rsplit_once("fn ")
                 .map_or("", |(_, rest)| ident(rest));
-            if !AFTER_THE_GATE.contains(&(file, within, call.as_str())) {
-                found.push(format!("{call} in {within}"));
-            }
+            found.push(format!("{call} in {within}"));
         }
         found
     }
@@ -3670,6 +3705,18 @@ mod tests {
             ),
             ("ws/conn.rs", "let b = is_banned(db, s, u)"),
             (
+                "api/servers.rs",
+                "async fn insert_member_locked() { is_member(&mut *tx, s, u) }",
+            ),
+            (
+                "api/servers.rs",
+                "async fn set_admin() { member_role(&mut *tx, s, u) }",
+            ),
+            (
+                "api/servers.rs",
+                "async fn delete_channel() { ws_view_rules(db, id) }",
+            ),
+            (
                 "api/pins.rs",
                 "use crate::api::access::ws_channel_now as channel_row;\nfn f() { channel_row(db, id) }",
             ),
@@ -3689,23 +3736,12 @@ mod tests {
                 "api/mod.rs",
                 "pub(crate) async fn token_row(db: &Db) { token_row(db) }",
             ),
-            ("ws/filter.rs", "match is_member(db, server, user)"),
+            ("ws/filter.rs", "match ws_is_member(db, server, user)"),
             (
                 "api/servers.rs",
-                "async fn insert_member_locked() { is_member(&mut *tx, s, u) }",
+                "if access.member_in(&mut *tx, u).await? { access.role_in(&mut *tx, u) }",
             ),
-            (
-                "api/servers.rs",
-                "async fn set_admin() { member_role(&mut *tx, s, u) }",
-            ),
-            (
-                "api/timeouts.rs",
-                "pub(crate) async fn set_timeout() { is_member(db, k, t) }",
-            ),
-            (
-                "api/servers.rs",
-                "async fn delete_channel() { ws_view_rules(db, id) }",
-            ),
+            ("api/servers.rs", "channel.view_rules(db)"),
             ("limits.rs", "pub fn ws_limits(&self) -> Limits {"),
             ("api/servers.rs", "if access.is_member() { news_feed(db) }"),
         ];
@@ -3737,6 +3773,37 @@ mod tests {
             "calls around the gate:\n{}",
             found.join("\n")
         );
+    }
+
+    #[tokio::test]
+    async fn membership_is_read_on_the_callers_connection() {
+        let (state, path) = temp_state("member_in").await;
+        let db = &state.db;
+        exec(db, "INSERT INTO servers(name, display_name, creator, created_at, public_read) VALUES('club', 'Club', 'alice', 0, 1)").await;
+        for name in ["alice", "bob", "zed"] {
+            user(db, name).await;
+        }
+        add_member(db, "club", "alice", 1, 0, 0).await;
+        add_member(db, "club", "bob", 0, 6, 10).await;
+        let alice = mem_user("alice", false);
+        let access = resolve_server(db, "club", Some(&alice), &Proof::none())
+            .await
+            .expect("member access");
+        assert!(access.member_in(db, "bob").await.unwrap());
+        assert!(!access.member_in(db, "zed").await.unwrap());
+        assert_eq!(access.role_in(db, "alice").await.unwrap(), Some((true, 0)));
+        assert_eq!(access.role_in(db, "bob").await.unwrap(), Some((false, 6)));
+        assert_eq!(access.role_in(db, "zed").await.unwrap(), None);
+        let mut tx = db.begin().await.unwrap();
+        sqlx::query("DELETE FROM members WHERE server = 'club' AND username = 'bob'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(!access.member_in(&mut *tx, "bob").await.unwrap());
+        assert_eq!(access.role_in(&mut *tx, "bob").await.unwrap(), None);
+        tx.rollback().await.unwrap();
+        assert!(access.member_in(db, "bob").await.unwrap());
+        done(state, path).await;
     }
 
     async fn exec(db: &Db, sql: &str) {

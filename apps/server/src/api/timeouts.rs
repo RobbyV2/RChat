@@ -8,7 +8,7 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, ServerAccess, acting_on, is_member, resolve_server};
+use crate::api::access::{Proof, ServerAccess, acting_on, resolve_server};
 use crate::api::audit::{self, Details, Entry, Target};
 use crate::api::{ApiError, ApiErrorBody, OkResp, bad, ok, placeholders};
 use crate::api::{Authed, check_len};
@@ -227,7 +227,7 @@ pub(crate) async fn set_timeout(
     }
     let reason = clean_reason(reason)?;
     let key = access.name().to_string();
-    if !is_member(&state.db, &key, &target).await? {
+    if !access.member_in(&state.db, &target).await? {
         return Err(ApiError(
             StatusCode::NOT_FOUND,
             "Not a member".to_string(),

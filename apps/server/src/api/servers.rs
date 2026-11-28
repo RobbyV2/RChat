@@ -17,8 +17,8 @@ use crate::api::access::perms::{
 };
 use crate::api::access::{
     BANNED, Caller, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden,
-    is_member, member_role, ranks, resolve_channel, resolve_invite, resolve_join, resolve_reading,
-    resolve_server, seen_among,
+    ranks, resolve_channel, resolve_invite, resolve_join, resolve_reading, resolve_server,
+    seen_among,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -3204,7 +3204,7 @@ pub(crate) async fn insert_member_locked(
     username: &str,
 ) -> Result<Option<NewMember>, ApiError> {
     let server = access.name();
-    if is_member(&mut *tx, server, username).await? {
+    if access.member_in(&mut *tx, username).await? {
         return Ok(None);
     }
     let banned = crate::api::bans::banned(&mut *tx, server, username).await?;
@@ -3244,7 +3244,7 @@ pub(crate) async fn insert_member_locked(
         let notice = post_system(tx, server, username, SystemKind::Join).await?;
         return Ok(Some(NewMember { notice }));
     }
-    let member = is_member(&mut *tx, server, username).await?;
+    let member = access.member_in(&mut *tx, username).await?;
     match member {
         true => Ok(None),
         false => Err(forbidden(BANNED)),
@@ -4718,7 +4718,7 @@ pub(crate) async fn delete_channel(
             return Err(bad("Cannot delete the only text channel"));
         }
     }
-    let rules = crate::api::access::ws_view_rules(&state.db, id).await?;
+    let rules = channel.view_rules(&state.db).await?;
     let actor = channel
         .server()
         .audit_actor(&state.db, Perm::ManageChannels)
@@ -4897,7 +4897,7 @@ pub(crate) async fn ban_member(
         reason,
         purge_hours,
     } = bans::options(duration_secs, reason, purge_hours, t)?;
-    let held = match is_member(&state.db, &key, &target).await? {
+    let held = match access.member_in(&state.db, &target).await? {
         true => None,
         false => Some(lookup::outside_ban(&state, &user)?),
     };
@@ -5199,7 +5199,7 @@ async fn set_admin(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
-    let was = member_role(&mut *tx, server, target).await?;
+    let was = access.role_in(&mut *tx, target).await?;
     let changed = sqlx::query(
         "UPDATE members SET is_admin = $1, perms = 0 WHERE server = $2 AND username = $3",
     )
@@ -6386,7 +6386,7 @@ pub(crate) async fn assign_role(
     let access = role_guard(&state, &name, &user, Perm::AssignRoles).await?;
     let key = access.name().to_string();
     let role_perms = require_role(&state.db, &key, id).await?;
-    if !is_member(&state.db, &key, &target).await? {
+    if !access.member_in(&state.db, &target).await? {
         return Err(not_found("Not a member"));
     }
     require_below(&state.db, &access, id).await?;

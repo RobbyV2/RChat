@@ -6,8 +6,8 @@ use super::p2p::announce_drop;
 use super::{PURGE_CHUNK, evict_unviewable};
 
 use crate::api::access::{
-    is_member, member_role, presence_mode, servers_with_expired_passwords, ws_banned,
-    ws_channel_now, ws_server_lite, ws_voice_viewable,
+    presence_mode, servers_with_expired_passwords, ws_banned, ws_channel_now, ws_is_member,
+    ws_member_role, ws_server_lite, ws_voice_viewable,
 };
 use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::{PublicSettings, UserRef};
@@ -288,23 +288,25 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             Ok(None) | Err(_) => Some(WsEvent::ServerDeleted { name }),
         },
         WsEvent::MemberJoined { server, member } => {
-            match is_member(db, &server, &member.user.username).await {
+            match ws_is_member(db, &server, &member.user.username).await {
                 Ok(true) => Some(WsEvent::MemberJoined { server, member }),
                 Ok(false) | Err(_) => None,
             }
         }
-        WsEvent::MemberLeft { server, username } => match is_member(db, &server, &username).await {
-            Ok(true) => {
-                evict_unviewable(state, &server, None).await;
-                None
+        WsEvent::MemberLeft { server, username } => {
+            match ws_is_member(db, &server, &username).await {
+                Ok(true) => {
+                    evict_unviewable(state, &server, None).await;
+                    None
+                }
+                Ok(false) | Err(_) => Some(WsEvent::MemberLeft { server, username }),
             }
-            Ok(false) | Err(_) => Some(WsEvent::MemberLeft { server, username }),
-        },
+        }
         WsEvent::MemberKicked {
             server,
             username,
             banned,
-        } => match is_member(db, &server, &username).await {
+        } => match ws_is_member(db, &server, &username).await {
             Ok(true) => {
                 evict_unviewable(state, &server, None).await;
                 None
@@ -319,7 +321,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             let mut gone = Vec::new();
             let mut stayed = false;
             for username in usernames {
-                match is_member(db, &server, &username).await {
+                match ws_is_member(db, &server, &username).await {
                     Ok(true) => stayed = true,
                     Ok(false) | Err(_) => gone.push(username),
                 }
@@ -394,7 +396,10 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             is_admin: _,
             perms: _,
         } => {
-            let (is_admin, perms) = member_role(db, &server, &username).await.ok().flatten()?;
+            let (is_admin, perms) = ws_member_role(db, &server, &username)
+                .await
+                .ok()
+                .flatten()?;
             Some(WsEvent::AdminChanged {
                 server,
                 username,
@@ -515,7 +520,10 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
     match op {
         Op::Broadcast { event } => repost_event(state, event).await,
         Op::ForceOffline { server, user } => {
-            if !is_member(&state.db, &server, &user).await.unwrap_or(false) {
+            if !ws_is_member(&state.db, &server, &user)
+                .await
+                .unwrap_or(false)
+            {
                 state.hub.force_offline(&server, &user);
             }
         }
