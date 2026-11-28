@@ -219,7 +219,7 @@ pub(crate) fn spawn_purge(state: &AppState, jobs: Vec<i64>) {
                 tokio::select! {
                     () = &mut run => break,
                     () = tokio::time::sleep(LEASE_HOLD) => {
-                        if let Err(e) = hold_lease(&state.db, waiting, now()).await {
+                        if let Err(e) = hold_lease(&state.db, waiting, state.clock.unix()).await {
                             tracing::warn!("holding the lease of purge jobs did not work: {e}");
                         }
                     }

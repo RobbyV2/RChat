@@ -1554,7 +1554,7 @@ pub(crate) async fn vote(
     crate::db::pepper(db).await?;
     let mut tx = db.begin().await?;
     let def = lock_poll(db, &mut tx, id).await?;
-    if def.closed(now()) {
+    if def.closed(state.clock.unix()) {
         return Err(closed_error());
     }
     let ids = option_ids(&mut tx, id).await?;
@@ -1585,8 +1585,8 @@ pub(crate) async fn vote(
         .execute(&mut *tx)
         .await?;
     let t = match def.anonymous {
-        true => now().div_euclid(86400) * 86400,
-        false => now(),
+        true => state.clock.unix().div_euclid(86400) * 86400,
+        false => state.clock.unix(),
     };
     for (option, value) in &rows {
         sqlx::query("INSERT INTO poll_votes(message_id, voter, option_id, value, created_at) VALUES($1, $2, $3, $4, $5)")
@@ -1629,7 +1629,7 @@ pub(crate) async fn retract_vote(
     crate::db::pepper(db).await?;
     let mut tx = db.begin().await?;
     let def = lock_poll(db, &mut tx, id).await?;
-    if def.closed(now()) {
+    if def.closed(state.clock.unix()) {
         return Err(closed_error());
     }
     if !def.allow_change {
@@ -1682,7 +1682,7 @@ pub(crate) async fn add_option(
     crate::db::pepper(db).await?;
     let mut tx = db.begin().await?;
     let def = lock_poll(db, &mut tx, id).await?;
-    if def.closed(now()) {
+    if def.closed(state.clock.unix()) {
         return Err(closed_error());
     }
     if !def.kind.written() || !(def.allow_add || own) {
@@ -1724,7 +1724,7 @@ pub(crate) async fn add_option(
         &text,
         emoji.as_deref(),
         Some(&user.username),
-        now(),
+        state.clock.unix(),
         writer.as_ref(),
     )
     .await?;
@@ -1755,7 +1755,7 @@ async fn set_closed(
     };
     let mut tx = db.begin().await?;
     lock_poll(db, &mut tx, id).await?;
-    let t = now();
+    let t = state.clock.unix();
     let changed = match close {
         true => sqlx::query("UPDATE polls SET closed_at = CASE WHEN closes_at IS NOT NULL AND closes_at < $2 THEN closes_at ELSE $2 END, closed_by = $3, version = version + 1 WHERE message_id = $1 AND closed_at IS NULL")
             .bind(id)
@@ -2040,7 +2040,7 @@ pub(crate) async fn update_event(db: &Db, id: i64) -> Result<Option<WsEvent>, Ap
 
 /// Closes polls whose deadline passed (the jobs sweep), each once, and announces them.
 pub async fn close_due(state: &AppState) -> sqlx::Result<usize> {
-    let t = now();
+    let t = state.clock.unix();
     let ids: Vec<i64> = sqlx::query("SELECT message_id FROM polls WHERE closed_at IS NULL AND closes_at IS NOT NULL AND closes_at <= $1 ORDER BY closes_at LIMIT $2")
         .bind(t)
         .bind(CLOSE_BATCH)

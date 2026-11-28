@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, Session, check_at};
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, ok, unauthorized};
-use crate::db::{Db, PURGING_HASH, User, now};
+use crate::db::{Db, PURGING_HASH, User};
 use crate::sso::Sso;
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -137,7 +137,7 @@ pub(crate) async fn request(
     AuthedSession(session): AuthedSession,
     Json(req): Json<DeleteAccount>,
 ) -> Result<Json<DeletionPending>, ApiError> {
-    request_at(&state, session, req, now()).await
+    request_at(&state, session, req, state.clock.unix()).await
 }
 
 pub(crate) async fn request_at(

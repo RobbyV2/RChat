@@ -234,7 +234,7 @@ async fn reconcile_after_lookup(
             )
             .bind(server)
             .bind(username)
-            .bind(db::now())
+            .bind(state.clock.unix())
             .fetch_optional(&mut *tx)
             .await?
             .is_some();

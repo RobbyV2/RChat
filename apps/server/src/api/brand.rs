@@ -16,7 +16,7 @@ use crate::api::access::not_found;
 use crate::api::admin::require_site_admin;
 use crate::api::policy::Policy;
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, ok};
-use crate::db::{Db, now};
+use crate::db::Db;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -495,7 +495,7 @@ pub(crate) async fn put_asset(
     let kind = asset_of(&kind)?;
     check_image(kind, &body)?;
     let etag = etag_of(&body);
-    let t = now();
+    let t = state.clock.unix();
     let mut tx = state.db.begin().await?;
     sqlx::query(
         "INSERT INTO brand_assets(kind, bytes, etag, updated_at) VALUES($1, $2, $3, $4) ON CONFLICT(kind) DO UPDATE SET bytes = excluded.bytes, etag = excluded.etag, updated_at = excluded.updated_at",
@@ -530,7 +530,7 @@ pub(crate) async fn delete_asset(
 ) -> Result<Json<OkResp>, ApiError> {
     require_site_admin(&user)?;
     let kind = asset_of(&kind)?;
-    let t = now();
+    let t = state.clock.unix();
     let mut tx = state.db.begin().await?;
     let removed = sqlx::query("DELETE FROM brand_assets WHERE kind = $1")
         .bind(kind.as_str())

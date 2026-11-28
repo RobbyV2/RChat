@@ -172,7 +172,7 @@ pub(crate) async fn post(
     super::messages::guest_message_rate(&state).await?;
     let server = channel.server().name();
     let addr = address(db, server).await?;
-    let t = now();
+    let t = state.clock.unix();
     let reading = super::access::Reading::now(db).await;
     let mut tx = db.begin().await?;
     lock_server(&mut tx, server).await?;
@@ -357,7 +357,7 @@ pub(crate) async fn pause(
         return Err(not_found());
     }
     let actor = server.audit_actor(db, Perm::TimeoutMembers).await?;
-    let until = now() + PAUSE;
+    let until = state.clock.unix() + PAUSE;
     let mut tx = db.begin().await?;
     if sqlx::query(
         "UPDATE guest_chat_sessions SET blocked_until = $3 WHERE server = $1 AND author = $2",

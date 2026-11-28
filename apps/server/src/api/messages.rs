@@ -1462,7 +1462,7 @@ pub(crate) async fn insert_message(
     if content.trim().is_empty() && media.is_none() && !has_cards && poll.is_none() {
         return Err(bad("Message is empty"));
     }
-    let t = now();
+    let t = state.clock.unix();
     let parts = Parts {
         content: content.clone(),
         embeds: hook.and_then(|h| crate::api::webhooks::stored_embeds(&h.embeds)),
@@ -1859,7 +1859,7 @@ async fn insert_forward(
             crate::api::polls::check_snapshot(&settings, data)?;
         }
     }
-    let t = now();
+    let t = state.clock.unix();
     let (mut tx, text_only, writer) = begin_message_write(
         db,
         channel_id,
@@ -2982,7 +2982,7 @@ pub(crate) async fn edit_message(
         };
         crate::api::seal::store_parts(&mut tx, writer.as_ref(), id, &author, &parts).await?;
         sqlx::query("UPDATE messages SET edited_at = $1, no_previews = $3 WHERE id = $2")
-            .bind(now())
+            .bind(state.clock.unix())
             .bind(id)
             .bind(i64::from(text_only))
             .execute(&mut *tx)

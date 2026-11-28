@@ -281,7 +281,7 @@ pub(crate) async fn list_passwords(
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     let invites = access.has_perm(&state.db, Perm::ManageInvites).await;
     let db = &state.db;
-    let t = now();
+    let t = state.clock.unix();
     let protected = access.lite().has_password;
     if !invites {
         access.require_perm(db, Perm::ManageServer).await?;
@@ -415,7 +415,7 @@ pub(crate) async fn create_password(
             false => generate(),
         },
     };
-    let t = now();
+    let t = state.clock.unix();
     let expires_at = expiry(t, expires_in, expires_at)?;
     if let Some(max) = max_uses
         && !(1..=USES_MAX).contains(&max)
@@ -714,7 +714,7 @@ pub(crate) async fn make_standing_invite(
         Actor::Staff => None,
         Actor::User(name) => Some(name.clone()),
     };
-    let t = now();
+    let t = state.clock.unix();
     let mut tx = db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     end_standing(&mut tx, access.name(), &actor, t).await?;
@@ -775,7 +775,7 @@ pub(crate) async fn delete_standing_invite(
     let actor = access.audit_actor(&state.db, Perm::ManageInvites).await?;
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
-    end_standing(&mut tx, access.name(), &actor, now()).await?;
+    end_standing(&mut tx, access.name(), &actor, state.clock.unix()).await?;
     tx.commit().await?;
     state.hub.broadcast(WsEvent::ServerUpdated {
         server: access.lite().clone(),
@@ -845,7 +845,7 @@ pub(crate) async fn revoke_password(
     let revoked = sqlx::query(
         "UPDATE server_passwords SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL",
     )
-    .bind(now())
+    .bind(state.clock.unix())
     .bind(id)
     .execute(&mut *tx)
     .await?

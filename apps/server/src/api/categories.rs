@@ -16,7 +16,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, Category, CategoryStyle, ChannelLayout, LayoutCategory, OkResp,
     ProfanityTarget, Separator, SeparatorStyle, bad, ok,
 };
-use crate::db::{Db, now};
+use crate::db::Db;
 use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -574,7 +574,7 @@ pub(crate) async fn create_category(
     )
     .bind(&server)
     .bind(&category_name)
-    .bind(now())
+    .bind(state.clock.unix())
     .bind(style.as_str())
     .fetch_one(&mut *tx)
     .await?;

@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 
 use crate::api::auth::{note_change_failure, session_key, throttle_change, verify_password};
 use crate::api::{ApiError, bad, bearer_token, session_for_token, unauthorized};
-use crate::db::{Db, User, now};
+use crate::db::{Db, User};
 use crate::state::AppState;
 
 pub const NONCE_TTL_SECS: i64 = 300;
@@ -214,7 +214,7 @@ pub async fn check(
     reauth: ReAuth,
     purpose: Purpose,
 ) -> Result<(), ApiError> {
-    check_at(state, session, reauth, purpose, now()).await
+    check_at(state, session, reauth, purpose, state.clock.unix()).await
 }
 
 pub(crate) async fn check_at(

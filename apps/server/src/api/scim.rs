@@ -1,6 +1,6 @@
 use super::{ApiError, Settings, UserRef, admin, auth, names, policy::Policy};
 use crate::{
-    db::{self, AvatarKind, NO_PASSWORD_HASH, User, now},
+    db::{self, AvatarKind, NO_PASSWORD_HASH, User},
     limits::http,
     server::client_ip::ClientIp,
     sso::{accounts, audit, config::ScimDelete, scim::*},
@@ -358,7 +358,7 @@ async fn write(state: AppState, target: WriteTarget, p: UserPatch) -> Result<Res
     } else {
         db::lock_new_usernames(&mut tx).await?
     }
-    let t = now();
+    let t = state.clock.unix();
     let mut joined = None;
     let id = match target {
         WriteTarget::Replace(id) | WriteTarget::Patch(id) => {
@@ -537,7 +537,7 @@ async fn delete(State(state): State<AppState>, Path(id): Path<String>) -> Result
             let changed = accounts::set_active_in(&mut tx, &user.username, false).await?;
             sqlx::query("UPDATE scim_users SET deleted_at=$2, updated_at=$2 WHERE id=$1")
                 .bind(id)
-                .bind(now())
+                .bind(state.clock.unix())
                 .execute(&mut *tx)
                 .await?;
             tx.commit().await?;
@@ -824,7 +824,7 @@ async fn group_write(
 ) -> Result<Response> {
     let mut tx = auth::begin_account_write(&state.db).await?;
     db::lock_new_usernames(&mut tx).await?;
-    let t = now();
+    let t = state.clock.unix();
     if matches!(mode, GroupWrite::Create) {
         let display = changes
             .iter()

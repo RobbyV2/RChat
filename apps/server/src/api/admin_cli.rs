@@ -166,7 +166,7 @@ pub async fn announce_resets(state: &AppState) -> sqlx::Result<usize> {
     let rows = sqlx::query(
         "SELECT username FROM temp_passwords WHERE issued_by IS NULL AND issued_at >= $1 ORDER BY issued_at DESC LIMIT $2",
     )
-    .bind(now() - RESET_WINDOW)
+    .bind(state.clock.unix() - RESET_WINDOW)
     .bind(RESET_BATCH)
     .fetch_all(&state.db)
     .await?;

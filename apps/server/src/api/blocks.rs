@@ -16,7 +16,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, bad, cursor_int, decode_cursor,
     encode_cursor, ok, placeholders,
 };
-use crate::db::{AvatarKind, Db, User, get_user, now};
+use crate::db::{AvatarKind, Db, User, get_user};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -237,7 +237,7 @@ pub(crate) async fn block_user(
     if other.username == user.username {
         return Err(bad("You cannot block yourself"));
     }
-    let at = now();
+    let at = state.clock.unix();
     let mut tx = state.db.begin().await?;
     friends::lock_users(&mut tx, &state.db, &[&user.username, &other.username]).await?;
     let added = sqlx::query(
@@ -1020,6 +1020,30 @@ mod tests {
         assert_eq!(unseen("boss").await, 0);
         unblock(&state, "bob", "boss").await;
         assert_eq!(unseen("bob").await, 2, "counted again after unblocking");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_block_is_stamped_with_the_time_of_the_state_clock() {
+        let (state, path) = temp_state("blocks_clock").await;
+        let clock = crate::clock::Clock::fixed(1_000);
+        let state = state.with_clock(clock.clone());
+        for name in ["alice", "bob", "carol"] {
+            add_user(&state.db, name, name).await;
+        }
+        block(&state, "alice", "bob").await.expect("block bob");
+        clock.advance(60);
+        block(&state, "alice", "carol").await.expect("block carol");
+        let times: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT blocked, created_at FROM blocks WHERE blocker = 'alice' ORDER BY created_at",
+        )
+        .fetch_all(&state.db)
+        .await
+        .expect("rows");
+        assert_eq!(
+            times,
+            vec![("bob".to_string(), 1_000), ("carol".to_string(), 1_060)]
+        );
         done(state, path).await;
     }
 }

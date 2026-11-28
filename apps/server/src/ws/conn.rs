@@ -35,7 +35,7 @@ use super::{
 
 use crate::api::Settings;
 use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws_member_servers};
-use crate::db::{now, setting_on};
+use crate::db::setting_on;
 use crate::fanout::Topic;
 use crate::hub::{AUDIO_EVERY, AddrSlot, Hub, SlotRefused};
 use crate::limits::bucket::{Policy, Single};
@@ -486,7 +486,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                                 };
                                 let key = hex::encode(crate::p2p::host_key(&state.instance.p2p_secret, &user, &peer_id));
                                 access.host(&state, conn, (peer_id.clone(), ids, relays)).await;
-                                let hosted = WsEvent::P2pHosted { live, checked, key, peer_id, now: now() };
+                                let hosted = WsEvent::P2pHosted { live, checked, key, peer_id, now: state.clock.unix() };
                                 if !sent(&mut access, out.event(&hosted)) {
                                     break;
                                 }

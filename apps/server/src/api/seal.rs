@@ -844,7 +844,7 @@ pub(crate) async fn put_required(
             "encryption.required",
             None,
             serde_json::json!({"on": on}),
-            now(),
+            state.clock.unix(),
         )
         .await?;
     }
@@ -906,7 +906,7 @@ pub(crate) async fn put_server_forced(
             "encryption.server_required",
             Some(&key),
             serde_json::json!({"on": on}),
-            now(),
+            state.clock.unix(),
         )
         .await?;
         let word = match on {

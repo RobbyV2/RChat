@@ -514,7 +514,7 @@ pub(crate) async fn backchannel_logout(
         alg,
         &cfg.issuer,
         &cfg.client_id,
-        crate::db::now(),
+        state.clock.unix(),
     )
     .map_err(invalid)?;
     let users: Vec<String> = if let Some(sid) = claims.sid {

@@ -961,7 +961,7 @@ pub(crate) async fn reset_member_profile(
     };
     let key = access.name().to_string();
     let actor = moderator(&state.db, &access, &target).await?;
-    let t = now();
+    let t = state.clock.unix();
     let Some((mut tx, before)) = open_member(&state.db, &key, &target).await? else {
         return Err(not_found());
     };
@@ -1038,7 +1038,7 @@ pub(crate) async fn unlock_member_profile(
     }
     let key = access.name().to_string();
     let actor = moderator(&state.db, &access, &target).await?;
-    let t = now();
+    let t = state.clock.unix();
     let Some((mut tx, before)) = open_member(&state.db, &key, &target).await? else {
         return Err(not_found());
     };

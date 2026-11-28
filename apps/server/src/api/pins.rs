@@ -11,7 +11,7 @@ use crate::api::messages::{Quotes, load_broadcast, load_message, moderated, pinn
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, bad, now_ms, ok, require_guest_ok,
 };
-use crate::db::{Db, User, is_sqlite, now};
+use crate::db::{Db, User, is_sqlite};
 use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -142,7 +142,7 @@ pub(crate) async fn pin_message(
             )),
         };
     }
-    let t = now();
+    let t = state.clock.unix();
     let notice: Option<i64> = sqlx::query(
         "INSERT INTO messages(channel_id, dm_id, author, content, kind, pin_message_id, created_at) SELECT $1, $2, $3, '', 'pin', $4, $5 WHERE NOT EXISTS(SELECT 1 FROM messages n WHERE n.pin_message_id = $4 AND n.kind = 'pin' AND n.created_at > $6) RETURNING id",
     )
@@ -328,6 +328,7 @@ mod tests {
     use super::*;
     use crate::api::messages::{send_thread_message, thread_messages};
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
+    use crate::db::now;
     use axum::extract::Query;
 
     async fn exec(db: &Db, sql: &str) {

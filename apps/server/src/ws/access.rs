@@ -921,7 +921,7 @@ impl Access {
     }
 
     pub(super) async fn past_deadlines(&mut self, state: &AppState, conn: u64) -> bool {
-        let t = now();
+        let t = state.clock.unix();
         let due: Vec<String> = self
             .deadlines
             .iter()

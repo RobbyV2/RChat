@@ -20,6 +20,7 @@ pub struct AppState {
     pub limits: Arc<Limits>,
     pub sso: Arc<crate::sso::Sso>,
     pub crypt: Arc<crate::crypt::ring::Ring>,
+    pub clock: crate::clock::Clock,
 }
 
 impl AppState {
@@ -44,6 +45,7 @@ impl AppState {
             limits: limits.clone(),
             sso: Arc::new(crate::sso::Sso::off()),
             crypt,
+            clock: crate::clock::Clock::system(),
         }
         .with_limits(limits)
     }
@@ -57,6 +59,11 @@ impl AppState {
 
     pub fn with_sso(self, sso: Arc<crate::sso::Sso>) -> Self {
         Self { sso, ..self }
+    }
+
+    /// The same state on `clock`.
+    pub fn with_clock(self, clock: crate::clock::Clock) -> Self {
+        Self { clock, ..self }
     }
 
     pub fn with_crypt(self, crypt: Arc<crate::crypt::ring::Ring>) -> Self {

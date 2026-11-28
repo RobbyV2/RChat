@@ -16,7 +16,7 @@ use crate::api::reauth::{
     issue_nonce, phrase_sig_ok, take_nonce,
 };
 use crate::api::{ApiError, ApiErrorBody, NAME_MAX, Settings, bad, check_len, unauthorized};
-use crate::db::{User, now, secret_key};
+use crate::db::{User, secret_key};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -57,7 +57,7 @@ pub(crate) async fn challenge(
     Json(req): Json<ChallengeReq>,
 ) -> Result<Json<Challenge>, ApiError> {
     rare::take(&state, Rare::Recovery, None)?;
-    challenge_at(&state, req, now()).await
+    challenge_at(&state, req, state.clock.unix()).await
 }
 
 pub(crate) async fn challenge_at(
@@ -130,7 +130,7 @@ pub(crate) async fn recover(
     Json(req): Json<RecoverReq>,
 ) -> Result<Json<AuthResp>, ApiError> {
     let held = rare::hold(&state, Rare::Recovery, None)?;
-    rare::counted(held, recover_at(&state, req, now()).await)
+    rare::counted(held, recover_at(&state, req, state.clock.unix()).await)
 }
 
 pub(crate) async fn recover_at(
@@ -300,7 +300,7 @@ pub(crate) async fn set_phrase(
     AuthedSession(session): AuthedSession,
     Json(req): Json<RecoverySet>,
 ) -> Result<Json<RecoveryStatus>, ApiError> {
-    set_phrase_at(&state, session, req, now()).await
+    set_phrase_at(&state, session, req, state.clock.unix()).await
 }
 
 pub(crate) async fn set_phrase_at(
@@ -372,7 +372,7 @@ pub(crate) async fn remove_phrase(
     AuthedSession(session): AuthedSession,
     Json(req): Json<RecoveryRemove>,
 ) -> Result<Json<RecoveryStatus>, ApiError> {
-    remove_phrase_at(&state, session, req, now()).await
+    remove_phrase_at(&state, session, req, state.clock.unix()).await
 }
 
 pub(crate) async fn remove_phrase_at(

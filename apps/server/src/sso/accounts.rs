@@ -196,7 +196,7 @@ async fn sign_in_once(
         // Group writes enumerate cached claimants under this same lock.
         crate::db::lock_new_usernames(&mut tx).await?;
     }
-    let t = now();
+    let t = state.clock.unix();
     let already_linked = linked.is_some();
     let mut username = linked;
     if username.is_none()
@@ -397,7 +397,7 @@ pub async fn link(
     let mut tx = auth::begin_account_write(&state.db).await?;
     let locked = sqlx::query("UPDATE users SET suspended_at=suspended_at WHERE username=$1 AND suspended_at IS NULL AND password_hash <> '!purging'")
         .bind(username).execute(&mut *tx).await?;
-    let t = now();
+    let t = state.clock.unix();
     let (born, used) = state.limits.session_cutoffs(t);
     let active: Option<i32> = sqlx::query_scalar("SELECT 1 FROM tokens WHERE username=$1 AND token=$2 AND created_at >= $3 AND (last_used_at >= $4 OR created_at >= $4)")
         .bind(username).bind(session_key).bind(born).bind(used).fetch_optional(&mut *tx).await?;
@@ -505,7 +505,7 @@ pub async fn unlink(state: &AppState, user: &User, provider: &str) -> Result<(),
         "sso.unlink",
         None,
         serde_json::json!({"provider":provider}),
-        now(),
+        state.clock.unix(),
     )
     .await?;
     tx.commit().await?;

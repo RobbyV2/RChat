@@ -1,5 +1,6 @@
 pub mod api;
 pub mod bus;
+pub mod clock;
 pub mod config;
 pub mod crypt;
 pub mod db;

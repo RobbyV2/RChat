@@ -18,7 +18,7 @@ use crate::api::{
     check_len, check_profanity, cursor_int, decode_cursor, encode_cursor, ok, user_from, user_refs,
     yes,
 };
-use crate::db::{Db, User, get_user, is_sqlite, now};
+use crate::db::{Db, User, get_user, is_sqlite};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -703,7 +703,9 @@ pub(crate) async fn create(
     Authed(user): Authed,
     Json(req): Json<ScheduleReq>,
 ) -> Result<Json<ScheduledMessage>, ApiError> {
-    create_at(&state, &user, req, now()).await.map(Json)
+    create_at(&state, &user, req, state.clock.unix())
+        .await
+        .map(Json)
 }
 
 pub(crate) async fn create_at(
@@ -809,7 +811,9 @@ pub(crate) async fn patch(
     Path(id): Path<i64>,
     Json(req): Json<ScheduledPatch>,
 ) -> Result<Json<ScheduledMessage>, ApiError> {
-    patch_at(&state, &user, id, req, now()).await.map(Json)
+    patch_at(&state, &user, id, req, state.clock.unix())
+        .await
+        .map(Json)
 }
 
 pub(crate) async fn patch_at(
@@ -918,7 +922,9 @@ pub(crate) async fn send_now(
     Authed(user): Authed,
     Path(id): Path<i64>,
 ) -> Result<Json<Message>, ApiError> {
-    send_now_at(&state, &user, id, now()).await.map(Json)
+    send_now_at(&state, &user, id, state.clock.unix())
+        .await
+        .map(Json)
 }
 
 pub(crate) async fn send_now_at(
@@ -1186,7 +1192,7 @@ async fn run_one(state: &AppState, claimed: Claimed, t: i64) -> sqlx::Result<boo
 /// Sends the scheduled messages that are due, one after another, and takes over the ones a
 /// stopped copy held past their lease. Answers how many it sent.
 pub async fn run_due(state: &AppState) -> sqlx::Result<u64> {
-    run_due_at(state, now()).await
+    run_due_at(state, state.clock.unix()).await
 }
 
 pub(crate) async fn run_due_at(state: &AppState, t: i64) -> sqlx::Result<u64> {

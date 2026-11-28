@@ -17,7 +17,7 @@ use crate::api::access::{
     user_scope, ws_appear_offline, ws_channel_read_since, ws_dm_between, ws_hosted_messages,
     ws_member_servers, ws_p2p_message, ws_staff_file,
 };
-use crate::db::{Db, now};
+use crate::db::Db;
 use crate::hub::P2pDrop;
 use crate::state::AppState;
 
@@ -262,7 +262,7 @@ pub(super) async fn p2p_release(
     ) else {
         return deny(NOT_AVAILABLE);
     };
-    let now = now();
+    let now = state.clock.unix();
     let live = expires.is_none_or(|at| at > now);
     if hoster == me || !live {
         return deny(NOT_AVAILABLE);

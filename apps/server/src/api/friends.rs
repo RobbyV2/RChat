@@ -14,7 +14,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, bad, cursor_int, decode_cursor,
     encode_cursor, ok,
 };
-use crate::db::{AvatarKind, Db, User, get_user, now};
+use crate::db::{AvatarKind, Db, User, get_user};
 use crate::limits::Limits;
 use crate::limits::bucket::{Keyed, Policy};
 use crate::limits::shared::Rate;
@@ -473,7 +473,7 @@ async fn ping(
     if is_blocked(&state.db, recipient, &actor.username).await? {
         return Ok(());
     }
-    let t = now();
+    let t = state.clock.unix();
     let id: i64 = sqlx::query(
         "INSERT INTO friend_pings(username, kind, actor, created_at) VALUES($1, $2, $3, $4) RETURNING id",
     )
@@ -602,7 +602,7 @@ async fn either_blocked(
 /// Makes `me` and `other` friends, taking `other`'s pending request to `me`. Fails when there is
 /// no such request or either side is at the friends cap.
 async fn befriend(state: &AppState, me: &User, other: &User) -> Result<Friend, ApiError> {
-    let t = now();
+    let t = state.clock.unix();
     let mut tx = state.db.begin().await?;
     lock_users(&mut tx, &state.db, &[&me.username, &other.username]).await?;
     let taken = sqlx::query("DELETE FROM friend_requests WHERE sender = $1 AND recipient = $2")
@@ -895,7 +895,7 @@ pub(crate) async fn send_request(
             Err(e) => Err(e),
         };
     }
-    let t = now();
+    let t = state.clock.unix();
     let mut tx = state.db.begin().await?;
     lock_users(&mut tx, &state.db, &[&user.username, &other.username]).await?;
     let added = sqlx::query(
@@ -1313,7 +1313,7 @@ pub(crate) async fn mark_seen(
     Json(req): Json<SeenReq>,
 ) -> Result<Json<OkResp>, ApiError> {
     let SeenReq { pings_until } = req;
-    let t = now();
+    let t = state.clock.unix();
     let changed = sqlx::query(
         "UPDATE friend_pings SET seen = 1 WHERE username = $1 AND seen = 0 AND id <= $2",
     )
@@ -1403,6 +1403,7 @@ pub(crate) async fn patch_privacy(
 
 #[cfg(test)]
 mod tests {
+    use crate::db::now;
     use std::collections::HashSet;
 
     use axum::extract::{Path, Query, State};

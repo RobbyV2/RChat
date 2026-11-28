@@ -28,7 +28,7 @@ use crate::api::{
     request_token, valid_color,
 };
 use crate::db::{
-    AvatarKind, Db, NotAdded, User, get_user, lock_server, now, secret_key, shift_member_count,
+    AvatarKind, Db, NotAdded, User, get_user, lock_server, secret_key, shift_member_count,
 };
 use crate::limits::Limits;
 use crate::state::AppState;
@@ -517,7 +517,7 @@ const SESSION_SWEEP_BATCH: i64 = 500;
 /// each of their accounts' connections (`TokensRevoked`), so their sockets close. Returns how
 /// many ended.
 pub async fn sweep_sessions(state: &AppState) -> sqlx::Result<u64> {
-    let (born_after, used_after) = state.limits.session_cutoffs(now());
+    let (born_after, used_after) = state.limits.session_cutoffs(state.clock.unix());
     if born_after == i64::MIN && used_after == i64::MIN {
         return Ok(0);
     }
@@ -666,7 +666,7 @@ pub(crate) async fn register(
         .clone();
     crate::api::network_caps::take(&state, crate::api::network_caps::Kind::SignUp).await?;
     let mut tx = begin_account_write(&state.db).await?;
-    let t = now();
+    let t = state.clock.unix();
     let joined = add_account(
         &mut tx,
         &state.limits,
@@ -1006,7 +1006,7 @@ pub(crate) async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
 ) -> Result<Json<AuthResp>, ApiError> {
-    login_at(&state, req, now()).await
+    login_at(&state, req, state.clock.unix()).await
 }
 
 pub(crate) async fn login_at(
@@ -1087,7 +1087,7 @@ pub(crate) async fn change_password(
     headers: HeaderMap,
     Json(req): Json<PasswordChange>,
 ) -> Result<Json<OkResp>, ApiError> {
-    change_password_at(&state, user, &headers, req, now()).await
+    change_password_at(&state, user, &headers, req, state.clock.unix()).await
 }
 
 async fn change_password_at(
@@ -1569,6 +1569,7 @@ pub(crate) async fn patch_me(
 mod tests {
     use super::*;
     use crate::api::test_util::{done, pg_done, pg_state, temp_state};
+    use crate::db::now;
     use crate::state::AppState;
 
     /// The account `alice` with a session `token` made at `created_at`.

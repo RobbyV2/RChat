@@ -1228,7 +1228,7 @@ async fn reports_name_their_targets_alike_at_the_default_limits() {
         sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
             .bind(secret_key(&token))
             .bind(&reporter)
-            .bind(crate::db::now())
+            .bind(state.clock.unix())
             .execute(&db)
             .await
             .expect("token");

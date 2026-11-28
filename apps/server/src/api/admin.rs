@@ -558,7 +558,7 @@ pub(crate) async fn patch_settings(
         .await?;
         after.insert(key.to_string(), value);
     }
-    let t = now();
+    let t = state.clock.unix();
     let mut rebranded = false;
     for control in touched {
         let shown = |rows: &HashMap<String, String>| {
@@ -787,7 +787,7 @@ pub(crate) async fn put_report_forms(
         "report_forms.change",
         None,
         serde_json::json!({"rev": after.rev}),
-        now(),
+        state.clock.unix(),
     )
     .await?;
     tx.commit().await?;
@@ -887,7 +887,15 @@ pub(crate) async fn mute_reporter(
     if !reports::reporter_known(db, &scope, &target).await? {
         return Err(not_found());
     }
-    reports::mute_in(db, &scope, &user.username, &target, true, now()).await?;
+    reports::mute_in(
+        db,
+        &scope,
+        &user.username,
+        &target,
+        true,
+        state.clock.unix(),
+    )
+    .await?;
     Ok(ok())
 }
 
@@ -906,7 +914,7 @@ pub(crate) async fn unmute_reporter(
         &user.username,
         &username.to_lowercase(),
         false,
-        now(),
+        state.clock.unix(),
     )
     .await?;
     Ok(ok())
@@ -990,7 +998,7 @@ pub(crate) async fn list_users(
         }
         Some("expired") => format!(
             " AND EXISTS(SELECT 1 FROM temp_passwords tp WHERE tp.username = users.username AND tp.expires_at IS NOT NULL AND tp.expires_at <= {})",
-            now()
+            state.clock.unix()
         ),
         Some(_) => {
             return Err(ApiError::invalid(
@@ -1431,7 +1439,8 @@ async fn hide_user(
     let mut tx = state.db.begin().await?;
     let hidden = hide_user_in(&mut tx, key, kind).await?;
     if hidden.starts_purge() {
-        staff_audit::p2p_purge_in(&mut tx, admin, key, hidden.p2p_held(), now()).await?;
+        staff_audit::p2p_purge_in(&mut tx, admin, key, hidden.p2p_held(), state.clock.unix())
+            .await?;
     }
     tx.commit().await?;
     hidden.finish(state).await;
@@ -1636,7 +1645,7 @@ async fn release_purge(db: &Db, kind: PurgeKind, key: &str) {
 }
 
 pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
-    let t = now();
+    let t = state.clock.unix();
     let rows = sqlx::query(
         "SELECT kind, key, self_requested FROM pending_purges WHERE claimed_at < $1 AND (self_requested = 0 OR created_at <= $2) ORDER BY created_at LIMIT 100",
     )
@@ -1652,7 +1661,7 @@ pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
         };
         let claimed = match own != 0 {
             true => begin_own(state, &key).await.map_err(|e| e.1),
-            false => claim_purge(state, kind, &key, now())
+            false => claim_purge(state, kind, &key, state.clock.unix())
                 .await
                 .map_err(|e| e.to_string()),
         };
@@ -1877,7 +1886,7 @@ pub(crate) async fn remove_phrase(
             "user.remove_phrase",
             Some(&key),
             serde_json::json!({}),
-            now(),
+            state.clock.unix(),
         )
         .await?;
     }

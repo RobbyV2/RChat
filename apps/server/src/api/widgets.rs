@@ -438,7 +438,7 @@ pub(crate) async fn open(
     {
         return Err(not_found());
     }
-    let until = now() + 86400;
+    let until = state.clock.unix() + 86400;
     let tag = signature(&w.revision, &format!("widget {id} {until} {parent}"))
         .finalize()
         .into_bytes();

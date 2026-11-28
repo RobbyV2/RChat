@@ -45,7 +45,7 @@ use crate::api::{
 use crate::crypt::body::{Opened, Parts};
 use crate::crypt::copies::{self, DELIVERIES};
 use crate::crypt::secrets::{HOOK_COLUMN, HOOK_TABLE, Sealer, open_or};
-use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, is_sqlite, lock_server, now, pepper};
+use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, is_sqlite, lock_server, pepper};
 use crate::limits::bucket::{self, Keyed};
 use crate::net_guard::{self, AllowedHost, Http, Policy};
 use crate::state::AppState;
@@ -759,7 +759,7 @@ pub(crate) async fn create_webhook(
     let place = audit::channel_ref(db, channel.id())
         .await?
         .ok_or_else(|| bad("Unknown channel"))?;
-    let t = now();
+    let t = state.clock.unix();
     let mut tx = db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     let sql = format!(
@@ -1510,7 +1510,7 @@ async fn post(
     )
     .await?;
     sqlx::query("UPDATE webhooks SET last_used_at = $1 WHERE id = $2")
-        .bind(now())
+        .bind(state.clock.unix())
         .bind(hook.id)
         .execute(db)
         .await?;
@@ -1714,7 +1714,7 @@ pub(crate) async fn edit_hook_message(
         };
         crate::api::seal::store_parts(&mut tx, writer.as_ref(), mid, &author, &parts).await?;
         sqlx::query("UPDATE messages SET edited_at = $1, no_previews = $3 WHERE id = $2")
-            .bind(now())
+            .bind(state.clock.unix())
             .bind(mid)
             .bind(i64::from(text_only))
             .execute(&mut *tx)
@@ -2217,7 +2217,7 @@ pub(crate) async fn create_outgoing(
             false => secret.as_str(),
         })
         .bind(&user.username)
-        .bind(now())
+        .bind(state.clock.unix())
         .bind(state.limits.server_outgoing_webhooks_max)
         .fetch_optional(&mut *tx)
         .await?
@@ -2761,7 +2761,9 @@ pub fn spawn(state: &AppState, deliver: bool) -> Vec<tokio::task::JoinHandle<()>
             loop {
                 let _ = tokio::time::timeout(Duration::from_secs(2), WAKE.notified()).await;
                 let policy = outbound_policy();
-                if let Err(ApiError(_, e, _)) = dispatch(&worker, &policy, now(), &pool).await {
+                if let Err(ApiError(_, e, _)) =
+                    dispatch(&worker, &policy, worker.clock.unix(), &pool).await
+                {
                     tracing::warn!("outgoing webhook deliveries failed: {e}");
                 }
             }
@@ -3192,7 +3194,7 @@ async fn payload(
 async fn queue(state: &AppState, hook: i64, fact: &Fact) -> Result<(), ApiError> {
     let db = &state.db;
     let text = serde_json::to_string(fact).map_err(|e| bad(&e.to_string()))?;
-    let t = now();
+    let t = state.clock.unix();
     let (status, payload, error, finished) = match text.len() > PAYLOAD_MAX {
         true => ("failed", None, Some("Payload too large"), Some(t)),
         false => ("pending", Some(text), None, None),
@@ -3291,7 +3293,7 @@ async fn enqueue(state: &AppState, ev: WsEvent) -> Result<(), ApiError> {
     let mut queued = false;
     for (hook, owner) in hooks {
         let Some(user) = hook_owner(db, fact.server(), owner.as_deref()).await? else {
-            owner_gone(db, hook, now()).await?;
+            owner_gone(db, hook, state.clock.unix()).await?;
             continue;
         };
         if payload(db, &user, &fact).await?.is_some() {
@@ -3662,7 +3664,16 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
             .execute(db)
             .await?;
     }
-    let attempt = send(policy, &url, &secret, event, id, body.as_bytes(), now()).await;
+    let attempt = send(
+        policy,
+        &url,
+        &secret,
+        event,
+        id,
+        body.as_bytes(),
+        state.clock.unix(),
+    )
+    .await;
     let tries = attempts + 1;
     let code = attempt.code.map(i64::from);
     let err = attempt.error.as_deref();
@@ -3770,6 +3781,7 @@ async fn finish(
 
 #[cfg(test)]
 mod tests {
+    use crate::db::now;
     use axum::body::Body;
     use serde_json::{Value, json};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

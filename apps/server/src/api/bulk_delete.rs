@@ -20,7 +20,7 @@ use crate::api::budget::slow_down;
 use crate::api::messages::moderated;
 use crate::api::pings::{announce_counts, pinged_by};
 use crate::api::{ApiError, ApiErrorBody, Authed, allowed, bad, placeholders};
-use crate::db::{Db, LIVE_AUTHOR, User, get_user, now, pool_key};
+use crate::db::{Db, LIVE_AUTHOR, User, get_user, pool_key};
 use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -964,7 +964,7 @@ async fn start_all(
             "bulk_delete_jobs",
         ));
     }
-    let t = now();
+    let t = state.clock.unix();
     let inserted = sqlx::query("INSERT INTO bulk_delete_jobs(username, scope, channel_id, except_ids, after_id, upto_id, cursor_id, estimate, claimed_at, created_at, author_filter) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10) ON CONFLICT DO NOTHING RETURNING id")
         .bind(&user.username)
         .bind(scope)
@@ -1020,7 +1020,7 @@ pub(crate) async fn list_jobs(
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(&user.username)
-        .bind(now() - JOB_KEEP)
+        .bind(state.clock.unix() - JOB_KEEP)
         .fetch_all(&state.db)
         .await?;
     Ok(Json(
@@ -1061,7 +1061,7 @@ async fn finish(
 ) -> Result<(), ApiError> {
     let ended = sqlx::query("UPDATE bulk_delete_jobs SET status = $1, finished_at = $2, error = $3 WHERE id = $4 AND status = 'running'")
         .bind(status.as_str())
-        .bind(now())
+        .bind(state.clock.unix())
         .bind(error)
         .bind(id)
         .execute(&state.db)
@@ -1262,7 +1262,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
     let staff = row.try_get::<i64, _>(7)? != 0;
     let filter: Option<String> = row.try_get(8)?;
     sqlx::query("UPDATE bulk_delete_jobs SET claimed_at = $1 WHERE id = $2 AND status = 'running'")
-        .bind(now())
+        .bind(state.clock.unix())
         .bind(id)
         .execute(db)
         .await?;
@@ -1319,7 +1319,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
     // Takes the job row first: a cancel or purge that got there first ends the batch here, and
     // the tally is read under the lock, so a concurrent runner or purge never loses an update.
     let Some(locked) = sqlx::query("UPDATE bulk_delete_jobs SET claimed_at = $1 WHERE id = $2 AND status = 'running' RETURNING authors, audit_id")
-        .bind(now())
+        .bind(state.clock.unix())
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
@@ -1372,7 +1372,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
 /// Takes over running jobs whose runner stopped reporting (a restart, a crashed process) and
 /// runs them here. Returns how many it took.
 pub async fn resume_jobs(state: &AppState) -> sqlx::Result<u64> {
-    let t = now();
+    let t = state.clock.unix();
     let rows = sqlx::query("SELECT id, claimed_at FROM bulk_delete_jobs WHERE status = 'running' AND claimed_at < $1 ORDER BY id LIMIT 50")
         .bind(t - JOB_LEASE)
         .fetch_all(&state.db)

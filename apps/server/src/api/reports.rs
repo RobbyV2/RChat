@@ -30,7 +30,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, LIST_PAGE, OkResp, Paged, Settings, UserRef, allowed, bad,
     decode_cursor, encode_cursor, lookup, ok,
 };
-use crate::db::{Db, User, now};
+use crate::db::{Db, User};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 use forms::{Answer, Base, FieldKind, Form, OTHER, StoredAnswer, validate_answers};
@@ -646,7 +646,11 @@ pub(crate) async fn create_report(
         return Err(crate::api::policy::refused(feature.key(), not_found()));
     }
     let held = lookup::unmissed(&state, Some(&user))?;
-    lookup::counted(held, create_at(&state, &user, req, now()).await).map(Json)
+    lookup::counted(
+        held,
+        create_at(&state, &user, req, state.clock.unix()).await,
+    )
+    .map(Json)
 }
 
 /// `create_report` at the time `t`.
@@ -1532,7 +1536,7 @@ pub(crate) async fn patch_report(
         status: status.map(|s| (s, action)),
         assignee,
     };
-    let t = now();
+    let t = state.clock.unix();
     let mut tx = db.begin().await?;
     store::change(db, &mut tx, &scope, &user.username, change, t).await?;
     let done = match deed {
@@ -1582,7 +1586,7 @@ pub(crate) async fn add_note(
     let text = note_text(&text)?;
     let db = &state.db;
     let (scope, _) = query::held(db, &user, id).await?;
-    store::note(db, &scope, &user.username, id, text, now()).await?;
+    store::note(db, &scope, &user.username, id, text, state.clock.unix()).await?;
     Ok(Json(query::detail_in(db, &scope, id).await?))
 }
 
@@ -1632,7 +1636,7 @@ pub(crate) async fn escalate(
     if scope.server.is_none() {
         return Err(invalid("id", NOT_ESCALATABLE));
     }
-    if store::escalate(db, &scope, &user.username, id, note, now()).await? {
+    if store::escalate(db, &scope, &user.username, id, note, state.clock.unix()).await? {
         let audience = store::audience(db, id).await?;
         announce(&state, scope.server.as_deref(), audience.clone());
         announce(&state, None, audience);
@@ -1673,7 +1677,7 @@ pub(crate) async fn resolve_in(
         &user.username,
         &req.target,
         (status, action),
-        now(),
+        state.clock.unix(),
     )
     .await?;
     let count = closed.len() as i64;
@@ -1789,7 +1793,15 @@ pub(crate) async fn mute_reporter(
         Err(e) => Err(e),
     };
     lookup::counted(held, known)?;
-    store::mute(db, &scope, &user.username, &target, true, now()).await?;
+    store::mute(
+        db,
+        &scope,
+        &user.username,
+        &target,
+        true,
+        state.clock.unix(),
+    )
+    .await?;
     Ok(ok())
 }
 
@@ -1825,7 +1837,7 @@ pub(crate) async fn unmute_reporter(
         &user.username,
         &username.to_lowercase(),
         false,
-        now(),
+        state.clock.unix(),
     )
     .await?;
     Ok(ok())

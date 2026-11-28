@@ -286,7 +286,7 @@ pub(crate) async fn begin(
         .bind(direction.as_str())
         .bind(upto)
         .bind(by)
-        .bind(now())
+        .bind(state.clock.unix())
         .execute(db)
         .await?;
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -453,7 +453,7 @@ async fn end(state: &AppState, id: i64, to: JobState) -> Result<(), ApiError> {
         "UPDATE seal_jobs SET state = $1, finished_at = $2 WHERE id = $3 AND state = 'running' AND runner = $4",
     )
     .bind(word)
-    .bind(now())
+    .bind(state.clock.unix())
     .bind(id)
     .bind(RUNNER.as_str())
     .execute(&state.db)

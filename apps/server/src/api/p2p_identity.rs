@@ -14,7 +14,7 @@ use crate::api::policy::{effective, refused};
 use crate::api::rare::{self, Rare};
 use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, Session, check_at};
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, ok};
-use crate::db::{User, now};
+use crate::db::User;
 use crate::p2p_chain::{self, ChainError};
 use crate::state::AppState;
 
@@ -217,7 +217,7 @@ pub(crate) async fn put_identity(
     body: Body,
 ) -> Result<Json<IdentityRecord>, ApiError> {
     let held = rare::hold(&state, Rare::P2pIdentity, Some(&session.user))?;
-    let answer = put_at(&state, session, &ik, body, now()).await;
+    let answer = put_at(&state, session, &ik, body, state.clock.unix()).await;
     match &answer {
         Err(ApiError(StatusCode::UNAUTHORIZED, _, _)) => drop(held),
         Ok(_) | Err(_) => held.answered(answer.as_ref().err()),
@@ -317,7 +317,7 @@ pub(crate) async fn delete_identity(
     Path(ik): Path<String>,
     Json(req): Json<IdentityDelete>,
 ) -> Result<Json<OkResp>, ApiError> {
-    delete_at(&state, session, &ik, req, now()).await
+    delete_at(&state, session, &ik, req, state.clock.unix()).await
 }
 
 pub(crate) async fn delete_at(

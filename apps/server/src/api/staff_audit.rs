@@ -403,7 +403,7 @@ pub(crate) async fn staff_view(
     Path(id): Path<i64>,
     Json(StaffViewReq { reauth }): Json<StaffViewReq>,
 ) -> Result<Json<StaffView>, ApiError> {
-    staff_view_at(&state, session, id, reauth, now()).await
+    staff_view_at(&state, session, id, reauth, state.clock.unix()).await
 }
 
 pub(crate) async fn staff_view_at(

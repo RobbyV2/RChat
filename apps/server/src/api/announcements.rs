@@ -8,7 +8,6 @@ use utoipa::ToSchema;
 
 use super::admin::require_site_admin;
 use super::{ApiError, Authed, MaybeAuthed, OkResp, ok};
-use crate::db::now;
 use crate::state::AppState;
 
 /// A scheduled instance banner and its display interval.
@@ -69,7 +68,7 @@ pub(crate) async fn active(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
 ) -> Result<Feed, ApiError> {
-    let t = now();
+    let t = state.clock.unix();
     let rows = sqlx::query("SELECT a.id, CASE WHEN a.starts_at <= $1 THEN a.message ELSE '' END, a.starts_at, a.ends_at FROM announcements a WHERE a.ends_at > $1 AND NOT EXISTS (SELECT 1 FROM announcement_dismissals d WHERE d.announcement_id = a.id AND d.username = $2) ORDER BY a.starts_at, a.id")
         .bind(t).bind(user.map(|u| u.username)).fetch_all(&state.db).await?;
     let mut announcements = Vec::new();
@@ -102,7 +101,7 @@ pub(crate) async fn dismiss(
     Path(id): Path<String>,
 ) -> Result<Json<OkResp>, ApiError> {
     sqlx::query("INSERT INTO announcement_dismissals(username, announcement_id) SELECT $1, id FROM announcements WHERE id = $2 AND starts_at <= $3 AND ends_at > $3 ON CONFLICT DO NOTHING")
-        .bind(user.username).bind(id).bind(now()).execute(&state.db).await?;
+        .bind(user.username).bind(id).bind(state.clock.unix()).execute(&state.db).await?;
     Ok(ok())
 }
 
@@ -114,7 +113,7 @@ pub(crate) async fn list(
 ) -> Result<Json<Vec<Announcement>>, ApiError> {
     require_site_admin(&user)?;
     let rows = sqlx::query("SELECT id, message, starts_at, ends_at FROM announcements WHERE ends_at > $1 ORDER BY starts_at, id")
-        .bind(now()).fetch_all(&state.db).await?;
+        .bind(state.clock.unix()).fetch_all(&state.db).await?;
     Ok(Json(rows.iter().map(row).collect::<sqlx::Result<_>>()?))
 }
 
@@ -127,7 +126,7 @@ pub(crate) async fn schedule(
 ) -> Result<Json<Announcement>, ApiError> {
     require_site_admin(&user)?;
     let message = super::brand::clean_text(&req.message, 1, 500, false).map_err(invalid)?;
-    let t = now();
+    let t = state.clock.unix();
     if req.starts_at < 0
         || req.ends_at <= t
         || req.ends_at <= req.starts_at
@@ -185,7 +184,7 @@ pub(crate) async fn remove(
             "branding.change",
             Some(&id),
             serde_json::json!({"key":"announcements","action":"remove"}),
-            now(),
+            state.clock.unix(),
         )
         .await?;
     }
@@ -198,6 +197,7 @@ pub(crate) async fn remove(
 mod tests {
     use super::*;
     use crate::api::test_util::{each_db, mem_user};
+    use crate::db::now;
 
     #[tokio::test]
     async fn future_text_is_private_and_dismissals_follow_the_account() {

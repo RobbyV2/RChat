@@ -16,7 +16,7 @@ use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, Session, ch
 use crate::api::seal::Source;
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, Settings, bad, ok};
 use crate::crypt::copies::{BACKUPS, Opener, backup_binding};
-use crate::db::{Db, PURGE_BATCH, PURGING_HASH, User, now};
+use crate::db::{Db, PURGE_BATCH, PURGING_HASH, User};
 use crate::state::AppState;
 
 /// The newest versions of an identity's backup that are always kept.
@@ -529,7 +529,7 @@ pub(crate) async fn list_versions(
     Authed(user): Authed,
     Path(ik): Path<String>,
 ) -> Result<Json<Vec<BackupVersion>>, ApiError> {
-    list_versions_at(&state, &user.username, &ik, now()).await
+    list_versions_at(&state, &user.username, &ik, state.clock.unix()).await
 }
 
 pub(crate) async fn list_versions_at(
@@ -570,7 +570,7 @@ pub(crate) async fn get_version(
     Authed(user): Authed,
     Path((ik, version)): Path<(String, i64)>,
 ) -> Result<Response, ApiError> {
-    get_version_at(&state, &user.username, &ik, version, now()).await
+    get_version_at(&state, &user.username, &ik, version, state.clock.unix()).await
 }
 
 pub(crate) async fn get_version_at(
@@ -618,7 +618,16 @@ pub(crate) async fn put_backup(
 ) -> Result<Json<BackupEntry>, PutError> {
     let held = rare::hold(&state, Rare::P2pBackup, Some(&user))?;
     let declared = declared_length(&headers);
-    let answer = put_at(&state, &user, &ik, version, declared, body, now()).await;
+    let answer = put_at(
+        &state,
+        &user,
+        &ik,
+        version,
+        declared,
+        body,
+        state.clock.unix(),
+    )
+    .await;
     held.answered(match &answer {
         Err(PutError::Other(e)) => Some(e),
         Ok(_) | Err(PutError::Stale(_)) => None,
@@ -738,7 +747,7 @@ pub(crate) async fn delete_version(
     Path((ik, version)): Path<(String, i64)>,
     Json(req): Json<BackupDelete>,
 ) -> Result<Json<OkResp>, ApiError> {
-    delete_at(&state, session, &ik, Some(version), req, now()).await
+    delete_at(&state, session, &ik, Some(version), req, state.clock.unix()).await
 }
 
 /// Delete a P2P backup
@@ -758,7 +767,7 @@ pub(crate) async fn delete_backup(
     Path(ik): Path<String>,
     Json(req): Json<BackupDelete>,
 ) -> Result<Json<OkResp>, ApiError> {
-    delete_at(&state, session, &ik, None, req, now()).await
+    delete_at(&state, session, &ik, None, req, state.clock.unix()).await
 }
 
 /// Deletes `version` of the backup of `ik`, or every version, after re-auth.

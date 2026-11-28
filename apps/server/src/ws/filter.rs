@@ -7,7 +7,7 @@ use super::conn::{forget_server, join, leave};
 use super::event::{EditStub, Updated, WsEvent};
 
 use crate::api::access::{is_member, typing_scope, ws_sees_reports, ws_sees_timeouts};
-use crate::db::{MediaKind, now};
+use crate::db::MediaKind;
 use crate::state::AppState;
 
 /// Seconds after which a `message` event is checked against the read-history floor.
@@ -142,7 +142,7 @@ pub(super) async fn on_event(
             message,
             ..
         } = ev
-        && message.created_at < now() - REPLAY_AGE
+        && message.created_at < state.clock.unix() - REPLAY_AGE
     {
         deliver = access
             .floor(state, server, *cid)

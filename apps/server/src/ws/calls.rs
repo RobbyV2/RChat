@@ -15,7 +15,7 @@ use super::{CallKind, SIGNAL_MAX};
 use crate::api::access::perms::held;
 use crate::api::access::{ws_dm_users, ws_voice_channel, ws_voice_rights, ws_voice_silenced};
 use crate::api::messages::load_broadcast;
-use crate::db::{ChannelKind, now, touch_interaction};
+use crate::db::{ChannelKind, touch_interaction};
 use crate::hub::{Audio, CallEnd, VOICE_EVERY};
 use crate::state::AppState;
 
@@ -41,7 +41,7 @@ async fn insert_call_log(
     .bind(caller)
     .bind(kind)
     .bind(i64::from(video))
-    .bind(now())
+    .bind(state.clock.unix())
     .fetch_one(&state.db)
     .await?
     .try_get(0)
@@ -75,7 +75,7 @@ async fn answer_call_log(state: &AppState, dm_users: Vec<String>, log_id: i64) {
     let res = sqlx::query(
         "UPDATE messages SET call_answered_at = $1 WHERE id = $2 AND call_answered_at IS NULL",
     )
-    .bind(now())
+    .bind(state.clock.unix())
     .bind(log_id)
     .execute(&state.db)
     .await;
@@ -106,7 +106,7 @@ pub(super) async fn finalize_call_log(state: &AppState, end: CallEnd, declined: 
     let res = sqlx::query(
         "UPDATE messages SET call_ended_at = $1, call_outcome = $2 WHERE id = $3 AND call_ended_at IS NULL",
     )
-    .bind(now())
+    .bind(state.clock.unix())
     .bind(outcome)
     .bind(log_id)
     .execute(&state.db)

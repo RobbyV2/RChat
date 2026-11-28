@@ -13,7 +13,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, ChannelLayout, NAME_MAX, OkResp, ProfanityTarget, Separator,
     check_profanity, ok,
 };
-use crate::db::{Db, now};
+use crate::db::Db;
 use crate::state::AppState;
 
 /// How a category header is drawn.
@@ -209,7 +209,7 @@ pub(crate) async fn create_separator(
         .bind(category_id)
         .bind(&label)
         .bind(style.as_str())
-        .bind(now())
+        .bind(state.clock.unix())
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(not_found)?

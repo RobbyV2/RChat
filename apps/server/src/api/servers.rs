@@ -2272,7 +2272,7 @@ async fn found_server(
         true => Some(crate::api::passwords::NewLink::make(&state.db, &key).await?),
         false => None,
     };
-    let t = now();
+    let t = state.clock.unix();
     let mut tx = state.db.begin().await?;
     lock_account(&mut tx, member).await?;
     room_for_account(&mut tx, &state.limits, member).await?;
@@ -2611,7 +2611,7 @@ pub(crate) async fn guest_access(
     }
     let network = grant_network(&state.db, &state.limits).await?;
     let grant = new_token();
-    let t = now();
+    let t = state.clock.unix();
     let cutoff = t - state.limits.guest_grant_ttl();
     let password_id = access.password_id().unwrap_or(0);
     let mut tx = state.db.begin().await?;
@@ -4236,7 +4236,7 @@ pub(crate) async fn create_channel(
         .bind(&key)
         .bind(&channel_name)
         .bind(kind.as_str())
-        .bind(now())
+        .bind(state.clock.unix())
         .bind(i64::from(req.restrict_view))
         .bind(req.category_id)
         .bind(i64::from(req.text_only))
@@ -4776,7 +4776,7 @@ pub(crate) async fn ban_member(
     if !crate::api::names::could_be_username(&target) {
         return Err(ApiError::invalid("Invalid username", "username"));
     }
-    let t = now();
+    let t = state.clock.unix();
     let BanOptions {
         expires_at,
         reason,
@@ -4963,7 +4963,7 @@ pub(crate) async fn list_bans(
         limit,
         cursor,
     } = q;
-    let t = now();
+    let t = state.clock.unix();
     let limit = limit.unwrap_or(50).clamp(1, 50);
     let rows = match pair_cursor(cursor.as_deref())? {
         Some((at, name)) => {

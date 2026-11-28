@@ -1236,7 +1236,7 @@ pub(crate) async fn save_within(
     // A cheap early refusal before the S3 write; `store_within` makes the binding check.
     check_budget(&state.db, charge, data.len() as u64, budget).await?;
     let id = fresh_id(&state.db).await?;
-    let uploaded_at = now();
+    let uploaded_at = state.clock.unix();
     let in_db = match (&state.s3, sealed) {
         (Some(bucket), Some(key)) => {
             bucket

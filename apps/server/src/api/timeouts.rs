@@ -235,7 +235,7 @@ pub(crate) async fn set_timeout(
         ));
     }
     let actor = moderator(&state.db, &access, &target).await?;
-    let t = now();
+    let t = state.clock.unix();
     let until = t + seconds;
     let mut tx = state.db.begin().await?;
     lock_member(&mut tx, &key, &target).await?;
@@ -315,7 +315,7 @@ pub(crate) async fn remove_timeout(
     let actor = moderator(&state.db, &access, &target).await?;
     let mut tx = state.db.begin().await?;
     lock_member(&mut tx, &key, &target).await?;
-    let t = now();
+    let t = state.clock.unix();
     let before = match sqlx::query(
         "DELETE FROM member_timeouts WHERE server = $1 AND username = $2 RETURNING until, reason",
     )
@@ -374,7 +374,7 @@ pub async fn announce_expired_timeouts(
         )
         .bind(&server)
         .bind(&username)
-        .bind(now())
+        .bind(state.clock.unix())
         .fetch_optional(&state.db)
         .await?;
         if running.is_some() {

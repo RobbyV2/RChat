@@ -12,7 +12,6 @@ use utoipa::ToSchema;
 use super::access::not_found;
 use super::{ApiError, ApiErrorBody, Authed, Settings};
 use crate::api::rare::{self, Rare};
-use crate::db::now;
 use crate::identity::{
     ASSERTION_TTL_SECS, BINDING_AUD, BINDING_SKEW_SECS, BINDING_TTL_SECS, BindingClaims, Claims,
     binding_proof_ok, p2p_key, random_id, split_qualified,
@@ -233,7 +232,7 @@ pub(crate) async fn assertion(
     }
     let iss = state.instance.origin(peer, &headers);
     let sub = format!("{}@{}", user.username, state.instance.host(&iss));
-    let iat = now();
+    let iat = state.clock.unix();
     let claims = Claims {
         iss: iss.clone(),
         sub: sub.clone(),
@@ -349,7 +348,7 @@ pub(crate) async fn p2p_binding(
     }
     let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string(), None);
     let key = p2p_key(&ik).ok_or_else(|| bad("ik must be a base64url Ed25519 public key"))?;
-    let iat = now();
+    let iat = state.clock.unix();
     if ts.abs_diff(iat) > BINDING_SKEW_SECS {
         return Err(bad("ts must be within 5 minutes of the server clock"));
     }
@@ -403,7 +402,7 @@ pub(crate) fn verify_binding(state: &AppState, token: &str) -> Option<(String, S
         exp,
         head: _,
     } = state.instance.keys.signed(token)?;
-    let lasts = exp > now() && iat <= exp && exp - iat <= BINDING_TTL_SECS;
+    let lasts = exp > state.clock.unix() && iat <= exp && exp - iat <= BINDING_TTL_SECS;
     let (name, host) = split_qualified(&sub)?;
     let here = state.instance.host(&iss).eq_ignore_ascii_case(host);
     (aud == BINDING_AUD && lasts && here && !name.contains('@'))
@@ -459,7 +458,10 @@ pub(crate) async fn ice(
     headers: HeaderMap,
 ) -> Json<IceServers> {
     let origin = state.instance.origin(peer, &headers);
-    let (ice_servers, expires_at) = state.instance.ice_servers(&origin, &user.username, now());
+    let (ice_servers, expires_at) =
+        state
+            .instance
+            .ice_servers(&origin, &user.username, state.clock.unix());
     Json(IceServers {
         ice_servers,
         expires_at,
@@ -474,6 +476,7 @@ pub fn well_known_routes() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
+    use crate::db::now;
     use std::net::SocketAddr;
     use std::time::Duration;
 

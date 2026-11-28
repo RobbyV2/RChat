@@ -2,6 +2,7 @@ use super::{
     config::{ProviderConfig, TokenAuth},
     jwt::Alg,
 };
+use crate::db::now;
 use crate::{
     config::{Roles, Secret},
     state::AppState,
@@ -313,7 +314,7 @@ async fn token(
     {
         return invalid();
     }
-    let now = crate::db::now();
+    let now = now();
     let mut claims = json!({"iss":s.config.issuer,"aud":s.config.client_id,"sub":s.subject,"sid":s.subject,
         "exp":now+300,"iat":now,"auth_time":now,"nonce":auth.nonce,"preferred_username":"river","name":"River"});
     if let Value::Object(extra) = s.claims.take() {

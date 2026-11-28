@@ -15,7 +15,7 @@ use crate::api::temp_passwords::{self, Issued, Issuer};
 use crate::api::{
     ApiError, Authed, OkResp, ProfanityTarget, SERVER_ERROR, Settings, UserRef, check_profanity, ok,
 };
-use crate::db::{AvatarKind, get_user, now, temp_password};
+use crate::db::{AvatarKind, get_user, temp_password};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -60,7 +60,7 @@ pub(crate) async fn reset_password(
         &key,
         Issuer::Account(&user.username),
         settings.temp_password_hours,
-        now(),
+        state.clock.unix(),
     )
     .await?;
     state
@@ -93,7 +93,7 @@ pub(crate) async fn sign_out(
         "user.sign_out",
         Some(&target.username),
         serde_json::json!({ "sessions": ended }),
-        now(),
+        state.clock.unix(),
     )
     .await?;
     tx.commit().await?;
@@ -143,7 +143,7 @@ pub(crate) async fn get_account(
     let Some(target) = get_user(db, &username).await? else {
         return Err(not_found());
     };
-    let t = now();
+    let t = state.clock.unix();
     let temporary = temp_password(db, &target.username)
         .await?
         .map(|temp| Temporary {
@@ -295,7 +295,7 @@ pub(crate) async fn create_account(
     let temp_password = temp_passwords::generate();
     let password_hash = crate::api::auth::hash_password(&temp_password).await?;
     let defaults = Policy::cached(&state.db).await.default_servers.clone();
-    let t = now();
+    let t = state.clock.unix();
     let expires_at = temp_passwords::expiry(settings.temp_password_hours, t);
     let mut tx = state.db.begin().await?;
     let joined = add_account(

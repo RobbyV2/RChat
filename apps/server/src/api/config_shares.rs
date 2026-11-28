@@ -8,7 +8,6 @@ use utoipa::ToSchema;
 use crate::api::access::not_found;
 use crate::api::rare::{self, Rare};
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, bad, ok};
-use crate::db::now;
 use crate::state::AppState;
 
 /// Lifetimes a share link can have, in seconds: 10 minutes, 1 hour, 1 day, 7 days, 30 days.
@@ -124,7 +123,7 @@ pub(crate) async fn create_share(
     rare::take(&state, Rare::ConfigLink, Some(&user))?;
     check_blob(&blob)?;
     check_expiry(expires_in)?;
-    let t = now();
+    let t = state.clock.unix();
     let expires_at = t + expires_in;
     let id = new_id();
     let mut tx = state.db.begin().await?;
@@ -180,7 +179,7 @@ pub(crate) async fn list_shares(
         "SELECT id, created_at, expires_at FROM config_shares WHERE owner = $1 AND expires_at > $2 ORDER BY created_at DESC, id LIMIT $3",
     )
     .bind(&user.username)
-    .bind(now())
+    .bind(state.clock.unix())
     .bind(ACTIVE_MAX)
     .fetch_all(&state.db)
     .await?;
@@ -221,7 +220,7 @@ pub(crate) async fn get_share(
     let row =
         sqlx::query("SELECT blob, expires_at FROM config_shares WHERE id = $1 AND expires_at > $2")
             .bind(&id)
-            .bind(now())
+            .bind(state.clock.unix())
             .fetch_optional(&state.db)
             .await?
             .ok_or_else(not_found)?;
@@ -270,6 +269,7 @@ pub(crate) async fn delete_share(
 
 #[cfg(test)]
 mod tests {
+    use crate::db::now;
     use axum::http::StatusCode;
 
     use super::*;

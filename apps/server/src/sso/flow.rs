@@ -284,7 +284,7 @@ pub(crate) async fn issue_ticket(
         "ticket",
         provider,
         &ticket,
-        now() + TICKET_TTL,
+        state.clock.unix() + TICKET_TTL,
     )
     .await?;
     Ok(value)
@@ -398,7 +398,7 @@ pub async fn begin(
         "flow",
         &cfg.id,
         &pending,
-        now() + FLOW_TTL,
+        state.clock.unix() + FLOW_TTL,
     )
     .await
     .map_err(|_| CallbackError::Failed)?;
@@ -426,7 +426,7 @@ pub async fn finish_response(
     )
     .bind(&id)
     .bind(&provider.config.id)
-    .bind(now())
+    .bind(state.clock.unix())
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {
@@ -511,7 +511,7 @@ async fn complete(
             issuer: &p.issuer,
             client_id: &p.client_id,
             nonce: &p.nonce,
-            now: now(),
+            now: state.clock.unix(),
         },
     )
     .map_err(invalid)?;
@@ -583,7 +583,7 @@ async fn complete(
         user: p.flow.user,
         challenge: p.flow.challenge,
         auth_time: claims.auth_time,
-        expires_at: now() + CODE_TTL,
+        expires_at: state.clock.unix() + CODE_TTL,
     };
     let value = new_token();
     if let Return::Client { origin } = p.flow.ret {

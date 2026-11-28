@@ -545,7 +545,7 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
     let idle = voice.limits.voice_idle_secs;
     held.spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
-        let mut since = crate::db::now();
+        let mut since = voice.clock.unix();
         let mut timeouts_since = since;
         loop {
             interval.tick().await;
@@ -559,7 +559,7 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
                     Ok(n) => info!("resumed {n} interrupted bulk deletions"),
                     Err(e) => tracing::warn!("resuming bulk deletions failed: {e}"),
                 }
-                let until = crate::db::now();
+                let until = voice.clock.unix();
                 match crate::ws::announce_expired_passwords(&voice, since, until).await {
                     Ok(()) => since = until,
                     Err(e) => tracing::warn!("password expiry recheck failed: {e}"),
