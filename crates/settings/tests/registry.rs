@@ -104,3 +104,93 @@ fn every_default_is_a_value_its_kind_takes() {
 fn registry_text_is_plain_ascii() {
     assert!(json().bytes().all(|b| (b' '..=b'~').contains(&b)));
 }
+
+const ENV_FILE: &str = "../../.env.local.example";
+
+// `UPDATE_FIXTURES=1 cargo test -p rchat-settings` rewrites `.env.local.example` too.
+#[test]
+fn the_env_example_is_the_registry() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(ENV_FILE);
+    let want = rchat_settings::env_example();
+    if std::env::var_os("UPDATE_FIXTURES").is_some() {
+        std::fs::write(&path, &want).expect("write the env file");
+    }
+    let got = std::fs::read_to_string(&path).expect("read the env file");
+    assert!(
+        got == want,
+        "run UPDATE_FIXTURES=1 cargo test -p rchat-settings"
+    );
+}
+
+#[test]
+fn every_setting_has_one_line_in_the_env_file() {
+    use rchat_settings::env::{BLOCKS, Line};
+    let mut seen = BTreeSet::new();
+    for line in BLOCKS.iter().flat_map(|b| b.iter()) {
+        match line {
+            Line::Note(text) => assert!(text.starts_with('#') && !text.contains('\n'), "{text}"),
+            Line::Set(s, _) | Line::Shown(s, _) => assert!(seen.insert(s.env), "{} twice", s.env),
+        }
+    }
+    let all: BTreeSet<&str> = ALL.iter().map(|s| s.env).collect();
+    assert_eq!(seen, all);
+}
+
+fn readable(n: i64) -> String {
+    n.to_string()
+}
+
+/// Numbers whose comment gives a narrower rule than the range, which their reader checks: ports,
+/// and the STUN count, which matters only while public STUN is on.
+fn ruled_by_reader(env: &str) -> bool {
+    env == "PORT" || env.ends_with("_PORT") || env == "PUBLIC_STUN_COUNT"
+}
+
+#[test]
+fn each_line_shows_the_default_and_its_comment_says_what_the_setting_takes() {
+    let mut wrong = Vec::new();
+    for s in ALL {
+        let env = s.env;
+        let shown = rchat_settings::shown(s).expect("a line");
+        let doc = rchat_settings::doc(s).join(" ");
+        let unquoted = shown
+            .strip_prefix('\'')
+            .and_then(|v| v.strip_suffix('\''))
+            .unwrap_or(shown);
+        let says = |words: &str| doc.contains(words);
+        match (s.kind, s.default) {
+            (Kind::Number { min, max }, Preset::Number(n)) => {
+                if unquoted != readable(n) {
+                    wrong.push(format!("{env}: shows {shown}, default {n}"));
+                }
+                if !says(&format!("{min} to {max}")) && !ruled_by_reader(env) {
+                    wrong.push(format!("{env}: no {min} to {max}"));
+                }
+            }
+            (Kind::Number { min, max }, Preset::Picked(_)) => {
+                if !says(&format!("{min} to {max}")) && !ruled_by_reader(env) {
+                    wrong.push(format!("{env}: no {min} to {max}"));
+                }
+            }
+            (Kind::Switch, Preset::On | Preset::Off) => {
+                let on = s.default == Preset::On;
+                let reads = match unquoted {
+                    "on" | "true" => Some(true),
+                    "off" | "false" => Some(false),
+                    _ => None,
+                };
+                if reads != Some(on) {
+                    wrong.push(format!("{env}: shows {shown}"));
+                }
+            }
+            (Kind::Choice(_), Preset::Text(word)) if unquoted != word => {
+                wrong.push(format!("{env}: shows {shown}, default {word}"))
+            }
+            _ => {}
+        }
+        if s.kind != Kind::Pins && (s.scope == Scope::Live) != says("Admin page") {
+            wrong.push(format!("{env}: Admin page marking"));
+        }
+    }
+    assert_eq!(wrong, Vec::<String>::new());
+}

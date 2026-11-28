@@ -1456,13 +1456,9 @@ mod tests {
             .filter(|word| *word != "\\")
             .map(|word| word.split_once('=').expect("NAME=value"))
             .collect();
-        let example = include_str!("../../../.env.local.example");
         for (name, _) in &pairs {
-            let set = format!("{name}=");
             assert!(
-                example
-                    .lines()
-                    .any(|line| line.trim_start_matches("# ").starts_with(&set)),
+                rchat_settings::by_env(name).is_some(),
                 "{name} is a setting"
             );
         }

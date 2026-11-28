@@ -17,6 +17,15 @@ import {
 const repo = join(import.meta.dir, '..')
 
 const read = (path: string) => readFileSync(join(import.meta.dir, '..', path), 'utf8')
+// A setting of the settings registry, by env name.
+const registered = (env: string) => {
+  const { settings } = JSON.parse(read('assets/settings.json')) as {
+    settings: { env: string; default?: string | number }[]
+  }
+  const found = settings.find(s => s.env === env)
+  if (!found) throw new Error(`${env} is not a setting`)
+  return found
+}
 
 const req = (remote: string, xff?: string) => ({
   socket: { remoteAddress: remote },
@@ -212,9 +221,8 @@ describe('PeerJS per-address limit', () => {
     const nginx = read('deploy/nginx.conf')
     expect(nginx).toContain('limit_conn_zone $binary_remote_addr zone=peers')
     expect(nginx.split('limit_conn peers ').length - 1).toBe(1)
-    const env = read('.env.local.example')
-    expect(env).toContain('# PEERJS_PEERS_PER_IP=50')
-    expect(env).toContain('# PEERJS_CONCURRENT_LIMIT=5000')
+    expect(registered('PEERJS_PEERS_PER_IP').default).toBe(50)
+    expect(registered('PEERJS_CONCURRENT_LIMIT').default).toBe(5000)
   })
 
   test('nginx shared memory zones have distinct names', () => {
@@ -350,7 +358,7 @@ describe('one public port by default', () => {
       expect(runtime).toContain(`${name}=\${${name}}`)
     }
     expect(read('docker-compose.yml')).not.toContain('9001')
-    expect(read('.env.local.example')).toContain('# PEERJS_BUILTIN=true')
+    expect(registered('PEERJS_BUILTIN').default).toBe('on')
     // The scaled setups keep the PeerJS role behind the one HTTP port.
     const compose = read('deploy/compose.scale.yml')
     expect(compose).toContain('PEERJS_BUILTIN: "false"')

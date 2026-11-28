@@ -2347,22 +2347,11 @@ mod tests {
 
     #[test]
     fn every_limit_is_documented_with_its_range_and_default() {
-        let example = include_str!("../../../.env.local.example");
-        let lines: Vec<&str> = example.lines().collect();
         let mut documented = Vec::new();
         for name in names() {
-            let key = format!("# {name}=");
-            let at = lines
-                .iter()
-                .position(|l| l.starts_with(&key))
-                .unwrap_or_else(|| panic!("{name} is in .env.local.example"));
-            let value = lines[at][key.len()..].to_string();
-            let about: Vec<&str> = lines[..at]
-                .iter()
-                .rev()
-                .take_while(|l| l.starts_with("# ") && !l.contains('='))
-                .copied()
-                .collect();
+            let setting = rchat_settings::by_env(&name).expect("a setting");
+            let value = rchat_settings::shown(setting).expect("a line").to_string();
+            let about = rchat_settings::doc(setting);
             match ranges().iter().find(|(n, _, _)| *n == name) {
                 Some((_, lo, hi)) => assert!(
                     about.iter().any(|l| l.contains(&format!("{lo} to {hi}"))),

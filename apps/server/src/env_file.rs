@@ -619,7 +619,7 @@ P='a\\\\b' # it's
 
     #[test]
     fn every_example_line_uncommented_loads_the_value_its_comment_documents() {
-        let example = include_str!("../../../.env.local.example");
+        let example = rchat_settings::env_example();
         let mut uncommented = String::new();
         let mut documented = Vec::new();
         let mut lines = Vec::new();

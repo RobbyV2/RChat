@@ -3,6 +3,7 @@
 
 use std::marker::PhantomData;
 
+pub mod env;
 pub mod items;
 mod read;
 
@@ -508,4 +509,57 @@ pub fn json() -> String {
         })
         .collect();
     json!({ "v": 1, "settings": settings }).to_string()
+}
+
+/// `.env.local.example`, written from `env::BLOCKS`.
+pub fn env_example() -> String {
+    let mut out = String::new();
+    for (at, block) in env::BLOCKS.iter().enumerate() {
+        if at > 0 {
+            out.push('\n');
+        }
+        for line in *block {
+            let (prefix, setting, value) = match line {
+                env::Line::Note(text) => {
+                    out.push_str(text);
+                    out.push('\n');
+                    continue;
+                }
+                env::Line::Set(setting, value) => ("", setting, value),
+                env::Line::Shown(setting, value) => ("# ", setting, value),
+            };
+            let name = match setting.scope {
+                Scope::Provider => provider_env(setting, env::PROVIDER_EXAMPLE),
+                Scope::Start | Scope::Live | Scope::P2p | Scope::Build => setting.env.to_string(),
+            };
+            out.push_str(&format!("{prefix}{name}={value}\n"));
+        }
+    }
+    out
+}
+
+/// The comment lines above `setting`'s line in the env file, `# ` taken off.
+pub fn doc(setting: &Setting) -> Vec<&'static str> {
+    for block in env::BLOCKS {
+        let mut about = Vec::new();
+        for line in *block {
+            match line {
+                env::Line::Note(text) => about.push(text.strip_prefix("# ").unwrap_or(text)),
+                env::Line::Set(s, _) | env::Line::Shown(s, _) if *s == setting => return about,
+                env::Line::Set(_, _) | env::Line::Shown(_, _) => about.clear(),
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// The value `setting`'s line in the env file shows.
+pub fn shown(setting: &Setting) -> Option<&'static str> {
+    env::BLOCKS
+        .iter()
+        .flat_map(|block| block.iter())
+        .find_map(|line| match line {
+            env::Line::Set(s, value) | env::Line::Shown(s, value) if *s == setting => Some(*value),
+            env::Line::Set(_, _) | env::Line::Shown(_, _) | env::Line::Note(_) => None,
+        })
 }

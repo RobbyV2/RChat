@@ -225,7 +225,7 @@ RCHAT_ENV_TEST_LAST=last # a comment
 
 #[test]
 fn the_example_file_uncommented_loads_every_documented_value() {
-    let example = include_str!("../../../.env.local.example");
+    let example = rchat_settings::env_example();
     let mut text = String::new();
     let mut want = BTreeMap::new();
     for line in example.lines() {

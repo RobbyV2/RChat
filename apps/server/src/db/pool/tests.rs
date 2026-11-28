@@ -114,9 +114,6 @@ fn light_commits_are_async_unless_the_env_says_sync() {
             .to_string(),
         "DATABASE_LIGHT_COMMITS: expected async or sync, got maybe"
     );
-    let example = include_str!("../../../../../.env.local.example");
-    assert!(example.contains("# Postgres: async or sync."));
-    assert!(example.contains("\n# DATABASE_LIGHT_COMMITS=async\n"));
 }
 
 /// Every `.rs` file under `dir`, as (path from `src`, non-test code).
@@ -432,8 +429,6 @@ async fn init_purges_and_builds_have_no_statement_limit() {
 #[tokio::test]
 async fn acquire_timeout_defaults_to_10_s() {
     assert_eq!(Limits::default().acquire_timeout_secs(), 10);
-    let example = include_str!("../../../../../.env.local.example");
-    assert!(example.contains("\n# DATABASE_ACQUIRE_TIMEOUT_SECS=10\n"));
     for (set, secs) in [(None, 10), (Some(3), 3)] {
         let path = temp_db_path("acquire_timeout");
         let opts = DbOptions {

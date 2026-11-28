@@ -1123,27 +1123,16 @@ mod tests {
 
     #[test]
     fn every_control_is_documented_with_its_default() {
-        let example = include_str!("../../../../.env.local.example");
-        let lines: Vec<&str> = example.lines().collect();
         let documented = |name: &str, words: &[&str]| {
-            let key = format!("# {name}=");
-            let at = lines
-                .iter()
-                .position(|l| l.starts_with(&key))
-                .unwrap_or_else(|| panic!("{name} is in .env.local.example"));
-            let about: Vec<&str> = lines[..at]
-                .iter()
-                .rev()
-                .take_while(|l| l.starts_with("# ") && !l.contains('='))
-                .copied()
-                .collect();
+            let setting = rchat_settings::by_env(name).expect("a setting");
+            let about = rchat_settings::doc(setting);
             for word in words {
                 assert!(
                     about.iter().any(|l| l.contains(word)),
                     "{name}: the comment above it says {word}"
                 );
             }
-            lines[at][key.len()..].to_string()
+            rchat_settings::shown(setting).expect("a line").to_string()
         };
         for c in Control::all() {
             let words = match c.kind {
@@ -1176,7 +1165,7 @@ mod tests {
                 c.env
             );
         }
-        assert!(!example.contains("First start only"));
+        assert!(!rchat_settings::env_example().contains("First start only"));
         documented(PINNED_ENV, &["all"]);
     }
 

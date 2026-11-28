@@ -74,26 +74,14 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
 // sets them.
 const DERIVED = ['guest_servers', 'builtin_server', 'encryption_required', 'encryption_ready']
 
-const example = readFileSync(
-  fileURLToPath(new URL('../../../../../.env.local.example', import.meta.url)),
-  'utf8'
-)
-  .split('\n')
-  .map(l => l.trim())
-
-// The env names the example marks as changeable on the admin page.
-const marked = example.flatMap((line, at) => {
-  const name = line.match(/^# ([A-Z0-9_]+)=/)?.[1]
-  if (!name) return []
-  const about: string[] = []
-  for (
-    let i = at - 1;
-    i >= 0 && example[i].startsWith('# ') && !/^# [A-Z0-9_]+=/.test(example[i]);
-    i--
+// The env names of the settings the admin page also changes, from the settings registry.
+const registry = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL('../../../../../assets/settings.json', import.meta.url)),
+    'utf8'
   )
-    about.push(example[i])
-  return about.some(l => l.startsWith('# Admin page')) ? [name] : []
-})
+) as { settings: { env: string; scope: string }[] }
+const marked = registry.settings.filter(s => s.scope === 'live').map(s => s.env)
 
 test('every site setting has a row', () => {
   const keys = ADMIN_ROWS.map(r => r.key)
