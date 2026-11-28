@@ -187,6 +187,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(hoo
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_user ON scheduled_messages(username, status, due_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_next ON scheduled_messages(status, next_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_server ON scheduled_messages(server);
 CREATE INDEX IF NOT EXISTS idx_scheduled_finished ON scheduled_messages(finished_at) WHERE finished_at IS NOT NULL;
 ";
 
@@ -375,6 +376,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(hoo
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_user ON scheduled_messages(username, status, due_at);
 CREATE INDEX IF NOT EXISTS idx_scheduled_next ON scheduled_messages(status, next_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_server ON scheduled_messages(server);
 CREATE INDEX IF NOT EXISTS idx_scheduled_finished ON scheduled_messages(finished_at) WHERE finished_at IS NOT NULL;
 ";
 
