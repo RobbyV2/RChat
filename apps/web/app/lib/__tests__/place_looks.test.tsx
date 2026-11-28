@@ -43,6 +43,7 @@ const seat = (world: ContractWorld) => {
       roles: [
         { id: 'r4', name: 'Mods', color: 0xff0000, pos: 1, icon: null, tint: true, dpos: null },
       ],
+      memberList: { hide: false, roles: null, channels: [] },
     } as unknown as ServerView
     const state = {
       me: 'A',

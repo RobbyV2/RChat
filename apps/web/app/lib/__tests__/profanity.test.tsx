@@ -552,6 +552,7 @@ describe('in messages', () => {
           { ik: 'IK_ME', name: 'shit head' },
           { ik: 'IK_PEER', name: 'shit face' },
         ],
+        memberList: { hide: false, roles: null, channels: [] },
       } as unknown as ServerView
       Object.assign(p2pInitial(), { me: 'IK_ME', name: 'shit head', servers: { room: view } })
       const roster = renderToStaticMarkup(
