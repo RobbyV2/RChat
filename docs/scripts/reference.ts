@@ -1,5 +1,5 @@
 // Writes the reference pages of the docs site from the files they describe: every setting from
-// .env.local.example, the permission bits from assets/perm_bits.json and the server's command
+// the settings registry (assets/settings.json), the permission bits from assets/perm_bits.json and the server's command
 // line from docs/generated/cli.json. The pages are build output (src/content/docs/reference).
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -130,6 +130,37 @@ const prose = (text: string) => {
   return out + escape(text.slice(at))
 }
 
+// The settings registry as assets/settings.json holds it: each setting, and the lines of the env
+// file it writes.
+export interface Registry {
+  settings: { env: string; kind: string; scope: string; min?: number; max?: number }[]
+  file: ({ note: string } | { env: string; name: string; value: string; set: boolean })[][]
+}
+
+// The reference of the registry: the env file's sections and notes, with whether the admin page
+// changes a setting taken from its item, and a number's range from its item where its comment
+// gives none.
+export function parseRegistry(registry: Registry): EnvReference {
+  const source = registry.file
+    .map(block =>
+      block.map(l => ('note' in l ? l.note : `${l.set ? '' : '# '}${l.name}=${l.value}`)).join('\n')
+    )
+    .join('\n\n')
+  const ref = parseEnv(`${source}\n`)
+  const envOf = new Map(registry.file.flat().flatMap(l => ('note' in l ? [] : [[l.name, l.env]])))
+  const byEnv = new Map(registry.settings.map(s => [s.env, s]))
+  for (const item of ref.sections.flatMap(s => s.items)) {
+    if (item.kind !== 'settings') continue
+    const setting = byEnv.get(envOf.get(item.settings[0].name) ?? '')
+    if (!setting) continue
+    item.admin = setting.scope === 'live'
+    if (setting.kind === 'number' && setting.min !== undefined && setting.max !== undefined) {
+      item.range = item.range ?? `${setting.min} to ${setting.max}`
+    }
+  }
+  return ref
+}
+
 export function renderSettings(ref: EnvReference): string {
   const out = [
     '---',
@@ -139,7 +170,7 @@ export function renderSettings(ref: EnvReference): string {
     '  maxHeadingLevel: 2',
     '---',
     '',
-    'This page is generated from `.env.local.example`, which documents every setting of the server and of its builds. Put settings in `.env.local` in the folder the server starts in, or in its environment.',
+    'This page is generated from the settings registry, which also writes `.env.local.example`. It lists every setting of the server and of its builds. Put settings in `.env.local` in the folder the server starts in, or in its environment.',
     '',
     ...ref.intro.map(l => `- ${prose(l)}`),
     '',
@@ -279,7 +310,7 @@ const root = join(import.meta.dir, '..', '..')
 export function writeReference(out = join(import.meta.dir, '..', 'src/content/docs/reference')) {
   const read = (path: string) => readFileSync(join(root, path), 'utf8')
   const pages: [string, string][] = [
-    ['settings.md', renderSettings(parseEnv(read('.env.local.example')))],
+    ['settings.md', renderSettings(parseRegistry(JSON.parse(read('assets/settings.json'))))],
     ['permissions.md', renderPermissions(JSON.parse(read('assets/perm_bits.json')) as Bit[])],
     ['command-line.md', renderCli(JSON.parse(read('docs/generated/cli.json')) as CliCommand)],
   ]

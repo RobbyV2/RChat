@@ -4,10 +4,12 @@ import { join } from 'node:path'
 import { inlineScripts, scriptHash } from '../docs/scripts/finish'
 import {
   parseEnv,
+  parseRegistry,
   renderCli,
   renderPermissions,
   renderSettings,
   type CliCommand,
+  type Registry,
 } from '../docs/scripts/reference'
 import type { Bit } from '../apps/web/app/lib/perms'
 
@@ -87,13 +89,11 @@ describe('settings reference', () => {
     expect(page).not.toContain('<org>.okta.com/oauth2/default and')
   })
 
-  test('the page lists every setting of .env.local.example once', () => {
-    const source = read('.env.local.example')
-    const names = source
-      .split('\n')
-      .map(l => /^(?:# )?([A-Z][A-Z0-9_]*)=/.exec(l)?.[1])
-      .filter((n): n is string => n !== undefined)
-    const ref = parseEnv(source)
+  test('the page lists every setting of the registry once', () => {
+    const registry = JSON.parse(read('assets/settings.json')) as Registry
+    const names = registry.file.flat().flatMap(l => ('note' in l ? [] : [l.name]))
+    expect(names.length).toBe(registry.settings.length)
+    const ref = parseRegistry(registry)
     const listed = ref.sections.flatMap(s =>
       s.items.flatMap(i => (i.kind === 'settings' ? i.settings.map(x => x.name) : []))
     )

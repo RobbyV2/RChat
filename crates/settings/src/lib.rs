@@ -549,7 +549,27 @@ pub fn json() -> String {
             row
         })
         .collect();
-    json!({ "v": 1, "settings": settings }).to_string()
+    let file: Vec<Value> = env::BLOCKS
+        .iter()
+        .map(|block| {
+            let lines: Vec<Value> = block
+                .iter()
+                .map(|line| match line {
+                    env::Line::Note(text) => json!({ "note": text }),
+                    env::Line::Set(setting, value) | env::Line::Shown(setting, value) => {
+                        json!({
+                            "env": setting.env,
+                            "name": env_name(setting),
+                            "value": value,
+                            "set": matches!(line, env::Line::Set(_, _)),
+                        })
+                    }
+                })
+                .collect();
+            Value::Array(lines)
+        })
+        .collect();
+    json!({ "v": 1, "settings": settings, "file": file }).to_string()
 }
 
 /// `.env.local.example`, written from `env::BLOCKS`.
@@ -569,11 +589,7 @@ pub fn env_example() -> String {
                 env::Line::Set(setting, value) => ("", setting, value),
                 env::Line::Shown(setting, value) => ("# ", setting, value),
             };
-            let name = match setting.scope {
-                Scope::Provider => provider_env(setting, env::PROVIDER_EXAMPLE),
-                Scope::Start | Scope::Live | Scope::P2p | Scope::Build => setting.env.to_string(),
-            };
-            out.push_str(&format!("{prefix}{name}={value}\n"));
+            out.push_str(&format!("{prefix}{}={value}\n", env_name(setting)));
         }
     }
     out
@@ -603,4 +619,12 @@ pub fn shown(setting: &Setting) -> Option<&'static str> {
             env::Line::Set(s, value) | env::Line::Shown(s, value) if *s == setting => Some(*value),
             env::Line::Set(_, _) | env::Line::Shown(_, _) | env::Line::Note(_) => None,
         })
+}
+
+/// The name `setting`'s line in the env file shows: a per-provider setting with the example id.
+fn env_name(setting: &Setting) -> String {
+    match setting.scope {
+        Scope::Provider => provider_env(setting, env::PROVIDER_EXAMPLE),
+        Scope::Start | Scope::Live | Scope::P2p | Scope::Build => setting.env.to_string(),
+    }
 }
