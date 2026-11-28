@@ -99,7 +99,8 @@ export function AuthorRow({
   )
 }
 
-// A row that continues its author's group: the author for screen readers only, and hours and
+// A row that continues its author's group: the author for screen readers only (`name` is the
+// name component with `look="sr-only"`), and hours and
 // minutes in the avatar's place while the row is hovered or holds keyboard focus. A `status`
 // (a send not delivered yet) takes the time's place and always shows.
 export function GroupedRow({
@@ -117,7 +118,7 @@ export function GroupedRow({
 }) {
   return (
     <Row gap="md" align="stretch" data-grouped>
-      <span className="sr-only">{name}</span>
+      {name}
       <div className="relative shrink-0" style={{ width: size }}>
         {status ? (
           <span className={gutterStatusCls}>{status}</span>
@@ -362,7 +363,7 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
           </AuthorRow>
         ) : (
           <GroupedRow
-            name={<Name of={face.name} withUsername />}
+            name={<Name of={face.name} withUsername look="sr-only" />}
             ts={m.created_at}
             size={size}
             status={props.sent === 'pending' ? status : undefined}

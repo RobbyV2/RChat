@@ -497,9 +497,9 @@ function ListView() {
         tone="plain"
         radius="none"
         border="bottom"
-        place="shrink-0 overflow-x-auto"
+        place="shrink-0"
       >
-        <Row gap="xs">
+        <Row gap="xs" wrap>
           {prefixes.map(p => {
             const on = mode === p.mode
             return (

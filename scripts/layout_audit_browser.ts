@@ -261,12 +261,21 @@ const measure = (page: Page) =>
     }
     const visible = (el: Element) =>
       el.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+    // What only a screen reader gets (clipped to one pixel), with everything in it.
+    const unseen = new WeakSet<Element>()
     for (const el of document.querySelectorAll('body *')) {
       if (el instanceof SVGElement && !(el instanceof SVGSVGElement)) continue
       const cs = getComputedStyle(el)
       if (cs.display === 'contents' || !visible(el)) continue
       const r = el.getBoundingClientRect()
       if (r.width === 0 || r.height === 0) continue
+      if (
+        (el.parentElement && unseen.has(el.parentElement)) ||
+        (cs.position === 'absolute' && r.width <= 1 && r.height <= 1 && cs.overflowX !== 'visible')
+      ) {
+        unseen.add(el)
+        continue
+      }
       let p = el.parentElement
       while (p && !ids.has(p)) p = p.parentElement
       ids.set(el, layout.length)
@@ -322,12 +331,20 @@ const measure = (page: Page) =>
           (flex || grid) && kids.length > 1
             ? { row: gapOf(cs.rowGap), column: gapOf(cs.columnGap) }
             : null,
-        centers: centered
-          ? kids.map(c => {
-              const b = c.getBoundingClientRect()
-              return (b.top + b.bottom) / 2
-            })
-          : null,
+        centers:
+          centered && cs.flexWrap === 'nowrap'
+            ? kids.map(c => {
+                const b = c.getBoundingClientRect()
+                return (b.top + b.bottom) / 2
+              })
+            : null,
+        wrapped:
+          centered && cs.flexWrap !== 'nowrap'
+            ? kids.map(c => {
+                const b = c.getBoundingClientRect()
+                return { top: b.top, bottom: b.bottom }
+              })
+            : null,
       })
     }
     return { layout, audit, frame: { width: innerWidth, height: innerHeight, safe } }

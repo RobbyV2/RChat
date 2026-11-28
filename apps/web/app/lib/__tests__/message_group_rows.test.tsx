@@ -18,13 +18,11 @@ import { msg, user } from './fixtures'
 const AT = 1_800_000_000
 const ms = AT * 1000
 
-const SR = '<span class="sr-only">'
-
-// The text of the screen-reader-only author name, or null without one.
+// The text of the screen-reader-only author name that opens a grouped row, or null without one.
 const srName = (html: string) => {
-  const at = html.indexOf(SR)
-  if (at < 0) return null
-  return html.slice(at + SR.length, html.indexOf('</span><div', at)).replace(/<[^>]*>/g, '')
+  const found = /data-grouped="true"[^>]*><span class="([^"]*)"[^>]*>(.*?)<\/span><div/.exec(html)
+  if (!found || !found[1].split(' ').includes('sr-only')) return null
+  return found[2].replace(/<[^>]*>/g, '')
 }
 
 describe('a grouped instance row', () => {
@@ -34,6 +32,7 @@ describe('a grouped instance row', () => {
         <Name
           of={personName(shownUser(user('alice', { display_name: 'Ally' }), null))}
           withUsername
+          look="sr-only"
         />
       }
       ts={AT}

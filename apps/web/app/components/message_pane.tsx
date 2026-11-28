@@ -241,7 +241,7 @@ export function OutgoingRow({
         </AuthorRow>
       ) : (
         <GroupedRow
-          name={<ShownName user={author} server={server} />}
+          name={<ShownName user={author} server={server} look="sr-only" />}
           ts={o.msg.created_at}
           size={size}
         >

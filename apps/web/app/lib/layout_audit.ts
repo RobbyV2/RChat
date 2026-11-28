@@ -1,6 +1,7 @@
 // Spacing faults on a rendered screen, from boxes measured in the page (see
 // scripts/layout_audit_browser.ts): a surface padded unevenly or off the spacing scale, a gap off
-// the scale, and children of a centered row that do not share one center line. Lengths are CSS
+// the scale, and children of a centered row that do not share one center line (a row that wraps
+// has one center line per line). Lengths are CSS
 // pixels; the scale is the `--space-*` steps of globals.css.
 
 export const SCALE_PX = [0, 2, 4, 6, 8, 12, 16, 24, 32, 48] as const
@@ -21,7 +22,28 @@ export interface AuditNode {
   gap: { row: number; column: number } | null
   // A flex row whose children are centered on one line: their vertical centers.
   centers: number[] | null
+  // A centered flex row that wraps: the top and bottom of each child, whichever line it is on.
+  wrapped?: Span[] | null
 }
+
+export interface Span {
+  top: number
+  bottom: number
+}
+
+// The children of a wrapping row by line: children whose heights overlap share a line.
+export function lines(spans: Span[]): Span[][] {
+  const out: Span[][] = []
+  for (const span of [...spans].sort((a, b) => a.top - b.top)) {
+    const line = out[out.length - 1]
+    if (line && span.top < Math.max(...line.map(s => s.bottom))) line.push(span)
+    else out.push([span])
+  }
+  return out
+}
+
+const spreadOf = (centers: number[]) =>
+  centers.length > 1 ? Math.max(...centers) - Math.min(...centers) : 0
 
 export type AuditIssue =
   | { kind: 'uneven'; label: string; padding: Sides }
@@ -47,10 +69,14 @@ export function auditIssues(nodes: AuditNode[], tolerance = 0.5): AuditIssue[] {
     if (n.gap)
       for (const value of new Set([n.gap.row, n.gap.column]))
         if (!onScale(value, tolerance)) out.push({ kind: 'off-scale-gap', label: n.label, value })
-    if (n.centers && n.centers.length > 1) {
-      const spread = Math.max(...n.centers) - Math.min(...n.centers)
-      if (spread > 1 + tolerance) out.push({ kind: 'misaligned', label: n.label, spread })
-    }
+    // Each line of a wrapping row has its own center line.
+    const spread = n.wrapped
+      ? Math.max(
+          0,
+          ...lines(n.wrapped).map(line => spreadOf(line.map(s => (s.top + s.bottom) / 2)))
+        )
+      : spreadOf(n.centers ?? [])
+    if (spread > 1 + tolerance) out.push({ kind: 'misaligned', label: n.label, spread })
   }
   return out
 }

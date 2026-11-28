@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { SPACES } from '../layout'
-import { SCALE_PX, auditIssues, describeAudit, type AuditNode } from '../layout_audit'
+import { SCALE_PX, auditIssues, describeAudit, type AuditNode, lines } from '../layout_audit'
 
 const css = readFileSync(fileURLToPath(new URL('../../globals.css', import.meta.url)), 'utf8')
 
@@ -47,4 +47,25 @@ test('a centered row whose children do not share one center line is misaligned',
   expect(auditIssues([node({ centers: [20, 20.5, 19.8] })])).toEqual([])
   const [issue] = auditIssues([node({ label: 'header', centers: [20, 24] })])
   expect(describeAudit(issue)).toBe('header has children 4px off one center line')
+})
+
+test('a row that wraps is checked line by line', () => {
+  const two = [
+    { top: 0, bottom: 32 },
+    { top: 4, bottom: 28 },
+    { top: 40, bottom: 72 },
+  ]
+  expect(lines(two).map(line => line.length)).toEqual([2, 1])
+  expect(auditIssues([node({ wrapped: two })])).toEqual([])
+  const [issue] = auditIssues([
+    node({
+      label: 'chips',
+      wrapped: [
+        { top: 0, bottom: 32 },
+        { top: 10, bottom: 30 },
+        { top: 40, bottom: 72 },
+      ],
+    }),
+  ])
+  expect(issue).toEqual({ kind: 'misaligned', label: 'chips', spread: 4 })
 })
