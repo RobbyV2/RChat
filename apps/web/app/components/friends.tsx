@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { handleName, personCalled } from '../lib/names'
 import { asAccount } from '../lib/people'
 import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
@@ -55,7 +57,7 @@ import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { PingBadge } from './ping_badge'
 import { Button, IconButton, ListRow, Chip, Tab, LinkButton } from './controls'
-import { Dialog, fieldCls, FieldError, Masked, PanelHeader, Sentinel, useEscape } from './ui'
+import { Dialog, fieldCls, FieldError, PanelHeader, Sentinel, useEscape } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { Row, Stack, Surface } from './layout'
 import { time } from '../lib/platform/time'
@@ -83,14 +85,15 @@ function Avatar({ user, online, size = 32 }: { user: UserRef; online?: boolean; 
   )
 }
 
-function Name({ user, sub }: { user: UserRef; sub?: string }) {
+function FriendName({ user, sub }: { user: UserRef; sub?: string }) {
   return (
     <Stack as="span" gap="none" place="flex-1">
-      <span className="streamer truncate text-sm text-on-surface">
-        <Masked text={user.display_name} by={user.username} />
-      </span>
+      <Name
+        of={personCalled(user.display_name, user.username)}
+        look="truncate text-sm text-on-surface"
+      />
       <span className="truncate text-xs text-on-surface-variant">
-        <span className="streamer">@{user.username}</span>
+        <Name of={handleName(user.username)} before="@" />
         {sub ? ` · ${sub}` : ''}
       </span>
     </Stack>
@@ -131,7 +134,7 @@ export function FriendRow({ friend }: { friend: Friend }) {
             }}
           >
             <Avatar user={user} online={online} />
-            <Name user={user} sub={online ? 'Online' : 'Offline'} />
+            <FriendName user={user} sub={online ? 'Online' : 'Offline'} />
           </Row>
           <IconButton
             icon={MessageCircle}
@@ -192,7 +195,7 @@ export function RequestRow({ request }: { request: FriendRequest }) {
             }}
           >
             <Avatar user={user} />
-            <Name user={user} sub={incoming ? 'Incoming request' : 'Outgoing request'} />
+            <FriendName user={user} sub={incoming ? 'Incoming request' : 'Outgoing request'} />
           </Row>
           {incoming ? (
             <>
@@ -410,7 +413,7 @@ export function AddFriendBox({
                 shown.store.getState().openDialog({ kind: 'add_instance', origin: unknown })
               }
             >
-              Add <span className="streamer">{unknown}</span>
+              Add <Name of={handleName(unknown)} />
             </LinkButton>
           )}
         </p>
@@ -716,7 +719,7 @@ export function FriendPreview({
       <div className="flex h-20 items-center rounded-2xl bg-surface-container">
         <Surface tone="plain" radius="none" pad="lg">
           <p className="text-sm text-on-surface-variant">
-            Loading <span className="streamer">@{name}</span>
+            Loading <Name of={handleName(name)} before="@" />
           </p>
         </Surface>
       </div>
@@ -738,7 +741,12 @@ export function FriendPreview({
   if (!profile && hidden)
     return (
       <Surface data-preview={name} tone="base" pad="lg" gap="2xs">
-        <p className="streamer truncate text-sm font-medium text-on-surface">@{name}</p>
+        <Name
+          as="p"
+          of={handleName(name)}
+          before="@"
+          look="truncate text-sm font-medium text-on-surface"
+        />
         <p className="text-xs text-on-surface-variant">{HIDDEN_PREVIEW}</p>
         {statusLine}
       </Surface>
@@ -747,7 +755,7 @@ export function FriendPreview({
     return (
       <Surface tone="base" pad="lg">
         <p className="text-sm text-on-surface-variant">
-          Couldn&apos;t load <span className="streamer">@{name}</span>
+          Couldn&apos;t load <Name of={handleName(name)} before="@" />
         </p>
       </Surface>
     )
@@ -762,7 +770,7 @@ export function FriendPreview({
           <Avatar user={profile.user} size={40} />
         </span>
         <Surface tone="plain" radius="none" pad="2xs" gap="2xs" place="flex-1">
-          <Name user={profile.user} />
+          <FriendName user={profile.user} />
           {profile.bio && (
             <p className="line-clamp-2 text-xs break-words text-on-surface-variant">
               {profile.bio}

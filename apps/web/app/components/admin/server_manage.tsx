@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { personCalled } from '../../lib/names'
 import { asAccount } from '../../lib/people'
 import { askKick } from '../../lib/place/moderation'
 import { HostedServer } from '../../lib/place/place'
@@ -211,7 +213,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
         <Surface key={m.username} tone="plain" radius="lg" pad="2xs" gap="xs">
           <Row gap="sm" wrap justify="end">
             <UserAvatar person={asAccount(m, 'administration')} size={24} />
-            <span className="streamer min-w-24 flex-1 truncate text-sm">{m.display_name}</span>
+            <Name of={personCalled(m.display_name)} look="min-w-24 flex-1 truncate text-sm" />
             {m.is_admin && (
               <Button
                 onClick={() => setEditingAdmin(editingAdmin === m.username ? null : m.username)}

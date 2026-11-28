@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { accountLabel } from '../lib/names'
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { client } from '../lib/client/client'
 import { railBlocks } from '../lib/client/rail_blocks'
@@ -115,9 +117,7 @@ function SignedSection({ entry, children }: { entry: FriendAccount; children: Re
         <Surface as="span" tone="plain" radius="none" pad="sm" inset="bar">
           <Row as="span" gap="sm">
             <AccountTag row={entry.row} name={entry.name} />
-            <span className="streamer text-xs text-on-surface-variant">
-              <Masked text={entry.name} />
-            </span>
+            <Name of={accountLabel(entry.name)} look="text-xs text-on-surface-variant" />
           </Row>
         </Surface>
       </h3>

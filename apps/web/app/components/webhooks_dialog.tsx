@@ -1,7 +1,7 @@
 'use client'
 
 import { asAccount, pictured } from '../lib/people'
-import { personName } from '../lib/names'
+import { personCalled, personName } from '../lib/names'
 import { Name } from './name'
 import { useAccount } from '../lib/client/react'
 
@@ -413,9 +413,11 @@ function Incoming({ server }: { server: string }) {
                       size={32}
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="streamer truncate text-sm font-medium text-on-surface">
-                        <Masked text={h.name} by={h.creator?.username} />
-                      </p>
+                      <Name
+                        as="p"
+                        of={personCalled(h.name, h.creator?.username)}
+                        look="truncate text-sm font-medium text-on-surface"
+                      />
                       <p className="truncate text-xs text-on-surface-variant">
                         #{channelName(h.channel_id)}
                         {' · '}

@@ -103,9 +103,12 @@ export function BanDialog({
                 look="truncate text-sm font-medium text-on-surface"
               />
               {user && (
-                <p className="streamer truncate text-xs text-on-surface-variant">
-                  @{user.username}
-                </p>
+                <Name
+                  as="p"
+                  of={handleName(user.username)}
+                  before="@"
+                  look="truncate text-xs text-on-surface-variant"
+                />
               )}
             </Stack>
           </Row>

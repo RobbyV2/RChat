@@ -1,4 +1,6 @@
 'use client'
+import { Name } from './name'
+import { handleName, instanceAddress, instanceName, personCalled } from '../lib/names'
 import { asAccount, identityPerson } from '../lib/people'
 import { openPeerLink } from '../lib/client/peer_links'
 import { ViewActorTag } from './view_actor'
@@ -205,10 +207,7 @@ function Greeting({ total, accounts = 1 }: { total?: number; accounts?: number }
           'Welcome back'
         ) : (
           <>
-            {greeting(hour)},{' '}
-            <span className="streamer">
-              <Masked text={me.display_name} own />
-            </span>
+            {greeting(hour)}, <Name of={personCalled(me.display_name, null, true)} />
           </>
         )}
       </h1>
@@ -448,7 +447,7 @@ function QuickActions({
           {problem.error}{' '}
           {canAdd && problem.host && (
             <LinkButton onClick={() => openDialog({ kind: 'add_instance', origin: problem.host })}>
-              Add <span className="streamer">{problem.host}</span>
+              Add <Name of={instanceAddress(problem.host)} />
             </LinkButton>
           )}
         </p>
@@ -1111,9 +1110,7 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
         </span>
       }
       description={
-        <span className="streamer">
-          {dm.is_self ? 'Notes to yourself' : `@${dm.other.username}`}
-        </span>
+        dm.is_self ? 'Notes to yourself' : <Name of={handleName(dm.other.username)} before="@" />
       }
       trailing={<DmEnd id={dm.id} unread={unread} pings={pings} />}
     />
@@ -1414,9 +1411,7 @@ function HomeActorLabel({ actor }: { actor: HomeActor }) {
   return (
     <>
       <AccountTag row={actor.row} name={actor.instance} />
-      <span className="streamer text-xs">
-        <Masked text={actor.instance} />
-      </span>
+      <Name of={instanceName(actor.instance)} look="text-xs" />
     </>
   )
 }

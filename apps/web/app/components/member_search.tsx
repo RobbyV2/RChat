@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { personCalled } from '../lib/names'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAccount } from '../lib/client/react'
 import { errorText, useStore } from '../lib/store'
@@ -7,7 +9,7 @@ import type { Member } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { useShownMembers } from './shown_user'
 import { Row, Stack, Surface } from './layout'
-import { Masked, fieldCls } from './ui'
+import { fieldCls } from './ui'
 import { time } from '../lib/platform/time'
 
 // Searching a hosted server's members: the paged search, its field, and a picker that adds one.
@@ -162,9 +164,10 @@ export function MemberPicker({
               place="w-full"
             >
               <UserAvatar person={shownOf(m)} size={20} />
-              <span className="streamer min-w-0 flex-1 truncate text-sm">
-                <Masked text={shownOf(m).display_name} by={m.username} />
-              </span>
+              <Name
+                of={personCalled(shownOf(m).display_name, m.username)}
+                look="min-w-0 flex-1 truncate text-sm"
+              />
             </Surface>
           ))}
           {!found.loading && hits.length === 0 && (

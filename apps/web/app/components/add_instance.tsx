@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { handleName, instanceAddress, instanceName } from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { Shield } from 'lucide-react'
 import {
@@ -67,15 +69,11 @@ export function TrustNotice({
       <Shield aria-hidden="true" />
       <h3 className="text-lg font-semibold">Only add instances in an app you trust</h3>
       <p>
-        {words.split(pattern).map((part, i) =>
-          hosts.includes(part) ? (
-            <strong key={i} className="streamer">
-              {part}
-            </strong>
-          ) : (
-            part
-          )
-        )}
+        {words
+          .split(pattern)
+          .map((part, i) =>
+            hosts.includes(part) ? <Name key={i} as="strong" of={instanceAddress(part)} /> : part
+          )}
       </p>
       <Row gap="sm" justify="end">
         <Button size="md" onClick={onCancel}>
@@ -301,7 +299,7 @@ export function AddInstanceFlow({
               {target.info.name.slice(0, 1)}
             </Surface>
             <div>
-              <strong className="streamer">{target.info.name}</strong>
+              <Name as="strong" of={instanceName(target.info.name)} />
               <p className="streamer text-xs">
                 {target.conn.host} · {target.info.version}
               </p>
@@ -326,8 +324,8 @@ export function AddInstanceFlow({
           {signed.map(a => (
             <Row key={a.username} gap="sm" justify="between">
               <p>
-                You're signed in on <span className="streamer">{target.conn.host}</span> as{' '}
-                <span className="streamer">{a.username}</span>.
+                You're signed in on <Name of={instanceAddress(target.conn.host)} /> as{' '}
+                <Name of={handleName(a.username)} />.
               </p>
               <Button size="md" onClick={() => useExisting(a.username)}>
                 Switch
@@ -340,7 +338,7 @@ export function AddInstanceFlow({
             </Button>
           )}
           <Button variant="filled" size="md" onClick={() => authenticate(target)}>
-            Add another account on <span className="streamer">{target.conn.host}</span>
+            Add another account on <Name of={instanceAddress(target.conn.host)} />
           </Button>
         </>
       )}

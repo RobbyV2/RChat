@@ -1,4 +1,6 @@
 'use client'
+import { Name } from './name'
+import { accountLabel } from '../lib/names'
 import { client } from '../lib/client/client'
 import { AccountProvider, useAccount } from '../lib/client/react'
 
@@ -540,9 +542,7 @@ function ListView() {
               {sec.owner &&
                 (sections[ix - 1]?.owner?.account !== sec.owner.account ||
                   sections[ix - 1]?.owner?.local !== sec.owner.local) && (
-                  <h3 className="streamer text-sm font-semibold">
-                    <Masked text={sec.owner.label} />
-                  </h3>
+                  <Name as="h3" of={accountLabel(sec.owner.label)} look="text-sm font-semibold" />
                 )}
               <p className="text-2xs font-medium tracking-wide text-on-surface-variant uppercase">
                 {sec.label}

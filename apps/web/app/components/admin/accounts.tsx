@@ -1,7 +1,7 @@
 'use client'
 
 import { Name } from '../name'
-import { serverCalled } from '../../lib/names'
+import { handleName, serverCalled } from '../../lib/names'
 import { useEffect, useId, useState } from 'react'
 import { Check, Copy, X } from 'lucide-react'
 import {
@@ -60,8 +60,8 @@ export function PasswordReveal({
     <Stack gap="lg">
       <Stack gap="md">
         <p className="text-sm text-on-surface-variant">
-          <span className="streamer text-on-surface">{username}</span> can sign in with this
-          temporary password. It is shown only now.
+          <Name of={handleName(username)} look="text-on-surface" /> can sign in with this temporary
+          password. It is shown only now.
         </p>
         <div className="rounded-2xl border border-primary bg-primary-container/30">
           <Surface tone="plain" pad="md">
@@ -425,8 +425,8 @@ export function TempPasswordDialog({ username }: { username: string }) {
       <Stack gap="xl">
         <Stack gap="none">
           <p className="text-sm text-on-surface-variant">
-            Give <span className="streamer">{username}</span> a new temporary password? Their
-            password stops working and they are signed out everywhere. Their backup phrase stays.
+            Give <Name of={handleName(username)} /> a new temporary password? Their password stops
+            working and they are signed out everywhere. Their backup phrase stays.
           </p>
           <FieldError message={refused} />
         </Stack>
@@ -495,8 +495,8 @@ export function AddToServerDialog({ username }: { username: string }) {
         }}
       >
         <p className="text-sm text-on-surface-variant">
-          Add <span className="streamer">{username}</span> to a server. It works whatever the
-          instance lets people join by themselves.
+          Add <Name of={handleName(username)} /> to a server. It works whatever the instance lets
+          people join by themselves.
         </p>
         <ServerEntries servers={servers} onChange={next => setServers(next.slice(-1))} />
         <FieldError message={refused} />

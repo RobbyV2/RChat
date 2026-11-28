@@ -1,7 +1,7 @@
 'use client'
 
 import { asAccount } from '../lib/people'
-import { personName, serverCalled } from '../lib/names'
+import { instanceAddress, personName, serverCalled } from '../lib/names'
 import { Name } from './name'
 import {
   useCallback,
@@ -1210,7 +1210,7 @@ export function RemoteInviteCard({
       place="max-w-full min-w-0"
     >
       <span className="min-w-0 truncate">
-        Open on <span className="streamer">{host}</span>
+        Open on <Name of={instanceAddress(host)} />
       </span>
       {!internal && <ExternalLink size={14} className="shrink-0" />}
     </Button>
@@ -1219,7 +1219,7 @@ export function RemoteInviteCard({
   const invalid = error instanceof ApiError && error.status === 404 && !hidden
   const heading = (
     <>
-      Invite on <span className="streamer normal-case">{host}</span>
+      Invite on <Name of={instanceAddress(host)} look="normal-case" />
     </>
   )
   const body = (): Body | null => {
@@ -1233,7 +1233,7 @@ export function RemoteInviteCard({
         title: <span className="min-w-0 truncate">Server invite</span>,
         sub: (
           <p className="text-xs text-on-surface-variant">
-            Loading the preview contacts <span className="streamer">{host}</span>.
+            Loading the preview contacts <Name of={instanceAddress(host)} />.
           </p>
         ),
         actions: (

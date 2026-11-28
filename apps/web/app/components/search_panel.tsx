@@ -1,7 +1,7 @@
 'use client'
 
 import { Name } from './name'
-import { serverCalled } from '../lib/names'
+import { personCalled, serverCalled } from '../lib/names'
 import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -79,9 +79,7 @@ function HitAuthor({ r }: { r: SearchHit }) {
         <span className="shrink-0">
           <MemberAvatar members={author.of} ik={author.ik} size={20} />
         </span>
-        <span className="streamer truncate text-sm font-medium">
-          <Masked text={author.name} own={r.own} />
-        </span>
+        <Name of={personCalled(author.name, null, r.own)} look="truncate text-sm font-medium" />
       </>
     )
   return (

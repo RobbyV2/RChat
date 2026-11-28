@@ -5,7 +5,7 @@
 // for P2P messages that were due while the app was closed.
 
 import { Name } from './name'
-import { serverCalled } from '../lib/names'
+import { personCalled, serverCalled } from '../lib/names'
 import {
   useCallback,
   useEffect,
@@ -219,12 +219,7 @@ export function ScheduledChip({
 
 function PlaceLine({ label }: { label: ScheduledLabel | null }) {
   if (!label) return <span>{NOWHERE}</span>
-  if (label.person)
-    return (
-      <span className="streamer">
-        <Masked text={label.person} by={label.by} />
-      </span>
-    )
+  if (label.person) return <Name of={personCalled(label.person, label.by)} />
   const channel = label.channel ? (
     <span className="streamer">
       #<Masked text={label.channel} />

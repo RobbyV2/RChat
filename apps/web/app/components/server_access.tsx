@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { handleName } from '../lib/names'
 import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
 import { Check, Copy, Lock, LockOpen, Plus } from 'lucide-react'
 import { readLocal, writeLocal } from '../lib/instances'
@@ -178,7 +180,7 @@ function PasswordRow({
             )}
             {created_by && (
               <span>
-                by <span className="streamer">{created_by}</span>
+                by <Name of={handleName(created_by)} />
               </span>
             )}
           </Row>

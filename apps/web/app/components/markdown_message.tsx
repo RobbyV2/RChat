@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { personCalled } from '../lib/names'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import {
   createContext,
@@ -711,9 +713,7 @@ export function P2pFile({
         <Share2 size={10} />
         P2P
       </Inset>
-      <span className="streamer truncate">
-        <Masked text={hosterName} own={own} />
-      </span>
+      <Name of={personCalled(hosterName, null, own)} look="truncate" />
       <span>·</span>
       <span>{fmtExpiry(expires_at)}</span>
       {unverified && (
@@ -866,14 +866,8 @@ export function P2pFile({
           className="msg-part-loose text-xs text-on-surface-variant italic"
         >
           File not available. Ask{' '}
-          {hoster === null ? (
-            'the sender'
-          ) : (
-            <span className="streamer">
-              <Masked text={hosterName} own={own} />
-            </span>
-          )}{' '}
-          to send it again.
+          {hoster === null ? 'the sender' : <Name of={personCalled(hosterName, null, own)} />} to
+          send it again.
         </p>
         {meta}
       </FileCard>

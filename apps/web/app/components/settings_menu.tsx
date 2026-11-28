@@ -1,4 +1,6 @@
 'use client'
+import { Name } from './name'
+import { instanceAddress, instanceName, personCalled } from '../lib/names'
 import { asAccount, pictured } from '../lib/people'
 import { useP2p } from '../lib/client/p2p_react'
 
@@ -137,7 +139,10 @@ export function BannerPicker({
                   />
                 )}
               </span>
-              <span className="streamer truncate font-medium text-on-surface">{displayName}</span>
+              <Name
+                of={personCalled(displayName, null, true)}
+                look="truncate font-medium text-on-surface"
+              />
             </Row>
           </Surface>
         </div>
@@ -300,9 +305,11 @@ function AccountCard() {
       <Row gap="md">
         {me ? <UserAvatar person={asAccount(me, 'own')} size={48} /> : <GuestAvatar size={48} />}
         <div className="min-w-0">
-          <p className="streamer truncate font-medium text-on-surface">
-            {me ? me.display_name : 'Guest'}
-          </p>
+          <Name
+            as="p"
+            of={personCalled(me ? me.display_name : 'Guest', null, true)}
+            look="truncate font-medium text-on-surface"
+          />
           <p className="streamer truncate text-sm text-on-surface-variant">
             {me ? `@${me.username}` : 'Browsing without an account'}
           </p>
@@ -314,9 +321,17 @@ function AccountCard() {
           <Globe size={16} />
         </span>
         <div className="min-w-0">
-          <p className="streamer truncate text-sm font-medium text-on-surface">{label}</p>
+          <Name
+            as="p"
+            of={instanceName(label)}
+            look="truncate text-sm font-medium text-on-surface"
+          />
           {host !== label && (
-            <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
+            <Name
+              as="p"
+              of={instanceAddress(host)}
+              look="truncate text-xs text-on-surface-variant"
+            />
           )}
         </div>
       </Row>
@@ -351,12 +366,18 @@ function NavAccount({
       <Row gap="md">
         {me ? <UserAvatar person={asAccount(me, 'own')} size={40} /> : <GuestAvatar size={40} />}
         <div className="min-w-0">
-          <p className="streamer truncate text-sm font-medium text-on-surface">
-            {me ? me.display_name : 'Guest'}
-          </p>
-          <p className="streamer truncate text-xs text-on-surface-variant">{label}</p>
+          <Name
+            as="p"
+            of={personCalled(me ? me.display_name : 'Guest', null, true)}
+            look="truncate text-sm font-medium text-on-surface"
+          />
+          <Name as="p" of={instanceName(label)} look="truncate text-xs text-on-surface-variant" />
           {host !== label && (
-            <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
+            <Name
+              as="p"
+              of={instanceAddress(host)}
+              look="truncate text-xs text-on-surface-variant"
+            />
           )}
           {me && (
             <button
@@ -877,8 +898,8 @@ export function ProfanitySwitch() {
           </p>
           {site && (
             <p className="text-xs text-on-surface-variant">
-              <span className="streamer">{label}</span> also blocks profanity in server content
-              before it is posted.
+              <Name of={instanceName(label)} /> also blocks profanity in server content before it is
+              posted.
             </p>
           )}
         </Stack>
@@ -896,7 +917,7 @@ function ConnectionSection() {
   const info = useStore(s => s.instance?.ice)
   const own = useStore(s => ownTurn(s.relayPrefs))
   const { label } = useInstanceLabel()
-  const named = <span className="streamer">{label}</span>
+  const named = <Name of={instanceName(label)} />
   const offer = iceOffer(info)
   const relayUsable = (info?.turn === true || own) && on && signedIn
   return (
@@ -975,7 +996,7 @@ function ProfileSection() {
       </PageRow>
       <PageRow id="user_instance">
         <p className={sectionCls}>
-          About <span className="streamer">{label}</span>
+          About <Name of={instanceName(label)} />
         </p>
         <InstanceDetails />
       </PageRow>
@@ -1058,13 +1079,13 @@ function ModerationText() {
       <p>
         {site ? (
           <>
-            <span className="streamer">{label}</span> blocks profanity in server content before it
-            is posted: names, channel topics, profile descriptions, file names and channel messages,
-            as the admin set it up.
+            <Name of={instanceName(label)} /> blocks profanity in server content before it is
+            posted: names, channel topics, profile descriptions, file names and channel messages, as
+            the admin set it up.
           </>
         ) : (
           <>
-            <span className="streamer">{label}</span> does not filter profanity in server content.
+            <Name of={instanceName(label)} /> does not filter profanity in server content.
           </>
         )}{' '}
         DMs, passwords and P2P content are never filtered by the instance.

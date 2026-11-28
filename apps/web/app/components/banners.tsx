@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { personCalled } from '../lib/names'
 import { AccountProvider, useLiveSessions } from '../lib/client/react'
 import { useStore } from '../lib/store'
 import { temporaryNotice } from '../lib/temp_password'
@@ -61,7 +63,7 @@ function AccountBanners() {
           {toast.name && (
             <>
               {' '}
-              <span className="streamer font-medium">{toast.name}</span>
+              <Name of={personCalled(toast.name)} look="font-medium" />
             </>
           )}
         </div>

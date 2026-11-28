@@ -2,7 +2,7 @@
 
 import { asAccount, pictured, type Person } from '../lib/people'
 import { Name } from './name'
-import { p2pName, personName } from '../lib/names'
+import { p2pName, personCalled, personName } from '../lib/names'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Lock } from 'lucide-react'
 import { useApi } from '../lib/client/react'
@@ -477,9 +477,11 @@ export function ProfileReset({
         <Row gap="md">
           {source.avatar(asAccount(user, 'editor'), 36)}
           <div className="min-w-0">
-            <p className="streamer truncate text-sm font-medium text-on-surface">
-              <Masked text={user.display_name} />
-            </p>
+            <Name
+              as="p"
+              of={personCalled(user.display_name)}
+              look="truncate text-sm font-medium text-on-surface"
+            />
             {source.subtitle !== null && (
               <p
                 data-profile-reset-who

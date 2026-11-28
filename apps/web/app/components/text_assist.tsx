@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { handleName, personCalled } from '../lib/names'
 import { shownUser } from '../lib/people'
 import { useApi } from '../lib/client/react'
 import {
@@ -33,7 +35,6 @@ import { useChat } from '../lib/place/use_chat'
 import { useEmojiData } from './emoji_picker'
 import { UserAvatar } from './user_avatar'
 import { useShownMembers } from './shown_user'
-import { Masked } from './ui'
 import {
   STYLE_LABELS,
   acceptStamp,
@@ -342,12 +343,15 @@ export function useTextAssist({
           u.kind === 'user' ? (
             <>
               <UserAvatar person={shownUser(u.user, null)} size={24} />
-              <span className="streamer min-w-0 truncate font-medium">
-                <Masked text={u.user.display_name} by={u.user.username} />
-              </span>
-              <span className="streamer min-w-0 shrink truncate text-xs opacity-70">
-                @{u.user.username}
-              </span>
+              <Name
+                of={personCalled(u.user.display_name, u.user.username)}
+                look="min-w-0 truncate font-medium"
+              />
+              <Name
+                of={handleName(u.user.username)}
+                before="@"
+                look="min-w-0 shrink truncate text-xs opacity-70"
+              />
             </>
           ) : (
             <>

@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { personCalled } from '../lib/names'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useAccount } from '../lib/client/react'
 import { errorText, memberState, myPerms, myRank, orderWith, useMask, useStore } from '../lib/store'
@@ -24,7 +26,7 @@ import { RestrictionToggles } from './settings_fields'
 import { MemberPicker } from './member_search'
 import { usePermissionRules } from './use_permission_rules'
 import { Row, Surface } from './layout'
-import { Dialog, Masked, textBtn } from './ui'
+import { Dialog, textBtn } from './ui'
 import { ViewActorTag } from './view_actor'
 import { staffChange, staffViewChannel } from '../lib/staff_view'
 import { newestReads } from '../lib/newest_read'
@@ -243,9 +245,7 @@ export function HostedRules({
           />
         )}
         {subject.startsWith('u:') ? (
-          <span className="streamer truncate">
-            <Masked text={nameOf(subject)} by={subject.slice(2)} />
-          </span>
+          <Name of={personCalled(nameOf(subject), subject.slice(2))} look="truncate" />
         ) : (
           <span className={`truncate ${role ? 'streamer' : ''}`}>{label(subject)}</span>
         )}

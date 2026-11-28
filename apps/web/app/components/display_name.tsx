@@ -1,4 +1,6 @@
 'use client'
+import { Name } from './name'
+import { handleName } from '../lib/names'
 import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { useStoreApi } from '../lib/client/react'
@@ -91,7 +93,7 @@ export function DisplayNameField({ focus }: { focus: boolean }) {
         </Button>
       </Row>
       <p id={`${id}-hint`} className="text-xs text-on-surface-variant">
-        You still sign in and get mentioned as <span className="streamer">@{username}</span>.
+        You still sign in and get mentioned as <Name of={handleName(username)} before="@" />.
       </p>
       <FieldError id={`${id}-error`} message={error} />
       {done && !error && <p className="text-xs text-on-surface-variant">Saved</p>}

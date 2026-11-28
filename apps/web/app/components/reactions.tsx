@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { handleName } from '../lib/names'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { SmilePlus } from 'lucide-react'
@@ -365,9 +367,10 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
               <span className="streamer block truncate text-sm font-medium text-on-surface">
                 <ReactorName user={u} server={server} />
               </span>
-              <span className="streamer block truncate text-xs text-on-surface-variant">
-                {u.username}
-              </span>
+              <Name
+                of={handleName(u.username)}
+                look="block truncate text-xs text-on-surface-variant"
+              />
             </span>
           </Surface>
         ))}

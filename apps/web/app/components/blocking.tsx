@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { handleName, personCalled } from '../lib/names'
 import { asAccount } from '../lib/people'
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { UserX } from 'lucide-react'
@@ -11,7 +13,7 @@ import { UserAvatar } from './user_avatar'
 import { DateDivider } from './date_divider'
 import { Button, LinkButton } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { fieldCls, FieldError, Masked, Sentinel } from './ui'
+import { fieldCls, FieldError, Sentinel } from './ui'
 import { time } from '../lib/platform/time'
 
 // Collapsed runs of blocked users' messages. A run opens with Show, or by itself when a jump
@@ -276,10 +278,8 @@ export function BlockedUsersSection() {
             <Row gap="sm">
               <UserAvatar person={asAccount(user, 'block')} size={28} />
               <span className="min-w-0 flex-1 truncate text-sm">
-                <span className="streamer">
-                  <Masked text={user.display_name} by={user.username} />
-                </span>{' '}
-                <span className="streamer text-on-surface-variant">@{user.username}</span>
+                <Name of={personCalled(user.display_name, user.username)} />{' '}
+                <Name of={handleName(user.username)} before="@" look="text-on-surface-variant" />
               </span>
               <Button onClick={() => void unblockUser(user.username)}>Unblock</Button>
             </Row>

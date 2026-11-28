@@ -1,6 +1,7 @@
 'use client'
+import { Name } from './name'
 import { useNameLabel } from './name'
-import { serverCalled, serverName } from '../lib/names'
+import { instanceName, serverCalled, serverName } from '../lib/names'
 import { useAddingAllowed } from './add_instance'
 import { Globe } from 'lucide-react'
 import { voiceLabel } from '../lib/voice_rail'
@@ -717,7 +718,7 @@ export function ServerRail() {
                     onClick={() => toggle(group.origin)}
                     className="relative h-5 w-10 rounded bg-surface-container-high text-xs"
                   >
-                    <span className="streamer">{group.name.slice(0, 1)}</span>
+                    <Name of={instanceName(group.name.slice(0, 1))} />
                     {collapsed.has(group.origin) && group.pings > 0 && (
                       <RailPingBadge count={group.pings} />
                     )}

@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { instanceName } from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import {
   ArrowDown,
@@ -507,10 +509,7 @@ function AccountList({
                   }
                   label={
                     <>
-                      Add an account on{' '}
-                      <span className="streamer">
-                        <Masked text={g.name} />
-                      </span>
+                      Add an account on <Name of={instanceName(g.name)} />
                     </>
                   }
                 />

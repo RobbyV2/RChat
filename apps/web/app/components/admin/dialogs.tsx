@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from '../name'
+import { handleName } from '../../lib/names'
 import { useStore } from '../../lib/store'
 import { Button } from '../controls'
 import { Row, Stack } from '../layout'
@@ -66,9 +68,9 @@ function DeleteUserConfirm({ username }: { username: string }) {
   const adminDeleteUser = useStore(s => s.adminDeleteUser)
   return (
     <UserConfirm title="Delete User" confirm="Delete" run={() => adminDeleteUser(username)}>
-      Delete the account of <span className="streamer">{username}</span>? Every message they sent
-      and their DMs are deleted. Servers they created are kept. The username becomes free to
-      register again; use Ban site-wide to also block the name.
+      Delete the account of <Name of={handleName(username)} />? Every message they sent and their
+      DMs are deleted. Servers they created are kept. The username becomes free to register again;
+      use Ban site-wide to also block the name.
     </UserConfirm>
   )
 }
@@ -81,8 +83,8 @@ function RemovePhraseConfirm({ username }: { username: string }) {
       confirm="Remove"
       run={() => adminRemovePhrase(username)}
     >
-      Remove the backup phrase of <span className="streamer">{username}</span>? They stay signed in
-      and keep their password. This only removes a way back in, and they can set a new phrase.
+      Remove the backup phrase of <Name of={handleName(username)} />? They stay signed in and keep
+      their password. This only removes a way back in, and they can set a new phrase.
     </UserConfirm>
   )
 }
@@ -96,8 +98,8 @@ function SignOutConfirm({ username }: { username: string }) {
       confirm="Sign out"
       run={() => adminSignOut(username).then(changed)}
     >
-      Sign <span className="streamer">{username}</span> out on every device? They keep their
-      password and can sign in again.
+      Sign <Name of={handleName(username)} /> out on every device? They keep their password and can
+      sign in again.
     </UserConfirm>
   )
 }
@@ -106,8 +108,8 @@ function BanConfirm({ username }: { username: string }) {
   const banUser = useStore(s => s.banUser)
   return (
     <UserConfirm title="Ban Site-wide" confirm="Ban" run={() => banUser(username)}>
-      Ban <span className="streamer">{username}</span> site-wide? This deletes their account and
-      every message they have sent, and permanently blocks the username.
+      Ban <Name of={handleName(username)} /> site-wide? This deletes their account and every message
+      they have sent, and permanently blocks the username.
     </UserConfirm>
   )
 }

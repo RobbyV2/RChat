@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { accountLabel, instanceAddress, instanceName } from '../lib/names'
 import { Globe } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { useAccount, useConn } from '../lib/client/react'
@@ -22,13 +24,7 @@ export function LabelText({ text, name }: { text: string; name?: string }) {
   return (
     <>
       {labelParts(text, name ?? label).map((p, i) =>
-        p.label ? (
-          <span key={i} className="streamer">
-            {p.text}
-          </span>
-        ) : (
-          p.text
-        )
+        p.label ? <Name key={i} of={instanceName(p.text)} /> : p.text
       )}
     </>
   )
@@ -39,11 +35,14 @@ export function AccountLabel({ notice = false }: { notice?: boolean }) {
   const username = useStore(s => s.me?.username ?? account.credentialTarget)
   const info = useStore(s => s.instance) ?? account.conn.info
   return (
-    <span className="streamer block truncate text-xs">
-      {notice
-        ? accountNoticeLabel(username, info, account.conn.host)
-        : (username ?? '~guest') + '@' + account.conn.host}
-    </span>
+    <Name
+      of={accountLabel(
+        notice
+          ? accountNoticeLabel(username, info, account.conn.host)
+          : (username ?? '~guest') + '@' + account.conn.host
+      )}
+      look="block truncate text-xs"
+    />
   )
 }
 
@@ -65,7 +64,7 @@ export function InstanceChip({ host }: { host: string }) {
       place="inline-flex max-w-full min-w-0"
     >
       <Globe size={11} className="shrink-0" />
-      <span className="streamer truncate">{host}</span>
+      <Name of={instanceAddress(host)} look="truncate" />
     </Surface>
   )
 }
@@ -97,11 +96,12 @@ export function RailInstance() {
       place="shrink-0"
     >
       <Globe size={16} className="shrink-0" />
-      <span className="streamer w-full truncate text-center text-3xs leading-3 font-semibold text-on-surface">
-        {label}
-      </span>
+      <Name
+        of={instanceName(label)}
+        look="w-full truncate text-center text-3xs leading-3 font-semibold text-on-surface"
+      />
       {named && (
-        <span className="streamer w-full truncate text-center text-3xs leading-3">{host}</span>
+        <Name of={instanceAddress(host)} look="w-full truncate text-center text-3xs leading-3" />
       )}
     </Surface>
   )
@@ -136,11 +136,11 @@ export function InstanceDetails() {
           {label === host ? null : (
             <>
               {' '}
-              on <span className="streamer">{label}</span>
+              on <Name of={instanceName(label)} />
             </>
           )}{' '}
-          live on <span className="streamer">{host}</span>. Other instances are run by other people;
-          what comes from them is marked with its instance.
+          live on <Name of={instanceAddress(host)} />. Other instances are run by other people; what
+          comes from them is marked with its instance.
         </p>
       </Surface>
     </Stack>

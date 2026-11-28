@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { handleName, personCalled } from '../../lib/names'
 import { asAccount } from '../../lib/people'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -149,10 +151,11 @@ export function UserPage({ username }: { username: string }) {
           <Row gap="md">
             <UserAvatar person={asAccount(user, 'administration')} size={40} />
             <Stack as="span" gap="none">
-              <span className="streamer truncate font-medium">{user.display_name}</span>
-              <span className="streamer truncate text-sm text-on-surface-variant">
-                {user.username}
-              </span>
+              <Name of={personCalled(user.display_name)} look="truncate font-medium" />
+              <Name
+                of={handleName(user.username)}
+                look="truncate text-sm text-on-surface-variant"
+              />
             </Stack>
           </Row>
           {account && <AccountFacts account={account} />}

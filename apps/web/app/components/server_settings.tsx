@@ -1,7 +1,7 @@
 'use client'
 
 import { asAccount } from '../lib/people'
-import { personName } from '../lib/names'
+import { personCalled, personName } from '../lib/names'
 import { Name } from './name'
 import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
@@ -110,7 +110,6 @@ import { Row, Stack, Surface } from './layout'
 import {
   Dialog,
   FieldError,
-  Masked,
   Sentinel,
   dangerBtn,
   fieldCls,
@@ -1197,9 +1196,7 @@ export function BanList({ server }: { server: string }) {
             <UserAvatar person={asAccount(b, 'unknown')} size={28} />
             <span className="min-w-0 flex-1 text-sm">
               <span className="block truncate">
-                <span className="streamer">
-                  <Masked text={b.display_name} by={b.username} />
-                </span>
+                <Name of={personCalled(b.display_name, b.username)} />
                 <span className="text-xs text-on-surface-variant">
                   {' '}
                   · banned {new Date(b.banned_at * 1000).toLocaleDateString()}
