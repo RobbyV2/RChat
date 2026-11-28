@@ -38,7 +38,7 @@ const SEND_GROUP = wire('AddReactions', 'AttachFiles', 'EmbedLinks', 'StartThrea
 const VIEW_GROUP = wire('Connect', 'Speak', 'Video')
 
 describe('the current rules', () => {
-  test('are rules 5, and rooms of rules 2 and 4 are still read', () => {
+  test('are rules 5, and rooms of rules 2 and 4 are read', () => {
     expect([RULES_VERSION, RULES_NEXT, RULES_TEXT_ONLY]).toEqual([5, 5, 4])
     expect([2, 3, 4, 5, 6, '5', null].map(knownRules)).toEqual([
       true,
