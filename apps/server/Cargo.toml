@@ -13,7 +13,7 @@ aws-lc-rs = "1.18.2"
 axum = { version = "0.8", features = ["multipart", "ws"] }
 multer = "3.1"
 memchr = "2.8"
-hashbrown = { version = "0.16", default-features = false, features = [
+hashbrown = { version = "0.17", default-features = false, features = [
   "inline-more",
 ] }
 tokio = { version = "1", features = ["full"] }
@@ -49,7 +49,7 @@ hmac = "0.13"
 hex = "0.4.3"
 age = "0.12.1"
 tar = "0.4"
-zstd = "0.13"
+zstd = "0.14"
 rand = "0.10.3"
 rand_chacha = "0.10.0"
 memorable-wordlist = "0.1.7"
@@ -72,20 +72,20 @@ redis = { version = "1.8", default-features = false, features = [
   "streams",
   "connection-manager",
 ] }
-jsonwebtoken = { version = "11", default-features = false, features = [
+jsonwebtoken = { version = "12", default-features = false, features = [
   "aws_lc_rs",
   "use_pem",
 ] }
-ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
-base64 = "0.22"
+ed25519-dalek = { version = "3", features = ["pkcs8", "pem"] }
+base64 = "0.23"
 ring = "0.17"
 regex = "1"
 emojis = "0.9.1"
 # Stored username keys are made with these four (api/names.rs): raise names::KEY_VERSION when one changes.
-unicode-security = "=0.1.2"
+unicode-security = "=0.1.3"
 caseless = "=0.2.2"
 unicode-normalization = "=0.1.26"
-unicode-properties = "=0.1.4"
+unicode-properties = "=0.1.5"
 turn = "0.17.2"
 sha1 = "0.11"
 async-trait = "0.1"
@@ -93,7 +93,7 @@ stun = "0.17.2"
 webrtc-util = { version = "0.17.2", default-features = false, features = [
   "conn",
 ] }
-chacha20poly1305 = "0.10"
+chacha20poly1305 = "0.11"
 hkdf = "0.13"
 zeroize = "1"
 rchat-avatar = { path = "../../crates/avatar" }
@@ -106,7 +106,7 @@ rustix = { version = "1", default-features = false, features = [
 
 [dev-dependencies]
 rust-next-wasm = { path = "../../crates/wasm" }
-tokio-tungstenite = { version = "=0.29.0", default-features = false, features = [
+tokio-tungstenite = { version = "=0.30.0", default-features = false, features = [
   "connect",
 ] }
 tokio = { version = "1", features = ["full", "test-util"] }
