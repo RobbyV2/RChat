@@ -66,9 +66,19 @@ describe('realtime reconnects', () => {
     client.reconnectAfterGap()
     ws.onmessage?.({ data: '{"type":"resync"}' })
     const fresh = sockets.at(-1)!
-    fresh.onmessage?.({ data: '{"type":"hello"}' })
-    expect(events).toEqual(['hello'])
+    fresh.onmessage?.({ data: '{"type":"guest_name","name":"g1"}' })
+    expect(events).toEqual(['guest_name'])
     client.stop()
+  })
+
+  test('events are read against their schema; a newer kind and a malformed one are dropped', () => {
+    const { client, ws } = openClient()
+    const events: string[] = []
+    client.onEvent = ev => events.push(ev.type)
+    ws.onmessage?.({ data: '{"type":"a_newer_event","x":1}' })
+    ws.onmessage?.({ data: '{"type":"guest_name","name":5}' })
+    ws.onmessage?.({ data: '{"type":"guest_name","name":"g1","later":true}' })
+    expect(events).toEqual(['guest_name'])
   })
 
   test('wait as long as the instance asks', () => {

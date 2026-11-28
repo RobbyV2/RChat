@@ -12,14 +12,28 @@ import { sameSecret, Secret, TO_REQUEST } from './secret'
 import { readToken, writeToken } from './client/credentials'
 import { time } from './platform/time'
 import { readJson } from './api/masks'
+import { decode } from './api/gen'
+import { arr, obj, opt, str, tagged, type Infer, type Parsed } from './schema'
 import type { Cancel } from './clock'
 import { cleanServers } from './ice'
 
-type Event =
-  | WsEvent
-  | { type: 'widget_ready'; name: string }
-  | { type: 'widget_refresh' }
-  | { type: 'widget_mutes'; users: string[]; staff?: string[] }
+// The widget socket's own frames, besides the realtime events it passes on.
+const WIDGET_FRAME = tagged('type', {
+  widget_ready: obj({ name: str() }),
+  widget_refresh: obj({}),
+  widget_mutes: obj({ users: arr(str()), staff: opt(arr(str())) }),
+})
+
+type Event = WsEvent | Infer<typeof WIDGET_FRAME>
+
+const readEvent = (text: string): Parsed<Event> => {
+  const value = readJson(text)
+  const tag =
+    typeof value === 'object' && value !== null ? (value as { type?: unknown }).type : null
+  return typeof tag === 'string' && tag.startsWith('widget_')
+    ? WIDGET_FRAME.parse(value)
+    : decode.WsEvent.parse(value)
+}
 
 const roomRevision = (room: WidgetRoomMetadata) => ({
   'X-Widget-Room-Revision': room.channel_id + '.' + (room.sensitive ? '1' : '0'),
@@ -290,7 +304,9 @@ export class WidgetConnection {
     }
     ws.onmessage = e => {
       if (this.socket !== ws) return
-      const event = readJson(e.data as string) as Event
+      const read = readEvent(e.data as string)
+      if (!read.ok) return
+      const event = read.value
       switch (event.type) {
         case 'widget_ready':
           this.name = event.name

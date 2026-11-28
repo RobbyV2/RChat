@@ -3,9 +3,10 @@ import { DEFAULT_LIMITS } from './instance_limits'
 import type { VoiceMsg, WsEvent, WsStatus } from './types'
 import type { TypingMsg } from './typing'
 import { TO_REQUEST, type Secret } from './secret'
-import { cause, label, logError } from './log'
+import { cause, label, logError, logWarn } from './log'
 import { time } from './platform/time'
 import { readJson } from './api/masks'
+import { decode } from './api/gen'
 import type { Cancel } from './clock'
 
 const secure = (protocol: string) => protocol === 'https:' || protocol === 'wss:'
@@ -217,7 +218,9 @@ export class WsClient {
     ws.onmessage = e => {
       if (this.ws !== ws) return
       try {
-        this.onEvent(readJson(e.data as string) as WsEvent)
+        const read = decode.WsEvent.parse(readJson(e.data as string))
+        if (read.ok) this.onEvent(read.value)
+        else if (!read.unknown) logWarn('ws event not read')
       } catch (err) {
         logError('ws parse', cause(err))
       }
