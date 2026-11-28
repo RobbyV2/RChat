@@ -308,7 +308,7 @@ test('the page says where encrypted storage is on, what did not open and the job
   expect(html).toContain('data-unreadable')
   expect(html).toContain('Every place')
   expect(html).toContain('Storing messages plain: 50%')
-  expect(html).toContain('<span class="min-w-0 text-sm break-words streamer">den</span>')
+  expect(html).toContain('<span class="streamer min-w-0 text-sm break-words">den</span>')
   expect(html).toContain('Earlier messages are stored encrypted.')
 })
 

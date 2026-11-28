@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from '../covered'
 import { ask, sendTo } from '../../lib/asks'
 import { Loaded, useSource } from '../loaded'
 import { KeyRound, TriangleAlert } from 'lucide-react'
@@ -189,9 +190,9 @@ export function EncryptionStatus({
               const where = jobPlace(job.place)
               return (
                 <Row as="li" key={job.id} data-job={job.state} gap="sm" align="baseline" wrap>
-                  <span className={`min-w-0 text-sm break-words ${where.name ? 'streamer' : ''}`}>
+                  <Covered what="place" on={where.name} look="min-w-0 text-sm break-words">
                     {where.text}
-                  </span>
+                  </Covered>
                   <span className="min-w-0 text-sm text-on-surface-variant">{jobText(job)}</span>
                 </Row>
               )
