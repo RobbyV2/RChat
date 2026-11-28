@@ -9,7 +9,9 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, ServerAccess, code_lookup, password_lookup, resolve_server};
+use crate::api::access::{
+    Proof, ServerAccess, code_lookup, grants, password_lookup, resolve_server,
+};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::join_modes::{ALPHABET, JoinMode, random_text};
 use crate::api::rare::{self, Rare};
@@ -214,7 +216,7 @@ pub fn generate() -> String {
 async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
     guard_rchat(&state.db, &name.to_lowercase()).await?;
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageInvites).await?;
+    let _may_manage_invites = access.grant::<grants::ManageInvites>(&state.db).await?;
     Ok(access)
 }
 
@@ -286,7 +288,7 @@ pub(crate) async fn list_passwords(
     let t = state.clock.unix();
     let protected = access.lite().has_password;
     if !invites {
-        access.require_perm(db, Perm::ManageServer).await?;
+        let _may_manage_server = access.grant::<grants::ManageServer>(db).await?;
         let permanent = access.has_permanent_password(db).await?;
         return Ok(Json(ServerPasswords {
             protected,
@@ -472,7 +474,11 @@ pub(crate) async fn create_password(
         false => None,
     };
     rare::take(&state, Rare::ServerPassword, Some(&user))?;
-    let actor = access.audit_actor(db, Perm::ManageInvites).await?;
+    let actor = access
+        .grant::<grants::ManageInvites>(db)
+        .await?
+        .actor()
+        .clone();
     let created_by = match &actor {
         Actor::Staff => None,
         Actor::User(name) => Some(name.clone()),
@@ -745,7 +751,11 @@ pub(crate) async fn make_standing_invite(
     let db = &state.db;
     let link = NewLink::make(db, access.name()).await?;
     rare::take(&state, Rare::ServerPassword, Some(&user))?;
-    let actor = access.audit_actor(db, Perm::ManageInvites).await?;
+    let actor = access
+        .grant::<grants::ManageInvites>(db)
+        .await?
+        .actor()
+        .clone();
     let created_by = match &actor {
         Actor::Staff => None,
         Actor::User(name) => Some(name.clone()),
@@ -812,7 +822,11 @@ pub(crate) async fn delete_standing_invite(
     Path(name): Path<String>,
 ) -> Result<Json<OkResp>, ApiError> {
     let access = manage(&state, &user, &name).await?;
-    let actor = access.audit_actor(&state.db, Perm::ManageInvites).await?;
+    let actor = access
+        .grant::<grants::ManageInvites>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     end_standing(&mut tx, access.name(), &actor, state.clock.unix()).await?;
@@ -866,7 +880,11 @@ pub(crate) async fn revoke_password(
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<Json<OkResp>, ApiError> {
     let access = manage(&state, &user, &name).await?;
-    let actor = access.audit_actor(&state.db, Perm::ManageInvites).await?;
+    let actor = access
+        .grant::<grants::ManageInvites>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     let found = sqlx::query("SELECT label FROM server_passwords WHERE id = $1 AND server = $2")

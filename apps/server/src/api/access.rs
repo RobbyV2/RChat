@@ -1153,7 +1153,11 @@ impl ServerAccess {
             .is_ok_and(|p| p & perm as i64 != 0)
     }
 
-    pub async fn require_perm(&self, db: &Db, perm: Perm) -> Result<(), ApiError> {
+    pub(in crate::api::access) async fn require_perm(
+        &self,
+        db: &Db,
+        perm: Perm,
+    ) -> Result<(), ApiError> {
         let bit = perm as i64;
         match (self.perms(db).await?, self.view_perms(db).await?) {
             (p, _) if p & bit != 0 => Ok(()),
@@ -1172,7 +1176,11 @@ impl ServerAccess {
 
     /// Who an action needing `perm` is logged as: the viewer, or the unnamed instance staff
     /// when a site admin acts without being a member who holds `perm` themselves.
-    pub async fn audit_actor(&self, db: &Db, perm: Perm) -> Result<Actor, ApiError> {
+    pub(in crate::api::access) async fn audit_actor(
+        &self,
+        db: &Db,
+        perm: Perm,
+    ) -> Result<Actor, ApiError> {
         let Some(user) = &self.user else {
             return Ok(Actor::Staff);
         };

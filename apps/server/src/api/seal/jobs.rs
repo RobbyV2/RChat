@@ -14,7 +14,6 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::make_ready;
 use super::sweep::seal_row;
-use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, not_found, resolve_dm, resolve_server};
 use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, check};
 use crate::api::{ApiError, ApiErrorBody, Authed};
@@ -186,7 +185,10 @@ async fn allowed(
     match target {
         Target::Server(name) => {
             let access = resolve_server(db, name, Some(user), &Proof::none()).await?;
-            access.require_perm(db, Perm::ManageServer).await
+            access
+                .grant::<crate::api::access::grants::ManageServer>(db)
+                .await
+                .map(|_| ())
         }
         Target::Dm(id) => resolve_dm(db, *id, user).await.map(|_| ()),
         Target::All => Err(not_found()),

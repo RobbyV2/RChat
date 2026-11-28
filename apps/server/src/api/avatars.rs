@@ -14,8 +14,7 @@ use serde::Deserialize;
 use sqlx::Row;
 use utoipa::IntoParams;
 
-use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, ServerAccess, not_found, resolve_server};
+use crate::api::access::{Proof, ServerAccess, grants, not_found, resolve_server};
 use crate::api::audit;
 use crate::api::auth::MeUpdated;
 use crate::api::features::Feature;
@@ -324,7 +323,11 @@ async fn replace_icon(
     next: Option<&Picture>,
 ) -> Result<bool, ApiError> {
     let key = access.name();
-    let actor = access.audit_actor(&state.db, Perm::ManageServer).await?;
+    let actor = access
+        .grant::<grants::ManageServer>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     let before: Option<String> = sqlx::query("SELECT icon_image FROM servers WHERE name = $1")
         .bind(key)
@@ -365,7 +368,7 @@ async fn replace_icon(
 /// The server a manager opens to change its picture.
 async fn managed(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageServer).await?;
+    access.grant::<grants::ManageServer>(&state.db).await?;
     Ok(access)
 }
 

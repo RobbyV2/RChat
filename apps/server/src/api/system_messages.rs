@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, ServerAccess, not_found, resolve_channel, resolve_server};
+use crate::api::access::{Proof, ServerAccess, grants, not_found, resolve_channel, resolve_server};
 use crate::api::audit;
 use crate::api::messages::load_broadcast;
 use crate::api::{ApiError, ApiErrorBody, Authed};
@@ -178,7 +177,7 @@ pub struct SystemMessagesPatch {
 
 async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageServer).await?;
+    let _may_manage_server = access.grant::<grants::ManageServer>(&state.db).await?;
     Ok(access)
 }
 
@@ -282,8 +281,10 @@ pub(crate) async fn update_system_messages(
         }
     }
     let actor = access
-        .audit_actor(&state.db, Perm::ManageServer)
+        .grant::<grants::ManageServer>(&state.db)
         .await?
+        .actor()
+        .clone()
         .staff_if(bypassed);
     let was = load(&state.db, &key).await?;
     let moved = match channel_id {
@@ -360,6 +361,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::api::access::perms::Perm;
     use crate::api::auth::hash_password;
     use crate::api::messages::channel_messages;
     use crate::api::servers::{

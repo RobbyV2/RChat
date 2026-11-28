@@ -10,8 +10,8 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::access::perms::held;
 use super::access::{
-    Proof, ResolvedChannel, ServerAccess, Via, not_found, perms::Perm, resolve_channel,
-    resolve_reading, resolve_server,
+    Proof, ResolvedChannel, ServerAccess, Via, grants, not_found, resolve_channel, resolve_reading,
+    resolve_server,
 };
 use super::{
     ApiError, Authed, LIST_PAGE, MaybeAuthed, Message, Paged, Settings, audit, guest_chat,
@@ -207,7 +207,7 @@ fn origin(s: &str) -> Result<String, ApiError> {
 
 async fn manager(db: &Db, server: &str, user: &User) -> Result<ServerAccess, ApiError> {
     let access = resolve_server(db, server, Some(user), &Proof::none()).await?;
-    access.require_perm(db, Perm::ManageServer).await?;
+    let _may_manage_server = access.grant::<grants::ManageServer>(db).await?;
     Ok(access)
 }
 
@@ -306,7 +306,11 @@ async fn save(
         ));
     }
     let server = access.name().to_string();
-    let actor = access.audit_actor(db, Perm::ManageServer).await?;
+    let actor = access
+        .grant::<grants::ManageServer>(db)
+        .await?
+        .actor()
+        .clone();
     let lite = access.lite().clone();
     let channel = access.channel(db, config.channel_id).await?;
     if channel.kind() == ChannelKind::Voice && !matches!(config.mode, Mode::Voice | Mode::Members)

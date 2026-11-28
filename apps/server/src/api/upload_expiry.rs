@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, ServerAccess, resolve_server};
+use crate::api::access::{Proof, ServerAccess, grants, resolve_server};
 use crate::api::audit;
 use crate::api::media::MEDIA_TTL_SECS;
 use crate::api::{ApiError, ApiErrorBody, Authed, Settings, placeholders};
@@ -632,7 +631,7 @@ pub(crate) async fn release(conn: &mut sqlx::AnyConnection, id: &str) -> sqlx::R
 
 async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageServer).await?;
+    let _may_manage_server = access.grant::<grants::ManageServer>(&state.db).await?;
     Ok(access)
 }
 
@@ -740,7 +739,11 @@ pub(crate) async fn set_upload_expiry(
         return Err(ApiError::invalid(&problem, "upload_expiry"));
     }
     let key = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageServer).await?;
+    let actor = access
+        .grant::<grants::ManageServer>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let limits = KeptLimits::of(&state.limits);
     let mut tx = state.db.begin().await?;
     lock_kept(&mut tx, &key).await?;

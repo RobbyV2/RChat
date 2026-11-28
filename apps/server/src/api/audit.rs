@@ -8,8 +8,7 @@ use serde_json::{Map, Value, json};
 use sqlx::{AnyConnection, Row};
 use utoipa::{IntoParams, ToSchema};
 
-use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, denied, resolve_server};
+use crate::api::access::{Proof, denied, grants, resolve_server};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Paged, UserRef, cursor_int, decode_cursor, encode_cursor,
     placeholders, user_from, user_refs,
@@ -1023,7 +1022,7 @@ pub(crate) async fn list_audit(
     if !access.is_member() && !access.site_admin() {
         return Err(denied());
     }
-    access.require_perm(db, Perm::ViewAuditLog).await?;
+    let _may_view_audit_log = access.grant::<grants::ViewAuditLog>(db).await?;
     let limit = q.limit.unwrap_or(PAGE_MAX).clamp(1, PAGE_MAX);
     let (clauses, mut binds) = filters(&q)?;
     let hidden = match access.manages_channels(db).await? {
@@ -1163,6 +1162,7 @@ mod tests {
     use serde::de::DeserializeOwned;
 
     use super::*;
+    use crate::api::access::perms::Perm;
     use crate::api::categories::{
         create_category, delete_category, layout_version, rename_category, reorder_layout,
     };
