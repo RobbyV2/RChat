@@ -18,7 +18,7 @@ import {
   reactorNames,
   reactorsText,
 } from '../lib/reactions'
-import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
+import { EmojiPicker, useEmojiNow, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { ShownAvatar, useShown, useViewServer } from './shown_user'
 import { CloseButton, Masked, Sheet, useOwnCheck } from './ui'
@@ -86,7 +86,7 @@ function ReactionTooltip({
   r: Reaction
 }) {
   const streamer = useStore(s => s.streamer)
-  const { data } = useEmojiData(true)
+  const data = useEmojiNow()
   const users = useReactors(messageId, r.emoji, r.count, !streamer)
   const own = useOwnCheck()
   const mask = useMask()

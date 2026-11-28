@@ -4,6 +4,7 @@ import { composerTextLook } from '../lib/controls'
 import { useEffect, useRef, useState, type ClipboardEvent, type ReactNode, type Ref } from 'react'
 import { Smile } from 'lucide-react'
 import { spliceText } from '../lib/autocomplete'
+import { background } from '../lib/api_errors'
 import { loadEmojiData } from '../lib/emoji'
 import { composing, sendKey } from '../lib/keys'
 import type { ComposerDraft } from '../lib/scheduled'
@@ -218,7 +219,7 @@ export function ComposerField({
           tight
           aria-haspopup="dialog"
           aria-expanded={pickerOpen}
-          onPointerEnter={() => void loadEmojiData().catch(() => {})}
+          onPointerEnter={() => void loadEmojiData().catch(background('loading emoji failed'))}
           onClick={openPicker}
         />
         <SendButton

@@ -34,9 +34,10 @@ import {
   DEFAULT_TOP,
   boostFor,
   emojiData,
+  emojiSource,
+  emojiWatch,
   frequent,
   gridMove,
-  loadEmojiData,
   searchEmoji,
   sectionHeight,
   sections,
@@ -50,10 +51,12 @@ import {
 } from '../lib/emoji'
 import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { useMedia } from './context_menu'
-import { Button, IconButton } from './controls'
+import { IconButton } from './controls'
 import { Sheet } from './ui'
 import { Stack, Surface, Inset, Grid } from './layout'
 import { time } from '../lib/platform/time'
+import { useLive } from '../lib/place/react'
+import { Loaded, useLoad } from './loaded'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
 
@@ -94,26 +97,11 @@ const FREQUENT_ROWS = 2
 const HEADER = 30
 const DRAG_CLOSE = 96
 
-export function useEmojiData(enabled = true) {
-  const [data, setData] = useState<Emoji[] | null>(emojiData)
-  const [failed, setFailed] = useState(false)
-  const [attempt, setAttempt] = useState(0)
-  useEffect(() => {
-    if (!enabled || data) return
-    let live = true
-    loadEmojiData().then(
-      d => live && setData(d),
-      () => live && setFailed(true)
-    )
-    return () => {
-      live = false
-    }
-  }, [enabled, data, attempt])
-  const retry = () => {
-    setFailed(false)
-    setAttempt(a => a + 1)
-  }
-  return { data, failed, retry }
+// The emoji data once it is here, for code that reads it outside what it draws (a key handler,
+// a tooltip); null until then. While `wanted` it asks for the data.
+export function useEmojiNow(wanted = true): Emoji[] | null {
+  useLive(emojiWatch(wanted))
+  return emojiData()
 }
 
 export function useTopEmojis(n: number) {
@@ -287,20 +275,66 @@ export function EmojiPicker({
   )
 }
 
-const PickerBody = memo(function PickerBody({
-  sheet,
-  label,
-  onPick,
-  onClose,
-}: {
+interface BodyProps {
   sheet: boolean
   label: string
   onPick: (emoji: string, opts: PickOptions) => void
   onClose: () => void
-}) {
+}
+
+function LoadingGrid({ sheet }: { sheet: boolean }) {
+  const cols = sheet ? 8 : 9
+  return (
+    <Inset pad="md">
+      <Grid
+        aria-busy
+        aria-label="Loading emoji"
+        cols={1}
+        gap="2xs"
+        at={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+      >
+        {Array.from({ length: cols * 6 }, (_, i) => (
+          <div
+            key={i}
+            className="aspect-square animate-pulse rounded-lg bg-surface-container-highest/60"
+          />
+        ))}
+      </Grid>
+    </Inset>
+  )
+}
+
+const PickerBody = memo(function PickerBody(props: BodyProps) {
+  const { sheet, onClose } = props
+  const load = useLoad(emojiSource())
+  const here = load.status === 'ready'
+  useEffect(() => {
+    if (here) return
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.isComposing) return
+      e.preventDefault()
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [here, onClose])
+  return (
+    <Loaded
+      load={load}
+      what="emoji"
+      hold={false}
+      skeleton={<LoadingGrid sheet={sheet} />}
+      empty="No emoji to show."
+    >
+      {data => <PickerGrid {...props} data={data} />}
+    </Loaded>
+  )
+})
+
+function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data: Emoji[] }) {
   const store = useStoreApi()
   const uid = useId()
-  const { data, failed, retry } = useEmojiData()
   const tone = useStore(s => s.emoji.tone)
   const noteEmoji = useStore(s => s.noteEmoji)
   const setSkinTone = useStore(s => s.setSkinTone)
@@ -356,7 +390,6 @@ const PickerBody = memo(function PickerBody({
   }, [sheet, data])
 
   const groups = useMemo<Group[]>(() => {
-    if (!data) return []
     const q = query.trim()
     if (q) {
       return [
@@ -561,36 +594,9 @@ const PickerBody = memo(function PickerBody({
         ?.setAttribute('aria-selected', 'true')
   }, [active, grid, uid])
 
-  const hasGrid = !failed && !!data && groups.some(g => g.items.length > 0)
+  const hasGrid = groups.some(g => g.items.length > 0)
   let content: ReactNode
-  if (failed) {
-    content = (
-      <Surface tone="plain" radius="none" pad="xl" place="h-full">
-        <Stack gap="md" align="center" justify="center" place="flex-1">
-          <p className="text-center text-sm text-on-surface-variant">Emoji could not load.</p>
-          <Button onClick={retry}>Try again</Button>
-        </Stack>
-      </Surface>
-    )
-  } else if (!data) {
-    content = (
-      <Inset pad="sm">
-        <Grid
-          aria-label="Loading emoji"
-          cols={1}
-          gap="2xs"
-          at={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
-        >
-          {Array.from({ length: cols * 6 }, (_, i) => (
-            <div
-              key={i}
-              className="aspect-square animate-pulse rounded-lg bg-surface-container-highest/60"
-            />
-          ))}
-        </Grid>
-      </Inset>
-    )
-  } else if (!hasGrid) {
+  if (!hasGrid) {
     content = (
       <Surface tone="plain" radius="none" pad="xl" place="h-full">
         <Stack gap="sm" align="center" justify="center" place="flex-1">
@@ -763,4 +769,4 @@ const PickerBody = memo(function PickerBody({
       )}
     </>
   )
-})
+}

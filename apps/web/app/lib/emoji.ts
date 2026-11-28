@@ -1,3 +1,5 @@
+import { fromRequest, type LoadSource } from './load'
+import type { Live } from './place/live'
 import { time } from './platform/time'
 export type CategoryId =
   | 'recent'
@@ -425,6 +427,23 @@ export function loadEmojiData(): Promise<Emoji[]> {
   )
   return loading
 }
+
+let source: LoadSource<Emoji[]> | null = null
+
+// The emoji data as a load, fetched once a screen watches it. The data is part of the app's own
+// code, so a failure to fetch it is a request that got no answer.
+export const emojiSource = (): LoadSource<Emoji[]> =>
+  (source ??= fromRequest(time(), () =>
+    loadEmojiData().catch(() => {
+      throw new TypeError('The emoji data did not load')
+    })
+  ))
+
+const idle: Live<null> = { get: () => null, subscribe: () => () => {} }
+
+// What to watch for the emoji data to be read with `emojiData` once it is here: the load while
+// `wanted`, else nothing.
+export const emojiWatch = (wanted: boolean): Live<unknown> => (wanted ? emojiSource() : idle)
 
 export const sectionHeight = (count: number, cols: number, cell: number, chrome: number) =>
   chrome + Math.ceil(count / Math.max(1, cols)) * cell

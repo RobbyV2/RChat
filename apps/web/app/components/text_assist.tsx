@@ -22,7 +22,7 @@ import { boostFor, findShortcode, matchShortcodes, withTone, type CodeMatch } fr
 import { AutocompletePopup, useAutocomplete } from './autocomplete'
 import { useChat } from '../lib/place/use_chat'
 import { useLive } from '../lib/place/react'
-import { useEmojiData } from './emoji_picker'
+import { useEmojiNow } from './emoji_picker'
 import { UserAvatar } from './user_avatar'
 import {
   STYLE_LABELS,
@@ -109,7 +109,7 @@ export function useTextAssist({
     },
     [findPeople, findGroups]
   )
-  const { data: emoji } = useEmojiData(trigger !== null)
+  const emoji = useEmojiNow(trigger !== null)
   const searchCodes = useCallback(
     (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, time().now())) : []),
     [emoji, prefs]
