@@ -72,7 +72,7 @@ import {
   type View,
 } from '../lib/media_lightbox'
 import { FUNCTIONAL } from '../lib/motion/functional'
-import { plays, playsBehind, playsOn } from '../lib/motion/play'
+import { beside, plays, playsBehind, playsOn } from '../lib/motion/play'
 import { useSlotBlurs, useSlotPlays } from '../lib/motion/use_motion'
 import { sharing } from '../lib/platform'
 import { useMask } from '../lib/store'
@@ -974,6 +974,7 @@ export function LightboxView({
           safe="all"
           look="border-t border-outline-variant/40 bg-surface-container-lowest/95 md:h-12"
           place="shrink-0"
+          {...beside('lightbox')}
         >
           <Row gap="3xs" look="max-md:justify-center-safe" place="min-w-0 flex-1 overflow-x-auto">
             <Row gap="3xs" place="max-md:hidden">

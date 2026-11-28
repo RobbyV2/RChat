@@ -793,7 +793,9 @@ export function SwitchRow({
         )}
       </span>
       <span aria-hidden {...look('toggle')} className={`flex ${switchTrackLook}`}>
-        <span className={switchThumbLook} />
+        <span className={`flex ${switchThumbLook}`}>
+          <Check size={12} strokeWidth={4} />
+        </span>
       </span>
     </button>
   )

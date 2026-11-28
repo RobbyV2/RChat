@@ -25,6 +25,7 @@ import {
 } from '../lib/settings_page'
 import { searchRows, type SearchHit, type SearchRow } from '../lib/settings_search'
 import type { EscapeLayer } from '../lib/escape_layers'
+import { playsOn } from '../lib/motion/play'
 import { useSlotPlays } from '../lib/motion/use_motion'
 import { IconButton, ListRow } from './controls'
 import { Row, Stack, Surface, Inset } from './layout'
@@ -606,7 +607,7 @@ export function SettingsPage({
             <Inset pad="lg" safe>
               <Stack gap="lg" place="mx-auto max-w-3xl">
                 {results}
-                <div>
+                <div ref={playsOn('route', shown ?? '')}>
                   {lead}
                   {sections
                     .filter(s => kept.includes(s.id))

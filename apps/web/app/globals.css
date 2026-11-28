@@ -499,6 +499,30 @@ body {
   transition-timing-function: var(--motion-spring-bouncy, var(--motion-standard));
 }
 
+/* toggle: the thumb of a switch that is on carries a check, which pops in as it turns on. A
+   switch shows no check while this does not play. */
+[data-motion~='toggle'] svg {
+  display: none;
+}
+
+:root[data-motion-slots~='toggle'] [data-motion~='toggle'] svg {
+  display: block;
+  opacity: 0;
+  scale: 0.4;
+  transition:
+    opacity var(--motion-short) var(--motion-standard),
+    scale var(--motion-short) var(--motion-standard);
+}
+
+:root[data-motion-slots~='toggle'] [aria-checked='true'] [data-motion~='toggle'] svg {
+  opacity: 1;
+  scale: 1;
+}
+
+:root[data-motion='lively'][data-motion-slots~='toggle'] [data-motion~='toggle'] svg {
+  transition-timing-function: var(--motion-spring-bouncy, var(--motion-standard));
+}
+
 /* expand: a chevron turns as its section folds. */
 :root[data-motion-slots~='expand'] [data-motion~='expand'] {
   transition: rotate var(--motion-short) var(--motion-standard);
@@ -592,6 +616,34 @@ body {
 @keyframes skeleton-shimmer {
   to {
     transform: translateX(1600px);
+  }
+}
+
+/* In the lively style a placeholder's lines fade in one after the other, the first eight apart. */
+:root[data-motion='lively'][data-motion-slots~='skeleton.shimmer']
+  [data-motion~='skeleton.shimmer']
+  [data-blob] {
+  animation: motion-fade-in var(--motion-medium) var(--motion-standard) backwards;
+  animation-delay: calc(min(var(--motion-line, 0), 8) * var(--motion-short) / 3);
+}
+
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* What comes in beside a slot's element in the lively style: the media viewer's toolbar rises
+   from the bottom edge as the viewer opens. */
+:root[data-motion='lively'] [data-motion-with='lightbox'] {
+  animation: motion-rise-in var(--motion-long) var(--motion-spring-gentle, var(--motion-decelerate))
+    backwards;
+}
+
+@keyframes motion-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
   }
 }
 

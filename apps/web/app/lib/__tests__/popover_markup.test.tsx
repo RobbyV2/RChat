@@ -28,6 +28,7 @@ describe('Popover', () => {
   test('in a pane it sits under the header at the end; elsewhere at its measured place', () => {
     const pane = renderToStaticMarkup(<Popover at="pane">x</Popover>)
     expect(classes(pane)).toContain('absolute')
+    expect(classes(pane)).toContain('origin-top-right')
     expect(pane).not.toContain('style=')
     const placed = renderToStaticMarkup(
       <Popover at={{ top: 40, left: 12 }} size="text">
@@ -35,7 +36,7 @@ describe('Popover', () => {
       </Popover>
     )
     expect(classes(placed)).toContain('fixed')
-    expect(placed).toContain('style="top:40px;left:12px"')
+    expect(placed).toContain('style="top:40px;left:12px;transform-origin:top left"')
     expect(classes(placed)).toContain('w-112')
   })
 

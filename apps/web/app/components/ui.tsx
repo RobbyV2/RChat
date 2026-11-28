@@ -27,6 +27,7 @@ import type { RChatState } from '../lib/store_types'
 import { layerCovered, type EscapeLayer } from '../lib/escape_layers'
 import { dialogBlurs, dialogLayout, type DialogChrome, type DialogSize } from '../lib/dialog_size'
 import { FUNCTIONAL } from '../lib/motion/functional'
+import { originAt, originOf } from '../lib/motion/origin'
 import { plays, playsBehind } from '../lib/motion/play'
 import type { PlaySlot } from '../lib/motion/slots'
 import { useSlotBlurs } from '../lib/motion/use_motion'
@@ -254,7 +255,8 @@ export type PopoverSize = 'card' | 'list' | 'text' | 'picker'
 // `pane`: under the header, at the end of the pane it is rendered in. A measured place in the
 // window otherwise; null while it is not measured yet (the popover is laid out, unseen, so it can
 // be).
-export type PopoverAt = 'pane' | Pick<CSSProperties, 'top' | 'left' | 'right' | 'bottom'> | null
+export type PopoverAt =
+  'pane' | Pick<CSSProperties, 'top' | 'left' | 'right' | 'bottom' | 'transformOrigin'> | null
 
 const POPOVER_SIZE: Record<PopoverSize, string> = {
   card: 'max-h-screen-inset w-75 max-w-screen-inset',
@@ -271,17 +273,17 @@ export function usePlaceUnder(
   size: PopoverSize,
   on = true
 ): PopoverAt {
-  const [at, setAt] = useState<{ top: number; left: number } | null>(null)
+  const [at, setAt] = useState<{ top: number; left: number; transformOrigin: string } | null>(null)
   useLayoutEffect(() => {
     if (!on) return
     const place = () => {
       const rect = anchor.current?.getBoundingClientRect()
       if (!rect) return
       const width = Math.min(POPOVER_WIDTH[size], window.innerWidth - 16)
-      setAt({
-        top: rect.bottom + 8,
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
-      })
+      const top = rect.bottom + 8
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+      const from = { x: rect.left + rect.width / 2, y: top }
+      setAt({ top, left, transformOrigin: originAt(from, { left, top, width, height: 0 }) })
     }
     place()
     window.addEventListener('resize', place)
@@ -317,8 +319,8 @@ export function Popover({
       ref={at === null ? ref : plays('menu', ref)}
       role="dialog"
       data-popover=""
-      style={at === 'pane' || at === null ? undefined : at}
-      className={`${at === 'pane' ? 'absolute top-14 right-2' : 'fixed'} ${
+      style={at === 'pane' || at === null ? undefined : { ...at, transformOrigin: originOf(at) }}
+      className={`${at === 'pane' ? 'absolute top-14 right-2 origin-top-right' : 'fixed'} ${
         layer === 'top' ? 'z-top' : 'z-popover'
       } flex flex-col ${POPOVER_SIZE[size]} ${FLOAT_SHAPE} ${SURFACE[surface]} shadow-elevation-3 outline-none ${
         scroll ? 'overflow-x-hidden overflow-y-auto overscroll-contain' : 'overflow-hidden'

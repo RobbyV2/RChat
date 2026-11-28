@@ -544,7 +544,8 @@ export const swatchLook =
 export const switchRowLook = `w-full min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm ${HOVER} ${FOCUS} disabled:opacity-50 pointer-coarse:min-h-11`
 export const switchTrackLook =
   'h-6 w-10 shrink-0 items-center rounded-full border border-outline bg-surface-container-highest p-0.5 transition-colors group-checked/switch:justify-end group-checked/switch:border-transparent group-checked/switch:bg-primary'
-export const switchThumbLook = 'size-4.5 rounded-full bg-outline group-checked/switch:bg-on-primary'
+export const switchThumbLook =
+  'size-4.5 items-center justify-center rounded-full bg-outline text-primary group-checked/switch:bg-on-primary'
 
 // The box one ticks to select a row: it fills the row's leading edge, so the whole edge ticks it.
 export const tickLook = 'group/tick shrink-0 items-start p-3 outline-none'

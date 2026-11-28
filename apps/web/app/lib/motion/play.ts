@@ -89,6 +89,7 @@ export const playsOn = (slot: PlaySlot, key: string | number): RefCallback<Eleme
 }
 
 export const MARK = 'data-motion'
+export const WITH = 'data-motion-with'
 export const STILL = 'data-motion-none'
 export const ONLY = 'data-motion-only'
 
@@ -101,6 +102,22 @@ export const look = (...slots: LookSlot[]): { readonly [MARK]: string } => {
   if (!mark) {
     mark = Object.freeze({ [MARK]: id })
     marks.set(id, mark)
+  }
+  return mark
+}
+
+// The slots whose element something else comes in beside, in the lively style.
+export type BesideSlot = 'lightbox'
+
+const besides = new Map<BesideSlot, { readonly [WITH]: BesideSlot }>()
+
+// The attribute of what comes in beside the element of `slot` (the media viewer's toolbar): the
+// style sheet brings it in while the lively style plays.
+export const beside = (slot: BesideSlot): { readonly [WITH]: BesideSlot } => {
+  let mark = besides.get(slot)
+  if (!mark) {
+    mark = Object.freeze({ [WITH]: slot })
+    besides.set(slot, mark)
   }
   return mark
 }

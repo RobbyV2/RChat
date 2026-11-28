@@ -39,6 +39,7 @@ import { Inset, Row, Stack, Surface } from './layout'
 import { Overlay, Sheet } from './ui'
 import { time } from '../lib/platform/time'
 import { plays } from '../lib/motion/play'
+import { originAt } from '../lib/motion/origin'
 
 let press = idlePress
 let owner: HTMLElement | null = null
@@ -436,11 +437,20 @@ function Panel({
     if ('beside' in place) {
       const r = place.beside
       const right = r.right + 2
-      el.style.left = `${right <= maxX ? right : Math.max(4, r.left - w - 2)}px`
-      el.style.top = `${Math.max(4, Math.min(r.top - 8, maxY))}px`
+      const left = right <= maxX ? right : Math.max(4, r.left - w - 2)
+      const top = Math.max(4, Math.min(r.top - 8, maxY))
+      el.style.left = `${left}px`
+      el.style.top = `${top}px`
+      el.style.transformOrigin = originAt(
+        { x: right <= maxX ? r.right : r.left, y: r.top + r.height / 2 },
+        { left, top, width: w, height: h }
+      )
     } else {
-      el.style.left = `${Math.max(4, Math.min(place.x, maxX))}px`
-      el.style.top = `${Math.max(4, Math.min(place.y, maxY))}px`
+      const left = Math.max(4, Math.min(place.x, maxX))
+      const top = Math.max(4, Math.min(place.y, maxY))
+      el.style.left = `${left}px`
+      el.style.top = `${top}px`
+      el.style.transformOrigin = originAt(place, { left, top, width: w, height: h })
     }
   }, [place])
 
