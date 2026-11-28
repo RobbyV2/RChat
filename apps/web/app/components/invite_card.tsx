@@ -1,8 +1,15 @@
 'use client'
 
 import { asAccount } from '../lib/people'
-import { instanceAddress, instanceName, personName, serverCalled } from '../lib/names'
-import { Name } from './name'
+import {
+  handleName,
+  instanceAddress,
+  instanceName,
+  labelWith,
+  personName,
+  serverCalled,
+} from '../lib/names'
+import { Name, useNameLabels } from './name'
 import {
   useCallback,
   useEffect,
@@ -43,7 +50,7 @@ import {
   type RemoteInvite,
 } from '../lib/invite'
 import { channelTarget } from '../lib/viewing'
-import { formatQualified, hostOf } from '../lib/qualified'
+import { hostOf, normalizeHost } from '../lib/qualified'
 import { deniedAccess, needsPassword } from '../lib/join_flow'
 import { absoluteTime, countdown, tickMs, useNow, usesLeftText } from '../lib/passwords'
 import { plainStamps } from '../lib/timestamps'
@@ -396,6 +403,7 @@ export function PreviewLine({
   remote?: InstanceConnection
 }) {
   const store = useStoreApi()
+  const say = useNameLabels()
   const account = useStore(s => s.me?.username ?? null)
   const { useViewing, canView } = useAccount().viewing
   useViewing(s => s.revision)
@@ -422,7 +430,11 @@ export function PreviewLine({
           withUsername
           link={!host}
           {...(host ? {} : profileTrigger(store, author, null))}
-          titled={host ? formatQualified(author.username, host) : false}
+          titled={
+            host
+              ? labelWith`${say(handleName(author.username))}@${say(instanceAddress(normalizeHost(host)))}`
+              : false
+          }
           look="font-medium text-on-surface"
         />{' '}
         <span className="text-on-surface-variant">
@@ -1137,13 +1149,14 @@ export function InviteBody({
 }
 
 function RemoteOrigin({ host, name }: { host: string; name?: string }) {
+  const say = useNameLabels()
   return (
     <Row as="span" gap="xs" wrap lineGap="3xs" place="max-w-full min-w-0">
       <InstanceChip host={host} />
       {name && name !== host && (
         <Name
           of={instanceName(name)}
-          titled={`${host} calls itself ${name}`}
+          titled={labelWith`${say(instanceAddress(host))} calls itself ${say(instanceName(name))}`}
           place="max-w-full min-w-0"
           look="truncate text-2xs text-on-surface-variant"
         />
@@ -1157,7 +1170,7 @@ const remoteHost = (invite: RemoteInvite) => hostOf(invite.origin) ?? new URL(in
 // The way to the invite on its own site: inside the app for one of these sites, else a new tab.
 function OpenRemote({ invite, site }: { invite: RemoteInvite; site: boolean }) {
   const owner = useAccount()
-  const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const host = remoteHost(invite)
   const internal = knownLinkOrigin(invite.origin) || site
   const path = invite.url.slice(invite.origin.length)
@@ -1173,9 +1186,10 @@ function OpenRemote({ invite, site }: { invite: RemoteInvite; site: boolean }) {
       title={
         internal
           ? 'Open invite'
-          : streamer
-            ? 'Opens the invite in a new tab'
-            : `Opens ${host} in a new tab`
+          : say.line(
+              'Opens the invite in a new tab',
+              () => labelWith`Opens ${say(instanceAddress(host))} in a new tab`
+            )
       }
       place="max-w-full min-w-0"
     >
@@ -1203,7 +1217,7 @@ export function RemoteBody({
   invite: RemoteInvite
   access?: InviteAccess
 }) {
-  const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const host = remoteHost(invite)
   const openBtn = <OpenRemote invite={invite} site={view.kind !== 'foreign'} />
   const where = (
@@ -1263,7 +1277,12 @@ export function RemoteBody({
     const { name, display_name, has_password } = view.invite.server
     return {
       icon: (
-        <span title={streamer ? 'Server icon' : `${display_name} on ${host}`}>
+        <span
+          title={say.line(
+            'Server icon',
+            () => labelWith`${say(serverCalled(display_name))} on ${say(instanceAddress(host))}`
+          )}
+        >
           <ServerTile
             name={name}
             displayName={display_name}
@@ -1348,7 +1367,7 @@ export function RemoteInviteCard({
   onResolved?: (key: string, ok: boolean) => void
 }) {
   const previews = useStore(s => s.settings.asset_previews)
-  const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const key = remoteKey(invite)
   const owner = useAccount()
   const cache = owner.invites
@@ -1391,9 +1410,10 @@ export function RemoteInviteCard({
                 variant="filled"
                 size="md"
                 onClick={load}
-                title={
-                  streamer ? 'Fetch this invite from its site' : `Fetch this invite from ${host}`
-                }
+                title={say.line(
+                  'Fetch this invite from its site',
+                  () => labelWith`Fetch this invite from ${say(instanceAddress(host))}`
+                )}
                 place="shrink-0"
               >
                 Load preview

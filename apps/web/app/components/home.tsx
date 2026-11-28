@@ -1,10 +1,11 @@
 'use client'
 import { Covered } from './covered'
-import { Name, NameSelect, useNameLabel } from './name'
+import { Name, NameSelect, useNameLabel, useNameLabels } from './name'
 import {
   handleName,
   instanceAddress,
   instanceName,
+  labelWith,
   p2pName,
   personCalled,
   roomName,
@@ -50,7 +51,6 @@ import {
   scopePingCount,
   scopeUnread,
   serversMarkTargets,
-  useMask,
   useStore,
 } from '../lib/store'
 import {
@@ -589,10 +589,8 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
   const unread = useStore(s => scopeUnread(s, key))
   const pings = useStore(s => scopePingCount(s, key))
   const markScopesRead = useStore(s => s.markScopesRead)
-  const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const ownServer = useOwnServer(recent.kind === 'channel' ? recent.server : null)
-  const own = recent.kind === 'dm' ? dm?.is_self === true : ownServer
-  const mask = useMask(own)
   const open = () => {
     const s = acct.store.getState()
     if (recent.kind === 'dm') void s.openDm(recent.dmId)
@@ -604,13 +602,13 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
     <RecentItem
       id={key}
       title={
-        streamer
-          ? recent.kind === 'dm'
-            ? 'Direct message'
-            : 'Channel'
-          : recent.kind === 'dm'
-            ? mask(label)
-            : `${mask(label)}, ${mask(serverName)}`
+        recent.kind === 'dm'
+          ? say(personCalled(label, null, dm?.is_self === true), 'Direct message')
+          : say.line(
+              'Channel',
+              () =>
+                labelWith`${say.covered(label, 'Channel', ownServer)}, ${say(serverCalled(serverName, ownServer))}`
+            )
       }
       glyph={
         recent.kind === 'dm' && dm ? (
@@ -623,10 +621,10 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
       }
       label={
         recent.kind === 'dm' ? (
-          <Name of={personCalled(label, null, own)} />
+          <Name of={personCalled(label, null, dm?.is_self === true)} />
         ) : (
           <Covered what="channel">
-            <Masked text={label} own={own} />
+            <Masked text={label} own={ownServer} />
           </Covered>
         )
       }
@@ -638,7 +636,7 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
             'Direct message'
           )
         ) : (
-          <Name of={serverCalled(serverName, own)} />
+          <Name of={serverCalled(serverName, ownServer)} />
         )
       }
       unread={unread}
@@ -669,9 +667,8 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
   const server = useP2p(s => (ch === null ? undefined : s.servers[room]))
   const counts = useP2p(s => (ch === null ? s.rooms[room] : s.servers[room]?.chans[ch]))
   const prefs = useStore(s => s.notifyPrefs)
-  const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const own = useP2p(s => ch !== null && ownsP2pServer(s.servers[room], s.me))
-  const mask = useMask(own)
   const scope =
     ch === null ? ({ kind: 'p2p', room } as const) : ({ kind: 'p2pc', room, ch } as const)
   const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
@@ -692,13 +689,13 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
     <RecentItem
       id={key}
       title={
-        streamer
-          ? ch === null
-            ? 'P2P direct message'
-            : 'Channel'
-          : ch === null
-            ? mask(label)
-            : `${mask(label)}, ${mask(server?.name ?? '')}`
+        ch === null
+          ? say(p2pName(label), 'P2P direct message')
+          : say.line(
+              'Channel',
+              () =>
+                labelWith`${say.covered(label, 'Channel', own)}, ${say(roomName(server?.name ?? '', own))}`
+            )
       }
       glyph={
         ch === null && peer ? (
@@ -1169,8 +1166,7 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
   const card = useP2pCard()
   const error = useP2p(s => s.error)
   const me = useP2p(s => s.me)
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const say = useNameLabels()
   return (
     <section
       data-p2p-home
@@ -1265,7 +1261,7 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
               <Line>
                 <Row as="ul" aria-label="Online contacts" gap="sm" align="stretch" wrap>
                   {card.top.map(c => {
-                    const label = streamer ? 'Message contact' : `Message ${mask(displayName(c))}`
+                    const label = labelWith`Message ${say(p2pName(displayName(c)), 'contact')}`
                     return (
                       <li key={c.ik} className="flex">
                         <MediaButton

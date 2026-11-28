@@ -1,7 +1,7 @@
 'use client'
 
-import { personName, p2pName } from '../lib/names'
-import { Name } from './name'
+import { personName, p2pKey, p2pName } from '../lib/names'
+import { Name, useNameLabels } from './name'
 import { useState, type ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
 import { BlockedQuote } from './blocking'
@@ -96,6 +96,7 @@ export function ReplyPreview({
   const blocked = useStore(s => (quote.author ? s.blocked[quote.author.username] === true : false))
   const server = useStore(s => (!local && s.view?.kind === 'channel' ? s.view.server : null))
   const author = useShownOrNull(quote.author, server)
+  const say = useNameLabels()
   const [shown, setShown] = useState<string | null>(null)
   const viewer = useStore(s => s.me?.username)
   const authorKey = JSON.stringify([viewer, quote.id, quote.author?.username])
@@ -152,7 +153,7 @@ export function ReplyPreview({
         {local ? (
           <Name
             of={p2pName(author.display_name, own)}
-            titled={author.username}
+            titled={say(p2pKey(author.username))}
             color={color}
             before={quote.mention ? '@' : ''}
             look="min-w-0 truncate font-medium text-on-surface"

@@ -1,7 +1,7 @@
 'use client'
 import { Covered } from '../covered'
-import { Name } from '../name'
-import { p2pName } from '../../lib/names'
+import { Name, useNameLabel } from '../name'
+import { p2pName, unnamed } from '../../lib/names'
 import { Button, Tab } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -10,7 +10,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useMemo, useState } from 'react'
 import { Eye } from 'lucide-react'
-import { useMask, useStore } from '../../lib/store'
+import { useStore } from '../../lib/store'
 
 import { displayName, shieldOf, warningText } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
@@ -36,10 +36,10 @@ function VerifyDialogBody({ ik }: { ik: string }) {
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
   const code = useMemo(() => (mode === 'show' ? p2p.verifyCode(ik) : null), [mode, ik])
   const groups = useMemo(() => (me ? safetyGroups(me, ik, p2p.limits().misc) : []), [me, ik])
-  const mask = useMask()
+  const lookalike = contact?.warning ? all.find(c => c.ik === contact.warning) : undefined
+  const called = useNameLabel(p2pName(lookalike ? displayName(lookalike) : ''), 'a contact')
   if (!contact || !me) return null
   const shield = shieldOf(contact)
-  const lookalike = contact.warning ? all.find(c => c.ik === contact.warning) : undefined
   const hidden = streamer && !shown
 
   const scanned = async (text: string) => {
@@ -58,8 +58,8 @@ function VerifyDialogBody({ ik }: { ik: string }) {
         {contact.warning && (
           <Surface role="alert" pad="md" tone="error" radius="lg">
             <p className="text-sm">
-              {warningText(lookalike ? mask(displayName(lookalike)) : 'a contact')} Compare the
-              safety number in person before you trust it.
+              {warningText(lookalike ? called : unnamed('a contact'))} Compare the safety number in
+              person before you trust it.
             </p>
           </Surface>
         )}

@@ -1,8 +1,8 @@
 'use client'
 import { Covered } from './covered'
 import { ask, asked, known as answered } from '../lib/asks'
-import { personCalled, accountLabel } from '../lib/names'
-import { Name } from './name'
+import { accountLabel, labelWith, personCalled, serverCalled } from '../lib/names'
+import { Name, useNameLabels } from './name'
 
 import { ActorLabel, useActorSuffix, useViewActor } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
@@ -45,7 +45,6 @@ import {
   myRank,
   myRolePerms,
   type ProfileTarget,
-  useMask,
   mayEditProfile,
   profilesShown,
   useStore,
@@ -445,13 +444,13 @@ function CardBody({
   const editsProfile = useStore(s => (server ? mayEditProfile(s, server) : false))
   const lockedUntil = profile?.member?.profile_locked_until
   const ownServer = useOwnServer(server)
-  const mask = useMask(ownServer)
+  const say = useNameLabels()
   const fetched = profile?.member ?? null
   const known = server === null || live !== undefined || profile !== null || hidden
   const member = server === null ? null : live !== undefined ? live : fetched
   const join = serverJoinLine(
     server,
-    serverName === null ? null : mask(serverName),
+    serverName,
     joinedServer(member !== null, profile, hidden || failed),
     fetched?.joined_at
   )
@@ -708,7 +707,11 @@ function CardBody({
                           <Covered
                             what="place"
                             look="min-w-0 truncate"
-                            title={streamer ? undefined : join.label}
+                            title={
+                              say.hiding
+                                ? undefined
+                                : labelWith`Joined ${say(serverCalled(join.name, ownServer))}`
+                            }
                           >
                             <Masked text={serverName ?? join.name} own={ownServer} />
                           </Covered>

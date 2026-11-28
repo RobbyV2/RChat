@@ -1,8 +1,16 @@
 'use client'
 import { tileLook } from '../lib/controls'
 import { Name } from './name'
-import { useNameLabel } from './name'
-import { instanceName, serverCalled, serverName } from '../lib/names'
+import { useNameLabel, useNameLabels } from './name'
+import {
+  accountLabel,
+  instanceAddress,
+  instanceName,
+  labelWith,
+  p2pName,
+  serverCalled,
+  serverName,
+} from '../lib/names'
 import { useAddingAllowed } from './add_instance'
 import { Globe } from 'lucide-react'
 import { voiceLabel } from '../lib/voice_rail'
@@ -368,10 +376,12 @@ function DmTile({ active, pings, unread }: { active: boolean; pings: number; unr
 }
 
 function ResumeAccount({ row }: { row: SwitcherRow }) {
-  const streamer = useStore(s => s.streamer)
-  const label = streamer
-    ? 'Show paused account'
-    : 'Show ' + row.display + ' on ' + new URL(row.origin).host
+  const say = useNameLabels()
+  const label = say.line(
+    'Show paused account',
+    () =>
+      labelWith`Show ${say(accountLabel(row.display))} on ${say(instanceAddress(new URL(row.origin).host))}`
+  )
   return (
     <Tile onClick={() => void switchActor(row, client.shown())} label={label}>
       <Play size={18} />
@@ -455,6 +465,7 @@ export function ServerRail() {
   const rows = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
   const model = railBlocks(rows.groups, canAdd ? undefined : ownInstance()?.origin)
   const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const toggle = (key: string) =>
     setCollapsed(prev => {
@@ -500,13 +511,11 @@ export function ServerRail() {
       for (const local of locals) {
         const row = saved.find(r => r.local === local)
         const app = running.get(local)
-        const label = streamer
-          ? 'P2P identity'
-          : (app?.name || row?.display || local) +
-            ', P2P as ' +
-            parent.username +
-            ' on ' +
-            group.name
+        const label = say.line(
+          'P2P identity',
+          () =>
+            labelWith`${say(p2pName(app?.name || row?.display || local, true))}, P2P as ${say(accountLabel(parent.username ?? ''))} on ${say(instanceName(group.name))}`
+        )
         const live = owner && app ? { account: owner, app: app.app, label } : undefined
         if (live) peers.push(live)
         peerTiles.push({
@@ -697,7 +706,11 @@ export function ServerRail() {
                   <RailToggle
                     onClick={() => toggle(group.origin)}
                     open={!collapsed.has(group.origin)}
-                    tooltip={streamer ? 'Instance' : group.name + ' (' + group.host + ')'}
+                    tooltip={say.line(
+                      'Instance',
+                      () =>
+                        labelWith`${say(instanceName(group.name))} (${say(instanceAddress(group.host))})`
+                    )}
                   >
                     <Name of={instanceName(group.name.slice(0, 1))} />
                     {collapsed.has(group.origin) && group.pings > 0 && (
@@ -738,11 +751,11 @@ export function ServerRail() {
                               )}
                               chip={false}
                               open={!collapsed.has(key)}
-                              tooltip={
-                                streamer
-                                  ? 'Account'
-                                  : (row.username ?? 'Guest') + ' on ' + group.name
-                              }
+                              tooltip={say.line(
+                                'Account',
+                                () =>
+                                  labelWith`${say(accountLabel(row.username ?? 'Guest'))} on ${say(instanceName(group.name))}`
+                              )}
                             >
                               <ActorAvatar row={row} size={28} />
                               {row.badge > 0 && <RailPingBadge count={row.badge} />}

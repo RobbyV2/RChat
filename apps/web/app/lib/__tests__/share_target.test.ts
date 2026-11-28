@@ -6,6 +6,13 @@ import { attachShare, shareRooms } from '../client/share_target'
 import { client } from '../client/client'
 import { testAccount } from './test_account'
 import { me, serverDetail, textChannel, user } from './fixtures'
+import { nameLabeller } from '../names'
+
+const plainLabels = nameLabeller(
+  false,
+  text => text,
+  () => ({ streamer: false, mask: text => text, own: false })
+)
 
 function fixture(host: string) {
   const account = testAccount('alice', host)
@@ -81,27 +88,31 @@ test('contacts with matching peer keys are scoped to the selected registered ide
       contacts: [{ ...blank(ik, 0), name: identity.localId, state: 'mutual' }],
     })
   }
-  expect(shareRooms({ account, identity: main }, [], false).map(r => r.label)).toEqual(['main'])
-  expect(shareRooms({ account, identity: sibling }, [], false).map(r => r.label)).toEqual(['work'])
+  expect(shareRooms({ account, identity: main }, [], plainLabels, false).map(r => r.label)).toEqual(
+    ['main']
+  )
+  expect(
+    shareRooms({ account, identity: sibling }, [], plainLabels, false).map(r => r.label)
+  ).toEqual(['work'])
   sibling.useP2p.setState({ reader: true })
-  expect(shareRooms({ account, identity: sibling }, [], false)).toEqual([])
+  expect(shareRooms({ account, identity: sibling }, [], plainLabels, false)).toEqual([])
 })
 
 test('streamer labels are scoped to each destination owner even when room IDs match', () => {
   const visible = fixture('https://share-visible.test')
   const hidden = fixture('https://share-hidden.test')
   hidden.account.store.setState({ streamer: true })
-  expect(shareRooms(hidden, [], false).map(room => room.label)).toEqual([
+  expect(shareRooms(hidden, [], plainLabels, false).map(room => room.label)).toEqual([
     'Direct message 1',
     'Channel 1',
     'Channel 2',
   ])
-  expect(shareRooms(visible, [], true).map(room => room.label)).toEqual([
+  expect(shareRooms(visible, [], plainLabels, true).map(room => room.label)).toEqual([
     'Direct message 1',
     'Channel 1',
     'Channel 2',
   ])
-  expect(shareRooms(visible, [], false).map(room => room.label)).toEqual([
+  expect(shareRooms(visible, [], plainLabels, false).map(room => room.label)).toEqual([
     'bob',
     'Garden / #c3',
     'Garden / #c4',

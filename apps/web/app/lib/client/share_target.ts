@@ -11,6 +11,16 @@ import { sourceAccess } from '../forward_viewing'
 import { client } from './client'
 import { allowsAccountOrigin } from './hosted_policy'
 import { time } from '../platform/time'
+import {
+  labelWith,
+  p2pName,
+  personCalled,
+  roomName,
+  serverName,
+  unnamed,
+  type NameLabel,
+  type NameLabeller,
+} from '../names'
 
 // Keep a one-use worker ticket through the normal signed-out startup redirect.
 export function shareLoginHref(href: string, search: string) {
@@ -33,6 +43,9 @@ export type ShareRoom = Room & { label: string; key: string; reason: string | nu
 export function shareRooms(
   { account, identity }: ShareOwner,
   files: readonly File[],
+  // Makes the labels. Without it, or in streamer mode on this device or that account, a room is
+  // called by its kind and a number.
+  say: NameLabeller | null = null,
   streamer = client.device.streamer
 ): ShareRoom[] {
   const s = account.store.getState()
@@ -45,8 +58,10 @@ export function shareRooms(
     peer: 'Peer contact',
     peer_channel: 'Peer channel',
   }
-  const add = (room: Room, label: string, reason: string | null) => {
-    if (s.streamer || streamer) label = names[room.kind] + ' ' + ++counts[room.kind]
+  const add = (room: Room, named: (say: NameLabeller) => NameLabel, reason: string | null) => {
+    const numbered = names[room.kind] + ' ' + ++counts[room.kind]
+    const label =
+      say === null || s.streamer || streamer ? numbered : say.line(numbered, () => named(say))
     rooms.push({ ...room, key: JSON.stringify(room), label, reason })
   }
   if (!identity) {
@@ -64,7 +79,10 @@ export function shareRooms(
       if (!dm.closed && !s.blocked[dm.other.username])
         add(
           { kind: 'dm', id: dm.id },
-          dm.is_self ? 'Notes to yourself' : dm.other.display_name,
+          say =>
+            dm.is_self
+              ? unnamed('Notes to yourself')
+              : say(personCalled(dm.other.display_name, dm.other.username)),
           attach('d' + dm.id)
         )
     for (const member of s.me.servers) {
@@ -83,7 +101,7 @@ export function shareRooms(
         )
           add(
             { kind: 'channel', server: member.name, id: c.id },
-            member.display_name + ' / #' + c.name,
+            say => labelWith`${say(serverName(member))} / #${say.covered(c.name, 'channel')}`,
             attach('c' + c.id, c.text_only)
           )
     }
@@ -111,7 +129,8 @@ export function shareRooms(
   for (const c of peer.contacts)
     if (c.state === 'mutual' && !c.ignored) {
       const room = dmRoomId(peer.me, c.ik)
-      if (!peer.rooms[room]?.full) add({ kind: 'peer', ik: c.ik }, displayName(c), attach(room))
+      if (!peer.rooms[room]?.full)
+        add({ kind: 'peer', ik: c.ik }, say => say(p2pName(displayName(c))), attach(room))
     }
   for (const server of Object.values(peer.servers))
     if (server.me === 'join' && !server.readOnly && !server.upgraded && !server.full) {
@@ -128,7 +147,7 @@ export function shareRooms(
         )
           add(
             { kind: 'peer_channel', server: server.id, id: c.id },
-            server.name + ' / #' + c.name,
+            say => labelWith`${say(roomName(server.name))} / #${say.covered(c.name, 'channel')}`,
             attach(chatKey({ room: server.id, ch: c.id }), c.text_only)
           )
     }

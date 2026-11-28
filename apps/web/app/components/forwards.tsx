@@ -4,8 +4,8 @@ import { useLive } from '../lib/place/react'
 import { useCompose } from '../lib/place/use_composer'
 import { Covered } from './covered'
 import { asAccount, pictured } from '../lib/people'
-import { personName, serverCalled } from '../lib/names'
-import { Name } from './name'
+import { labelWith, personName, serverCalled } from '../lib/names'
+import { Name, useNameLabels } from './name'
 import type { ForwardSource } from '../lib/forward'
 import type { AccountSession } from '../lib/client/session'
 
@@ -327,8 +327,7 @@ export function ForwardSourcePill({
   openServer?: () => void
   openOriginal?: () => void
 }) {
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask(own)
+  const label = useNameLabels()
   const original = `Open the original message, sent ${when}`
   if (pill.kind === 'none') return null
   const head = <span className="shrink-0">Forwarded from</span>
@@ -360,7 +359,10 @@ export function ForwardSourcePill({
         ) : (
           <span className="flex max-w-9/20 min-w-0">
             <LinkButton
-              title={streamer ? 'Open server' : `Open ${mask(server.name)}`}
+              title={label.line(
+                'Open server',
+                () => labelWith`Open ${label(serverCalled(server.name, own))}`
+              )}
               onClick={stop(openServer)}
               tone="strong"
             >

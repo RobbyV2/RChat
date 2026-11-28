@@ -343,12 +343,21 @@ function DroppedNote({ n }: { n: number }) {
   )
 }
 
+// What happened to a contact's identity, as the words after their name.
 const noticeText = (c: Contact) =>
   c.notice?.kind === 'moved'
-    ? `${displayName(c)} moved to a new device`
+    ? 'moved to a new device'
     : c.notice?.kind === 'reset'
-      ? `${displayName(c)} reset their P2P identity`
+      ? 'reset their P2P identity'
       : null
+
+function ContactNotice({ c, words }: { c: Contact; words: string }) {
+  return (
+    <>
+      <Name of={p2pName(displayName(c))} /> {words}
+    </>
+  )
+}
 
 // A contact: opens the conversation (in the P2P home, or beside the instance's DM list with
 // `where="dms"`), or the contact's card while it isn't mutual.
@@ -430,7 +439,7 @@ function ContactRowBody({
           <span className="block truncate text-xs text-on-surface-variant">
             {shield === 'warning'
               ? 'New key: verify before you trust it'
-              : ((notice && <Masked text={notice} />) ??
+              : ((notice && <ContactNotice c={c} words={notice} />) ??
                 (c.state === 'outgoing'
                   ? 'Request sent'
                   : c.state === 'blocked'
@@ -438,7 +447,7 @@ function ContactRowBody({
                     : presenceText(presence)))}
           </span>
         </span>
-        {typing && <TypingEllipsis names={[displayName(c)]} />}
+        {typing && <TypingEllipsis names={[displayName(c)]} p2p />}
         <PingBadge count={pings} />
         {!pings && unread && !typing && (
           <span
@@ -827,7 +836,7 @@ function ContactDialog({ ik }: { ik: string }) {
         <BadgeRow ik={c.ik} />
         {notice && (
           <p className="text-sm text-on-surface-variant">
-            <Masked text={notice} />
+            <ContactNotice c={c} words={notice} />
           </p>
         )}
         <Name

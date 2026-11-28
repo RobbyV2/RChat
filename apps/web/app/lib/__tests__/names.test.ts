@@ -4,8 +4,11 @@ import {
   handleName,
   instanceAddress,
   instanceName,
+  labelList,
+  labelWith,
   masksName,
   nameLabel,
+  nameLabeller,
   nameParts,
   nameText,
   nameTitle,
@@ -18,6 +21,7 @@ import {
   serverCalled,
   serverName,
   shownNameText,
+  unnamed,
   type NameView,
 } from '../names'
 import { shownUser } from '../people'
@@ -85,14 +89,36 @@ describe('streamer mode', () => {
     expect(nameTitle(name, view({ streamer: true }))).toBeUndefined()
   })
 
+  test('a line around labels keeps what each label says', () => {
+    const den = nameLabel(name, view())
+    expect<string>(labelWith`Open ${den}, ${2} unread`).toBe('Open **** Den, 2 unread')
+    expect<string>(labelList([den, unnamed('a contact')])).toBe('**** Den, a contact')
+  })
+
+  test('labels for several names share one view of streamer mode', () => {
+    const viewOf = (streamer: boolean) => () => view({ streamer })
+    const shown = nameLabeller(false, view().mask, viewOf(false))
+    const hidden = nameLabeller(true, view().mask, viewOf(true))
+    expect<string>(shown(name)).toBe('**** Den')
+    expect<string>(hidden(name, 'this server')).toBe('this server')
+    expect(shown.line('Open server', () => labelWith`Open ${shown(name)}`)).toBe('Open **** Den')
+    expect(hidden.line('Open server', () => labelWith`Open ${hidden(name)}`)).toBe('Open server')
+    expect<string>(shown.covered('darn talk', 'Channel')).toBe('**** talk')
+    expect<string>(shown.covered('darn talk', 'Channel', true)).toBe('darn talk')
+    expect<string>(hidden.covered('darn talk', 'Channel', true)).toBe('Channel')
+    expect(hidden.hiding).toBe(true)
+  })
+
   test('a label says what kind of thing it is', () => {
-    expect(nameLabel(name, view())).toBe('**** Den')
-    expect(nameLabel(name, view({ streamer: true }))).toBe('Server')
-    expect(nameLabel(name, view({ streamer: true }), 'A server')).toBe('A server')
-    expect(nameLabel(p2pName('Pat'), view({ streamer: true }))).toBe('Contact')
-    expect(nameLabel(instanceName('Alpha'), view({ streamer: true }))).toBe('Instance')
-    expect(nameLabel(accountLabel('alice@a.test'), view({ streamer: true }))).toBe('Account')
-    expect(nameLabel(handleName('bob'), view({ streamer: true }))).toBe('Someone')
+    expect<string>(nameLabel(name, view())).toBe('**** Den')
+    expect<string>(nameLabel(name, view({ streamer: true }))).toBe('Server')
+    expect<string>(nameLabel(name, view({ streamer: true }), 'A server')).toBe('A server')
+    expect<string>(nameLabel(p2pName('Pat'), view({ streamer: true }))).toBe('Contact')
+    expect<string>(nameLabel(instanceName('Alpha'), view({ streamer: true }))).toBe('Instance')
+    expect<string>(nameLabel(accountLabel('alice@a.test'), view({ streamer: true }))).toBe(
+      'Account'
+    )
+    expect<string>(nameLabel(handleName('bob'), view({ streamer: true }))).toBe('Someone')
   })
 })
 

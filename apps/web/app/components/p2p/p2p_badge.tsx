@@ -1,7 +1,7 @@
 'use client'
-import { accountLabel } from '../../lib/names'
+import { accountLabel, type NameLabel } from '../../lib/names'
 import { KeyAvatar } from './key_avatar'
-import { Name } from '../name'
+import { Name, useNameLabels } from '../name'
 import { useP2pApp } from '../../lib/client/p2p_react'
 
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -27,7 +27,6 @@ import type { Presence } from '../../lib/p2p/node'
 import { badgeState, type BadgeSlot, type BadgeState } from '../../lib/p2p/badge'
 
 import { openActionMenu } from '../../lib/actions/menu'
-import { useStore } from '../../lib/store'
 import { longPress } from '../context_menu'
 import { Row, Stack, Surface } from '../layout'
 import { time } from '../../lib/platform/time'
@@ -160,10 +159,10 @@ const CHIP = {
 >
 
 // What the badge says in full: the hover tooltip, the screen reader label and the long-press
-// sheet. Streamer mode leaves the account out.
-export const badgeLine = (state: BadgeState, slot: BadgeSlot, streamer: boolean) => {
+// sheet. `account` is the confirmed account's label, or null to leave it out.
+export const badgeLine = (state: BadgeState, slot: BadgeSlot, account: NameLabel | null) => {
   const ok = slot.ok
-  const sub = streamer || !ok ? '' : ` as ${ok.sub}`
+  const sub = account === null || !ok ? '' : ` as ${account}`
   switch (state) {
     case 'confirmed':
       return `Confirmed${sub || ' account'}. Checked ${badgeDate((ok as NonNullable<typeof ok>).checked)}.`
@@ -225,12 +224,16 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
   const acct = useAccount()
 
   const slot = useP2p(s => s.badges[ik])
-  const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const state = badgeState(slot, acct.time.now())
   if (!slot || !state) return null
   const { Icon, cls, text, short } = CHIP[state]
-  const line = badgeLine(state, slot, streamer)
   const sub = slot.ok?.sub
+  const line = badgeLine(
+    state,
+    slot,
+    sub === undefined || say.hiding ? null : say(accountLabel(sub))
+  )
   const open = (x: number, y: number) =>
     openActionMenu(
       x,

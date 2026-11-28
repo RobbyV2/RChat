@@ -26,6 +26,8 @@ import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 import { time } from '../lib/platform/time'
+import { useNameLabels } from './name'
+import { accountLabel, instanceName, serverName } from '../lib/names'
 
 function Destinations({
   owner,
@@ -58,7 +60,8 @@ function Destinations({
   }, [])
   const files =
     owner.identity || content.files.length < 2 ? content.files : [content.files[fileIndex]]
-  const rooms = shareRooms(owner, files, streamer)
+  const say = useNameLabels()
+  const rooms = shareRooms(owner, files, say, streamer)
   const dest = rooms.find(r => r.key === room)
   const joined = state.me?.servers ?? []
   const [loading, setLoading] = useState('')
@@ -135,7 +138,8 @@ function Destinations({
           .filter(s => !state.servers[s.name])
           .map((s, i) => (
             <Button key={s.name} disabled={!!loading || busy} onClick={() => void load(s.name)}>
-              Load channels in {state.streamer || streamer ? 'Server ' + (i + 1) : s.display_name}
+              Load channels in{' '}
+              {streamer ? 'Server ' + (i + 1) : say(serverName(s), 'Server ' + (i + 1))}
             </Button>
           ))}
       {!owner.identity && state.serversMore && (
@@ -203,6 +207,7 @@ function Picker({
   const selection = useRef(0)
   const mark = selection.current
   const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const ready =
     prepared &&
     selected?.ready?.account === prepared.account &&
@@ -256,18 +261,24 @@ function Picker({
                   <optgroup
                     key={origin}
                     label={
-                      streamer || owners.some(o => o.origin === origin && o.streamer)
+                      owners.some(o => o.origin === origin && o.streamer)
                         ? 'Instance ' + (i + 1)
-                        : owners.find(o => o.origin === origin)!.group
+                        : say(
+                            instanceName(owners.find(o => o.origin === origin)!.group),
+                            'Instance ' + (i + 1)
+                          )
                     }
                   >
                     {owners
                       .filter(o => o.origin === origin)
                       .map((o, n) => (
                         <option key={o.key} value={o.key}>
-                          {streamer || o.streamer
+                          {o.streamer
                             ? (o.local ? 'P2P identity ' : 'Account ') + (n + 1)
-                            : o.label}
+                            : say(
+                                accountLabel(o.label),
+                                (o.local ? 'P2P identity ' : 'Account ') + (n + 1)
+                              )}
                         </option>
                       ))}
                   </optgroup>

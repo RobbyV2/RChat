@@ -1,8 +1,8 @@
 'use client'
 import { Covered } from '../covered'
 import { Button, IconButton, CardButton } from '../controls'
-import { Name } from '../name'
-import { p2pName } from '../../lib/names'
+import { Name, useNameLabels } from '../name'
+import { p2pName, type NameLabeller } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -518,28 +518,22 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
 
 // ----- A channel's permissions -----
 
-// A subject's name as text (labels): @everyone, the role's (`maskRole`) or the member's (`mask`,
-// never your own).
+// A subject's name as text (labels): @everyone, the role's (`maskRole`) or the member's.
 const subjectText =
   (identity: P2pApp) =>
   (
-    streamer: boolean,
+    say: NameLabeller,
     v: ServerView,
     subj: string,
     me: string | null,
-    maskRole: (t: string) => string,
-    mask: (t: string) => string
+    maskRole: (t: string) => string
   ) => {
     const { memberName } = identity
     return subj === `r:${EVERYONE}`
       ? '@everyone'
       : subj.startsWith('r:')
         ? maskRole(v.roles.find(x => `r:${x.id}` === subj)?.name ?? 'Deleted role')
-        : streamer
-          ? 'this member'
-          : subj === `u:${me}`
-            ? memberName(v.id, subj.slice(2))
-            : mask(memberName(v.id, subj.slice(2)))
+        : say(p2pName(memberName(v.id, subj.slice(2)), subj === `u:${me}`), 'this member')
   }
 
 function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
@@ -644,6 +638,7 @@ function ChannelAccessBody({
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const maskRole = useMask(own)
   const mask = useMask()
+  const say = useNameLabels()
   if (!ready) return null
   const over = (channel ?? cat)?.over ?? ({} as ChannelView['over'])
   const id = channel?.id ?? cat?.id ?? ''
@@ -696,7 +691,7 @@ function ChannelAccessBody({
     restrictSend: channel?.restrict_send === true,
   }
   const listed = (subj: string) => src.rows.some(r => r.subject === subj)
-  const label = (subj: string) => subjectText(identity)(streamer, v, subj, me, maskRole, mask)
+  const label = (subj: string) => subjectText(identity)(say, v, subj, me, maskRole)
   const people = v.members
     .filter(m => m.m === 'join' && m.below && !m.owner && !listed(`u:${m.ik}`))
     .sort((a, b) => a.name.localeCompare(b.name))

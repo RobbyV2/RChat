@@ -2,8 +2,8 @@
 
 import { Covered } from './covered'
 import { ScheduledButton } from './scheduled'
-import { personName, serverCalled } from '../lib/names'
-import { Name } from './name'
+import { personName, serverCalled, serverName } from '../lib/names'
+import { Name, useNameLabels } from './name'
 import { ViewActorTag } from './view_actor'
 import {
   useCallback,
@@ -17,7 +17,7 @@ import {
 } from 'react'
 import { AtSign, Bell, Check, CheckCheck, Hash, MessageSquare, UserPlus, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
-import { useMask, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { PreviewFilename, PreviewRow, RevealChannelPreview } from './preview_reveal'
 import { SpoilerLine } from './replies'
 import { totalInboxCount } from '../lib/client/account_counts'
@@ -303,7 +303,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
   const panelId = `${ids}-list`
   const servers = useStore(s => s.me?.servers)
   const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const say = useNameLabels()
 
   const set = (patch: Partial<InboxView>) => setView(v => ({ ...v, ...patch }))
 
@@ -402,7 +402,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
             <option value={DM_PLACE}>Direct messages</option>
             {(servers ?? []).map(s => (
               <option key={s.name} value={s.name}>
-                {mask(s.display_name)}
+                {say(serverName(s))}
               </option>
             ))}
           </select>

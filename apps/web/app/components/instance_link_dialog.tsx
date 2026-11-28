@@ -6,11 +6,13 @@ import { client } from '../lib/client/client'
 import type { InstanceLinkDialog } from '../lib/client/instance_links'
 import { AddInstanceFlow } from './add_instance'
 import { Button } from './controls'
+import { useNameLabels } from './name'
+import { accountLabel, instanceAddress, labelWith } from '../lib/names'
 import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 
 function Choose({ dialog, close }: { dialog: InstanceLinkDialog; close: () => void }) {
-  const streamer = useStore(s => s.streamer)
+  const label = useNameLabels()
   const [user, setUser] = useState(dialog.selected ?? '')
   const [remember, setRemember] = useState(false)
   const host = new URL(dialog.target.origin).host
@@ -27,16 +29,20 @@ function Choose({ dialog, close }: { dialog: InstanceLinkDialog; close: () => vo
           >
             {dialog.users.map((name, index) => (
               <option key={name} value={name}>
-                {streamer ? `Account ${index + 1}` : `${name} · ${host}`}
+                {label.line(
+                  `Account ${index + 1}`,
+                  () => labelWith`${label(accountLabel(name))} · ${label(instanceAddress(host))}`
+                )}
               </option>
             ))}
           </select>
         </Stack>
         <Row as="label" gap="sm">
           <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
-          {streamer
-            ? 'Remember my account for matching links'
-            : `Always use this account for links to ${host}`}
+          {label.line(
+            'Remember my account for matching links',
+            () => labelWith`Always use this account for links to ${label(instanceAddress(host))}`
+          )}
         </Row>
         <Row gap="sm" justify="end">
           <Button size="md" onClick={close}>

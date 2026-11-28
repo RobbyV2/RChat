@@ -7,7 +7,9 @@ import { useP2p, useP2pApp } from '../lib/client/p2p_react'
 import { resolveViewActor } from '../lib/client/view_actor'
 import { isHosted } from '../lib/place/place'
 import { usePlace } from '../lib/place/react'
-import { useMask, useStore } from '../lib/store'
+import { useNameLabels } from './name'
+import { accountLabel, labelWith } from '../lib/names'
+import { useStore } from '../lib/store'
 import { AccountTag } from './account_tag'
 import { Row } from './layout'
 
@@ -39,9 +41,8 @@ export function usePlaceActor() {
 }
 
 export function useActorSuffix(actor: ViewActor) {
-  const mask = useMask()
-  const streamer = useStore(s => s.streamer)
-  return actor && !streamer ? ' as ' + mask(actor.row.display) : ''
+  const label = useNameLabels()
+  return actor ? label.line('', () => labelWith` as ${label(accountLabel(actor.row.display))}`) : ''
 }
 
 export function ActorLabel({

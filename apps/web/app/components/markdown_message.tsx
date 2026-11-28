@@ -2,8 +2,8 @@
 
 import { IconButton, CardButton, MediaButton } from './controls'
 import { ask, mediaUrlOf, sendTo } from '../lib/asks'
-import { Name } from './name'
-import { handleName, personCalled } from '../lib/names'
+import { Name, useNameLabel, useNameLabels } from './name'
+import { handleName, labelWith, personCalled, unnamed } from '../lib/names'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import {
   createContext,
@@ -331,7 +331,7 @@ function Mention({ username }: { username: string }) {
   const { user, mine, label, card } = useWatch(() => chat.mention(username), [chat, username])
   // The pill keeps the handle that resolves; the name the server shows is its tooltip.
   const named = useLook(card?.server ?? null, username)?.name ?? null
-  const mask = useMask(mine)
+  const tip = useNameLabel(personCalled(named ?? '', username, mine))
   return (
     <MaskControl>
       <Name
@@ -339,7 +339,7 @@ function Mention({ username }: { username: string }) {
         data-mention={username}
         of={handleName(label, mine)}
         before="@"
-        titled={named === null ? false : mask(named)}
+        titled={named === null ? false : tip}
         look={
           mine
             ? 'md-mark cursor-pointer hover:underline bg-primary-container text-on-primary-container'
@@ -571,7 +571,7 @@ export function P2pFile({
   const key = JSON.stringify([account.conn.origin, 'p2p', messageId, media.id])
   const me = useStore(s => s.me)
   const previews = useStore(s => s.settings.asset_previews)
-  const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const avail = useStore(s => (media.hoster !== null ? s.p2pAvailability[media.hoster] : undefined))
   // Fetching from the sender shows them our IP address, so images load on their own only when
   // that goes through the relay, or when nothing has to be fetched.
@@ -606,8 +606,11 @@ export function P2pFile({
   const localFile = live && own ? p2p.file(id) : null
   const hosted = live && avail?.online === true && avail.ids.includes(id)
   const online = localFile !== null || hosted
-  const hosterName =
-    hoster !== null ? userRefFor(account.store.getState(), hoster).display_name : 'the sender'
+  const hosterCalled =
+    hoster === null
+      ? null
+      : personCalled(userRefFor(account.store.getState(), hoster).display_name, hoster)
+  const hosterName = hosterCalled === null ? unnamed('the sender') : say(hosterCalled, 'the sender')
   const guess = guessKind(filename)
   const audio = audioHint(filename, mime)
   const unverified = sha256 === null && !own
@@ -748,11 +751,7 @@ export function P2pFile({
     <IconButton
       icon={Download}
       label="Download"
-      tooltip={
-        streamer || hoster === null
-          ? "Download from the sender's browser"
-          : `Download from ${hosterName}'s browser`
-      }
+      tooltip={labelWith`Download from ${hosterName}'s browser`}
       size="sm"
       onClick={() => run(true)}
       disabled={busy || !online}
@@ -789,8 +788,7 @@ export function P2pFile({
       label: 'Download' as const,
       onClick: () => run(true),
       disabled: busy || !online,
-      hint:
-        streamer || hoster === null ? "from the sender's browser" : `from ${hosterName}'s browser`,
+      hint: labelWith`from ${hosterName}'s browser`,
     },
     onCancel: () => ctl.current?.stop.abort(),
     menu: { download: busy || !online ? null : () => run(true), link: null, remove },
@@ -861,20 +859,14 @@ export function P2pFile({
   }
 
   if (!online) {
-    const generic = streamer || hoster === null
     return (
       <FileCard {...card} progress={null} dim>
         <p
-          title={
-            generic
-              ? 'File not available. Ask the sender to send it again.'
-              : `File not available. Ask ${hosterName} to send it again.`
-          }
+          title={labelWith`File not available. Ask ${hosterName} to send it again.`}
           className="msg-part-loose text-xs text-on-surface-variant italic"
         >
           File not available. Ask{' '}
-          {hoster === null ? 'the sender' : <Name of={personCalled(hosterName, null, own)} />} to
-          send it again.
+          {hosterCalled === null ? 'the sender' : <Name of={hosterCalled} />} to send it again.
         </p>
         {meta}
       </FileCard>

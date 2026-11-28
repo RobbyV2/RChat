@@ -1,8 +1,8 @@
 'use client'
 import { Button } from '../controls'
 import { CallSplit } from '../call_buttons'
-import { Name } from '../name'
-import { p2pName } from '../../lib/names'
+import { Name, useNameLabel } from '../name'
+import { labelWith, type NameValue } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -65,10 +65,11 @@ function P2pCallButtonsBody({
   canCall,
 }: {
   peer: string
-  name: string
+  name: NameValue
   online: boolean
   canCall: boolean
 }) {
+  const called = useNameLabel(name, 'This contact')
   const elsewhere = useP2p(s => s.reader || s.elsewhere)
   const there = useP2p(s => s.callElsewhere)
   const busy = useP2p(
@@ -96,7 +97,7 @@ function P2pCallButtonsBody({
       : busy
         ? 'Already in a call'
         : !online
-          ? `${name} is offline`
+          ? labelWith`${called} is offline`
           : null
   return (
     <Row gap="2xs">
@@ -107,7 +108,7 @@ function P2pCallButtonsBody({
 }
 
 // An incoming call in the open conversation: always here, also when its ringing is quiet.
-function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
+function IncomingCallBarBody({ room, name }: { room: string; name: NameValue }) {
   const identity = useP2pApp()!
   const { p2pCall } = identity
 
@@ -133,7 +134,7 @@ function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
             <Phone size={16} className="shrink-0 text-status-green" aria-hidden />
           )}
           <span className="min-w-0 truncate text-sm">
-            <Name of={p2pName(name)} look="font-medium" />{' '}
+            <Name of={name} look="font-medium" />{' '}
             {c.video ? 'is video calling you' : 'is calling you'}
           </span>
         </Row>

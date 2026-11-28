@@ -1,7 +1,7 @@
 'use client'
 import { IconButton, CardButton } from '../controls'
-import { Name } from '../name'
-import { p2pName } from '../../lib/names'
+import { Name, useNameLabel } from '../name'
+import { guestCalled, labelWith, p2pName, type NameValue } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { StoredLock } from '../storage_settings'
 import { longPress } from '../context_menu'
@@ -12,9 +12,9 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
-import { useCallback, useId, type ReactNode } from 'react'
+import { useCallback, useId, useMemo, type ReactNode } from 'react'
 import { ArrowLeft, Menu } from 'lucide-react'
-import { useMask, useStore } from '../../lib/store'
+import { useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_DM_INTRO } from '../../lib/home'
 
@@ -39,20 +39,19 @@ import { PlaceProvider } from '../../lib/place/react'
 import { P2pChatBody, P2pIntro } from './p2p_chat'
 import { Row, Inset } from '../layout'
 
-const IntroBanner = ({ name }: { name: string }) => (
+const IntroBanner = ({ name }: { name: NameValue }) => (
   <P2pIntro id={P2P_DM_INTRO}>
-    This conversation is stored only on your device and{' '}
-    <Name of={p2pName(name)} look="font-medium" />
+    This conversation is stored only on your device and <Name of={name} look="font-medium" />
     &apos;s. Messages are delivered when you are both online, and the instance never sees them.
   </P2pIntro>
 )
 
-const statusLine = (online: boolean, name: string): ReactNode =>
+const statusLine = (online: boolean, name: NameValue): ReactNode =>
   online ? (
     'Connected'
   ) : (
     <>
-      Offline. Messages wait until <Name of={p2pName(name)} /> is online
+      Offline. Messages wait until <Name of={name} /> is online
     </>
   )
 
@@ -67,9 +66,10 @@ export function useDmFacts() {
   const presence = useP2p(s => (s.chat ? (s.presence[s.chat.peer] ?? 'offline') : 'offline'))
   const room = useP2p(s => (s.chat ? s.rooms[s.chat.room] : undefined))
   const peerIk = useP2p(s => s.chat?.peer ?? '')
-  const mask = useMask()
-  const peerRaw = peer ? displayName(peer) : 'Contact'
-  const peerName = mask(peerRaw)
+  const peerCalled = useMemo(
+    () => (peer ? p2pName(displayName(peer)) : guestCalled('Contact')),
+    [peer]
+  )
   const online = presence === 'online'
   const canAct = !reader && !elsewhere && peer?.state === 'mutual' && status !== 'moved'
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me, [me])
@@ -78,8 +78,7 @@ export function useDmFacts() {
     me,
     peer,
     peerIk,
-    peerRaw,
-    peerName,
+    peerCalled,
     presence,
     online,
     room,
@@ -99,7 +98,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   const nameId = useId()
   const shieldId = useId()
   const statusId = useId()
-  const streamer = useStore(s => s.streamer)
   const menuPings = useStore(allPings)
   const staged = useP2p(
     s =>
@@ -109,7 +107,8 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   )
   const callShare = useRoomCallShare(chat?.room ?? '')
   const facts = useDmFacts()
-  const { peer, peerIk, peerRaw, peerName, presence, online, room, canAct } = facts
+  const { peer, peerIk, peerCalled, presence, online, room, canAct } = facts
+  const peerLabel = useNameLabel(peerCalled, 'Contact')
   const { mayDelete } = facts
   const chip = useHasChip(peerIk)
   const sealAll = useP2p(s => s.seal.everything)
@@ -154,7 +153,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       {/* Below 360 px the header has room for the avatar only: the shield sits on it, and the
           name stays the label. */}
       <CardButton
-        title={streamer ? 'Contact' : peerName}
+        title={peerLabel}
         aria-labelledby={peer ? `${nameId} ${shieldId} ${statusId}` : `${nameId} ${statusId}`}
         onClick={() => peer && p2p.openDialog({ kind: 'contact', ik: peer.ik })}
         {...longPress((x, y) => {
@@ -176,7 +175,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
           <Row as="span" gap="xs">
             <Name
               id={nameId}
-              of={p2pName(peerRaw)}
+              of={peerCalled}
               titled
               place={chip ? 'min-w-0 sm:max-w-3/5 sm:shrink-0' : 'min-w-0'}
               look="truncate text-sm font-medium"
@@ -196,7 +195,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
               data-p2p-online={online ? 'yes' : 'no'}
               className="truncate text-xs text-on-surface-variant"
             >
-              {statusLine(online, peerName)}
+              {statusLine(online, peerCalled)}
             </span>
           </Row>
         </span>
@@ -206,7 +205,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       </span>
       {(room?.store?.on || sealAll) && <StoredLock />}
       <Row gap="2xs" place="ml-auto shrink-0">
-        <P2pCallButtons peer={peerIk} name={peerName} online={online} canCall={canAct} />
+        <P2pCallButtons peer={peerIk} name={peerCalled} online={online} canCall={canAct} />
         <PlaceProvider place={P2pDm.open(identity, chat.room)}>
           <PinsButton narrowHidden />
           <ThreadsButton narrowHidden />
@@ -218,7 +217,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
 
   const above = (
     <>
-      <IncomingCallBar room={chat.room} name={peerName} />
+      <IncomingCallBar room={chat.room} name={peerCalled} />
       {staged && (
         <div
           data-p2p-stage
@@ -235,15 +234,15 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       chat={chat}
       header={header}
       above={above}
-      intro={<IntroBanner name={peerName} />}
+      intro={<IntroBanner name={peerCalled} />}
       canAct={canAct}
-      pendingTip={`Waiting for ${peerName} to come online`}
+      pendingTip={labelWith`Waiting for ${peerLabel} to come online`}
       peerFull={room?.peerFull === true}
       gap={room?.gap === true}
       online={online}
       gapOffline={
         <>
-          Older messages unavailable until <Name of={p2pName(peerRaw)} /> is online
+          Older messages unavailable until <Name of={peerCalled} /> is online
         </>
       }
       empty={

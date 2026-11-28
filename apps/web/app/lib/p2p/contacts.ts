@@ -1,3 +1,4 @@
+import type { NameLabel } from '../names'
 import type { PicWire } from './pictures'
 import type { Card } from './card'
 import {
@@ -314,7 +315,7 @@ export type Shield = 'warning' | 'verified' | 'unverified'
 export const shieldOf = (c: Pick<Contact, 'warning' | 'verified'>): Shield =>
   c.warning !== null ? 'warning' : c.verified ? 'verified' : 'unverified'
 
-export const warningText = (name: string) =>
+export const warningText = (name: NameLabel) =>
   `This contact uses a new key. It may be ${name} after a reset, or someone else.`
 
 export const isRevoked = (c: Pick<Contact, 'revocations'>, dk: string) =>

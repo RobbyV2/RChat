@@ -5,8 +5,8 @@ import { OwnLoadNotice } from './own_load'
 
 import { Loaded, useAccountRequest } from './loaded'
 import { orMissing } from '../lib/api_errors'
-import { Name, NameSelect } from './name'
-import { handleName, personCalled } from '../lib/names'
+import { Name, NameSelect, useNameLabel, useNameLabels } from './name'
+import { accountLabel, handleName, instanceName, labelWith, personCalled } from '../lib/names'
 import { asAccount } from '../lib/people'
 import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
@@ -35,7 +35,7 @@ import {
 import { messageFriend } from '../lib/actions/member'
 import { openActionMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
-import { useMask, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { bannerColor } from '../lib/profile'
 import { scopePings } from '../lib/pings'
 import { badgePings } from '../lib/selectors'
@@ -118,6 +118,7 @@ export function FriendRow({ friend }: { friend: Friend }) {
   const { store } = acct
 
   const { user, online } = friend
+  const called = useNameLabel(personCalled(user.display_name, user.username), 'this friend')
   return (
     <div
       data-friend={user.username}
@@ -142,14 +143,14 @@ export function FriendRow({ friend }: { friend: Friend }) {
           </Row>
           <IconButton
             icon={MessageCircle}
-            label={`Message ${user.display_name}`}
+            label={labelWith`Message ${called}`}
             tooltip="Message"
             size="lg"
             onClick={() => messageFriend(user, acct)}
           />
           <IconButton
             icon={MoreVertical}
-            label={`More for ${user.display_name}`}
+            label={labelWith`More for ${called}`}
             tooltip="More"
             size="lg"
             onClick={e => {
@@ -171,6 +172,7 @@ export function RequestRow({ request }: { request: FriendRequest }) {
   const denyFriend = useStore(s => s.denyFriend)
   const cancelFriendRequest = useStore(s => s.cancelFriendRequest)
   const { user, incoming } = request
+  const called = useNameLabel(personCalled(user.display_name, user.username), 'this person')
   return (
     <div
       data-request={user.username}
@@ -205,7 +207,7 @@ export function RequestRow({ request }: { request: FriendRequest }) {
             <>
               <IconButton
                 icon={Check}
-                label={`Accept ${user.display_name}`}
+                label={labelWith`Accept ${called}`}
                 tooltip="Accept"
                 tone="primary"
                 size="lg"
@@ -213,7 +215,7 @@ export function RequestRow({ request }: { request: FriendRequest }) {
               />
               <IconButton
                 icon={X}
-                label={`Deny ${user.display_name}`}
+                label={labelWith`Deny ${called}`}
                 tooltip="Deny"
                 tone="error"
                 size="lg"
@@ -223,7 +225,7 @@ export function RequestRow({ request }: { request: FriendRequest }) {
           ) : (
             <IconButton
               icon={X}
-              label={`Cancel request to ${user.display_name}`}
+              label={labelWith`Cancel request to ${called}`}
               tooltip="Cancel request"
               size="lg"
               onClick={() => void cancelFriendRequest(user.username)}
@@ -355,7 +357,7 @@ export function AddFriendBox({
 }) {
   const shown = useAccount()
   const [picked, setPicked] = useState(initial?.account ?? shown)
-  const mask = useMask()
+  const label = useNameLabels()
   const account =
     entries.find(e => e.account === picked)?.account ??
     (!entries.length && picked === shown ? shown : null)
@@ -412,9 +414,13 @@ export function AddFriendBox({
                 Choose an account
               </option>
             )}
-            {entries.map(x => (
+            {entries.map((x, i) => (
               <option key={x.account.renderKey} value={x.account.renderKey}>
-                {mask(x.row.display)} · {mask(x.name)}
+                {label.line(
+                  `Account ${i + 1}`,
+                  () =>
+                    labelWith`${label(accountLabel(x.row.display))} · ${label(instanceName(x.name))}`
+                )}
               </option>
             ))}
           </NameSelect>
@@ -728,18 +734,21 @@ export function FriendPreview({
   result?: SendResult
 }) {
   const { profile, relation, hidden } = preview
-  const status = result
-    ? result.ok
-      ? `${sendLabel(result.status)} ${profile?.user.display_name ?? result.user.display_name}`
-      : result.error
-    : relationLabel(relation)
-  const statusLine = status && (
-    <p
-      role={result && !result.ok ? 'alert' : undefined}
-      className={`text-xs ${result && !result.ok ? 'text-error' : 'text-primary'}`}
-    >
-      <Covered what="status">{status}</Covered>
+  const status = result ? (result.ok ? null : result.error) : relationLabel(relation)
+  const statusLine = result?.ok ? (
+    <p className="text-xs text-primary">
+      {sendLabel(result.status)}{' '}
+      <Name of={personCalled((profile?.user ?? result.user).display_name, result.user.username)} />
     </p>
+  ) : (
+    status && (
+      <p
+        role={result && !result.ok ? 'alert' : undefined}
+        className={`text-xs ${result && !result.ok ? 'text-error' : 'text-primary'}`}
+      >
+        <Covered what="status">{status}</Covered>
+      </p>
+    )
   )
   if (!profile && hidden)
     return (

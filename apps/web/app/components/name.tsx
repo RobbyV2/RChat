@@ -11,9 +11,12 @@ import type { LayoutPlace, Look } from '../lib/controls'
 import {
   masksName,
   nameLabel,
+  nameLabeller,
   nameParts,
   nameTitle,
   revealKeyOf,
+  type NameLabel,
+  type NameLabeller,
   type NameValue,
   type NameView,
 } from '../lib/names'
@@ -25,6 +28,7 @@ import {
   RevealScope,
   fieldCls,
   useOwn,
+  useOwnCheck,
   useOwnServer,
   useRevealed,
 } from './ui'
@@ -53,12 +57,18 @@ export function useNameLabel(name: NameValue, generic?: string, withUsername = f
   return nameLabel(name, useNameView(name), generic, withUsername)
 }
 
-// The same for several names at once: a function from a name to its label.
-export function useNameLabels() {
+// The same for several names at once: a function from a name to its label, and `line` for a
+// whole line that streamer mode replaces.
+export function useNameLabels(): NameLabeller {
   const streamer = useStore(s => s.streamer)
   const mask = useMask()
-  return (name: NameValue, generic?: string, withUsername = false) =>
-    nameLabel(name, { streamer, mask, own: name.kind === 'account' }, generic, withUsername)
+  const mine = useOwnCheck()
+  return nameLabeller(streamer, mask, name => {
+    const own =
+      name.kind === 'account' ||
+      (name.kind !== 'instance' && (name.own ?? (name.kind === 'person' ? mine(name.who) : false)))
+    return { streamer, mask, own }
+  })
 }
 
 function Body({ of, withUsername, fit }: { of: NameValue; withUsername: boolean; fit: boolean }) {
@@ -116,7 +126,7 @@ type NameProps<S extends string, L extends string> = Omit<
   fit?: boolean
   // The whole name as the element's tooltip (always with `fit`), or the text given. None in
   // streamer mode.
-  titled?: boolean | string
+  titled?: boolean | NameLabel
   // The name opens something (a profile): it looks pressable.
   link?: boolean
   as?: Tag

@@ -1,7 +1,15 @@
 'use client'
 
-import { Name, NameSelect } from './name'
-import { accountLabel, handleName, instanceAddress, instanceName, personCalled } from '../lib/names'
+import { Name, NameSelect, useNameLabel, useNameLabels } from './name'
+import {
+  accountLabel,
+  handleName,
+  instanceAddress,
+  instanceName,
+  labelWith,
+  personCalled,
+  type NameValue,
+} from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import {
   ArrowDown,
@@ -30,7 +38,6 @@ import { switchActor, switcherSession } from '../lib/client/switch_actor'
 import { setConnected, setIdentityBackground } from '../lib/client/book'
 import { IdentityEnrollment } from './p2p/identity_enrollment'
 import { confirmIdentityRemoval } from '../lib/client/identity_enrollment'
-import { useMask, useStore } from '../lib/store'
 import type { SettingsSection } from '../lib/settings_sections'
 import { AccountTag, ActorAvatar, InstanceTag } from './account_tag'
 import { hostedLockMessage } from '../lib/client/hosted_policy'
@@ -52,21 +59,16 @@ const keyOf = (row: SwitcherRow) => JSON.stringify([row.origin, row.username, ro
 export function AccountSwitcherTile() {
   const account = useAccount()
   const model = useRows()
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const label = useNameLabels()
   const group = model.groups.find(g => g.rows.some(r => r.active))
   const row = group?.rows.find(r => r.active)
   if (!row || !group) return <RailInstance />
-  const title = streamer
-    ? 'Switch account'
-    : 'Acting as ' +
-      mask(row.display) +
-      ' on ' +
-      mask(group.name) +
-      ' (' +
-      mask(group.host) +
-      ').' +
-      (model.otherBadge ? ' ' + model.otherBadge + ' mentions on other accounts' : '')
+  const title =
+    label.line(
+      'Switch account',
+      () =>
+        labelWith`Acting as ${label(accountLabel(row.display))} on ${label(instanceName(group.name))} (${label(instanceAddress(group.host))}).`
+    ) + (model.otherBadge ? ' ' + model.otherBadge + ' mentions on other accounts' : '')
   return (
     <div className="w-16">
       <CardButton
@@ -110,7 +112,7 @@ export function AccountSwitcherTile() {
 export function SettingsAccountPicker({ section }: { section: SettingsSection | null }) {
   const owner = useAccount()
   const model = useRows()
-  const mask = useMask()
+  const label = useNameLabels()
   const rows = model.groups.flatMap(g =>
     g.rows
       .filter(r => r.local === null && r.status !== 'Signed out')
@@ -134,9 +136,12 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection | 
           }).catch(e => owner.store.getState().setError(String(e)))
         }}
       >
-        {rows.map(({ row, name }) => (
+        {rows.map(({ row, name }, i) => (
           <option key={keyOf(row)} value={keyOf(row)}>
-            {mask(row.display)} · {mask(name)}
+            {label.line(
+              `Account ${i + 1}`,
+              () => labelWith`${label(accountLabel(row.display))} · ${label(instanceName(name))}`
+            )}
           </option>
         ))}
       </NameSelect>
@@ -160,27 +165,22 @@ const sameLevel = (a: OrderTarget, b: OrderTarget) =>
         : b.local !== undefined && a.username === b.username)
 
 function OrderHandle({
-  label: name,
+  of,
   target,
   index,
   order,
   reorder,
 }: {
-  label: string
+  of: NameValue
   target: OrderTarget
   index: number
   order: OrderTarget[]
   reorder: (t: OrderTarget, to: OrderTarget) => void
 }) {
-  const mask = useMask()
-  const streamer = useStore(s => s.streamer)
-  const label = streamer
-    ? target.local
-      ? 'identity'
-      : target.username
-        ? 'account'
-        : 'instance'
-    : mask(name)
+  const label = useNameLabel(
+    of,
+    target.local ? 'identity' : target.username ? 'account' : 'instance'
+  )
   return (
     <span className="inline-flex shrink-0 items-center">
       <IconButton
@@ -204,14 +204,14 @@ function OrderHandle({
           if (other.ok && sameLevel(target, other.value)) reorder(target, other.value)
         }}
         icon={GripVertical}
-        label={'Drag ' + label}
+        label={labelWith`Drag ${label}`}
         size="lg"
         shape="square"
         grip
       ></IconButton>
       <IconButton
         icon={ArrowUp}
-        label={'Move ' + label + ' up'}
+        label={labelWith`Move ${label} up`}
         tooltip="Move up"
         size="lg"
         shape="square"
@@ -220,7 +220,7 @@ function OrderHandle({
       />
       <IconButton
         icon={ArrowDown}
-        label={'Move ' + label + ' down'}
+        label={labelWith`Move ${label} down`}
         tooltip="Move down"
         size="lg"
         shape="square"
@@ -348,7 +348,7 @@ function AccountList({
                     </span>
                     {manage && model.groups.length > 1 && (
                       <OrderHandle
-                        label={g.name}
+                        of={instanceName(g.name)}
                         target={{ origin: g.origin }}
                         index={gi}
                         order={model.groups}
@@ -438,7 +438,7 @@ function AccountList({
                         </CardButton>
                         {manage && own && r.saved && ordered.length > 1 && (
                           <OrderHandle
-                            label={r.display}
+                            of={accountLabel(r.display)}
                             target={target}
                             index={index}
                             order={ordered.map(row => ({

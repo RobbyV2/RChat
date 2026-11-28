@@ -1,5 +1,6 @@
 import { CallButtons } from '../../../components/call_buttons'
 import { P2pCallButtons } from '../../../components/p2p/p2p_call'
+import { p2pName } from '../../names'
 import { client } from '../../client/client'
 import type { AccountSession } from '../../client/session'
 import { Calls } from '../../p2p/calls'
@@ -46,7 +47,7 @@ export function setupCallControls(owner: AccountSession) {
         <CallButtons dm={dm} />
       </section>
       <section aria-label="Online contact">
-        <P2pCallButtons peer="contact" name="Contact" online canCall />
+        <P2pCallButtons peer="contact" name={p2pName('Contact')} online canCall />
       </section>
     </>
   )

@@ -1,11 +1,11 @@
 'use client'
-import { personCalled } from '../lib/names'
-import { Name } from './name'
+import { p2pName, personCalled } from '../lib/names'
+import { Name, useNameLabels } from './name'
 
 import { memo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { look, plays } from '../lib/motion/play'
-import { useMask, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { rowTypers } from '../lib/typing_rows'
 import { typingParts, typingTitle } from '../lib/typing'
 import { useLooksFor } from './shown_user'
@@ -31,14 +31,16 @@ function Dots() {
 // The dots of a channel or DM row while someone types there; their names are its label.
 export const TypingEllipsis = memo(function TypingEllipsis({
   names,
+  p2p = false,
 }: {
   names: readonly string[]
+  // The names are P2P contacts'.
+  p2p?: boolean
 }) {
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const say = useNameLabels()
   const title = typingTitle(
-    names.map(n => mask(n)),
-    streamer
+    names.map(n => say(p2p ? p2pName(n) : personCalled(n))),
+    say.hiding
   )
   return (
     <span

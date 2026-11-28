@@ -1,5 +1,5 @@
 'use client'
-import { Name, NameInput } from '../name'
+import { Name, NameInput, useNameLabels } from '../name'
 import { p2pName } from '../../lib/names'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -653,8 +653,7 @@ function ModerationLog({ v }: { v: ServerView }) {
   const { p2pServer, p2p, memberName } = identity
   const me = useP2p(s => s.me)
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const say = useNameLabels()
   const maskRole = useMask(own)
   const ready = usePermissionRules()
   const [pages, setPages] = useState<LogPage[]>([])
@@ -691,8 +690,7 @@ function ModerationLog({ v }: { v: ServerView }) {
     generation.current += 1
     setPages(ps => ps.slice(0, 1))
   }
-  const name = (ik: string) =>
-    streamer ? 'a member' : ik === me ? memberName(v.id, ik) : mask(memberName(v.id, ik))
+  const name = (ik: string) => say(p2pName(memberName(v.id, ik), ik === me), 'a member')
   const lines = logLines(events, {
     member: name,
     role: id => {

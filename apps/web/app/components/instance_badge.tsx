@@ -1,7 +1,7 @@
 'use client'
 
-import { Name } from './name'
-import { accountLabel, instanceAddress, instanceName } from '../lib/names'
+import { Name, useNameLabels } from './name'
+import { accountLabel, instanceAddress, instanceName, labelWith } from '../lib/names'
 import { Globe } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { useAccount, useConn } from '../lib/client/react'
@@ -48,12 +48,13 @@ export function AccountLabel({ notice = false }: { notice?: boolean }) {
 }
 
 export function InstanceChip({ host }: { host: string }) {
-  const streamer = useStore(s => s.streamer)
+  const label = useNameLabels()
   return (
     <Surface
-      title={
-        streamer ? 'Lives on another RChat instance' : `Lives on ${host}, another RChat instance`
-      }
+      title={label.line(
+        'Lives on another RChat instance',
+        () => labelWith`Lives on ${label(instanceAddress(host))}, another RChat instance`
+      )}
       as="span"
       pad="sm"
       inset="chip"
@@ -75,7 +76,7 @@ export function RailInstance() {
 
   const { label, host } = useInstanceLabel()
   const openDialog = useStore(s => s.openDialog)
-  const streamer = useStore(s => s.streamer)
+  const say = useNameLabels()
   const signedIn = useStore(s => s.me !== null)
   const named = label !== host
   return (
@@ -87,8 +88,16 @@ export function RailInstance() {
           : {})}
         column
         pad="sm"
-        title={streamer ? 'Instance' : named ? `${label} (${host})` : host}
-        label={`Instance ${label}${named ? ` on ${host}` : ''}`}
+        title={say.line('Instance', () =>
+          named
+            ? labelWith`${say(instanceName(label))} (${say(instanceAddress(host))})`
+            : say(instanceAddress(host))
+        )}
+        label={say.line('Instance', () =>
+          named
+            ? labelWith`Instance ${say(instanceName(label))} on ${say(instanceAddress(host))}`
+            : labelWith`Instance ${say(instanceAddress(host))}`
+        )}
         place="w-full"
       >
         <Globe size={16} className="shrink-0" />

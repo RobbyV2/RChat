@@ -1,6 +1,6 @@
 'use client'
 import { Covered } from './covered'
-import { Name } from './name'
+import { Name, useNameLabels } from './name'
 import { accountLabel } from '../lib/names'
 import { client } from '../lib/client/client'
 import { AccountProvider, useAccount } from '../lib/client/react'
@@ -405,6 +405,7 @@ function ListView() {
   const sections = useResults(text)
   const items = useMemo(() => flatItems(sections), [sections])
   const mask = useMask()
+  const say = useNameLabels()
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listId = useId()
@@ -539,7 +540,9 @@ function ListView() {
               sec.label,
             ])}
             role="group"
-            aria-label={sec.owner ? mask(sec.owner.label) + ' · ' + sec.label : sec.label}
+            aria-label={
+              sec.owner ? say(accountLabel(sec.owner.label)) + ' · ' + sec.label : sec.label
+            }
             data-palette-owner={sec.owner?.account.renderKey}
             data-palette-identity={sec.owner?.local}
           >

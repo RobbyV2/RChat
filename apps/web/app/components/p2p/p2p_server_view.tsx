@@ -1,6 +1,6 @@
 'use client'
-import { Name } from '../name'
-import { roomName, p2pName } from '../../lib/names'
+import { Name, useNameLabel, useNameLabels } from '../name'
+import { labelList, labelWith, roomName, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { StoredLock } from '../storage_settings'
 import { PeerActorTag } from '../view_actor'
@@ -35,7 +35,7 @@ import {
   Volume2,
   Waypoints,
 } from 'lucide-react'
-import { useMask, useStore } from '../../lib/store'
+import { useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
 import { serverScope } from '../../lib/p2p/app'
@@ -136,7 +136,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   const muted = mutedOf(prefs, serverScope(v.id), acct.time.now())
   const parent = folder === null ? null : zoneOfFolder(folder)
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const mask = useMask(own)
+  const called = useNameLabel(roomName(v.name, own))
   return (
     <Tile
       data-p2p-tile
@@ -156,8 +156,8 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       )}
       data-drop-onto={folder === null ? 'Create folder' : undefined}
       tone={active ? 'p2p-server-active' : 'p2p-server'}
-      label={`${mask(v.name)}, peer-to-peer${voiceLabel(voice)}`}
-      tooltip={`${mask(v.name)}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
+      label={`${called}, peer-to-peer${voiceLabel(voice)}`}
+      tooltip={`${called}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
     >
       <span
         className={`flex h-full w-full items-center justify-center rounded-inherit ${muted && !active ? 'opacity-50' : ''}`}
@@ -216,14 +216,17 @@ function P2pFolderEntryBody({
   const unread = !folder.open && list.some(v => serverUnread(v, prefs))
   const pings = folder.open ? 0 : list.reduce((n, v) => n + serverPings(v, prefs), 0)
   const voice = useP2pVoice(folder.open ? [] : list.map(v => v.id))
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const say = useNameLabels()
   const label =
-    folder.name && !streamer ? folder.name : `P2P folder: ${list.map(v => mask(v.name)).join(', ')}`
+    folder.name ||
+    say.line(
+      'Folder',
+      () => labelWith`P2P folder: ${labelList(list.map(v => say(roomName(v.name))))}`
+    )
   const theme = useStore(s => s.theme)
   const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
-    label: `${streamer ? folder.name || 'Folder' : label}${voiceLabel(voice)}`,
+    label: `${label}${voiceLabel(voice)}`,
     'aria-expanded': folder.open,
     'data-drop-onto': 'Add to folder',
     'data-p2p-tile': '',
