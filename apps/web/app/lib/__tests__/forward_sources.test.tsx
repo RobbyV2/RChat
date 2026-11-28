@@ -297,7 +297,7 @@ test('the forward bar offers "Show where it\'s from" and says what the server wi
     forwardClip: clipOf(msg(40, { channel_id: 1, content: TEXT }), 'club'),
     forwardShowSource: null,
   })
-  const bar = () => renderToStaticMarkup(<ForwardBar draftKey="c1" />)
+  const bar = () => renderToStaticMarkup(<ForwardBar list="main" />)
   const unknown = bar()
   expect(unknown).toContain('role="switch" aria-checked="true"')
   expect(unknown).toContain(

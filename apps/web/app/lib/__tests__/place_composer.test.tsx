@@ -154,6 +154,16 @@ placeContract(composer, (kind, world) => {
     expect(main.state.get().focus).toBe(4)
   })
 
+  test('a forward sent from a list goes to that list of the place', () => {
+    const main = seat(world(), []).forwardTo.get()
+    const thread = seat(world(), [], 'thread').forwardTo.get()
+    expect(main?.destination.kind).toBe(hosted ? 'instance' : 'p2p')
+    expect(main?.textOnly).toBe(false)
+    expect(thread?.key).not.toBe(main?.key)
+    if (hosted) expect([main?.key, thread?.key]).toEqual([mainKey(), threadKey()])
+    else expect(main?.destination).toMatchObject({ room: world().room })
+  })
+
   test('typing is said as often as the place wants it', () => {
     const calls: unknown[][] = []
     const main = seat(world(), calls)

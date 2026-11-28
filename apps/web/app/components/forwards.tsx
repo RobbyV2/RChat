@@ -1,9 +1,12 @@
 'use client'
+import type { ComposerList } from '../lib/place/composer'
+import { useLive } from '../lib/place/react'
+import { useCompose } from '../lib/place/use_composer'
 import { Covered } from './covered'
 import { asAccount, pictured } from '../lib/people'
 import { personName, serverCalled } from '../lib/names'
 import { Name } from './name'
-import type { ForwardDestination, ForwardSource } from '../lib/forward'
+import type { ForwardSource } from '../lib/forward'
 import type { AccountSession } from '../lib/client/session'
 
 import { useAccount, useStoreApi } from '../lib/client/react'
@@ -19,11 +22,10 @@ import {
   SendHorizontal,
 } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
-import { textOnlyDestination } from '../lib/channel_content'
 import { clipAllowed, clipSourceNames, sourceAccess } from '../lib/forward_viewing'
 import { useForwardAccess, useLocated } from '../lib/forward_access'
 import { locateFailed, locateOnce } from '../lib/forward_locate'
-import { forwardPending, forwardSourceDefault, instanceServer, shownSource } from '../lib/forward'
+import { forwardPending, forwardSourceDefault, shownSource } from '../lib/forward'
 import {
   PENDING,
   carriedOf,
@@ -120,29 +122,25 @@ const useOwnSource = (account: AccountSession, source?: ForwardSource) => {
 
 // The bar above a composer while the forward clipboard has a message. Send forwards it here. X
 // clears the clipboard. The switch says whether the copy names where it's from.
-// `onSend` sends it somewhere other than an instance conversation (a P2P one, `destination`).
-export function ForwardBar({
-  draftKey,
-  onSend,
-  destination,
-}: {
-  draftKey: string
-  onSend?: (showSource: boolean) => void
-  destination?: ForwardDestination
-}) {
+// `sent` runs once a copy went out at once.
+export function ForwardBar({ list, sent }: { list: ComposerList; sent?: () => void }) {
   const account = useAccount()
   const store = useStoreApi()
   const clip = useForwardClip()
-  const textOnly = useStore(s => !onSend && textOnlyDestination(s, draftKey))
-  const blocked = textOnly && !clip?.p2p && (clip?.has_media || clip?.has_poll)
+  const compose = useCompose(list)
+  const to = useLive(compose.forwardTo)
+  const draftKey = to?.key ?? ''
+  const onInstance = to?.destination.kind !== 'p2p'
+  // A copy from a device to the instance carries no files or poll: text fits anywhere.
+  const blocked =
+    !!to?.textOnly && !(onInstance && clip?.p2p) && (clip?.has_media || clip?.has_poll)
   const busy = useStore(s => (clip ? forwardPending(s.outbox[draftKey], clip.id) : false))
-  const sendForward = useStore(s => s.sendForward)
   const clearForward = useStore(s => s.clearForward)
   const setShowSource = useStore(s => s.setForwardShowSource)
   const me = useStore(s => s.me?.username ?? null)
-  const server = useStore(s => (destination ? null : instanceServer(s, draftKey)))
-  const to: ForwardDestination = destination ?? { kind: 'instance', server }
-  const fallback = useStore(s => (clip ? forwardSourceDefault(clip, to, s, s.settings) : null))
+  const fallback = useStore(s =>
+    clip && to ? forwardSourceDefault(clip, to.destination, s, s.settings) : null
+  )
   const chosen = useStore(s =>
     s.forwardShowSource?.key === draftKey ? s.forwardShowSource.on : null
   )
@@ -155,7 +153,7 @@ export function ForwardBar({
   const [, retried] = useReducer((n: number) => n + 1, 0)
   const ownSource = useOwnSource(account, clip?.source)
   const { label: instance } = useInstanceLabel()
-  if (!clip) return null
+  if (!clip || !to) return null
   const own = !clip.p2p && clip.author !== null && clip.author.username === me
   const show = fallback === null ? null : (chosen ?? fallback)
   const known = !hosted || located !== undefined
@@ -164,19 +162,23 @@ export function ForwardBar({
   const shown = show === null ? null : shownSource(clipSourceNames(account, clip), show)
   const retry = () => void locateOnce(account, clip.id).then(retried)
   // A P2P message stored only on two devices: copying it to the instance needs a yes first.
+  const go = (showSource: boolean | null) =>
+    void compose.forward(showSource).then(
+      account.lifetime.inSession(out => {
+        if (out) sent?.()
+      })
+    )
   const send = () =>
-    onSend
-      ? onSend(show ?? false)
-      : clip.p2p
-        ? store.getState().askConfirm({
-            title: 'Forward',
-            body: `This copies the message to ${instance}.`,
-            confirm: 'Copy',
-            action: () => {
-              if (store.getState().forwardClip === clip) sendForward(draftKey)
-            },
-          })
-        : sendForward(draftKey, show ?? undefined)
+    onInstance && clip.p2p
+      ? store.getState().askConfirm({
+          title: 'Forward',
+          body: `This copies the message to ${instance}.`,
+          confirm: 'Copy',
+          action: () => {
+            if (store.getState().forwardClip === clip) go(null)
+          },
+        })
+      : go(show)
   return (
     <ComposerBar
       onClose={clearForward}

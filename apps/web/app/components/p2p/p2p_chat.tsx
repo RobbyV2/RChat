@@ -50,9 +50,6 @@ import { chat as chatFeature } from '../../lib/place/chat'
 import { featureAt, isUnsupported } from '../../lib/place/feature'
 import { type EditBinding } from '../message_editor'
 import { QuickReactions, rowAt } from '../reactions'
-import { ComposerBar } from '../replies'
-import { clipAllowed, clipSourceNames } from '../../lib/forward_viewing'
-import { fwdSource, p2pDestination, p2pForward } from '../../lib/forward'
 import { ForwardBar, useForwardClip, useVouchedFiles } from '../forwards'
 import { PinsWindow } from '../pins'
 import { ReplyBar } from '../replies'
@@ -300,28 +297,8 @@ function P2pComposerBody({
 
   const bar = replying ? (
     <ReplyBar list={list} />
-  ) : channelTextOnly && (forwardClip?.has_media || forwardClip?.has_poll) ? (
-    <ComposerBar onClose={() => store.getState().clearForward()} closeLabel="Discard forward">
-      This channel only accepts text.
-    </ComposerBar>
   ) : forwardClip ? (
-    <ForwardBar
-      draftKey={scope}
-      destination={p2pDestination(key)}
-      onSend={showSource => {
-        const s = store.getState()
-        const clip = s.forwardClip
-        if (clip !== forwardClip || !clipAllowed(s, clip, account)) return
-        const names = clipSourceNames(account, clip)
-        void p2pDm.forward(key, p2pForward(clip, fwdSource(clip.source, names, showSource))).then(
-          identity.inIdentity(ok => {
-            if (!ok) return
-            if (store.getState().forwardClip === clip) store.getState().clearForward()
-            identity.p2pHost.toast('Forwarded to', title)
-          })
-        )
-      }}
-    />
+    <ForwardBar list={list} sent={() => identity.p2pHost.toast('Forwarded to', title)} />
   ) : null
 
   return (

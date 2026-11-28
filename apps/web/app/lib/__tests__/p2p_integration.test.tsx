@@ -1177,10 +1177,13 @@ describe('forwarding', () => {
     expect(state().forwardClip).toBeNull()
     account.store.setState({ forwardClip: clip })
     const bar = (owner: typeof account) => {
-      Object.assign(owner.store.getInitialState(), { forwardClip: clip })
+      Object.assign(owner.store.getInitialState(), {
+        forwardClip: clip,
+        panel: { kind: 'thread', root: { id: 1, channel_id: null } },
+      })
       return render(
         <AccountProvider session={owner}>
-          <ForwardBar draftKey="t1" />
+          <ForwardBar list="thread" />
         </AccountProvider>
       )
     }

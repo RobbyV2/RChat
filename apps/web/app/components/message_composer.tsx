@@ -271,7 +271,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     replying && draftKey ? (
       <ReplyBar list={thread ? 'thread' : 'main'} />
     ) : forwarding && draftKey ? (
-      <ForwardBar draftKey={draftKey} />
+      <ForwardBar list={thread ? 'thread' : 'main'} />
     ) : null
 
   const doSend = (p2pExpiresIn?: number | null, relay?: RelayChoice) => {

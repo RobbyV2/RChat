@@ -1,6 +1,6 @@
 import type { AccountSession } from '../client/session'
 import { limitsOf } from '../instance_limits'
-import { chatKey, threadKey } from '../p2p/app/store'
+import { chatKey, chatScope, threadKey, threadScope } from '../p2p/app/store'
 import { LIMITS as P2P_LIMITS } from '../p2p/content'
 import { bodyTooLong, fullNote } from '../p2p/dm'
 import { peerServer } from '../actions/p2p_server'
@@ -13,6 +13,16 @@ import { TRANSFERRED_TEXT } from '../p2p/flows'
 import { channelCan } from '../selectors'
 import type { UserRef } from '../types'
 import { viewKey } from '../view'
+import { textOnlyDestination } from '../channel_content'
+import {
+  fwdSource,
+  instanceServer,
+  p2pDestination,
+  p2pForward,
+  type ForwardDestination,
+} from '../forward'
+import { clipAllowed, clipSourceNames } from '../forward_viewing'
+import { identityScopeKey } from '../p2p/app/host'
 import { defineFeature } from './feature'
 import { built, type Live } from './live'
 import { P2pDm, P2pRoom } from './place'
@@ -42,6 +52,15 @@ export interface Replying {
   // Whether the answer pings the author; null where there is nothing to choose (your own
   // message, or a place that has no such switch).
   mention: boolean | null
+}
+
+// Where a forwarded copy goes when it is sent from a list.
+export interface ForwardTo {
+  // What the choice to name the source and the send under way go by.
+  key: string
+  destination: ForwardDestination
+  // Only text can be written there.
+  textOnly: boolean
 }
 
 // Why nothing can be written to a list, as the bar in the composer's place says it.
@@ -97,6 +116,11 @@ export interface Compose {
   editLast: () => boolean
   cancelReply: () => void
   toggleReplyMention: () => void
+  // Where a forward sent from this list goes; null with nothing to write to.
+  forwardTo: Live<ForwardTo | null>
+  // Sends the message on the forward clipboard here. `showSource`: whether the copy names where
+  // it is from (null: the place decides). True once the copy went out.
+  forward: (showSource: boolean | null) => Promise<boolean>
 }
 
 export interface Composer {
@@ -220,7 +244,31 @@ const hosted = (account: AccountSession): Composer =>
         }
       )
     const getGate = gate(false)
+    const forwardTo = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? store.getInitialState() : store.getState()
+          const key = keyOf(initial)
+          return [
+            key,
+            key === null ? null : instanceServer(s, key),
+            textOnlyDestination(s, key),
+          ] as const
+        },
+        ([key, server, textOnly]): ForwardTo | null =>
+          key === null ? null : { key, destination: { kind: 'instance', server }, textOnly }
+      )
     return {
+      forwardTo: {
+        get: forwardTo(false),
+        initial: forwardTo(true),
+        subscribe: changed => store.subscribe(changed),
+      },
+      forward: async showSource => {
+        const { key } = get()
+        if (key !== null) store.getState().sendForward(key, showSource ?? undefined)
+        return false
+      },
       state: { get, initial: state(true), subscribe: changed => store.subscribe(changed) },
       gate: {
         get: getGate,
@@ -419,9 +467,51 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
         }
       )
     const getGate = gate(false)
+    const forwardTo = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? useP2p.getInitialState() : useP2p.getState()
+          const key = keyOf(initial)
+          const at = list === 'thread' ? s.thread : s.chat
+          const ch = at?.ch ?? null
+          return [
+            key,
+            key === null || !at
+              ? null
+              : identityScopeKey(
+                  app.localId,
+                  list === 'thread' && s.thread ? threadScope(s.thread) : chatScope(room, ch)
+                ),
+            ch !== null && s.servers[room]?.channels.find(c => c.id === ch)?.text_only === true,
+          ] as const
+        },
+        ([key, scope, textOnly]): ForwardTo | null =>
+          key === null || scope === null
+            ? null
+            : { key: scope, destination: p2pDestination(key), textOnly }
+      )
     // When each key last said it is typing; the place wants to hear it again only so often.
     const said = new Map<string, number>()
     return {
+      forwardTo: {
+        get: forwardTo(false),
+        initial: forwardTo(true),
+        subscribe: changed => useP2p.subscribe(changed),
+      },
+      forward: async showSource => {
+        const { key } = get()
+        const { store } = place.account
+        const s = store.getState()
+        const clip = s.forwardClip
+        if (key === null || !clip || !clipAllowed(s, clip, place.account)) return false
+        const names = clipSourceNames(place.account, clip)
+        const sent = await p2pDm.forward(
+          key,
+          p2pForward(clip, fwdSource(clip.source, names, showSource ?? false))
+        )
+        if (sent && store.getState().forwardClip === clip) store.getState().clearForward()
+        return !!sent
+      },
       state: { get, initial: state(true), subscribe: changed => useP2p.subscribe(changed) },
       gate: { get: getGate, initial: gate(true), subscribe: changed => useP2p.subscribe(changed) },
       openNext: () => {
