@@ -733,9 +733,15 @@ export function createDmsPart(
     setEditText: (text: string) =>
       useP2p.setState(st => (st.editing ? { editing: { ...st.editing, text } } : {})),
 
-    cancelEdit: () => useP2p.setState({ editing: null }),
+    cancelEdit: (refocus?: boolean) =>
+      useP2p.setState(s => ({
+        editing: null,
+        ...(refocus && s.editing
+          ? { composerFocus: { key: s.editing.room, n: (s.composerFocus?.n ?? 0) + 1 } }
+          : {}),
+      })),
 
-    async saveEdit() {
+    async saveEdit(refocus?: boolean) {
       const e = useP2p.getState().editing
       if (!e) return
       const m = findMessage(e.id)
@@ -745,7 +751,7 @@ export function createDmsPart(
       if (tooLong) return p2pHost.toast(tooLong)
       const changed = !!e.alt && altText(e.alt.text) !== e.alt.was
       const alts = m ? editAltsFor(m.att, e.alt) : undefined
-      useP2p.setState({ editing: null })
+      p2pDm.cancelEdit(refocus)
       if (!m || !body || (body === m.body.trim() && !changed)) return
       await onTarget(
         e.room,

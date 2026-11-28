@@ -154,6 +154,25 @@ placeContract(composer, (kind, world) => {
     expect(main.state.get().focus).toBe(4)
   })
 
+  test('leaving an edit asks its list to take the focus', () => {
+    const { ann } = world()
+    const main = seat(world(), [])
+    const key = main.state.get().key as string
+    const before = main.state.get().focus
+    if (hosted) {
+      ann.account.store.setState({ editing: { key, id: 1, text: 'x', focus: 1 } })
+      ann.account.store.getState().cancelEdit(true)
+    } else {
+      ann.app?.useP2p.setState({ editing: { room: key, id: 'e6', text: 'x', focus: 1 } })
+      ann.app?.p2pDm.cancelEdit(true)
+    }
+    expect(main.state.get().focus).toBe(before + 1)
+    if (hosted) return
+    ann.app?.useP2p.setState({ editing: { room: key, id: 'e6', text: 'x', focus: 1 } })
+    ann.app?.p2pDm.cancelEdit()
+    expect(main.state.get().focus).toBe(before + 1)
+  })
+
   test('a forward sent from a list goes to that list of the place', () => {
     const main = seat(world(), []).forwardTo.get()
     const thread = seat(world(), [], 'thread').forwardTo.get()

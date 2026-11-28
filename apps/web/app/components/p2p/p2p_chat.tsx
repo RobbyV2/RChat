@@ -457,8 +457,8 @@ export function useP2pList({
             focus: editingState.focus,
             getText: () => identity.useP2p.getState().editing?.text ?? '',
             setText: p2pDm.setEditText,
-            save: () => void p2pDm.saveEdit(),
-            cancel: () => p2pDm.cancelEdit(),
+            save: fine => void p2pDm.saveEdit(fine),
+            cancel: fine => p2pDm.cancelEdit(fine),
             ...(editingState.alt
               ? { alt: { text: editingState.alt.text, set: p2pDm.setEditAlt } }
               : {}),
