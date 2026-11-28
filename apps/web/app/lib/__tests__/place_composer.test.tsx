@@ -498,7 +498,7 @@ placeContract(composer, (kind, world) => {
     if (kind === 'hostedServer' || kind === 'p2pRoom') expect(to.what?.kind).toBe('channel')
     if (kind === 'p2pDm') expect(to.what).toEqual({ kind: 'person', handle: 'Bob' })
     expect(thread.state.get().to.what).toEqual({ kind: 'thread' })
-    if (!hosted) expect(poll).toBeNull()
+    if (!hosted) expect(isUnsupported(poll) && poll.line).toBe('Polls are not available in P2P')
     if (kind === 'hostedServer') expect(poll).toEqual({ kind: 'channel', id: 1 })
     const { account, app } = world().ann
     Object.assign(account.store.getInitialState(), account.store.getState())
@@ -516,6 +516,10 @@ placeContract(composer, (kind, world) => {
     expect(html).toContain('see you at noon')
     expect(html).toContain('aria-label="Send"')
     expect(html.includes('aria-label="Create poll"')).toBe(main.state.get().poll !== null)
+    expect(
+      /disabled=""[^>]*aria-label="Create poll"|aria-label="Create poll"[^>]*disabled=""/.test(html)
+    ).toBe(!hosted)
+    if (!hosted) expect(html).toContain('title="Polls are not available in P2P"')
     if (kind === 'p2pDm') expect(html).toContain('placeholder="Message Bob')
   })
 

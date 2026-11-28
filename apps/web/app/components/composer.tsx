@@ -1,4 +1,5 @@
 'use client'
+import { isUnsupported } from '../lib/place/feature'
 import { OwnLoadNotice } from './own_load'
 
 import { Name } from './name'
@@ -187,7 +188,9 @@ export function Composer({ list = 'main' }: { list?: ComposerList }) {
   return (
     <Dock gap="sm">
       <PeerCodeButton text={text} peer={peer} />
-      {pollOpen && poll && <CreatePollDialog target={poll} onClose={() => setPollOpen(false)} />}
+      {pollOpen && poll && !isUnsupported(poll) && (
+        <CreatePollDialog target={poll} onClose={() => setPollOpen(false)} />
+      )}
       {laterOpen && (
         <SendLaterDialog
           side={later.side}
@@ -254,6 +257,8 @@ export function Composer({ list = 'main' }: { list?: ComposerList }) {
               <IconButton
                 icon={ChartColumn}
                 label="Create poll"
+                tooltip={isUnsupported(poll) ? poll.line : undefined}
+                disabled={isUnsupported(poll)}
                 tight
                 data-create-poll
                 onClick={() => setPollOpen(true)}

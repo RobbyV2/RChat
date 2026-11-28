@@ -24,7 +24,7 @@ import {
 } from '../forward'
 import { clipAllowed, clipSourceNames } from '../forward_viewing'
 import { identityScopeKey } from '../p2p/app/host'
-import { defineFeature } from './feature'
+import { defineFeature, unsupported, type Unsupported } from './feature'
 import { built, type Live } from './live'
 import { P2pDm, P2pRoom } from './place'
 import { shownOf } from './shown'
@@ -63,8 +63,9 @@ export interface ComposeState {
   focus: number
   // When slow mode lets the next message through (ms); 0 without a wait.
   slowUntil: number
-  // Where a poll made here is posted; null where none can be.
-  poll: PollTarget | null
+  // Where a poll made here is posted: null where the reader may not make one, and the reason
+  // where the place has no polls.
+  poll: PollTarget | Unsupported | null
   to: WriteTo
   // What the completions of the field draw their people and messages by.
   listKey: string | null
@@ -235,6 +236,7 @@ export interface GateState {
 }
 
 const OPEN: GateState = { first: null, until: null, then: null }
+const NO_PEER_POLLS = unsupported('Polls are not available in P2P')
 
 // The text being written to one list of a place.
 export interface Compose {
@@ -885,7 +887,7 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
             text,
             focus,
             slowUntil,
-            poll: null,
+            poll: NO_PEER_POLLS,
             to,
             listKey,
             filtered: false,
