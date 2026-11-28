@@ -33,7 +33,7 @@ import { useLive } from '../lib/place/react'
 import { REVEAL_EVENT } from '../lib/masked_reveal'
 import { ThemeToggle } from './status_clock'
 import { Chip, IconButton } from './controls'
-import { buttonLook, fieldLook, iconButtonLook, sectionHeadingLook } from '../lib/controls'
+import { fieldLook, sectionHeadingLook } from '../lib/controls'
 
 export const fieldCls = fieldLook
 // A small field or select beside others on a toolbar line (a search filter).
@@ -52,11 +52,6 @@ export const bareFieldCls =
 // A value set off inside a line of text (a time, a code): it breaks across lines with the text.
 export const inlineChipCls =
   'rounded box-decoration-clone bg-surface-container-high px-1 py-0.5 text-on-surface'
-export const filledBtn = buttonLook('filled', 'md')
-export const filledDangerBtn = buttonLook('filled-danger', 'md')
-export const textBtn = buttonLook('text', 'sm')
-export const dangerBtn = buttonLook('danger', 'sm')
-export const iconBtn = `inline-flex ${iconButtonLook('plain', 'lg')}`
 export const sectionCls = sectionHeadingLook
 
 // One choice of a few, as chips.

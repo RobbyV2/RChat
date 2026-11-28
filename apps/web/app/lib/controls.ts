@@ -329,7 +329,7 @@ export const bannerLook =
   'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:w-max sm:max-w-screen-inset'
 
 // A row of the channel sidebar (a channel, a voice channel, a link): inset from the sidebar's sides.
-export const sideRowLook =
+const sideRowLook =
   'mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11'
 
 // The text field of a composer: it grows with its lines up to a height, inside the composer's
@@ -397,22 +397,6 @@ export const pillLook = (tone: BadgeTone) =>
 export const consoleFieldLook =
   'w-full min-w-0 rounded-lg border bg-transparent px-3 py-1.5 text-base outline-none placeholder:text-on-surface-variant/70 focus:border-primary md:text-sm'
 
-// A button an app puts under its message: a pill with the color of its style.
-export const appButtonLook =
-  'flex min-h-11 max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium disabled:cursor-default disabled:opacity-40'
-
-// An action on a note only the viewer sees.
-export const noteActionLook =
-  'cursor-pointer rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest'
-
-// A small round icon button beside a file or a code block.
-export const miniIconLook =
-  'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary'
-
-// The same, dimmed while it cannot be used.
-export const miniIconOffLook =
-  'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40'
-
 // The pill under a forwarded message that says where it came from.
 export const sourcePillLook =
   'mt-2 flex w-fit max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-outline-variant/70 bg-surface-container-high px-2 py-1 text-xs text-on-surface-variant'
@@ -421,14 +405,6 @@ export const sourcePillLook =
 export const sourcePlaceLook =
   'streamer flex min-w-0 items-center gap-1 rounded-sm font-semibold text-on-surface'
 
-// A quick action on Home: a wide card button.
-export const homeActionLook =
-  'flex min-w-0 items-center gap-3 rounded-2xl bg-surface-container-low px-4 py-3 text-left text-sm font-medium text-on-surface hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary'
-
-// The same for a peer-to-peer action: dashed.
-export const homeP2pActionLook =
-  'flex min-w-0 items-center gap-3 rounded-2xl border-2 border-dashed border-tertiary/70 bg-surface-container-low px-4 py-3 text-left text-sm font-medium text-on-surface hover:bg-tertiary-container hover:text-on-tertiary-container focus-visible:outline-2 focus-visible:outline-primary'
-
 // A covered or removed embed, in place of its card.
 export const embedNoteLook =
   'mt-1 flex w-fit max-w-md items-center gap-2 rounded-lg border-l-4 border-outline bg-surface-container py-2 pr-3 pl-3 text-sm'
@@ -436,10 +412,6 @@ export const embedNoteLook =
 // The quick actions floating over the top edge of a message row.
 export const messageToolbarLook =
   'group/bar pointer-events-none absolute -top-5 right-3 z-raised flex items-center gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-elevation-1 group-hover:pointer-events-auto group-hover:opacity-100 data-open:pointer-events-auto data-open:opacity-100 pointer-fine:group-focus-within:pointer-events-auto pointer-fine:group-focus-within:opacity-100'
-
-// A reaction under a message: its emoji and count.
-export const reactionChipLook =
-  'flex h-7 items-center gap-1.5 rounded-lg border px-2 text-sm font-medium tabular-nums outline-offset-2 select-none focus-visible:outline-2 focus-visible:outline-primary'
 
 // A field of the sign-in form: its border color says whether its value is valid.
 export const signInFieldLook = 'rounded-lg border bg-transparent px-3 py-2 outline-none'

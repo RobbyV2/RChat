@@ -22,24 +22,8 @@ import {
   TriButton,
   WindowButton,
 } from '../../components/controls'
-import {
-  CloseButton,
-  PanelHeader,
-  dangerBtn,
-  filledBtn,
-  filledDangerBtn,
-  iconBtn,
-  sectionCls,
-  textBtn,
-} from '../../components/ui'
-import {
-  buttonLook,
-  chipLook,
-  iconBoxLook,
-  iconButtonLook,
-  rowLook,
-  sectionHeadingLook,
-} from '../controls'
+import { CloseButton, PanelHeader, sectionCls } from '../../components/ui'
+import { buttonLook, chipLook, iconBoxLook, rowLook, sectionHeadingLook } from '../controls'
 
 const attr = (html: string, name: string) => new RegExp(`${name}="([^"]*)"`).exec(html)?.[1]
 
@@ -321,11 +305,6 @@ describe('Tab', () => {
 
 describe('the shared class names and close buttons', () => {
   test('the class names are the looks of the controls', () => {
-    expect(filledBtn).toBe(buttonLook('filled', 'md'))
-    expect(filledDangerBtn).toBe(buttonLook('filled-danger', 'md'))
-    expect(textBtn).toBe(buttonLook('text', 'sm'))
-    expect(dangerBtn).toBe(buttonLook('danger', 'sm'))
-    expect(iconBtn).toBe(`inline-flex ${iconButtonLook('plain', 'lg')}`)
     expect(sectionCls).toBe(sectionHeadingLook)
   })
 

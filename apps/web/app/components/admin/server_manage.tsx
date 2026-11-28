@@ -26,7 +26,7 @@ import { Button, IconButton, SectionHeading } from '../controls'
 import { Inset, Row, Surface } from '../layout'
 import { Sentinel } from '../ui'
 import { ServerEncryption } from './encryption'
-import { fieldCls } from './touch'
+import { fieldCls } from '../ui'
 
 function NameForm({
   initial,

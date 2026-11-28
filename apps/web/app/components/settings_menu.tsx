@@ -1,4 +1,5 @@
 'use client'
+import { buttonLook } from '../lib/controls'
 import { OwnLoadNotice } from './own_load'
 import { Name } from './name'
 import { instanceAddress, instanceName, personCalled, handleName, serverName } from '../lib/names'
@@ -79,7 +80,7 @@ import { Choice, PrivacyChoices } from './friends'
 import { LinkSafetySection } from './link_safety_settings'
 import { AccountWords, PassSwitch } from './word_grid'
 import { PageRow, SettingsPage, type PageSection } from './settings_page'
-import { dangerBtn, Dialog, FieldError, fieldCls, sectionCls } from './ui'
+import { Dialog, FieldError, fieldCls, sectionCls } from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -720,7 +721,7 @@ function SignInSection() {
             closeDialog()
             logout()
           }}
-          className={dangerBtn}
+          className={`inline-flex items-center ${buttonLook('danger', 'sm')}`}
         >
           {signedIn ? 'Log out' : 'Exit guest mode'}
         </Link>

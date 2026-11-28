@@ -4,6 +4,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
+import buttons from './apps/web/eslint/buttons.mjs'
 import spacing from './apps/web/eslint/spacing.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
@@ -32,6 +33,11 @@ const SPACING_SOURCES = [
   'apps/web/app/components/{controls,ui}.tsx',
   'apps/web/app/components/layout/index.tsx',
 ]
+
+// The controls: the only files that write a button element.
+const CONTROL_SOURCES = ['apps/web/app/components/{controls,ui}.tsx']
+
+const rchat = { rules: { spacing, buttons } }
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
 
@@ -141,8 +147,14 @@ export default tseslint.config(
   {
     files: ['apps/web/app/**/*.tsx', 'docs/src/**/*.tsx'],
     ignores: [...SPACING_SOURCES, ...TEST_FILES],
-    plugins: { rchat: { rules: { spacing } } },
+    plugins: { rchat },
     rules: { 'rchat/spacing': 'error' },
+  },
+  {
+    files: ['apps/web/app/**/*.{ts,tsx}'],
+    ignores: [...CONTROL_SOURCES, ...TEST_FILES],
+    plugins: { rchat },
+    rules: { 'rchat/buttons': 'error' },
   },
   {
     files: ['apps/web/app/**/*.{ts,tsx}', 'docs/src/**/*.{ts,tsx}'],

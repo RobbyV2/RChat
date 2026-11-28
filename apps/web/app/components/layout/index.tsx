@@ -70,7 +70,6 @@ type Tag =
   | 'kbd'
   | 'code'
   | 'pre'
-  | 'button'
   | 'a'
 
 // Where and how large a measured box is (a popover placed by script, a grid whose columns are

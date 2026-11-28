@@ -50,7 +50,7 @@ test('a grid is a grid', () => {
   has(renderToStaticMarkup(<Grid cols={2} gap="lg" />), 'grid', 'grid-cols-2', 'gap-(--space-lg)')
 })
 
-test('the boxes take no class names, styles, off-scale steps or margins', () => {
+test('the boxes take no class names, styles, off-scale steps or margins, and are never buttons', () => {
   const boxes = [
     // @ts-expect-error a box has no className
     <Stack key={0} gap="sm" className="p-4" />,
@@ -62,11 +62,15 @@ test('the boxes take no class names, styles, off-scale steps or margins', () => 
     <Surface key={3} pad={4} />,
     // @ts-expect-error a box is placed, never spaced, by its parent
     <Row key={4} gap="sm" place="mt-2" />,
+    // @ts-expect-error a box is never a button: buttons are the controls
+    <Row key={9} gap="sm" as="button" />,
+    // @ts-expect-error nor is a surface
+    <Surface key={10} pad="sm" as="button" />,
     <Row key={5} gap="sm" place="ml-auto min-w-0 flex-1" />,
     <Stack key={6} gap="sm" place="min-h-0 flex-1 overflow-y-auto overscroll-contain" />,
     <Surface key={7} pad="lg" place="max-w-md w-full" />,
     // @ts-expect-error sizes come from the content or the container scale
     <Surface key={8} pad="lg" place="w-[13rem]" />,
   ]
-  expect(boxes.length).toBe(9)
+  expect(boxes.length).toBe(11)
 })

@@ -113,7 +113,7 @@ import { altText } from '../lib/alt_text'
 import { cause, logError } from '../lib/log'
 import { Row, Surface, Inset } from './layout'
 import { time } from '../lib/platform/time'
-import { miniIconLook } from '../lib/controls'
+import { iconButtonLook } from '../lib/controls'
 import { embedNoteLook } from '../lib/controls'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
@@ -1077,7 +1077,6 @@ export function MediaAttachment({
       </div>
     )
   if (lang !== null && !removed && !hidden) {
-    const iconBtn = miniIconLook
     return (
       <ServerText id={id} server={server}>
         {(text, notice) =>
@@ -1104,9 +1103,9 @@ export function MediaAttachment({
                     download={filename}
                     title={`Download ${filename}`}
                     aria-label="Download"
-                    className={iconBtn}
+                    className={`inline-flex ${iconButtonLook('plain', 'sm')}`}
                   >
-                    <Download size={14} />
+                    <Download size={16} aria-hidden />
                   </a>
                 )
               }
