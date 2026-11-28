@@ -3,9 +3,11 @@ import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
 import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
+import type { OpenThread, ThreadState } from '../lib/place/thread'
+import { useThread } from '../lib/place/use_thread'
 import { MessageSquareText } from 'lucide-react'
 import { useChannelCan } from '../lib/place/use_rights'
-import { useHostedServer } from '../lib/place/react'
+import { useHostedServer, useLive } from '../lib/place/react'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { actionPress, openActionMenu } from '../lib/actions/menu'
 import { myRank, roleColor, roleLook, threadKey, useStore } from '../lib/store'
@@ -35,7 +37,7 @@ import {
   useFocusMessage,
   useScrollAnchor,
 } from './viewport_height'
-import { PanelHeader, useEscape } from './ui'
+import { PanelHeader, textBtn, useEscape } from './ui'
 import { LightboxList } from './media_lightbox'
 import { BlockedComposer, BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
@@ -51,38 +53,114 @@ const EMPTY: Message[] = []
 const NO_SENDS: Outgoing[] = []
 const ALONE: GroupPlace = { first: true, last: true }
 
-// The thread panel, whichever source fills it (instance messages, or a P2P server's): the header,
-// bars above the list, the list (`head`, the root, its reply count, the replies, `tail`) and the
-// composer below.
-export function ThreadPanelView({
-  onClose,
-  peer = false,
-  bars,
-  overlays,
-  listRef,
-  contentRef,
-  onScroll,
-  head,
-  root,
-  count,
-  replies,
-  tail,
-  footer,
-}: {
-  peer?: boolean
-  onClose: () => void
-  bars?: ReactNode
-  overlays?: ReactNode
+// What the thread panel's list holds while it scrolls: its scroller, where it stands, and the
+// replies that came in below.
+export interface ThreadScroll {
   listRef: RefObject<HTMLDivElement | null>
   contentRef: RefObject<HTMLDivElement | null>
-  onScroll: () => void
-  head?: ReactNode
+  scroll: ReturnType<typeof useChatScroll>
+  beforePage: () => void
+  fresh: number
+  first: number | undefined
+  last: number | undefined
+}
+
+const onScreen = () => typeof document === 'undefined' || document.visibilityState === 'visible'
+
+// Follows the open thread's list: keeps its place while pages load, marks the thread read at
+// the bottom, and closes it on Escape unless `escape` took the key.
+export function useThreadScroll(
+  thread: OpenThread,
+  state: ThreadState,
+  {
+    replies,
+    own,
+    outCount,
+    focus,
+    escape,
+  }: {
+    replies: Message[]
+    // The author name the list's own messages carry.
+    own: string | undefined
+    outCount: number
+    focus: boolean
+    escape?: () => boolean
+  }
+): ThreadScroll {
+  const { scope, older, newer, pagesOnSight, stale, unseen } = state
+  const away = pagesOnSight && newer.more
+  const listRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const following = useStore(s => scope !== null && s.atBottom[scope] === true)
+  const first = replies[0]?.id
+  const last = replies[replies.length - 1]?.id
+  const beforePage = useScrollAnchor(listRef, first, older.loading || newer.loading)
+  useEscape(e => {
+    if (escape?.()) return
+    if (!e.defaultPrevented) thread.close()
+  }, 'panel')
+  const scroll = useChatScroll({
+    list: listRef,
+    content: contentRef,
+    scope,
+    count: replies.length,
+    lastId: last,
+    stale,
+    focus,
+    detached: away,
+    outCount,
+    onBottom: () => {
+      if (onScreen()) thread.markRead()
+    },
+  })
+  useEffect(() => {
+    if (scope !== null && unseen && following && !away && onScreen()) thread.markRead()
+  }, [thread, scope, unseen, following, away])
+  return {
+    listRef,
+    contentRef,
+    scroll,
+    beforePage,
+    fresh: newSince(replies, scroll.leftAt, own),
+    first,
+    last,
+  }
+}
+
+// The thread panel of a conversation, whichever place it is in: the header, bars above the list,
+// the list (the way to older replies, the root, the reply count, the replies) and `footer` below.
+// The rows are the caller's.
+export function ThreadPanelView({
+  thread,
+  state,
+  at,
+  peer = false,
+  bars,
+  root,
+  children,
+  footer,
+}: {
+  thread: OpenThread
+  state: ThreadState
+  at: ThreadScroll
+  peer?: boolean
+  bars?: ReactNode
   root: ReactNode
-  count: number
-  replies: ReactNode
-  tail?: ReactNode
+  children: ReactNode
   footer: ReactNode
 }) {
+  const { older, newer, pagesOnSight, count } = state
+  const { listRef, contentRef, scroll, beforePage, fresh, first } = at
+  const away = pagesOnSight && newer.more
+  const onScroll = () => {
+    scroll.onScroll()
+    if (older.loading || newer.loading) beforePage()
+  }
+  const onTop = () => {
+    if (older.loading || !older.more || first === undefined) return
+    beforePage()
+    thread.loadOlder()
+  }
   return (
     <div data-thread-panel className="flex h-full w-full flex-col bg-surface-container-low">
       <PanelHeader
@@ -90,15 +168,40 @@ export function ThreadPanelView({
         icon={MessageSquareText}
         title="Thread"
         closeTitle="Close thread"
-        onClose={onClose}
+        onClose={thread.close}
       />
       {bars}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {overlays}
+        {older.loading && <OlderLoading />}
+        {pagesOnSight && newer.loading && <OlderLoading newer />}
+        {away && !newer.loading && <PresentBar onJump={thread.toPresent} />}
+        {!away && scroll.positioned && fresh > 0 && (
+          <PresentBar count={fresh} onJump={scroll.toBottom} />
+        )}
         <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
           <div ref={contentRef}>
-            {head}
-            {root}
+            {pagesOnSight
+              ? scroll.positioned &&
+                first !== undefined &&
+                older.more && (
+                  <EdgeSentinel key={first} root={listRef} edge="top" onVisible={onTop} />
+                )
+              : older.more && (
+                  <Surface pad="sm" tone="plain" radius="none" align="center">
+                    <button onClick={thread.loadOlder} className={textBtn}>
+                      Show older replies
+                    </button>
+                  </Surface>
+                )}
+            {state.root === 'shown' ? (
+              root
+            ) : (
+              <Surface pad="lg" tone="plain" radius="none">
+                <p className="text-sm text-on-surface-variant italic">
+                  {state.root === 'loading' ? 'Loading…' : 'Message unavailable'}
+                </p>
+              </Surface>
+            )}
             <Surface pad="lg" inset="bar" tone="plain" radius="none">
               <Row gap="sm">
                 <span className="h-px flex-1 bg-outline-variant" />
@@ -108,13 +211,46 @@ export function ThreadPanelView({
                 <span className="h-px flex-1 bg-outline-variant" />
               </Row>
             </Surface>
-            {replies}
-            {tail}
+            {children}
           </div>
         </div>
       </div>
       <div className="relative shrink-0">{footer}</div>
     </div>
+  )
+}
+
+// What ends the replies: their placeholder while none is placed, and where the list asks for the
+// page after its last row as soon as that end shows.
+export function ThreadTail({
+  thread,
+  state,
+  at,
+}: {
+  thread: OpenThread
+  state: ThreadState
+  at: ThreadScroll
+}) {
+  const { scope, newer, pagesOnSight, waiting } = state
+  const { listRef, scroll, beforePage, last } = at
+  return (
+    <>
+      {waiting && scope !== null && (
+        <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
+      )}
+      {pagesOnSight && scroll.positioned && newer.more && last !== undefined && (
+        <EdgeSentinel
+          key={`n${last}`}
+          root={listRef}
+          edge="bottom"
+          onVisible={() => {
+            if (newer.loading) return
+            beforePage()
+            thread.loadNewer()
+          }}
+        />
+      )}
+    </>
   )
 }
 
@@ -152,19 +288,10 @@ export default function ThreadPanel() {
   const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
   useAuthorMembers(server, usePeopleKey(people))
   const key = useStore(s => (s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : null))
-  const older = useStore(s => (key ? s.older[key] : undefined))
-  const newer = useStore(s => (key ? s.newer[key] : undefined))
-  const stale = useStore(s => (key ? s.stale[key] === true : false))
+  const thread = useThread()
+  const state = useLive(thread.state)
   const focus = useStore(s => (key ? s.focus[key] : undefined))
   const outgoing = useStore(s => (key ? s.outbox[key] : undefined)) ?? NO_SENDS
-  const outCount = outgoing.length
-  const following = useStore(s => (key ? s.atBottom[key] === true : false))
-  const unseen = useStore(s => (key ? s.pings[key] !== undefined : false))
-  const seeThread = useStore(s => s.seeThread)
-  const closePanel = useStore(s => s.closePanel)
-  const loadOlderThread = useStore(s => s.loadOlderThread)
-  const loadNewerThread = useStore(s => s.loadNewerThread)
-  const jumpToPresent = useStore(s => s.jumpToPresent)
   const startReply = useStore(s => s.startReply)
   const startEdit = useStore(s => s.startEdit)
   const copyForward = useStore(s => s.copyForward)
@@ -173,50 +300,22 @@ export default function ThreadPanel() {
       ? s.editing.id
       : null
   )
-  const jumpTo = useStore(s => s.jumpTo)
   const wide = useMedia('(min-width: 768px)')
-  const listRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const detached = newer?.more === true
-  const snapEdge = useScrollAnchor(
-    listRef,
-    replies[0]?.id,
-    older?.loading === true || newer?.loading === true
-  )
+  const detached = state.newer.more
   const selecting = useStore(s => key !== null && s.selection?.scope === key)
-  useEscape(e => {
-    if (store.getState().selection) store.getState().exitSelection()
-    else if (!e.defaultPrevented) closePanel()
-  }, 'panel')
-
-  const scroll = useChatScroll({
-    list: listRef,
-    content: contentRef,
-    scope: key,
-    count: replies.length,
-    lastId: replies[replies.length - 1]?.id,
-    stale,
+  const at = useThreadScroll(thread, state, {
+    replies,
+    own: me?.username,
+    outCount: outgoing.length,
     focus: focus !== undefined,
-    detached,
-    outCount,
-    onBottom: () => {
-      if (root && !detached && document.visibilityState === 'visible') seeThread(root.id)
+    escape: () => {
+      if (!store.getState().selection) return false
+      store.getState().exitSelection()
+      return true
     },
   })
-  const rootId = root?.id ?? null
-  useEffect(() => {
-    if (
-      rootId !== null &&
-      unseen &&
-      following &&
-      !detached &&
-      document.visibilityState === 'visible'
-    )
-      seeThread(rootId)
-  }, [rootId, unseen, following, detached, seeThread])
-  const fresh = newSince(replies, scroll.leftAt, me?.username)
 
-  const flash = useFocusMessage(listRef, key, focus, replies, scroll.settle)
+  const flash = useFocusMessage(at.listRef, key, focus, replies, at.scroll.settle)
   const places = useMemo(
     () => messagePlaces(replies, detached ? new Set([replies.length]) : undefined, outgoing),
     [replies, detached, outgoing]
@@ -239,39 +338,20 @@ export default function ThreadPanel() {
   )
 
   if (!root || !key) return null
-  const positioned = scroll.positioned
   const canDelete = (m: Message) =>
     me !== null &&
     (m.author.username === me.username ||
       (can.manage && outranksKnown(rank, memberFor(m.author.username), roles)))
-
-  const onScroll = () => {
-    scroll.onScroll()
-    if (older?.loading || newer?.loading) snapEdge()
-  }
-
-  const onTop = () => {
-    if (older?.loading || older?.more === false || !replies.length) return
-    snapEdge()
-    void loadOlderThread()
-  }
 
   const canReply = (m: Message) => canQuoteHere && canQuote(m)
   const forwardable = (m: Message) => canUnreact && canForward(m)
   const replyTo = (m: Message) => startReply(key, m)
   const canEdit = (m: Message) => canWrite && ownEditable(m, me?.username)
   const editMsg = (m: Message) => startEdit(key, m)
-  const jump = (id: number) => void jumpTo(key, id)
+  const jump = (id: number) => thread.jump(String(id))
   const jumpMain = (id: number) => {
-    const main =
-      root.channel_id !== null
-        ? `c${root.channel_id}`
-        : root.dm_id !== null
-          ? `d${root.dm_id}`
-          : null
-    if (!main) return
-    if (!wide) closePanel()
-    void jumpTo(main, id)
+    if (!wide) thread.close()
+    thread.jumpMain(String(id))
   }
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
@@ -340,73 +420,16 @@ export default function ThreadPanel() {
       }}
     >
       <ThreadPanelView
-        onClose={closePanel}
+        thread={thread}
+        state={state}
+        at={at}
         bars={
           <>
             {wide && <SelectionBar scope={key} sheet={false} compact />}
             <BulkJobBar scope={key} />
           </>
         }
-        overlays={
-          <>
-            {older?.loading && <OlderLoading />}
-            {newer?.loading && <OlderLoading newer />}
-            {detached && !newer?.loading && <PresentBar onJump={() => void jumpToPresent(key)} />}
-            {!detached && positioned && fresh > 0 && (
-              <PresentBar count={fresh} onJump={scroll.toBottom} />
-            )}
-          </>
-        }
-        listRef={listRef}
-        contentRef={contentRef}
-        onScroll={onScroll}
-        head={
-          positioned &&
-          replies.length > 0 &&
-          older?.more !== false && (
-            <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
-          )
-        }
         root={row(root, ALONE)}
-        count={root.reply_count}
-        replies={
-          <BlockedList
-            messages={replies}
-            focusId={focus?.id ?? null}
-            dayAbove={rootAt}
-            row={(m, i) => (
-              <Selectable key={m.id} m={m} scope={key}>
-                {row(m, places[i] ?? ALONE)}
-              </Selectable>
-            )}
-            tail={lastShownAt => (
-              <>
-                {stale && replies.length === 0 && root.reply_count > 0 && (
-                  <MessageListSkeleton seed={key} variant="panel" label="Loading replies" />
-                )}
-                {positioned && detached && replies.length > 0 && (
-                  <EdgeSentinel
-                    key={`n${replies[replies.length - 1].id}`}
-                    root={listRef}
-                    edge="bottom"
-                    onVisible={() => {
-                      if (newer?.loading) return
-                      snapEdge()
-                      void loadNewerThread()
-                    }}
-                  />
-                )}
-                <OutboxRows
-                  msgKey={key}
-                  outgoing={outgoing}
-                  places={places.slice(replies.length)}
-                  dayAbove={lastShownAt}
-                  size={30}
-                />
-              </>
-            )}
-          />
-        }
         footer={
           <>
             <TypingIndicator scope={key} server={server} bg="bg-surface-container-low" />
@@ -419,7 +442,30 @@ export default function ThreadPanel() {
             )}
           </>
         }
-      />
+      >
+        <BlockedList
+          messages={replies}
+          focusId={focus?.id ?? null}
+          dayAbove={rootAt}
+          row={(m, i) => (
+            <Selectable key={m.id} m={m} scope={key}>
+              {row(m, places[i] ?? ALONE)}
+            </Selectable>
+          )}
+          tail={lastShownAt => (
+            <>
+              <ThreadTail thread={thread} state={state} at={at} />
+              <OutboxRows
+                msgKey={key}
+                outgoing={outgoing}
+                places={places.slice(replies.length)}
+                dayAbove={lastShownAt}
+                size={30}
+              />
+            </>
+          )}
+        />
+      </ThreadPanelView>
     </LightboxList>
   )
 }

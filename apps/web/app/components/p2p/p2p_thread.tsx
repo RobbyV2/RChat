@@ -9,20 +9,18 @@ import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
 import { CAN_ALL, type ChannelCan } from '../../lib/channel_perms'
 import type { Look } from '../../lib/role_looks'
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
-import { useMask, useStore } from '../../lib/store'
+import { Fragment, useCallback, useMemo, type ReactNode } from 'react'
+import { useMask } from '../../lib/store'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
 import type { ServerView } from '../../lib/p2p/server'
-import { newSince } from '../../lib/lists'
 import type { Message } from '../../lib/types'
-import { PlaceProvider, useP2pRoom } from '../../lib/place/react'
+import { PlaceProvider, useLive, useP2pRoom } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
 import { authorLook, MessageRow, RemovedRow, SlowHiddenRow } from '../message_row'
-import { ThreadPanelView } from '../thread_panel'
+import { ThreadPanelView, ThreadTail, useThreadScroll } from '../thread_panel'
+import { openThreadAt } from '../../lib/place/use_thread'
 import { TypingIndicator } from '../typing_indicator'
-import { PresentBar, useChatScroll } from '../viewport_height'
-import { textBtn, useEscape } from '../ui'
 import {
   P2pComposer,
   CanFetchContext,
@@ -39,9 +37,7 @@ import { useDmFacts } from './p2p_dm_pane'
 import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
-import { MessageListSkeleton } from '../skeletons'
 import { LightboxList } from '../media_lightbox'
-import { Surface } from '../layout'
 
 // The thread of a P2P server channel or conversation beside it (full screen on phones): its root,
 // the replies stored here and a composer, through the same panel as instance threads.
@@ -56,7 +52,6 @@ interface ThreadFacts {
   mayDelete: (p: P2pMessage) => boolean
   disabled: ReactNode
   typers: string[]
-  unseen: boolean
   textOnly?: boolean
   pendingTip: string
   // A server thread's rules for acting, a timeout among them; a conversation follows `disabled`.
@@ -114,7 +109,6 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
         mayDelete,
         disabled,
         typers: names,
-        unseen: (v.chans[t.ch ?? '']?.threads?.[t.root] ?? 0) > 0,
         textOnly: channel?.text_only,
         pendingTip: 'Waiting for a member to come online',
         canAct,
@@ -132,7 +126,6 @@ function ConversationThread({ t }: { t: P2pThread }) {
   const facts = useDmFacts()
   const { mayDelete, disabled, peerIk, peerRaw, peerName } = facts
   const typingIks = useP2p(s => s.typing[threadKey(t)] ?? NONE)
-  const unseen = useP2p(s => (s.rooms[t.room]?.threads?.[t.root] ?? 0) > 0)
   const ownName = useCallback((ik: string) => profileName(ik), [])
   const typers = useMemo(
     () => typingIks.filter(ik => ik === peerIk).map(() => peerRaw),
@@ -146,7 +139,6 @@ function ConversationThread({ t }: { t: P2pThread }) {
         mayDelete,
         disabled,
         typers,
-        unseen,
         pendingTip: `Waiting for ${peerName} to come online`,
       }}
     />
@@ -155,16 +147,12 @@ function ConversationThread({ t }: { t: P2pThread }) {
 
 function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
   const identity = useP2pApp()!
-  const { p2pThread, p2pDm } = identity
-  const { ownName, mayDelete, disabled, unseen } = f
+  const { ownName, mayDelete, disabled } = f
 
   const me = useP2p(s => s.me)
   const key = threadKey(t)
   const scope = identityScopeKey(identity.localId, threadScope(t))
   const focus = useP2p(s => (s.focus?.room === key ? s.focus : null))
-  const following = useStore(s => s.atBottom[scope] === true)
-  const listRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
   const canAct = f.canAct ?? !disabled
   const timedOut = f.timedOut ?? false
   const held = f.can ?? CAN_ALL
@@ -197,6 +185,8 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
     threads: false,
     can: held,
   })
+  const thread = openThreadAt(place)
+  const state = useLive(thread.state)
   const head = t.head ? rows[0] : null
   const list = useMemo(() => (t.head ? rows.slice(1) : rows), [rows, t.head])
   const shared = useMemo(() => list.map(r => r.m), [list])
@@ -211,46 +201,30 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
     [list, headAt]
   )
   const ownCount = useMemo(() => replies.filter(m => m.sender === me).length, [replies, me])
-  useEscape(e => {
-    if (!e.defaultPrevented) p2pThread.close()
-  }, 'panel')
-  const visible = () => typeof document === 'undefined' || document.visibilityState === 'visible'
-  const scroll = useChatScroll({
-    list: listRef,
-    content: contentRef,
-    scope,
-    count: shared.length,
-    lastId: shared[shared.length - 1]?.id,
-    stale: t.loading && replies.length === 0,
-    focus: focus !== null,
-    detached: false,
+  const at = useThreadScroll(thread, state, {
+    replies: shared,
+    own: me ?? undefined,
     outCount: ownCount,
-    onBottom: () => {
-      if (visible()) void p2pThread.markRead()
-    },
+    focus: focus !== null,
   })
-  useEffect(() => {
-    if (unseen && following && visible()) void p2pThread.markRead()
-  }, [unseen, following])
-  const fresh = newSince(shared, scroll.leftAt, me ?? undefined)
-  const flash = useP2pFlash(listRef, scope, focus, num, shared, scroll.settle)
+  const flash = useP2pFlash(at.listRef, scope, focus, num, shared, at.scroll.settle)
 
   // A quote in the root jumps in the channel; one in a reply, in the thread.
   const jumpMain = useCallback(
     (n: number) => {
       const id = idOf(n)
       if (!id) return
-      if (!window.matchMedia('(min-width: 768px)').matches) p2pThread.close()
-      void p2pDm.jumpTo(id)
+      if (!window.matchMedia('(min-width: 768px)').matches) thread.close()
+      thread.jumpMain(id)
     },
-    [idOf]
+    [idOf, thread]
   )
   const jumpHere = useCallback(
     (n: number) => {
       const id = idOf(n)
-      if (id) void p2pThread.jumpTo(id)
+      if (id) thread.jump(id)
     },
-    [idOf]
+    [idOf, thread]
   )
 
   const onRoot = useMemo(() => rowOn(jumpMain), [rowOn, jumpMain])
@@ -293,49 +267,11 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
               forward={forwardRow}
             >
               <ThreadPanelView
+                thread={thread}
+                state={state}
+                at={at}
                 peer
-                onClose={p2pThread.close}
-                overlays={
-                  scroll.positioned &&
-                  fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />
-                }
-                listRef={listRef}
-                contentRef={contentRef}
-                onScroll={scroll.onScroll}
-                head={
-                  t.more && (
-                    <Surface pad="sm" tone="plain" radius="none" align="center">
-                      <button onClick={() => void p2pThread.loadOlder()} className={textBtn}>
-                        Show older replies
-                      </button>
-                    </Surface>
-                  )
-                }
-                root={
-                  head ? (
-                    row(head, true, ALONE)
-                  ) : (
-                    <Surface pad="lg" tone="plain" radius="none">
-                      <p className="text-sm text-on-surface-variant italic">
-                        {t.loading ? 'Loading…' : 'Message unavailable'}
-                      </p>
-                    </Surface>
-                  )
-                }
-                count={t.head?.replies ?? replies.length}
-                replies={list.map((r, i) => (
-                  <Fragment key={r.p.id}>
-                    {days.has(i) && <DateDivider at={r.m.created_at} />}
-                    {row(r, false, places[i] ?? ALONE)}
-                  </Fragment>
-                ))}
-                tail={
-                  t.loading &&
-                  replies.length === 0 &&
-                  (t.head?.replies ?? 1) > 0 && (
-                    <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
-                  )
-                }
+                root={head && row(head, true, ALONE)}
                 footer={
                   <>
                     <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
@@ -352,7 +288,15 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
                     />
                   </>
                 }
-              />
+              >
+                {list.map((r, i) => (
+                  <Fragment key={r.p.id}>
+                    {days.has(i) && <DateDivider at={r.m.created_at} />}
+                    {row(r, false, places[i] ?? ALONE)}
+                  </Fragment>
+                ))}
+                <ThreadTail thread={thread} state={state} at={at} />
+              </ThreadPanelView>
             </LightboxList>
             {picker && (
               <EmojiPicker
