@@ -137,7 +137,7 @@ describe('where skeletons show', () => {
     put({ ...signedIn, view: channelView, servers: { club }, messages: {}, stale: { c1: true } })
     const loading = renderToStaticMarkup(<MessagePane onMenu={() => {}} onMembers={() => {}} />)
     expect(loading).toContain('data-skeleton="messages"')
-    expect(loading).toContain('overflow-y-auto py-3 invisible')
+    expect(loading).toContain('invisible overflow-y-auto')
     put({ messages: { c1: [] }, stale: {} })
     const empty = renderToStaticMarkup(<MessagePane onMenu={() => {}} onMembers={() => {}} />)
     expect(empty).not.toContain('data-skeleton')
@@ -145,7 +145,7 @@ describe('where skeletons show', () => {
     put({ messages: { c1: [msg(5, { channel_id: 1 })] }, stale: { c1: true } })
     const cached = renderToStaticMarkup(<MessagePane onMenu={() => {}} onMembers={() => {}} />)
     expect(cached).toContain('data-skeleton="messages"')
-    expect(cached).toContain('overflow-y-auto py-3 invisible')
+    expect(cached).toContain('invisible overflow-y-auto')
   })
 
   test('a thread with replies loads them under placeholders, one without replies does not', () => {

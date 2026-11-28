@@ -1,5 +1,6 @@
 'use client'
 
+import { composerTextLook } from '../lib/controls'
 import { useEffect, useRef, useState, type ClipboardEvent, type ReactNode, type Ref } from 'react'
 import { Smile } from 'lucide-react'
 import { spliceText } from '../lib/autocomplete'
@@ -195,7 +196,7 @@ export function ComposerField({
             if (onPaste?.(e)) e.preventDefault()
           }}
           placeholder={placeholder}
-          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
+          className={composerTextLook}
         />
         {(count > counterFrom(max) || tooLong) && (
           <span

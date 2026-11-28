@@ -251,6 +251,11 @@ export const rowLook = (tone: RowTone, variant: RowVariant = 'plain') =>
 export const sideRowLook =
   'mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11'
 
+// The text field of a composer: it grows with its lines up to a height, inside the composer's
+// own frame.
+export const composerTextLook =
+  'max-h-40 min-w-0 flex-1 resize-none bg-transparent py-(--space-xs) text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm'
+
 // A button inside a line of text (with an icon before its words, if any): it reads as a link and
 // keeps the line's height; on a coarse pointer it is 44 px to tap, grown into its margins.
 export const linkLook = `inline-flex items-center gap-1 rounded-sm font-medium text-primary underline-offset-2 hover-idle:underline ${FOCUS} disabled:opacity-40 pointer-coarse:-my-3.5 pointer-coarse:min-w-11 pointer-coarse:justify-center pointer-coarse:py-3.5`

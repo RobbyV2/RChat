@@ -150,12 +150,12 @@ const JUSTIFY: Record<Justify, string> = {
 // How a surface pads its content: `even` the same on all four sides; `bar` (a header, footer or
 // toolbar line) one step less above and below than at the sides; `chip` (a pill, a tag, a chip)
 // two steps less; `line` (a line of a list or a chat) a hair above and below; `sides` only at
-// the sides.
-export type SurfaceInset = 'even' | 'bar' | 'sides' | 'chip' | 'line'
+// the sides; `ends` (a list that scrolls edge to edge) only above and below.
+export type SurfaceInset = 'even' | 'bar' | 'sides' | 'chip' | 'line' | 'ends'
 
 // The padding above and below a surface whose sides are padded by `pad`.
 const above = (pad: Space, inset: SurfaceInset): Space =>
-  inset === 'even'
+  inset === 'even' || inset === 'ends'
     ? pad
     : inset === 'bar'
       ? smaller(pad)
@@ -295,9 +295,15 @@ export const surfaceLook = ({
 }) =>
   [
     row ? 'min-w-0 flex-row' : 'min-w-0 flex-col',
-    inset === 'even' ? PAD[pad] : `${PAD_X[pad]} ${PAD_Y[above(pad, inset)]}`,
+    inset === 'even'
+      ? PAD[pad]
+      : inset === 'ends'
+        ? PAD_Y[pad]
+        : `${PAD_X[pad]} ${PAD_Y[above(pad, inset)]}`,
     safe === true || safe === 'bottom' || safe === 'all' ? PAD_SAFE_BOTTOM[above(pad, inset)] : '',
-    safe === 'sides' || safe === 'all' ? `${PAD_SAFE_LEFT[pad]} ${PAD_SAFE_RIGHT[pad]}` : '',
+    (safe === 'sides' || safe === 'all') && inset !== 'ends'
+      ? `${PAD_SAFE_LEFT[pad]} ${PAD_SAFE_RIGHT[pad]}`
+      : '',
     GAP[gap],
     ITEMS[align],
     JUSTIFY[justify],

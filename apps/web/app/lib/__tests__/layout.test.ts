@@ -164,6 +164,12 @@ test('a surface inset at its sides only sets no padding above or below', () => {
   expect(look.some(w => /^(p|pt|pb)-/.test(w))).toBe(false)
 })
 
+test('a surface inset at its ends only pads above and below', () => {
+  const ends = surface({ pad: 'md', inset: 'ends' }).split(' ')
+  expect(ends).toContain('py-(--space-md)')
+  expect(ends.some(w => /^(p|px|pl|pr)-/.test(w))).toBe(false)
+})
+
 test('a chip surface pads two steps less above and below than at its sides', () => {
   has(surface({ pad: 'md', inset: 'chip' }), 'px-(--space-md)', 'py-(--space-xs)')
   has(surface({ pad: '2xs', inset: 'chip' }), 'px-(--space-2xs)', 'py-0')

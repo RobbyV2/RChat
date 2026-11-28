@@ -46,7 +46,7 @@ import { canForward } from '../lib/forward'
 import { canEdit as ownEditable } from '../lib/sed'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
-import { Row, Surface } from './layout'
+import { Inset, Row, Surface } from './layout'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 
 const EMPTY: Message[] = []
@@ -178,7 +178,14 @@ export function ThreadPanelView({
         {!away && scroll.positioned && fresh > 0 && (
           <PresentBar count={fresh} onJump={scroll.toBottom} />
         )}
-        <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
+        <Inset
+          ref={listRef}
+          onScroll={onScroll}
+          pad="md"
+          inset="ends"
+          look="overflow-y-auto"
+          place="flex-1"
+        >
           <div ref={contentRef}>
             {pagesOnSight
               ? scroll.positioned &&
@@ -213,7 +220,7 @@ export function ThreadPanelView({
             </Surface>
             {children}
           </div>
-        </div>
+        </Inset>
       </div>
       <div className="relative shrink-0">{footer}</div>
     </div>

@@ -4,7 +4,7 @@ import type { ReactNode, RefObject } from 'react'
 import { History } from 'lucide-react'
 import type { Messages, MessagesState } from '../lib/place/messages'
 import type { UnreadSummary } from '../lib/unread_banner'
-import { Row, Surface } from './layout'
+import { Inset, Row, Surface } from './layout'
 import { LightboxList, type LightboxScope } from './media_lightbox'
 import { MessageListSkeleton } from './skeletons'
 import { textBtn } from './ui'
@@ -78,10 +78,13 @@ export function MessageList({
       {pagesOnSight && newer.loading && <OlderLoading newer />}
       {away && !newer.loading && <PresentBar onJump={list.toPresent} />}
       {!away && positioned && fresh > 0 && <PresentBar count={fresh} onJump={toBottom} />}
-      <div
+      <Inset
         ref={listRef}
         onScroll={onScroll}
-        className={`flex-1 overflow-y-auto py-3 ${loading ? 'invisible' : ''}`}
+        pad="md"
+        inset="ends"
+        look={loading ? 'invisible overflow-y-auto' : 'overflow-y-auto'}
+        place="flex-1"
       >
         {intro}
         {empty}
@@ -120,7 +123,7 @@ export function MessageList({
             )}
           </div>
         </LightboxList>
-      </div>
+      </Inset>
     </div>
   )
 }
