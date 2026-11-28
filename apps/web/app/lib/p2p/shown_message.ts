@@ -1,7 +1,7 @@
 import { readFwdSrc } from './content'
 import type { P2pMessage } from './dm'
 import { plainLine } from '../replies'
-import type { Message, UserRef } from '../types'
+import type { CallLog, Message, UserRef } from '../types'
 
 // Shared message components key rows by a number that grows in display order (jumps and the
 // unread line rely on it): display time in ms times 1000, plus a counter for ties.
@@ -17,6 +17,23 @@ export const numbering = (list: P2pMessage[]) => {
 }
 
 const seconds = (ms: number) => Math.floor(ms / 1000)
+
+// A call row of a P2P conversation as the shared call row reads it: the caller is the sender,
+// and only its outcome and length are known.
+export const callLogOf = (p: P2pMessage): CallLog | null => {
+  const c = p.call
+  if (!c) return null
+  const end = seconds(p.ts)
+  const ended = c.outcome === 'ended'
+  return {
+    from: p.sender,
+    answered_at: ended ? end - (c.dur ?? 0) : null,
+    ended_at: end,
+    outcome: c.outcome === 'ended' ? 'completed' : c.outcome,
+    p2p: true,
+    video: c.video,
+  }
+}
 
 export const asMessage = (
   m: P2pMessage,
@@ -35,8 +52,8 @@ export const asMessage = (
   reply_count: m.replies ?? 0,
   media: null,
   embeds: [],
-  kind: m.system ? m.system.kind : 'user',
-  call: null,
+  kind: m.system ? m.system.kind : m.call ? 'call' : 'user',
+  call: callLogOf(m),
   reactions: m.reactions.map(r => ({
     emoji: r.key,
     count: r.count,

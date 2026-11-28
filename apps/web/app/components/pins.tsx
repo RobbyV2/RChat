@@ -6,7 +6,8 @@ import { Loaded, useLoad } from './loaded'
 import { useStoreApi } from '../lib/client/react'
 import { isUnsupported } from '../lib/place/feature'
 import { pins as pinsFeature, type Pinned, type Pins, type PinsState } from '../lib/place/pins'
-import { useFeature, useLive } from '../lib/place/react'
+import { useFeature, useLive, usePlace } from '../lib/place/react'
+import { inDm } from '../lib/place/place'
 import {
   useEffect,
   useId,
@@ -31,6 +32,8 @@ import { profileTrigger } from './profile_card'
 import { Button, IconButton } from './controls'
 import { CloseButton, Masked, Sheet, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
+import { Name } from './name'
+import { personCalled } from '../lib/names'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { Row, Stack, Surface, Inset } from './layout'
@@ -134,36 +137,57 @@ export function PinLine({
   )
 }
 
+// The line a pin leaves among the messages, whichever place they are in. `target`: the pinned
+// message's key there, null once it is gone.
 export function PinNotice({
   m,
+  event,
+  target,
   server,
+  ik,
   divider,
   onMenu,
 }: {
   m: Message
+  event?: string
+  target: string | null
   server: string | null
+  // The author's identity key, where the place knows people by key.
+  ik?: string
   divider: ReactNode
   onMenu: (m: Message, x: number, y: number) => void
 }) {
   const store = useStoreApi()
-  const target = m.pin_message_id ?? null
+  const place = usePlace()
   return (
     <PinLine
-      row={{ 'data-row': '', 'data-mid': m.id }}
+      row={{
+        'data-row': '',
+        'data-mid': m.id,
+        ...(event === undefined ? {} : { 'data-event': event }),
+      }}
+      inner={{ 'data-system': 'pin' }}
       divider={divider}
       press={longPress((x, y) => onMenu(m, x, y))}
       name={
-        <ShownName
-          user={m.author}
-          server={server}
-          link
-          {...profileTrigger(store, m.author, server)}
-          look="font-medium text-on-surface"
-        />
+        ik === undefined ? (
+          <ShownName
+            user={m.author}
+            server={server}
+            link
+            {...profileTrigger(store, m.author, server)}
+            look="font-medium text-on-surface"
+          />
+        ) : (
+          <Name
+            of={personCalled(m.author.display_name, m.author.username)}
+            look="font-medium text-on-surface"
+          />
+        )
       }
-      place={m.dm_id !== null ? 'conversation' : 'channel'}
+      place={place !== null && inDm(place) ? 'conversation' : 'channel'}
       ts={m.created_at}
-      target={target === null ? null : String(target)}
+      target={target}
     />
   )
 }

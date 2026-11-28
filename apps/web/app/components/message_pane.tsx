@@ -7,16 +7,7 @@ import { useP2pApp } from '../lib/client/p2p_react'
 
 import { useAccount, useStoreApi } from '../lib/client/react'
 
-import {
-  Fragment,
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Clock,
@@ -26,18 +17,9 @@ import {
   MoreVertical,
   MessagesSquare,
   NotebookPen,
-  Phone,
-  PhoneCall,
-  PhoneIncoming,
-  PhoneMissed,
-  PhoneOff,
-  PhoneOutgoing,
   Search,
   Users,
-  Video,
-  VideoOff,
   Volume2,
-  type LucideIcon,
 } from 'lucide-react'
 import { newSince } from '../lib/lists'
 import { SELF_DM_TEXT, SELF_DM_TITLE } from '../lib/dm_list'
@@ -57,7 +39,6 @@ import {
   myRank,
   roleColor,
   roleLook,
-  userRefFor,
   useStore,
   viewKey,
   allPings,
@@ -66,9 +47,7 @@ import {
   type Outgoing,
 } from '../lib/store'
 import { outranksKnown } from '../lib/hierarchy'
-import type { CallLog, Member, Message, UserRef } from '../lib/types'
-import { callTone, type CallTone } from '../lib/voice_layout'
-import { callLogInfo } from '../lib/call_choice'
+import type { Member, Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { UnreadDivider } from './unread_banner'
 import { DateDivider } from './date_divider'
@@ -82,7 +61,7 @@ import { useMedia } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
 import { ChannelTopic } from './channel_topic'
-import { CallButtons, CallDuration, DirectBadge } from './call_buttons'
+import { CallButtons } from './call_buttons'
 import { useChatScroll, useFocusMessage, useScrollAnchor } from './viewport_height'
 import { Masked, useEscape, useOwnServer } from './ui'
 import { showsUsername } from '../lib/display_name'
@@ -94,21 +73,13 @@ import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
 import { ForwardCard } from './forwards'
 import { MessageList, NewerOnSight } from './message_list'
-import {
-  AuthorRow,
-  authorLook,
-  GroupedRow,
-  MessageRow,
-  type RowHandlers,
-  type RowProps,
-} from './message_row'
+import { AuthorRow, authorLook, GroupedRow, type RowHandlers } from './message_row'
 import { useMessages } from '../lib/place/use_messages'
-import { PinNotice, PinsButton, PinsWindow, useCanPin } from './pins'
+import { PinsButton, PinsWindow, useCanPin } from './pins'
+import { ListedRow } from './listed_row'
 import { ThreadsButton, ThreadsWindow } from './threads'
-import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
-import { isNotice, isSystem } from '../lib/system_messages'
-import { MessageTime } from './timestamp'
+import { isNotice } from '../lib/system_messages'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
 import { Row, Stack, Surface, Inset } from './layout'
@@ -125,187 +96,6 @@ import { Button, IconButton } from './controls'
 export { groupPadCls } from './grouped_row'
 
 const EMPTY: Message[] = []
-
-const callIcon = (tone: CallTone, video: boolean, incoming: boolean): LucideIcon => {
-  if (video) return tone === 'missed' || tone === 'declined' ? VideoOff : Video
-  switch (tone) {
-    case 'ringing':
-      return incoming ? PhoneIncoming : PhoneOutgoing
-    case 'active':
-      return PhoneCall
-    case 'missed':
-      return PhoneMissed
-    case 'declined':
-      return PhoneOff
-    case 'ended':
-      return incoming ? PhoneIncoming : PhoneOutgoing
-  }
-}
-
-function CallLogRow({ message }: { message: Message }) {
-  const store = useStoreApi()
-  const me = useStore(s => s.me)
-  const dms = useStore(s => s.dms)
-  const acceptCall = useStore(s => s.acceptCall)
-  const declineCall = useStore(s => s.declineCall)
-  const openDm = useStore(s => s.openDm)
-  const call = message.call
-  if (!call) return null
-  const tone = callTone(call)
-  const incoming = me !== null && me.username !== call.from
-  const caller = userRefFor(store.getState(), call.from)
-  const other = dms.find(d => d.id === message.dm_id)?.other
-  const name = (u: UserRef | undefined) =>
-    u ? (
-      <Name of={personName(asAccount(u, 'call'))} withUsername look="font-medium text-on-surface" />
-    ) : (
-      <span className="font-medium text-on-surface">Someone</span>
-    )
-  const status: ReactNode =
-    tone === 'ringing' ? (
-      incoming ? (
-        <>{name(caller)} is calling you</>
-      ) : (
-        <>Calling {name(other)}…</>
-      )
-    ) : tone === 'active' ? (
-      <>In progress</>
-    ) : null
-  return (
-    <CallLogLine
-      call={call}
-      me={me?.username ?? null}
-      time={message.created_at}
-      status={status}
-      badge={call.p2p === true ? <DirectBadge /> : null}
-      live={
-        tone === 'active' &&
-        call.answered_at !== null && (
-          <Surface
-            as="span"
-            row
-            pad="sm"
-            inset="chip"
-            gap="2xs"
-            tone="plain"
-            radius="full"
-            text="xs"
-            look="bg-status-green/15 font-medium text-status-green tabular-nums"
-          >
-            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-status-green" />
-            <CallDuration from={call.answered_at} />
-          </Surface>
-        )
-      }
-    >
-      {tone === 'ringing' && incoming && (
-        <Row as="span" gap="xs">
-          <Surface
-            title="Accept"
-            aria-label="Accept"
-            onClick={() => {
-              if (message.dm_id !== null) void openDm(message.dm_id)
-              void acceptCall()
-            }}
-            as="button"
-            row
-            pad="md"
-            inset="chip"
-            gap="2xs"
-            tone="plain"
-            radius="full"
-            text="xs"
-            look="bg-status-green font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
-          >
-            <Phone size={12} />
-            Accept
-          </Surface>
-          <Surface
-            title="Decline"
-            aria-label="Decline"
-            onClick={declineCall}
-            as="button"
-            row
-            pad="md"
-            inset="chip"
-            gap="2xs"
-            tone="plain"
-            radius="full"
-            text="xs"
-            look="bg-danger font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
-          >
-            <PhoneOff size={12} />
-            Decline
-          </Surface>
-        </Row>
-      )}
-    </CallLogLine>
-  )
-}
-
-// One call log row: icon by kind and direction, "Voice call"/"Video call", the connection badge,
-// the outcome (or `status` while it rings or runs), the duration and the time. Instance and P2P
-// conversations both use it.
-export function CallLogLine({
-  call,
-  me,
-  time,
-  status,
-  badge,
-  live,
-  children,
-}: {
-  call: CallLog
-  me: string | null
-  time: number
-  status?: ReactNode
-  badge?: ReactNode
-  live?: ReactNode
-  children?: ReactNode
-}) {
-  const tone = callTone(call)
-  const incoming = me !== null && me !== call.from
-  const info = callLogInfo(call, me)
-  const Icon = callIcon(tone, info.video, incoming)
-  const running = tone === 'ringing' || tone === 'active'
-  const iconCls = running
-    ? 'text-status-green'
-    : info.alert
-      ? 'text-error'
-      : 'text-on-surface-variant'
-  const direction = `${incoming ? 'Incoming' : 'Outgoing'} ${info.label.toLowerCase()}`
-  return (
-    <Inset data-call-row row pad="lg" inset="line" gap="md" look="hover:bg-surface-container-low">
-      <span
-        role="img"
-        title={direction}
-        aria-label={direction}
-        className={`flex w-9 shrink-0 justify-center ${iconCls}`}
-      >
-        <Icon size={18} className={tone === 'ringing' ? 'motion-safe:animate-pulse' : ''} />
-      </span>
-      <Row gap="sm" wrap lineGap="2xs" text="sm" ink="muted" place="min-w-0 flex-1">
-        <span className="font-medium text-on-surface">{info.label}</span>
-        {badge}
-        <span aria-hidden>·</span>
-        <span className="min-w-0">
-          {status ?? (
-            <span className={info.alert ? 'font-medium text-error' : ''}>{info.outcome}</span>
-          )}
-        </span>
-        {info.duration !== null && (
-          <>
-            <span aria-hidden>·</span>
-            <span className="tabular-nums">{info.duration}</span>
-          </>
-        )}
-        {live}
-        <MessageTime ts={time} className="text-xs opacity-70" />
-        {children}
-      </Row>
-    </Inset>
-  )
-}
 
 const EMPTY_OUT: Outgoing[] = []
 
@@ -379,22 +169,6 @@ const unreadDivider = <UnreadDivider />
 // The new messages banner of a hosted list: counted from the loaded rows, or asked of the server
 // while the first unread message or the newest one isn't loaded (`away`: the unread part is above
 // or below what is loaded).
-
-// A row of the hosted list: the notice its kind calls for, else the message.
-const HostedRow = memo(function HostedRow(props: RowProps) {
-  const { m, server, divider, on } = props
-  const mark = divider && unreadDivider
-  if (m.kind === 'pin') return <PinNotice m={m} server={server} divider={mark} onMenu={on.menu} />
-  if (isSystem(m)) return <SystemNotice m={m} server={server} divider={mark} onMenu={on.menu} />
-  if (m.kind === 'call')
-    return (
-      <div data-row data-mid={m.id}>
-        {mark}
-        <CallLogRow message={m} />
-      </div>
-    )
-  return <MessageRow {...props} />
-})
 
 export const reactHeader = (m: Message, x: number, y: number): ContextMenuOptions => ({
   header: <QuickReactions m={m} anchor={rowAt(x, y)} />,
@@ -1058,7 +832,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               divider={unreadDivider}
               row={(m, i) => (
                 <Selectable m={m} scope={scope}>
-                  <HostedRow
+                  <ListedRow
                     m={m}
                     first={places[i]?.first ?? true}
                     last={places[i]?.last ?? true}

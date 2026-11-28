@@ -11,40 +11,7 @@ import { useAccount } from '../../lib/client/react'
 import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
 import { CALL_ELSEWHERE } from '../../lib/p2p/app'
-import type { P2pMessage } from '../../lib/p2p/dm'
-import type { CallLog } from '../../lib/types'
-import { CallLogLine } from '../message_pane'
-import { P2pBadge } from './p2p_badge'
 import { Row, Surface, Inset } from '../layout'
-
-const seconds = (ms: number) => Math.floor(ms / 1000)
-
-// A call row of a P2P conversation as the shared call log row reads it: the caller is the
-// sender, and only its outcome and length are known.
-export const callLogOf = (p: P2pMessage): CallLog | null => {
-  const c = p.call
-  if (!c) return null
-  const end = seconds(p.ts)
-  const ended = c.outcome === 'ended'
-  return {
-    from: p.sender,
-    answered_at: ended ? end - (c.dur ?? 0) : null,
-    ended_at: end,
-    outcome: c.outcome === 'ended' ? 'completed' : c.outcome,
-    p2p: true,
-    video: c.video,
-  }
-}
-
-export function P2pCallRow({ p, me }: { p: P2pMessage; me: string | null }) {
-  const call = callLogOf(p)
-  if (!call) return null
-  return (
-    <div data-row data-event={p.id} data-p2p-call={p.call?.outcome}>
-      <CallLogLine call={call} me={me} time={seconds(p.ts)} badge={<P2pBadge />} />
-    </div>
-  )
-}
 
 // Call and Video for a P2P contact. A call with a contact is always direct; the chevron offers
 // a relay of the user's own for this call only, as in instance DMs.

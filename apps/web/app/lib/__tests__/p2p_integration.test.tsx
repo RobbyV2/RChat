@@ -1254,7 +1254,7 @@ describe('forwarding', () => {
       const row = list!.rows[0]
       // The row shows the petname, masked.
       expect(row.m.author.display_name).toBe('Mom')
-      list!.rowMenu(row.p, row.m, 0, 0)
+      list!.rowOn(() => {}).menu(row.m, 0, 0)
       const fwdItem = items.find(x => x.label === 'Forward')!
       await fwdItem.submenu!.find(x => x.label === 'Carol')!.action!()
       await flush()

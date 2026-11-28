@@ -17,7 +17,8 @@ import type { ServerView } from '../../lib/p2p/server'
 import type { Message } from '../../lib/types'
 import { PlaceProvider, useLive, useP2pRoom } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
-import { authorLook, MessageRow, RemovedRow, SlowHiddenRow } from '../message_row'
+import { authorLook } from '../message_row'
+import { ListedRow } from '../listed_row'
 import { ThreadPanelView, ThreadTail, useThreadScroll } from '../thread_panel'
 import { openThreadAt } from '../../lib/place/use_thread'
 import { TypingIndicator } from '../typing_indicator'
@@ -238,10 +239,8 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
 
   const row = (r: { p: P2pMessage; m: Message }, root: boolean, place: GroupPlace) => {
     const { p, m } = r
-    if (p.removed) return <RemovedRow key={p.id} m={m} divider={false} />
-    if (p.slowHidden) return <SlowHiddenRow key={p.id} m={m} divider={false} />
     return (
-      <MessageRow
+      <ListedRow
         key={p.id}
         m={m}
         first={place.first}
@@ -252,6 +251,7 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
         editing={editing && editingState?.id === p.id ? editing : false}
         {...rowOf(p, root ? rootRules : rules, identity)}
         {...authorLook(f.lookOf?.(p.sender))}
+        hidden={p.removed ? 'removed' : p.slowHidden ? 'slow' : undefined}
         on={root ? onRoot : onReply}
       />
     )

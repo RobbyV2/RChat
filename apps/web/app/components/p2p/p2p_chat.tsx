@@ -55,26 +55,23 @@ import { ComposerBar } from '../replies'
 import { clipAllowed, clipSourceNames } from '../../lib/forward_viewing'
 import { fwdSource, p2pDestination, p2pForward } from '../../lib/forward'
 import { ForwardBar, useForwardClip, useVouchedFiles } from '../forwards'
-import { PinLine, PinsWindow } from '../pins'
+import { PinsWindow } from '../pins'
+import { ListedRow } from '../listed_row'
 import { ThreadsWindow } from '../threads'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker } from '../emoji_picker'
-import { longPress } from '../context_menu'
 import { useChatScroll, useFocusMessage } from '../viewport_height'
-import { authorLook, MessageRow, RemovedRow, SlowHiddenRow, type RowHandlers } from '../message_row'
-import { SystemNotice } from '../system_messages'
+import { authorLook, type RowHandlers } from '../message_row'
 import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
-import { UnreadDivider } from '../unread_banner'
 import { textBtn } from '../ui'
 import { ScheduledChip, SendLaterDialog, useDeviceItems, useDeviceOps } from '../scheduled'
 import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
 import { P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
-import { P2pCallRow } from './p2p_call'
 import type { Look } from '../../lib/role_looks'
 import { Row, Stack, Surface } from '../layout'
 
@@ -205,39 +202,6 @@ function ListFiles({ m, place }: { m: Message; place: P2pRoom | P2pDm }) {
 function RowFiles({ m }: { m: Message }) {
   const place = usePlace()
   return place && !isHosted(place) ? <ListFiles m={m} place={place} /> : null
-}
-
-// "alice pinned a message to this channel. See all pinned messages."
-function P2pPinRow({
-  p,
-  m,
-  divider,
-  place,
-  onMenu,
-}: {
-  p: P2pMessage
-  m: Message
-  divider: boolean
-  place: 'conversation' | 'channel'
-  onMenu: (p: P2pMessage, x: number, y: number) => void
-}) {
-  return (
-    <PinLine
-      row={{ 'data-row': '', 'data-mid': m.id, 'data-event': p.id }}
-      inner={{ 'data-system': 'pin' }}
-      divider={divider && <UnreadDivider />}
-      press={longPress((x, y) => onMenu(p, x, y))}
-      name={
-        <Name
-          of={personCalled(m.author.display_name, m.author.username)}
-          look="font-medium text-on-surface"
-        />
-      }
-      place={place}
-      ts={m.created_at}
-      target={p.system?.target ?? null}
-    />
-  )
 }
 
 // Whether a row pings us: it mentions us, answers us, or mentions everyone.
@@ -624,10 +588,6 @@ export function useP2pList({
   useEffect(() => {
     menuRef.current = { menu, forward }
   })
-  const rowMenu = useCallback(
-    (p: P2pMessage, m: Message, x: number, y: number) => menuRef.current.menu(p, m, x, y),
-    []
-  )
   // What the image viewer's Forward button runs for message `id`.
   const forwardRow = useCallback(
     (id: string | number) => (typeof id === 'string' ? menuRef.current.forward(id) : null),
@@ -681,7 +641,6 @@ export function useP2pList({
     react,
     editing,
     editingState,
-    rowMenu,
     rowOn,
     forwardRow,
     copyRow,
@@ -763,7 +722,6 @@ function IdentityChatBody(props: ChatBodyProps) {
     react,
     editing,
     editingState,
-    rowMenu,
     rowOn,
     forwardRow,
     picker,
@@ -911,40 +869,19 @@ function IdentityChatBody(props: ChatBodyProps) {
             {rows.map(({ p, m }, i) => (
               <Fragment key={p.id}>
                 {days.has(i) && <DateDivider at={m.created_at} />}
-                {p.system?.kind === 'pin' ? (
-                  <P2pPinRow
-                    p={p}
-                    m={m}
-                    divider={i === divider}
-                    place={chat.ch ? 'channel' : 'conversation'}
-                    onMenu={(row, x, y) => rowMenu(row, m, x, y)}
-                  />
-                ) : p.system ? (
-                  <SystemNotice
-                    m={m}
-                    server={null}
-                    divider={i === divider && <UnreadDivider />}
-                    local
-                  />
-                ) : p.removed ? (
-                  <RemovedRow m={m} divider={i === divider} />
-                ) : p.slowHidden ? (
-                  <SlowHiddenRow m={m} divider={i === divider} />
-                ) : p.call ? (
-                  <P2pCallRow p={p} me={me} />
-                ) : (
-                  <MessageRow
-                    m={m}
-                    first={places[i]?.first ?? true}
-                    last={places[i]?.last ?? true}
-                    divider={i === divider}
-                    flash={flash === m.id}
-                    editing={editing && editingState?.id === p.id ? editing : false}
-                    {...rowOf(p, rules, identity)}
-                    {...authorLook(props.lookOf?.(p.sender))}
-                    on={on}
-                  />
-                )}
+                <ListedRow
+                  m={m}
+                  first={places[i]?.first ?? true}
+                  last={places[i]?.last ?? true}
+                  divider={i === divider}
+                  flash={flash === m.id}
+                  editing={editing && editingState?.id === p.id ? editing : false}
+                  {...rowOf(p, rules, identity)}
+                  {...authorLook(props.lookOf?.(p.sender))}
+                  hidden={p.removed ? 'removed' : p.slowHidden ? 'slow' : undefined}
+                  pinned={p.system?.target ?? null}
+                  on={on}
+                />
               </Fragment>
             ))}
           </MessageList>
