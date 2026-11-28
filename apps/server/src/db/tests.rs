@@ -5428,8 +5428,8 @@ async fn a_changed_env_value_is_applied_once() {
         assert_eq!(
             changes,
             [
-                change("sfu", "1", "0"),
-                change("registration", "sso", "closed")
+                change("registration", "sso", "closed"),
+                change("sfu", "1", "0")
             ]
         );
 
@@ -5447,8 +5447,8 @@ async fn a_changed_env_value_is_applied_once() {
         assert_eq!(
             config_audit(&db).await,
             [
-                row("sfu", "on", "off"),
-                row("registration", "sso", "closed")
+                row("registration", "sso", "closed"),
+                row("sfu", "on", "off")
             ],
             "the audit log notes what the config changed, with no actor"
         );
@@ -5650,7 +5650,7 @@ async fn pinned_controls_follow_the_env_at_every_start() {
         let db = open_with(Some(&url), &env_opts(&all)).await.expect("run");
         assert_eq!(
             stored(&db, "env:pinned").await.as_deref(),
-            Some("p2p,registration")
+            Some("registration,p2p")
         );
         page_sets(&db, "p2p", "1").await;
         close(&db).await;
