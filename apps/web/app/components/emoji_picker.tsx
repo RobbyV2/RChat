@@ -51,7 +51,7 @@ import {
 } from '../lib/emoji'
 import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { useMedia } from './context_menu'
-import { IconButton } from './controls'
+import { IconButton, EmojiCell } from './controls'
 import { Sheet } from './ui'
 import { Stack, Surface, Inset, Grid } from './layout'
 import { time } from '../lib/platform/time'
@@ -508,23 +508,14 @@ function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data:
         const Icon = ICONS[c.id]
         const on = current === c.id
         return (
-          <button
+          <IconButton
+            icon={Icon}
+            label={c.label}
             key={c.id}
-            type="button"
-            title={c.label}
-            aria-label={c.label}
             aria-current={on ? 'true' : undefined}
             onClick={() => jump(c.id)}
-            className={`flex shrink-0 items-center justify-center rounded-full transition-colors ${
-              sheet ? 'h-10 max-w-14 min-w-0 flex-1' : 'h-8 w-8'
-            } ${
-              on
-                ? 'bg-secondary-container text-on-secondary-container'
-                : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
-            }`}
-          >
-            <Icon size={18} />
-          </button>
+            place={sheet ? 'flex-1' : undefined}
+          />
         )
       })}
     </Surface>
@@ -557,25 +548,17 @@ function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data:
           </Inset>
           <div className="grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
             {g.items.map((e, i) => (
-              <button
+              <EmojiCell
                 key={e.emoji}
                 id={`${uid}-${s}-${i}`}
-                type="button"
-                role="option"
-                tabIndex={-1}
-                aria-selected={false}
-                aria-label={e.name}
                 data-cell=""
                 data-s={s}
                 data-i={i}
-                className={`flex aspect-square scroll-mt-9 scroll-mb-1 items-center justify-center rounded-xl font-emoji leading-none select-none ${
-                  sheet ? 'text-3xl active:bg-surface-container-highest' : 'text-2xl'
-                } aria-selected:bg-secondary-container aria-selected:ring-2 aria-selected:ring-primary aria-selected:ring-inset aria-[selected=false]:hover:bg-surface-container-highest`}
+                label={e.name}
+                touch={sheet}
               >
-                <span className={sheet ? '' : 'transition-transform duration-100 hover:scale-110'}>
-                  {withTone(e, tone)}
-                </span>
-              </button>
+                {withTone(e, tone)}
+              </EmojiCell>
             ))}
           </div>
         </section>
@@ -678,19 +661,16 @@ function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data:
           )}
         </Surface>
         <div className="relative shrink-0">
-          <button
-            type="button"
-            title="Skin tone"
-            aria-label="Skin tone"
+          <IconButton
             aria-haspopup="menu"
             aria-expanded={toneOpen}
             onClick={() => setToneOpen(o => !o)}
-            className={`flex h-10 w-10 items-center justify-center rounded-full font-emoji text-2xl leading-none ${
-              toneOpen ? 'bg-surface-container-highest' : 'hover:bg-surface-container-highest'
-            }`}
+            glyph={toneHand(tone)}
+            label="Skin tone"
+            size="lg"
           >
             {toneHand(tone)}
-          </button>
+          </IconButton>
           {toneOpen && (
             <Surface
               role="menu"
@@ -703,26 +683,19 @@ function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data:
               place="absolute top-full right-0 z-float translate-y-1"
             >
               {TONE_NAMES.map((name, t) => (
-                <button
+                <IconButton
                   key={t}
-                  type="button"
                   role="menuitemradio"
                   aria-checked={t === tone}
-                  title={name}
-                  aria-label={name}
                   onClick={() => {
                     setSkinTone(t)
                     setToneOpen(false)
                     if (!sheet) searchRef.current?.focus()
                   }}
-                  className={`flex h-9 w-9 items-center justify-center rounded-full font-emoji text-xl leading-none ${
-                    t === tone
-                      ? 'bg-secondary-container ring-2 ring-primary ring-inset'
-                      : 'hover:bg-surface-container-high'
-                  }`}
-                >
-                  {toneHand(t)}
-                </button>
+                  glyph={toneHand(t)}
+                  label={name}
+                  size="lg"
+                />
               ))}
             </Surface>
           )}

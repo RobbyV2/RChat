@@ -14,11 +14,11 @@ import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { useShownOrNull } from './shown_user'
 import { KeyAvatar } from './p2p/p2p_badge'
-import { IconButton } from './controls'
+import { IconButton, Chip } from './controls'
 import { Masked, useOwn } from './ui'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
-import { Row, Surface, Inset } from './layout'
+import { Row, Surface } from './layout'
 import type { ComposerList, Replying } from '../lib/place/composer'
 import { useLive } from '../lib/place/react'
 import { useCompose } from '../lib/place/use_composer'
@@ -232,23 +232,16 @@ export function ReplyBar({ list }: { list: ComposerList }) {
       closeLabel="Cancel reply"
       actions={
         mention !== null && (
-          <Inset
-            type="button"
-            aria-pressed={mention}
+          <Chip
             title={
               mention ? 'The author will be pinged. Click to turn off' : 'Click to ping the author'
             }
             onClick={compose.toggleReplyMention}
-            as="button"
-            pad="xs"
-            inset="chip"
-            align="center"
-            text="xs"
-            look={`rounded-md font-bold focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-10 pointer-coarse:min-w-12 ${mention ? 'text-primary hover:bg-primary/10' : 'text-on-surface-variant hover:bg-surface-container-highest'}`}
             place="shrink-0"
+            on={mention}
           >
             @ {mention ? 'ON' : 'OFF'}
-          </Inset>
+          </Chip>
         )
       }
     >

@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState, type HTMLAttributes, type ReactNode
 import type { ViewingTarget } from '../lib/viewing'
 import { Masked } from './ui'
 import { Inset } from './layout'
+import { Hotspot, LinkButton } from './controls'
 
 // The row opens its destination. Buttons in its preview have their own focus and click targets.
 export function PreviewRow({
@@ -26,13 +27,7 @@ export function PreviewRow({
         if (!e.defaultPrevented) onOpen()
       }}
     >
-      <button
-        type="button"
-        title={title}
-        tabIndex={tabIndex}
-        aria-labelledby={label}
-        className="absolute inset-0 cursor-pointer rounded-inherit focus-visible:outline-2 focus-visible:outline-primary"
-      />
+      <Hotspot tabIndex={tabIndex} labelledBy={label} tooltip={title} />
       <div
         id={label}
         className={'preview-row-content relative pointer-events-none ' + contentClassName}
@@ -64,11 +59,8 @@ export function PreviewSpoiler({
     )
   const label = file ? 'Reveal spoiler attachment' : 'Reveal spoiler'
   return (
-    <Inset
-      as="button"
-      type="button"
+    <LinkButton
       data-reply-spoiler
-      aria-label={label}
       title={label}
       onClick={e => {
         e.preventDefault()
@@ -76,15 +68,18 @@ export function PreviewSpoiler({
         focus.current = e.currentTarget === document.activeElement
         setOpen(true)
       }}
-      pad="xs"
-      inset="sides"
-      row
-      text="xs"
-      look="cursor-pointer rounded bg-spoiler align-baseline font-medium text-white hover:underline focus-visible:outline-2 focus-visible:outline-primary"
-      place="inline-flex"
+      tone="inherit"
+      label={label}
     >
-      Spoiler
-    </Inset>
+      <Inset
+        as="span"
+        pad="xs"
+        inset="sides"
+        look="rounded bg-spoiler text-xs font-medium text-white"
+      >
+        Spoiler
+      </Inset>
+    </LinkButton>
   )
 }
 
@@ -110,21 +105,15 @@ export function PreviewFilename({
 export function RevealChannelPreview({ target }: { target: ViewingTarget }) {
   const { requestViewing } = useAccount().viewing
   return (
-    <Inset
-      type="button"
+    <LinkButton
       onClick={e => {
         e.stopPropagation()
         void requestViewing(target)
       }}
-      as="button"
-      pad="2xs"
-      inset="sides"
-      justify="center"
-      text="sm"
-      look="min-h-8 cursor-pointer rounded-sm whitespace-nowrap text-primary underline focus-visible:outline-2 focus-visible:outline-primary"
       place="shrink-0"
+      underlined
     >
-      Reveal preview
-    </Inset>
+      <span className="text-sm whitespace-nowrap">Reveal preview</span>
+    </LinkButton>
   )
 }

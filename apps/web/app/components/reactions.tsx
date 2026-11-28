@@ -27,7 +27,7 @@ import { centerEmoji } from '../lib/emoji_center'
 import { useChat } from '../lib/place/use_chat'
 import { Surface, Row, Inset } from './layout'
 import { time } from '../lib/platform/time'
-import { reactionChipLook } from '../lib/controls'
+import { Chip, IconButton } from './controls'
 
 const EMPTY: Reaction[] = []
 
@@ -43,14 +43,8 @@ const shield = {
   onContextMenu: stop,
   onKeyDown: stop,
 }
-
-const chipCls = reactionChipLook
-const blockedCls = 'cursor-not-allowed opacity-40'
 // The glyph moves by the emoji font's own offset (`centerEmoji`), so it sits in the pill's middle.
 const emojiCls = 'relative top-emoji-shift font-emoji text-base leading-none'
-const chipMineCls = 'border-primary bg-primary/15 text-primary hover:bg-primary/25'
-const chipOtherCls =
-  'border-transparent bg-surface-container-high text-on-surface-variant hover:border-outline-variant hover:text-on-surface'
 
 function useReactors(messageId: number, emoji: string, count: number, enabled: boolean) {
   const { loadReactors: load } = useChat()
@@ -165,12 +159,9 @@ function ReactionChip({
   const active = r.me ? canRemove : canReact && canAddEmoji(m, r.emoji)
   return (
     <>
-      <button
+      <Chip
         ref={ref}
-        type="button"
         data-reaction={r.emoji}
-        aria-pressed={r.me}
-        aria-label={reactionAria(r)}
         aria-describedby={tip ? tipId : undefined}
         {...longPress(() => {
           setTip(false)
@@ -187,13 +178,16 @@ function ReactionChip({
           if (!coarse) setTip(true)
         }}
         onBlur={() => setTip(false)}
-        className={`${chipCls} ${r.me ? chipMineCls : chipOtherCls} ${active ? '' : 'cursor-default'}`}
+        variant="reaction"
+        plain
+        on={r.me}
+        label={reactionAria(r)}
       >
         <span aria-hidden className={emojiCls}>
           {r.emoji}
         </span>
         <span aria-hidden>{r.count}</span>
-      </button>
+      </Chip>
       {tip && ref.current && (
         <ReactionTooltip anchor={ref.current} id={tipId} messageId={m.id} r={r} />
       )}
@@ -209,11 +203,11 @@ function AddReactionChip({ m }: { m: Message }) {
   const full = reactionsFull(m)
   return (
     <>
-      <button
+      <IconButton
+        icon={SmilePlus}
+        label="Add reaction"
+        tooltip={full ? FULL_TITLE : 'Add reaction'}
         ref={ref}
-        type="button"
-        title={full ? FULL_TITLE : 'Add reaction'}
-        aria-label="Add reaction"
         aria-disabled={full || undefined}
         aria-expanded={open}
         data-open={open ? '' : undefined}
@@ -222,10 +216,10 @@ function AddReactionChip({ m }: { m: Message }) {
           keyboard.current = e.detail === 0
           setOpen(o => !o)
         }}
-        className={`flex h-7 w-7 items-center justify-center rounded-full bg-surface-container-high text-on-surface-variant opacity-0 outline-offset-2 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:opacity-100 data-open:opacity-100 ${full ? 'cursor-not-allowed [&>svg]:opacity-40' : 'hover:text-on-surface'}`}
-      >
-        <SmilePlus size={16} />
-      </button>
+        tone="tonal"
+        size="sm"
+        place="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 data-open:opacity-100"
+      />
       {open && (
         <EmojiPicker
           anchor={ref.current}
@@ -344,22 +338,21 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
         place="shrink-0 overflow-x-auto"
       >
         {list.map(r => (
-          <button
+          <Chip
             key={r.emoji}
-            type="button"
-            role="tab"
-            aria-selected={r.emoji === current.emoji}
-            aria-label={reactionAria(r)}
             onClick={() => setPicked(r.emoji)}
-            className={`${chipCls} h-8 shrink-0 ${
-              r.emoji === current.emoji ? chipMineCls : chipOtherCls
-            }`}
+            as="tab"
+            variant="reaction"
+            plain
+            on={r.emoji === current.emoji}
+            label={reactionAria(r)}
+            place="shrink-0"
           >
             <span aria-hidden className={emojiCls}>
               {r.emoji}
             </span>
             <span aria-hidden>{r.count}</span>
-          </button>
+          </Chip>
         ))}
       </Inset>
       <Inset
@@ -406,7 +399,6 @@ export function QuickReactions({ m, anchor }: { m: Message; anchor: HTMLElement 
   const coarse = useMedia(COARSE_QUERY)
   const { toggleReaction: toggle, openReactPicker: openPicker } = useChat()
   const close = useStore(s => s.closeContextMenu)
-  const size = coarse ? 'h-12 w-12 text-2xl' : 'h-9 w-9 text-xl'
   const full = reactionsFull(m)
   return (
     <Row gap="2xs" justify={coarse ? 'around' : 'start'}>
@@ -414,48 +406,36 @@ export function QuickReactions({ m, anchor }: { m: Message; anchor: HTMLElement 
         const on = reacted(m, e)
         const blocked = !on && !canAddEmoji(m, e)
         return (
-          <button
+          <IconButton
             key={e}
-            type="button"
-            title={blocked ? FULL_TITLE : `React with ${e}`}
-            aria-label={`React with ${e}`}
-            aria-pressed={on}
             aria-disabled={blocked || undefined}
             onClick={() => {
               if (blocked) return
               close()
               toggle(m, e)
             }}
-            className={`flex items-center justify-center rounded-full font-emoji leading-none ${size} ${
-              on
-                ? 'bg-primary/15 ring-2 ring-primary ring-inset'
-                : blocked
-                  ? `${blockedCls} bg-surface-container-highest`
-                  : 'bg-surface-container-highest hover:bg-surface-variant active:bg-surface-variant'
-            }`}
-          >
-            {e}
-          </button>
+            glyph={e}
+            label={`React with ${e}`}
+            tooltip={blocked ? FULL_TITLE : `React with ${e}`}
+            tone="tonal"
+            size="xl"
+            pressed={on}
+          />
         )
       })}
-      <button
-        type="button"
-        title={full ? FULL_TITLE : 'Add reaction'}
-        aria-label="Add reaction"
+      <IconButton
+        icon={SmilePlus}
+        label="Add reaction"
+        tooltip={full ? FULL_TITLE : 'Add reaction'}
         aria-disabled={full || undefined}
         onClick={() => {
           if (full) return
           close()
           openPicker(m, anchor?.isConnected ? anchor : null)
         }}
-        className={`flex items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant ${size} ${
-          full
-            ? blockedCls
-            : 'hover:bg-surface-variant hover:text-on-surface active:bg-surface-variant'
-        }`}
-      >
-        <SmilePlus size={coarse ? 24 : 18} />
-      </button>
+        tone="tonal"
+        size="xl"
+      />
     </Row>
   )
 }

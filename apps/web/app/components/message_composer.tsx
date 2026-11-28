@@ -3,7 +3,7 @@ import { OwnLoadNotice } from './own_load'
 
 import { Name } from './name'
 import { instanceName, serverCalled } from '../lib/names'
-import { Button, IconButton } from './controls'
+import { Button, IconButton, Chip } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, useViewActor } from './view_actor'
 import { useEffect, useRef, useState } from 'react'
@@ -224,17 +224,9 @@ function SiteFilterNote() {
       <span className="min-w-0 flex-1">
         <Name of={instanceName(label)} /> filters some words in server messages.
       </span>
-      <Inset
-        type="button"
-        onClick={() => home.hideTip(SITE_FILTER_NOTE)}
-        as="button"
-        pad="sm"
-        inset="chip"
-        look="cursor-pointer rounded-full font-medium text-primary hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary"
-        place="shrink-0"
-      >
+      <Button onClick={() => home.hideTip(SITE_FILTER_NOTE)} place="shrink-0">
         Got it
-      </Inset>
+      </Button>
     </Surface>
   )
 }
@@ -533,23 +525,15 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           <div className="flex items-center justify-between">
             <FileIcon size={20} className="text-primary" />
             <Row gap="2xs">
-              <Surface
+              <Chip
                 title={modeTitle(pending.mode, switchable, uploadHint)}
                 onClick={() => draftKey && toggleUploadMode(draftKey)}
                 disabled={!switchable}
-                as="button"
-                row
-                pad="sm"
-                inset="chip"
-                gap="2xs"
-                tone="plain"
-                radius="full"
-                text="xs"
-                look={`font-medium disabled:cursor-default ${pending.mode === 'p2p' ? 'bg-tertiary-container text-on-tertiary-container' : 'bg-surface-container-highest text-on-surface-variant'}`}
+                on={pending.mode === 'p2p'}
+                icon={pending.mode === 'p2p' ? Share2 : Server}
               >
-                {pending.mode === 'p2p' ? <Share2 size={12} /> : <Server size={12} />}
                 {pending.mode === 'p2p' ? 'P2P' : 'Server'}
-              </Surface>
+              </Chip>
               <IconButton
                 icon={pending.spoiler ? EyeOff : Eye}
                 label={pending.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}

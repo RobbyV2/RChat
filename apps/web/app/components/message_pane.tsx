@@ -91,7 +91,7 @@ import {
   useSelectionKeys,
 } from './selection'
 import { ChatWorkNotices } from './own_load'
-import { Button, IconButton } from './controls'
+import { Button, IconButton, LinkButton } from './controls'
 
 export { groupPadCls } from './grouped_row'
 
@@ -210,12 +210,10 @@ export function OutgoingRow({
       {o.pending && <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>}
       {failed && (
         <Row gap="md" text="xs" look="msg-part font-medium">
-          <button onClick={onRetry} className="text-primary">
-            Retry
-          </button>
-          <button onClick={onCancel} className="text-error">
+          <LinkButton onClick={onRetry}>Retry</LinkButton>
+          <LinkButton onClick={onCancel} tone="error">
             Delete
-          </button>
+          </LinkButton>
         </Row>
       )}
     </>

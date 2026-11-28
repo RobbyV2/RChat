@@ -211,10 +211,10 @@ describe('video attachment', () => {
   test('only an enabled button or a link changes color on hover', () => {
     const cls = (html: string, tag: string) =>
       (new RegExp(`<${tag} [^>]*class="([^"]*)"`).exec(html)?.[1] ?? '').split(' ')
-    expect(cls(body(), 'button')).toContain('enabled:hover:bg-surface-container-high')
-    expect(cls(body(), 'button').includes('hover:bg-surface-container-high')).toBe(false)
+    expect(cls(body(), 'button')).toContain('hover-idle:bg-on-surface/8')
+    expect(cls(body(), 'button').some(c => c.startsWith('hover:'))).toBe(false)
     const link = body({ primary: { label: 'Download', href: '/api/media/m1' } })
-    expect(cls(link, 'a')).toContain('hover:bg-surface-container-high')
+    expect(cls(link, 'a')).toContain('hover-idle:bg-on-surface/8')
   })
 
   test('without a menu of its own, right-click and long-press are the row around it', () => {

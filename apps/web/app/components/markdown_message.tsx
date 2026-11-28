@@ -1,6 +1,6 @@
 'use client'
 
-import { IconButton } from './controls'
+import { IconButton, CardButton, MediaButton } from './controls'
 import { ask, mediaUrlOf, sendTo } from '../lib/asks'
 import { Name } from './name'
 import { personCalled } from '../lib/names'
@@ -518,32 +518,27 @@ const fmtExpiry = (ts: number | null) =>
 // The cover of a hidden spoiler attachment.
 export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => void }) {
   return (
-    <Surface
-      title={title}
-      aria-label="Spoiler attachment, press to reveal"
-      onClick={onReveal}
-      as="button"
-      row
-      pad="md"
-      inset="bar"
-      gap="sm"
-      tone="base"
-      radius="lg"
-      border
-      fit
-      look="msg-part hover:bg-surface-container-high"
-    >
-      <EyeOff size={18} className="shrink-0 text-on-surface-variant" />
-      <Inset
-        as="span"
-        pad="sm"
-        inset="chip"
-        look="rounded-full bg-spoiler text-xs font-medium tracking-wide text-white uppercase"
+    <div className="msg-part">
+      <CardButton
+        title={title}
+        onClick={onReveal}
+        tone="outlined"
+        pad="md"
+        label="Spoiler attachment, press to reveal"
+        place="w-fit"
       >
-        Spoiler
-      </Inset>
-      <span className="text-sm text-on-surface-variant">Reveal</span>
-    </Surface>
+        <EyeOff size={18} className="shrink-0 text-on-surface-variant" />
+        <Inset
+          as="span"
+          pad="sm"
+          inset="chip"
+          look="rounded-full bg-spoiler text-xs font-medium tracking-wide text-white uppercase"
+        >
+          Spoiler
+        </Inset>
+        <span className="text-sm text-on-surface-variant">Reveal</span>
+      </CardButton>
+    </div>
   )
 }
 
@@ -975,25 +970,26 @@ export function MediaAttachment({
   if (image && typeof src === 'string') {
     if (hidden) {
       return (
-        <button
-          title="Reveal"
-          aria-label="Spoiler image, press to reveal"
-          data-spoiler-media
-          onClick={() => setRevealed(true)}
-          className="msg-part relative block w-fit overflow-hidden rounded-xl"
-        >
-          <img src={src} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
-          <span className="absolute inset-0 flex items-center justify-center">
-            <Inset
-              as="span"
-              pad="md"
-              inset="chip"
-              look="rounded-full bg-scrim/70 text-xs font-medium tracking-wide text-white uppercase"
-            >
-              Spoiler
-            </Inset>
-          </span>
-        </button>
+        <div className="msg-part">
+          <MediaButton
+            title="Reveal"
+            data-spoiler-media
+            onClick={() => setRevealed(true)}
+            label="Spoiler image, press to reveal"
+          >
+            <img src={src} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
+            <span className="absolute inset-0 flex items-center justify-center">
+              <Inset
+                as="span"
+                pad="md"
+                inset="chip"
+                look="rounded-full bg-scrim/70 text-xs font-medium tracking-wide text-white uppercase"
+              >
+                Spoiler
+              </Inset>
+            </span>
+          </MediaButton>
+        </div>
       )
     }
     return (
@@ -1237,13 +1233,13 @@ function SpoilerLinkCard({ url }: { url: string }) {
       </div>
     )
   return (
-    <button
-      type="button"
+    <CardButton
       data-spoiler-link="hidden"
-      title="Spoiler link, click to show"
-      aria-label="Spoiler link, press to show"
       onClick={() => setRevealed(true)}
-      className={`${box} text-on-surface-variant hover:bg-surface-container-high`}
+      tone="outlined"
+      pad="sm"
+      title="Spoiler link, click to show"
+      label="Spoiler link, press to show"
     >
       <EyeOff size={14} className="shrink-0" />
       <Inset
@@ -1255,7 +1251,7 @@ function SpoilerLinkCard({ url }: { url: string }) {
         Spoiler
       </Inset>
       Link hidden
-    </button>
+    </CardButton>
   )
 }
 

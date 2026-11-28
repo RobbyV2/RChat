@@ -61,12 +61,11 @@ describe('the only-you row', () => {
     expect(html).not.toContain('<button')
   })
 
-  test('Dismiss and the jump are real buttons with pointers', () => {
+  test('Dismiss and the jump are real buttons', () => {
     const html = renderToStaticMarkup(
       <OnlyYouRow text="Posted" onDismiss={noop} jump={{ label: 'Jump', onJump: noop }} />
     )
     expect(count(html, '<button type="button"')).toBe(2)
-    expect(count(html, 'cursor-pointer')).toBe(2)
     expect(html).toContain('>Dismiss</button>')
     expect(html).toContain('>Jump</button>')
   })
@@ -94,7 +93,7 @@ describe('message components', () => {
     const html = view({ pressed: new Set(['mc']) })
     expect(/data-cid="mc"[^>]*aria-pressed="true"/.test(html)).toBe(true)
     expect(/data-cid="val"[^>]*aria-pressed="false"/.test(html)).toBe(true)
-    expect(count(html, 'bg-secondary-container')).toBe(1)
+    expect(count(html, 'aria-pressed="true"')).toBe(1)
     const kinds = renderToStaticMarkup(
       <ComponentsView rows={vectors.cases[1].components} onPress={noop} onPick={noop} />
     )
@@ -239,19 +238,20 @@ describe('menu picks', () => {
 })
 
 describe('layering', () => {
-  // The layout boxes take props only themselves.
+  // The layout boxes and the controls take props only themselves.
   const BOXES = [
     'apps/web/app/components/layout/index.tsx',
+    'apps/web/app/components/controls.tsx',
     'apps/web/app/lib/controls.ts',
     'apps/web/app/lib/layout/index.ts',
   ]
 
-  test('props only: no store, no API client, no other component than the layout boxes', () => {
+  test('props only: no store, no API client, no other component than the layout boxes and the controls', () => {
     for (const name of ['components_view', 'only_you_row', 'automation_chip']) {
       const entry = `apps/web/app/components/automations/${name}.tsx`
       expect([name, [...importsOf(entry)].filter(f => !BOXES.includes(f))]).toEqual([name, []])
-      const packages = [...packagesOf(entry)].filter(p => p !== 'react').sort()
-      expect([name, packages]).toEqual([name, name === 'components_view' ? ['lucide-react'] : []])
+      const packages = [...packagesOf(entry)].filter(p => p !== 'react' && p !== 'lucide-react')
+      expect([name, packages]).toEqual([name, []])
     }
   })
 })

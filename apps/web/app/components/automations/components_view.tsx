@@ -3,7 +3,7 @@
 import { useId, useState } from 'react'
 import { Check, ChevronDown, ExternalLink } from 'lucide-react'
 import { Stack, Row, Surface, Inset } from '../layout'
-import { appButtonLook } from '../../lib/controls'
+import { AppButton, Button, CardButton } from '../controls'
 
 // The buttons and menus under an automation's message, as the shared rules write them.
 export type ButtonStyle = 'plain' | 'primary' | 'danger'
@@ -70,14 +70,6 @@ export const pickedLabel = (s: Select, picks: readonly string[]) =>
   s.placeholder ||
   'Choose'
 
-const baseCls = appButtonLook
-const STYLES: Record<ButtonStyle, string> = {
-  plain: 'border border-outline text-on-surface hover:bg-surface-container-highest',
-  primary: 'bg-primary text-on-primary hover:opacity-90',
-  danger: 'bg-error text-on-error hover:opacity-90',
-}
-const pressedCls = 'border border-transparent bg-secondary-container text-on-secondary-container'
-
 interface Shared {
   // Why nothing can be used ("Sign in to use this"); null when it can.
   reason: string | null
@@ -100,22 +92,21 @@ function ButtonView({
   const wait = waiting[c.cid]
   const role = c.do === 'role'
   return (
-    <button
-      type="button"
+    <AppButton
       data-cid={c.cid}
-      aria-pressed={role ? pressed : undefined}
       aria-busy={wait ? true : undefined}
       aria-describedby={reason ? reasonId : undefined}
       disabled={reason !== null || wait !== undefined}
       title={reason ?? wait ?? (c.do === 'link' ? c.url : undefined)}
       onClick={() => onPress(c.cid)}
-      className={`${baseCls} ${role && pressed ? pressedCls : STYLES[c.style ?? 'plain']}`}
+      style={c.style ?? 'plain'}
+      pressed={role ? pressed : undefined}
     >
       {c.emoji && <span aria-hidden="true">{c.emoji}</span>}
       <span className="min-w-0 truncate">{wait ?? c.label}</span>
       {role && pressed && <Check size={14} className="shrink-0" aria-hidden="true" />}
       {c.do === 'link' && <ExternalLink size={14} className="shrink-0" aria-hidden="true" />}
-    </button>
+    </AppButton>
   )
 }
 
@@ -151,8 +142,7 @@ function SelectView({
   }
   return (
     <Stack gap="2xs" place="w-full min-w-0">
-      <button
-        type="button"
+      <AppButton
         data-cid={c.cid}
         aria-haspopup="listbox"
         aria-expanded={open && !off}
@@ -165,11 +155,11 @@ function SelectView({
         onKeyDown={e => {
           if (e.key === 'Escape' && open) close()
         }}
-        className={`${baseCls} w-full justify-between rounded-xl ${STYLES.plain}`}
+        wide
       >
         <span className="min-w-0 truncate">{wait ?? pickedLabel(c, picks)}</span>
         <ChevronDown size={16} className="shrink-0" aria-hidden="true" />
-      </button>
+      </AppButton>
       {open && !off && (
         <Surface pad="2xs" tone="base" radius="lg" border>
           <div
@@ -185,21 +175,12 @@ function SelectView({
             {c.options.map(o => {
               const on = shown.includes(o.value)
               return (
-                <Surface
+                <CardButton
                   key={o.value}
-                  type="button"
                   role="option"
                   aria-selected={on}
                   onClick={() => choose(o.value)}
-                  as="button"
-                  row
                   pad="md"
-                  inset="chip"
-                  gap="md"
-                  tone="plain"
-                  radius="md"
-                  text="sm"
-                  look={`min-h-11 cursor-pointer text-left ${on ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface hover:bg-surface-container-highest'}`}
                 >
                   {o.emoji && <span aria-hidden="true">{o.emoji}</span>}
                   <span className="min-w-0 flex-1">
@@ -209,30 +190,23 @@ function SelectView({
                     )}
                   </span>
                   {on && <Check size={16} className="shrink-0" aria-hidden="true" />}
-                </Surface>
+                </CardButton>
               )
             })}
           </div>
           {many && (
             <Inset row pad="2xs" justify="end">
-              <Surface
-                type="button"
+              <Button
                 disabled={!picksOk(c, shown)}
                 onClick={() => {
                   close()
                   onPick(c.cid, [...shown])
                 }}
-                as="button"
-                pad="lg"
-                inset="chip"
-                tone="plain"
-                radius="full"
-                align="center"
-                text="sm"
-                look="cursor-pointer bg-primary font-medium text-on-primary hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+                variant="filled"
+                size="md"
               >
                 Done
-              </Surface>
+              </Button>
             </Inset>
           )}
         </Surface>

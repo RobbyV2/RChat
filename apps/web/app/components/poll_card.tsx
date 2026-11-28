@@ -1,7 +1,6 @@
 'use client'
 
 import { ask, sendTo } from '../lib/asks'
-import { iconButtonLook } from '../lib/controls'
 import { useAccount } from '../lib/client/react'
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
@@ -44,7 +43,7 @@ import {
 import { useStore } from '../lib/store'
 import type { Message, Poll, PollVoter } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
-import { Button, IconButton, LinkButton, Tab } from './controls'
+import { Button, IconButton, LinkButton, Tab, Chip, PollChoice } from './controls'
 import { Dialog, fieldCls, FieldError, Masked, Sentinel } from './ui'
 import { ShownAvatar, ShownName, useViewServer } from './shown_user'
 import { MessageTime } from './timestamp'
@@ -178,15 +177,9 @@ function ChoiceList({
         return (
           <Row as="li" key={o.id} gap="2xs">
             {onPick ? (
-              <button
-                type="button"
-                data-poll-option={o.id}
-                aria-pressed={sel}
-                onClick={() => onPick(o.id)}
-                className={`${cls} hover:border-outline`}
-              >
+              <PollChoice data-poll-option={o.id} onClick={() => onPick(o.id)} chosen={sel}>
                 {body}
-              </button>
+              </PollChoice>
             ) : (
               <div data-poll-option={o.id} className={cls}>
                 {body}
@@ -332,24 +325,9 @@ function Rating({
           {scores.map(v => {
             const on = picked[0] === v
             return (
-              <Surface
-                key={v}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                data-poll-score={v}
-                onClick={() => onPick(v)}
-                as="button"
-                pad="md"
-                inset="chip"
-                tone="plain"
-                radius="full"
-                align="center"
-                text="sm"
-                look={`min-w-9 border font-medium tabular-nums ${on ? 'border-primary bg-primary text-on-primary' : 'border-outline-variant hover:border-outline'}`}
-              >
+              <Chip key={v} data-poll-score={v} onClick={() => onPick(v)} radio on={on}>
                 {v}
-              </Surface>
+              </Chip>
             )
           })}
         </Row>
@@ -401,16 +379,12 @@ function AddOption({ id, onDone }: { id: number; onDone: () => void }) {
   return (
     <Stack gap="md">
       <Row gap="xs">
-        <button
+        <IconButton
           ref={emojiRef}
-          type="button"
-          title={emoji ? 'Change emoji' : 'Add an emoji'}
-          aria-label={emoji ? 'Change emoji' : 'Add an emoji'}
           onClick={() => setPicker(true)}
-          className={`inline-flex ${iconButtonLook('plain', 'md')}`}
-        >
-          {emoji ? <span className="text-base leading-none">{emoji}</span> : <Smile size={16} />}
-        </button>
+          {...(emoji ? { glyph: emoji } : { icon: Smile })}
+          label={emoji ? 'Change emoji' : 'Add an emoji'}
+        />
         <input
           autoFocus
           value={text}

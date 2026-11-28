@@ -1,6 +1,5 @@
 'use client'
 
-import { iconButtonLook } from '../lib/controls'
 import { useRef, useState, type ReactNode } from 'react'
 import { Plus, Smile, Trash2 } from 'lucide-react'
 import {
@@ -135,26 +134,19 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
             <Stack as="ul" gap="xs">
               {d.options.map((o, i) => (
                 <Row key={i} as="li" gap="xs">
-                  <button
+                  <IconButton
                     ref={el => {
                       anchors.current[i] = el
                     }}
-                    type="button"
-                    title={o.emoji ? 'Remove emoji' : 'Add an emoji'}
-                    aria-label={
+                    onClick={() => (o.emoji ? setOption(i, { emoji: null }) : setPicker(i))}
+                    {...(o.emoji ? { glyph: o.emoji } : { icon: Smile })}
+                    label={
                       o.emoji
                         ? `Remove emoji of option ${i + 1}`
                         : `Add an emoji to option ${i + 1}`
                     }
-                    onClick={() => (o.emoji ? setOption(i, { emoji: null }) : setPicker(i))}
-                    className={`inline-flex ${iconButtonLook('plain', 'md')}`}
-                  >
-                    {o.emoji ? (
-                      <span className="text-base leading-none">{o.emoji}</span>
-                    ) : (
-                      <Smile size={16} />
-                    )}
-                  </button>
+                    tooltip={o.emoji ? 'Remove emoji' : 'Add an emoji'}
+                  />
                   <input
                     value={o.text}
                     maxLength={POLL_OPTION_MAX}

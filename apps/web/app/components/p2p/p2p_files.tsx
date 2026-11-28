@@ -1,5 +1,5 @@
 'use client'
-import { IconButton } from '../controls'
+import { IconButton, MediaButton } from '../controls'
 import { Name } from '../name'
 import { instanceName } from '../../lib/names'
 import { altText, describableFile } from '../../lib/alt_text'
@@ -216,24 +216,21 @@ export function TileView({
   if (hidden) {
     if (kind === 'image' && url)
       return (
-        <button
-          data-file-spoiler
-          title="Click to reveal"
-          onClick={() => setRevealed(true)}
-          className="msg-part relative block w-fit overflow-hidden rounded-xl"
-        >
-          <img src={url} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
-          <span className="absolute inset-0 flex items-center justify-center">
-            <Inset
-              as="span"
-              pad="md"
-              inset="chip"
-              look="rounded-full bg-scrim/70 text-xs font-medium tracking-wide text-white uppercase"
-            >
-              Spoiler
-            </Inset>
-          </span>
-        </button>
+        <div className="msg-part">
+          <MediaButton data-file-spoiler title="Click to reveal" onClick={() => setRevealed(true)}>
+            <img src={url} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
+            <span className="absolute inset-0 flex items-center justify-center">
+              <Inset
+                as="span"
+                pad="md"
+                inset="chip"
+                look="rounded-full bg-scrim/70 text-xs font-medium tracking-wide text-white uppercase"
+              >
+                Spoiler
+              </Inset>
+            </span>
+          </MediaButton>
+        </div>
       )
     return (
       <div data-file-spoiler>

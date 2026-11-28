@@ -49,6 +49,11 @@ describe('the toolbar buttons', () => {
       .match(new RegExp(`<button[^>]*class="([^"]*)"[^>]*aria-label="${label}"`))?.[1]
       .split(' ') ??
     []
+  // The classes of the box around a button: it is what leaves the toolbar.
+  const box = (label: string) =>
+    html
+      .match(new RegExp(`<span class="([^"]*)"><button[^>]*aria-label="${label}"`))?.[1]
+      .split(' ') ?? []
   const COMPACT = 'group-data-[fit=compact]/bar:hidden'
   const TIGHT = 'group-data-[fit=tight]/bar:hidden'
   const quick = [...html.matchAll(/aria-label="(React with [^"]*)"/g)].map(m => m[1])
@@ -61,10 +66,11 @@ describe('the toolbar buttons', () => {
   test('the quick reactions leave a compact or tight toolbar', () => {
     expect(quick.length).toBe(3)
     for (const label of quick) {
-      expect(cls(label)).toContain(COMPACT)
-      expect(cls(label)).toContain(TIGHT)
+      expect(box(label)).toContain(COMPACT)
+      expect(box(label)).toContain(TIGHT)
     }
-    const rule = html.match(/<span aria-hidden="true" class="([^"]*)"/)?.[1].split(' ') ?? []
+    const rule =
+      html.match(/<span aria-hidden="true" class="(h-5 w-px [^"]*)"/)?.[1].split(' ') ?? []
     expect(rule).toContain(COMPACT)
     expect(rule).toContain(TIGHT)
   })
@@ -72,15 +78,15 @@ describe('the toolbar buttons', () => {
   test('a tight toolbar keeps add reaction, reply and more', () => {
     for (const label of ['Add reaction', 'Reply', 'More']) {
       expect(cls(label).length > 0).toBe(true)
-      expect(cls(label)).not.toContain(COMPACT)
-      expect(cls(label)).not.toContain(TIGHT)
+      expect(box(label)).not.toContain(COMPACT)
+      expect(box(label)).not.toContain(TIGHT)
     }
   })
 
   test('edit, forward, reply in thread and delete leave only a tight toolbar', () => {
     for (const label of ['Edit', 'Forward', 'Reply in thread', 'Delete message']) {
-      expect(cls(label)).toContain(TIGHT)
-      expect(cls(label)).not.toContain(COMPACT)
+      expect(box(label)).toContain(TIGHT)
+      expect(box(label)).not.toContain(COMPACT)
     }
   })
 })

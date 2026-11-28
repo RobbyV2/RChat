@@ -29,7 +29,7 @@ import { longPress, useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
-import { Button, IconButton } from './controls'
+import { Button, IconButton, LinkButton } from './controls'
 import { CloseButton, Masked, Sheet, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
 import { Name } from './name'
@@ -75,9 +75,6 @@ export function PinsButton({ narrowHidden = false }: { narrowHidden?: boolean })
   return isUnsupported(here) ? null : <PinsToggle pins={here} narrowHidden={narrowHidden} />
 }
 
-const pinLinkCls =
-  'cursor-pointer rounded-sm font-medium text-on-surface outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
-
 // "alice pinned a message to this channel. See all pinned messages." for the messages of any
 // place: `name` as the place shows people, `target` null when the message is gone.
 export function PinLine({
@@ -120,16 +117,16 @@ export function PinLine({
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {name} pinned{' '}
           {target !== null && pins ? (
-            <button type="button" onClick={() => pins.show(target)} className={pinLinkCls}>
+            <LinkButton onClick={() => pins.show(target)} tone="strong">
               a message
-            </button>
+            </LinkButton>
           ) : (
             'a message'
           )}{' '}
           to this {place}. See all{' '}
-          <button type="button" onClick={() => pins?.open()} className={pinLinkCls}>
+          <LinkButton onClick={() => pins?.open()} tone="strong">
             pinned messages
-          </button>
+          </LinkButton>
           . <MessageTime ts={ts} className="text-xs opacity-70" />
         </p>
       </Inset>

@@ -80,6 +80,7 @@ import { useFileMenu } from './file_card'
 import { Masked, useEscape } from './ui'
 import { Row, Surface, Inset } from './layout'
 import { useCopied } from '../lib/use_copied'
+import { IconButton, MediaButton } from './controls'
 
 // An image as the viewer shows it. `src` is the address its message shows it from, held while it
 // is on screen; `w` and `h` the size its sender gave, until the image tells its own; `placeholder`
@@ -207,9 +208,6 @@ const platformRows = (
   }
 }
 
-const imageButton =
-  'block w-fit max-w-full cursor-zoom-in rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
-
 // An image a message shows, the one way into the viewer: rendered only where the message shows
 // the image, it puts the image on its account's shelf while mounted, and it draws the image as the
 // button that opens the viewer, with its ALT pill and its menu on right-click and long-press
@@ -282,13 +280,7 @@ export function ViewableImage({
       className="msg-part w-fit max-w-full"
     >
       <span className="relative block w-fit max-w-full">
-        <button
-          ref={buttonRef}
-          type="button"
-          aria-label={`Open ${shown}`}
-          onClick={view}
-          className={imageButton}
-        >
+        <MediaButton ref={buttonRef} onClick={view} zoom label={`Open ${shown}`}>
           <img
             ref={imgRef}
             src={item.src}
@@ -299,7 +291,7 @@ export function ViewableImage({
             onError={() => setShows(null)}
             className={className}
           />
-        </button>
+        </MediaButton>
         <AltBadge alt={item.alt} own={item.own} />
       </span>
       {children}
@@ -374,9 +366,6 @@ const trapTab = (e: ReactKeyboardEvent, root: HTMLElement | null) => {
   }
 }
 
-const barBtn =
-  'flex size-9 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary aria-disabled:opacity-40 aria-disabled:hover:bg-transparent max-md:size-11 pointer-coarse:size-11'
-
 // An icon button of the bar. One that is off stays focusable, so pressing it to its limit (Zoom
 // in up to 400%) keeps focus, and keys, in the viewer.
 function BarButton({
@@ -385,33 +374,29 @@ function BarButton({
   title,
   onClick,
   disabled = false,
-  className = '',
+  narrowHidden = false,
 }: {
   icon: LucideIcon
   label: string
   title?: string
   onClick: (e: ReactMouseEvent<HTMLButtonElement>) => void
   disabled?: boolean
-  className?: string
+  narrowHidden?: boolean
 }) {
   return (
-    <button
-      type="button"
-      title={title ?? label}
-      aria-label={label}
+    <IconButton
+      place={narrowHidden ? 'max-md:hidden' : undefined}
       aria-disabled={disabled || undefined}
       onClick={e => {
         if (!disabled) onClick(e)
       }}
-      className={`${barBtn} ${className}`}
-    >
-      <Icon size={20} aria-hidden />
-    </button>
+      icon={Icon}
+      label={label}
+      tooltip={title ?? label}
+      size="lg"
+    />
   )
 }
-
-const arrowBtn =
-  'absolute top-1/2 z-raised flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-surface-container-highest/85 text-on-surface shadow-elevation-2 hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary'
 
 // The press point of a button, for a menu it opens.
 const at = (e: ReactMouseEvent<HTMLElement>) => {
@@ -746,13 +731,13 @@ export function LightboxView({
     const p = at(e)
     openMenu?.(p.x, p.y)
   }
-  const moreButton = (className: string) =>
+  const moreButton = (narrowHidden: boolean) =>
     openMenu && (
       <BarButton
         icon={EllipsisVertical}
         label="More options"
         onClick={more}
-        className={className}
+        narrowHidden={narrowHidden}
       />
     )
 
@@ -829,7 +814,7 @@ export function LightboxView({
           }}
         />
       )}
-      {moreButton('max-md:hidden')}
+      {moreButton(true)}
     </>
   )
 
@@ -880,7 +865,7 @@ export function LightboxView({
             </p>
           </div>
           {outward}
-          {moreButton('')}
+          {moreButton(false)}
           <BarButton icon={X} label="Close" onClick={close} />
         </Inset>
         <div
@@ -959,26 +944,26 @@ export function LightboxView({
             )}
           </div>
           {count > 1 && open.at > 0 && (
-            <button
-              type="button"
-              title="Previous image"
-              aria-label="Previous image"
-              onClick={() => go('prev')}
-              className={`${arrowBtn} left-safe-2`}
-            >
-              <ChevronLeft size={24} aria-hidden />
-            </button>
+            <div className="absolute top-1/2 left-safe-2 z-raised -translate-y-1/2">
+              <IconButton
+                icon={ChevronLeft}
+                label="Previous image"
+                onClick={() => go('prev')}
+                tone="raised"
+                size="xl"
+              />
+            </div>
           )}
           {count > 1 && open.at < count - 1 && (
-            <button
-              type="button"
-              title="Next image"
-              aria-label="Next image"
-              onClick={() => go('next')}
-              className={`${arrowBtn} right-safe-2`}
-            >
-              <ChevronRight size={24} aria-hidden />
-            </button>
+            <div className="absolute top-1/2 right-safe-2 z-raised -translate-y-1/2">
+              <IconButton
+                icon={ChevronRight}
+                label="Next image"
+                onClick={() => go('next')}
+                tone="raised"
+                size="xl"
+              />
+            </div>
           )}
           <AltBadge key={`alt ${key}`} alt={item.alt} own={item.own} up />
         </div>

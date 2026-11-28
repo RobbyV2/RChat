@@ -6,7 +6,7 @@ import { X } from 'lucide-react'
 import { charCount } from '../lib/rules'
 import { ALT_MAX, altAnnouncement, altError, cleanAlt } from '../lib/alt_text'
 import { Masked, smallFieldCls } from './ui'
-import { Stack, Surface, Inset } from './layout'
+import { Stack, Surface } from './layout'
 
 // The ALT pill in the bottom-right corner of an image that has a description; pressing it shows
 // the description over the image, below the pill or, with `up`, above it where there is no room
@@ -40,24 +40,21 @@ export function AltBadge({
   if (!alt) return null
   return (
     <span ref={box} data-alt-badge className="contents">
-      <Inset
-        type="button"
-        title="Image description"
-        aria-label="ALT, image description"
+      <IconButton
         aria-expanded={open}
         onClick={e => {
           e.preventDefault()
           e.stopPropagation()
           setOpen(o => !o)
         }}
-        as="button"
-        pad="xs"
-        inset="chip"
-        look="rounded bg-scrim/80 text-3xs font-bold tracking-wider text-white uppercase hover:bg-scrim"
         place="absolute right-2 bottom-2"
-      >
-        Alt
-      </Inset>
+        glyph={<span className="font-sans text-3xs font-bold tracking-wider">ALT</span>}
+        label="ALT, image description"
+        tooltip="Image description"
+        tone="overlay"
+        shape="square"
+        size="sm"
+      />
       {open && (
         <Surface
           role="note"

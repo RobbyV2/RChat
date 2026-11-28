@@ -1,6 +1,5 @@
 import { Inset, Row, Surface } from '../layout'
-import { noteActionLook } from '../../lib/controls'
-const actionCls = noteActionLook
+import { Button } from '../controls'
 
 // A reply only this user sees, as a local row under the messages.
 export function OnlyYouRow({
@@ -30,16 +29,8 @@ export function OnlyYouRow({
             Only you can see this
           </span>
           <div className="flex items-center">
-            {jump && (
-              <button type="button" onClick={jump.onJump} className={actionCls}>
-                {jump.label}
-              </button>
-            )}
-            {onDismiss && (
-              <button type="button" onClick={onDismiss} className={actionCls}>
-                Dismiss
-              </button>
-            )}
+            {jump && <Button onClick={jump.onJump}>{jump.label}</Button>}
+            {onDismiss && <Button onClick={onDismiss}>Dismiss</Button>}
           </div>
         </Row>
         <p

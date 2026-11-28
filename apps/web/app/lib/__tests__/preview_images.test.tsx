@@ -141,7 +141,7 @@ describe('link preview images', () => {
       expect(md(absolute)).not.toContain('<img')
       expect(md('/api/media/f1')).not.toContain('<img')
       expect(attached('pic.png')).not.toContain('<img')
-      expect(attached('report.pdf')).toContain('<button title="Download report.pdf"')
+      expect(attached('report.pdf')).toContain('title="Download report.pdf"')
       expect(render('/api/messages/5/embeds/0/image?v=0123456789abcdef')).not.toContain('<img')
       const requests: RequestInit[] = []
       globalThis.fetch = (async (_input, init) => {
@@ -186,7 +186,7 @@ describe('link preview images', () => {
     expect(picture.includes('<img')).toBe(false)
     expect(picture.includes('chat.b.com')).toBe(false)
     const html = attached('report.pdf')
-    expect(html).toContain('<button title="Download report.pdf"')
+    expect(html).toContain('title="Download report.pdf"')
     expect(html.includes('href="https://chat.b.com')).toBe(false)
     expect(html.includes('download=')).toBe(false)
   })

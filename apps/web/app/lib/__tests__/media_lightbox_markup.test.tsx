@@ -482,7 +482,7 @@ describe('the viewer', () => {
 
   test('Download is off while no download may start', () => {
     const html = render([one({}, { download: null })], 0)
-    expect(/<button[^>]*aria-label="Download"[^>]*aria-disabled="true"/.test(html)).toBe(true)
+    expect(/<button(?=[^>]*aria-disabled="true")[^>]*aria-label="Download"/.test(html)).toBe(true)
   })
 
   test('with animations off the backdrop is a plain scrim, without blur', () => {
@@ -505,9 +505,11 @@ describe('the viewer', () => {
     const html = render([one({ alt: 'A cat on a mat' })], 0)
     expect(html).toContain('<img src="blob:one" alt="A cat on a mat"')
     const stage = html.slice(html.indexOf('data-lightbox-stage'))
-    expect(stage).toContain(
-      'title="Image description" aria-label="ALT, image description" aria-expanded="false"'
-    )
+    expect(
+      /<button(?=[^>]*aria-expanded="false")[^>]*title="Image description" aria-label="ALT, image description"/.test(
+        stage
+      )
+    ).toBe(true)
     const plain = render([one()], 0)
     expect(plain).toContain('<img src="blob:one" alt="one.png"')
     expect(plain.includes('data-alt-badge')).toBe(false)

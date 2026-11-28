@@ -1,5 +1,6 @@
 'use client'
 
+import { iconButtonLook } from '../lib/controls'
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Download,
@@ -40,7 +41,7 @@ import { useLiveNow } from './timestamp'
 import { MaskedText, MaskedTogether } from './ui'
 import { Row, Surface } from './layout'
 import { time } from '../lib/platform/time'
-import { miniIconLook } from '../lib/controls'
+import { IconButton } from './controls'
 
 const ICONS: Record<FileKind, LucideIcon> = {
   archive: FileArchive,
@@ -97,11 +98,6 @@ export interface FileCardProps extends CardProps {
   // copy the instance's address of a file it hosts, and remove the attachment.
   menu: FileMenuOwn
 }
-
-const square =
-  'flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:size-12'
-const primaryCls = `${square} bg-primary text-on-primary disabled:opacity-40`
-const extraCls = miniIconLook
 const cardBox = 'msg-part w-md max-w-full min-w-0'
 
 // A file in a message, hosted or P2P: its kind, name, size and a download button, with a menu
@@ -156,34 +152,35 @@ export function FileCardBody({
   const { label, title } = primaryText(primary.label, shown, primary.hint)
   const button =
     progress && onCancel ? (
-      <button
-        title="Cancel download"
-        aria-label="Cancel download"
+      <IconButton
+        icon={X}
+        label="Cancel download"
         onClick={onCancel}
-        className={`${square} bg-surface-container-highest text-on-surface hover:bg-surface-container-high`}
-      >
-        <X size={20} />
-      </button>
+        tone="tonal"
+        size="xl"
+        shape="square"
+      />
     ) : primary.href !== undefined ? (
       <a
         href={primary.href}
         download={primary.download}
         title={title}
         aria-label={label}
-        className={`${primaryCls} hover:bg-primary/90`}
+        className={`inline-flex ${iconButtonLook('filled', 'xl', 'square')}`}
       >
-        <Download size={20} />
+        <Download size={24} aria-hidden />
       </a>
     ) : (
-      <button
-        title={title}
-        aria-label={label}
+      <IconButton
+        icon={Download}
+        label={label}
+        tooltip={title}
         onClick={primary.onClick}
         disabled={primary.disabled}
-        className={`${primaryCls} enabled:hover:bg-primary/90`}
-      >
-        <Download size={20} />
-      </button>
+        tone="filled"
+        size="xl"
+        shape="square"
+      />
     )
   return (
     <div
@@ -226,15 +223,14 @@ export function FileCardBody({
             extra?.map(x => {
               const { label: extraLabel, icon: ExtraIcon } = EXTRAS[x.kind]
               return (
-                <button
+                <IconButton
+                  icon={ExtraIcon}
+                  label={extraLabel}
+                  tooltip={x.hint ? `${extraLabel} ${x.hint}` : extraLabel}
                   key={x.kind}
-                  title={x.hint ? `${extraLabel} ${x.hint}` : extraLabel}
-                  aria-label={extraLabel}
                   onClick={x.run}
-                  className={extraCls}
-                >
-                  <ExtraIcon size={14} />
-                </button>
+                  size="sm"
+                />
               )
             })}
           {button}

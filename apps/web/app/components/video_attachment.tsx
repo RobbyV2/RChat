@@ -1,5 +1,6 @@
 'use client'
 
+import { iconButtonLook } from '../lib/controls'
 import {
   useCallback,
   useEffect,
@@ -24,6 +25,7 @@ import { longPress } from './context_menu'
 import { useFileMenu, type FilePrimary } from './file_card'
 import { time } from '../lib/platform/time'
 import type { Cancel } from '../lib/clock'
+import { IconButton } from './controls'
 
 interface VideoProps {
   src: string
@@ -60,9 +62,6 @@ export interface VideoAttachmentProps extends VideoProps {
   // When it plays to its end.
   onEnded?: () => void
 }
-
-const button =
-  'flex size-9 items-center justify-center rounded-lg text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-40 max-md:size-11 pointer-coarse:size-11'
 
 // A ref for a video that tells `onPlaying` whether it plays (in a picture-in-picture window too),
 // and false once it is gone, and `onEnded` when it plays to its end.
@@ -176,34 +175,35 @@ export function VideoAttachmentBody({
         />
         <div className={pillClass(moves)}>
           {progress && onCancel ? (
-            <button
-              title="Cancel download"
-              aria-label="Cancel download"
+            <IconButton
+              icon={X}
+              label="Cancel download"
               onClick={onCancel}
-              className={`${button} hover:bg-surface-container-high`}
-            >
-              <X size={18} />
-            </button>
+              tone="inherit"
+              size="lg"
+              shape="square"
+            />
           ) : primary.href !== undefined ? (
             <a
               href={primary.href}
               download={primary.download}
               title={title}
               aria-label={label}
-              className={`${button} hover:bg-surface-container-high`}
+              className={`inline-flex ${iconButtonLook('inherit', 'lg', 'square')}`}
             >
-              <Download size={18} />
+              <Download size={20} aria-hidden />
             </a>
           ) : (
-            <button
-              title={title}
-              aria-label={label}
+            <IconButton
+              icon={Download}
+              label={label}
+              tooltip={title}
               onClick={primary.onClick}
               disabled={primary.disabled}
-              className={`${button} enabled:hover:bg-surface-container-high`}
-            >
-              <Download size={18} />
-            </button>
+              tone="inherit"
+              size="lg"
+              shape="square"
+            />
           )}
         </div>
       </div>

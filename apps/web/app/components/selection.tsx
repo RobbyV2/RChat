@@ -1,6 +1,6 @@
 'use client'
 import { OwnLoadNotice } from './own_load'
-import { IconButton } from './controls'
+import { IconButton, Button, Chip, Tick } from './controls'
 import { useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 
@@ -12,7 +12,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react'
-import { Check, Ellipsis, ListChecks, SquareCheckBig, X } from 'lucide-react'
+import { Ellipsis, ListChecks, SquareCheckBig, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { actionsVersion, subscribeActions } from '../lib/actions/registry'
 import { useStore } from '../lib/store'
@@ -22,7 +22,7 @@ import { canDeleteIn } from '../lib/selection_store'
 import { allKey, selectKey } from '../lib/shortcuts'
 import type { Message, UserRef } from '../lib/types'
 import { useMedia } from './context_menu'
-import { Row, Surface, Inset } from './layout'
+import { Row, Surface } from './layout'
 
 // Clicks on these never pick a row.
 const INTERACTIVE =
@@ -150,33 +150,14 @@ export function Selectable({
       }
     >
       {state > 0 && (
-        <Inset
-          type="button"
-          role="checkbox"
-          aria-checked={state === 2}
-          title={state === 2 ? 'Unselect message' : 'Select message'}
-          aria-label={state === 2 ? 'Unselect message' : 'Select message'}
+        <Tick
           onClick={e => {
             e.stopPropagation()
             pick(e, true)
           }}
-          as="button"
-          row
-          pad="md"
-          align="start"
-          look="outline-none"
-          place="shrink-0"
-        >
-          <span
-            className={`flex h-5 w-5 items-center justify-center rounded-md border-2 ${
-              state === 2
-                ? 'border-primary bg-primary text-on-primary'
-                : 'border-outline bg-surface hover:border-primary'
-            } focus-visible:outline-2`}
-          >
-            {state === 2 && <Check size={14} strokeWidth={3} />}
-          </span>
-        </Inset>
+          checked={state === 2}
+          label={state === 2 ? 'Unselect message' : 'Select message'}
+        />
       )}
       <div className={state ? 'min-w-0 flex-1' : undefined}>
         <RowSelecting.Provider value={state > 0}>{children}</RowSelecting.Provider>
@@ -259,8 +240,6 @@ export function useSelectionKeys(
   }, [acct, scope, thread])
 }
 
-const barLook = 'font-medium hover:bg-surface-container-highest disabled:opacity-50'
-
 // The bar shown while selecting in `scope`: sticky above the list on wide screens, a bottom
 // sheet (in place of the composer) on narrow ones.
 export function SelectionBar({
@@ -318,26 +297,18 @@ export function SelectionBar({
     </span>
   )
   const buttons = primary.map(a => (
-    <Surface
+    <Button
       key={a.id}
-      title={a.label}
-      aria-label={a.label}
       disabled={busy !== null}
       onClick={a.run}
-      as="button"
-      row
-      pad={compact ? 'sm' : 'md'}
-      inset="chip"
-      gap="xs"
-      tone="plain"
-      radius="full"
-      text="sm"
-      look={`${barLook} ${a.danger ? 'text-error' : ''}`}
       place="shrink-0"
+      variant={a.danger ? 'danger' : 'text'}
+      icon={a.icon}
+      title={a.label}
+      label={a.label}
     >
-      {a.icon && <a.icon size={16} />}
       <span className={sheet || compact ? 'sr-only' : 'hidden lg:inline'}>{a.label}</span>
-    </Surface>
+    </Button>
   ))
   const moreBtn = more.length > 0 && (
     <IconButton
@@ -368,24 +339,15 @@ export function SelectionBar({
         <Row gap="sm">
           {exit}
           {status}
-          <Surface
-            aria-pressed={selection.ranging}
+          <Chip
             title="Select range: tap the first and the last message"
             onClick={() => acct.store.getState().toggleSelectRange()}
-            as="button"
-            row
-            pad="md"
-            inset="chip"
-            gap="xs"
-            tone="plain"
-            radius="full"
-            text="sm"
-            look={`${barLook} ${selection.ranging ? 'bg-secondary-container text-on-secondary-container' : ''}`}
             place="shrink-0"
+            on={selection.ranging}
+            icon={ListChecks}
           >
-            <ListChecks size={16} />
             Select range
-          </Surface>
+          </Chip>
         </Row>
         {selection.ranging && (
           <p className="text-xs text-on-surface-variant">
@@ -451,16 +413,13 @@ export function BulkJobBar({ scope }: { scope: string | null }) {
       <span className="min-w-0 flex-1 truncate">
         Deleting messages: {done} of about {of}
       </span>
-      <Inset
+      <Button
         onClick={() => void acct.store.getState().cancelBulkJob(scope)}
-        as="button"
-        pad="md"
-        inset="chip"
-        look="rounded-full font-medium hover:bg-on-secondary-container/10"
         place="shrink-0"
+        variant="inherit"
       >
         Cancel
-      </Inset>
+      </Button>
     </Surface>
   )
 }

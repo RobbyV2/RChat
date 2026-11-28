@@ -4,6 +4,7 @@ import { Check } from 'lucide-react'
 import { Inset, Row, Surface } from './layout'
 import { useMotionPlays } from '../lib/motion/use_motion'
 import { unreadBannerText, type UnreadSummary } from '../lib/unread_banner'
+import { Button } from './controls'
 
 // The bar at the top of a list with unread messages: how many and since when (jumps to the first
 // one), and Mark as read.
@@ -30,36 +31,25 @@ export function UnreadBanner({
       look={`bg-primary text-on-primary ${moves ? 'animate-banner-in' : ''}`}
       place="absolute inset-x-3 top-2 z-raised"
     >
-      <Inset
+      <Button
         onClick={onJump}
         title="Jump to the first unread message"
-        as="button"
-        pad="sm"
-        inset="sides"
-        row
-        look="min-h-9 text-left font-medium pointer-coarse:min-h-11"
         place="min-w-0 flex-1"
+        variant="inherit"
+        align="start"
       >
         <span className="truncate">{unreadBannerText(unread)}</span>
-      </Inset>
-      <Surface
-        as="button"
+      </Button>
+      <Button
         onClick={onMarkRead}
         title="Mark as read"
-        aria-label="Mark as read"
-        pad="sm"
-        inset="sides"
-        gap="xs"
-        row
-        tone="plain"
-        radius="md"
-        justify="center"
-        look="min-h-9 min-w-9 font-medium hover:bg-on-primary/10 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
         place="shrink-0"
+        variant="inherit"
+        label="Mark as read"
       >
         <span className="max-sm:hidden">Mark as read</span>
         <Check size={16} aria-hidden />
-      </Surface>
+      </Button>
     </Surface>
   )
 }

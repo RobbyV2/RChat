@@ -52,7 +52,7 @@ import { BlockedQuote } from './blocking'
 import { MessageTime } from './timestamp'
 import { PollCard } from './poll_card'
 import { fullTimeOf, plainStamps } from '../lib/timestamps'
-import { Button, LinkButton } from './controls'
+import { Button, LinkButton, Chip } from './controls'
 import { Masked, useOwnServer } from './ui'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
@@ -184,28 +184,17 @@ export function ForwardBar({
       actions={
         <>
           {show !== null && (
-            <Surface
-              type="button"
-              role="switch"
-              aria-checked={show}
+            <Chip
               title={SHOW_SOURCE}
-              aria-label={SHOW_SOURCE}
               onClick={() => setShowSource(draftKey, !show)}
-              as="button"
-              row
-              pad="sm"
-              inset="chip"
-              gap="2xs"
-              tone="plain"
-              radius="full"
-              justify="center"
-              text="xs"
-              look={`font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-10 pointer-coarse:min-w-10 ${show ? 'bg-secondary-container text-on-secondary-container hover:opacity-90' : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'}`}
               place="shrink-0"
+              as="switch"
+              on={show}
+              icon={MapPin}
+              label={SHOW_SOURCE}
             >
-              <MapPin size={12} aria-hidden className="shrink-0" />
               <span className="@max-sm:hidden">{SHOW_SOURCE}</span>
-            </Surface>
+            </Chip>
           )}
           <Button
             variant="filled"
@@ -290,7 +279,6 @@ export function ForwardBar({
 
 const PILL = sourcePillLook
 const PLACE = sourcePlaceLook
-const PLACE_BUTTON = `${PLACE} cursor-pointer hover:underline focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-8`
 const CANT_OPEN = "You can't open this"
 
 function P2pInitial({ name, own }: { name: string; own: boolean }) {
@@ -370,14 +358,15 @@ export function ForwardSourcePill({
         {frame || !openServer ? (
           <span className={`${PLACE} max-w-9/20`}>{serverName}</span>
         ) : (
-          <button
-            type="button"
-            title={streamer ? 'Open server' : `Open ${mask(server.name)}`}
-            onClick={stop(openServer)}
-            className={`${PLACE_BUTTON} max-w-9/20`}
-          >
-            {serverName}
-          </button>
+          <span className="flex max-w-9/20 min-w-0">
+            <LinkButton
+              title={streamer ? 'Open server' : `Open ${mask(server.name)}`}
+              onClick={stop(openServer)}
+              tone="strong"
+            >
+              <span className={PLACE}>{serverName}</span>
+            </LinkButton>
+          </span>
         )}
         {channel && (
           <>
@@ -385,14 +374,9 @@ export function ForwardSourcePill({
             {frame || !openOriginal ? (
               <span className={PLACE}>{channelName}</span>
             ) : (
-              <button
-                type="button"
-                title={original}
-                onClick={stop(openOriginal)}
-                className={PLACE_BUTTON}
-              >
-                {channelName}
-              </button>
+              <LinkButton title={original} onClick={stop(openOriginal)} tone="strong">
+                <span className={PLACE}>{channelName}</span>
+              </LinkButton>
             )}
           </>
         )}
@@ -404,14 +388,9 @@ export function ForwardSourcePill({
       <div data-forward-pill="dm" className={PILL}>
         {head}
         {pill.open && !frame && openOriginal ? (
-          <button
-            type="button"
-            title={original}
-            onClick={stop(openOriginal)}
-            className="min-w-0 truncate rounded-sm font-semibold text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-8"
-          >
-            a direct message
-          </button>
+          <LinkButton title={original} onClick={stop(openOriginal)} tone="strong">
+            <span className="truncate">a direct message</span>
+          </LinkButton>
         ) : (
           <span className="min-w-0 truncate">a direct message</span>
         )}
@@ -639,14 +618,14 @@ export function ForwardCard({
     return (
       <div data-forward={fwd.source_id} className="min-w-0 text-sm text-on-surface-variant">
         Forwarded message · {target && <RevealChannelPreview target={target} />}{' '}
-        <button
-          type="button"
-          className="min-h-8 cursor-pointer underline"
+        <LinkButton
           disabled={sending}
           onClick={() => void openForward(m)}
+          tone="inherit"
+          underlined
         >
           Open original
-        </button>
+        </LinkButton>
       </div>
     )
   return (

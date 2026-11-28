@@ -18,6 +18,7 @@ import {
 } from '../lib/follow'
 import { time } from '../lib/platform/time'
 import { Surface } from './layout'
+import { Button } from './controls'
 
 const KEYBOARD_MIN = 120
 
@@ -366,23 +367,9 @@ export function useFocusMessage(
 export function PresentBar({ onJump, count = 0 }: { onJump: () => void; count?: number }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-raised flex justify-center">
-      <Surface
-        onClick={onJump}
-        as="button"
-        pad="md"
-        inset="chip"
-        gap="xs"
-        row
-        tone="plain"
-        radius="full"
-        elevation={2}
-        text="xs"
-        look="bg-primary font-medium text-on-primary hover:opacity-90"
-        place="pointer-events-auto"
-      >
-        <ArrowDown size={14} />
+      <Button onClick={onJump} place="pointer-events-auto" variant="filled" raised icon={ArrowDown}>
         {count > 0 ? `${count} new ${count === 1 ? 'message' : 'messages'}` : 'Jump to present'}
-      </Surface>
+      </Button>
     </div>
   )
 }

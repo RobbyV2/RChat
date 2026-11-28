@@ -48,13 +48,13 @@ describe('file card', () => {
 
   test('only an enabled button or a link changes color on hover', () => {
     const button = (html: string) => classOf(html, /<button[^>]* class="([^"]*)"/)
-    expect(button(card())).toContain('enabled:hover:bg-primary/90')
-    expect(button(card()).includes('hover:bg-primary/90')).toBe(false)
+    expect(button(card())).toContain('hover-idle:opacity-90')
+    expect(button(card()).some(c => c.startsWith('hover:'))).toBe(false)
     const off = card({ primary: { label: 'Download', disabled: true } })
     expect(button(off)).toContain('disabled:opacity-40')
-    expect(button(off).includes('hover:bg-primary/90')).toBe(false)
+    expect(button(off).some(c => c.startsWith('hover:'))).toBe(false)
     const link = card({ primary: { label: 'Download', href: '/api/media/f1' } })
-    expect(classOf(link, /<a [^>]*class="([^"]*)"/)).toContain('hover:bg-primary/90')
+    expect(classOf(link, /<a [^>]*class="([^"]*)"/)).toContain('hover-idle:opacity-90')
   })
 
   test("the button's label and title name the shown file; a hint goes in the title only", () => {

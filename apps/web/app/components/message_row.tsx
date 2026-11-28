@@ -1,7 +1,7 @@
 'use client'
 
 import { Covered } from './covered'
-import { Button } from './controls'
+import { Button, LinkButton } from './controls'
 import { UNREADABLE_TEXT } from '../lib/sealing'
 import { memo, type ComponentType, type ReactNode } from 'react'
 import { Check, CircleAlert, Clock, EyeOff, MessageSquareText, Reply, Trash2 } from 'lucide-react'
@@ -219,20 +219,18 @@ function Sent({ m, sent, sentTip, canRetry, canDrop, on }: RowProps) {
         <CircleAlert size={12} aria-hidden className="text-error" />
         <span className="text-xs text-error">Not sent</span>
         {canRetry && (
-          <button
-            onClick={() => on.retry?.(m)}
-            className="text-xs font-medium text-error hover:underline"
-          >
-            Retry
-          </button>
+          <span className="text-xs">
+            <LinkButton onClick={() => on.retry?.(m)} tone="error">
+              Retry
+            </LinkButton>
+          </span>
         )}
         {canDrop && (
-          <button
-            onClick={e => on.remove(m, e.shiftKey)}
-            className="text-xs font-medium text-error hover:underline"
-          >
-            Delete
-          </button>
+          <span className="text-xs">
+            <LinkButton onClick={e => on.remove(m, e.shiftKey)} tone="error">
+              Delete
+            </LinkButton>
+          </span>
         )}
       </Row>
     )

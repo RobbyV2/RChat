@@ -526,7 +526,7 @@ export function Tile({
           tooltip="More"
           tone="overlay"
           size={compact ? 'xs' : 'sm'}
-        ></IconButton>
+        />
       )}
     </div>
   )

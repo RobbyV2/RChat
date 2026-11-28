@@ -15,6 +15,7 @@ import { keptWhenTight, toolbarFit } from '../lib/toolbar_fit'
 import { EmojiPicker, useTopEmojis } from './emoji_picker'
 import { time } from '../lib/platform/time'
 import { messageToolbarLook } from '../lib/controls'
+import { IconButton } from './controls'
 
 // It straddles the row's top edge, so a pointer moving up from the row reaches it before leaving.
 const messageToolbarCls = messageToolbarLook
@@ -71,8 +72,6 @@ function useClampedToolbar(ref: RefObject<HTMLDivElement | null>, shown: boolean
     }
   }, [ref, shown])
 }
-const messageToolCls =
-  'flex h-8 w-8 items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary'
 
 export interface ToolbarAction {
   key: string
@@ -117,28 +116,27 @@ export function MessageToolbar({
           {top.map(e => {
             const blocked = !canAddEmoji(m, e)
             return (
-              <button
-                key={e}
-                type="button"
-                title={blocked ? FULL_TITLE : `React with ${e}`}
-                aria-label={`React with ${e}`}
-                aria-pressed={reacted(m, e)}
-                aria-disabled={blocked || undefined}
-                onClick={() => {
-                  if (!blocked) toggle(m, e)
-                }}
-                className={`${messageToolCls} ${quickCls} font-emoji text-lg leading-none ${blocked ? 'cursor-not-allowed [&>span]:opacity-40' : 'hover:[&>span]:scale-115'}`}
-              >
-                <span className="transition-transform">{e}</span>
-              </button>
+              <span key={e} className={`contents ${quickCls}`}>
+                <IconButton
+                  aria-disabled={blocked || undefined}
+                  onClick={() => {
+                    if (!blocked) toggle(m, e)
+                  }}
+                  glyph={e}
+                  label={`React with ${e}`}
+                  tooltip={blocked ? FULL_TITLE : `React with ${e}`}
+                  shape="square"
+                  pressed={reacted(m, e)}
+                />
+              </span>
             )
           })}
           <span aria-hidden className={`h-5 w-px bg-outline-variant ${quickCls}`} />
-          <button
+          <IconButton
+            icon={SmilePlus}
+            label="Add reaction"
+            tooltip={full ? FULL_TITLE : 'Add reaction'}
             ref={addRef}
-            type="button"
-            title={full ? FULL_TITLE : 'Add reaction'}
-            aria-label="Add reaction"
             aria-disabled={full || undefined}
             aria-expanded={open}
             onClick={e => {
@@ -146,38 +144,34 @@ export function MessageToolbar({
               keyboard.current = e.detail === 0
               setOpen(o => !o)
             }}
-            className={`${messageToolCls} ${full ? 'cursor-not-allowed [&>svg]:opacity-40' : 'hover:text-primary'} ${open ? 'bg-surface-container-highest text-primary' : ''}`}
-          >
-            <SmilePlus size={18} />
-          </button>
+            shape="square"
+            aria-haspopup="dialog"
+          />
         </>
       )}
       {actions.map(a => (
-        <button
-          key={a.key}
-          type="button"
-          title={a.label}
-          aria-label={a.label}
-          onClick={a.onClick}
-          className={`${messageToolCls} ${keptWhenTight(a.key) ? '' : spareCls} ${a.danger ? 'hover:text-error' : 'hover:text-primary'}`}
-        >
-          <a.icon size={18} />
-        </button>
+        <span key={a.key} className={keptWhenTight(a.key) ? 'contents' : `contents ${spareCls}`}>
+          <IconButton
+            icon={a.icon}
+            label={a.label}
+            key={a.key}
+            onClick={a.onClick}
+            shape="square"
+            tone={a.danger ? 'danger' : 'plain'}
+          />
+        </span>
       ))}
       {onMore && (
-        <button
-          type="button"
-          title="More"
-          aria-label="More"
+        <IconButton
+          icon={MoreHorizontal}
+          label="More"
           aria-haspopup="menu"
           onClick={e => {
             const r = e.currentTarget.getBoundingClientRect()
             onMore(r.left, r.bottom + 4)
           }}
-          className={`${messageToolCls} hover:text-on-surface`}
-        >
-          <MoreHorizontal size={18} />
-        </button>
+          shape="square"
+        />
       )}
       {open && (
         <EmojiPicker
