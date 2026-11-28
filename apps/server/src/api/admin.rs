@@ -28,20 +28,30 @@ use crate::db::{AvatarKind, Db, User, get_user, now, purge_messages, recount_mem
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-#[derive(Serialize)]
+/// Counts of the instance and the state of its relay.
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = AdminOverview)]
 pub struct Overview {
+    /// Servers on the instance.
     pub server_count: i64,
+    /// Accounts on the instance.
     pub user_count: i64,
     /// Accounts whose password is still a temporary one.
     pub temporary_count: i64,
+    /// The STUN and TURN relay.
     pub relay: RelayStatus,
 }
 
-#[derive(Serialize)]
+/// The relay this instance advertises to P2P clients.
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct RelayStatus {
+    /// Whether the instance advertises a relay.
     pub enabled: bool,
+    /// Whether it relays media (TURN) and not only finds addresses (STUN).
     pub turn: bool,
+    /// The relay port.
     pub port: Option<u16>,
+    /// Open relay allocations, when this process runs the relay.
     pub allocations: Option<usize>,
 }
 
@@ -56,11 +66,15 @@ fn relay_status(state: &AppState) -> RelayStatus {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct AdminQuery {
+    /// Rows to skip, when no `cursor` is given.
     offset: Option<i64>,
+    /// Page size, 1 to 50 (default 50).
     limit: Option<i64>,
+    /// Text to find in names and display names.
     q: Option<String>,
+    /// The `X-Next-Cursor` of the page before.
     cursor: Option<String>,
     /// For the list of accounts: `temporary` (the password is a temporary one) or `expired`
     /// (a temporary one that has expired).
@@ -183,22 +197,36 @@ pub(crate) fn like_pattern(q: &str, fuzzy: bool) -> String {
     p
 }
 
-#[derive(Deserialize)]
+/// Request body of `POST /api/v1/admin/ban`.
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = AdminBanReq)]
 pub struct BanReq {
+    /// The account to ban, case-insensitive.
     username: String,
 }
 
-#[derive(Clone, Copy, Deserialize, Default)]
+/// The profanity filter targets to change. A target left out stays as it is.
+#[derive(Clone, Copy, Deserialize, Default, utoipa::ToSchema)]
 pub struct ProfanityTargetsPatch {
+    /// Whether the filter checks messages.
     messages: Option<bool>,
+    /// Whether the filter checks links.
     links: Option<bool>,
+    /// Whether the filter checks usernames.
     usernames: Option<bool>,
+    /// Whether the filter checks server names.
     server_names: Option<bool>,
+    /// Whether the filter checks channel names.
     channel_names: Option<bool>,
+    /// Whether the filter checks role names.
     role_names: Option<bool>,
+    /// Whether the filter checks file names.
     file_names: Option<bool>,
+    /// Whether the filter checks bios.
     bios: Option<bool>,
+    /// Whether the filter checks channel topics.
     channel_topics: Option<bool>,
+    /// Whether the filter checks category names.
     category_names: Option<bool>,
 }
 
@@ -231,36 +259,78 @@ impl ProfanityTargetsPatch {
     }
 }
 
-#[derive(Deserialize)]
+/// Request body of `PATCH /api/v1/admin/settings`: the settings to change. A field left out stays
+/// as it is.
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SettingsPatch {
+    /// Master switch of the profanity filter. Off by default (`PROFANITY_FILTER`). When on, content
+    /// matching a target in `profanity_targets` is rejected with 400 `Content blocked by profanity
+    /// filter`.
     profanity_filter: Option<bool>,
+    /// Which texts the filter checks while `profanity_filter` is on.
     #[serde(default)]
     profanity_targets: ProfanityTargetsPatch,
+    /// While the filter checks `file_names`: file names, and file names in the paths of links in
+    /// any checked text, are also read whole, like message text. Off by default
+    /// (`PROFANITY_STRICT_FILE_NAMES`): a known extension is read apart from the name before it.
     #[serde(default)]
     profanity_strict_file_names: Option<bool>,
+    /// Link previews: the server fetches page metadata for links in messages.
     asset_previews: Option<bool>,
+    /// File uploads through `POST /api/v1/media`.
     asset_uploads: Option<bool>,
+    /// Peer-to-peer attachments: files hosted by the sender's browser, without a size limit. With
+    /// this and `asset_uploads` off the instance is text only: messages carrying any attachment are
+    /// rejected and existing ones are no longer offered.
     p2p_attachments: Option<bool>,
+    /// Guest access: reading servers without an account.
     guests_enabled: Option<bool>,
+    /// Outgoing webhooks: servers may have the instance POST signed event payloads to URLs their
+    /// managers choose. Off by default (`OUTGOING_WEBHOOKS`); while off, nothing is queued or sent
+    /// and outgoing webhooks cannot be created.
     #[serde(default)]
     outgoing_webhooks: Option<bool>,
+    /// Reports to a server's moderators.
     server_reports: Option<bool>,
+    /// Reports to the instance.
     instance_reports: Option<bool>,
+    /// Embeddable widgets.
     widgets: Option<bool>,
+    /// Sending from widgets, and Quick join.
     widget_chat: Option<bool>,
+    /// Site permission for servers to opt in to guest chat.
     guest_chat_enabled: Option<bool>,
+    /// Site permission for servers to opt in to guest voice.
     guest_voice_enabled: Option<bool>,
+    /// Read-only widget links.
     widget_read_links: Option<bool>,
+    /// Widgets for P2P servers through the instance's bridge. Off by default.
     widget_bridge: Option<bool>,
+    /// End-to-end encryption. Off by default.
     e2ee: Option<bool>,
+    /// The compliance archive in new encrypted spaces. Off by default.
     e2ee_compliance: Option<bool>,
+    /// Setting and resetting backup phrases.
     backup_phrase: Option<bool>,
+    /// Uploads of P2P backups (`PUT /api/v1/me/p2p_backup/{ik}`). Off: uploads answer 404; stored
+    /// backups can still be read and deleted.
     p2p_backup: Option<bool>,
+    /// Changing display names.
     display_names: Option<bool>,
+    /// The tour for new accounts.
     onboarding: Option<bool>,
+    /// Password sign-in. Off: no new passwords (see `registration`); existing passwords still sign
+    /// in.
     password_login: Option<bool>,
+    /// Calls through the instance's media server when it runs (`sfu` in `GET /api/v1/instance`).
+    /// Off by default.
     sfu: Option<bool>,
+    /// Peer-to-peer servers and conversations in the app this instance serves. Off: the app hides
+    /// them, and `POST /api/v1/identity/p2p_binding` and P2P backup uploads answer 404. Data on
+    /// devices and stored backups are kept.
     p2p: Option<bool>,
+    /// Adding other instances in the web app this instance serves. Only that app reads it: the
+    /// desktop and mobile apps and other web apps ignore it, and it gates no endpoint.
     client_other_instances: Option<bool>,
     /// Server profiles: a name, avatar, banner and description per server.
     server_profiles: Option<bool>,
@@ -276,28 +346,87 @@ pub struct SettingsPatch {
     profile_pictures: Option<bool>,
     /// Animated profile and server pictures.
     animated_profile_pictures: Option<bool>,
+    /// Who may create an account with a password: `open`, `sso` (only through single sign-on) or
+    /// `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and `password_login`
+    /// is on.
     registration: Option<Registration>,
+    /// Longest upload expiry a server may choose, in days: 1 to 365, or 0 for no cap (servers may
+    /// then also keep files until they are removed). Longer choices are shortened to it. 0 by
+    /// default (`UPLOAD_EXPIRY_MAX_DAYS`).
     upload_expiry_max_days: Option<i64>,
+    /// Who may create servers: `everyone`, `nobody` or `some` (listed accounts and role holders;
+    /// the list is not public). `POST /api/v1/servers` answers 404 to everyone else. Existing
+    /// servers are not affected.
     server_creation: Option<ServerCreation>,
+    /// Usernames that may create servers while `server_creation` is `listed`.
     server_creators: Option<Vec<String>>,
+    /// How people get into servers by themselves: `everyone`, `invites` (only with a server
+    /// password or a ticket: without one, every name gets the answers of a password-protected
+    /// server) or `nobody` (joining and guest access requests answer 404). Members stay. Reading
+    /// follows it: under `invites` and `nobody` a server without a password is closed to everyone
+    /// who is not a member, like a password-protected one, and server search leaves it out. Under
+    /// `nobody` a request without a password is not asked for one: it gets the 404 of a wrong
+    /// password.
     server_joining: Option<ServerJoining>,
+    /// Server search. Off: `GET /api/v1/server_search` answers 404.
     server_search: Option<bool>,
+    /// Who may start a direct conversation: `everyone`, `friends` (only with a friend) or `nobody`.
+    /// `POST /api/v1/dms` answers 404 for a conversation it would have to create; conversations
+    /// that exist, and the self DM, keep working.
     dm_creation: Option<DmCreation>,
+    /// New friend requests. Off: `POST /api/v1/friends/requests` answers 404, except that it still
+    /// accepts a request the other user sent. Pending requests can be accepted or denied, and
+    /// friends stay.
     friend_requests: Option<bool>,
+    /// Whether servers can be read by people who aren't members: a server is readable by its name
+    /// when its own `public_read` is `true`, or `null` while the server has no password and
+    /// `server_joining` is `everyone`. Off: no server is, whatever its option says, and `PATCH
+    /// /api/v1/servers/{name}` refuses `public_read: true` with reason `off_site`.
     public_reading: Option<bool>,
+    /// Keys of the servers new accounts join, in order.
     default_servers: Option<Vec<String>>,
+    /// Voice channels and DM calls that run through the instance. Off: joining a voice channel and
+    /// starting or accepting a call are refused with a WebSocket `error` frame whose `reason` is
+    /// `off_site` with control `calls`, and running calls end. Voice channels stay. P2P calls
+    /// follow `p2p` instead.
     calls: Option<bool>,
+    /// Incoming webhooks. Off: creating one, resetting its token and every request to a webhook URL
+    /// (`/api/v1/webhooks/{id}/{token}`) answer 404 `Not found` with reason `off_site` and control
+    /// `incoming_webhooks`. Existing webhooks stay, are still listed, and work again when it is
+    /// back on.
     incoming_webhooks: Option<bool>,
+    /// Who may see an account's profile (its description, banner color and creation time):
+    /// `everyone`, `public_servers` (everyone, for an account in a server anyone can read; others
+    /// as `shared`) or `shared` (people who share a server, a direct conversation the account wrote
+    /// in or a friendship with it). `shared` by default (`PROFILE_VISIBILITY`). Never `friends`,
+    /// which only an account chooses for itself (`profile` in `GET /api/v1/me/privacy`).
     profile_visibility: Option<Level>,
+    /// What an account's own `profile` choice does: `any` (it applies, wider or narrower than
+    /// `profile_visibility`), `narrower` (only a narrower one applies; a wider one acts as no
+    /// choice) or `site` (every account follows `profile_visibility`; choices are kept). `any` by
+    /// default (`PROFILE_CHOICES`).
     profile_choices: Option<ProfileChoices>,
+    /// What an account that signed in with a temporary password must do: `required` (its sessions
+    /// can only change the password, read the account and sign out; everything else answers 403
+    /// `Change your password first`) or `encouraged` (it works as usual until the temporary
+    /// password expires, then as under `required`). `required` by default (`TEMP_PASSWORD_CHANGE`).
     password_change: Option<TempChange>,
+    /// How many hours a new temporary password signs in for: 1 to 720, or 0 for no expiry. 72 by
+    /// default (`TEMP_PASSWORD_HOURS`). A temporary password keeps the expiry it was issued with.
     temp_password_hours: Option<i64>,
+    /// The name of this instance.
     instance_name: Option<String>,
+    /// The name the app shows for itself.
     app_name: Option<String>,
+    /// The short name of the app, for home screens.
     app_short_name: Option<String>,
+    /// The text of the About section.
     brand_about: Option<String>,
+    /// The links of the About section.
     brand_links: Option<Vec<brand::Link>>,
+    /// A note shown on the sign-in page.
     login_note: Option<String>,
+    /// The instances the app suggests when adding one.
     instance_suggestions: Option<brand::Suggestions>,
 }
 
@@ -338,6 +467,12 @@ pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<PublicSe
     Json(PublicSettings::cached(&state.db).await)
 }
 
+/// Change the instance settings
+///
+/// Changes the switches and choices given and leaves the others as they are. Each change is
+/// noted in the instance audit log and reaches every connection as `settings_changed`. A
+/// setting the server configuration pins is refused. General rate-limit bucket.
+#[utoipa::path(patch, path = "/api/v1/admin/settings", tag = "Admin", operation_id = "admin_patch_settings", request_body = SettingsPatch, responses((status = 200, description = "The settings after the change", body = PublicSettings), (status = 400, description = "A value a setting does not take, a name the profanity filter refuses, a setting the server configuration pins, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn patch_settings(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -639,32 +774,55 @@ async fn control_rows(conn: &mut sqlx::AnyConnection) -> sqlx::Result<HashMap<St
 
 /// One control in the config view: its stored value, what the server config said at the last
 /// start that set it, whether the stored value says the same, and whether the config pins it.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = ConfigControl)]
 pub struct ControlRow {
+    /// The name of the control in the settings.
     pub key: &'static str,
+    /// The name of the control in the server configuration.
     pub env: &'static str,
+    /// The stored value.
     pub value: String,
+    /// What the server configuration said at the last start that set it.
     pub config: Option<String>,
+    /// Whether the stored value says the same as the server configuration.
     pub same: bool,
+    /// Whether the server configuration pins it, so it can not be changed here.
     pub pinned: bool,
 }
 
 /// One limit in the config view. Limits change only in the server config, at a start.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = ConfigLimit)]
 pub struct LimitRow {
+    /// The name of the limit in the server configuration.
     pub env: &'static str,
+    /// The value in use; null when the limit is off.
     pub value: Option<i64>,
+    /// The default; null when the limit is off by default.
     pub default: Option<i64>,
+    /// The range it takes, as `low-high`; empty when any value is taken.
     pub range: String,
 }
 
-#[derive(Serialize)]
+/// Controls, limits and the state of the database.
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = AdminConfig)]
 pub struct ConfigView {
+    /// The database this process uses.
     database: crate::db::status::DatabaseStatus,
+    /// Every control.
     pub controls: Vec<ControlRow>,
+    /// Every limit.
     pub limits: Vec<LimitRow>,
 }
 
+/// Get the configuration view
+///
+/// Every control with its stored value and what the server configuration said at the last start
+/// that set it, every limit with its value, default and range, and the state of the database.
+/// General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/admin/config", tag = "Admin", operation_id = "admin_config", responses((status = 200, description = "Controls, limits and the database state", body = ConfigView), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn get_config(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -710,7 +868,10 @@ pub(crate) async fn get_config(
     }))
 }
 
+/// Get the report forms
+///
 /// The whole forms document, turned-off categories included.
+#[utoipa::path(get, path = "/api/v1/admin/report_forms", tag = "Admin", operation_id = "admin_get_report_forms", responses((status = 200, description = "The forms and their revision", body = ReportForms), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn get_report_forms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -721,15 +882,20 @@ pub(crate) async fn get_report_forms(
 
 /// Request body of `PUT /api/v1/admin/report_forms`: every category, in list order, and the
 /// revision the editor loaded.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ReportFormsReq {
+    /// The revision the editor loaded. One that is not the stored revision is refused with 409.
     #[serde(default)]
     rev: Option<i64>,
+    /// Every category, in list order.
     forms: Vec<Form>,
 }
 
+/// Replace the report forms
+///
 /// Replaces the forms. A change takes the next revision and is noted in the instance audit
 /// log; the same forms again change nothing. A `rev` that is not the stored one is a 409.
+#[utoipa::path(put, path = "/api/v1/admin/report_forms", tag = "Admin", operation_id = "admin_put_report_forms", request_body = ReportFormsReq, responses((status = 200, description = "The stored forms", body = ReportForms), (status = 400, description = "A form the rules of report forms refuse, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 409, description = "`rev` is not the stored revision: someone else changed the forms", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn put_report_forms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -810,8 +976,11 @@ pub(crate) async fn put_report_forms(
     Ok(Json(after))
 }
 
+/// List reports as the instance
+///
 /// The reports to the instance or, with `scope=server&server=<name>`, a server's reports,
 /// read-only: `GET /api/v1/servers/{name}/reports` for the instance.
+#[utoipa::path(get, path = "/api/v1/admin/reports", tag = "Admin", operation_id = "admin_list_reports", params(reports::AdminScope, reports::ReportQuery), responses((status = 200, description = "A page of reports", body = Vec<reports::ReportRow>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "`Invalid tz`, `Invalid day`, an invalid cursor (JSON), or a value of the wrong type (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or `scope=server` names no server", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list_reports(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -823,7 +992,10 @@ pub(crate) async fn list_reports(
     reports::list_in(db, &scope, &q).await
 }
 
+/// List report groups as the instance
+///
 /// The groups of those reports. `by=server` works for the reports to the instance.
+#[utoipa::path(get, path = "/api/v1/admin/reports/groups", tag = "Admin", operation_id = "admin_report_groups", params(reports::AdminScope, reports::ReportQuery), responses((status = 200, description = "A page of groups", body = Vec<reports::ReportGroup>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "`Unknown grouping`, `Invalid tz`, `Invalid day`, an invalid cursor (JSON), or a value of the wrong type (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or `scope=server` names no server", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn report_groups(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -835,7 +1007,10 @@ pub(crate) async fn report_groups(
     reports::groups_in(db, &scope, &q).await
 }
 
+/// Count open reports as the instance
+///
 /// How many of those reports are open.
+#[utoipa::path(get, path = "/api/v1/admin/reports/open", tag = "Admin", operation_id = "admin_reports_open", params(reports::AdminScope), responses((status = 200, description = "The count", body = reports::Open), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or `scope=server` names no server", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn reports_open(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -848,8 +1023,11 @@ pub(crate) async fn reports_open(
     }))
 }
 
+/// Export reports as the instance
+///
 /// The reports to the instance (or, with `scope=server&server=<name>`, a server's) as a file:
 /// `GET /api/v1/servers/{name}/reports/export` for the instance.
+#[utoipa::path(get, path = "/api/v1/admin/reports/export", tag = "Admin", operation_id = "admin_export_reports", params(reports::AdminScope, reports::export::ExportQuery, reports::ReportQuery), responses((status = 200, description = "The file, as an attachment: `text/csv` or, with `format=json`, `application/json`", content_type = "text/csv", body = String), (status = 400, description = "`Invalid tz`, `Invalid day` (JSON), or a value of the wrong type (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or `scope=server` names no server", body = crate::api::ApiErrorBody), (status = 429, description = "`Too many exports. Try again later.` with a `Retry-After` header: more than 10 exports this hour. Or too many requests in the strict bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn export_reports(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -861,8 +1039,11 @@ pub(crate) async fn export_reports(
     reports::export::export_in(&state, &scope, &user, &q, format.unwrap_or_default()).await
 }
 
+/// Close the reports about one target
+///
 /// Closes every report to the instance about one target: `POST
 /// /api/v1/servers/{name}/reports/resolve` for the instance.
+#[utoipa::path(post, path = "/api/v1/admin/reports/resolve", tag = "Admin", operation_id = "admin_resolve_reports", request_body = reports::BulkResolve, responses((status = 200, description = "How many reports were closed", body = reports::Resolved), (status = 400, description = "A target or status the request does not take, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn resolve_reports(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -875,7 +1056,10 @@ pub(crate) async fn resolve_reports(
         .map(Json)
 }
 
+/// List muted reporters of the instance
+///
 /// The accounts whose reports to the instance are muted.
+#[utoipa::path(get, path = "/api/v1/admin/report_mutes", tag = "Admin", operation_id = "admin_list_report_mutes", params(reports::MutesQuery), responses((status = 200, description = "A page of muted accounts", body = Vec<reports::MutedReporter>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "An invalid cursor", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list_report_mutes(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -887,7 +1071,10 @@ pub(crate) async fn list_report_mutes(
     reports::mutes_in(db, &scope, q.cursor.as_deref()).await
 }
 
+/// Mute a reporter for the instance
+///
 /// Mutes the reports of an account to the instance. A name without an account is a 404.
+#[utoipa::path(put, path = "/api/v1/admin/report_mutes/{username}", tag = "Admin", operation_id = "admin_mute_reporter", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "Their reports are muted", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no account by that name", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn mute_reporter(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -912,7 +1099,10 @@ pub(crate) async fn mute_reporter(
     Ok(ok())
 }
 
+/// Unmute a reporter for the instance
+///
 /// Lets an account report to the instance again.
+#[utoipa::path(delete, path = "/api/v1/admin/report_mutes/{username}", tag = "Admin", operation_id = "admin_unmute_reporter", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "Their reports count again", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn unmute_reporter(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -934,7 +1124,7 @@ pub(crate) async fn unmute_reporter(
 }
 
 /// Request body of `POST /api/v1/admin/servers`.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AdminServerReq {
     /// The server's name, with the rules of `POST /api/v1/servers`.
     name: String,
@@ -947,8 +1137,11 @@ pub struct AdminServerReq {
     options: crate::api::servers::ServerOptions,
 }
 
+/// Create a server for an account
+///
 /// Creates a server for `owner`, whatever `server_creation` says: the operator's way to make
 /// servers while people can't. The server has no creator, like one whose creator left.
+#[utoipa::path(post, path = "/api/v1/admin/servers", tag = "Admin", operation_id = "admin_create_server", request_body = AdminServerReq, responses((status = 200, description = "The new server", body = crate::api::servers::CreatedServer), (status = 400, description = "`No such account`, `Server name is taken`, a name or option `POST /api/v1/servers` refuses, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 409, description = "`That name is not available yet`: a server of that name is still being removed", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn create_server_for(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -967,6 +1160,11 @@ pub(crate) async fn create_server_for(
     crate::api::servers::found_for(&state, &user, &name, password.as_deref(), options, &owner).await
 }
 
+/// Get the instance overview
+///
+/// How many servers and accounts the instance has, how many accounts still have a temporary
+/// password, and the state of the relay. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/admin/overview", tag = "Admin", operation_id = "admin_overview", responses((status = 200, description = "Counts and the relay state", body = Overview), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn overview(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -994,6 +1192,12 @@ pub(crate) async fn overview(
     }))
 }
 
+/// List accounts
+///
+/// Accounts by username, as pages of `limit` (default and max 50). `q` filters by username or
+/// display name; `filter` keeps the accounts with a temporary password. Page with `cursor` from
+/// the `X-Next-Cursor` response header. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/admin/users", tag = "Admin", operation_id = "admin_list_users", params(AdminQuery), responses((status = 200, description = "A page of accounts", body = Vec<UserRef>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "An invalid cursor, an unknown `filter`, or a value of the wrong type (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list_users(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1047,6 +1251,12 @@ pub(crate) async fn list_users(
     Ok(Paged(users, next))
 }
 
+/// List servers
+///
+/// Every server by name, as pages of `limit` (default and max 50). `q` filters by name or
+/// display name. Page with `cursor` from the `X-Next-Cursor` response header. General
+/// rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/admin/servers", tag = "Admin", operation_id = "admin_list_servers", params(AdminQuery), responses((status = 200, description = "A page of servers", body = Vec<ServerSummaryLite>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "An invalid cursor, or a value of the wrong type (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list_servers(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1075,6 +1285,12 @@ pub(crate) async fn list_servers(
     Ok(Paged(servers, next))
 }
 
+/// Delete a server
+///
+/// Removes the server with its channels, messages and members. Its members get
+/// `server_deleted`. The built-in default server stays while the instance keeps it (400).
+/// General rate-limit bucket.
+#[utoipa::path(delete, path = "/api/v1/admin/servers/{name}", tag = "Admin", operation_id = "admin_delete_server", params(("name" = String, Path, description = "Server name, case-insensitive")), responses((status = 200, description = "The server is gone", body = OkResp), (status = 400, description = "The built-in default server, which stays", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no such server", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn delete_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1808,6 +2024,12 @@ async fn drop_user_rows(
     crate::api::instance_audit::forget_user(tx, key).await
 }
 
+/// Ban an account from the instance
+///
+/// Removes the account like `DELETE /api/v1/admin/users/{username}` and keeps its username from
+/// being registered again. Refused for the caller's own account (400). General rate-limit
+/// bucket.
+#[utoipa::path(post, path = "/api/v1/admin/ban", tag = "Admin", operation_id = "admin_ban_user", request_body = BanReq, responses((status = 200, description = "The account is banned", body = OkResp), (status = 400, description = "`Cannot ban yourself`, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no account by that name", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn ban_user(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1852,6 +2074,11 @@ fn remove_user_events(state: &AppState, username: String, servers: Vec<String>) 
     }
 }
 
+/// Delete an account
+///
+/// Removes the account, its sessions, memberships and messages. The username can be registered
+/// again. Refused for the caller's own account (400). General rate-limit bucket.
+#[utoipa::path(delete, path = "/api/v1/admin/users/{username}", tag = "Admin", operation_id = "admin_delete_user", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "The account is gone", body = OkResp), (status = 400, description = "`Cannot delete yourself`", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no account by that name", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn delete_user(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1866,11 +2093,19 @@ pub(crate) async fn delete_user(
     Ok(ok())
 }
 
-#[derive(Serialize)]
+/// Answer of `DELETE /api/v1/admin/users/{username}/recovery`.
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct PhraseRemoved {
+    /// Whether the account had a backup phrase.
     pub removed: bool,
 }
 
+/// Remove the backup phrase of an account
+///
+/// Removes the account's backup phrase, so it can no longer recover with it, and notes it in
+/// the instance audit log. Refused for the caller's own account (400). General rate-limit
+/// bucket.
+#[utoipa::path(delete, path = "/api/v1/admin/users/{username}/recovery", tag = "Admin", operation_id = "admin_remove_phrase", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "Whether a phrase was removed", body = PhraseRemoved), (status = 400, description = "`Cannot remove your own backup phrase here`", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn remove_phrase(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1908,6 +2143,11 @@ pub(crate) async fn remove_phrase(
     Ok(Json(PhraseRemoved { removed }))
 }
 
+/// List the servers an account created
+///
+/// The servers whose creator is the account, by name, as pages of `limit` (default and max 50).
+/// Page with `cursor` from the `X-Next-Cursor` response header. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/admin/users/{username}/servers", tag = "Admin", operation_id = "admin_user_servers", params(("username" = String, Path, description = "Username, case-insensitive"), AdminQuery), responses((status = 200, description = "A page of servers", body = Vec<ServerSummaryLite>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "An invalid cursor, or a value of the wrong type (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn user_servers(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1942,6 +2182,12 @@ pub(crate) async fn user_servers(
     Ok(Paged(servers, next))
 }
 
+/// Delete a message as the instance
+///
+/// Deletes one message of a server channel or DM. A message in a private channel the caller has
+/// not opened answers as that channel does. Its channel gets `message_deleted`, and the
+/// server's audit log notes it. General rate-limit bucket.
+#[utoipa::path(delete, path = "/api/v1/admin/messages/{id}", tag = "Admin", operation_id = "admin_delete_message", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "The message is gone", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 403, description = "`Confirm to open this channel`: a private channel that `POST /api/v1/admin/channels/{id}/staff_view` has not opened", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no such message", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
     Authed(user): Authed,

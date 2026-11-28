@@ -44,6 +44,7 @@ pub(crate) async fn passwords_on(state: &AppState) -> Result<Settings, ApiError>
 /// its hash. It signs in for `temp_password_hours`, and the account must then choose its own
 /// (`password_change`). The backup phrase stays. Refused for the caller's own account (400) and
 /// while `password_login` is off (400, reason `off_site`). Strict rate-limit bucket.
+#[utoipa::path(post, path = "/api/v1/admin/users/{username}/temp_password", tag = "Admin", operation_id = "admin_temp_password", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "The temporary password", body = Issued), (status = 400, description = "`Use Settings to change your own password`, or `Password sign-in is off` (reason `off_site`)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no account by that name", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn reset_password(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -72,6 +73,7 @@ pub(crate) async fn reset_password(
 /// Sign an account out everywhere
 ///
 /// Ends every session of the account and closes its connections. The password stays.
+#[utoipa::path(post, path = "/api/v1/admin/users/{username}/sign_out", tag = "Admin", operation_id = "admin_sign_out", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "Every session of the account ended", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no account by that name", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn sign_out(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -101,18 +103,24 @@ pub(crate) async fn sign_out(
 }
 
 /// The temporary password of an account in the account view.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = TemporaryPassword)]
 pub struct Temporary {
+    /// Unix seconds.
     pub issued_at: i64,
+    /// When it stops signing in (unix seconds); null for never.
     pub expires_at: Option<i64>,
     /// Whether it has expired.
     pub expired: bool,
 }
 
 /// One account as the site administration page shows it.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = AdminAccount)]
 pub struct AdminUser {
+    /// The account.
     pub user: UserRef,
+    /// Unix seconds.
     pub created_at: i64,
     /// How the account signs in: `text` or `words`.
     pub sign_in: String,
@@ -130,6 +138,7 @@ pub struct AdminUser {
 ///
 /// How the account signs in, whether its password is a temporary one, whether it has a backup
 /// phrase, and how many sessions and servers it has.
+#[utoipa::path(get, path = "/api/v1/admin/users/{username}", tag = "Admin", operation_id = "admin_get_account", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "The account", body = AdminUser), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no account by that name", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn get_account(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -177,7 +186,7 @@ pub(crate) const SERVERS_MAX: usize = 20;
 pub(crate) const ROLES_MAX: usize = 20;
 
 /// A server to add an account to, with the roles it gets there.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ServerEntry {
     /// The server's key or name.
     server: String,
@@ -187,7 +196,7 @@ pub struct ServerEntry {
 }
 
 /// Request body of `POST /api/v1/admin/users`.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct NewAccountReq {
     /// The rules of `POST /api/v1/auth/register`.
     username: String,
@@ -200,9 +209,11 @@ pub struct NewAccountReq {
 }
 
 /// What became of one server of the request.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ServerResult {
+    /// The server as the request named it.
     pub server: String,
+    /// Whether the account was added.
     pub ok: bool,
     /// Why the account was not added.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -210,11 +221,15 @@ pub struct ServerResult {
 }
 
 /// A new account with its temporary password, which is in this answer only.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CreatedAccount {
+    /// The account.
     pub user: UserRef,
+    /// The temporary password.
     pub temp_password: String,
+    /// When it stops signing in (unix seconds); null for never.
     pub expires_at: Option<i64>,
+    /// What became of each server of the request.
     pub servers: Vec<ServerResult>,
 }
 
@@ -270,6 +285,7 @@ async fn add_to_servers(
 /// account and the others in place. The account is never a site administrator, and works in
 /// every `registration` mode. Refused while `password_login` is off (400, reason `off_site`).
 /// The username and display name follow the rules of sign-up. Strict rate-limit bucket.
+#[utoipa::path(post, path = "/api/v1/admin/users", tag = "Admin", operation_id = "admin_create_account", request_body = NewAccountReq, responses((status = 200, description = "The account and its temporary password", body = CreatedAccount), (status = 400, description = "`Password sign-in is off` (reason `off_site`), a username or display name sign-up refuses (`Username is taken`), more than 20 servers or 20 roles for one server, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn create_account(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -337,7 +353,7 @@ pub(crate) async fn create_account(
 }
 
 /// Request body of `POST /api/v1/admin/users/{username}/servers`.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AddToServerReq {
     /// The server's key or name.
     server: String,
@@ -351,6 +367,7 @@ pub struct AddToServerReq {
 /// Makes the account a member of the server, whatever `server_joining` says, and gives it the
 /// roles. An account that is a member already only gets the roles. A missing server or account
 /// answers 404, a role of another server 404 `Role not found`, a banned account 403.
+#[utoipa::path(post, path = "/api/v1/admin/users/{username}/servers", tag = "Admin", operation_id = "admin_add_to_server", params(("username" = String, Path, description = "Username, case-insensitive")), request_body = AddToServerReq, responses((status = 200, description = "The account is a member with those roles", body = OkResp), (status = 400, description = "More than 20 roles, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 403, description = "The account is banned from the server", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no such account or server, or `Role not found`", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn add_to_server(
     State(state): State<AppState>,
     Authed(user): Authed,

@@ -179,21 +179,37 @@ pub(crate) async fn forget_user(
     Ok(())
 }
 
-#[derive(Serialize)]
+/// One entry of the instance audit log.
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = InstanceAuditEntry)]
 pub struct Entry {
+    /// The entry id; newer entries have higher ids.
     pub id: i64,
+    /// Unix seconds.
     pub at: i64,
+    /// Who did it; null for the server configuration, the command line, or an account deleted
+    /// since.
     pub actor: Option<String>,
+    /// What was done, for example `user.create` or `branding.change`.
     pub action: String,
+    /// What it was done to: a username, a server, a setting.
     pub target: Option<String>,
+    /// More about the action; its fields depend on the action.
     pub detail: Value,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct AuditQuery {
+    /// The `X-Next-Cursor` of the page before.
     cursor: Option<String>,
 }
 
+/// List the instance audit log
+///
+/// What site administrators, the server configuration and the command line did on the instance,
+/// newest first, 50 a page. Page with `cursor` from the `X-Next-Cursor` response header.
+/// General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/admin/audit", tag = "Admin", operation_id = "admin_audit", params(AuditQuery), responses((status = 200, description = "A page of entries", body = Vec<Entry>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "An invalid cursor", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Authed(user): Authed,

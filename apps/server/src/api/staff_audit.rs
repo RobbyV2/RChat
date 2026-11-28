@@ -367,7 +367,7 @@ pub(crate) async fn p2p_purge_in(
 }
 
 /// Request body of `POST /api/v1/admin/channels/{id}/staff_view`.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct StaffViewReq {
     /// How the admin confirms: the account password or words, a `phrase` proof (purpose
     /// `staff_view`, context the channel id as decimal text) or a fresh provider sign-in.
@@ -375,7 +375,7 @@ pub struct StaffViewReq {
 }
 
 /// Answer of `POST /api/v1/admin/channels/{id}/staff_view`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StaffView {
     /// Unix seconds until which the channel stays open to the admin.
     pub until: i64,
@@ -383,6 +383,8 @@ pub struct StaffView {
     pub remaining: i64,
 }
 
+/// Open a private channel as the instance
+///
 /// Opens a private channel to the site admin. Everyone else, and every channel that does not
 /// exist, gets the same 404. A channel that only instance powers open (its rules hide it from
 /// the admin's own membership, or the admin is no member) answers 403 `Confirm to open this
@@ -397,6 +399,7 @@ pub struct StaffView {
 /// a staff entry. When the entry can't be written the answer is 503 and nothing opens. The
 /// admin's own connections get `staff_view_opened`, so their WS delivers the channel's events
 /// until it closes.
+#[utoipa::path(post, path = "/api/v1/admin/channels/{id}/staff_view", tag = "Admin", operation_id = "admin_staff_view", params(("id" = i64, Path, description = "Channel id")), request_body = StaffViewReq, responses((status = 200, description = "Until when the channel stays open", body = StaffView), (status = 400, description = "`X-Staff-Reason` that is too long or not percent-encoded text, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token, or a confirmation that does not match", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no such channel", body = crate::api::ApiErrorBody), (status = 503, description = "`Staff access could not be recorded`: nothing opened", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn staff_view(
     State(state): State<AppState>,
     AuthedSession(session): AuthedSession,

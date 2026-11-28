@@ -731,14 +731,16 @@ pub(crate) async fn put_dm_seal(
 }
 
 /// What the admin routes that require encryption take.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct RequireReq {
+    /// Whether encryption is required.
     pub on: bool,
 }
 
 /// Whether the site requires encryption, and where that is set.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct RequiredView {
+    /// Whether the site requires encryption.
     pub on: bool,
     /// The server configuration sets it, so the admin page can't.
     pub pinned: bool,
@@ -816,7 +818,10 @@ pub(crate) async fn required_view(state: &AppState) -> sqlx::Result<RequiredView
     Ok(RequiredView { on, pinned })
 }
 
+/// Require encryption on the site
+///
 /// `PUT /api/v1/admin/encryption/required`: "Require encryption on this site".
+#[utoipa::path(put, path = "/api/v1/admin/encryption/required", tag = "Admin", operation_id = "admin_require_encryption", request_body = RequireReq, responses((status = 200, description = "Whether the site requires encryption", body = RequiredView), (status = 400, description = "Malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 403, description = "`Set by the server configuration` (reason `forced`)", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 409, description = "No encryption key that every copy of this site holds (reason `keys`)", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn put_required(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -859,7 +864,10 @@ pub(crate) async fn put_required(
     Ok(Json(RequiredView { on, pinned }))
 }
 
+/// Require encryption for one server
+///
 /// `PUT /api/v1/admin/servers/{name}/seal_forced`: "Require encryption" for one server.
+#[utoipa::path(put, path = "/api/v1/admin/servers/{name}/seal_forced", tag = "Admin", operation_id = "admin_require_server_encryption", params(("name" = String, Path, description = "Server name, case-insensitive")), request_body = RequireReq, responses((status = 200, description = "How the server stores new messages", body = SealView), (status = 400, description = "Malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no such server", body = crate::api::ApiErrorBody), (status = 409, description = "No encryption key that every copy of this site holds (reason `keys`)", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn put_server_forced(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -933,13 +941,17 @@ pub(crate) async fn put_server_forced(
 }
 
 /// What the admin route that confirms the copies takes.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CopiesReq {
+    /// Whether every copy of this site runs this build.
     pub confirmed: bool,
 }
 
+/// Confirm every copy runs this build
+///
 /// `PUT /api/v1/admin/encryption/copies`: "Every copy runs this build", for a site whose
 /// copies do not announce themselves.
+#[utoipa::path(put, path = "/api/v1/admin/encryption/copies", tag = "Admin", operation_id = "admin_confirm_copies", request_body = CopiesReq, responses((status = 200, description = "The confirmation is stored", body = OkResp), (status = 400, description = "Malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn put_copies(
     State(state): State<AppState>,
     Authed(user): Authed,

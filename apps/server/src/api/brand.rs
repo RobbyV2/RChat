@@ -485,6 +485,7 @@ fn asset_of(kind: &str) -> Result<Asset, ApiError> {
 /// `mark-512` or `mark-maskable`), replacing the one before. The logo is up to 2048 by 1024
 /// pixels; a mark is a square of exactly its size (512 for the maskable one). At most 1 MiB.
 /// Anything that is not a PNG of that size is refused with 400. Strict rate-limit bucket.
+#[utoipa::path(put, path = "/api/v1/admin/brand/{kind}", tag = "Admin", operation_id = "admin_put_brand_asset", params(("kind" = String, Path, description = "`logo`, `mark-32`, `mark-180`, `mark-192`, `mark-512` or `mark-maskable`")), request_body(content = String, content_type = "image/png", description = "The PNG file"), responses((status = 200, description = "The branding after the change", body = Brand), (status = 400, description = "Not a PNG of the size the kind takes, or over 1 MiB", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or an unknown `kind`", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn put_asset(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -523,6 +524,7 @@ pub(crate) async fn put_asset(
 ///
 /// Removes the image `kind`, so the app shows its own again. Removing one that is not there
 /// changes nothing.
+#[utoipa::path(delete, path = "/api/v1/admin/brand/{kind}", tag = "Admin", operation_id = "admin_delete_brand_asset", params(("kind" = String, Path, description = "`logo`, `mark-32`, `mark-180`, `mark-192`, `mark-512` or `mark-maskable`")), responses((status = 200, description = "The image is gone", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or an unknown `kind`", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn delete_asset(
     State(state): State<AppState>,
     Authed(user): Authed,

@@ -517,6 +517,59 @@ impl Modify for Bearer {
 )]
 pub struct ApiDoc;
 
+/// The site administration routes. No route serves this document: the served one leaves them
+/// out, so nothing an instance answers says that such routes exist.
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        super::admin::patch_settings,
+        super::admin::get_config,
+        super::admin::get_report_forms,
+        super::admin::put_report_forms,
+        super::admin::list_reports,
+        super::admin::report_groups,
+        super::admin::reports_open,
+        super::admin::export_reports,
+        super::admin::resolve_reports,
+        super::admin::list_report_mutes,
+        super::admin::mute_reporter,
+        super::admin::unmute_reporter,
+        super::admin::create_server_for,
+        super::admin::overview,
+        super::admin::list_users,
+        super::admin::list_servers,
+        super::admin::delete_server,
+        super::admin::ban_user,
+        super::admin::delete_user,
+        super::admin::remove_phrase,
+        super::admin::user_servers,
+        super::admin::delete_message,
+        super::admin_users::reset_password,
+        super::admin_users::sign_out,
+        super::admin_users::get_account,
+        super::admin_users::create_account,
+        super::admin_users::add_to_server,
+        super::instance_audit::list,
+        super::staff_audit::staff_view,
+        super::brand::put_asset,
+        super::brand::delete_asset,
+        super::encryption::admin_status,
+        super::encryption::post_rotate,
+        super::encryption::put_backed_up,
+        super::seal::put_required,
+        super::seal::put_server_forced,
+        super::seal::put_copies,
+        super::announcements::list,
+        super::announcements::schedule,
+        super::announcements::remove,
+    ),
+    modifiers(&Bearer, &Busy, &AuditReason),
+    tags(
+        (name = "Admin", description = "Site administration: settings, accounts, servers, reports to the instance, the instance audit log, branding, announcements and encryption keys. Every route answers 404 `Not found` to an account that is not a site administrator."),
+    )
+)]
+pub struct AdminDoc;
+
 async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }
@@ -542,7 +595,7 @@ pub(crate) mod tests {
     use serde_json::Value;
     use utoipa::OpenApi;
 
-    use super::{ApiDoc, swagger_on};
+    use super::{AdminDoc, ApiDoc, swagger_on};
     use crate::api::auth::Me;
     use crate::db::AvatarKind;
 
@@ -577,49 +630,6 @@ pub(crate) mod tests {
             "/.well-known/jwks.json",
             "public, no input; serves the in-memory signing keys and only the rate limiter can refuse it",
         ),
-    ];
-
-    const ADMIN_ROUTES: [(&str, &str); 40] = [
-        ("patch", "/api/v1/admin/settings"),
-        ("get", "/api/v1/admin/report_forms"),
-        ("put", "/api/v1/admin/report_forms"),
-        ("get", "/api/v1/admin/reports"),
-        ("get", "/api/v1/admin/reports/groups"),
-        ("get", "/api/v1/admin/reports/open"),
-        ("get", "/api/v1/admin/reports/export"),
-        ("post", "/api/v1/admin/reports/resolve"),
-        ("get", "/api/v1/admin/report_mutes"),
-        ("put", "/api/v1/admin/report_mutes/{username}"),
-        ("delete", "/api/v1/admin/report_mutes/{username}"),
-        ("get", "/api/v1/admin/config"),
-        ("get", "/api/v1/admin/encryption"),
-        ("put", "/api/v1/admin/encryption/required"),
-        ("put", "/api/v1/admin/encryption/copies"),
-        ("put", "/api/v1/admin/encryption/backed_up"),
-        ("post", "/api/v1/admin/encryption/rotate"),
-        ("put", "/api/v1/admin/servers/{name}/seal_forced"),
-        ("get", "/api/v1/admin/overview"),
-        ("get", "/api/v1/admin/users"),
-        ("post", "/api/v1/admin/users"),
-        ("get", "/api/v1/admin/servers"),
-        ("post", "/api/v1/admin/servers"),
-        ("delete", "/api/v1/admin/servers/{name}"),
-        ("get", "/api/v1/admin/users/{username}"),
-        ("delete", "/api/v1/admin/users/{username}"),
-        ("post", "/api/v1/admin/users/{username}/temp_password"),
-        ("post", "/api/v1/admin/users/{username}/sign_out"),
-        ("delete", "/api/v1/admin/users/{username}/recovery"),
-        ("get", "/api/v1/admin/audit"),
-        ("post", "/api/v1/admin/channels/{id}/staff_view"),
-        ("get", "/api/v1/admin/users/{username}/servers"),
-        ("post", "/api/v1/admin/users/{username}/servers"),
-        ("delete", "/api/v1/admin/messages/{id}"),
-        ("post", "/api/v1/admin/ban"),
-        ("get", "/api/v1/admin/announcements"),
-        ("post", "/api/v1/admin/announcements"),
-        ("delete", "/api/v1/admin/announcements/{id}"),
-        ("put", "/api/v1/admin/brand/{kind}"),
-        ("delete", "/api/v1/admin/brand/{kind}"),
     ];
 
     const UNDOCUMENTED: [(&str, &str, &str); 1] = [(
@@ -695,6 +705,11 @@ pub(crate) mod tests {
         }
         out.sort();
         out
+    }
+
+    /// The routes of the admin document.
+    fn admin_routes() -> Vec<(String, String)> {
+        documented_routes(&serde_json::to_value(AdminDoc::openapi()).expect("doc"))
     }
 
     fn text(value: &Value) -> bool {
@@ -796,6 +811,54 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn every_admin_operation_and_schema_is_documented() {
+        let doc = serde_json::to_value(AdminDoc::openapi()).expect("doc");
+        let gaps = doc_gaps(&doc);
+        assert!(gaps.is_empty(), "{}", gaps.join("\n"));
+        let json = AdminDoc::openapi().to_pretty_json().expect("json");
+        let found = non_ascii(&json);
+        assert!(found.is_empty(), "non-ASCII text:\n{}", found.join("\n"));
+    }
+
+    /// Every admin route is under `/api/v1/admin/`, and each of its schemas that the served
+    /// document also has is the same schema there.
+    #[test]
+    fn the_admin_document_adds_to_the_served_one() {
+        let admin = serde_json::to_value(AdminDoc::openapi()).expect("doc");
+        let served = serde_json::to_value(ApiDoc::openapi()).expect("doc");
+        for (_, path) in documented_routes(&admin) {
+            assert!(path.starts_with("/api/v1/admin/"), "{path}");
+        }
+        let differ: Vec<&String> = admin["components"]["schemas"]
+            .as_object()
+            .expect("schemas")
+            .iter()
+            .filter(|(name, schema)| {
+                let other = &served["components"]["schemas"][name.as_str()];
+                !other.is_null() && other != *schema
+            })
+            .map(|(name, _)| name)
+            .collect();
+        assert!(differ.is_empty(), "{differ:?}");
+        let ids = |doc: &Value| -> Vec<String> {
+            doc["paths"]
+                .as_object()
+                .expect("paths")
+                .values()
+                .flat_map(|item| item.as_object().expect("path item").values())
+                .filter_map(|op| op["operationId"].as_str().map(str::to_string))
+                .collect()
+        };
+        let served_ids = ids(&served);
+        let mut admin_ids = ids(&admin);
+        assert!(admin_ids.iter().all(|id| !served_ids.contains(id)));
+        let count = admin_ids.len();
+        admin_ids.sort();
+        admin_ids.dedup();
+        assert_eq!(admin_ids.len(), count);
+    }
+
+    #[test]
     fn every_database_endpoint_lists_the_busy_answer() {
         let doc = serde_json::to_value(ApiDoc::openapi()).expect("doc");
         let mut operations = 0;
@@ -838,9 +901,9 @@ pub(crate) mod tests {
         let doc: Value = serde_json::from_str(&json).expect("parse");
         assert!(doc["openapi"].as_str().is_some_and(|v| v.starts_with("3.")));
         assert!(doc["paths"].as_object().is_some_and(|p| !p.is_empty()));
-        for (method, path) in ADMIN_ROUTES {
+        for (method, path) in admin_routes() {
             assert!(
-                doc["paths"][path].is_null(),
+                doc["paths"][&path].is_null(),
                 "{method} {path} is documented, but {ADMIN_REASON}"
             );
         }
@@ -1006,14 +1069,18 @@ pub(crate) mod tests {
     #[test]
     fn every_registered_route_is_documented() {
         let registered = registered_routes();
-        for (method, path) in ADMIN_ROUTES {
+        let admin = admin_routes();
+        assert!(!admin.is_empty());
+        for route in &admin {
             assert!(
-                registered.contains(&(method.to_string(), path.to_string())),
-                "{method} {path} is no longer registered; update ADMIN_ROUTES"
+                registered.contains(route),
+                "{route:?} is in the admin document but not registered"
             );
         }
         let skipped = |m: &str, p: &str| {
-            ADMIN_ROUTES.contains(&(m, p))
+            admin
+                .iter()
+                .any(|(am, ap)| (am.as_str(), ap.as_str()) == (m, p))
                 || UNDOCUMENTED.iter().any(|(um, up, _)| (*um, *up) == (m, p))
         };
         let expected: Vec<(String, String)> = registered

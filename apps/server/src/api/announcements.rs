@@ -40,10 +40,14 @@ impl IntoResponse for Feed {
     }
 }
 
+/// Request body of `POST /api/v1/admin/announcements`.
 #[derive(Deserialize, ToSchema)]
 pub struct Schedule {
+    /// The text.
     pub message: String,
+    /// Unix seconds; 0 starts it now.
     pub starts_at: i64,
+    /// Unix seconds; the announcement shows until just before.
     pub ends_at: i64,
 }
 
@@ -105,8 +109,10 @@ pub(crate) async fn dismiss(
     Ok(ok())
 }
 
-/// List current and upcoming announcements for the branding editor.
-#[utoipa::path(get, path="/api/v1/admin/announcements", tag="Admin", responses((status=200, body=Vec<Announcement>)))]
+/// List announcements
+///
+/// The announcements that show now or later, by start time. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/admin/announcements", tag = "Admin", operation_id = "admin_list_announcements", responses((status = 200, description = "Current and upcoming announcements", body = Vec<Announcement>), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -117,8 +123,11 @@ pub(crate) async fn list(
     Ok(Json(rows.iter().map(row).collect::<sqlx::Result<_>>()?))
 }
 
-/// Publish or schedule an announcement with an exclusive end time. Use zero for an immediate start.
-#[utoipa::path(post, path="/api/v1/admin/announcements", tag="Admin", request_body=Schedule, responses((status=200, body=Announcement)))]
+/// Schedule an announcement
+///
+/// Publishes or schedules an announcement with an exclusive end time. A start of zero starts
+/// it now. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/v1/admin/announcements", tag = "Admin", operation_id = "admin_schedule_announcement", request_body = Schedule, responses((status = 200, description = "The announcement", body = Announcement), (status = 400, description = "A message or time the request does not take, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn schedule(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -162,8 +171,10 @@ pub(crate) async fn schedule(
     Ok(Json(a))
 }
 
-/// Cancel a scheduled or active announcement.
-#[utoipa::path(delete, path="/api/v1/admin/announcements/{id}", tag="Admin", params(("id"=String,Path)), responses((status=200, body=OkResp)))]
+/// Cancel an announcement
+///
+/// Removes a scheduled or active announcement. General rate-limit bucket.
+#[utoipa::path(delete, path = "/api/v1/admin/announcements/{id}", tag = "Admin", operation_id = "admin_remove_announcement", params(("id" = String, Path, description = "Announcement identifier")), responses((status = 200, description = "The announcement is gone", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator, or no such announcement", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn remove(
     State(state): State<AppState>,
     Authed(user): Authed,

@@ -10,7 +10,9 @@ use crate::crypt::ring::{BACKED_UP_SETTING, RingStatus};
 use crate::db::Db;
 use crate::state::AppState;
 
-#[derive(Serialize)]
+/// The encryption state of the instance. It never holds key material.
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = AdminEncryption)]
 pub struct EncryptionView {
     #[serde(flatten)]
     pub status: RingStatus,
@@ -36,9 +38,12 @@ pub struct EncryptionView {
     pub rotation: Option<crate::api::seal::rotate::RotationView>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+/// How many places store new messages encrypted.
+#[derive(Clone, Copy, Debug, Serialize, utoipa::ToSchema)]
 pub struct SealedPlaces {
+    /// Servers.
     pub servers: i64,
+    /// DMs.
     pub dms: i64,
 }
 
@@ -82,6 +87,12 @@ async fn count_places(db: &Db) -> sqlx::Result<SealedPlaces> {
     Ok(SealedPlaces { servers, dms })
 }
 
+/// Get the encryption state
+///
+/// Where the instance's keys come from, their fingerprints, whether the key file is backed up,
+/// whether the site requires encrypted storage, how many places store messages encrypted, and
+/// the newest jobs and key rotation. It never holds key material. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/admin/encryption", tag = "Admin", operation_id = "admin_encryption", responses((status = 200, description = "The encryption state", body = EncryptionView), (status = 401, description = "Missing or unknown bearer token", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn admin_status(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -115,15 +126,20 @@ pub(crate) async fn admin_status(
 }
 
 /// What "Rotate data keys" takes: the purposes (every one when left out) and the confirmation.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct RotateReq {
+    /// `content`, `media`, `secrets`, `search` or `bus`; every purpose when left out.
     pub purposes: Option<Vec<String>>,
+    /// How the caller confirms it is them.
     pub reauth: ReAuthBody,
 }
 
 const BAD_PURPOSE: &str = "purposes must be content, media, secrets, search or bus";
 
+/// Rotate data keys
+///
 /// `POST /api/v1/admin/encryption/rotate`: "Rotate data keys", after confirming it is you.
+#[utoipa::path(post, path = "/api/v1/admin/encryption/rotate", tag = "Admin", operation_id = "admin_rotate_keys", request_body = RotateReq, responses((status = 200, description = "The rotation that started", body = crate::api::seal::rotate::Rotation), (status = 400, description = "`purposes must be content, media, secrets, search or bus`, or malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token, or a confirmation that does not match", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn post_rotate(
     State(state): State<AppState>,
     AuthedSession(session): AuthedSession,
@@ -158,18 +174,23 @@ pub(crate) async fn post_rotate(
 }
 
 /// What "Key copy saved" takes.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct BackedUpReq {
+    /// How the caller confirms it is them.
     pub reauth: ReAuthBody,
 }
 
-#[derive(Serialize)]
+/// Answer of `PUT /api/v1/admin/encryption/backed_up`.
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct BackedUpView {
     /// Unix seconds.
     pub backed_up_at: i64,
 }
 
+/// Confirm the key copy is saved
+///
 /// `PUT /api/v1/admin/encryption/backed_up`: "Key copy saved", after confirming it is you.
+#[utoipa::path(put, path = "/api/v1/admin/encryption/backed_up", tag = "Admin", operation_id = "admin_keys_backed_up", request_body = BackedUpReq, responses((status = 200, description = "When it was confirmed", body = BackedUpView), (status = 400, description = "Malformed JSON (plain-text framework error)", body = crate::api::ApiErrorBody), (status = 401, description = "Missing or unknown bearer token, or a confirmation that does not match", body = crate::api::ApiErrorBody), (status = 404, description = "`Not found`: the caller is not a site administrator", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn put_backed_up(
     State(state): State<AppState>,
     AuthedSession(session): AuthedSession,

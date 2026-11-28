@@ -668,7 +668,7 @@ pub async fn no_statement_limit(tx: &mut AnyConnection) -> sqlx::Result<()> {
 }
 
 /// What the Postgres connection limit leaves for more copies of this process.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 pub struct ConnectionBudget {
     /// This process's pool size.
     pub pool: u32,

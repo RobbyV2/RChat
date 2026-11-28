@@ -92,7 +92,7 @@ impl Step {
 }
 
 /// The rotation that runs, as kept in `settings`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Rotation {
     /// The purposes whose keys it replaces.
     pub purposes: Vec<String>,
@@ -100,6 +100,7 @@ pub struct Rotation {
     pub step: usize,
     /// Where that step goes on: the last row it finished.
     pub at: String,
+    /// Unix seconds.
     pub started_at: i64,
     /// When this pass began.
     #[serde(default)]
@@ -149,13 +150,17 @@ pub async fn current(db: &Db) -> Result<Option<Rotation>, ApiError> {
 }
 
 /// A rotation as the admin page shows it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct RotationView {
+    /// The purposes whose keys it replaces.
     pub purposes: Vec<String>,
     /// The steps this pass finished, of `steps`.
     pub done: usize,
+    /// Every step of those purposes.
     pub steps: usize,
+    /// Records this pass could not seal again for now.
     pub left: u64,
+    /// Whether it stopped with records left.
     pub ended: bool,
     /// The pass ended and the last one waits until every process can have dropped the old keys.
     pub waiting: bool,

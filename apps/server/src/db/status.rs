@@ -6,10 +6,15 @@ use super::pool::{ConnectionBudget, Db, connection_budget, is_sqlite};
 use super::replica::ReplicaStatus;
 use crate::state::AppState;
 
-#[derive(Serialize)]
+/// A connection pool of this process.
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(as = DatabasePool)]
 pub(crate) struct PoolStatus {
+    /// The most connections it opens.
     max: u32,
+    /// Connections in use now.
     in_use: usize,
+    /// Open connections not in use.
     idle: usize,
 }
 
@@ -23,11 +28,16 @@ fn pool(db: &Db) -> PoolStatus {
     }
 }
 
-#[derive(Serialize)]
+/// An index the server builds while it runs.
+#[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct IndexStatus {
+    /// The index name.
     name: String,
+    /// `valid`, `building`, `invalid` or `missing`.
     state: &'static str,
+    /// How far the build is, when it runs.
     percent: Option<i64>,
+    /// Its size in MiB.
     size_mib: i64,
 }
 
@@ -66,17 +76,28 @@ async fn online_indexes(db: &Db) -> sqlx::Result<Vec<IndexStatus>> {
         .collect()
 }
 
-#[derive(Serialize)]
+/// The database this process uses.
+#[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct DatabaseStatus {
+    /// `sqlite` or `postgres`.
     kind: &'static str,
+    /// The database version.
     version: String,
+    /// The schema version stored in the database.
     schema_version: i64,
+    /// The main pool.
     pool: PoolStatus,
+    /// The read pool, when it is a separate one.
     reader: Option<PoolStatus>,
+    /// What the Postgres connection limit leaves; null on SQLite.
     connections: Option<ConnectionBudget>,
+    /// How light writes commit, `sync` or `async`; null on SQLite.
     light_commits: Option<&'static str>,
+    /// The statement timeout; null on SQLite.
     statement_timeout_secs: Option<u64>,
+    /// The read replicas.
     replicas: Vec<ReplicaStatus>,
+    /// The indexes built while the server runs; empty on SQLite.
     online_indexes: Vec<IndexStatus>,
 }
 

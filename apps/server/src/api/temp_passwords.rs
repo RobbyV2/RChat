@@ -83,8 +83,10 @@ impl Issuer<'_> {
 }
 
 /// A temporary password as it is returned once to whoever issued it.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = IssuedPassword)]
 pub struct Issued {
+    /// The temporary password.
     pub temp_password: String,
     /// When it stops signing in (unix seconds); null for never.
     pub expires_at: Option<i64>,

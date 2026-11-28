@@ -282,12 +282,18 @@ struct Loaded {
 }
 
 /// One data key as `server keys status` and the admin page list it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[schema(as = AdminDataKey)]
 pub struct DataKeyStatus {
+    /// The data key id.
     pub id: i64,
+    /// `content`, `media`, `secrets`, `search` or `bus`.
     pub purpose: String,
+    /// Its generation within the purpose; the highest one seals new records.
     pub generation: i64,
+    /// The id of the root key that wraps it.
     pub kek: String,
+    /// Its state, for example `active` or `destroyed`.
     pub state: String,
     /// Whether it unwraps with a key this process holds.
     pub held: bool,
@@ -296,7 +302,7 @@ pub struct DataKeyStatus {
 }
 
 /// What the admin page and `server keys status` show. It never holds key material.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
 pub struct RingStatus {
     /// `kms`, `operator`, `file`, or `none`.
     pub source: String,
@@ -307,17 +313,22 @@ pub struct RingStatus {
     /// `id:fingerprint` of the instance key file's keys kept to open older data keys while
     /// `ENCRYPTION_KEYS` replaces them.
     pub kept: Vec<String>,
+    /// The path of the instance key file, when there is one.
     pub key_file: Option<String>,
     /// Whether the `secrets` purpose runs on the key kept in the database.
     pub database_key: bool,
+    /// When the key copy was confirmed saved (unix seconds).
     pub backed_up_at: Option<i64>,
+    /// Set when a start made relay or P2P secrets again.
     pub secrets_reset: Option<SecretsReset>,
+    /// Every data key.
     pub data_keys: Vec<DataKeyStatus>,
 }
 
 /// The relay or P2P secrets a start made again because the stored ones could not be opened.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct SecretsReset {
+    /// Unix seconds.
     pub at: i64,
     /// The `settings` names, such as `relay_secret`.
     pub secrets: Vec<String>,

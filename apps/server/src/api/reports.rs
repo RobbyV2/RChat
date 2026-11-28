@@ -1224,9 +1224,11 @@ pub(crate) async fn list_events(
 
 /// Which reports an admin route reads: those to the instance, or with `scope=server` those to
 /// the moderators of `server`, read-only.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
 pub struct AdminScope {
+    /// `server` to read the reports of `server`; left out for the reports to the instance.
     pub scope: Option<String>,
+    /// The server whose reports to read, with `scope=server`.
     pub server: Option<String>,
 }
 

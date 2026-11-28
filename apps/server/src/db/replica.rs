@@ -31,10 +31,14 @@ struct Replica {
     sample: Mutex<Sample>,
 }
 
-#[derive(serde::Serialize)]
+/// A read replica.
+#[derive(serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct ReplicaStatus {
+    /// Its host and port.
     host: String,
+    /// Whether reads go to it now.
     healthy: bool,
+    /// How far it is behind, when known.
     lag_ms: Option<i64>,
 }
 
