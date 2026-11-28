@@ -321,7 +321,7 @@ pub(crate) async fn get_job(
 ///
 /// The newest 10 jobs over the stored messages of `place` that you may run, newest first.
 /// General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/seal_jobs", tag = "Encryption", params(JobsQuery), responses((status = 200, description = "The jobs, newest first", body = Vec<SealJob>), (status = 400, description = "`place must be s:<server>, d:<dm id> or *`", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: a server or DM you have no access to; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/seal_jobs", operation_id = "list_seal_jobs", tag = "Encryption", params(JobsQuery), responses((status = 200, description = "The jobs, newest first", body = Vec<SealJob>), (status = 400, description = "`place must be s:<server>, d:<dm id> or *`", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: a server or DM you have no access to; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list_jobs(
     State(state): State<AppState>,
     Authed(user): Authed,

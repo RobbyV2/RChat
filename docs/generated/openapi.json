@@ -13994,7 +13994,7 @@
         ],
         "summary": "List the jobs of a place",
         "description": "The newest 10 jobs over the stored messages of `place` that you may run, newest first.\nGeneral rate-limit bucket.",
-        "operationId": "list_jobs",
+        "operationId": "list_seal_jobs",
         "parameters": [
           {
             "name": "place",
