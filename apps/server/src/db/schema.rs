@@ -148,6 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expir
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 CREATE INDEX IF NOT EXISTS idx_channel_categories_server ON channel_categories(server, position);
 CREATE INDEX IF NOT EXISTS idx_channel_separators_server ON channel_separators(server, position);
+CREATE INDEX IF NOT EXISTS idx_channel_separators_category ON channel_separators(category_id);
 CREATE INDEX IF NOT EXISTS idx_category_perms_server ON category_perms(server);
 CREATE INDEX IF NOT EXISTS idx_group_pings_channel ON group_pings(channel_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_message ON group_pings(message_id);
@@ -337,6 +338,7 @@ CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expir
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 CREATE INDEX IF NOT EXISTS idx_channel_categories_server ON channel_categories(server, position);
 CREATE INDEX IF NOT EXISTS idx_channel_separators_server ON channel_separators(server, position);
+CREATE INDEX IF NOT EXISTS idx_channel_separators_category ON channel_separators(category_id);
 CREATE INDEX IF NOT EXISTS idx_category_perms_server ON category_perms(server);
 CREATE INDEX IF NOT EXISTS idx_group_pings_channel ON group_pings(channel_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_message ON group_pings(message_id);
