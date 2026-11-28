@@ -1,3 +1,5 @@
+import { p2pMembersHidden } from '../member_list'
+import { loaded as rulesLoaded } from '../perms'
 import { displayName } from '../p2p/contacts'
 import { withMissed, type P2pMessage } from '../p2p/dm'
 import { asMessage, numbering } from '../p2p/shown_message'
@@ -83,15 +85,35 @@ const roomNaming = (place: P2pRoom, state: () => PeerState) => {
       user: (ik: string) => app.memberUser(room, ik),
     })
   )
+  // Without the member list only the authors in view are suggested.
+  const authors = built(
+    () => {
+      const s = state()
+      const v = s.servers[room]
+      const here = s.chat?.room === room ? s.chat : null
+      const hidden =
+        !!v &&
+        !!s.me &&
+        rulesLoaded() &&
+        p2pMembersHidden(
+          v,
+          s.me,
+          s.server?.room === room ? (s.server.ch ?? null) : null,
+          app.owner.store.getState().settings.member_lists !== false
+        ) !== null
+      return [hidden, hidden ? here?.messages : undefined] as const
+    },
+    ([hidden, messages]) => (hidden ? new Set((messages ?? []).map(m => m.sender)) : null)
+  )
   return built(
-    () => [who(), state().servers[room]?.members] as const,
-    ([{ name, user }, members]) =>
+    () => [who(), state().servers[room]?.members, authors()] as const,
+    ([{ name, user }, members, seen]) =>
       naming(
         place,
         name,
         user,
         (members ?? [])
-          .filter(m => m.m === 'join')
+          .filter(m => m.m === 'join' && (seen === null || seen.has(m.ik)))
           .map(m => ({ ik: m.ik, name: m.name, handle: m.name }))
       )
   )

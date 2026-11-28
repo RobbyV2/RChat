@@ -6,6 +6,7 @@ import type { RoomExtras } from '../../profile_fields'
 import type { LockState } from '../../profile_reset'
 import type { CategoryStyle, ProfilesMode, SeparatorStyle } from '../../types'
 import type { ServerAbout } from '../../server_about'
+import type { P2pMemberList } from '../../member_list'
 import type { Disowned, Reapply } from '../acl_room'
 import { b64u, bytesOf, canonical, fromB64u, randomBytes, utf8 } from '../canonical'
 import { storedSize } from '../dag'
@@ -324,6 +325,8 @@ export interface ServerView {
   color: number | null
   // What the server is about and how its icon looks.
   about: ServerAbout
+  // Who sees the member list.
+  memberList: P2pMemberList
   me: Membership | null
   joining: boolean
   owner: string | null
@@ -512,6 +515,7 @@ export const RESIGN_ACL = [
   'profile_mode',
   'profile_reset',
   'about',
+  'member_list',
   'category',
   'chcat',
   'chsep',

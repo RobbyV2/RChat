@@ -83,7 +83,12 @@ import {
   RoleNameForm,
   SlowmodeField,
 } from './settings_fields'
-import { GuestParticipation, ServerAccessSection, passwordName } from './server_access'
+import {
+  GuestParticipation,
+  MemberListSwitch,
+  ServerAccessSection,
+  passwordName,
+} from './server_access'
 import { HostedMembers, MEMBER_SEARCH_PERMS } from './server_members'
 import { WidgetSettings } from './widget_settings'
 import { HostedRules } from './perm_dialog'
@@ -1539,7 +1544,12 @@ function Settings({ server, section }: { server: string; section: ServerSettings
     profiles: () => <ServerProfilesSetting server={server} />,
     access: () =>
       server === 'rchat' ? (
-        <GuestParticipation server={server} />
+        <>
+          {canSettings && typeof detail.hide_members === 'boolean' && (
+            <MemberListSwitch server={server} hide={detail.hide_members} />
+          )}
+          <GuestParticipation server={server} />
+        </>
       ) : (
         <ServerAccessSection
           canSettings={canSettings}
@@ -1549,6 +1559,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
           canRemove={hasPerm(perms, Perm.Kick)}
           publicRead={detail.public_read ?? null}
           membersVisible={parseMembersVisible(detail.members_visible)}
+          hideMembers={typeof detail.hide_members === 'boolean' ? detail.hide_members : null}
         />
       ),
     roles: () => (

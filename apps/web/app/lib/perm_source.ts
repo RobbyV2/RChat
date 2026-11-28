@@ -32,6 +32,7 @@ export const PERM_GROUPS: readonly PermGroup[] = [
 const GROUP_OF: Record<string, PermGroup> = {
   ViewChannels: 'General',
   ReadHistory: 'General',
+  ViewMembers: 'General',
   ChangeProfile: 'General',
   CreateInvites: 'General',
   SendMessages: 'Text',
@@ -58,6 +59,7 @@ const GROUP_OF: Record<string, PermGroup> = {
 
 // Labels and hints where a side words a permission its own way.
 const HOSTED_TEXT: Record<string, { label?: string; hint?: string }> = {
+  ViewMembers: { hint: 'See who is in the server, who is online, and get member suggestions' },
   DeleteMessages: { hint: "Delete others' messages and close their polls" },
   BypassSlowmode: { hint: 'Send without waiting in slow mode channels' },
   ManageServer: { label: 'Manage server settings' },

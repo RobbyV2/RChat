@@ -354,6 +354,9 @@ class SnapFacts implements Facts {
   get profileMode() {
     return this.V.profileModeOf()
   }
+  get memberList() {
+    return this.V.memberListOf()
+  }
   get profileReset() {
     return this.one('profileReset', () =>
       lazyMap(

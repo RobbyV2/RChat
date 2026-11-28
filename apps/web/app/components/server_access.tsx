@@ -24,6 +24,7 @@ import {
   type ReadingChoice,
 } from '../lib/public_reading'
 import { MEMBERS_VISIBLE_LABEL, membersVisibleLine } from '../lib/profile_choice'
+import { HIDE_MEMBERS_LABEL, SITE_OFF_LINE, hideMembersLine } from '../lib/member_list'
 import {
   ACTIVE_MAX,
   EXPIRY_PRESETS,
@@ -692,6 +693,39 @@ function MemberPrivacy({ server, visible }: { server: string; visible: boolean }
   )
 }
 
+// "Allow members to view the member list": the server-wide switch of who sees it. While the site
+// has member lists off it shows off and can't change.
+export function MemberListSwitch({ server, hide }: { server: string; hide: boolean }) {
+  const account = useAccount()
+  const siteOn = useStore(s => s.settings.member_lists !== false)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const flip = (allow: boolean) => {
+    if (busy || allow === !hide) return
+    setBusy(true)
+    void sendTo(account, ask.updateServer(server, { hide_members: !allow }))
+      .then(
+        () => setError(null),
+        (err: unknown) => setError(errorText(err))
+      )
+      .finally(() => setBusy(false))
+  }
+  return (
+    <div>
+      <div>
+        <SettingSwitch
+          label={HIDE_MEMBERS_LABEL}
+          hint={siteOn ? hideMembersLine(hide) : SITE_OFF_LINE}
+          value={siteOn && !hide}
+          onChange={flip}
+          disabled={busy || !siteOn}
+        />
+      </div>
+      <FieldError message={error} />
+    </div>
+  )
+}
+
 interface AccessProps {
   server: string
   canSettings: boolean
@@ -700,6 +734,7 @@ interface AccessProps {
   canRemove: boolean
   publicRead: PublicRead
   membersVisible: boolean | null
+  hideMembers: boolean | null
 }
 
 export function ServerAccessSection(props: AccessProps) {
@@ -724,6 +759,7 @@ function AccessBody({
   canRemove,
   publicRead,
   membersVisible,
+  hideMembers,
 }: AccessProps & { data: ServerPasswords; refresh: () => void }) {
   const account = useAccount()
   const { conn: home } = account
@@ -882,6 +918,7 @@ function AccessBody({
         {canSettings && (
           <>
             <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
+            {hideMembers !== null && <MemberListSwitch server={server} hide={hideMembers} />}
             {membersVisible !== null && <MemberPrivacy server={server} visible={membersVisible} />}
             <GuestParticipation server={server} />
           </>

@@ -9403,3 +9403,82 @@ async fn seal_jobs_are_added_to_an_old_database() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn member_list_visibility_is_added_to_an_old_database() {
+    on_each_database("member_list_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let view_members = rchat_perms::masks::VIEW_MEMBERS as i64;
+        let old_base = (rchat_perms::masks::BASE as i64) & !view_members;
+        let narrow = (rchat_perms::masks::VIEW | rchat_perms::masks::SEND) as i64;
+        for sql in [
+            format!("INSERT INTO servers(name, display_name, creator, created_at, members_visible, everyone_perms) VALUES('club', 'Club', 'alice', 7, 0, {old_base})"),
+            format!("INSERT INTO servers(name, display_name, creator, created_at, everyone_perms) VALUES('cut', 'Cut', 'alice', 8, {narrow})"),
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 9)".to_string(),
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'bob', 0, 0, 5)".to_string(),
+            "ALTER TABLE servers DROP COLUMN hide_members".to_string(),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&db)
+                .await
+                .expect(&sql);
+        }
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind((super::migrate::VIEW_MEMBERS_VERSION - 1).to_string())
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name IN ('club', 'cut', 'den') AND hide_members = 0").await,
+                3 - i64::from(round == 1),
+                "{round}: old servers start without hiding their member list"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'den' AND hide_members = 1 AND everyone_perms IS NULL").await,
+                i64::from(round == 1),
+                "{round}: a choice made after the upgrade survives a restart"
+            );
+            let club = match round {
+                0 => old_base | view_members,
+                _ => old_base,
+            };
+            assert_eq!(
+                count(&db, "SELECT everyone_perms FROM servers WHERE name = 'club'").await,
+                club,
+                "{round}: @everyone gets View members once"
+            );
+            assert_eq!(
+                count(&db, "SELECT everyone_perms FROM servers WHERE name = 'cut'").await,
+                narrow | view_members,
+                "{round}"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'club' AND display_name = 'Club' AND created_at = 7 AND members_visible = 0").await,
+                1,
+                "{round}: the old server keeps its options"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM members WHERE server = 'club' AND username = 'bob' AND joined_at = 5").await,
+                1,
+                "{round}"
+            );
+            if round == 0 {
+                for sql in [
+                    format!("UPDATE servers SET everyone_perms = {old_base} WHERE name = 'club'"),
+                    "UPDATE servers SET hide_members = 1 WHERE name = 'den'".to_string(),
+                ] {
+                    sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                        .execute(&db)
+                        .await
+                        .expect(&sql);
+                }
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}

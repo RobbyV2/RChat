@@ -30,6 +30,7 @@ import {
 import { unsentText } from '../flows'
 import { membershipOf, roomColor, type HistoryVis } from '../state'
 import { p2pAbout, type AboutChange } from '../../server_about'
+import { parseP2pMemberList, type P2pMemberListChange } from '../../member_list'
 import type { P2pThread } from './store'
 import type { IdentityScope, P2pParts } from './scope'
 import { time } from '../../platform/time'
@@ -96,6 +97,7 @@ export function createServersPart(
       name: r.name ?? 'P2P server',
       color: null,
       about: p2pAbout(sum?.about ?? null),
+      memberList: parseP2pMemberList(sum?.memberList ?? null),
       awaitingAcl: !r.legacy && sum?.rules == null,
       rules: rulesOf(sum?.rules),
       me,
@@ -818,6 +820,8 @@ export function createServersPart(
     codes: (room: string) => withServers(s => s.codes(room)),
     rename: (room: string, name: string) => withServers(s => s.setName(room, name)),
     setAbout: (room: string, change: AboutChange) => withServers(s => s.setAbout(room, change)),
+    setMemberList: (room: string, change: P2pMemberListChange) =>
+      withServers(s => s.setMemberList(room, change)),
     setHistory: (room: string, vis: HistoryVis) => withServers(s => s.setHistory(room, vis)),
     setSystem: (room: string, sys: { ch: string | null; join: boolean; leave: boolean }) =>
       withServers(s => s.setSystem(room, sys)),

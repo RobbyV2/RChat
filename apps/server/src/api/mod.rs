@@ -419,6 +419,11 @@ pub struct ServerSummaryLite {
     /// and is found by name, but not as a member of this server.
     #[serde(default = "yes")]
     pub members_visible: bool,
+    /// "Allow members to view the member list" off: only members with Manage server, Manage
+    /// roles or Kick and ban (and instance staff) see who is in the server, their presence and
+    /// mention suggestions. While `false`, View members (34359738368) decides, per channel.
+    #[serde(default)]
+    pub hide_members: bool,
     /// How people join: `name` (anyone who knows its name), `invite` (with an invite link, or
     /// a password the managers made), `password` (its name and its password) or `closed`
     /// (nobody new). `has_password` is `true` for every mode but `name`.
@@ -752,6 +757,9 @@ pub struct ServerDetail {
     /// "Members can be seen by people outside this server" (see `ServerSummaryLite`). Set with
     /// `PATCH /api/v1/servers/{name}`.
     pub members_visible: bool,
+    /// Whether the server keeps its member list to its moderators (see `ServerSummaryLite`).
+    /// Set with `PATCH /api/v1/servers/{name}`.
+    pub hide_members: bool,
     /// How people join (see `ServerSummaryLite`). Set with `PATCH /api/v1/servers/{name}`.
     pub join_mode: join_modes::JoinMode,
     /// Whether server search lists it (see `ServerSummaryLite`). Set with
@@ -1553,6 +1561,10 @@ pub struct Settings {
     /// the accounts the app holds on this instance. Only the docs read it; it gates no endpoint.
     #[serde(default = "yes")]
     pub interactive_docs: bool,
+    /// Member lists: who is in a server, their presence and mention suggestions. While off,
+    /// nobody but instance staff gets a server's member list; existing servers and members stay.
+    #[serde(default = "yes")]
+    pub member_lists: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1752,6 +1764,7 @@ impl Settings {
         docs: false,
         scheduled_messages: false,
         interactive_docs: false,
+        member_lists: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
@@ -1835,6 +1848,7 @@ impl Settings {
             docs: feature(Feature::Docs),
             scheduled_messages: feature(Feature::ScheduledMessages),
             interactive_docs: feature(Feature::InteractiveDocs),
+            member_lists: feature(Feature::MemberLists),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -1925,6 +1939,7 @@ impl Settings {
             docs,
             scheduled_messages,
             interactive_docs,
+            member_lists,
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
@@ -1964,6 +1979,7 @@ impl Settings {
             Feature::Docs => docs,
             Feature::ScheduledMessages => scheduled_messages,
             Feature::InteractiveDocs => interactive_docs,
+            Feature::MemberLists => member_lists,
         }
     }
 

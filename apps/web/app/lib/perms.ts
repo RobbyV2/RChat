@@ -103,6 +103,13 @@ export interface PermsModule {
   ): string
   perms_display_order(places: Float64Array): Float64Array
   perms_hoist_groups(places: Float64Array, hoist: Uint8Array): Float64Array
+  perms_member_list(
+    seer: number,
+    bits: number,
+    here: number,
+    inChannel: boolean,
+    flags: number
+  ): number
 }
 
 type RankArgs = [number, number, number, Tie, number]
@@ -486,3 +493,40 @@ export const hoistGroupsOf = (places: number[], hoist: boolean[]) =>
   Array.from(
     rules().perms_hoist_groups(Float64Array.from(places), Uint8Array.from(hoist.map(Number)))
   )
+
+// Why a server's member list is hidden: the site turned member lists off, the server or the
+// viewer's roles keep it from them, the channel does, or the server shows its members only to
+// members.
+export type MembersHidden = 'site' | 'server' | 'channel' | 'outside'
+const HIDDEN: (MembersHidden | null)[] = [null, 'site', 'server', 'channel', 'outside']
+
+// Who asks for a member list: a site admin, a member with their server bits (and in a channel
+// what they hold there), or someone outside with @everyone's bits.
+export type Seer =
+  | { kind: 'staff' }
+  | { kind: 'member'; server: number; here?: number }
+  | { kind: 'visitor'; everyone: number; here?: number }
+
+export interface ListPlace {
+  site: boolean
+  hide: boolean
+  outside: boolean
+}
+
+// Whether `seer` sees a server's member list: null when it does.
+export const memberListHidden = (seer: Seer, place: ListPlace): MembersHidden | null => {
+  const flags = (place.site ? 1 : 0) | (place.hide ? 2 : 0) | (place.outside ? 4 : 0)
+  const answer =
+    seer.kind === 'staff'
+      ? rules().perms_member_list(0, 0, 0, false, flags)
+      : seer.kind === 'member'
+        ? rules().perms_member_list(1, seer.server, seer.here ?? 0, seer.here !== undefined, flags)
+        : rules().perms_member_list(
+            2,
+            seer.everyone,
+            seer.here ?? 0,
+            seer.here !== undefined,
+            flags
+          )
+  return answer < HIDDEN.length ? HIDDEN[answer] : 'server'
+}

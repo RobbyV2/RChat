@@ -28,6 +28,7 @@ pub const HISTORY: Mask = value("ReadHistory");
 pub const MANAGE_CHANNELS: Mask = value("ManageChannels");
 pub const MANAGE_ROLES: Mask = value("ManageRoles");
 pub const ASSIGN_ROLES: Mask = value("AssignRoles");
+pub const VIEW_MEMBERS: Mask = value("ViewMembers");
 
 /// What @everyone holds unless the server says otherwise.
 pub const BASE: Mask = pick(Some(true), None);
@@ -47,7 +48,7 @@ pub const VOICE: Mask = value("Connect") | value("Speak") | value("Video");
 /// What Manage channels passes in every channel.
 pub const MANAGER_PASS: Mask = (BASE & CHANNEL) | value("BypassSlowmode");
 /// What a timed-out member keeps.
-pub const TIMED_OUT_KEEP: Mask = VIEW | HISTORY | value("ViewAuditLog");
+pub const TIMED_OUT_KEEP: Mask = VIEW | HISTORY | VIEW_MEMBERS | value("ViewAuditLog");
 /// What an incoming webhook holds in its channel.
 pub const WEBHOOK: Mask = VIEW | HISTORY | SEND | value("AttachFiles") | value("EmbedLinks");
 /// What a read link holds in its channel, and what every visitor may hold.

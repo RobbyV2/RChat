@@ -32,6 +32,7 @@ import {
   type SystemContent,
 } from '../state'
 import { p2pAboutContent, type AboutChange } from '../../server_about'
+import { p2pMemberListContent, type P2pMemberListChange } from '../../member_list'
 import { isQuotaError } from '../sync'
 import { MOVED_TEXT, MOVING_TEXT, STORAGE_FULL_TEXT } from '../dm'
 import type { ServerCtx } from './context'
@@ -364,6 +365,15 @@ export async function setAbout(cx: ServerCtx, room: string, change: AboutChange)
   if (!can(cx.sumOf(room), cx.me, P.ManageServer)) throw new ServerError(CANT_TEXT)
   return cx.emit(room, 'about', () =>
     p2pAboutContent(cx.sumOf(room).about as Record<string, unknown> | null, change)
+  )
+}
+
+// Who sees the member list (`member_list`): the admitted content with only our change, so fields
+// a newer app wrote stay.
+export async function setMemberList(cx: ServerCtx, room: string, change: P2pMemberListChange) {
+  if (!can(cx.sumOf(room), cx.me, P.ManageServer)) throw new ServerError(CANT_TEXT)
+  return cx.emit(room, 'member_list', () =>
+    p2pMemberListContent(cx.sumOf(room).memberList as Record<string, unknown> | null, change)
   )
 }
 

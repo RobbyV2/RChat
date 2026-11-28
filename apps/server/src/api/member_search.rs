@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::members::{Roster, SERVER_HIDDEN, refusal};
 use crate::api::access::perms::Perm;
 use crate::api::access::subjects::{Level, ProfileChoices, level_of, own_choice};
 use crate::api::access::{Proof, forbidden, resolve_server};
@@ -528,8 +529,14 @@ pub(crate) async fn search_members(
     if search.via.is_some() && !invites {
         return Err(forbidden("Missing permission"));
     }
-    let key = access.name().to_string();
     let settings = crate::api::Settings::cached(db).await;
+    let list = match access.member_list(db, &settings).await? {
+        Roster::Shown(list) => list,
+        Roster::Hidden(why) => {
+            return Err(refusal(why, access.lite()).unwrap_or_else(|| forbidden(SERVER_HIDDEN)));
+        }
+    };
+    let key = list.server().to_string();
     let ages = Ages {
         settings: &settings,
         caller: &user.username,

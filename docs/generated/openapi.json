@@ -15126,7 +15126,7 @@
           "Servers"
         ],
         "summary": "Update a server",
-        "description": "Renames the server, switches it between public and password protected or changes how people\njoin it (`join`), sets, changes or clears its permanent password, changes its header colors,\nand sets whether people who aren't members can read it (`public_read`) and see its members\n(`members_visible`), whether search lists it (`listed`), and whether guests can participate\nin text and voice (`guest_chat_opt_in`, `guest_voice_opt_in`); every field is optional.\nTurning a guest choice on requires its site switch. A suspended choice can be kept or turned\noff. A server people join with an invite or that is closed keeps its key when it is renamed,\nso its passwords and links keep working; one that turns to `name` or `password` takes its\nlowercase name as its key. Joining by password or by name with `protected` and `password`\nsets the matching `join_mode`.\nRequires the Manage server settings permission; `members: remove` together with `password` also\nrequires Kick. The built-in rchat server can't be given a password and keeps its key\n`rchat` (a new name changes only its display name); its colors, `public_read`,\n`members_visible` and the guest participation opt-ins may change.\n\nWhen `password` is present, `members: remove` removes every other member you could kick\n(their roles are dropped, as if kicked; see `ServerDetail.roles_order_confirmed`) and existing\nguest grants are revoked unless `keep_guests` is true with `members: keep`. The response\ncarries `removed` and `kept` counts. Making the server public, or changing its lowercase\nname, revokes every extra password (extra password lookups are bound to the name, and invite\nlinks carry it); revoked passwords stay listed until they are purged.\n\nEmits `server_renamed` (with `old_name`) to the server when the name or display name changed,\notherwise `server_updated` with the new state (password flag, colors, description and icon), and\n`members_purged` to the server and the removed members. Voice users who can no longer open\nthe server leave their call, and with `guest_voice: false` every guest in its voice gets\n`voice_ended` (`Guests can't use voice in this server`). Strict and general rate-limit buckets.\nA new `name` counts with the name checks of `GET /api/v1/servers/{name}/available`, and a new\n`password` with new server passwords, as rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an\nhour and `RARE_REQUESTS_PER_DAY` (100) a day per account and kind by default. A password refused\nby its checks, or while the server is busy, does not count.",
+        "description": "Renames the server, switches it between public and password protected or changes how people\njoin it (`join`), sets, changes or clears its permanent password, changes its header colors,\nand sets whether people who aren't members can read it (`public_read`) and see its members\n(`members_visible`), whether members without moderation rights see the member list\n(`hide_members`), whether search lists it (`listed`), and whether guests can participate\nin text and voice (`guest_chat_opt_in`, `guest_voice_opt_in`); every field is optional.\nTurning a guest choice on requires its site switch. A suspended choice can be kept or turned\noff. A server people join with an invite or that is closed keeps its key when it is renamed,\nso its passwords and links keep working; one that turns to `name` or `password` takes its\nlowercase name as its key. Joining by password or by name with `protected` and `password`\nsets the matching `join_mode`.\nRequires the Manage server settings permission; `members: remove` together with `password` also\nrequires Kick. The built-in rchat server can't be given a password and keeps its key\n`rchat` (a new name changes only its display name); its colors, `public_read`,\n`members_visible`, `hide_members` and the guest participation opt-ins may change.\n\nWhen `password` is present, `members: remove` removes every other member you could kick\n(their roles are dropped, as if kicked; see `ServerDetail.roles_order_confirmed`) and existing\nguest grants are revoked unless `keep_guests` is true with `members: keep`. The response\ncarries `removed` and `kept` counts. Making the server public, or changing its lowercase\nname, revokes every extra password (extra password lookups are bound to the name, and invite\nlinks carry it); revoked passwords stay listed until they are purged.\n\nEmits `server_renamed` (with `old_name`) to the server when the name or display name changed,\notherwise `server_updated` with the new state (password flag, colors, description and icon), and\n`members_purged` to the server and the removed members. Voice users who can no longer open\nthe server leave their call, and with `guest_voice: false` every guest in its voice gets\n`voice_ended` (`Guests can't use voice in this server`). Strict and general rate-limit buckets.\nA new `name` counts with the name checks of `GET /api/v1/servers/{name}/available`, and a new\n`password` with new server passwords, as rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an\nhour and `RARE_REQUESTS_PER_DAY` (100) a day per account and kind by default. A password refused\nby its checks, or while the server is busy, does not count.",
         "operationId": "update_server",
         "parameters": [
           {
@@ -16578,7 +16578,7 @@
           "Roles"
         ],
         "summary": "Set what everyone may do",
-        "description": "Changes the permission bits every member of the server holds: 131072 View channels, 262144\nSend messages, 524288 Read history, 1048576 Add reactions, 2097152 Attach files, 4194304\nEmbed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect, 67108864 Speak\nand 134217728 Video. Other bits are left as they are. Requires the Manage roles permission,\nand you can only add bits you hold yourself. Emits `roles_changed` to the server and removes\nusers from voice rooms they can no longer view. General rate-limit bucket.",
+        "description": "Changes the permission bits every member of the server holds: 131072 View channels, 262144\nSend messages, 524288 Read history, 1048576 Add reactions, 2097152 Attach files, 4194304\nEmbed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect, 67108864 Speak,\n134217728 Video and 34359738368 View members. Other bits are left as they are. Requires the Manage roles permission,\nand you can only add bits you hold yourself. Emits `roles_changed` to the server and removes\nusers from voice rooms they can no longer view. General rate-limit bucket.",
         "operationId": "set_everyone_perms",
         "parameters": [
           {
@@ -16843,7 +16843,7 @@
           "Members"
         ],
         "summary": "List non-members who interacted",
-        "description": "Returns users who sent a message or joined a voice channel in the server but are not members\nnow (for example former members), most recent interaction first, as pages of `limit` (default\nand max 50). Only channel managers get this activity order. Other callers get only users with\na message the caller may read, newest such message first. Page with `cursor` from the\n`X-Next-Cursor` response header (or the legacy `offset`); a cursor works only for the caller\nit was given to.\n\nSigned-in users may call it, and guests when guest access is on. Banned users get 403. On a\npassword-protected server signed-in callers must be members and guests need a valid\n`X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A\nserver whose `members_visible` is off lists them only to its members and instance staff:\neveryone else gets an empty list.\nEach admitted call spends one `list` lookup per account or guest address group.\nOne list runs per caller. The latest waiter may wait up to 5 s for that caller or 2 s\nfor a process search place. Pools with two or more readers reserve one for other requests.\nWith one reader, other requests share that connection with a single admitted list.\nGeneral rate-limit bucket.",
+        "description": "Returns users who sent a message or joined a voice channel in the server but are not members\nnow (for example former members), most recent interaction first, as pages of `limit` (default\nand max 50). Only channel managers get this activity order. Other callers get only users with\na message the caller may read, newest such message first. Page with `cursor` from the\n`X-Next-Cursor` response header (or the legacy `offset`); a cursor works only for the caller\nit was given to.\n\nSigned-in users may call it, and guests when guest access is on. Banned users get 403. On a\npassword-protected server signed-in callers must be members and guests need a valid\n`X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A\nserver whose `members_visible` is off lists them only to its members and instance staff:\neveryone else gets an empty list. A caller without the member list (see\n`GET /api/v1/servers/{name}/members`, with `channel_id`) gets its 403.\nEach admitted call spends one `list` lookup per account or guest address group.\nOne list runs per caller. The latest waiter may wait up to 5 s for that caller or 2 s\nfor a process search place. Pools with two or more readers reserve one for other requests.\nWith one reader, other requests share that connection with a single admitted list.\nGeneral rate-limit bucket.",
         "operationId": "list_interacted",
         "parameters": [
           {
@@ -16891,6 +16891,16 @@
                 "string",
                 "null"
               ]
+            }
+          },
+          {
+            "name": "channel_id",
+            "in": "query",
+            "description": "The channel the list shows in: View members is read there. A channel of another server,\nor one the caller can't view, gives the uniform 404.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
             }
           },
           {
@@ -16949,7 +16959,7 @@
             }
           },
           "403": {
-            "description": "`You are banned from this server`; for password-protected servers only when you took part in the server before",
+            "description": "`You are banned from this server`; for password-protected servers only when you took part in the server before. The member list refusals of `GET /api/v1/servers/{name}/members`",
             "content": {
               "application/json": {
                 "schema": {
@@ -16959,7 +16969,7 @@
             }
           },
           "404": {
-            "description": "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)",
+            "description": "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). Also a `channel_id` of another server or that you can't view",
             "content": {
               "application/json": {
                 "schema": {
@@ -17808,7 +17818,7 @@
           "Members"
         ],
         "summary": "List server members",
-        "description": "Returns members as pages of `limit` (default and max 50): online members first, then offline\nones, each alphabetical by username. Page with `cursor` from the `X-Next-Cursor` response header\n(or the legacy `offset`). With `q` (username prefix) and/or `admins=1` it returns matching\nmembers alphabetically, paged by `cursor` only. With `role` and `top_hoisted=1`, or with\n`unhoisted=1`, it returns the members of one group of the member list (see `Role.hoist`)\nalphabetically, paged by `cursor` only. With `q` and `suggest=1` it returns the\nmembers `GET /api/v1/servers/{name}/mentions` suggests (mention autocomplete). With\n`usernames` it returns just those users that are members, alphabetical and unpaged.\n\nSigned-in users may call it, and guests when guest access is on. Banned users get 403. On a\npassword-protected server signed-in callers must be members and guests need a valid\n`X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A\nserver whose `members_visible` is off lists its members only to its members and instance\nstaff: everyone else gets an empty list in every mode.\nEach call takes one of the caller's `list` lookups (`LOOKUP_LIST_PER_MINUTE`, 120 a minute\nby default), or with `suggest` one of its `typeahead` lookups\n(`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute), counted per account, or per client address\nwithout one. General rate-limit bucket.",
+        "description": "Returns members as pages of `limit` (default and max 50): online members first, then offline\nones, each alphabetical by username. Page with `cursor` from the `X-Next-Cursor` response header\n(or the legacy `offset`). With `q` (username prefix) and/or `admins=1` it returns matching\nmembers alphabetically, paged by `cursor` only. With `role` and `top_hoisted=1`, or with\n`unhoisted=1`, it returns the members of one group of the member list (see `Role.hoist`)\nalphabetically, paged by `cursor` only. With `q` and `suggest=1` it returns the\nmembers `GET /api/v1/servers/{name}/mentions` suggests (mention autocomplete). With\n`usernames` it returns just those users that are members, alphabetical and unpaged.\n\nSigned-in users may call it, and guests when guest access is on. Banned users get 403. On a\npassword-protected server signed-in callers must be members and guests need a valid\n`X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A\nserver whose `members_visible` is off lists its members only to its members and instance\nstaff: everyone else gets an empty list in every mode.\n\nThe member list itself needs the site's `member_lists` switch on, the server's\n`hide_members` off and View members (34359738368) held, in `channel_id` when given; members\nwith Manage server, Manage roles or Kick and ban, and instance staff, get it regardless of the\nserver and its permissions. Without it the caller gets 403, `suggest` an empty list, and\n`usernames` only the members who wrote a message the caller can read, all shown offline.\nEach call takes one of the caller's `list` lookups (`LOOKUP_LIST_PER_MINUTE`, 120 a minute\nby default), or with `suggest` one of its `typeahead` lookups\n(`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute), counted per account, or per client address\nwithout one. General rate-limit bucket.",
         "operationId": "list_members",
         "parameters": [
           {
@@ -17917,6 +17927,16 @@
             }
           },
           {
+            "name": "channel_id",
+            "in": "query",
+            "description": "The channel the list shows in: View members is read there (see\n`ServerSummaryLite.hide_members`). A channel of another server, or one the caller can't\nview, gives the uniform 404. Must be an integer.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
             "name": "X-Guest-Grant",
             "in": "header",
             "description": "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server",
@@ -17952,7 +17972,7 @@
             }
           },
           "400": {
-            "description": "Invalid cursor (including a cursor from a different kind of listing), a non-integer `offset` or `limit`, a non-integer `role` (`Invalid role`), or `top_hoisted` without `role` (`top_hoisted needs a role`)",
+            "description": "Invalid cursor (including a cursor from a different kind of listing), a non-integer `offset` or `limit`, a non-integer `role` (`Invalid role`) or `channel_id` (`Invalid channel`), or `top_hoisted` without `role` (`top_hoisted needs a role`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -17972,7 +17992,7 @@
             }
           },
           "403": {
-            "description": "`You are banned from this server`; for password-protected servers only when you took part in the server before",
+            "description": "`You are banned from this server`; for password-protected servers only when you took part in the server before. `Member lists are turned off on this site` (reason `off_site`, control `member_lists`), `You can't view the members of this server` (with reason `off_server` and control `hide_members` while the server hides its list, else without a reason) or `You can't view the members of this channel`",
             "content": {
               "application/json": {
                 "schema": {
@@ -17982,7 +18002,7 @@
             }
           },
           "404": {
-            "description": "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)",
+            "description": "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). Also a `channel_id` of another server or that you can't view",
             "content": {
               "application/json": {
                 "schema": {
@@ -18485,7 +18505,7 @@
           "Members"
         ],
         "summary": "Suggest mentions",
-        "description": "At most 10 members of the server whose username, display name or server profile name starts\nwith `q` (case-insensitive), username matches first, each alphabetical, with only what a\nsuggestion shows: the name and avatar of their server profile over the account's. Members the caller may not find by name are left out: members see each other, and\npeople who read the server without being a member see its members while its\n`members_visible` is on; each member's own choice (`profile` in `PATCH\n/api/v1/me/privacy`) applies, so one who keeps their profile to friends is suggested only to\nfriends, and one who chose `everyone` to everyone who gets suggestions here. For signed-in\nmembers, and anyone signed in on a server anyone can read while its `members_visible` is\non; guests and everyone else get an empty list. Each call takes one of the caller's\n`typeahead` lookups\n(`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute by default), counted per account, or per client\naddress without one. General rate-limit bucket.",
+        "description": "At most 10 members of the server whose username, display name or server profile name starts\nwith `q` (case-insensitive), username matches first, each alphabetical, with only what a\nsuggestion shows: the name and avatar of their server profile over the account's. Members the caller may not find by name are left out: members see each other, and\npeople who read the server without being a member see its members while its\n`members_visible` is on; each member's own choice (`profile` in `PATCH\n/api/v1/me/privacy`) applies, so one who keeps their profile to friends is suggested only to\nfriends, and one who chose `everyone` to everyone who gets suggestions here. For signed-in\nmembers, and anyone signed in on a server anyone can read while its `members_visible` is\non; guests and everyone else get an empty list, and so does a caller without the member list\n(see `GET /api/v1/servers/{name}/members`, with `channel_id`). Each call takes one of the\ncaller's `typeahead` lookups\n(`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute by default), counted per account, or per client\naddress without one. General rate-limit bucket.",
         "operationId": "mentions",
         "parameters": [
           {
@@ -18509,6 +18529,19 @@
               ]
             },
             "example": "al"
+          },
+          {
+            "name": "channel_id",
+            "in": "query",
+            "description": "The channel the suggestions are for: View members is read there. A channel of another\nserver, or one the caller can't view, gives the uniform 404.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
           },
           {
             "name": "X-Guest-Grant",
@@ -18576,7 +18609,7 @@
             }
           },
           "404": {
-            "description": "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)",
+            "description": "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). Also a `channel_id` of another server or that you can't view",
             "content": {
               "application/json": {
                 "schema": {
@@ -29500,7 +29533,7 @@
             "type": "integer",
             "format": "int64",
             "description": "The permission bits everyone holds (see `ServerDetail.everyone_perms`).",
-            "example": 536739840
+            "example": 34896478208
           }
         }
       },
@@ -35955,6 +35988,7 @@
           "has_password",
           "guest_voice",
           "members_visible",
+          "hide_members",
           "join_mode",
           "listed",
           "icon_kind",
@@ -36032,6 +36066,10 @@
           "has_password": {
             "type": "boolean",
             "description": "Whether joining (or viewing as a non-member) needs the server password."
+          },
+          "hide_members": {
+            "type": "boolean",
+            "description": "Whether the server keeps its member list to its moderators (see `ServerSummaryLite`).\nSet with `PATCH /api/v1/servers/{name}`."
           },
           "icon_kind": {
             "$ref": "#/components/schemas/IconKind",
@@ -36414,6 +36452,13 @@
             ],
             "description": "Allow guests to talk in voice channels when the site permits it."
           },
+          "hide_members": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "\"Allow members to view the member list\" off (`true`): only members with Manage server,\nManage roles or Kick and ban, and instance staff, get the member list, presence and\nmention suggestions; `false` (the default) leaves it to View members. Omit to leave it\nunchanged."
+          },
           "icon_kind": {
             "oneOf": [
               {
@@ -36741,6 +36786,10 @@
             "type": "boolean",
             "description": "Whether joining (or viewing as a non-member) needs the server password."
           },
+          "hide_members": {
+            "type": "boolean",
+            "description": "\"Allow members to view the member list\" off: only members with Manage server, Manage\nroles or Kick and ban (and instance staff) see who is in the server, their presence and\nmention suggestions. While `false`, View members (34359738368) decides, per channel."
+          },
           "icon_kind": {
             "$ref": "#/components/schemas/IconKind",
             "description": "How its icon is drawn: `letter` (the first letter of its name, the default) or\n`identicon` (a pattern made from its key), on its `banner_color` when it has one."
@@ -36913,6 +36962,10 @@
           "interactive_docs": {
             "type": "boolean",
             "description": "Whether the docs this instance serves, and the docs the apps carry, may run requests as\nthe accounts the app holds on this instance. Only the docs read it; it gates no endpoint."
+          },
+          "member_lists": {
+            "type": "boolean",
+            "description": "Member lists: who is in a server, their presence and mention suggestions. While off,\nnobody but instance staff gets a server's member list; existing servers and members stay."
           },
           "onboarding": {
             "type": "boolean",

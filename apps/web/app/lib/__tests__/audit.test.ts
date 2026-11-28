@@ -530,6 +530,19 @@ describe('the member privacy option', () => {
     expect(fieldLabel('members_visible')).toBe('Members can be seen by people outside this server')
   })
 
+  test('hiding the member list from members says so', () => {
+    const turned = (before: boolean, after: boolean) =>
+      sentenceText(
+        entry({
+          action: 'server.update',
+          details: { changes: [{ field: 'hide_members', before, after }] },
+        })
+      )
+    expect(turned(false, true)).toBe('Alice hid the member list from members')
+    expect(turned(true, false)).toBe('Alice showed the member list to members')
+    expect(fieldLabel('hide_members')).toBe('Member list hidden from members')
+  })
+
   test('server profiles: the mode a server sets, and the names members give themselves', () => {
     const mode = (before: string, after: string) =>
       sentenceText(

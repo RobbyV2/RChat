@@ -1,12 +1,13 @@
 //! Permission rules shared by the server and by P2P devices: the bit registry, the masks, the
-//! channel evaluator, the hierarchy, escalation checks, role order, how roles show and the
-//! category-sync check.
+//! channel evaluator, the hierarchy, escalation checks, role order, how roles show, who sees a
+//! server's member list and the category-sync check.
 
 pub mod delta;
 pub mod eval;
 pub mod hier;
 pub mod looks;
 pub mod masks;
+pub mod members;
 pub mod order;
 pub mod registry;
 pub mod rules;

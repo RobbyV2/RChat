@@ -838,6 +838,9 @@ export interface RChatState {
   ) => Promise<void>
   // Forgets the loaded groups of the member list, so they load again.
   clearGroups: (server: string) => void
+  // The channel the member list of `server` loads for, where only that channel shows it to us
+  // (null: anywhere in the server).
+  scopeMembers: (server: string, channel: number | null) => void
   loadInteracted: (server: string, reset?: boolean) => Promise<void>
   ensureMembers: (server: string, usernames: string[]) => Promise<void>
   // Asks again for the member rows of `server` that did not load.

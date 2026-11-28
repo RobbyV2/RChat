@@ -221,6 +221,7 @@ export const actParts = (t: string, to?: string, ends = false): { act: string; w
     chsep: 'Change a separator',
     settings: 'Change the server settings',
     about: 'Change the server description and icon',
+    member_list: 'Change who can view the member list',
     profile: 'Change their profile',
     device_add: 'Add a device',
     device_revoke: 'Remove a device',
@@ -335,6 +336,8 @@ export const effectHolds = (
       return same(s.about, c)
     case 'store':
       return same(s.store, c)
+    case 'member_list':
+      return same(s.memberList, c)
     case 'profile':
       return same(s.members[me]?.profile, c)
     default:

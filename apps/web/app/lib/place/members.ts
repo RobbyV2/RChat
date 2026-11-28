@@ -11,6 +11,9 @@ import { ownsP2pServer } from '../p2p/server/types'
 import { P } from '../p2p/state'
 import { PAGE, pageGroups } from '../paging'
 import { onlineSection } from '../presence'
+import { hostedMembersHidden, p2pMembersHidden, type MembersHidden } from '../member_list'
+import { loaded as rulesLoaded } from '../perms'
+import { loadPermissionRules } from '../perms_load'
 import { seesMembers } from '../profile_choice'
 import type { Look } from '../role_looks'
 import { roleLook } from '../selectors'
@@ -58,6 +61,8 @@ export type MemberItem =
 export interface MemberList {
   // `none`: nothing to show here; `hidden`: the server keeps its members to itself.
   state: 'none' | 'loading' | 'hidden' | 'ready'
+  // Why a hidden list is hidden.
+  why: MembersHidden | null
   // What the loading rows are drawn from.
   seed: string
   items: MemberItem[]
@@ -77,8 +82,13 @@ export interface Members {
 }
 
 const NONE: MemberItem[] = []
-const plain = (state: MemberList['state'], seed: string): MemberList => ({
+const plain = (
+  state: MemberList['state'],
+  seed: string,
+  why: MembersHidden | null = null
+): MemberList => ({
   state,
+  why,
   seed,
   items: NONE,
   ownText: false,
@@ -89,8 +99,34 @@ const plain = (state: MemberList['state'], seed: string): MemberList => ({
 const sameParts = (a: readonly unknown[], b: readonly unknown[]) =>
   a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
 
-const hostedList = (s: RChatState, server: string) => {
+// Why the server keeps its member list from the viewer, in the open channel (`inChannel`) or
+// anywhere in it; null when it shows it. Until the permission rules are loaded only the rule
+// for people outside the server is known; the server refuses what it hides either way.
+const hostedHidden = (s: RChatState, server: string, inChannel: boolean): MembersHidden | null => {
+  const detail = s.servers[server]
   const member = s.me?.servers.some(x => x.name === server) ?? false
+  const siteAdmin = s.me?.is_site_admin ?? false
+  if (!rulesLoaded())
+    return seesMembers(detail?.members_visible, member, siteAdmin) ? null : 'outside'
+  const open = s.view?.kind === 'channel' && s.view.server === server ? s.view.channelId : null
+  return hostedMembersHidden({
+    siteOn: s.settings.member_lists !== false,
+    siteAdmin,
+    member,
+    detail,
+    channel: inChannel && open !== null ? detail?.channels.find(c => c.id === open) : null,
+  })
+}
+
+// The channel a member list loads for: the open one while only it shows the list.
+const hostedScope = (s: RChatState, server: string) =>
+  hostedHidden(s, server, true) === null && hostedHidden(s, server, false) !== null
+    ? s.view?.kind === 'channel' && s.view.server === server
+      ? s.view.channelId
+      : null
+    : null
+
+const hostedList = (s: RChatState, server: string) => {
   const parts = shownParts(s, server)
   return [
     s.servers[server],
@@ -99,7 +135,7 @@ const hostedList = (s: RChatState, server: string) => {
     s.interacted[server],
     s.hoisted[server],
     s.timeouts[server],
-    seesMembers(s.servers[server]?.members_visible, member, s.me?.is_site_admin ?? false),
+    hostedHidden(s, server, true),
     s.me !== null,
     parts.names,
     parts.rest,
@@ -117,20 +153,9 @@ const hosted = ({
   const act = () => store.getState()
   const list = derived(
     fromStore(store, s => hostedList(s, server), sameParts),
-    ([
-      detail,
-      cache,
-      info,
-      inter,
-      hoisted,
-      timeouts,
-      listed,
-      signedIn,
-      names,
-      rest,
-    ]): MemberList => {
+    ([detail, cache, info, inter, hoisted, timeouts, why, signedIn, names, rest]): MemberList => {
       if (!detail) return plain('loading', server)
-      if (!listed) return plain('hidden', server)
+      if (why !== null) return plain('hidden', server, why)
       if (detail.member_count > 0 && (!cache || (cache.loading && !cache.list.length)))
         return plain('loading', server)
       const shownOf = <T extends UserRef & { profile?: Member['profile'] }>(
@@ -222,6 +247,7 @@ const hosted = ({
         interacted()
         return {
           state: 'ready',
+          why: null,
           seed: server,
           items,
           ownText: false,
@@ -262,6 +288,7 @@ const hosted = ({
       interacted()
       return {
         state: 'ready',
+        why: null,
         seed: server,
         items,
         ownText: false,
@@ -277,6 +304,12 @@ const hosted = ({
       let ids: string | null = null
       let loaded: boolean | null = null
       let busy = false
+      let scope: number | null = null
+      if (!rulesLoaded())
+        void loadPermissionRules().then(
+          () => store.setState({}),
+          () => undefined
+        )
       const run = () => {
         if (busy) return
         busy = true
@@ -285,8 +318,15 @@ const hosted = ({
             again = false
             const s = act()
             const detail = s.servers[server]
-            if (!detail || !hostedList(s, server)[6]) break
+            if (!detail || hostedHidden(s, server, true) !== null) break
+            const nowScope = hostedScope(s, server)
+            if (nowScope !== scope) {
+              scope = nowScope
+              started = false
+              ids = null
+            }
             if (!started) {
+              s.scopeMembers(server, scope)
               started = true
               void s.loadMembers(server, true)
               void s.loadInteracted(server, true)
@@ -341,12 +381,19 @@ const peer = ({
         s.contacts,
         s.badges,
         s.server?.room === room && serversLoading(s),
+        s.server?.room === room ? (s.server.ch ?? null) : null,
+        rulesLoaded(),
       ] as const,
     sameParts
   )
   const build = (count: number): MemberList => {
-    const [v, me, contacts, badges, loading] = parts.get()
+    const [v, me, contacts, badges, loading, ch, rules] = parts.get()
     if (!v) return { ...plain(loading ? 'loading' : 'none', room), byIdentity: true }
+    if (!rules) return { ...plain('loading', room), byIdentity: true }
+    const why = me
+      ? p2pMembersHidden(v, me, ch, app.owner.store.getState().settings.member_lists !== false)
+      : null
+    if (why !== null) return { ...plain('hidden', room, why), byIdentity: true }
     const now = time().now()
     const sees = viewCan(v, P.TimeoutMembers)
     const paged = pageGroups(memberGroups(v.members, v.roles, me), count)
@@ -391,6 +438,7 @@ const peer = ({
     if (paged.more) items.push({ kind: 'more', key: `more${count}`, load: grow })
     return {
       state: 'ready',
+      why: null,
       seed: room,
       items,
       ownText: ownsP2pServer(v, me),
@@ -419,6 +467,13 @@ const peer = ({
     },
     watch: () => {
       shown = PAGE
+      if (!rulesLoaded())
+        void loadPermissionRules().then(
+          () => {
+            for (const changed of waiting) changed()
+          },
+          () => undefined
+        )
       return () => {}
     },
   }

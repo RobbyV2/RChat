@@ -22,6 +22,9 @@ use crate::ws::UserScope;
 
 #[cfg(test)]
 mod bit_gates_tests;
+pub mod members;
+#[cfg(test)]
+mod members_tests;
 pub mod overwrite_sql;
 #[cfg(test)]
 mod overwrite_tests;
@@ -638,7 +641,7 @@ pub(crate) fn public_read(row: &AnyRow, idx: usize) -> sqlx::Result<Option<bool>
 }
 
 /// The `servers` columns that `lite_row` reads, in its order.
-pub(crate) const LITE_COLUMNS: &str = "name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in, join_mode, listed, profiles_mode, description, icon_kind, seal, seal_forced";
+pub(crate) const LITE_COLUMNS: &str = "name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in, join_mode, listed, profiles_mode, description, icon_kind, seal, seal_forced, hide_members";
 
 /// The summary of a server from the columns of `LITE_COLUMNS` in `row`, starting at `at`. A
 /// server whose join mode the row doesn't say (a server without a permanent password from
@@ -670,6 +673,7 @@ pub(crate) async fn lite_row(db: &Db, row: &AnyRow, at: usize) -> sqlx::Result<S
             row.try_get::<Option<String>, _>(at + 14)?.as_deref(),
         ),
         seal: crate::api::seal::server_view(db, row.try_get(at + 15)?, row.try_get(at + 16)?).await,
+        hide_members: row.try_get::<i64, _>(at + 17)? != 0,
     })
 }
 
@@ -1614,7 +1618,7 @@ async fn configured_channel(
     rights: ChannelAccess,
 ) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
-        "SELECT c.kind, c.name, c.slowmode_seconds, c.sensitive, s.name, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, s.join_mode, s.listed, s.profiles_mode, s.description, s.icon_kind, s.seal, s.seal_forced, c.text_only FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+        "SELECT c.kind, c.name, c.slowmode_seconds, c.sensitive, s.name, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, s.join_mode, s.listed, s.profiles_mode, s.description, s.icon_kind, s.seal, s.seal_forced, s.hide_members, c.text_only FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
     .bind(id)
     .fetch_optional(db)
@@ -1633,7 +1637,7 @@ async fn configured_channel(
         name: r.try_get(1)?,
         slowmode: r.try_get(2)?,
         sensitive: r.try_get::<i64, _>(3)? != 0,
-        text_only: r.try_get::<i64, _>(21)? != 0,
+        text_only: r.try_get::<i64, _>(22)? != 0,
         rights,
     })
 }

@@ -350,8 +350,10 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     access.since = since;
     access.password_expires = password_expires;
     access.reading = Some((settings.server_joining, settings.public_reading));
+    access.member_lists = Some(settings.member_lists);
     access.password_change = Some(settings.password_change);
     access.token = token.filter(|_| access.user.is_some());
+    access.note_closed(&state.read()).await;
     state.hub.reconcile(conn, &access.topics(), 0);
     let (sink, mut stream) = socket.split();
     let out = Out::spawn(
@@ -604,6 +606,9 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
             }
             _ = out.tx.closed() => break,
         }
+        if access.roster_dirty {
+            access.note_closed(&state.read()).await;
+        }
         if std::mem::take(&mut access.topics_dirty) {
             access.layouts.retain(|server, _| {
                 access.member_servers.contains(server) || access.subs.contains(server)
@@ -774,6 +779,7 @@ pub(super) async fn look(
 }
 
 pub(super) fn join(access: &mut Access, server: String) {
+    access.roster_dirty = true;
     access.moved.push(server.clone());
     access.member_servers.insert(server);
     access.hosted_scope = None;
@@ -784,6 +790,7 @@ pub(super) fn join(access: &mut Access, server: String) {
 }
 
 pub(super) fn forget_server(access: &mut Access, server: &str) {
+    access.roster_dirty |= access.held(server);
     access.layouts.remove(server);
     access.viewable.retain(|_, (owner, _, _)| owner != server);
     access.floors.clear();
@@ -791,6 +798,7 @@ pub(super) fn forget_server(access: &mut Access, server: &str) {
 }
 
 pub(super) fn leave(access: &mut Access, server: &str) {
+    access.roster_dirty = true;
     access.moved.push(server.to_string());
     access.member_servers.remove(server);
     access.hosted_scope = None;

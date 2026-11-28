@@ -1021,6 +1021,7 @@ async fn outsiders_get_none_of_the_members(state: AppState) {
             has_password: true,
             public_read: Some(true),
             members_visible: visible,
+            hide_members: false,
             join_mode: Default::default(),
             listed: true,
             ..lite("vault")
@@ -1254,4 +1255,150 @@ fn server_looks_stay_inside_a_server_that_keeps_its_members() {
     let elsewhere = Access::new(Some(s("erin")), false, HashSet::new());
     assert!(!elsewhere.wants(&look("bob")));
     assert!(elsewhere.wants(&look("erin")));
+}
+
+#[tokio::test]
+async fn a_hidden_member_list_sends_its_members_to_moderators_only() {
+    let (state, path) = crate::api::test_util::temp_state("ws_member_lists").await;
+    rosters_follow_the_member_list_rule(state.clone()).await;
+    crate::api::test_util::done(state, path).await;
+    if let Some((state, pg)) = crate::api::test_util::pg_state("ws_member_lists").await {
+        rosters_follow_the_member_list_rule(state.clone()).await;
+        crate::api::test_util::pg_done(state, pg).await;
+    }
+}
+
+async fn rosters_follow_the_member_list_rule(state: AppState) {
+    let db = &state.db;
+    for name in ["alice", "bob", "carol", "root"] {
+        add_user(db, name).await;
+    }
+    exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'club', 'alice', 1)").await;
+    exec(db, "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'alice', 1, 0, 1)").await;
+    exec(
+        db,
+        "INSERT INTO members(server, username, joined_at) VALUES('club', 'bob', 1)",
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO members(server, username, joined_at) VALUES('club', 'carol', 1)",
+    )
+    .await;
+    exec(db, "INSERT INTO roles(id, server, name, color, perms) VALUES(70, 'club', 'mods', '#ffffff', 4)").await;
+    exec(
+        db,
+        "INSERT INTO user_roles(server, username, role_id) VALUES('club', 'carol', 70)",
+    )
+    .await;
+    let mut bob = Access::new(Some(s("bob")), false, set(&["club"]));
+    let mut carol = Access::new(Some(s("carol")), false, set(&["club"]));
+    let mut root = Access::new(Some(s("root")), true, HashSet::new());
+    subscribe(&state, 1, &mut root, vec![s("club")], HashMap::new()).await;
+    for access in [&mut bob, &mut carol] {
+        access.note_closed(db).await;
+    }
+    let roster = [
+        WsEvent::PresenceChanged {
+            server: s("club"),
+            username: s("alice"),
+            online: true,
+            online_count: 1,
+        },
+        joined("club", "dave"),
+        WsEvent::MemberLeft {
+            server: s("club"),
+            username: s("alice"),
+        },
+        WsEvent::AdminChanged {
+            server: s("club"),
+            username: s("alice"),
+            is_admin: true,
+            perms: 0,
+        },
+        WsEvent::MemberRolesChanged {
+            server: s("club"),
+            username: s("alice"),
+            role_ids: vec![70],
+        },
+    ];
+    let shown = |access: &Access| {
+        let mut out: Vec<bool> = roster.iter().map(|ev| access.wants(ev)).collect();
+        out.push(presence_snapshot(&state.hub, access, "club").is_some());
+        out
+    };
+    let all = vec![true; roster.len() + 1];
+    let none = vec![false; roster.len() + 1];
+    for access in [&bob, &carol, &root] {
+        assert_eq!(shown(access), all, "everyone holds View members");
+    }
+    exec(
+        db,
+        "UPDATE servers SET hide_members = 1 WHERE name = 'club'",
+    )
+    .await;
+    let hidden = WsEvent::ServerUpdated {
+        server: ServerSummaryLite {
+            hide_members: true,
+            ..lite("club")
+        },
+    };
+    for access in [&mut bob, &mut carol, &mut root] {
+        assert!(on_event(&state, 1, access, &hidden).await.is_some());
+    }
+    assert_eq!(shown(&bob), none, "bob is no moderator");
+    assert_eq!(shown(&carol), all, "Kick and ban sees the list");
+    assert_eq!(shown(&root), all, "the site admin always does");
+    assert!(
+        bob.wants(&WsEvent::MemberRolesChanged {
+            server: s("club"),
+            username: s("bob"),
+            role_ids: vec![70],
+        }),
+        "his own roles still arrive"
+    );
+    assert!(
+        bob.wants(&posted("club", "user", "alice")),
+        "messages still arrive"
+    );
+    exec(
+        db,
+        "UPDATE servers SET hide_members = 0 WHERE name = 'club'",
+    )
+    .await;
+    sqlx::query("UPDATE servers SET everyone_perms = $1 WHERE name = 'club'")
+        .bind((rchat_perms::masks::BASE & !rchat_perms::masks::VIEW_MEMBERS) as i64)
+        .execute(db)
+        .await
+        .expect("everyone");
+    let changed = WsEvent::RolesChanged { server: s("club") };
+    for access in [&mut bob, &mut carol] {
+        assert!(on_event(&state, 1, access, &changed).await.is_some());
+    }
+    assert_eq!(shown(&bob), none, "@everyone lost View members");
+    assert_eq!(shown(&carol), all);
+    exec(
+        db,
+        "UPDATE servers SET everyone_perms = NULL WHERE name = 'club'",
+    )
+    .await;
+    exec(db, "INSERT INTO settings(key, value) VALUES('member_lists', '0') ON CONFLICT(key) DO UPDATE SET value = excluded.value").await;
+    let settings = crate::api::Settings::load(db).await;
+    for access in [&mut bob, &mut carol, &mut root] {
+        assert!(access.settings_changed(&state, 1, &settings).await);
+        access.note_closed(db).await;
+    }
+    assert_eq!(shown(&bob), none, "the site turned member lists off");
+    assert_eq!(shown(&carol), none, "for moderators too");
+    assert_eq!(shown(&root), all, "but not for the site admin");
+    exec(
+        db,
+        "UPDATE settings SET value = '1' WHERE key = 'member_lists'",
+    )
+    .await;
+    let settings = crate::api::Settings::load(db).await;
+    assert!(bob.settings_changed(&state, 1, &settings).await);
+    assert!(bob.roster_dirty, "the switch changed");
+    bob.note_closed(db).await;
+    assert_eq!(shown(&bob), all);
 }

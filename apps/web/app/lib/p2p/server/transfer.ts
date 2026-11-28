@@ -1,4 +1,5 @@
 import { isRecord } from '../../bytes'
+import { parseP2pMemberList } from '../../member_list'
 import { genesisBundle } from '../acl/binding'
 import { knownRules, RULES_VERSION } from '../acl/rules'
 import { emptySummary, type RoleSum } from '../acl/summary'
@@ -403,6 +404,18 @@ export async function carryOver(cx: ServerCtx, to: string) {
             }))
           },
         ])
+    // Who sees the member list, its roles named as the new copy has them.
+    if (s.memberList)
+      steps.push([
+        'l',
+        async () => {
+          if (cur().memberList) return
+          const roles = parseP2pMemberList(s.memberList).roles
+          const content: Record<string, unknown> = { ...s.memberList }
+          if (roles !== null) content.allow_roles = roles.flatMap(r => carry.roles[r] ?? [])
+          await cx.emit(to, 'member_list', () => content)
+        },
+      ])
     for (const ik of s.bans)
       steps.push([
         `b:${ik}`,

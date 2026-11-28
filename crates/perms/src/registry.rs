@@ -378,6 +378,15 @@ pub const BITS: &[Bit] = &[
         Reserved,
         wire(64, Live, 2),
     ),
+    bit(
+        "ViewMembers",
+        "View members",
+        1 << 35,
+        Channel,
+        true,
+        Live,
+        None,
+    ),
 ];
 
 pub const fn value(name: &str) -> Mask {

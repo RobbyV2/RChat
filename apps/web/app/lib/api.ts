@@ -4,7 +4,7 @@ import { reasonOf } from './reasons'
 import { apiRoot, versionedBase, type ApiPrefix } from './api_version'
 import { localUntil, type TimeoutWire } from './timeouts'
 import { DEFAULT_DM_QUERY, queryParams, type DmQuery } from './dm_list'
-import { ALL_PERMS } from './types'
+import { ALL_PERMS, ROLE_BITS } from './types'
 import { resetBody, type LockSecs, type ResetField } from './profile_reset'
 import type {
   AccountFilter,
@@ -194,6 +194,9 @@ const NEXT_CURSOR = 'X-Next-Cursor'
 
 // Requests the app makes on its own, so they don't keep an idle session alive.
 export const BACKGROUND: Readonly<Record<string, string>> = Object.freeze({ 'X-Background': '1' })
+
+// The channel a member list shows in, as a query part to append.
+const inChannel = (channel: number | null) => (channel === null ? '' : `&channel_id=${channel}`)
 
 export const withCursor = (path: string, cursor: string | null) =>
   cursor ? `${path}${path.includes('?') ? '&' : '?'}cursor=${seg(cursor)}` : path
@@ -803,10 +806,15 @@ export const endpoints = (c: ApiClient) => ({
     c.req<ServerMatch[]>('GET', `/server_search?q=${seg(q)}`, undefined, {}, false, 0, signal),
   guestAccess: (name: string, password?: string) =>
     c.req<{ grant: string | null }>('POST', `/servers/${seg(name)}/guest_access`, { password }),
-  listMembers: (name: string, cursor: string | null, filter: MemberFilter = {}) =>
+  listMembers: (
+    name: string,
+    cursor: string | null,
+    filter: MemberFilter = {},
+    channel: number | null = null
+  ) =>
     c.page<Member>(
       withCursor(
-        `/servers/${seg(name)}/members?limit=50${filter.q ? `&q=${seg(filter.q)}` : ''}${filter.admins ? '&admins=1' : ''}`,
+        `/servers/${seg(name)}/members?limit=50${filter.q ? `&q=${seg(filter.q)}` : ''}${filter.admins ? '&admins=1' : ''}${inChannel(channel)}`,
         cursor
       )
     ),
@@ -815,22 +823,33 @@ export const endpoints = (c: ApiClient) => ({
       withCursor(`/servers/${seg(name)}/members/search${query ? `?${query}` : ''}`, cursor),
       signal
     ),
-  listGroup: (name: string, group: MemberGroup, cursor: string | null, limit = 50) =>
+  listGroup: (
+    name: string,
+    group: MemberGroup,
+    cursor: string | null,
+    limit = 50,
+    channel: number | null = null
+  ) =>
     c.page<Member>(
       withCursor(
-        `/servers/${seg(name)}/members?limit=${limit}${group === 'rest' ? '&unhoisted=1' : `&role=${group}&top_hoisted=1`}`,
+        `/servers/${seg(name)}/members?limit=${limit}${group === 'rest' ? '&unhoisted=1' : `&role=${group}&top_hoisted=1`}${inChannel(channel)}`,
         cursor
       )
     ),
-  suggestMembers: (name: string, q: string) =>
-    c.req<Member[]>('GET', `/servers/${seg(name)}/members?suggest=1&q=${seg(q)}`),
-  membersByName: (name: string, usernames: string[]) =>
+  suggestMembers: (name: string, q: string, channel: number | null = null) =>
     c.req<Member[]>(
       'GET',
-      `/servers/${seg(name)}/members?${usernames.map(u => `usernames=${seg(u)}`).join('&')}`
+      `/servers/${seg(name)}/members?suggest=1&q=${seg(q)}${inChannel(channel)}`
     ),
-  listInteracted: (name: string, cursor: string | null) =>
-    c.page<UserRef>(withCursor(`/servers/${seg(name)}/interacted?limit=50`, cursor)),
+  membersByName: (name: string, usernames: string[], channel: number | null = null) =>
+    c.req<Member[]>(
+      'GET',
+      `/servers/${seg(name)}/members?${usernames.map(u => `usernames=${seg(u)}`).join('&')}${inChannel(channel)}`
+    ),
+  listInteracted: (name: string, cursor: string | null, channel: number | null = null) =>
+    c.page<UserRef>(
+      withCursor(`/servers/${seg(name)}/interacted?limit=50${inChannel(channel)}`, cursor)
+    ),
   joinServer: (name: string, password?: string) =>
     c.req<ServerDetail>('POST', `/servers/${seg(name)}/join`, { password }),
   leaveServer: (name: string) => c.req<unknown>('POST', `/servers/${seg(name)}/leave`),
@@ -848,6 +867,7 @@ export const endpoints = (c: ApiClient) => ({
       guest_voice_opt_in?: boolean
       guest_chat_opt_in?: boolean
       members_visible?: boolean
+      hide_members?: boolean
       profiles_mode?: ProfilesMode
       description?: string | null
       icon_kind?: ServerIconKind
@@ -995,7 +1015,7 @@ export const endpoints = (c: ApiClient) => ({
   createRole: (server: string, body: { name: string; color: string; perms: number }) =>
     c.req<Role>('POST', `/servers/${seg(server)}/roles`, body),
   updateRole: (server: string, id: number, patch: RolePatch) =>
-    c.req<Role>('PATCH', `/servers/${seg(server)}/roles/${id}`, { ...patch, mask: ALL_PERMS }),
+    c.req<Role>('PATCH', `/servers/${seg(server)}/roles/${id}`, { ...patch, mask: ROLE_BITS }),
   deleteRole: (server: string, id: number) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/roles/${id}`),
   assignRole: (server: string, id: number, username: string) =>

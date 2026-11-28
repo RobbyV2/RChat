@@ -135,6 +135,7 @@ export class Ix {
   profileBy = new Map<string, number[]>()
   settingsEv: number[] = []
   aboutEv: number[] = []
+  memberListEv: number[] = []
   upgradeEv: number[] = []
   channelEv = new Map<string, number[]>()
   chpermEv = new Map<string, number[]>()
@@ -255,6 +256,9 @@ export class Ix {
         break
       case 'about':
         this.aboutEv.push(i)
+        break
+      case 'member_list':
+        this.memberListEv.push(i)
         break
       case 'category':
         if (typeof c.id === 'string') pushM(this.categoryEv, c.id, i)

@@ -43,6 +43,7 @@ import { Voice } from '../voice'
 import { dmRoomId, type P2pMessage } from '../dm'
 import type { ServerCtx } from './context'
 import type { AboutChange } from '../../server_about'
+import type { P2pMemberListChange } from '../../member_list'
 import {
   BAD_CODE,
   LEGACY_TEXT,
@@ -1344,6 +1345,11 @@ export class Servers {
   // What the server is about and how its icon looks.
   setAbout(room: string, change: AboutChange) {
     return emitter.setAbout(ctx(this), room, change)
+  }
+
+  // Who sees the member list.
+  setMemberList(room: string, change: P2pMemberListChange) {
+    return emitter.setMemberList(ctx(this), room, change)
   }
 
   setHistory(room: string, vis: HistoryVis) {

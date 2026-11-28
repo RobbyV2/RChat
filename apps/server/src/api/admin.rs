@@ -270,6 +270,8 @@ pub struct SettingsPatch {
     scheduled_messages: Option<bool>,
     /// Running requests from the docs as the app's accounts.
     interactive_docs: Option<bool>,
+    /// Member lists: who is in a server, their presence and mention suggestions.
+    member_lists: Option<bool>,
     registration: Option<Registration>,
     upload_expiry_max_days: Option<i64>,
     server_creation: Option<ServerCreation>,
@@ -369,6 +371,7 @@ pub(crate) async fn patch_settings(
         docs,
         scheduled_messages,
         interactive_docs,
+        member_lists,
         registration,
         upload_expiry_max_days,
         server_creation,
@@ -500,6 +503,7 @@ pub(crate) async fn patch_settings(
         Feature::Docs => docs,
         Feature::ScheduledMessages => scheduled_messages,
         Feature::InteractiveDocs => interactive_docs,
+        Feature::MemberLists => member_lists,
     };
     let switches = [
         ("profanity_filter", profanity_filter),

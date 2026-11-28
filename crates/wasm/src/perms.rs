@@ -619,3 +619,41 @@ pub fn perms_hoist_groups(places: &[f64], hoist: &[u8]) -> Vec<f64> {
         .map(|i| i as f64)
         .collect()
 }
+
+const SITE_ON: u32 = 1;
+const HIDES: u32 = 2;
+const OUTSIDE: u32 = 4;
+
+/// Whether a server's member list shows: 0 when it does, else why not (1 the site, 2 the server
+/// or the viewer's roles, 3 the channel, 4 members only). `seer` is 0 for a site admin, 1 for a
+/// member with their server bits in `bits` (and what they hold in the channel in `here` when
+/// `in_channel`), 2 for someone outside with @everyone's bits in `bits` (and what @everyone holds
+/// in the channel in `here` when `in_channel`). `flags` holds the site
+/// switch (1), the server hiding its list (2) and showing members outside (4).
+#[wasm_bindgen]
+pub fn perms_member_list(seer: u8, bits: f64, here: f64, in_channel: bool, flags: u32) -> u8 {
+    use rchat_perms::members::{Hidden, Place, Seer, member_list};
+    let seer = match seer {
+        0 => Seer::Staff,
+        1 => Seer::Member {
+            server: mask(bits),
+            here: in_channel.then(|| mask(here)),
+        },
+        _ => Seer::Visitor {
+            everyone: mask(bits),
+            here: in_channel.then(|| mask(here)),
+        },
+    };
+    let place = Place {
+        site: flags & SITE_ON != 0,
+        hide: flags & HIDES != 0,
+        outside: flags & OUTSIDE != 0,
+    };
+    match member_list(seer, place) {
+        Ok(()) => 0,
+        Err(Hidden::Site) => 1,
+        Err(Hidden::Server) => 2,
+        Err(Hidden::Channel) => 3,
+        Err(Hidden::Outside) => 4,
+    }
+}

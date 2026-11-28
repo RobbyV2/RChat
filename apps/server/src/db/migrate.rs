@@ -188,6 +188,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "channel_categories",
         "style TEXT NOT NULL DEFAULT 'default' CHECK(style IN ('default','dots','line'))",
     ),
+    ("servers", "hide_members {INT} NOT NULL DEFAULT 0"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -328,7 +329,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 66: jobs that encrypt or decrypt the stored messages of a place (`seal_jobs`).
 /// 67: decorative channel separators (`channel_separators`) and category styles
 /// (`channel_categories.style`).
-pub const SCHEMA_VERSION: i64 = 67;
+/// 68: member list visibility (`servers.hide_members`) and the View members permission, given to
+/// the stored @everyone permissions of every server.
+pub const SCHEMA_VERSION: i64 = 68;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -345,6 +348,8 @@ pub(super) const CATEGORY_PERMS_VERSION: i64 = 59;
 /// The schema version that adds channel separators and category styles.
 #[cfg(test)]
 pub(super) const SEPARATORS_VERSION: i64 = 67;
+/// The schema version whose init gives View members to the stored @everyone permissions.
+pub(super) const VIEW_MEMBERS_VERSION: i64 = 68;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 20] {
@@ -775,6 +780,9 @@ pub(super) async fn init_schema(
     if version < ROLE_ORDER_VERSION {
         order_roles(conn).await?;
     }
+    if version < VIEW_MEMBERS_VERSION {
+        grant_view_members(conn).await?;
+    }
     if stored_setting(conn, BUILTIN_STATE).await?.is_none() {
         let t = now();
         sqlx::query("INSERT INTO servers(name, display_name, creator, created_at, roles_order_confirmed) VALUES('rchat', 'RChat', NULL, $1, 1) ON CONFLICT(name) DO NOTHING")
@@ -879,6 +887,21 @@ async fn grant_split_bits(conn: &mut AnyConnection) -> anyhow::Result<()> {
         tracing::info!(
             "gave Pin messages and Bypass slow mode to {n} admin and role permission sets"
         );
+    }
+    Ok(())
+}
+
+/// Gives View members to the @everyone permissions every server stores, so everyone who saw
+/// member lists before still does.
+async fn grant_view_members(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    let bit = rchat_perms::masks::VIEW_MEMBERS as i64;
+    let n = sqlx::query("UPDATE servers SET everyone_perms = everyone_perms | $1 WHERE everyone_perms IS NOT NULL AND (everyone_perms & $1) = 0")
+        .bind(bit)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    if n > 0 {
+        tracing::info!("gave View members to the @everyone permissions of {n} servers");
     }
     Ok(())
 }

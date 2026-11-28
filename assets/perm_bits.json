@@ -425,5 +425,14 @@
     },
     "scope": "server",
     "value": 17179869184
+  },
+  {
+    "everyone": true,
+    "hosted": "live",
+    "label": "View members",
+    "name": "ViewMembers",
+    "p2p": null,
+    "scope": "channel",
+    "value": 34359738368
   }
 ]

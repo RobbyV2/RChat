@@ -29,6 +29,7 @@ import {
   rank,
   resetBit,
   aboutOk,
+  memberListOk,
   rulesOf,
   SERVER,
   storeOk,
@@ -126,6 +127,8 @@ export interface Facts extends FactsQ {
   profileReset: RMap<string, ResetFact>
   // The server's description and icon (`about`, a display register).
   about: AclContent | undefined
+  // Who sees the member list (`member_list`, a display register).
+  memberList: AclContent | undefined
   // Categories by id, the category of each channel and the separators of the channel list by
   // id (`category`, `chcat`, `chsep`, registers).
   categories: RMap<string, AclContent>
@@ -846,6 +849,16 @@ export abstract class View {
     const r = this.register(ws)
     return r && ix.ev[r.win].c
   }
+  // MemberList: the register over the live `member_list` writes whose Authority holds in their
+  // own admission state and after the denies concurrent with them, as for RoleMeta.
+  memberListOf(): AclContent | undefined {
+    const ix = this.ix
+    const ws = ix.memberListEv.filter(
+      x => memberListOk(ix.ev[x], ix.rec[x].local.facts) && !this.metaDenied(x, SERVER)
+    )
+    const r = this.register(ws)
+    return r && ix.ev[r.win].c
+  }
   // ProfileReset(T): the live `profile_reset` writes naming T whose Authority holds in their
   // own admission state and after the denies concurrent with them, as for RoleMeta, and that
   // came after the join T's membership started with (a reset ends with the membership). Each
@@ -1203,6 +1216,7 @@ export function fullFacts(V: View): Facts {
     profileMode: V.profileModeOf(),
     profileReset,
     about: V.aboutOf(),
+    memberList: V.memberListOf(),
     categories,
     chcats,
     store: V.storeOf(),
@@ -1280,6 +1294,7 @@ const EMPTY_FACTS: Facts = {
   profileMode: undefined,
   profileReset: new Map(),
   about: undefined,
+  memberList: undefined,
   categories: new Map(),
   chcats: new Map(),
   store: undefined,

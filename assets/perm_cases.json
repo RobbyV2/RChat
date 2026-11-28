@@ -14441,7 +14441,7 @@
         "who": "member",
         "timed_out": true,
         "acting": true,
-        "out": ["ViewChannels", "ReadHistory"]
+        "out": ["ViewChannels", "ReadHistory", "ViewMembers"]
       },
       {
         "name": "a timeout does not limit reads",
@@ -14455,7 +14455,7 @@
         "roles": ["ManageChannels", "DeleteMessages"],
         "timed_out": true,
         "acting": true,
-        "out": ["ViewChannels", "ReadHistory"]
+        "out": ["ViewChannels", "ReadHistory", "ViewMembers"]
       },
       {
         "name": "no overwrite gives a timed-out member more",
@@ -14463,7 +14463,7 @@
         "timed_out": true,
         "acting": true,
         "own": { "allow": ["SendMessages", "PinMessages"] },
-        "out": ["ViewChannels", "ReadHistory"]
+        "out": ["ViewChannels", "ReadHistory", "ViewMembers"]
       },
       {
         "name": "unknown bits are ignored",

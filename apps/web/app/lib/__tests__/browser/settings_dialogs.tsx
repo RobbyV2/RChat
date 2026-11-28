@@ -94,6 +94,7 @@ const view: ServerView = {
   name: 'Book club',
   color: null,
   about: NO_ABOUT,
+  memberList: { hide: false, roles: null, channels: [] },
   me: 'join',
   joining: false,
   owner: 'owner-key',

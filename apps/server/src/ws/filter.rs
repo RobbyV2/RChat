@@ -85,6 +85,9 @@ pub(super) async fn on_event(
         _ => None,
     };
     track(ev, access);
+    if access.roster_dirty {
+        access.note_closed(&state.read()).await;
+    }
     if let WsEvent::MemberLeft { server, username }
     | WsEvent::MemberKicked {
         server,

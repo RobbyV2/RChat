@@ -178,7 +178,9 @@ export const hostedPeople = (
       if (cache.has(key)) return say(null)
       let live = true
       const stop = time().after(SUGGEST_DEBOUNCE, () => {
-        api.suggestMembers(server, query).then(
+        const view = store.getState().view
+        const channelId = view?.kind === 'channel' && view.server === server ? view.channelId : null
+        api.suggestMembers(server, query, channelId).then(
           found => {
             if (cache.size >= CACHE_MAX) cache.clear()
             cache.set(key, found)

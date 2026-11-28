@@ -168,6 +168,8 @@ export interface Summary {
   about: AclContent | null
   // The `store` register: whether devices store the room's events sealed. Null: never set.
   store: AclContent | null
+  // Who sees the member list, as written (read with `parseP2pMemberList`).
+  memberList: AclContent | null
   codes: Record<string, CodeSum>
   upgraded: boolean
   // Admitted upgrades, and devices with a fork point (evidence against them).
@@ -218,6 +220,7 @@ export const emptySummary = (): Summary => ({
   profiles: null,
   about: null,
   store: null,
+  memberList: null,
   codes: dict(),
   upgraded: false,
   upgrades: [],
@@ -532,6 +535,7 @@ export function buildSummary(
       profiles: roomMode(F.profileMode) ?? null,
       about: F.about ?? null,
       store: F.store ?? null,
+      memberList: F.memberList ?? null,
       codes,
       upgraded: F.upgraded.length > 0,
       upgrades: [...F.upgraded],

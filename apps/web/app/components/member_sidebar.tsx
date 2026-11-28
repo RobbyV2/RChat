@@ -11,7 +11,6 @@ import { useAccount } from '../lib/client/react'
 import { isUnsupported } from '../lib/place/feature'
 import { members, type MemberEntry, type MemberItem, type Members } from '../lib/place/members'
 import { useFeature, useLive, usePlace } from '../lib/place/react'
-import { MEMBERS_HIDDEN_LINE } from '../lib/profile_choice'
 import type { Look } from '../lib/role_looks'
 import { useMask } from '../lib/store'
 import type { Timeout } from '../lib/timeouts'
@@ -23,6 +22,7 @@ import { MemberCard } from './p2p/p2p_server_roles'
 import { Badge, profileTrigger } from './profile_card'
 import { RoleIcon } from './role_icon'
 import { MemberListSkeleton } from './skeletons'
+import { MembersHiddenState } from './members_hidden'
 import { TimeoutBadge, useMemberTimeout, useNow } from './timeout_dialog'
 import { Masked, Sentinel } from './ui'
 import { UserAvatar } from './user_avatar'
@@ -267,9 +267,7 @@ function MemberListView({ of }: { of: Members }) {
     return (
       <aside className={asideCls}>
         {actor}
-        <Surface pad="md" tone="plain" radius="none">
-          <p className="text-sm text-on-surface-variant">{MEMBERS_HIDDEN_LINE}</p>
-        </Surface>
+        <MembersHiddenState why={list.why ?? 'outside'} />
       </aside>
     )
   return (

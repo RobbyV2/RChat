@@ -44,7 +44,11 @@ export const ChannelPermBit = {
   Video: 134217728,
   PinMessages: 536870912,
   BypassSlowmode: 1073741824,
+  ViewMembers: 34359738368,
 } as const
+
+// Every bit a role may hold: the management bits and the ones everyone starts with.
+export const ROLE_BITS = 36238783487
 
 export const hasPerm = (perms: number, perm: number) => hasBit(perms, perm)
 
@@ -85,6 +89,9 @@ export interface ServerSummaryLite {
   guest_chat?: boolean
   // "Members can be seen by people outside this server". Absent on older servers: on.
   members_visible?: boolean
+  // "Allow members to view the member list" off: only moderators see it. Absent on older
+  // servers, which have no such rule.
+  hide_members?: boolean
   // How people join. Absent on older servers: `name` without a password, else `password`.
   join_mode?: JoinMode
   // Whether search lists it. Absent on older servers: listed.
@@ -363,6 +370,9 @@ export interface ServerDetail {
   guest_chat?: boolean
   // "Members can be seen by people outside this server". Absent on older servers: on.
   members_visible?: boolean
+  // "Allow members to view the member list" off: only moderators see it. Absent on older
+  // servers, which have no such rule.
+  hide_members?: boolean
   // What members may set in their server profile. Absent on older servers: nothing.
   profiles_mode?: ProfilesMode
   my_profile?: ServerProfile
@@ -852,6 +862,8 @@ export interface SiteSettings {
   docs: boolean
   scheduled_messages: boolean
   interactive_docs: boolean
+  // Who is in each server, their presence and mention suggestions.
+  member_lists: boolean
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number

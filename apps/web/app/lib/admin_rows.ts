@@ -571,6 +571,14 @@ export const ADMIN_ROWS: AdminRow[] = [
     label: 'Interactive docs',
     line: 'Lets the docs run requests as the accounts people hold on this site.',
   },
+  {
+    key: 'member_lists',
+    env: 'FEATURE_MEMBER_LISTS',
+    group: 'Servers',
+    kind: 'switch',
+    label: 'Member lists',
+    line: 'Allow users to view server member lists. Turning this off hides member lists across all servers.',
+  },
 ]
 
 export const adminRow = (key: string) => ADMIN_ROWS.find(r => r.key === key)

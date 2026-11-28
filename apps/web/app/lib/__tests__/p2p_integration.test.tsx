@@ -171,6 +171,7 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   name: 'Book club',
   color: null,
   about: NO_ABOUT,
+  memberList: { hide: false, roles: null, channels: [] },
   me: 'join',
   joining: false,
   owner: ALICE,

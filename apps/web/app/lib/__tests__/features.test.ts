@@ -50,6 +50,7 @@ const SWITCHES = [
   'docs',
   'scheduled_messages',
   'interactive_docs',
+  'member_lists',
 ]
 
 describe('feature switches', () => {
@@ -61,7 +62,14 @@ describe('feature switches', () => {
     expect(s.p2p_attachments).toBe(true)
     expect(s.client_other_instances).toBe(true)
     expect(s.interactive_docs).toBe(true)
-    const kept = ['p2p', 'password_login', 'client_other_instances', 'interactive_docs']
+    expect(s.member_lists).toBe(true)
+    const kept = [
+      'p2p',
+      'password_login',
+      'client_other_instances',
+      'interactive_docs',
+      'member_lists',
+    ]
     for (const key of SWITCHES.filter(k => !kept.includes(k)))
       expect([key, s[key as keyof SiteSettings]]).toEqual([key, false])
     expect(passwordSignup(s)).toBe(true)

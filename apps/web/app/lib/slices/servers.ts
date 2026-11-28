@@ -156,6 +156,7 @@ export const applyServerChange = (
       guest_voice: server.guest_voice === true,
       guest_chat: server.guest_chat === true,
       members_visible: server.members_visible ?? detail.members_visible,
+      hide_members: server.hide_members ?? detail.hide_members,
       join_mode: server.join_mode ?? detail.join_mode,
       listed: server.listed ?? detail.listed,
       profiles_mode: server.profiles_mode ?? detail.profiles_mode,
@@ -673,6 +674,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   // Per session, like the lookups it counts.
   let memberPending = new Set<string>()
   const listSince = new Map<string, number>()
+  const listScope = new Map<string, number>()
+  const scopeOf = (server: string) => listScope.get(server) ?? null
   const pastOnline = new Set<string>()
   const pendingKey = (server: string, username: string) => `${server}\n${username}`
 
@@ -720,7 +723,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           server,
           presenceHub.fresh(
             server,
-            await live(api.membersByName(server, batch)).catch(e => {
+            await live(api.membersByName(server, batch, scopeOf(server))).catch(e => {
               throw banCheck(e, server)
             }),
             since
@@ -996,6 +999,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'loadMembers'
     | 'loadGroup'
     | 'clearGroups'
+    | 'scopeMembers'
     | 'loadInteracted'
     | 'ensureMembers'
     | 'retryMemberRows'
@@ -1392,9 +1396,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
             const since = presenceHub.seq()
             const rolesSince = roleSeq
             if (cursor === null) listSince.set(server, since)
-            const page = await live(api.listMembers(server, cursor)).catch(e => {
-              throw banCheck(e, server)
-            })
+            const page = await live(api.listMembers(server, cursor, {}, scopeOf(server))).catch(
+              e => {
+                throw banCheck(e, server)
+              }
+            )
             if (page.items.at(-1)?.online === false) pastOnline.add(server)
             else pastOnline.delete(server)
             noteMemberTimeouts(server, page.items)
@@ -1423,7 +1429,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
             const since = presenceHub.seq()
             const rolesSince = roleSeq
             const page = await live(
-              api.listGroup(server, group, cursor, cursor === null ? limit : PAGE)
+              api.listGroup(server, group, cursor, cursor === null ? limit : PAGE, scopeOf(server))
             ).catch(e => {
               throw banCheck(e, server)
             })
@@ -1445,6 +1451,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
     clearGroups: server => forgetGroups(server),
 
+    scopeMembers: (server, channel) => {
+      if (channel === null) listScope.delete(server)
+      else listScope.set(server, channel)
+    },
+
     loadInteracted: (server, reset = false) =>
       act(() =>
         loadPage(
@@ -1452,7 +1463,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           () => get().interacted[server] ?? emptyPage<UserRef>(),
           page => set(s => ({ interacted: { ...s.interacted, [server]: page } })),
           cursor =>
-            live(api.listInteracted(server, cursor)).catch(e => {
+            live(api.listInteracted(server, cursor, scopeOf(server))).catch(e => {
               throw banCheck(e, server)
             }),
           u => u.username,
@@ -1526,7 +1537,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     refreshMember: async (server, username) => {
       let found: Member | undefined
       try {
-        found = (await live(api.membersByName(server, [username])))[0]
+        found = (await live(api.membersByName(server, [username], scopeOf(server))))[0]
       } catch {
         return
       }

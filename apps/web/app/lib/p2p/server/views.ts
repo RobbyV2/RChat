@@ -46,6 +46,7 @@ import {
 } from '../state'
 import type { ServerCtx } from './context'
 import { p2pAbout } from '../../server_about'
+import { parseP2pMemberList } from '../../member_list'
 import {
   systemRow,
   placeholder,
@@ -211,6 +212,7 @@ export function serverView(
     name: n?.name ?? r.name ?? 'P2P server',
     color: n?.color ?? null,
     about: p2pAbout(s.about),
+    memberList: parseP2pMemberList(s.memberList),
     me,
     joining: !!r.joining,
     owner: s.creator,

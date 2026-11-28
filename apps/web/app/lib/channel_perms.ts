@@ -73,6 +73,7 @@ const BASE_BITS: number[] = [
   ChannelPermBit.Connect,
   ChannelPermBit.Speak,
   ChannelPermBit.Video,
+  ChannelPermBit.ViewMembers,
 ]
 const SEND_BITS: number[] = [
   ChannelPermBit.SendMessages,

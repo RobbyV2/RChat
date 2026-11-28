@@ -87,6 +87,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         docs: _,
         scheduled_messages: _,
         interactive_docs: _,
+        member_lists: _,
         registration,
         upload_expiry_max_days: _,
         server_creation: _,

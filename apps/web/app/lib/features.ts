@@ -25,12 +25,13 @@ export const FEATURE_KEYS = [
   'docs',
   'scheduled_messages',
   'interactive_docs',
+  'member_lists',
 ] as const
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number]
 
-// An instance from before the switches has P2P and password sign-up, lets its app add other
-// instances, and has none of the rest.
+// An instance from before the switches has P2P, password sign-up and member lists, lets its app
+// add other instances, and has none of the rest.
 const BEFORE_SWITCHES: Record<FeatureKey, boolean> = {
   server_reports: false,
   instance_reports: false,
@@ -54,6 +55,7 @@ const BEFORE_SWITCHES: Record<FeatureKey, boolean> = {
   docs: false,
   scheduled_messages: false,
   interactive_docs: true,
+  member_lists: true,
 }
 
 const registrationOf = (value: unknown): Registration => {

@@ -84,6 +84,7 @@ const FIELD_LABELS: Record<string, string> = {
   was_member: 'Was a member',
   guest_voice: 'Guests can use voice',
   members_visible: 'Members can be seen by people outside this server',
+  hide_members: 'Member list hidden from members',
   members_removed: 'Members removed',
   guests_revoked: 'Guest access ended',
   passwords_revoked: 'Extra passwords revoked',
@@ -526,6 +527,15 @@ export function sentence(entry: AuditEntry): Part[] {
             only.after === false
               ? ' hid the members from people outside the server'
               : ' showed the members to people outside the server'
+          ),
+        ]
+      if (only?.field === 'hide_members')
+        return [
+          ...actor,
+          t(
+            only.after === true
+              ? ' hid the member list from members'
+              : ' showed the member list to members'
           ),
         ]
       if (only) return [...actor, t(` changed the server ${fieldLabel(only.field).toLowerCase()}`)]

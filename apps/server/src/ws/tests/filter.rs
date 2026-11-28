@@ -240,6 +240,7 @@ fn self_grants_are_recognized() {
             guest_voice: false,
             guest_chat: false,
             members_visible: true,
+            hide_members: false,
             join_mode: Default::default(),
             listed: true,
             profiles_mode: Default::default(),

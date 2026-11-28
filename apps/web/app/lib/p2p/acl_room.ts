@@ -329,6 +329,7 @@ export interface Carried {
   chcats?: Record<string, ChcatSum>
   separators?: Record<string, SeparatorSum>
   settings: AclContent | null
+  memberList?: AclContent | null
 }
 
 export interface Purgeable {

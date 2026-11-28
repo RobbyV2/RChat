@@ -16,6 +16,7 @@ use super::{
     SUB_CHECKS_RATE, SUBSCRIBE_CAP, authed_sub_ok, guest_sub_ok,
 };
 
+use crate::api::access::members::ws_rosterless;
 use crate::api::access::{
     ViewRules, is_member, is_membership_notice, presence_mode, ws_channel_now, ws_channel_policy,
     ws_channel_seen, ws_closed_servers, ws_grant_deadline, ws_member_servers,
@@ -344,6 +345,13 @@ pub(super) struct Access {
     /// Servers it reads from outside that keep their members to themselves
     /// (`members_visible` off).
     pub(super) closed: HashSet<String>,
+    /// Servers whose member list the member list rule keeps from this connection: who is in
+    /// them, their presence and what changes about members.
+    pub(super) rosterless: HashSet<String>,
+    /// Something the member list rule reads changed: `rosterless` is worked out again.
+    pub(super) roster_dirty: bool,
+    /// The site's member list switch, as this connection last saw it.
+    pub(super) member_lists: Option<bool>,
     pub(super) grants: HashMap<String, String>,
     pub(super) deadlines: HashMap<String, i64>,
     pub(super) viewing: Option<String>,
@@ -395,6 +403,9 @@ impl Access {
             member_servers,
             subs: HashSet::new(),
             closed: HashSet::new(),
+            rosterless: HashSet::new(),
+            roster_dirty: false,
+            member_lists: None,
             grants: HashMap::new(),
             deadlines: HashMap::new(),
             viewing: None,
@@ -448,6 +459,8 @@ impl Access {
                 return false;
             }
         }
+        let lists = Some(settings.member_lists);
+        self.roster_dirty |= std::mem::replace(&mut self.member_lists, lists) != lists;
         let reading = Some((settings.server_joining, settings.public_reading));
         if std::mem::replace(&mut self.reading, reading) == reading {
             return true;
@@ -700,9 +713,11 @@ impl Access {
         self.closed.contains(server) && !self.member_servers.contains(server)
     }
 
-    /// Notes which servers this connection reads from outside keep their members to themselves.
-    /// The site admin sees every member list; a failed read counts each of them as closed.
+    /// Notes which servers this connection reads from outside keep their members to themselves,
+    /// and which servers it holds keep their member list from it. The site admin sees every
+    /// member list; a failed read counts each of them as closed.
     pub(super) async fn note_closed(&mut self, db: &Db) {
+        self.roster_dirty = false;
         let outside: Vec<&str> = self
             .subs
             .iter()
@@ -711,12 +726,34 @@ impl Access {
             .collect();
         if self.site_admin {
             self.closed.clear();
+            self.rosterless.clear();
             return;
         }
         self.closed = match ws_closed_servers(db, &outside).await {
             Ok(closed) => closed,
             Err(_) => outside.into_iter().map(str::to_string).collect(),
         };
+        let held: Vec<&str> = self
+            .member_servers
+            .iter()
+            .chain(self.subs.iter())
+            .map(String::as_str)
+            .collect();
+        let site = match self.member_lists {
+            Some(on) => on,
+            None => Settings::cached(db).await.member_lists,
+        };
+        self.rosterless =
+            match ws_rosterless(db, self.user.as_deref(), self.site_admin, &held, site).await {
+                Ok(hidden) => hidden,
+                Err(_) => held.into_iter().map(str::to_string).collect(),
+            };
+    }
+
+    /// Whether this connection gets no member list of `server`: it reads it from outside while
+    /// the server keeps its members to itself, or the member list rule keeps the list from it.
+    pub(super) fn hides_roster(&self, server: &str) -> bool {
+        self.closes(server) || self.rosterless.contains(server)
     }
 
     /// Keeps `closed` in step with a server's `members_visible` from an event.
@@ -811,7 +848,7 @@ impl Access {
             }
             _ => return false,
         };
-        about.is_none_or(|u| Some(u.as_str()) != me) && self.closes(server)
+        about.is_none_or(|u| Some(u.as_str()) != me) && self.hides_roster(server)
     }
 
     pub(super) fn wants(&self, ev: &WsEvent) -> bool {

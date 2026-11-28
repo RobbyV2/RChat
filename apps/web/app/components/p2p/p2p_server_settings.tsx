@@ -60,6 +60,7 @@ import type { LogPage } from '../../lib/p2p/server/modlog'
 import { usePermissionRules } from '../use_permission_rules'
 import { time } from '../../lib/platform/time'
 import { Button, IconButton } from '../controls'
+import { P2pChannelMemberList, P2pMemberListSettings } from './p2p_member_list'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
@@ -119,6 +120,10 @@ function Overview({ v }: { v: ServerView }) {
         <p className="text-sm">Server profiles</p>
         <ServerProfilesMode v={v} />
         {!edit && <Note>Only members with Manage server can change this.</Note>}
+      </Stack>
+      <Stack gap="2xs">
+        <p className="text-sm">Member list</p>
+        <P2pMemberListSettings v={v} />
       </Stack>
       <Note>
         This server is stored on its members&apos; devices. {v.joined}{' '}
@@ -322,6 +327,7 @@ function Channels({ v }: { v: ServerView }) {
                 onChange={value => void p2pServer.editChannel(v.id, c.id, { text_only: value })}
               />
             )}
+            <P2pChannelMemberList v={v} c={c} />
             {edit && open === c.id && <ChannelAccess v={v} c={c} />}
           </Surface>
         )

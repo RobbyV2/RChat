@@ -76,6 +76,8 @@ const seat = (world: ContractWorld, o: Seeded) => {
       perms: o.perms ?? 0,
       owner: 'A',
       owners: ['A'],
+      rules: 6,
+      memberList: { hide: false, roles: null, channels: [] },
       roles: [],
       channels: [],
       members: [

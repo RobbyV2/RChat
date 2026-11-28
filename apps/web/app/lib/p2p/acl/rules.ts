@@ -795,6 +795,12 @@ export const profileResetOk = (e: AclEv, St: FactsQ, bit: number) =>
 export const aboutOk = (e: AclEv, St: FactsQ) =>
   St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & SERVER) !== 0)
 
+// member_list (who sees the member list) is a register on the role_meta pattern: admitted, cut
+// and live by the generic rule, with its Authority read only at display. A write counts when its
+// author, in St(w), is an owner or holds Manage server. Its fields are read one by one at
+// display, a malformed one as unset.
+export const memberListOk = aboutOk
+
 const SHORT_ID_MAX = 64
 const shortId = (x: unknown): x is string =>
   typeof x === 'string' && x !== '' && x.length <= SHORT_ID_MAX

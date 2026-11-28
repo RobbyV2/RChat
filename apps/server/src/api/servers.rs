@@ -8,6 +8,7 @@ use sqlx::{AnyConnection, Row};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::PermMode;
+use crate::api::access::members::{ListPlace, MemberList, Roster, refusal, seen_authors};
 use crate::api::access::overwrite_sql::private_sql;
 use crate::api::access::perms::{
     ALL_PERMS, ChannelAccess, EVERYONE, EVERYONE_BITS, PRE_DELEGATION_PERMS, PRE_REPORT_PERMS,
@@ -228,6 +229,12 @@ pub struct ServerPatch {
     /// what people outside it read; `true` (the default) also for people who open the server
     /// without being a member. Omit to leave it unchanged.
     members_visible: Option<bool>,
+    /// "Allow members to view the member list" off (`true`): only members with Manage server,
+    /// Manage roles or Kick and ban, and instance staff, get the member list, presence and
+    /// mention suggestions; `false` (the default) leaves it to View members. Omit to leave it
+    /// unchanged.
+    #[serde(default)]
+    hide_members: Option<bool>,
     /// How people join: `name`, `invite`, `password` or `closed` (see `POST /api/v1/servers`).
     /// Use it instead of `protected`. `password` needs `password`, unless the server has a
     /// permanent password already. `invite` and `closed` remove the permanent password, and
@@ -502,6 +509,15 @@ pub struct Invite {
     pub password_uses_left: Option<i64>,
 }
 
+/// Where a member list shows.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListScope {
+    /// The channel the list shows in: View members is read there. A channel of another server,
+    /// or one the caller can't view, gives the uniform 404.
+    channel_id: Option<i64>,
+}
+
 /// Paging query parameters.
 #[derive(Deserialize, IntoParams)]
 pub struct MembersQuery {
@@ -618,6 +634,10 @@ pub struct MemberListQuery {
     /// `1` or `true`: the members in no group of the member list, alphabetically, paged by
     /// `cursor`. Ignored when `usernames`, `q` or `admins` is given.
     unhoisted: Option<bool>,
+    /// The channel the list shows in: View members is read there (see
+    /// `ServerSummaryLite.hide_members`). A channel of another server, or one the caller can't
+    /// view, gives the uniform 404. Must be an integer.
+    channel_id: Option<i64>,
 }
 
 impl MemberListQuery {
@@ -642,6 +662,7 @@ impl MemberListQuery {
         let mut role = None;
         let mut top_hoisted = None;
         let mut unhoisted = None;
+        let mut channel_id = None;
         for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
             match key.as_ref() {
                 "q" if !value.trim().is_empty() => {
@@ -653,6 +674,9 @@ impl MemberListQuery {
                 "role" => role = Some(value.parse().map_err(|_| bad("Invalid role"))?),
                 "top_hoisted" => top_hoisted = Some(matches!(value.as_ref(), "1" | "true")),
                 "unhoisted" => unhoisted = Some(matches!(value.as_ref(), "1" | "true")),
+                "channel_id" => {
+                    channel_id = Some(value.parse().map_err(|_| bad("Invalid channel"))?)
+                }
                 _ => {}
             }
         }
@@ -667,6 +691,7 @@ impl MemberListQuery {
             role,
             top_hoisted,
             unhoisted,
+            channel_id,
         })
     }
 }
@@ -717,29 +742,27 @@ async fn suggested_members(db: &Db, server: &str, q: &str) -> Result<Vec<MemberR
     Ok(rows)
 }
 
-/// Mention suggestions in the server `access` opened: at most `SUGGEST_MAX` of its members
-/// whose username, display name or name in the server starts with `q`, username matches first,
-/// only ones the caller may find by name (the lookup rule with the server named). Only signed-in
-/// members and signed-in readers of a server anyone can read get any, and the readers only while
-/// the server lists its members to them.
+/// Mention suggestions from the member list `list`: at most `SUGGEST_MAX` of the server's
+/// members whose username, display name or name in the server starts with `q`, username matches
+/// first, only ones the caller may find by name (the lookup rule with the server named). Only
+/// signed-in members and signed-in readers of a server anyone can read get any.
 async fn mentionable(
     state: &AppState,
-    access: &ServerAccess,
+    list: &MemberList<'_>,
     viewer: Option<&User>,
     proof: &Proof<'_>,
     q: &str,
 ) -> Result<Vec<MemberRow>, ApiError> {
-    match (viewer, access.via()) {
-        (Some(_), Via::Member | Via::Public)
-            if crate::api::access::subjects::lists_members(access) => {}
+    match (viewer, list.access().via()) {
+        (Some(_), Via::Member | Via::Public) => {}
         (_, _) => return Ok(Vec::new()),
     }
-    let rows = suggested_members(&state.read(), access.name(), q).await?;
+    let rows = suggested_members(&state.read(), list.server(), q).await?;
     let names: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
     let caller = Caller {
         user: viewer,
         proof,
-        server: Some(access.name()),
+        server: Some(list.server()),
         badge: None,
     };
     let seen = seen_among(state, &caller, &names).await?;
@@ -1282,6 +1305,7 @@ async fn server_detail(
         guest_voice,
         guest_chat,
         members_visible,
+        hide_members,
         join_mode,
         listed,
         profiles_mode,
@@ -1354,6 +1378,7 @@ async fn server_detail(
         guest_voice,
         guest_chat,
         members_visible,
+        hide_members,
         join_mode,
         listed,
         description,
@@ -1566,6 +1591,12 @@ async fn members_page(
 /// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A
 /// server whose `members_visible` is off lists its members only to its members and instance
 /// staff: everyone else gets an empty list in every mode.
+///
+/// The member list itself needs the site's `member_lists` switch on, the server's
+/// `hide_members` off and View members (34359738368) held, in `channel_id` when given; members
+/// with Manage server, Manage roles or Kick and ban, and instance staff, get it regardless of the
+/// server and its permissions. Without it the caller gets 403, `suggest` an empty list, and
+/// `usernames` only the members who wrote a message the caller can read, all shown offline.
 /// Each call takes one of the caller's `list` lookups (`LOOKUP_LIST_PER_MINUTE`, 120 a minute
 /// by default), or with `suggest` one of its `typeahead` lookups
 /// (`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute), counted per account, or per client address
@@ -1577,10 +1608,10 @@ async fn members_page(
     params(("name" = String, Path, description = "Server name, case-insensitive"), MemberListQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
     responses(
         (status = 200, description = "A page of members, or just the requested `usernames`", body = Vec<Member>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
-        (status = 400, description = "Invalid cursor (including a cursor from a different kind of listing), a non-integer `offset` or `limit`, a non-integer `role` (`Invalid role`), or `top_hoisted` without `role` (`top_hoisted needs a role`)", body = ApiErrorBody),
+        (status = 400, description = "Invalid cursor (including a cursor from a different kind of listing), a non-integer `offset` or `limit`, a non-integer `role` (`Invalid role`) or `channel_id` (`Invalid channel`), or `top_hoisted` without `role` (`top_hoisted needs a role`)", body = ApiErrorBody),
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
-        (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
-        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before. `Member lists are turned off on this site` (reason `off_site`, control `member_lists`), `You can't view the members of this server` (with reason `off_server` and control `hide_members` while the server hides its list, else without a reason) or `You can't view the members of this channel`", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). Also a `channel_id` of another server or that you can't view", body = ApiErrorBody),
         (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `list` lookups, or with `suggest` its `typeahead` lookups. Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
@@ -1605,38 +1636,54 @@ pub(crate) async fn list_members(
         role,
         top_hoisted,
         unhoisted,
+        channel_id,
     } = query;
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
     lookup::take(&state, class, viewer.as_ref())?;
-    let access = resolve_server(
-        db,
-        &name,
-        viewer.as_ref(),
-        &Proof::headers(&headers, &state.limits),
-    )
-    .await?;
-    if !crate::api::access::subjects::lists_members(&access) {
-        return Ok(Paged(Vec::new(), None));
-    }
-    let key = access.name().to_string();
-    let creator = access.lite().creator.clone();
+    let proof = Proof::headers(&headers, &state.limits);
+    let access = resolve_server(db, &name, viewer.as_ref(), &proof).await?;
+    let place = ListPlace::open(access, db, channel_id).await?;
+    let settings = crate::api::Settings::cached(db).await;
+    let suggesting = suggest == Some(true) && q.is_some();
+    let list = match place.member_list(db, &settings).await? {
+        Roster::Shown(list) => list,
+        Roster::Hidden(why) => {
+            let access = place.access();
+            return match (refusal(why, access.lite()), usernames, suggesting) {
+                (None, _, _) | (Some(_), None, true) => Ok(Paged(Vec::new(), None)),
+                (Some(_), Some(names), _) => {
+                    let names = unique_capped(names.iter().map(|n| n.to_lowercase()));
+                    let seen = seen_authors(db, access, &names).await?;
+                    let names: Vec<String> =
+                        names.into_iter().filter(|n| seen.contains(n)).collect();
+                    let rows = members_by_names(db, access.name(), &names).await?;
+                    Ok(Paged(
+                        member_objects(&state, access, rows, false).await?,
+                        None,
+                    ))
+                }
+                (Some(e), None, false) => Err(e),
+            };
+        }
+    };
+    let key = list.server();
     let (rows, next) = match usernames {
         Some(names) => (
             members_by_names(
                 db,
-                &key,
+                key,
                 &unique_capped(names.iter().map(|n| n.to_lowercase())),
             )
             .await?,
             None,
         ),
-        None if suggest == Some(true) && q.is_some() => (
+        None if suggesting => (
             mentionable(
                 &state,
-                &access,
+                &list,
                 viewer.as_ref(),
-                &Proof::headers(&headers, &state.limits),
+                &proof,
                 q.as_deref().unwrap_or_default(),
             )
             .await?,
@@ -1645,7 +1692,7 @@ pub(crate) async fn list_members(
         None if q.is_some() || admins == Some(true) => {
             filtered_members(
                 db,
-                &key,
+                key,
                 q.as_deref(),
                 admins == Some(true),
                 limit,
@@ -1654,28 +1701,48 @@ pub(crate) async fn list_members(
             .await?
         }
         None if unhoisted == Some(true) => {
-            grouped_members(db, &key, None, limit, cursor.as_deref()).await?
+            grouped_members(db, key, None, limit, cursor.as_deref()).await?
         }
         None if top_hoisted == Some(true) => match role {
-            Some(role) => grouped_members(db, &key, Some(role), limit, cursor.as_deref()).await?,
+            Some(role) => grouped_members(db, key, Some(role), limit, cursor.as_deref()).await?,
             None => return Err(bad("top_hoisted needs a role")),
         },
-        None => members_page(db, &key, &state.hub, offset, limit, cursor.as_deref()).await?,
+        None => members_page(db, key, &state.hub, offset, limit, cursor.as_deref()).await?,
     };
+    Ok(Paged(
+        member_objects(&state, list.access(), rows, true).await?,
+        next,
+    ))
+}
+
+/// The members of `rows` as the list shows them to the viewer of `access`, with whether they
+/// are online when `presence` (else every one reads as offline).
+async fn member_objects(
+    state: &AppState,
+    access: &ServerAccess,
+    rows: Vec<MemberRow>,
+    presence: bool,
+) -> Result<Vec<Member>, ApiError> {
+    let db = &state.read();
+    let key = access.name();
+    let creator = access.lite().creator.clone();
     let names: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
-    let online = state.hub.online_among(&key, &names);
+    let online = match presence {
+        true => state.hub.online_among(key, &names),
+        false => HashSet::new(),
+    };
     let refs = user_refs(db, &names).await;
-    let mut roles = role_ids_of(db, &key, &names).await?;
+    let mut roles = role_ids_of(db, key, &names).await?;
     let mut via = match access.can_view(db, Perm::ManageInvites).await {
-        true => crate::api::passwords::joined_via(db, &key, &names).await?,
+        true => crate::api::passwords::joined_via(db, key, &names).await?,
         false => HashMap::new(),
     };
     let mut timeouts = match access.can_view(db, Perm::TimeoutMembers).await {
-        true => running_timeouts(db, &key, &names).await?,
+        true => running_timeouts(db, key, &names).await?,
         false => HashMap::new(),
     };
-    let mut looks = crate::api::profiles::looks_of(db, &key, &names).await?;
-    let members = rows
+    let mut looks = crate::api::profiles::looks_of(db, key, &names).await?;
+    Ok(rows
         .into_iter()
         .map(|(username, is_admin, perms)| Member {
             profile: looks.remove(&username),
@@ -1688,8 +1755,7 @@ pub(crate) async fn list_members(
             joined_via: via.remove(&username),
             user: user_from(&refs, &username),
         })
-        .collect();
-    Ok(Paged(members, next))
+        .collect())
 }
 
 /// The most characters of the text a mention suggestion or a user search looks for.
@@ -1725,6 +1791,9 @@ pub struct MentionQuery {
     /// case-insensitive.
     #[param(example = "al")]
     q: Option<String>,
+    /// The channel the suggestions are for: View members is read there. A channel of another
+    /// server, or one the caller can't view, gives the uniform 404.
+    channel_id: Option<i64>,
 }
 
 /// Suggest mentions
@@ -1737,8 +1806,9 @@ pub struct MentionQuery {
 /// /api/v1/me/privacy`) applies, so one who keeps their profile to friends is suggested only to
 /// friends, and one who chose `everyone` to everyone who gets suggestions here. For signed-in
 /// members, and anyone signed in on a server anyone can read while its `members_visible` is
-/// on; guests and everyone else get an empty list. Each call takes one of the caller's
-/// `typeahead` lookups
+/// on; guests and everyone else get an empty list, and so does a caller without the member list
+/// (see `GET /api/v1/servers/{name}/members`, with `channel_id`). Each call takes one of the
+/// caller's `typeahead` lookups
 /// (`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute by default), counted per account, or per client
 /// address without one. General rate-limit bucket.
 #[utoipa::path(
@@ -1751,7 +1821,7 @@ pub struct MentionQuery {
         (status = 400, description = "`Search text needs at least 1 character`, `Search text must be at most 32 characters` or `Search text cannot contain NUL characters` (reason `invalid`, field `q`)", body = ApiErrorBody),
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
-        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). Also a `channel_id` of another server or that you can't view", body = ApiErrorBody),
         (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `typeahead` lookups. Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
@@ -1765,18 +1835,24 @@ pub(crate) async fn mentions(
 ) -> Result<Names, ApiError> {
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
-    let MentionQuery { q } = query;
+    let MentionQuery { q, channel_id } = query;
     let q = lookup_text(q.as_deref(), 1)?;
     lookup::take(&state, LookupClass::Typeahead, viewer.as_ref())?;
     let proof = Proof::headers(&headers, &state.limits);
     let access = resolve_server(db, &name, viewer.as_ref(), &proof).await?;
-    let names: Vec<String> = mentionable(&state, &access, viewer.as_ref(), &proof, &q)
+    let place = ListPlace::open(access, db, channel_id).await?;
+    let settings = crate::api::Settings::cached(db).await;
+    let list = match place.member_list(db, &settings).await? {
+        Roster::Shown(list) => list,
+        Roster::Hidden(_) => return Ok(Names(Vec::new())),
+    };
+    let names: Vec<String> = mentionable(&state, &list, viewer.as_ref(), &proof, &q)
         .await?
         .into_iter()
         .map(|(name, _, _)| name)
         .collect();
     let refs = user_refs(db, &names).await;
-    let looks = crate::api::profiles::looks_of(db, access.name(), &names).await?;
+    let looks = crate::api::profiles::looks_of(db, list.server(), &names).await?;
     Ok(Names(
         names
             .iter()
@@ -1900,7 +1976,8 @@ async fn seen_pairs(
 /// password-protected server signed-in callers must be members and guests need a valid
 /// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A
 /// server whose `members_visible` is off lists them only to its members and instance staff:
-/// everyone else gets an empty list.
+/// everyone else gets an empty list. A caller without the member list (see
+/// `GET /api/v1/servers/{name}/members`, with `channel_id`) gets its 403.
 /// Each admitted call spends one `list` lookup per account or guest address group.
 /// One list runs per caller. The latest waiter may wait up to 5 s for that caller or 2 s
 /// for a process search place. Pools with two or more readers reserve one for other requests.
@@ -1910,13 +1987,13 @@ async fn seen_pairs(
     get,
     path = "/api/v1/servers/{name}/interacted",
     tag = "Members",
-    params(("name" = String, Path, description = "Server name, case-insensitive"), MembersQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
+    params(("name" = String, Path, description = "Server name, case-insensitive"), MembersQuery, ListScope, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
     responses(
         (status = 200, description = "A page of users who interacted with the server and are not members, most recent first", body = Vec<UserRef>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
         (status = 400, description = "`Invalid cursor` (JSON): malformed, changed, or given to another caller or for another permission level. Or a non-integer `offset` or `limit` (plain-text framework error)", body = ApiErrorBody),
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
-        (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
-        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before. The member list refusals of `GET /api/v1/servers/{name}/members`", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). Also a `channel_id` of another server or that you can't view", body = ApiErrorBody),
         (status = 429, description = "The caller used up its list lookups, a newer request replaced this one, or no place is available. JSON with the reason `rate` and a `Retry-After` header. Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
@@ -1927,17 +2004,31 @@ pub(crate) async fn list_interacted(
     headers: HeaderMap,
     Path(name): Path<String>,
     Query(q): Query<MembersQuery>,
+    Query(scope): Query<ListScope>,
 ) -> Result<Paged<UserRef>, ApiError> {
     let db = state.read();
     require_guest_ok(&db, viewer.as_ref()).await?;
     let token = lookup::reserve(&state, LookupClass::List, viewer.as_ref())?;
     let proof = Proof::headers(&headers, &state.limits);
-    let resolve = || resolve_server(&db, &name, viewer.as_ref(), &proof);
-    let mut access = match resolve().await {
-        Ok(access) if crate::api::access::subjects::lists_members(&access) => access,
-        other => {
+    let resolve = async || {
+        let access = resolve_server(&db, &name, viewer.as_ref(), &proof).await?;
+        let place = ListPlace::open(access, &db, scope.channel_id).await?;
+        let settings = crate::api::Settings::cached(&db).await;
+        let shown = match place.member_list(&db, &settings).await? {
+            Roster::Shown(_) => Ok(()),
+            Roster::Hidden(why) => Err(refusal(why, place.access().lite())),
+        };
+        Ok::<_, ApiError>((place, shown))
+    };
+    let mut place = match resolve().await {
+        Ok((place, Ok(()))) => place,
+        Ok((_, Err(refused))) => {
             token.spend();
-            return other.map(|_| Paged(Vec::new(), None));
+            return refused.map_or(Ok(Paged(Vec::new(), None)), Err);
+        }
+        Err(e) => {
+            token.spend();
+            return Err(e);
         }
     };
     let mut admission = std::pin::pin!(crate::api::search_limits::admit_interacted(
@@ -1950,24 +2041,33 @@ pub(crate) async fn list_interacted(
             let admitted = admission.await?;
             // Membership, grants and member visibility can change while the request waits.
             require_guest_ok(&db, viewer.as_ref()).await?;
-            access = resolve().await?;
-            if !crate::api::access::subjects::lists_members(&access) {
-                return Ok(Paged(Vec::new(), None));
-            }
+            place = match resolve().await? {
+                (place, Ok(())) => place,
+                (_, Err(refused)) => return refused.map_or(Ok(Paged(Vec::new(), None)), Err),
+            };
             admitted
         }
     };
     token.spend();
     admitted
-        .run(async move { interacted_page(&db, &access, q).await })
+        .run(async move {
+            let settings = crate::api::Settings::cached(&db).await;
+            match place.member_list(&db, &settings).await? {
+                Roster::Shown(list) => interacted_page(&db, &list, q).await,
+                Roster::Hidden(why) => {
+                    refusal(why, place.access().lite()).map_or(Ok(Paged(Vec::new(), None)), Err)
+                }
+            }
+        })
         .await?
 }
 
 async fn interacted_page(
     db: &Db,
-    access: &ServerAccess,
+    list: &MemberList<'_>,
     q: MembersQuery,
 ) -> Result<Paged<UserRef>, ApiError> {
+    let access = list.access();
     let key = access.name();
     let MembersQuery {
         offset,
@@ -2340,6 +2440,7 @@ async fn found_server(
             guest_voice: false,
             guest_chat: false,
             members_visible: true,
+            hide_members: false,
             join_mode: mode,
             listed,
             profiles_mode: Default::default(),
@@ -3379,7 +3480,8 @@ pub(crate) async fn leave_server(
 /// Renames the server, switches it between public and password protected or changes how people
 /// join it (`join`), sets, changes or clears its permanent password, changes its header colors,
 /// and sets whether people who aren't members can read it (`public_read`) and see its members
-/// (`members_visible`), whether search lists it (`listed`), and whether guests can participate
+/// (`members_visible`), whether members without moderation rights see the member list
+/// (`hide_members`), whether search lists it (`listed`), and whether guests can participate
 /// in text and voice (`guest_chat_opt_in`, `guest_voice_opt_in`); every field is optional.
 /// Turning a guest choice on requires its site switch. A suspended choice can be kept or turned
 /// off. A server people join with an invite or that is closed keeps its key when it is renamed,
@@ -3389,7 +3491,7 @@ pub(crate) async fn leave_server(
 /// Requires the Manage server settings permission; `members: remove` together with `password` also
 /// requires Kick. The built-in rchat server can't be given a password and keeps its key
 /// `rchat` (a new name changes only its display name); its colors, `public_read`,
-/// `members_visible` and the guest participation opt-ins may change.
+/// `members_visible`, `hide_members` and the guest participation opt-ins may change.
 ///
 /// When `password` is present, `members: remove` removes every other member you could kick
 /// (their roles are dropped, as if kicked; see `ServerDetail.roles_order_confirmed`) and existing
@@ -3445,6 +3547,7 @@ pub(crate) async fn update_server(
         guest_chat_opt_in,
         guest_voice_opt_in,
         members_visible,
+        hide_members,
         join,
         listed: list,
         profiles_mode,
@@ -3662,6 +3765,13 @@ pub(crate) async fn update_server(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(hide) = hide_members {
+        sqlx::query("UPDATE servers SET hide_members = $1 WHERE name = $2")
+            .bind(i64::from(hide))
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
     if let Some(mode) = profiles_mode {
         sqlx::query("UPDATE servers SET profiles_mode = $1 WHERE name = $2")
             .bind(mode.as_str())
@@ -3755,6 +3865,11 @@ pub(crate) async fn update_server(
             "members_visible",
             lite.members_visible,
             members_visible.unwrap_or(lite.members_visible),
+        )
+        .change(
+            "hide_members",
+            lite.hide_members,
+            hide_members.unwrap_or(lite.hide_members),
         )
         .change("listed", lite.listed, list.unwrap_or(lite.listed))
         .change(
@@ -7796,7 +7911,7 @@ pub(crate) async fn follow_role_order(
 #[derive(Deserialize, ToSchema)]
 pub struct EveryoneReq {
     /// The permission bits everyone holds (see `ServerDetail.everyone_perms`).
-    #[schema(example = 536739840)]
+    #[schema(example = 34896478208i64)]
     perms: i64,
     /// The bits this request changes. Bits outside it keep their current value. Defaults to
     /// every bit everyone may hold.
@@ -7814,8 +7929,8 @@ pub struct EveryonePerms {
 ///
 /// Changes the permission bits every member of the server holds: 131072 View channels, 262144
 /// Send messages, 524288 Read history, 1048576 Add reactions, 2097152 Attach files, 4194304
-/// Embed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect, 67108864 Speak
-/// and 134217728 Video. Other bits are left as they are. Requires the Manage roles permission,
+/// Embed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect, 67108864 Speak,
+/// 134217728 Video and 34359738368 View members. Other bits are left as they are. Requires the Manage roles permission,
 /// and you can only add bits you hold yourself. Emits `roles_changed` to the server and removes
 /// users from voice rooms they can no longer view. General rate-limit bucket.
 #[utoipa::path(
@@ -8064,6 +8179,7 @@ mod tests {
                 limit: None,
                 cursor: None,
             }),
+            Query(ListScope { channel_id: None }),
         )
         .await
         .expect("interacted");
@@ -8616,6 +8732,7 @@ mod tests {
                 guest_chat_opt_in: None,
                 guest_voice_opt_in: None,
                 members_visible: None,
+                hide_members: None,
                 join: None,
                 listed: None,
                 profiles_mode: None,
@@ -9757,6 +9874,7 @@ mod tests {
                 guest_chat_opt_in: None,
                 guest_voice_opt_in: None,
                 members_visible: None,
+                hide_members: None,
                 join: None,
                 listed: None,
                 profiles_mode: None,
@@ -10210,6 +10328,7 @@ mod tests {
                 guest_chat_opt_in: None,
                 guest_voice_opt_in: None,
                 members_visible: None,
+                hide_members: None,
                 join: None,
                 listed: None,
                 profiles_mode: None,
@@ -11133,6 +11252,7 @@ mod tests {
             Path(server.to_string()),
             Query(MentionQuery {
                 q: q.map(str::to_string),
+                channel_id: None,
             }),
         )
         .await?;
@@ -11499,6 +11619,7 @@ mod tests {
                                 HeaderMap::new(),
                                 Path("club".to_string()),
                                 Query(q),
+                                Query(ListScope { channel_id: None }),
                             )
                             .await
                             .expect("interacted");
@@ -11561,6 +11682,7 @@ mod tests {
                     limit: Some(1),
                     cursor,
                 }),
+                Query(ListScope { channel_id: None }),
             )
             .await
             .expect("interacted");
@@ -11721,6 +11843,7 @@ mod tests {
                     limit: Some(1),
                     cursor: pages[0].1.clone(),
                 }),
+                Query(ListScope { channel_id: None }),
             )
             .await
             .expect("continue from the first page");
@@ -11742,6 +11865,7 @@ mod tests {
                 limit: None,
                 cursor: None,
             }),
+            Query(ListScope { channel_id: None }),
         )
         .await
         .map(|Paged(rows, _)| rows.len())
@@ -12113,6 +12237,7 @@ mod tests {
                         limit: Some(1),
                         cursor,
                     }),
+                    Query(ListScope { channel_id: None }),
                 )
                 .await
                 .map(|Paged(list, next)| {
@@ -12173,6 +12298,7 @@ mod tests {
                 limit: None,
                 cursor: None,
             }),
+            Query(ListScope { channel_id: None }),
         )
         .await
         .expect("interacted");
@@ -14511,6 +14637,7 @@ mod tests {
                 guest_chat_opt_in: None,
                 guest_voice_opt_in: None,
                 members_visible: None,
+                hide_members: None,
                 join: None,
                 listed: None,
                 profiles_mode: None,

@@ -112,6 +112,7 @@ export function carried(cx: RoomCtx, up: string): Carried | null {
     chcats: chcatsOf(F),
     separators: separatorsOf(F),
     settings: F.setting ?? null,
+    memberList: F.memberList ?? null,
   }
 }
 

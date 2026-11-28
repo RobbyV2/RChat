@@ -645,6 +645,7 @@ mod tests {
                         HeaderMap::new(),
                         Path("rchat".to_string()),
                         Query(serde_json::from_value(json!({})).expect("query")),
+                        Query(serde_json::from_value(json!({})).expect("scope")),
                     )
                     .await,
                 )

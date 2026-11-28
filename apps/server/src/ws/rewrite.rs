@@ -342,7 +342,7 @@ async fn seen_layout(
 pub(super) const PRESENCE_SNAPSHOT_MAX: usize = 50;
 
 pub(super) fn presence_snapshot(hub: &Hub, access: &Access, server: &str) -> Option<WsEvent> {
-    if access.retry.pending() || !access.held(server) || access.closes(server) {
+    if access.retry.pending() || !access.held(server) || access.hides_roster(server) {
         return None;
     }
     let mut online = hub.online_after(server, None, PRESENCE_SNAPSHOT_MAX);

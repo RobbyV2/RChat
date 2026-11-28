@@ -27,10 +27,11 @@ pub enum Feature {
     Docs,
     ScheduledMessages,
     InteractiveDocs,
+    MemberLists,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 22] = [
+    pub const ALL: [Feature; 23] = [
         Feature::ServerReports,
         Feature::InstanceReports,
         Feature::Widgets,
@@ -53,6 +54,7 @@ impl Feature {
         Feature::Docs,
         Feature::ScheduledMessages,
         Feature::InteractiveDocs,
+        Feature::MemberLists,
     ];
 
     /// The `Settings` field and the key in the `settings` table.
@@ -80,6 +82,7 @@ impl Feature {
             Feature::Docs => "docs",
             Feature::ScheduledMessages => "scheduled_messages",
             Feature::InteractiveDocs => "interactive_docs",
+            Feature::MemberLists => "member_lists",
         }
     }
 
@@ -108,6 +111,7 @@ impl Feature {
             Feature::Docs => "FEATURE_DOCS",
             Feature::ScheduledMessages => "FEATURE_SCHEDULED_MESSAGES",
             Feature::InteractiveDocs => "FEATURE_INTERACTIVE_DOCS",
+            Feature::MemberLists => "FEATURE_MEMBER_LISTS",
         }
     }
 
@@ -135,7 +139,8 @@ impl Feature {
             | Feature::ServerProfiles
             | Feature::Docs
             | Feature::ScheduledMessages
-            | Feature::InteractiveDocs => true,
+            | Feature::InteractiveDocs
+            | Feature::MemberLists => true,
         }
     }
 }
@@ -212,6 +217,7 @@ mod tests {
                 ("docs", "FEATURE_DOCS", true),
                 ("scheduled_messages", "FEATURE_SCHEDULED_MESSAGES", true),
                 ("interactive_docs", "FEATURE_INTERACTIVE_DOCS", true),
+                ("member_lists", "FEATURE_MEMBER_LISTS", true),
             ]
         );
         assert_eq!(
