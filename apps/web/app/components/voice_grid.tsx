@@ -1,4 +1,8 @@
 'use client'
+import { handleName, p2pName } from '../lib/names'
+import { asAccount, shownUser } from '../lib/people'
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -74,7 +78,6 @@ import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { Dialog, Masked, useEscape, useOwn } from './ui'
 import { Row, Stack, Surface } from './layout'
-import { NameWithUsername } from './display_name'
 import { tileName } from '../lib/display_name'
 import { ownsP2pServer } from '../lib/p2p/server/types'
 import { ChannelTopic } from './channel_topic'
@@ -453,19 +456,9 @@ export function Tile({
           {streamer ? (
             <AvatarHidden size={avatar} />
           ) : tile.local ? (
-            <KeyAvatar
-              ik={user.username}
-              size={avatar}
-              kind={user.avatar_kind}
-              bg={user.avatar_color}
-            />
+            <KeyAvatar person={shownUser(user, null)} size={avatar} />
           ) : (
-            <UserAvatar
-              username={user.username}
-              avatarKind={user.avatar_kind}
-              avatarColor={user.avatar_color}
-              size={avatar}
-            />
+            <UserAvatar person={shownUser(user, null)} size={avatar} />
           )}
         </span>
       )}
@@ -502,13 +495,11 @@ export function Tile({
             variant="tile"
           />
         )}
-        <span className="streamer truncate">
-          {tile.local ? (
-            <Masked text={user.display_name} own={tile.own} />
-          ) : (
-            <NameWithUsername user={user} own={tile.own} />
-          )}
-        </span>
+        {tile.local ? (
+          <Name of={p2pName(user.display_name, tile.own)} look="truncate" />
+        ) : (
+          <Name of={personName(shownUser(user, null), tile.own)} withUsername look="truncate" />
+        )}
         {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
         {status.forced === 'staff' && !screen && !compact && (
           <span className="shrink-0 opacity-75">{STAFF_MUTED}</span>
@@ -760,7 +751,11 @@ const NO_USERS: VoiceUser[] = []
 
 // Where the dock's call is: the person of a DM call, else the channel or contact name.
 export function DockPlace({ place, peer }: { place: string; peer?: UserRef }) {
-  return peer ? <NameWithUsername user={peer} /> : <Masked text={place} />
+  return peer ? (
+    <Name of={personName(asAccount(peer, 'call'))} withUsername />
+  ) : (
+    <Masked text={place} />
+  )
 }
 
 function CallOwner({ children }: { children: ReactNode }) {
@@ -1367,10 +1362,12 @@ export function VoiceGrid({
               />
               <Row as="span" gap="2xs">
                 {forDm.state === 'active' ? 'In call with' : 'Calling'}
-                <span className="streamer truncate font-medium text-on-surface">
-                  {dm ? <NameWithUsername user={dm.other} /> : <Masked text={pendingOther ?? ''} />}
-                  {forDm.state === 'ringing' && '…'}
-                </span>
+                <Name
+                  of={dm ? personName(asAccount(dm.other, 'call')) : handleName(pendingOther ?? '')}
+                  withUsername
+                  after={forDm.state === 'ringing' ? '…' : null}
+                  look="truncate font-medium text-on-surface"
+                />
               </Row>
               <span aria-hidden>·</span>
               <span className="shrink-0">{forDm.video ? 'Video call' : 'Voice call'}</span>
@@ -1553,9 +1550,11 @@ function CallBannerBody() {
               <span className="text-sm">
                 <Row as="span" gap="2xs">
                   Calling
-                  <span className="streamer truncate font-medium">
-                    <NameWithUsername user={other} />
-                  </span>
+                  <Name
+                    of={personName(asAccount(other, 'call'))}
+                    withUsername
+                    look="truncate font-medium"
+                  />
                   …
                 </Row>
               </span>
@@ -1583,9 +1582,11 @@ function CallBannerBody() {
       <span className="max-sm:hidden">{avatar(72)}</span>
       <span className="sm:hidden">{avatar(40)}</span>
       <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
-        <span className="streamer w-full truncate text-base font-semibold">
-          <NameWithUsername user={other} />
-        </span>
+        <Name
+          of={personName(asAccount(other, 'call'))}
+          withUsername
+          look="w-full truncate text-base font-semibold"
+        />
         {!shown && <AccountLabel />}
         <CallType video={call.video} p2p={p2pCall} incoming />
         <Row
@@ -1600,9 +1601,11 @@ function CallBannerBody() {
         >
           <MessageCircle size={12} aria-hidden className="shrink-0" />
           <span className="shrink-0">DM with</span>
-          <span className="streamer truncate">
-            <NameWithUsername user={dm?.other ?? other} />
-          </span>
+          <Name
+            of={personName(asAccount(dm?.other ?? other, 'call'))}
+            withUsername
+            look="truncate"
+          />
         </Row>
       </div>
       <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">
@@ -1645,12 +1648,7 @@ function RingAvatar({ user, size, streamer }: { user: UserRef; size: number; str
         {streamer ? (
           <AvatarHidden size={size} />
         ) : (
-          <UserAvatar
-            username={user.username}
-            avatarKind={user.avatar_kind}
-            avatarColor={user.avatar_color}
-            size={size}
-          />
+          <UserAvatar person={asAccount(user, 'call')} size={size} />
         )}
       </span>
     </span>

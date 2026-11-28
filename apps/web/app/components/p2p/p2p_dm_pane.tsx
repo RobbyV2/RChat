@@ -1,4 +1,5 @@
 'use client'
+import { identityPerson } from '../../lib/people'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -178,7 +179,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
         className="flex min-w-0 items-center gap-2 rounded-full py-1 pr-1.5 pl-1 hover:bg-surface-container-high sm:pr-2.5"
       >
         <span className="relative shrink-0">
-          <KeyAvatar ik={peerIk} size={28} />
+          <KeyAvatar person={identityPerson(peerIk, 'contact')} size={28} />
           <PresenceDot presence={presence} />
           {peer && (
             <span className="absolute -top-1 -right-1 hidden rounded-full bg-surface-container-low max-[360px]:flex">

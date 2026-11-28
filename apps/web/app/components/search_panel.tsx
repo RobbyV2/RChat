@@ -11,7 +11,7 @@ import { Inset, Row, Stack, Surface } from './layout'
 import { fieldCls, Masked, PanelHeader, Sentinel, smallFieldCls, useEscape } from './ui'
 import { MessageListSkeleton } from './skeletons'
 import { ShownAvatar, ShownName } from './shown_user'
-import { avatarTriggerCls, nameTriggerCls } from './message_pane'
+import { avatarTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { plainStamps } from '../lib/timestamps'
 import { profileTrigger } from './profile_card'
@@ -91,12 +91,13 @@ function HitAuthor({ r }: { r: SearchHit }) {
       >
         <ShownAvatar user={author.user} server={author.server} size={20} />
       </span>
-      <span
+      <ShownName
+        user={author.user}
+        server={author.server}
+        link
         {...profileTrigger(store, author.user, author.server)}
-        className={`streamer truncate text-sm font-medium ${nameTriggerCls}`}
-      >
-        <ShownName user={author.user} server={author.server} />
-      </span>
+        look="truncate text-sm font-medium"
+      />
     </>
   )
 }

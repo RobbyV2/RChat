@@ -1,4 +1,5 @@
 'use client'
+import { identityPerson } from '../../lib/people'
 import { Button, IconButton, ListRow, LinkButton } from '../controls'
 import { localInput } from '../../lib/scheduled'
 import { client } from '../../lib/client/client'
@@ -421,7 +422,7 @@ function TransferAsksBody({ room }: { room?: string }) {
         >
           <Surface pad="md" tone="plain" radius="none">
             <Row gap="md" wrap>
-              <KeyAvatar ik={a.from} size={32} />
+              <KeyAvatar person={identityPerson(a.from, 'request')} size={32} />
               <p className="min-w-48 flex-1 text-sm">
                 <Who room={a.room} ik={a.from} />{' '}
                 {a.kind === 'take' ? (
@@ -490,7 +491,7 @@ function CoOwnerAsksBody() {
             >
               <Surface pad="md" tone="plain" radius="none">
                 <Row gap="md" wrap>
-                  <KeyAvatar ik={a.from} size={32} />
+                  <KeyAvatar person={identityPerson(a.from, 'request')} size={32} />
                   <p className="min-w-48 flex-1 text-sm">
                     <span className="streamer font-medium">
                       {c ? <Masked text={displayName(c)} /> : 'A contact'}
@@ -559,7 +560,7 @@ function CoOwnerPickerBody({
                         )
                       }
                     />
-                    <KeyAvatar ik={c.ik} size={24} />
+                    <KeyAvatar person={identityPerson(c.ik, 'contact')} size={24} />
                     <span className="streamer min-w-0 flex-1 truncate text-sm">
                       <Masked text={displayName(c)} />
                     </span>

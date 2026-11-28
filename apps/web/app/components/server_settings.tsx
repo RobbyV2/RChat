@@ -1,5 +1,8 @@
 'use client'
 
+import { asAccount } from '../lib/people'
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
@@ -90,7 +93,6 @@ import { ServerHeader } from './server_header'
 import { SystemMessagesSection } from './system_messages'
 import { PlaceProvider, useHostedServer } from '../lib/place/react'
 import { ProfilesModeField } from './server_profile_dialog'
-import { NameWithUsername } from './display_name'
 import { useShownMembers } from './shown_user'
 import { ServerUploadExpiry } from './upload_expiry'
 import { RoleLooksFields } from './role_looks_fields'
@@ -1192,12 +1194,7 @@ export function BanList({ server }: { server: string }) {
       {list.map(b => (
         <Surface key={b.username} pad="sm" inset="bar" tone="plain" radius="lg">
           <Row gap="sm">
-            <UserAvatar
-              username={b.username}
-              avatarKind={b.avatar_kind}
-              avatarColor={b.avatar_color}
-              size={28}
-            />
+            <UserAvatar person={asAccount(b, 'unknown')} size={28} />
             <span className="min-w-0 flex-1 text-sm">
               <span className="block truncate">
                 <span className="streamer">
@@ -1459,16 +1456,9 @@ function Settings({ server, section }: { server: string; section: ServerSettings
   const memberRow = (m: Member, action: ReactNode, extra?: ReactNode) => (
     <Surface key={m.username} pad="sm" gap="xs" tone="plain" radius="lg">
       <Row gap="sm">
-        <UserAvatar
-          username={m.username}
-          avatarKind={shownOf(m).avatar_kind}
-          avatarColor={shownOf(m).avatar_color}
-          size={28}
-        />
+        <UserAvatar person={shownOf(m)} size={28} />
         <span className="min-w-0 flex-1">
-          <span className="streamer block truncate text-sm">
-            <NameWithUsername user={shownOf(m)} />
-          </span>
+          <Name of={personName(shownOf(m))} withUsername look="block truncate text-sm" />
           {m.joined_via && (
             <span className="block truncate text-xs text-on-surface-variant">
               Joined with: {passwordName(m.joined_via.label)}

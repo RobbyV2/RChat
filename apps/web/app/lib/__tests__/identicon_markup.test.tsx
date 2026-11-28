@@ -1,3 +1,4 @@
+import { pictured } from '../people'
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { minidenticon } from 'minidenticons'
@@ -12,7 +13,7 @@ const noop = () => {}
 describe('identicon avatar markup', () => {
   test('the default identicon is the plain minidenticon and has no inline background', () => {
     const html = renderToStaticMarkup(
-      <UserAvatar username="carol" avatarKind="identicon" avatarColor={null} />
+      <UserAvatar person={pictured('carol', { kind: 'identicon', color: null }, 'own')} />
     )
     expect(html).toContain(`src="${src(minidenticon('carol', 95, 45))}"`)
     expect(html).not.toContain('style=')
@@ -21,7 +22,10 @@ describe('identicon avatar markup', () => {
 
   test('a chosen background is painted and the ink is recolored to read on it', () => {
     const html = renderToStaticMarkup(
-      <UserAvatar username="carol" avatarKind="identicon" avatarColor="#FFFFFF" size={40} />
+      <UserAvatar
+        person={pictured('carol', { kind: 'identicon', color: '#FFFFFF' }, 'own')}
+        size={40}
+      />
     )
     expect(html).toContain('style="background:#ffffff"')
     expect(html).toContain(encodeURIComponent('fill="#c78605"'))
@@ -31,7 +35,7 @@ describe('identicon avatar markup', () => {
 
   test('a bad background falls back to the default identicon', () => {
     const html = renderToStaticMarkup(
-      <UserAvatar username="carol" avatarKind="identicon" avatarColor="javascript:1" />
+      <UserAvatar person={pictured('carol', { kind: 'identicon', color: 'javascript:1' }, 'own')} />
     )
     expect(html).toContain(`src="${src(minidenticon('carol', 95, 45))}"`)
     expect(html).not.toContain('style=')
@@ -39,7 +43,7 @@ describe('identicon avatar markup', () => {
 
   test('a color avatar shows its color', () => {
     const html = renderToStaticMarkup(
-      <UserAvatar username="carol" avatarKind="color" avatarColor="#123456" />
+      <UserAvatar person={pictured('carol', { kind: 'color', color: '#123456' }, 'own')} />
     )
     expect(html).toContain('background:#123456')
     expect(html).not.toContain('<img')

@@ -175,13 +175,15 @@ test('a mode without names leaves the name out of what is edited and shown', () 
 })
 
 test('the preview is the account under the draft', () => {
-  expect(previewUser(alice, draft(), 'all')).toBe(alice)
-  expect(previewUser(alice, draft({ name: 'Captain' }), 'all')).toEqual({
+  expect<UserRef>(previewUser(alice, draft(), 'all')).toEqual(alice)
+  expect<UserRef>(previewUser(alice, draft({ name: 'Captain' }), 'all')).toEqual({
     ...alice,
     display_name: 'Captain',
   })
-  expect(previewUser(alice, draft({ name: 'Captain' }), 'no_names')).toBe(alice)
-  expect(previewUser(alice, draft({ avatar: { kind: 'identicon', color: null } }), 'all')).toEqual({
+  expect<UserRef>(previewUser(alice, draft({ name: 'Captain' }), 'no_names')).toEqual(alice)
+  expect<UserRef>(
+    previewUser(alice, draft({ avatar: { kind: 'identicon', color: null } }), 'all')
+  ).toEqual({
     ...alice,
     avatar_kind: 'identicon',
     avatar_color: null,

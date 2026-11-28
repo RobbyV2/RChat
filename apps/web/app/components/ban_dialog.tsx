@@ -1,5 +1,7 @@
 'use client'
 
+import { handleName, personName } from '../lib/names'
+import { Name } from './name'
 import { useState } from 'react'
 import {
   BAN_DURATIONS,
@@ -19,7 +21,6 @@ import { UserAvatar } from './user_avatar'
 import { Button, Chip } from './controls'
 import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
-import { NameWithUsername } from './display_name'
 
 // Shows the ban dialog for the member of a hosted server or a P2P room.
 export default function BanDialogHost() {
@@ -93,18 +94,14 @@ export function BanDialog({
       <Stack gap="lg">
         <Stack gap="md">
           <Row gap="md">
-            {user && (
-              <UserAvatar
-                username={user.username}
-                avatarKind={user.avatar_kind}
-                avatarColor={user.avatar_color}
-                size={36}
-              />
-            )}
+            {user && <UserAvatar person={user} size={36} />}
             <Stack gap="none" place="min-w-0">
-              <p className="streamer truncate text-sm font-medium text-on-surface">
-                {user ? <NameWithUsername user={user} /> : name}
-              </p>
+              <Name
+                as="p"
+                of={user ? personName(user) : handleName(name)}
+                withUsername
+                look="truncate text-sm font-medium text-on-surface"
+              />
               {user && (
                 <p className="streamer truncate text-xs text-on-surface-variant">
                   @{user.username}

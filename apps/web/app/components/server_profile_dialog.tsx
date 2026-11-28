@@ -1,5 +1,8 @@
 'use client'
 
+import { asAccount, pictured, type Person } from '../lib/people'
+import { Name } from './name'
+import { p2pName, personName } from '../lib/names'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Lock } from 'lucide-react'
 import { useApi } from '../lib/client/react'
@@ -32,7 +35,6 @@ import {
 import { errorText, useStore } from '../lib/store'
 import type { AvatarKind, MemberLook, ProfilesMode, ServerProfile, UserRef } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
-import { NameWithUsername } from './display_name'
 import { BannerPicker } from './settings_menu'
 import { useLook } from './shown_user'
 import { useNow } from './timeout_dialog'
@@ -65,7 +67,7 @@ export interface ProfileEditorSource {
   failed?: boolean
   lock: LockState
   // Draws someone's picture there.
-  avatar: (user: UserRef, size: number) => ReactNode
+  avatar: (user: Person, size: number) => ReactNode
   // Whether a name shows with the username after it.
   handles: boolean
   save: (from: ProfileDraft, to: ProfileDraft) => Promise<string | null>
@@ -83,16 +85,25 @@ function Preview({ source, draft }: { source: ProfileEditorSource; draft: Profil
     server_banner: draft.banner,
   })
   const name = source.handles ? (
-    <NameWithUsername user={user} own />
+    <Name
+      of={personName(user, true)}
+      withUsername
+      as="p"
+      look="truncate text-sm font-medium text-on-surface"
+    />
   ) : (
-    <Masked text={user.display_name} own />
+    <Name
+      of={p2pName(user.display_name, true)}
+      as="p"
+      look="truncate text-sm font-medium text-on-surface"
+    />
   )
   return (
     <Grid data-profile-preview aria-label="Preview" role="group" cols={{ base: 1, sm: 2 }} gap="md">
       <Surface pad="md" gap="md" row tone="plain" align="stretch" look="bg-surface" place="min-w-0">
-        <span className="shrink-0 pt-0.5">{source.avatar(user, 36)}</span>
+        <span className="shrink-0 pt-0.5">{source.avatar(asAccount(user, 'editor'), 36)}</span>
         <div className="min-w-0">
-          <p className="streamer truncate text-sm font-medium text-on-surface">{name}</p>
+          {name}
           <p className="text-sm text-on-surface-variant">How you look in messages here</p>
         </div>
       </Surface>
@@ -246,7 +257,7 @@ export function ProfileEditor({
             {draft.avatar === null ? (
               <Row gap="md" wrap>
                 <span className={labelCls}>Avatar</span>
-                {source.avatar(account, 32)}
+                {source.avatar(asAccount(account, 'editor'), 32)}
                 <span className="text-xs text-on-surface-variant">As on your {origin}</span>
                 <Button
                   onClick={() =>
@@ -276,7 +287,7 @@ export function ProfileEditor({
                   background={background}
                   onBackground={next => change({ avatar: { kind: 'identicon', color: next } })}
                   avatar={(k, c) =>
-                    source.avatar({ ...account, avatar_kind: k, avatar_color: c }, 48)
+                    source.avatar(pictured(account.username, { kind: k, color: c }, 'editor'), 48)
                   }
                   disabled={locked || busy}
                 />
@@ -363,13 +374,8 @@ export function ProfileEditor({
   )
 }
 
-export const accountAvatar = (user: UserRef, size: number) => (
-  <UserAvatar
-    username={user.username}
-    avatarKind={user.avatar_kind}
-    avatarColor={user.avatar_color}
-    size={size}
-  />
+export const accountAvatar = (user: Person, size: number) => (
+  <UserAvatar person={user} size={size} />
 )
 
 function HostedProfileDialog({ server }: { server: string }) {
@@ -435,7 +441,7 @@ export interface ProfileResetSource {
   lock: LockState
   // Whether the reset keeps a reason (a hosted server's audit log does).
   reasons: boolean
-  avatar: (user: UserRef, size: number) => ReactNode
+  avatar: (user: Person, size: number) => ReactNode
   submit: (fields: ResetField[], secs: LockSecs, reason: string) => Promise<string | null>
   unlock: () => Promise<unknown>
 }
@@ -469,7 +475,7 @@ export function ProfileReset({
     <Dialog title="Reset server profile" onClose={onClose}>
       <Stack data-profile-reset gap="lg">
         <Row gap="md">
-          {source.avatar(user, 36)}
+          {source.avatar(asAccount(user, 'editor'), 36)}
           <div className="min-w-0">
             <p className="streamer truncate text-sm font-medium text-on-surface">
               <Masked text={user.display_name} />

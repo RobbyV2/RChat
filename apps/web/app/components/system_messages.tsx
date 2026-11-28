@@ -21,7 +21,6 @@ import type { Message } from '../lib/types'
 import { Button } from './controls'
 import { SettingNotes, SettingSwitch } from './settings_fields'
 import { longPress } from './context_menu'
-import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { profileTrigger } from './profile_card'
 import { fieldCls, FieldError } from './ui'
@@ -64,12 +63,13 @@ export function SystemNotice({
         </span>
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {before}
-          <span
+          <ShownName
+            user={m.author}
+            server={server}
+            link
             {...profileTrigger(store, m.author, server)}
-            className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
-          >
-            <ShownName user={m.author} server={server} />
-          </span>
+            look="font-medium text-on-surface"
+          />
           {after} <MessageTime ts={m.created_at} className="text-xs opacity-70" />
         </p>
       </Inset>

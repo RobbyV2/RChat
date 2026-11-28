@@ -1,5 +1,6 @@
 'use client'
 
+import { shownUser } from '../lib/people'
 import { useApi } from '../lib/client/react'
 import {
   useCallback,
@@ -340,12 +341,7 @@ export function useTextAssist({
         render={u =>
           u.kind === 'user' ? (
             <>
-              <UserAvatar
-                username={u.user.username}
-                avatarKind={u.user.avatar_kind}
-                avatarColor={u.user.avatar_color}
-                size={24}
-              />
+              <UserAvatar person={shownUser(u.user, null)} size={24} />
               <span className="streamer min-w-0 truncate font-medium">
                 <Masked text={u.user.display_name} by={u.user.username} />
               </span>

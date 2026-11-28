@@ -1,5 +1,7 @@
 'use client'
 
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { useAccount } from '../lib/client/react'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -40,7 +42,6 @@ import { nameWithUsername } from '../lib/display_name'
 import { useMemberSearch } from './member_search'
 import { UserAvatar } from './user_avatar'
 import { Dialog, Masked, Sentinel, fieldCls } from './ui'
-import { NameWithUsername } from './display_name'
 import { Grid, Inset, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
 import { usePermissionRules } from './use_permission_rules'
@@ -243,15 +244,8 @@ export function ActorHit({
       onClick={() => onPick(m)}
       className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left hover:bg-surface-container-high"
     >
-      <UserAvatar
-        username={m.username}
-        avatarKind={m.avatar_kind}
-        avatarColor={m.avatar_color}
-        size={20}
-      />
-      <span className="streamer min-w-0 flex-1 truncate text-sm">
-        <NameWithUsername user={m} />
-      </span>
+      <UserAvatar person={m} size={20} />
+      <Name of={personName(m)} withUsername look="min-w-0 flex-1 truncate text-sm" />
     </button>
   )
 }
@@ -343,7 +337,7 @@ function AuditPerson({ part, server }: { part: Part; server: string | null | und
     },
     server
   )
-  return <NameWithUsername user={user} />
+  return <Name of={personName(user)} withUsername />
 }
 
 export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?: string | null }) {

@@ -1,5 +1,7 @@
 'use client'
 
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { useState, type ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
 import { BlockedQuote } from './blocking'
@@ -10,7 +12,6 @@ import { snippetParts, type SnippetPart } from '../lib/replies'
 import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { NameWithUsername } from './display_name'
 import { useShownOrNull, useViewServer } from './shown_user'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { IconButton } from './controls'
@@ -157,21 +158,7 @@ export function ReplyPreview({
         className="min-w-0 rounded-sm text-xs text-on-surface-variant hover:text-on-surface"
         contentClassName="flex min-w-0 items-center gap-1.5"
       >
-        {local ? (
-          <KeyAvatar
-            ik={author.username}
-            size={16}
-            kind={author.avatar_kind}
-            bg={author.avatar_color}
-          />
-        ) : (
-          <UserAvatar
-            username={author.username}
-            avatarKind={author.avatar_kind}
-            avatarColor={author.avatar_color}
-            size={16}
-          />
-        )}
+        {local ? <KeyAvatar person={author} size={16} /> : <UserAvatar person={author} size={16} />}
         {local ? (
           <span
             title={streamer ? undefined : author.username}
@@ -184,10 +171,9 @@ export function ReplyPreview({
         ) : (
           <span
             style={{ color }}
-            className="streamer max-w-2/5 shrink-0 truncate font-medium text-on-surface"
+            className="max-w-2/5 shrink-0 truncate font-medium text-on-surface"
           >
-            {quote.mention ? '@' : ''}
-            <NameWithUsername user={author} own={own} />
+            <Name of={personName(author, own)} withUsername before={quote.mention ? '@' : null} />
           </span>
         )}
         {isWebhookAuthor(author.username) && <WebhookBadge />}
@@ -259,10 +245,7 @@ export function ReplyBar({ draftKey, onClose }: { draftKey: string; onClose: () 
         )
       }
     >
-      Replying to{' '}
-      <span className="streamer font-semibold text-on-surface">
-        <NameWithUsername user={author} />
-      </span>
+      Replying to <Name of={personName(author)} withUsername look="font-semibold text-on-surface" />
     </ComposerBar>
   )
 }

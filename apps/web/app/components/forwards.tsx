@@ -1,4 +1,7 @@
 'use client'
+import { asAccount, pictured } from '../lib/people'
+import { personName } from '../lib/names'
+import { Name } from './name'
 import type { ForwardDestination, ForwardSource } from '../lib/forward'
 import type { AccountSession } from '../lib/client/session'
 
@@ -50,7 +53,6 @@ import { PollCard } from './poll_card'
 import { fullTimeOf, plainStamps } from '../lib/timestamps'
 import { Button, LinkButton } from './controls'
 import { Masked, useOwnServer } from './ui'
-import { NameWithUsername } from './display_name'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { useInstanceLabel } from './instance_badge'
@@ -220,9 +222,11 @@ export function ForwardBar({
         <span className="shrink-0">
           Forward{' '}
           {clip.author ? (
-            <span className="streamer font-semibold text-on-surface">
-              <NameWithUsername user={clip.author} own={own} />
-            </span>
+            <Name
+              of={personName(asAccount(clip.author, 'forward'), own)}
+              withUsername
+              look="font-semibold text-on-surface"
+            />
           ) : (
             <span className="font-semibold text-on-surface">{DELETED_USER}</span>
           )}
@@ -649,24 +653,24 @@ export function ForwardCard({
                   title={local ? undefined : 'View profile'}
                   className={`block shrink-0 rounded-full ${local ? '' : 'cursor-pointer hover:opacity-85'}`}
                 >
-                  <UserAvatar
-                    username={author.username}
-                    avatarKind={author.avatar_kind}
-                    avatarColor={author.avatar_color}
-                    size={20}
-                  />
+                  <UserAvatar person={asAccount(author, 'forward')} size={20} />
                 </span>
-                <span
+                <Name
+                  of={personName(asAccount(author, 'forward'))}
+                  withUsername
+                  link={!local}
                   {...(local ? {} : profileTrigger(store, author, null))}
-                  className={`streamer min-w-0 truncate rounded-sm text-sm font-medium ${local ? '' : 'cursor-pointer outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'}`}
-                >
-                  <NameWithUsername user={author} />
-                </span>
+                  place="min-w-0"
+                  look="truncate rounded-sm text-sm font-medium"
+                />
                 {isWebhookAuthor(author.username) && <WebhookBadge />}
               </>
             ) : (
               <>
-                <UserAvatar username="" avatarKind="color" avatarColor={null} size={20} />
+                <UserAvatar
+                  person={pictured('', { kind: 'color', color: null }, 'unknown')}
+                  size={20}
+                />
                 <span
                   data-forward-deleted
                   className="min-w-0 truncate text-sm font-medium text-on-surface-variant italic"

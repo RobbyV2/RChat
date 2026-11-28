@@ -47,18 +47,7 @@ export function useNameLabels() {
     nameLabel(name, { streamer, mask, own: name.kind === 'account' }, generic, withUsername)
 }
 
-function Body({
-  of,
-  withUsername,
-  fit,
-  marked = false,
-}: {
-  of: NameValue
-  withUsername: boolean
-  fit: boolean
-  marked?: boolean
-}) {
-  const mark = marked ? 'streamer ' : ''
+function Body({ of, withUsername, fit }: { of: NameValue; withUsername: boolean; fit: boolean }) {
   const own = useOwnName(of)
   const shown = !masksName(of, own)
   const { main, handle } = nameParts(of, withUsername)
@@ -70,7 +59,7 @@ function Body({
           <span dir="auto" className="max-w-max min-w-0 flex-[1_1_4rem] truncate">
             <Masked text={main} own={shown} />
           </span>
-          <span className={`${mark}shrink-0 pl-1 text-on-surface-variant`}>
+          <span className="shrink-0 pl-1 text-on-surface-variant">
             (<Masked text={handle} own={shown} />)
           </span>
         </span>
@@ -82,13 +71,16 @@ function Body({
         <span className="min-w-0 truncate">
           <Masked text={main} own={shown} />
         </span>
-        <span className={`${mark}max-w-full shrink-0 truncate text-on-surface-variant`}>
+        <span className="max-w-full shrink-0 truncate text-on-surface-variant">
           (<Masked text={handle} own={shown} />)
         </span>
       </Row>
     </MaskedTogether>
   )
 }
+
+const nameTriggerCls =
+  'cursor-pointer rounded-sm outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
 
 type Tag = 'span' | 'p' | 'div' | 'h1' | 'h2' | 'h3' | 'strong' | 'dt' | 'dd' | 'li'
 
@@ -101,8 +93,11 @@ type NameProps<S extends string, L extends string> = Omit<
   withUsername?: boolean
   // For a row the name fills: the display name is cut short first, then the username.
   fit?: boolean
-  // The whole name as the element's tooltip (always with `fit`).
-  titled?: boolean
+  // The whole name as the element's tooltip (always with `fit`), or the text given. None in
+  // streamer mode.
+  titled?: boolean | string
+  // The name opens something (a profile): it looks pressable.
+  link?: boolean
   as?: Tag
   place?: LayoutPlace<S>
   look?: Look<L>
@@ -119,6 +114,7 @@ function Drawn<const S extends string, const L extends string>({
   withUsername = false,
   fit = false,
   titled = fit,
+  link = false,
   as = 'span',
   place,
   look,
@@ -132,10 +128,17 @@ function Drawn<const S extends string, const L extends string>({
   return createElement(
     as,
     {
+      title:
+        typeof titled === 'string'
+          ? view.streamer
+            ? undefined
+            : titled
+          : titled
+            ? nameTitle(of, view, withUsername)
+            : undefined,
       ...rest,
-      title: titled ? nameTitle(of, view, withUsername) : undefined,
       style: color === undefined ? undefined : { color },
-      className: ['streamer', place, look].filter(Boolean).join(' '),
+      className: ['streamer', place, look, link ? nameTriggerCls : ''].filter(Boolean).join(' '),
     },
     before,
     <Body of={of} withUsername={withUsername} fit={fit} />,
@@ -154,16 +157,4 @@ export function Name<const S extends string = never, const L extends string = ne
       <Drawn {...props} />
     </RevealScope>
   )
-}
-
-// The inside of a name for a caller that draws the element around it: the username carries the
-// streamer mark itself.
-export function NameBody({ of, fit = false }: { of: NameValue; fit?: boolean }) {
-  return <Body of={of} withUsername fit={fit} marked />
-}
-
-// The tooltip of a name drawn that way, under the reveal scope around it.
-export function useNameTitle(of: NameValue) {
-  const revealed = useRevealed(revealKeyOf(of))
-  return nameTitle(of, useNameView(of, revealed), true)
 }

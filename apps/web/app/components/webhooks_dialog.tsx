@@ -1,5 +1,8 @@
 'use client'
 
+import { asAccount, pictured } from '../lib/people'
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { useAccount } from '../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -40,7 +43,6 @@ import {
 } from '../lib/webhooks'
 import { AvatarPicker } from './avatar_picker'
 import { UserAvatar } from './user_avatar'
-import { NameWithUsername } from './display_name'
 import { Button, IconButton, Tab } from './controls'
 import { Grid, Row, Stack, Surface } from './layout'
 import { Dialog, FieldError, fieldCls, Masked, sectionCls, useCopied } from './ui'
@@ -52,9 +54,11 @@ export function CreatorNote({ creator }: { creator: UserRef }) {
   return (
     <Row as="p" gap="2xs">
       <span className="shrink-0 text-xs text-on-surface-variant">by</span>
-      <span className="streamer flex min-w-0 text-xs text-on-surface-variant">
-        <NameWithUsername user={creator} />
-      </span>
+      <Name
+        of={personName(asAccount(creator, 'webhook'))}
+        withUsername
+        look="flex min-w-0 text-xs text-on-surface-variant"
+      />
     </Row>
   )
 }
@@ -401,9 +405,11 @@ function Incoming({ server }: { server: string }) {
                 <Surface pad="sm" gap="sm" tone="plain">
                   <Row gap="md">
                     <UserAvatar
-                      username={`@webhook:${h.id}`}
-                      avatarKind={h.avatar_kind}
-                      avatarColor={h.avatar_color}
+                      person={pictured(
+                        `@webhook:${h.id}`,
+                        { kind: h.avatar_kind, color: h.avatar_color },
+                        'webhook'
+                      )}
                       size={32}
                     />
                     <div className="min-w-0 flex-1">

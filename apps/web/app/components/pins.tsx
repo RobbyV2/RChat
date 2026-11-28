@@ -20,7 +20,6 @@ import { profileTrigger } from './profile_card'
 import { Button, IconButton } from './controls'
 import { CloseButton, Masked, Sheet, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
-import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { Row, Stack, Surface } from './layout'
@@ -140,12 +139,13 @@ export function PinNotice({
       divider={divider}
       press={longPress((x, y) => onMenu(m, x, y))}
       name={
-        <span
+        <ShownName
+          user={m.author}
+          server={server}
+          link
           {...profileTrigger(store, m.author, server)}
-          className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
-        >
-          <ShownName user={m.author} server={server} />
-        </span>
+          look="font-medium text-on-surface"
+        />
       }
       place={m.dm_id !== null ? 'conversation' : 'channel'}
       ts={m.created_at}
@@ -234,12 +234,14 @@ function PinEntry({
     >
       <div className="flex min-w-0 items-center gap-2 pr-20 pointer-coarse:min-h-11 pointer-coarse:pr-30">
         <ShownAvatar user={m.author} server={server} size={24} />
-        <span
+        <ShownName
+          user={m.author}
+          server={server}
+          link={profiles}
           {...(profiles ? profileTrigger(store, m.author, server) : {})}
-          className={`streamer min-w-0 truncate text-sm font-medium text-on-surface ${profiles ? nameTriggerCls : ''}`}
-        >
-          <ShownName user={m.author} server={server} />
-        </span>
+          place="min-w-0"
+          look="truncate text-sm font-medium text-on-surface"
+        />
         <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
       </div>
       {m.forward && <p className="mt-1 text-xs text-on-surface-variant italic">Forwarded</p>}

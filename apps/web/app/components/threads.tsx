@@ -1,5 +1,8 @@
 'use client'
 
+import { Name } from './name'
+import { p2pName } from '../lib/names'
+import { shownUser } from '../lib/people'
 import { useAccount } from '../lib/client/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MessageSquareText, MessagesSquare, Search, X } from 'lucide-react'
@@ -29,7 +32,7 @@ import { MessageTime } from './timestamp'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { Button, IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { Masked, Sentinel, useOwn } from './ui'
+import { Sentinel, useOwn } from './ui'
 import { time } from '../lib/platform/time'
 
 function ThreadsToggle({ threads, className }: { threads: Threads; className: string }) {
@@ -160,22 +163,24 @@ function ThreadEntry({
         <Surface pad="md" gap="2xs" tone="plain" radius="none">
           <Row as="span" gap="sm">
             {peer ? (
-              <KeyAvatar
-                ik={m.author.username}
-                size={24}
-                kind={m.author.avatar_kind}
-                bg={m.author.avatar_color}
-              />
+              <KeyAvatar person={shownUser(m.author, null)} size={24} />
             ) : (
               <ShownAvatar user={m.author} server={server} size={24} />
             )}
-            <span className="streamer min-w-0 truncate text-sm font-medium text-on-surface">
-              {peer ? (
-                <Masked text={m.author.display_name} by={m.author.username} />
-              ) : (
-                <ShownName user={m.author} server={server} />
-              )}
-            </span>
+            {peer ? (
+              <Name
+                of={p2pName(m.author.display_name, own)}
+                place="min-w-0"
+                look="truncate text-sm font-medium text-on-surface"
+              />
+            ) : (
+              <ShownName
+                user={m.author}
+                server={server}
+                place="min-w-0"
+                look="truncate text-sm font-medium text-on-surface"
+              />
+            )}
             <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
             {row.pinged && (
               <span

@@ -1,4 +1,5 @@
 'use client'
+import { identityPerson } from '../../lib/people'
 import { Button, Tab } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { client } from '../../lib/client/client'
@@ -275,7 +276,7 @@ function ServerInviteDialogBody({ room }: { room: string }) {
                 return (
                   <Surface as="li" key={c.ik} pad="sm" tone="plain" radius="lg">
                     <Row gap="md">
-                      <KeyAvatar ik={c.ik} size={32} />
+                      <KeyAvatar person={identityPerson(c.ik, 'contact')} size={32} />
                       <span className="streamer min-w-0 flex-1 truncate text-sm">
                         <Masked text={displayName(c)} />
                       </span>

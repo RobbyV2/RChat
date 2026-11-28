@@ -1,5 +1,6 @@
 'use client'
 
+import { asAccount } from '../lib/people'
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { UserX } from 'lucide-react'
 import { useStore } from '../lib/store'
@@ -273,12 +274,7 @@ export function BlockedUsersSection() {
         {page.list.map(({ user }) => (
           <Surface key={user.username} tone="base" radius="lg" pad="sm">
             <Row gap="sm">
-              <UserAvatar
-                username={user.username}
-                avatarKind={user.avatar_kind}
-                avatarColor={user.avatar_color}
-                size={28}
-              />
+              <UserAvatar person={asAccount(user, 'block')} size={28} />
               <span className="min-w-0 flex-1 truncate text-sm">
                 <span className="streamer">
                   <Masked text={user.display_name} by={user.username} />

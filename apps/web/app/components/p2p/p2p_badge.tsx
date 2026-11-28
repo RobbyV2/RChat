@@ -11,6 +11,7 @@ import { useMemo } from 'react'
 import { minidenticon } from 'minidenticons'
 import { identiconInk } from '../../lib/identicon'
 import { validColor } from '../../lib/profile'
+import { shownUser, type Person } from '../../lib/people'
 import { roomLookOf } from '../../lib/server_profile'
 import type { AvatarKind } from '../../lib/types'
 import {
@@ -106,7 +107,13 @@ export function MemberAvatar({
 }) {
   const look = roomLookOf(members?.find(m => m.ik === ik))
   return (
-    <KeyAvatar ik={ik} size={size} kind={look?.avatar_kind ?? undefined} bg={look?.avatar_color} />
+    <KeyAvatar
+      person={shownUser(
+        { username: ik, display_name: '', avatar_kind: 'identicon', avatar_color: null },
+        look
+      )}
+      size={size}
+    />
   )
 }
 
@@ -126,17 +133,8 @@ export function PresenceDot({ presence }: { presence: Presence }) {
 // Identicons come from the identity key, so a look-alike name never gets the same picture. A
 // member's own background sits behind it; a color avatar is a disc of that color with the key
 // identicon as a mark in its corner, so the key-derived picture always shows.
-export function KeyAvatar({
-  ik,
-  size = 36,
-  kind = 'identicon',
-  bg,
-}: {
-  ik: string
-  size?: number
-  kind?: AvatarKind
-  bg?: string | null
-}) {
+export function KeyAvatar({ person, size = 36 }: { person: Person; size?: number }) {
+  const { username: ik, avatar_kind: kind, avatar_color: bg } = person
   const shade = validColor(bg) ? bg.toLowerCase() : null
   const disc = kind === 'color' && shade !== null
   const src = useMemo(() => {

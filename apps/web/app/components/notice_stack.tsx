@@ -1,5 +1,6 @@
 'use client'
 
+import { asAccount } from '../lib/people'
 import { IconButton } from './controls'
 import { useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
 import { User, X } from 'lucide-react'
@@ -88,12 +89,7 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
         className="flex w-full items-start gap-3 p-3 pr-9 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
       >
         {actor && !streamer ? (
-          <UserAvatar
-            username={actor.username}
-            avatarKind={actor.avatar_kind}
-            avatarColor={actor.avatar_color}
-            size={36}
-          />
+          <UserAvatar person={asAccount(actor, 'notice')} size={36} />
         ) : (
           <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant">
             <User size={20} />

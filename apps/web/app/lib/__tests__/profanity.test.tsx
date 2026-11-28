@@ -27,7 +27,10 @@ import { home } from './home_instance'
 import { maskOf, useStore } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { MaskControl, Masked, MaskedWords } from '../../components/ui'
-import { NameWithUsername, nameRevealKey } from '../../components/display_name'
+import { nameRevealKey } from '../../components/display_name'
+import { Name } from '../../components/name'
+import { personName } from '../names'
+import { shownUser } from '../people'
 import { ProfileHandle } from '../../components/profile_card'
 import { dmPlaceholder } from '../display_name'
 import { ReplyPreview } from '../../components/replies'
@@ -398,7 +401,10 @@ describe('in messages', () => {
     const name = (u: string, own?: boolean) =>
       renderToStaticMarkup(
         <button type="button">
-          <NameWithUsername user={user(u, { display_name: 'shit head' })} own={own} />
+          <Name
+            of={personName(shownUser(user(u, { display_name: 'shit head' }), null), own)}
+            withUsername
+          />
         </button>
       )
     const mine = name('alice')
@@ -455,7 +461,7 @@ describe('in messages', () => {
     const pair = (u: string, display: string, open: string[]) =>
       renderToStaticMarkup(
         <MaskedWords open={open}>
-          <NameWithUsername user={user(u, { display_name: display })} />
+          <Name of={personName(shownUser(user(u, { display_name: display }), null))} withUsername />
         </MaskedWords>
       )
     expect(pair('shit', 'fuck head', [])).toBe(pair('fuck', 'shit head', []))
@@ -466,15 +472,24 @@ describe('in messages', () => {
     expect(words(pair('shit', 'fuck head', [nameRevealKey('fuck')]))).toBe(2)
     const two = renderToStaticMarkup(
       <MaskedWords open={[nameRevealKey('shit')]}>
-        <NameWithUsername user={user('shit', { display_name: 'fuck head' })} />
-        <NameWithUsername user={user('fuck', { display_name: 'shit head' })} />
+        <Name
+          of={personName(shownUser(user('shit', { display_name: 'fuck head' }), null))}
+          withUsername
+        />
+        <Name
+          of={personName(shownUser(user('fuck', { display_name: 'shit head' }), null))}
+          withUsername
+        />
       </MaskedWords>
     )
     expect(words(two)).toBe(2)
     expect(text(two).startsWith('fuck head(shit)')).toBe(true)
     expect(text(two).includes('shit head')).toBe(false)
     const alone = renderToStaticMarkup(
-      <NameWithUsername user={user('shit', { display_name: 'fuck head' })} />
+      <Name
+        of={personName(shownUser(user('shit', { display_name: 'fuck head' }), null))}
+        withUsername
+      />
     )
     expect(words(alone)).toBe(2)
     expect(alone.includes('shit') || alone.includes('fuck')).toBe(false)

@@ -1,4 +1,5 @@
 'use client'
+import { asAccount } from '../../lib/people'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ACCOUNT_FILTERS, signInLine } from '../../lib/admin_accounts'
@@ -146,12 +147,7 @@ export function UserPage({ username }: { username: string }) {
       {user && (
         <>
           <Row gap="md">
-            <UserAvatar
-              username={user.username}
-              avatarKind={user.avatar_kind}
-              avatarColor={user.avatar_color}
-              size={40}
-            />
+            <UserAvatar person={asAccount(user, 'administration')} size={40} />
             <Stack as="span" gap="none">
               <span className="streamer truncate font-medium">{user.display_name}</span>
               <span className="streamer truncate text-sm text-on-surface-variant">
@@ -337,14 +333,7 @@ export function UsersSection() {
                 acct
               )
             )}
-            leading={
-              <UserAvatar
-                username={u.username}
-                avatarKind={u.avatar_kind}
-                avatarColor={u.avatar_color}
-                size={28}
-              />
-            }
+            leading={<UserAvatar person={asAccount(u, 'administration')} size={28} />}
             streamer
             label={
               <>

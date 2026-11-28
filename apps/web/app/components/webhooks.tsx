@@ -1,5 +1,6 @@
 'use client'
 
+import { asAccount } from '../lib/people'
 import { ListRow } from './controls'
 import { Grid, Inset, Lift, Row, Stack, Surface } from './layout'
 import type { ReactNode } from 'react'
@@ -131,12 +132,7 @@ export function WebhookProfile({
           <Lift by="2xl">
             <Row gap="sm" align="end" justify="between">
               <Surface as="span" pad="xs" tone="high" radius="full" place="shrink-0">
-                <UserAvatar
-                  username={user.username}
-                  avatarKind={user.avatar_kind}
-                  avatarColor={user.avatar_color}
-                  size={64}
-                />
+                <UserAvatar person={asAccount(user, 'webhook')} size={64} />
               </Surface>
               <span>
                 <WebhookBadge />

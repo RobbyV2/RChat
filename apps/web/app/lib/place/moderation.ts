@@ -1,3 +1,4 @@
+import type { ShownPerson } from '../people'
 import {
   HOSTED_BAN,
   HOSTED_BAN_NOTE,
@@ -22,7 +23,7 @@ import type { HostedServer, P2pRoom } from './place'
 export interface Moderated {
   name: string
   // Their account as the place shows it; null where members have none.
-  user: UserRef | null
+  user: ShownPerson | null
   // The timeout set for them, which may have ended.
   timeout: Timeout | null
 }

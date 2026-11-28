@@ -545,12 +545,7 @@ function Card({ target }: { target: ProfileTarget }) {
             <div className="-mt-12">
               <Row gap="sm" align="end" justify="between">
                 <span className="relative block shrink-0 rounded-full bg-surface-container-high p-1.5">
-                  <UserAvatar
-                    username={placed.username}
-                    avatarKind={placed.avatar_kind}
-                    avatarColor={placed.avatar_color}
-                    size={80}
-                  />
+                  <UserAvatar person={placed} size={80} />
                   {member && (
                     <span
                       title={member.online ? 'Online' : 'Offline'}

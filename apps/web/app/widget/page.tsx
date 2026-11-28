@@ -1,4 +1,5 @@
 'use client'
+import { asAccount } from '../lib/people'
 import { useAccount } from '../lib/client/react'
 import { useContext, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Reply } from 'lucide-react'
@@ -194,12 +195,7 @@ function ChatRow({
     >
       {place.first ? (
         <div aria-hidden="true" data-author-avatar className="col-start-1 row-start-1 pt-0.5">
-          <UserAvatar
-            username={message.author.username}
-            avatarKind={message.author.avatar_kind}
-            avatarColor={message.author.avatar_color}
-            size={36}
-          />
+          <UserAvatar person={asAccount(message.author, 'widget')} size={36} />
         </div>
       ) : (
         <div aria-hidden="true" data-group-time className="relative col-start-1 row-start-1">

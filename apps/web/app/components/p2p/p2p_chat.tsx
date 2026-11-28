@@ -1,4 +1,5 @@
 'use client'
+import { shownUser } from '../../lib/people'
 import { PeerCodeButton } from './peer_code_button'
 import { useActorSuffix, usePeerActor } from '../view_actor'
 import { identityScopeKey } from '../../lib/p2p/app/host'
@@ -348,12 +349,7 @@ export const P2pRow = memo(function P2pRow({
         {first ? (
           <Row gap="md" align="stretch">
             <div className="shrink-0 pt-0.5">
-              <KeyAvatar
-                ik={p.sender}
-                size={36}
-                kind={m.author.avatar_kind}
-                bg={m.author.avatar_color}
-              />
+              <KeyAvatar person={shownUser({ ...m.author, username: p.sender }, null)} size={36} />
             </div>
             <div className="min-w-0 flex-1">
               <Row gap="sm" align="baseline" wrap>

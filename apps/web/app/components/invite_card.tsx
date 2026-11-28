@@ -1,5 +1,8 @@
 'use client'
 
+import { asAccount } from '../lib/people'
+import { personName } from '../lib/names'
+import { Name } from './name'
 import {
   useCallback,
   useEffect,
@@ -58,7 +61,6 @@ import { Row, Stack, Surface } from './layout'
 import { Dialog, fieldCls, FieldError, LinkPage, Masked, useOwn } from './ui'
 import { SpoilerLine } from './replies'
 import { PreviewFilename, RevealChannelPreview } from './preview_reveal'
-import { NameWithUsername } from './display_name'
 import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
@@ -407,7 +409,6 @@ export function PreviewLine({
   remote?: InstanceConnection
 }) {
   const store = useStoreApi()
-  const streamer = useStore(s => s.streamer)
   const account = useStore(s => s.me?.username ?? null)
   const { useViewing, canView } = useAccount().viewing
   useViewing(s => s.revision)
@@ -423,24 +424,20 @@ export function PreviewLine({
   const parts = previewParts(plainStamps(content))
   return (
     <Row gap="sm" align="start">
-      <UserAvatar
-        username={author.username}
-        avatarKind={author.avatar_kind}
-        avatarColor={author.avatar_color}
-        size={big ? 24 : 18}
-      />
+      <UserAvatar person={asAccount(author, 'invite')} size={big ? 24 : 18} />
       <p
         className={`min-w-0 flex-1 text-left break-words ${
           big ? 'line-clamp-2 text-sm' : 'truncate text-xs leading-4.5'
         }`}
       >
-        <span
+        <Name
+          of={personName(asAccount(author, 'invite'))}
+          withUsername
+          link={!host}
           {...(host ? {} : profileTrigger(store, author, null))}
-          title={host && !streamer ? formatQualified(author.username, host) : undefined}
-          className={`streamer font-medium text-on-surface ${host ? '' : 'cursor-pointer hover:underline'}`}
-        >
-          <NameWithUsername user={author} />
-        </span>{' '}
+          titled={host ? formatQualified(author.username, host) : false}
+          look="font-medium text-on-surface"
+        />{' '}
         <span className="text-on-surface-variant">
           {hidden ? (
             <>

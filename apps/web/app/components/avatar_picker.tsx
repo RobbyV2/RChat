@@ -1,5 +1,6 @@
 'use client'
 
+import { pictured } from '../lib/people'
 import { IDENTICON_DEFAULT_BG, IDENTICON_PRESETS } from '../lib/identicon'
 import { useStore } from '../lib/store'
 import type { ReactNode } from 'react'
@@ -56,9 +57,11 @@ export function AvatarPicker({
         avatar(value, value === 'color' ? color : background)
       ) : (
         <UserAvatar
-          username={username.trim().toLowerCase() || 'preview'}
-          avatarKind={value}
-          avatarColor={value === 'color' ? color : background}
+          person={pictured(
+            username.trim().toLowerCase() || 'preview',
+            { kind: value, color: value === 'color' ? color : background },
+            'editor'
+          )}
           size={48}
         />
       )}

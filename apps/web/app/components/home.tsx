@@ -1,4 +1,5 @@
 'use client'
+import { asAccount, identityPerson } from '../lib/people'
 import { openPeerLink } from '../lib/client/peer_links'
 import { ViewActorTag } from './view_actor'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
@@ -616,12 +617,7 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
       }
       glyph={
         recent.kind === 'dm' && dm ? (
-          <UserAvatar
-            username={dm.other.username}
-            avatarKind={dm.other.avatar_kind}
-            avatarColor={dm.other.avatar_color}
-            size={32}
-          />
+          <UserAvatar person={asAccount(dm.other, 'dm')} size={32} />
         ) : (
           <PlaceGlyph>
             {channel?.kind === 'voice' ? <Volume2 size={16} /> : <Hash size={16} />}
@@ -702,7 +698,7 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
       }
       glyph={
         ch === null && peer ? (
-          <KeyAvatar ik={peer.ik} size={32} />
+          <KeyAvatar person={identityPerson(peer.ik, 'contact')} size={32} />
         ) : (
           <PlaceGlyph p2p>
             <Hash size={16} />
@@ -1107,14 +1103,7 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
           onDrop: ({ index }) => placeDm(dm.id, 'pinned', index),
         }
       )}
-      leading={
-        <UserAvatar
-          username={dm.other.username}
-          avatarKind={dm.other.avatar_kind}
-          avatarColor={dm.other.avatar_color}
-          size={32}
-        />
-      }
+      leading={<UserAvatar person={asAccount(dm.other, 'dm')} size={32} />}
       streamer
       label={
         <span className={unread || pings ? 'font-semibold' : undefined}>
@@ -1280,7 +1269,7 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
                           )}
                           className="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-primary"
                         >
-                          <KeyAvatar ik={c.ik} />
+                          <KeyAvatar person={identityPerson(c.ik, 'contact')} />
                           <PresenceDot presence="online" />
                         </button>
                       </li>

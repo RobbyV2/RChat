@@ -1,3 +1,4 @@
+import type { ShownPerson } from './people'
 import { PROFILE_FIELDS, cleanBio, type RoomExtras } from './profile_fields'
 import { validColor } from './profile'
 import { shownUser } from './server_profile'
@@ -134,7 +135,7 @@ export const previewUser = <T extends UserRef>(
   d: ProfileDraft,
   mode: ProfilesMode,
   names = true
-): T => shownUser(account, draftLook(d, mode, names))
+): T & ShownPerson => shownUser(account, draftLook(d, mode, names))
 
 // Characters left in the description, as the editor counts them.
 export const bioLeft = (d: ProfileDraft) => PROFILE_FIELDS.bio.max - count(cleanBio(d.bio))

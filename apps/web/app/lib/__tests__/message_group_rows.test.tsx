@@ -7,7 +7,9 @@ import { formatStamp, fullTime } from '../timestamps'
 import type { P2pMessage } from '../p2p/dm'
 import type { Outgoing } from '../store_types'
 import { GroupedRow, OutgoingRow, groupPadCls } from '../../components/message_pane'
-import { NameWithUsername } from '../../components/display_name'
+import { Name } from '../../components/name'
+import { personName } from '../names'
+import { shownUser } from '../people'
 import { P2pRow } from '../../components/p2p/p2p_chat'
 import { MessageToolbar } from '../../components/message_toolbar'
 import { msg, user } from './fixtures'
@@ -27,7 +29,12 @@ const srName = (html: string) => {
 describe('a grouped instance row', () => {
   const html = renderToStaticMarkup(
     <GroupedRow
-      name={<NameWithUsername user={user('alice', { display_name: 'Ally' })} />}
+      name={
+        <Name
+          of={personName(shownUser(user('alice', { display_name: 'Ally' }), null))}
+          withUsername
+        />
+      }
       ts={AT}
       size={36}
     >

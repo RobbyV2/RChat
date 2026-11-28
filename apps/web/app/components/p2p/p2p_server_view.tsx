@@ -1,4 +1,5 @@
 'use client'
+import { identityPerson } from '../../lib/people'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -374,7 +375,10 @@ function P2pServerRailBody({ actorLabel }: { actorLabel?: string }) {
           aria-label={actorLabel}
           className="streamer rounded-full outline-2 outline-offset-1 outline-dashed outline-tertiary"
         >
-          <KeyAvatar ik={identity.useP2p.getState().ik ?? identity.localId} size={24} />
+          <KeyAvatar
+            person={identityPerson(identity.useP2p.getState().ik ?? identity.localId, 'own')}
+            size={24}
+          />
         </span>
       )}
       <Stack

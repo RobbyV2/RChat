@@ -10,7 +10,10 @@ import { DmRow } from '../../components/channel_sidebar'
 import { MemberName } from '../../components/member_sidebar'
 import { Row } from '../../components/layout'
 import type { Look } from '../role_looks'
-import { DisplayNameField, NameWithUsername, nameRevealKey } from '../../components/display_name'
+import { DisplayNameField, nameRevealKey } from '../../components/display_name'
+import { Name } from '../../components/name'
+import { personName } from '../names'
+import { shownUser } from '../people'
 import { MaskedWords } from '../../components/ui'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { AuthorRow, DmPeer } from '../../components/message_pane'
@@ -76,27 +79,27 @@ test('the username shows next to a display name that differs', () => {
   expect(showsUsername(user('alice', { display_name: 'ALICE' }))).toBe(false)
   expect(showsUsername(user('alice', { display_name: 'Ally' }))).toBe(true)
   const same = renderToStaticMarkup(
-    <NameWithUsername user={user('alice', { display_name: 'Alice' })} />
+    <Name of={personName(shownUser(user('alice', { display_name: 'Alice' }), null))} withUsername />
   )
-  expect(same).toBe('Alice')
+  expect(same).toBe('<span class="streamer">Alice</span>')
   const other = renderToStaticMarkup(
-    <NameWithUsername user={user('alice', { display_name: 'Ally' })} />
+    <Name of={personName(shownUser(user('alice', { display_name: 'Ally' }), null))} withUsername />
   )
-  expect(other).toBe(USERNAME_AFTER('Ally', 'alice'))
+  expect(other).toBe(`<span class="streamer">${USERNAME_AFTER('Ally', 'alice')}</span>`)
 })
 
-// The display name truncates; the username keeps its place and its streamer class.
+// The display name truncates; the username keeps its place.
 const USERNAME_AFTER = (display: string, username: string) =>
-  `<span class="min-w-0 flex-nowrap gap-(--space-2xs) items-baseline justify-start inline-flex max-w-full"><span class="min-w-0 truncate">${display}</span><span class="streamer max-w-full shrink-0 truncate text-on-surface-variant">(${username})</span></span>`
+  `<span class="min-w-0 flex-nowrap gap-(--space-2xs) items-baseline justify-start inline-flex max-w-full"><span class="min-w-0 truncate">${display}</span><span class="max-w-full shrink-0 truncate text-on-surface-variant">(${username})</span></span>`
 
 // In a narrow row: the display name truncates first, and a username with no room left wraps
 // out of sight (it stays in the title and for screen readers).
 const FITTED = (display: string, username: string) =>
-  `<span class="flex h-[1lh] min-w-0 flex-wrap items-baseline overflow-hidden text-ellipsis"><span dir="auto" class="max-w-max min-w-0 flex-[1_1_4rem] truncate">${display}</span><span class="streamer shrink-0 pl-1 text-on-surface-variant">(${username})</span></span>`
+  `<span class="flex h-[1lh] min-w-0 flex-wrap items-baseline overflow-hidden text-ellipsis"><span dir="auto" class="max-w-max min-w-0 flex-[1_1_4rem] truncate">${display}</span><span class="shrink-0 pl-1 text-on-surface-variant">(${username})</span></span>`
 
 test('a member list name fits its row, with the whole name in its title', async () => {
   const row = (u: ReturnType<typeof user>, color?: string, icon?: Look['icon']) =>
-    renderToStaticMarkup(<MemberName user={u} color={color} icon={icon} />)
+    renderToStaticMarkup(<MemberName user={shownUser(u, null)} color={color} icon={icon} />)
   const cls = 'class="streamer min-w-0 truncate text-sm"'
   const box = (inner: string) =>
     renderToStaticMarkup(
@@ -128,7 +131,7 @@ test('a member list name fits its row, with the whole name in its title', async 
     const revealed = (username: string) =>
       renderToStaticMarkup(
         <MaskedWords open={[nameRevealKey(username)]}>
-          <MemberName user={user('shit', { display_name: 'shit head' })} />
+          <MemberName user={shownUser(user('shit', { display_name: 'shit head' }), null)} />
         </MaskedWords>
       )
     expect(revealed('shit')).toContain('title="shit head (shit)"')
@@ -161,7 +164,9 @@ test('text and mentions name the account a display name belongs to', () => {
   const hook = user('@webhook:7', { display_name: 'Deploy bot' })
   expect(showsUsername(hook)).toBe(false)
   expect(nameWithUsername(hook)).toBe('Deploy bot')
-  expect(render(<NameWithUsername user={hook} />)).toBe('Deploy bot')
+  expect(render(<Name of={personName(shownUser(hook, null))} withUsername />)).toBe(
+    '<span class="streamer">Deploy bot</span>'
+  )
 })
 
 test('message headers show the username next to a display name, fitted to the row', () => {
@@ -318,7 +323,9 @@ test('saving keeps the server copy and reports its errors', async () => {
 test('the voice dock, poll voters, invite previews and staff tools name the account too', () => {
   Object.assign(initial, { token: 'tok', me: me('carol') })
   const shown = USERNAME_AFTER('alice', 'bob')
-  expect(render(<DockPlace peer={impostor} place="alice" />)).toBe(shown)
+  expect(render(<DockPlace peer={impostor} place="alice" />)).toBe(
+    `<span class="streamer">${shown}</span>`
+  )
   expect(render(<DockPlace place="general" />)).toBe('general')
   expect(render(<VoterRow v={{ user: impostor, voted_at: 1 }} />)).toContain(shown)
   expect(

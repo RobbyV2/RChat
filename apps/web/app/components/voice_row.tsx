@@ -1,5 +1,7 @@
 'use client'
 
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { Lock, Volume2 } from 'lucide-react'
 import { useAccount, useStore } from '../lib/client/react'
 import { isGuestName } from '../lib/guest_voice'
@@ -12,7 +14,6 @@ import { userRefFor } from '../lib/selectors'
 import { useMask } from '../lib/store'
 import { NO_CONNECT } from '../lib/timeouts'
 import { longPress } from './context_menu'
-import { NameWithUsername } from './display_name'
 import type { DragSpec } from './drag'
 import { useGuestMenu } from './guest_voice_menu'
 import { MemberAvatar } from './p2p/p2p_badge'
@@ -88,15 +89,8 @@ function AccountSeat({
     >
       <SeatBody
         seat={seat}
-        face={
-          <UserAvatar
-            username={shown.username}
-            avatarKind={shown.avatar_kind}
-            avatarColor={shown.avatar_color}
-            size={22}
-          />
-        }
-        name={<NameWithUsername user={shown} />}
+        face={<UserAvatar person={shown} size={22} />}
+        name={<Name of={personName(shown)} withUsername />}
       />
     </div>
   )

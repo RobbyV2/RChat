@@ -1,8 +1,9 @@
+import type { ShownPerson } from '../../people'
 import { resolve as resolveNotify } from '../../notify'
 import type { RoomExtras } from '../../profile_fields'
 import type { LockSecs, LockState, ResetField } from '../../profile_reset'
 import { lookOf, roomLookOf, shownUser } from '../../server_profile'
-import type { ProfilesMode, UserRef } from '../../types'
+import type { ProfilesMode } from '../../types'
 import { BanExpiry } from '../ban_expiry'
 import type { P2pStore, RoomRecord, ServerCache } from '../db'
 import { loadDmThread, loadDmThreadAround, loadDmThreads, type P2pMessage } from '../dm'
@@ -549,7 +550,7 @@ export function createServersPart(
     'Member'
 
   // A member as a server shows them: their name there, and the avatar they set for it.
-  const memberUser = (room: string, ik: string): UserRef =>
+  const memberUser = (room: string, ik: string): ShownPerson =>
     shownUser(
       parts.dms.p2pUser(ik, memberName(room, ik)),
       lookOf(

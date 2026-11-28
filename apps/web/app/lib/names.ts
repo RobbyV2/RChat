@@ -1,4 +1,5 @@
 import { isGuestName } from './guest_voice'
+import type { Person } from './people'
 import { isWebhookAuthor } from './webhooks'
 
 // The names the app draws: people, servers, instances, accounts and P2P identities. A name is a
@@ -80,22 +81,19 @@ export class P2pName {
 export type NameValue = PersonName | ServerName | InstanceName | AccountLabel | P2pName
 export type NameKind = NameValue['kind']
 
-type Named = { username: string; display_name: string }
-
-// How a person is named: as the place on screen shows them, or as their account has them.
-export type PersonWhy = 'shown' | 'account'
-
-// A person by the name given. `own` says whose name it is where the username is not an account
-// here (a P2P identity); left out, the username decides.
-export const personName = (user: Named, _why: PersonWhy, own?: boolean): PersonName => {
-  const guest = isGuestName(user.username)
+// A person by the name they are drawn under. `own` says whose name it is where the username is
+// not an account here (a P2P identity); left out, the username decides.
+export const personName = (person: Person, own?: boolean): PersonName => {
+  const guest = isGuestName(person.username)
   const pair =
-    !guest && !isWebhookAuthor(user.username) && user.display_name.toLowerCase() !== user.username
+    !guest &&
+    !isWebhookAuthor(person.username) &&
+    person.display_name.toLowerCase() !== person.username
   return new PersonName(
     minted,
-    user.display_name,
-    pair ? user.username : null,
-    own === undefined ? user.username : null,
+    person.display_name,
+    pair ? person.username : null,
+    own === undefined ? person.username : null,
     own,
     guest
   )

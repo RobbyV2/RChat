@@ -107,14 +107,7 @@ function HitRow({ server, hit, roles }: { server: string; hit: MemberHit; roles:
   return (
     <MemberTableRow
       rowKey={m.username}
-      avatar={
-        <UserAvatar
-          username={shown.username}
-          avatarKind={shown.avatar_kind}
-          avatarColor={shown.avatar_color}
-          size={28}
-        />
-      }
+      avatar={<UserAvatar person={shown} size={28} />}
       name={<MemberName user={shown} color={roleColor(roles, m.role_ids)} />}
       badges={
         <>

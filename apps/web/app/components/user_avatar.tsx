@@ -3,16 +3,16 @@
 import { useMemo } from 'react'
 import { User } from 'lucide-react'
 import { identiconBackground, identiconSvg } from '../lib/identicon'
-import type { AvatarKind } from '../lib/types'
+import type { Person } from '../lib/people'
 
 interface Props {
-  username: string
-  avatarKind: AvatarKind
-  avatarColor: string | null
+  person: Person
   size?: number
 }
 
-export function UserAvatar({ username, avatarKind, avatarColor, size = 32 }: Props) {
+// The picture of an account, as the person given is drawn.
+export function UserAvatar({ person, size = 32 }: Props) {
+  const { username, avatar_kind: avatarKind, avatar_color: avatarColor } = person
   const background = identiconBackground(avatarKind, avatarColor)
   const src = useMemo(
     () =>

@@ -161,9 +161,11 @@ function LinkCard({
       <PreviewRow tabIndex={-1} onOpen={jump} className="min-w-0 flex-1 text-left">
         <Row gap="sm">
           <ShownAvatar user={author} server={card.server} size={20} />
-          <span className="streamer min-w-0 truncate text-sm font-medium">
-            <ShownName user={author} server={card.server} />
-          </span>
+          <ShownName
+            user={author}
+            server={card.server}
+            look="min-w-0 truncate text-sm font-medium"
+          />
           <MessageTime ts={created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </Row>
         <Row gap="2xs" text="sm" ink="muted" place="min-w-0">

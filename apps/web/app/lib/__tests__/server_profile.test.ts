@@ -48,10 +48,13 @@ const member = (profile?: MemberLook): Member => ({
 })
 
 test('each field of a look stands over the account value on its own', () => {
-  expect(shownUser(bob, null)).toBe(bob)
-  expect(shownUser(bob, look())).toEqual(bob)
-  expect(shownUser(bob, look({ name: 'Robert' }))).toEqual({ ...bob, display_name: 'Robert' })
-  expect(shownUser(bob, look({ avatar_kind: 'color', avatar_color: '#112233' }))).toEqual({
+  expect<UserRef>(shownUser(bob, null)).toEqual(bob)
+  expect<UserRef>(shownUser(bob, look())).toEqual(bob)
+  expect<UserRef>(shownUser(bob, look({ name: 'Robert' }))).toEqual({
+    ...bob,
+    display_name: 'Robert',
+  })
+  expect<UserRef>(shownUser(bob, look({ avatar_kind: 'color', avatar_color: '#112233' }))).toEqual({
     ...bob,
     avatar_color: '#112233',
   })
@@ -59,7 +62,7 @@ test('each field of a look stands over the account value on its own', () => {
 
 test('an explicit identicon shows over an account color', () => {
   const shown = shownUser(bob, look({ avatar_kind: 'identicon' }))
-  expect(shown).toEqual({ ...bob, avatar_kind: 'identicon', avatar_color: null })
+  expect<UserRef>(shown).toEqual({ ...bob, avatar_kind: 'identicon', avatar_color: null })
   expect(shown.username).toBe('bob')
 })
 
@@ -278,13 +281,19 @@ test('a look is cut down to the parts that show', () => {
 })
 
 test('someone in a notification shows under the server name, and is asked for when not loaded', () => {
-  expect(shownIn(loaded, 's', bob)).toEqual({
+  expect<{ user: UserRef; ask: boolean }>(shownIn(loaded, 's', bob)).toEqual({
     user: { ...bob, display_name: 'Robert' },
     ask: false,
   })
   const carol = { ...bob, username: 'carol', display_name: 'Carol' }
-  expect(shownIn(loaded, 's', carol)).toEqual({ user: carol, ask: true })
-  expect(shownIn(loaded, null, bob)).toEqual({ user: bob, ask: false })
+  expect<{ user: UserRef; ask: boolean }>(shownIn(loaded, 's', carol)).toEqual({
+    user: carol,
+    ask: true,
+  })
+  expect<{ user: UserRef; ask: boolean }>(shownIn(loaded, null, bob)).toEqual({
+    user: bob,
+    ask: false,
+  })
 })
 
 test('a notification asks once for a member row it lacks, never for a webhook or a DM', () => {
@@ -295,8 +304,8 @@ test('a notification asks once for a member row it lacks, never for a webhook or
   })
   const carol = { ...bob, username: 'carol', display_name: 'Carol' }
   expect(shownActor(source, 's', bob).display_name).toBe('Robert')
-  expect(shownActor(source, 's', carol)).toBe(carol)
-  expect(shownActor(source, null, carol)).toBe(carol)
+  expect<UserRef>(shownActor(source, 's', carol)).toEqual(carol)
+  expect<UserRef>(shownActor(source, null, carol)).toEqual(carol)
   expect(asked).toEqual([['s', ['carol']]])
 })
 

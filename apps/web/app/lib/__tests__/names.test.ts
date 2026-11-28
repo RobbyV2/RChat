@@ -18,7 +18,12 @@ import {
   shownNameText,
   type NameView,
 } from '../names'
+import { shownUser } from '../people'
+import type { UserRef } from '../types'
 import { user } from './fixtures'
+
+const shown = (username: string, over: Partial<UserRef> = {}) =>
+  shownUser(user(username, over), null)
 
 const stars = (t: string) => t.replace(/darn/g, '****')
 const view = (over: Partial<NameView> = {}): NameView => ({
@@ -29,8 +34,8 @@ const view = (over: Partial<NameView> = {}): NameView => ({
 })
 
 describe('a person', () => {
-  const ally = personName(user('alice', { display_name: 'Ally' }), 'shown')
-  const alice = personName(user('alice', { display_name: 'Alice' }), 'shown')
+  const ally = personName(shown('alice', { display_name: 'Ally' }))
+  const alice = personName(shown('alice', { display_name: 'Alice' }))
 
   test('shows the username after a display name that is more than its case', () => {
     expect(nameParts(ally, true)).toEqual({ main: 'Ally', handle: 'alice' })
@@ -41,17 +46,17 @@ describe('a person', () => {
   })
 
   test('a webhook and a guest keep their own name', () => {
-    const hook = personName(user('@webhook:3', { display_name: 'Deploys' }), 'shown')
+    const hook = personName(shown('@webhook:3', { display_name: 'Deploys' }))
     expect(nameParts(hook, true).handle).toBeNull()
-    const guest = personName(user('@guest:ab12cd', { display_name: 'Guest ab12' }), 'shown')
+    const guest = personName(shown('@guest:ab12cd', { display_name: 'Guest ab12' }))
     expect(nameParts(guest, true)).toEqual({ main: 'Guest ab12', handle: null })
   })
 
   test('the filter masks other people and never the viewer or a guest label', () => {
-    const rude = personName(user('darn', { display_name: 'darn it' }), 'shown')
+    const rude = personName(shown('darn', { display_name: 'darn it' }))
     expect(shownNameText(rude, view(), true)).toBe('**** it (****)')
     expect(shownNameText(rude, view({ own: true }), true)).toBe('darn it (darn)')
-    const guest = personName(user('@guest:darn00', { display_name: 'Guest darn' }), 'shown')
+    const guest = personName(shown('@guest:darn00', { display_name: 'Guest darn' }))
     expect(masksName(guest, false)).toBe(false)
     expect(shownNameText(guest, view())).toBe('Guest darn')
   })
@@ -59,7 +64,7 @@ describe('a person', () => {
   test('who decides whose name it is: the username, or what the caller says', () => {
     expect(ally.who).toBe('alice')
     expect(ally.own).toBeUndefined()
-    const peer = personName(user('k1', { display_name: 'Pat' }), 'shown', false)
+    const peer = personName(shown('k1', { display_name: 'Pat' }), false)
     expect(peer.who).toBeNull()
     expect(peer.own).toBe(false)
     expect(handleName('bob').display).toBe('bob')

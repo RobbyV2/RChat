@@ -1,5 +1,8 @@
 'use client'
 
+import type { Person } from '../lib/people'
+import { Name } from './name'
+import { personName } from '../lib/names'
 import type { Cancel } from '../lib/clock'
 import { useEffect, useMemo, useState } from 'react'
 import { Crown } from 'lucide-react'
@@ -12,11 +15,9 @@ import { MEMBERS_HIDDEN_LINE } from '../lib/profile_choice'
 import type { Look } from '../lib/role_looks'
 import { useMask } from '../lib/store'
 import type { Timeout } from '../lib/timeouts'
-import type { UserRef } from '../lib/types'
 import { prefixHeights, visibleRange } from '../lib/window'
 import { longPress } from './context_menu'
 import { Inset, Row, Surface } from './layout'
-import { FitName } from './display_name'
 import { AccountChip, ContactShield, MemberAvatar, PresenceDot } from './p2p/p2p_badge'
 import { MemberCard } from './p2p/p2p_server_roles'
 import { Badge, profileTrigger } from './profile_card'
@@ -81,15 +82,18 @@ export const MemberName = ({
   color,
   icon,
 }: {
-  user: UserRef
+  user: Person
   color?: string
   icon?: Look['icon']
 }) => (
   <Row as="span" gap="2xs" place="flex-1">
-    <FitName
-      user={user}
-      style={color === undefined ? undefined : { color }}
-      className="streamer min-w-0 truncate text-sm"
+    <Name
+      of={personName(user)}
+      withUsername
+      fit
+      color={color}
+      place="min-w-0"
+      look="truncate text-sm"
     />
     <RoleIcon emoji={icon?.emoji} role={icon?.role} />
   </Row>
@@ -114,12 +118,7 @@ function Face({ entry }: { entry: MemberEntry }) {
   return (
     <span className="relative shrink-0">
       {face.kind === 'account' ? (
-        <UserAvatar
-          username={face.user.username}
-          avatarKind={face.user.avatar_kind}
-          avatarColor={face.user.avatar_color}
-          size={28}
-        />
+        <UserAvatar person={face.user} size={28} />
       ) : (
         <MemberAvatar members={face.of} ik={face.ik} size={28} />
       )}

@@ -15,7 +15,12 @@ import {
 } from '../names'
 import { setMasking } from '../profanity'
 import { useStore } from '../store'
+import { shownUser } from '../people'
+import type { UserRef } from '../types'
 import { me, user } from './fixtures'
+
+const shown = (username: string, over: Partial<UserRef> = {}) =>
+  shownUser(user(username, over), null)
 
 const initial = useStore.getInitialState()
 const saved = { ...initial }
@@ -35,7 +40,7 @@ const words = (s: string) => s.split('data-masked-word').length - 1
 
 describe('every kind is drawn in one marked element', () => {
   const kinds: [string, NameValue, string][] = [
-    ['person', personName(user('bob', { display_name: 'Bob' }), 'shown'), 'Bob'],
+    ['person', personName(shown('bob', { display_name: 'Bob' })), 'Bob'],
     ['server', serverName({ name: 'den', display_name: 'The Den' }), 'The Den'],
     ['room', roomName('Club'), 'Club'],
     ['instance', instanceName('Alpha'), 'Alpha'],
@@ -50,7 +55,7 @@ describe('every kind is drawn in one marked element', () => {
 })
 
 describe('variants', () => {
-  const ally = personName(user('alice', { display_name: 'Ally' }), 'shown')
+  const ally = personName(shown('alice', { display_name: 'Ally' }))
 
   test('the name alone, placed and styled by the caller', () => {
     expect(html(<Name of={ally} as="p" place="min-w-0" look="truncate text-sm" />)).toBe(
@@ -83,11 +88,11 @@ describe('variants', () => {
 describe('the viewer filter', () => {
   test('masks other names word by word and never the viewer own', async () => {
     await masking()
-    const rude = personName(user('darn', { display_name: 'oh darn' }), 'shown')
+    const rude = personName(shown('darn', { display_name: 'oh darn' }))
     const drawn = html(<Name of={rude} withUsername titled />)
     expect(words(drawn)).toBe(2)
     expect(drawn).toContain('title="oh **** (****)"')
-    const mine = personName(user('alice', { display_name: 'darn alice' }), 'shown')
+    const mine = personName(shown('alice', { display_name: 'darn alice' }))
     expect(words(html(<Name of={mine} withUsername />))).toBe(0)
     expect(words(html(<Name of={p2pName('darn', true)} />))).toBe(0)
     expect(words(html(<Name of={p2pName('darn')} />))).toBe(1)
@@ -119,7 +124,7 @@ describe('the viewer filter', () => {
 
   test('a reveal of the pair shows the title unmasked', async () => {
     await masking()
-    const rude = personName(user('darn', { display_name: 'oh darn' }), 'shown')
+    const rude = personName(shown('darn', { display_name: 'oh darn' }))
     const open = html(
       <MaskedWords open={[revealKeyOf(rude)]}>
         <Name of={rude} withUsername fit />

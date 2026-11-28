@@ -1,4 +1,5 @@
 'use client'
+import { identityPerson } from '../../lib/people'
 import { Button, Tab } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -60,7 +61,7 @@ function Preview({ card }: { card: Card }) {
   return (
     <Surface pad="md" tone="base" radius="lg">
       <Row gap="md">
-        <KeyAvatar ik={card.ik} />
+        <KeyAvatar person={identityPerson(card.ik, 'contact')} />
         <div className="min-w-0">
           <p className="streamer truncate text-sm font-medium">
             <Masked text={card.name || 'Unnamed'} />

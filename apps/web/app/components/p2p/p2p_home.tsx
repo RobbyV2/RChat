@@ -1,4 +1,5 @@
 'use client'
+import { identityPerson } from '../../lib/people'
 import { ActorLabel, PeerActorTag, usePeerActor } from '../view_actor'
 import { IdentityEnrollment } from './identity_enrollment'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -147,7 +148,10 @@ function P2pRailTileBody({ actorLabel }: { actorLabel?: string }) {
     >
       {actorLabel ? (
         <span className="streamer rounded-full outline-2 outline-dashed outline-tertiary">
-          <KeyAvatar ik={identity.useP2p.getState().ik ?? identity.localId} size={28} />
+          <KeyAvatar
+            person={identityPerson(identity.useP2p.getState().ik ?? identity.localId, 'own')}
+            size={28}
+          />
         </span>
       ) : (
         <Waypoints size={22} />
@@ -447,7 +451,10 @@ function ContactRowBody({
         }
       >
         <span className="relative shrink-0">
-          <KeyAvatar ik={c.ik} size={where === 'dms' ? 28 : undefined} />
+          <KeyAvatar
+            person={identityPerson(c.ik, 'contact')}
+            size={where === 'dms' ? 28 : undefined}
+          />
           <PresenceDot presence={presence} />
         </span>
         <span className="min-w-0 flex-1">
@@ -496,7 +503,7 @@ function RequestRow({ c }: { c: Contact }) {
   return (
     <Surface as="li" data-request={c.ik} pad="md" gap="2xs" tone="base" radius="lg">
       <Row gap="md">
-        <KeyAvatar ik={c.ik} />
+        <KeyAvatar person={identityPerson(c.ik, 'request')} />
         <div className="min-w-0 flex-1">
           <Row as="p" gap="xs">
             <span
@@ -842,7 +849,7 @@ function ContactDialog({ ik }: { ik: string }) {
       <Stack gap="lg">
         <Row gap="md">
           <span className="relative">
-            <KeyAvatar ik={c.ik} size={48} />
+            <KeyAvatar person={identityPerson(c.ik, 'contact')} size={48} />
             <PresenceDot presence={presence} />
           </span>
           <div className="min-w-0">

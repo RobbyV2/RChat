@@ -1,3 +1,4 @@
+import type { ShownPerson } from '../people'
 import type { Target } from '../actions/types'
 import { FIRST_GROUPS, FIRST_ROWS, groupParts, serverGroups } from '../member_groups'
 import { badgeState } from '../p2p/badge'
@@ -27,7 +28,8 @@ type Shield = ReturnType<typeof shieldOf> | 'unverified'
 export interface MemberEntry {
   who: string
   // An account draws its own picture and name; a key draws the picture its room has for it.
-  face: { kind: 'account'; user: UserRef } | { kind: 'key'; ik: string; of: readonly MemberView[] }
+  face:
+    { kind: 'account'; user: ShownPerson } | { kind: 'key'; ik: string; of: readonly MemberView[] }
   name: string
   own: boolean
   online: boolean
@@ -131,8 +133,9 @@ const hosted = ({
       if (!listed) return plain('hidden', server)
       if (detail.member_count > 0 && (!cache || (cache.loading && !cache.list.length)))
         return plain('loading', server)
-      const shownOf = <T extends UserRef & { profile?: Member['profile'] }>(m: T): T =>
-        m.profile ? shownUser(m, lookIn(m.profile, { names, rest })) : m
+      const shownOf = <T extends UserRef & { profile?: Member['profile'] }>(
+        m: T
+      ): T & ShownPerson => shownUser(m, m.profile ? lookIn(m.profile, { names, rest }) : null)
       const items: MemberItem[] = []
       const row = (m: Member): MemberItem => {
         const user = shownOf(m)
@@ -177,7 +180,7 @@ const hosted = ({
             key: `u${u.username}`,
             entry: {
               who: u.username,
-              face: { kind: 'account', user: u },
+              face: { kind: 'account', user: shownUser(u, null) },
               name: u.display_name,
               own: false,
               online: true,

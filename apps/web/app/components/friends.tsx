@@ -1,5 +1,6 @@
 'use client'
 
+import { asAccount } from '../lib/people'
 import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 import { client } from '../lib/client/client'
@@ -68,12 +69,7 @@ export const useIncomingCount = () => useStore(s => s.friendCounts.incoming)
 function Avatar({ user, online, size = 32 }: { user: UserRef; online?: boolean; size?: number }) {
   return (
     <span className="relative shrink-0">
-      <UserAvatar
-        username={user.username}
-        avatarKind={user.avatar_kind}
-        avatarColor={user.avatar_color}
-        size={size}
-      />
+      <UserAvatar person={asAccount(user, 'friend')} size={size} />
       {online !== undefined && (
         <span
           title={online ? 'Online' : 'Offline'}

@@ -447,9 +447,7 @@ export function VoterRow({ v }: { v: PollVoter }) {
   return (
     <li className="flex items-center gap-3 py-1.5">
       <ShownAvatar user={v.user} server={server} size={28} />
-      <span className="streamer min-w-0 flex-1 truncate text-sm">
-        <ShownName user={v.user} server={server} />
-      </span>
+      <ShownName user={v.user} server={server} look="min-w-0 flex-1 truncate text-sm" />
       <MessageTime ts={v.voted_at} className="shrink-0 text-xs text-on-surface-variant" />
     </li>
   )

@@ -1,5 +1,6 @@
 'use client'
 
+import { identityPerson, pictured } from '../lib/people'
 import type { ActorTagRow } from '../lib/client/view_actor'
 import { UserAvatar } from './user_avatar'
 import { KeyAvatar } from './p2p/p2p_badge'
@@ -34,14 +35,9 @@ export function ActorAvatar({ row, size = 32 }: { row: ActorTagRow; size?: numbe
       }
     >
       {row.local ? (
-        <KeyAvatar ik={row.ik ?? row.local} size={size} />
+        <KeyAvatar person={identityPerson(row.ik ?? row.local, 'own')} size={size} />
       ) : (
-        <UserAvatar
-          username={row.username ?? 'Guest'}
-          avatarKind={row.avatar?.kind ?? 'identicon'}
-          avatarColor={row.avatar?.color ?? null}
-          size={size}
-        />
+        <UserAvatar person={pictured(row.username ?? 'Guest', row.avatar, 'own')} size={size} />
       )}
     </span>
   )

@@ -1,4 +1,7 @@
 'use client'
+import { asAccount } from '../lib/people'
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { useP2pApp, useP2p, P2pProvider } from '../lib/client/p2p_react'
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -69,7 +72,6 @@ import { VoiceDock } from './voice_grid'
 import { Button, IconButton, LinkButton } from './controls'
 import { Row, Surface } from './layout'
 import { Sentinel, useOwnServer } from './ui'
-import { NameWithUsername } from './display_name'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { ChannelEnd, useHostedTypers } from './typing_indicator'
@@ -130,15 +132,8 @@ export function DmRow({
           : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
       } ${muted && !active ? 'opacity-60' : ''}`}
     >
-      <UserAvatar
-        username={other.username}
-        avatarKind={other.avatar_kind}
-        avatarColor={other.avatar_color}
-        size={28}
-      />
-      <span className="streamer truncate">
-        <NameWithUsername user={other} />
-      </span>
+      <UserAvatar person={asAccount(other, 'dm')} size={28} />
+      <Name of={personName(asAccount(other, 'dm'))} withUsername look="truncate" />
       <MutedIcon scope={{ kind: 'dm', id }} />
       {is_self ? (
         <>

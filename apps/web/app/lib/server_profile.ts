@@ -1,10 +1,12 @@
 import { nameWithUsername } from './display_name'
+import { shownUser, type ShownPerson } from './people'
 import { bannerColor } from './profile'
 import type { Paged } from './store_types'
 import { isWebhookAuthor } from './webhooks'
 import type { Place } from './profile_fields'
 import type { AvatarKind, Member, MemberLook, ProfilesMode, UserRef } from './types'
 
+export { shownUser }
 export {
   PROFILE_FIELDS,
   isProfilesMode,
@@ -91,18 +93,6 @@ export function lookOf(s: LookSource, place: Place, who: string): MemberLook | n
   return look ? lookIn(look, shownParts(s, place.server)) : null
 }
 
-// `ref` as a place shows it: the name and avatar of the look over the account's. An explicit
-// avatar kind replaces the whole account avatar, color included. The username never changes,
-// so the identicon keeps its seed.
-export function shownUser<T extends UserRef>(ref: T, look: MemberLook | null | undefined): T {
-  if (!look) return ref
-  const avatar =
-    look.avatar_kind === null
-      ? {}
-      : { avatar_kind: look.avatar_kind, avatar_color: look.avatar_color }
-  return { ...ref, ...(look.name === null ? {} : { display_name: look.name }), ...avatar }
-}
-
 // `member` with the look a `member_profile` event carries: null takes the look away.
 export function withLook<T extends { profile?: MemberLook }>(
   member: T,
@@ -144,8 +134,8 @@ export function shownIn<T extends UserRef>(
   s: LookSource,
   server: string | null | undefined,
   ref: T
-): { user: T; ask: boolean } {
-  if (!server) return { user: ref, ask: false }
+): { user: T & ShownPerson; ask: boolean } {
+  if (!server) return { user: shownUser(ref, null), ask: false }
   return {
     user: shownUser(ref, lookOf(s, { server }, ref.username)),
     ask: !lookKnown(s, server, ref.username),
@@ -196,7 +186,7 @@ export function shownActor<T extends UserRef>(
   get: () => LookSource & { ensureMembers: (server: string, usernames: string[]) => unknown },
   server: string | null | undefined,
   ref: T
-): T {
+): T & ShownPerson {
   const s = get()
   const { user, ask } = shownIn(s, server, ref)
   if (ask && server && !isWebhookAuthor(ref.username)) void s.ensureMembers(server, [ref.username])

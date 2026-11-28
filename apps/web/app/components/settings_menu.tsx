@@ -1,4 +1,5 @@
 'use client'
+import { asAccount, pictured } from '../lib/people'
 import { useP2p } from '../lib/client/p2p_react'
 
 import { SignInMethods, useSignInLinks } from './sso/sign_in_methods'
@@ -131,9 +132,7 @@ export function BannerPicker({
               <span className="shrink-0 rounded-full bg-surface-container-high p-1">
                 {avatar ?? (
                   <UserAvatar
-                    username={username}
-                    avatarKind={kind}
-                    avatarColor={avatarColor}
+                    person={pictured(username, { kind, color: avatarColor }, 'editor')}
                     size={56}
                   />
                 )}
@@ -299,16 +298,7 @@ function AccountCard() {
   return (
     <Surface data-account-card pad="lg" gap="md">
       <Row gap="md">
-        {me ? (
-          <UserAvatar
-            username={me.username}
-            avatarKind={me.avatar_kind}
-            avatarColor={me.avatar_color}
-            size={48}
-          />
-        ) : (
-          <GuestAvatar size={48} />
-        )}
+        {me ? <UserAvatar person={asAccount(me, 'own')} size={48} /> : <GuestAvatar size={48} />}
         <div className="min-w-0">
           <p className="streamer truncate font-medium text-on-surface">
             {me ? me.display_name : 'Guest'}
@@ -359,16 +349,7 @@ function NavAccount({
   return (
     <Surface data-nav-account pad="2xs" gap="sm" tone="plain">
       <Row gap="md">
-        {me ? (
-          <UserAvatar
-            username={me.username}
-            avatarKind={me.avatar_kind}
-            avatarColor={me.avatar_color}
-            size={40}
-          />
-        ) : (
-          <GuestAvatar size={40} />
-        )}
+        {me ? <UserAvatar person={asAccount(me, 'own')} size={40} /> : <GuestAvatar size={40} />}
         <div className="min-w-0">
           <p className="streamer truncate text-sm font-medium text-on-surface">
             {me ? me.display_name : 'Guest'}

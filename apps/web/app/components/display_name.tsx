@@ -2,59 +2,14 @@
 import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { useStoreApi } from '../lib/client/react'
-import { useEffect, useId, useRef, useState, type HTMLAttributes } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { displayNameError } from '../lib/display_name'
-import { isGuestName } from '../lib/guest_voice'
-import { personName } from '../lib/names'
 import { useStore } from '../lib/store'
-import type { UserRef } from '../lib/types'
-import { NameBody, useNameTitle } from './name'
-import { FieldError, RevealScope, fieldCls } from './ui'
+import { FieldError, fieldCls } from './ui'
 
 const nameFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
 export const nameRevealKey = (username: string) => `name:${username}`
-
-// A person's display name with their username after it, inside the caller's own element. `own`
-// decides where the username is not an account here (P2P).
-export function NameWithUsername({
-  user,
-  own,
-  fit = false,
-}: {
-  user: Pick<UserRef, 'username' | 'display_name'>
-  own?: boolean
-  fit?: boolean
-}) {
-  const name = personName(user, 'shown', own)
-  if (isGuestName(user.username)) return <span>{user.display_name}</span>
-  return <NameBody of={name} fit={fit} />
-}
-
-type FitNameProps = { user: Pick<UserRef, 'username' | 'display_name'> } & Omit<
-  HTMLAttributes<HTMLSpanElement>,
-  'title' | 'children'
->
-
-// A name in a row it fills (member list, message header). The span's title has the whole name
-// as shown: masked until the pair is revealed, none in streamer mode.
-export function FitName(props: FitNameProps) {
-  return (
-    <RevealScope>
-      <FitNameSpan {...props} />
-    </RevealScope>
-  )
-}
-
-function FitNameSpan({ user, ...span }: FitNameProps) {
-  const name = personName(user, 'shown')
-  const title = useNameTitle(name)
-  return (
-    <span title={title} {...span}>
-      <NameWithUsername user={user} fit />
-    </span>
-  )
-}
 
 export function DisplayNameField({ focus }: { focus: boolean }) {
   const store = useStoreApi()

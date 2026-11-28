@@ -1,4 +1,7 @@
 'use client'
+import { Name } from './name'
+import { asAccount } from '../lib/people'
+import { personName } from '../lib/names'
 import { ViewActorTag } from './view_actor'
 import { useP2pApp } from '../lib/client/p2p_react'
 
@@ -88,7 +91,6 @@ import { ChannelTopic } from './channel_topic'
 import { CallButtons, CallDuration, DirectBadge } from './call_buttons'
 import { useChatScroll, useFocusMessage, useScrollAnchor } from './viewport_height'
 import { Masked, useEscape, useOwnServer } from './ui'
-import { FitName, NameWithUsername } from './display_name'
 import { showsUsername } from '../lib/display_name'
 import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
@@ -155,11 +157,12 @@ function CallLogRow({ message }: { message: Message }) {
   const incoming = me !== null && me.username !== call.from
   const caller = userRefFor(store.getState(), call.from)
   const other = dms.find(d => d.id === message.dm_id)?.other
-  const name = (u: UserRef | undefined) => (
-    <span className="streamer font-medium text-on-surface">
-      {u ? <NameWithUsername user={u} /> : 'Someone'}
-    </span>
-  )
+  const name = (u: UserRef | undefined) =>
+    u ? (
+      <Name of={personName(asAccount(u, 'call'))} withUsername look="font-medium text-on-surface" />
+    ) : (
+      <span className="font-medium text-on-surface">Someone</span>
+    )
   const status: ReactNode =
     tone === 'ringing' ? (
       incoming ? (
@@ -284,8 +287,6 @@ const EMPTY_OUT: Outgoing[] = []
 
 export const avatarTriggerCls =
   'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
-export const nameTriggerCls =
-  'cursor-pointer rounded-sm outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
 // The name color and role icon of a row's author, as row props.
 const authorLook = (look: Look) => ({
   color: look.color,
@@ -321,21 +322,20 @@ export function AuthorRow({
           title="View profile"
           className={avatarTriggerCls}
         >
-          <UserAvatar
-            username={shown.username}
-            avatarKind={shown.avatar_kind}
-            avatarColor={shown.avatar_color}
-            size={size}
-          />
+          <UserAvatar person={shown} size={size} />
         </span>
       </div>
       <div className="min-w-0 flex-1">
         <Row gap="sm" align="baseline" wrap place="min-w-0">
-          <FitName
-            user={shown}
+          <Name
+            of={personName(shown)}
+            withUsername
+            fit
+            link
             {...profileTrigger(store, author, server)}
-            style={{ color }}
-            className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+            color={color}
+            place="min-w-0"
+            look="truncate text-sm font-medium"
           />
           <RoleIcon emoji={icon?.emoji} role={icon?.role} />
           {isWebhookAuthor(author.username) && <WebhookBadge />}
@@ -390,16 +390,9 @@ export function DmPeer({ other }: { other: UserRef }) {
       className="-ml-1.5 flex min-w-0 cursor-pointer items-center gap-2 rounded-full py-1 pr-2.5 pl-1.5 outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
     >
       <span className={`flex shrink-0 ${showsUsername(other) ? 'max-sm:hidden' : ''}`.trim()}>
-        <UserAvatar
-          username={other.username}
-          avatarKind={other.avatar_kind}
-          avatarColor={other.avatar_color}
-          size={24}
-        />
+        <UserAvatar person={asAccount(other, 'dm')} size={24} />
       </span>
-      <span className="streamer truncate">
-        <NameWithUsername user={other} />
-      </span>
+      <Name of={personName(asAccount(other, 'dm'))} withUsername look="truncate" />
     </span>
   )
 }
@@ -800,12 +793,7 @@ function SelfDmEmpty() {
       <Stack gap="md" align="center" justify="center" place="flex-1">
         {me ? (
           <span className="rounded-full ring-4 ring-secondary-container">
-            <UserAvatar
-              username={me.username}
-              avatarKind={me.avatar_kind}
-              avatarColor={me.avatar_color}
-              size={64}
-            />
+            <UserAvatar person={asAccount(me, 'own')} size={64} />
           </span>
         ) : (
           <NotebookPen size={40} className="text-on-surface-variant" />

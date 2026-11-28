@@ -1,6 +1,8 @@
+import { asAccount } from '../lib/people'
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { systemParts } from '../lib/system_messages'
 import type { Message } from '../lib/types'
-import { NameWithUsername } from './display_name'
 import { Surface } from './layout'
 import { ShortTime } from './timestamp'
 
@@ -18,9 +20,11 @@ export function WidgetNotice({ message }: { message: Message }) {
     >
       <p className="min-w-0 break-words text-sm text-on-surface-variant">
         {before}
-        <span className="streamer font-medium text-on-surface">
-          <NameWithUsername user={message.author} />
-        </span>
+        <Name
+          of={personName(asAccount(message.author, 'widget'))}
+          withUsername
+          look="font-medium text-on-surface"
+        />
         {after} <ShortTime ts={message.created_at} className="text-xs opacity-70" />
       </p>
     </Surface>

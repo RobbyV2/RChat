@@ -161,12 +161,7 @@ export function MemberPicker({
               look="text-left hover:bg-surface-container-highest"
               place="w-full"
             >
-              <UserAvatar
-                username={m.username}
-                avatarKind={shownOf(m).avatar_kind}
-                avatarColor={shownOf(m).avatar_color}
-                size={20}
-              />
+              <UserAvatar person={shownOf(m)} size={20} />
               <span className="streamer min-w-0 flex-1 truncate text-sm">
                 <Masked text={shownOf(m).display_name} by={m.username} />
               </span>

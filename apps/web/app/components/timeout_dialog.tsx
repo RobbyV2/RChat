@@ -1,5 +1,7 @@
 'use client'
 
+import { handleName, personName } from '../lib/names'
+import { Name } from './name'
 import { useEffect, useState } from 'react'
 import { Timer } from 'lucide-react'
 import {
@@ -24,7 +26,6 @@ import { UserAvatar } from './user_avatar'
 import { Button, Chip, Pill } from './controls'
 import { Dock, Row, Stack, Surface } from './layout'
 import { Dialog, fieldCls } from './ui'
-import { NameWithUsername } from './display_name'
 import { time } from '../lib/platform/time'
 
 // The current time, ticking every `ms` while `on`.
@@ -154,18 +155,14 @@ export function TimeoutDialog({
       <Stack gap="lg">
         <Stack gap="md">
           <Row gap="md">
-            {user && (
-              <UserAvatar
-                username={user.username}
-                avatarKind={user.avatar_kind}
-                avatarColor={user.avatar_color}
-                size={36}
-              />
-            )}
+            {user && <UserAvatar person={user} size={36} />}
             <Stack gap="none" place="min-w-0">
-              <p className="streamer truncate text-sm font-medium text-on-surface">
-                {user ? <NameWithUsername user={user} /> : name}
-              </p>
+              <Name
+                as="p"
+                of={user ? personName(user) : handleName(name)}
+                withUsername
+                look="truncate text-sm font-medium text-on-surface"
+              />
               {user && (
                 <p className="streamer truncate text-xs text-on-surface-variant">
                   @{user.username}

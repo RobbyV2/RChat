@@ -1,4 +1,5 @@
 'use client'
+import { asAccount } from '../../lib/people'
 import { askKick } from '../../lib/place/moderation'
 import { HostedServer } from '../../lib/place/place'
 import { useAccount } from '../../lib/client/react'
@@ -209,12 +210,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
       {(found.active ? found.list : (cache?.list ?? [])).map(m => (
         <Surface key={m.username} tone="plain" radius="lg" pad="2xs" gap="xs">
           <Row gap="sm" wrap justify="end">
-            <UserAvatar
-              username={m.username}
-              avatarKind={m.avatar_kind}
-              avatarColor={m.avatar_color}
-              size={24}
-            />
+            <UserAvatar person={asAccount(m, 'administration')} size={24} />
             <span className="streamer min-w-24 flex-1 truncate text-sm">{m.display_name}</span>
             {m.is_admin && (
               <Button

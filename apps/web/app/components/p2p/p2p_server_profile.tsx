@@ -1,17 +1,15 @@
 'use client'
 
+import type { Person } from '../../lib/people'
 import { useP2p, useP2pApp, withP2pIdentity } from '../../lib/client/p2p_react'
 import { draftOfExtras, extrasOf } from '../../lib/server_profile_editor'
-import type { UserRef } from '../../lib/types'
 import { ProfileEditor, ProfileReset, ProfilesModeField } from '../server_profile_dialog'
 import type { ServerView } from '../../lib/p2p/server'
 import { P } from '../../lib/p2p/state'
 import { KeyAvatar } from './p2p_badge'
 
 // A P2P identity's picture: its key's identicon, under the avatar set for the server.
-const keyAvatar = (user: UserRef, size: number) => (
-  <KeyAvatar ik={user.username} size={size} kind={user.avatar_kind} bg={user.avatar_color} />
-)
+const keyAvatar = (user: Person, size: number) => <KeyAvatar person={user} size={size} />
 
 // Your own profile in a P2P server: what this device signs into it next to your P2P name.
 function ServerProfileDialogBody({ room }: { room: string }) {

@@ -1,6 +1,8 @@
 'use client'
 
 import { ScheduledButton } from './scheduled'
+import { personName } from '../lib/names'
+import { Name } from './name'
 import { ViewActorTag } from './view_actor'
 import {
   useCallback,
@@ -50,7 +52,6 @@ import { Button, Chip, IconButton, ListRow, Tab } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { Masked, Sentinel, Sheet, useEscape, useOwnServer } from './ui'
 import { RowsSkeleton } from './skeletons'
-import { NameWithUsername } from './display_name'
 import { useShown } from './shown_user'
 import { INSTANCE_INBOX } from '../lib/inbox_source'
 import { longPress, useMedia } from './context_menu'
@@ -371,12 +372,7 @@ function EntryRow({
         contentClassName="flex gap-3"
       >
         <span className="relative mt-0.5 shrink-0">
-          <UserAvatar
-            username={actor.username}
-            avatarKind={actor.avatar_kind}
-            avatarColor={actor.avatar_color}
-            size={32}
-          />
+          <UserAvatar person={actor} size={32} />
           {entry.unread && (
             <span
               aria-hidden
@@ -387,9 +383,11 @@ function EntryRow({
         <span className="flex min-w-0 flex-1 flex-col gap-0.5 pr-8">
           <Row as="span" gap="xs" align="baseline">
             <span className="min-w-0 truncate text-sm">
-              <span className={`streamer ${entry.unread ? 'font-semibold' : 'font-medium'}`}>
-                <NameWithUsername user={actor} />
-              </span>{' '}
+              <Name
+                of={personName(actor)}
+                withUsername
+                look={entry.unread ? 'font-semibold' : 'font-medium'}
+              />{' '}
               {isWebhookAuthor(entry.actor.username) && (
                 <>
                   <WebhookBadge />{' '}
