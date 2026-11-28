@@ -29,7 +29,7 @@ describe('a P2P profile picture', () => {
       expect(parsePic({ ...wire, a } as unknown)).toEqual(parsePic(wire))
   })
 
-  test('a malformed or oversized still reads as no picture', () => {
+  test('a malformed or oversized frame reads as no picture', () => {
     for (const bad of [
       null,
       undefined,
@@ -56,7 +56,7 @@ describe('a P2P profile picture', () => {
     expect(samePic(a, undefined)).toBe(false)
   })
 
-  test('its files are listed for the gates, and a drawing takes the still that fills it', () => {
+  test('its files are listed for the gates, and a drawing takes the frame that fills it', () => {
     const pic = parsePic({ ...wire, a: [h(3), 9] })!
     expect(picFiles(pic).map(f => f.h)).toEqual([h(1), h(2), h(3)])
     expect(picFiles(null)).toEqual([])
