@@ -129,6 +129,9 @@ const recorder = () => {
     'deleteChannel',
     'syncChannelPerms',
     'deleteCategory',
+    'renameCategory',
+    'moveSeparator',
+    'deleteSeparator',
     'setCategoriesCollapsed',
     'askMarkAllRead',
     'setCallRoute',
@@ -201,6 +204,7 @@ test('server icon: a channel manager, inside a folder, and the rchat server', ()
     'Mute Server',
     'Notification settings',
     'Create category',
+    'Create separator',
     'App previews',
     'Copy invite link',
     'Copy Server ID',
@@ -248,6 +252,7 @@ test('each server row item runs its store action', async () => {
     ['Suppress @everyone and @here', [['setNotifySuppress', 's', 'everyone', true]]],
     ['Suppress role mentions', [['setNotifySuppress', 's', 'roles', true]]],
     ['Create category', [['openDialog', { kind: 'category', server: 's' }]]],
+    ['Create separator', [['openDialog', { kind: 'separator', server: 's', category: null }]]],
     ['App previews', [['openDialog', { kind: 'app_preview', server: 's' }]]],
     ['Copy invite link', [['copy', 'https://chat.test/invite/s/']]],
     ['Copy Server ID', [['copy', 's']]],
@@ -514,7 +519,9 @@ test('a category, as a member and as a manager', async () => {
   railState({ perms: Perm.ManageChannels })
   expect(labels(categoryAt)).toEqual([
     'Create channel here',
+    'Create separator',
     'Rename category',
+    'Category style',
     'Permissions',
     'Delete category',
     'Collapse all',
@@ -524,7 +531,17 @@ test('a category, as a member and as a manager', async () => {
   expect(row(categoryAt, 'Delete category')?.danger).toBe(true)
   expect(await effects(items(categoryAt))).toEqual([
     ['Create channel here', [['setCategoriesCollapsed', 's', [7], false]]],
+    [
+      'Create separator',
+      [
+        ['setCategoriesCollapsed', 's', [7], false],
+        ['openDialog', { kind: 'separator', server: 's', category: 7 }],
+      ],
+    ],
     ['Rename category', [['openDialog', { kind: 'category', server: 's', id: 7 }]]],
+    ['Plain caps', [['renameCategory', 7, 'Chat', 'default']]],
+    ['Dotted line', [['renameCategory', 7, 'Chat', 'dots']]],
+    ['Solid line', [['renameCategory', 7, 'Chat', 'line']]],
     ['Permissions', [['openDialog', { kind: 'perms', server: 's', category: 7 }]]],
     [
       'Delete category',
@@ -548,6 +565,44 @@ test('a category, as a member and as a manager', async () => {
     editing: { mode: 'create', server: 's', kind: 'text', category: 7 },
     name: '',
   })
+})
+
+test('a separator, as a member and as a manager', async () => {
+  const news = { id: 4, label: 'News', style: 'dots' as const, category_id: null, after: 1 }
+  const withSeparator = (perms: number) => {
+    railState({ perms })
+    useStore.setState(s => ({ servers: { s: { ...s.servers.s, separators: [news] } } }))
+  }
+  const separatorAt: Target = { kind: 'separator', server: 's', separator: news }
+  withSeparator(0)
+  expect(labels(separatorAt)).toEqual([])
+  withSeparator(Perm.ManageChannels)
+  expect(labels(separatorAt)).toEqual([
+    'Edit separator',
+    'Move up',
+    'Move down',
+    'Move to category',
+    'Delete separator',
+  ])
+  expect(await effects(items(separatorAt))).toEqual([
+    ['Edit separator', [['openDialog', { kind: 'separator', server: 's', id: 4 }]]],
+    ['Move up', [['moveSeparator', 's', 4, null, 0]]],
+    ['Move down', [['moveSeparator', 's', 4, null, 2]]],
+    ['No category', []],
+    ['Chat', [['moveSeparator', 's', 4, 7, 1]]],
+    [
+      'Delete separator',
+      [
+        [
+          'askConfirm',
+          'Delete separator',
+          'Delete the separator News? The channels around it stay.',
+          'Delete',
+        ],
+        ['deleteSeparator', 4],
+      ],
+    ],
+  ])
 })
 
 test('each home card kind', async () => {

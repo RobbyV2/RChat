@@ -8265,6 +8265,71 @@ async fn category_rules_are_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn separators_and_category_styles_are_added_to_an_old_database() {
+    on_each_database("separators_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let sqlite = is_sqlite(&db);
+        let index = |name: &str| match sqlite {
+            true => format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{name}'"),
+            false => format!("SELECT COUNT(*) FROM pg_indexes WHERE indexname = '{name}'"),
+        };
+        for sql in [
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'Club', 1)".to_string(),
+            "INSERT INTO channel_categories(server, name, position, created_at) VALUES('club', 'Team', 0, 1)".to_string(),
+            "INSERT INTO channels(server, name, kind, created_at, category_id, position) SELECT 'club', 'plans', 'text', 1, id, 3 FROM channel_categories WHERE name = 'Team'".to_string(),
+            "DROP INDEX idx_channel_separators_server".to_string(),
+            "DROP TABLE channel_separators".to_string(),
+            "ALTER TABLE channel_categories DROP COLUMN style".to_string(),
+            format!(
+                "UPDATE settings SET value = '{}' WHERE key = 'schema_version'",
+                super::migrate::SEPARATORS_VERSION - 1
+            ),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&db)
+                .await
+                .expect(&sql);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channel_categories WHERE name = 'Team' AND server = 'club' AND position = 0").await,
+                1,
+                "{round}: the old category keeps its name and place"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channel_categories WHERE style = 'default'").await,
+                1 - round,
+                "{round}: an old category starts plain; a style set after the upgrade stays"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channels c JOIN channel_categories k ON k.id = c.category_id WHERE c.name = 'plans' AND c.position = 3").await,
+                1,
+                "{round}: its channel stays in it"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channel_separators s JOIN channel_categories k ON k.id = s.category_id WHERE s.server = 'club' AND s.label = 'news' AND s.style = 'dots' AND s.position = 2").await,
+                round,
+                "{round}: a separator added after the upgrade stays, with the default style"
+            );
+            assert_eq!(count(&db, &index("idx_channel_separators_server")).await, 1, "{round}");
+            if round == 0 {
+                for sql in [
+                    "INSERT INTO channel_separators(server, category_id, label, position, created_at) SELECT 'club', id, 'news', 2, 5 FROM channel_categories WHERE name = 'Team'",
+                    "UPDATE channel_categories SET style = 'dots' WHERE name = 'Team'",
+                ] {
+                    sqlx::query(sql).execute(&db).await.expect(sql);
+                }
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn channel_labels_preserve_topics_and_channel_ids() {
     on_each_database("channel_labels", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");

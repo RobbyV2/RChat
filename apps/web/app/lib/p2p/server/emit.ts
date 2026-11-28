@@ -3,6 +3,7 @@ import { isRecord } from '../../bytes'
 import { deviceCertOk, genesisBundle, genesisSrv } from '../acl/binding'
 import { aclContentOk, knownRules, RULES_VERSION } from '../acl/rules'
 import type { Plan, Received } from '../acl_room'
+import type { Summary } from '../acl/summary'
 import { b64u, bytesOf, randomBytes } from '../canonical'
 import { blankRoom, chainKey, insertServer, type DevChain } from '../dag'
 import { buildEvent2, LIMITS2, validate2, type ChainFields } from '../event_v2'
@@ -380,6 +381,14 @@ export function setSystem(cx: ServerCtx, room: string, sys: SystemContent) {
   return cx.settings(room, { system: sys })
 }
 
+// The place after every channel and separator of the room's channel list.
+export const lastPlace = (s: Summary, lim: Parameters<typeof channelsOf>[1]) =>
+  Math.max(
+    -1,
+    ...channelsOf(s, lim).map(c => c.pos),
+    ...Object.values(s.separators ?? {}).map(p => p.pos)
+  ) + 1
+
 // `restrictView`: only owners, Manage channels and overwrites that allow it may view it.
 export function addChannel(
   cx: ServerCtx,
@@ -387,7 +396,7 @@ export function addChannel(
   name: string,
   opts: { restrictView?: boolean; kind?: 'text' | 'voice' } = {}
 ) {
-  const pos = Math.max(-1, ...channelsOf(cx.sumOf(room), cx.local.display).map(c => c.pos)) + 1
+  const pos = Math.ceil(lastPlace(cx.sumOf(room), cx.local.display))
   const id = newShortId()
   return cx
     .emit(room, 'channel', () => ({

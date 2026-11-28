@@ -24,8 +24,8 @@ use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
 use crate::api::auth::{Work, clean_multiline, hash_in, new_token, present};
 use crate::api::bans::{self, BanOptions, BanReq, BanResp};
 use crate::api::categories::{
-    announce, bump, channel_order, layout_version, listed, load_layout, rank, seen_version,
-    server_categories, write_layout,
+    NEXT_POSITION, announce, bump, channel_order, current_layout, layout_version, listed,
+    load_layout, rank, seen_part, server_categories, write_layout,
 };
 use crate::api::features::Feature;
 use crate::api::join_modes::{
@@ -42,12 +42,12 @@ use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::timeouts::{running_timeouts, timeout_event};
 use crate::api::users::Names;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, Channel, ChannelLayout, ChannelPerm, LIST_MAX, LayoutCategory,
-    MaybeAuthed, Member, Message, NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role,
-    RoleLimits, SLOWMODE_MAX, ServerDetail, ServerSummary, ServerSummaryLite, Settings, TOPIC_MAX,
-    UserRef, allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, encode_cursor,
-    header_grants, ok, page_bounds, placeholders, require_guest_ok, unique_capped, user_from,
-    user_ref, user_refs, valid_color,
+    ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
+    NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX,
+    ServerDetail, ServerSummary, ServerSummaryLite, Settings, TOPIC_MAX, UserRef, allowed, bad,
+    check_len, check_profanity, cursor_int, decode_cursor, encode_cursor, header_grants, ok,
+    page_bounds, placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs,
+    valid_color,
 };
 use crate::db::{ChannelKind, Db, NO_PERMANENT_HASH, User, lock_server, now, shift_member_count};
 use crate::limits::Limits;
@@ -1326,29 +1326,15 @@ async fn server_detail(
     for (i, c) in categories.iter_mut().enumerate() {
         c.position = i as i64;
     }
+    let visible: HashSet<i64> = channels.iter().map(|c| c.id).collect();
+    let seen = current_layout(db, &name)
+        .await?
+        .map(|full| seen_part(&full, |id| visible.contains(&id), manage));
     let layout_version = match manage {
         true => layout_version(db, &name).await?,
-        false => seen_version(&ChannelLayout {
-            version: 0,
-            uncategorized: channels
-                .iter()
-                .filter(|c| c.category_id.is_none_or(|id| !at.contains_key(&id)))
-                .map(|c| c.id)
-                .collect(),
-            categories: categories
-                .iter()
-                .map(|category| LayoutCategory {
-                    id: category.id,
-                    name: category.name.clone(),
-                    channels: channels
-                        .iter()
-                        .filter(|c| c.category_id == Some(category.id))
-                        .map(|c| c.id)
-                        .collect(),
-                })
-                .collect(),
-        }),
+        false => seen.as_ref().map(|l| l.version).unwrap_or_default(),
     };
+    let separators = seen.map(|l| l.separators).unwrap_or_default();
     let member_count = member_count(db, &name).await?;
     let online_count = hub.online_count(&name);
     let choice = crate::api::upload_expiry::stored(db, &name).await?;
@@ -1374,6 +1360,7 @@ async fn server_detail(
         icon_kind,
         channels,
         categories,
+        separators,
         layout_version,
         read_only,
         roles: server_roles(db, &name).await?,
@@ -4238,14 +4225,14 @@ pub(crate) async fn create_channel(
         ));
     }
     let sql = match req.category_id {
-        Some(_) => {
-            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, text_only, position) SELECT $1, $2, $3, $4, $5, $6, $7, (SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server = $1) WHERE EXISTS(SELECT 1 FROM channel_categories WHERE id = $6 AND server = $1) RETURNING id"
-        }
-        None => {
-            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, text_only, position) SELECT $1, $2, $3, $4, $5, $6, $7, (SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server = $1) RETURNING id"
-        }
+        Some(_) => format!(
+            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, text_only, position) SELECT $1, $2, $3, $4, $5, $6, $7, {NEXT_POSITION} WHERE EXISTS(SELECT 1 FROM channel_categories WHERE id = $6 AND server = $1) RETURNING id"
+        ),
+        None => format!(
+            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, text_only, position) SELECT $1, $2, $3, $4, $5, $6, $7, {NEXT_POSITION} RETURNING id"
+        ),
     };
-    let Some(row) = sqlx::query(sql)
+    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(&key)
         .bind(&channel_name)
         .bind(kind.as_str())

@@ -44,6 +44,7 @@ import type {
   BulkJob,
   CallKind,
   CallRelays,
+  CategoryStyle,
   ChannelKind,
   ChannelPermInput,
   ConfirmChoice,
@@ -60,6 +61,7 @@ import type {
   P2pAvailability,
   Ping,
   SearchResult,
+  SeparatorStyle,
   ServerBan,
   ServerDetail,
   ServerProfile,
@@ -179,6 +181,8 @@ export type ActiveDialog =
     }
   | { kind: 'rename_folder'; id: string; focus?: 'color' }
   | { kind: 'category'; server: string; id?: number }
+  // A new separator at the end of `category` (null: of the channels without one), or separator `id`.
+  | { kind: 'separator'; server: string; id?: number; category?: number | null }
   | { kind: 'add_friends'; names: string[]; id: number }
   | { kind: 'poll_voters'; message: Message }
   // This account's scheduled messages, hosted and P2P; `focus`: a row to edit.
@@ -731,9 +735,19 @@ export interface RChatState {
     textOnly?: boolean
   ) => Promise<void>
   createCategory: (server: string, name: string) => Promise<void>
-  renameCategory: (id: number, name: string) => Promise<void>
+  renameCategory: (id: number, name: string, style?: CategoryStyle) => Promise<void>
   deleteCategory: (id: number) => Promise<void>
+  createSeparator: (
+    server: string,
+    label: string,
+    style: SeparatorStyle,
+    category: number | null
+  ) => Promise<void>
+  editSeparator: (id: number, patch: { label?: string; style?: SeparatorStyle }) => Promise<void>
+  deleteSeparator: (id: number) => Promise<void>
+  // Moves a channel or a separator to `index` among the rows of `category` (null: none).
   moveChannel: (server: string, id: number, category: number | null, index: number) => void
+  moveSeparator: (server: string, id: number, category: number | null, index: number) => void
   moveCategory: (server: string, id: number, index: number) => void
   setCategoriesCollapsed: (server: string, ids: number[], collapsed: boolean) => void
   renameChannel: (id: number, name: string) => Promise<void>

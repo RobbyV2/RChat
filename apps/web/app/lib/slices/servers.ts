@@ -14,6 +14,7 @@ import {
   layoutOrder,
   moveCategory as moveCategoryIn,
   moveChannel as moveChannelIn,
+  moveSeparator as moveSeparatorIn,
   orderLayout,
 } from '../categories'
 import type { FriendsDeps } from '../friends_store'
@@ -916,7 +917,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'createCategory'
     | 'renameCategory'
     | 'deleteCategory'
+    | 'createSeparator'
+    | 'editSeparator'
+    | 'deleteSeparator'
     | 'moveChannel'
+    | 'moveSeparator'
     | 'moveCategory'
     | 'setCategoriesCollapsed'
     | 'renameChannel'
@@ -1061,11 +1066,20 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       act(async () => void (await api.createChannel(server, name, kind, category, textOnly))),
     createCategory: (server, name) =>
       act(async () => void (await api.createCategory(server, name))),
-    renameCategory: (id, name) => act(async () => void (await api.renameCategory(id, name))),
+    renameCategory: (id, name, style) =>
+      act(async () => void (await api.renameCategory(id, name, style))),
     deleteCategory: id => act(async () => void (await api.deleteCategory(id))),
+    createSeparator: (server, label, style, category) =>
+      act(async () => void (await api.createSeparator(server, label, style, category))),
+    editSeparator: (id, patch) => act(async () => void (await api.editSeparator(id, patch))),
+    deleteSeparator: id => act(async () => void (await api.deleteSeparator(id))),
     moveChannel: (server, id, category, index) => {
       const detail = get().servers[server]
       if (detail) sendLayout(server, moveChannelIn(layoutOrder(detail), id, category, index))
+    },
+    moveSeparator: (server, id, category, index) => {
+      const detail = get().servers[server]
+      if (detail) sendLayout(server, moveSeparatorIn(layoutOrder(detail), id, category, index))
     },
     moveCategory: (server, id, index) => {
       const detail = get().servers[server]

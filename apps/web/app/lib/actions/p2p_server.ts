@@ -37,7 +37,15 @@ import { ownsP2pServer, type MemberView, type RoleView, type ServerView } from '
 import { P } from '../p2p/state'
 import { editsRoomProfile } from '../server_profile_editor'
 import { peerTimeout } from '../timeouts'
-import { subjectNames, syncConfirmText } from '../categories'
+import {
+  CATEGORY_STYLES,
+  STYLE_NAMES,
+  categoryStyleOf,
+  roomGroups,
+  roomSeparatorStep,
+  subjectNames,
+  syncConfirmText,
+} from '../categories'
 import { sharing } from '../platform'
 import { maskOf } from '../store'
 import type { ConfirmRequest } from '../store_types'
@@ -909,6 +917,34 @@ export const peerServer = identityActions(identity => {
       },
     },
     {
+      id: 'p2p_category_style',
+      title: 'Category Style',
+      ...onCategory,
+      order: 115,
+      args: [
+        {
+          kind: 'choice',
+          name: 'style',
+          prompt: 'Style',
+          choices: ctx =>
+            CATEGORY_STYLES.map(value => ({
+              value,
+              label: STYLE_NAMES[value],
+              radio: true,
+              checked: categoryOf(ctx)?.cat.style === value,
+            })),
+        },
+      ],
+      available: ctx => managedCategory(ctx) !== null,
+      run: (ctx, { style }) => {
+        const t = managedCategory(ctx)
+        if (t && style !== undefined)
+          void identity().p2pServer.editCategory(t.v.id, t.cat.id, {
+            style: categoryStyleOf(style),
+          })
+      },
+    },
+    {
       id: 'p2p_category_permissions',
       title: 'Permissions',
       ...onCategory,
@@ -1009,6 +1045,146 @@ export const peerServer = identityActions(identity => {
     },
   ]
 
+  // Separators of the channel list: who manages channels makes, edits, moves and deletes them.
+  const separatorOf = ({ target }: ActionCtx) => (target.kind === 'p2p_separator' ? target : null)
+  const managedSeparator = (ctx: ActionCtx) => {
+    const t = separatorOf(ctx)
+    return t && can(t.v, P.ManageChannels) ? t : null
+  }
+  const newSeparatorAt = (ctx: ActionCtx) => {
+    const t = ctx.target
+    const at =
+      t.kind === 'p2p_category'
+        ? { v: t.v, cat: t.cat.id }
+        : t.kind === 'p2p_server'
+          ? { v: t.v, cat: null }
+          : null
+    return at && can(at.v, P.ManageChannels) ? at : null
+  }
+  // The place a separator takes one row up or down its list, as the sidebar shows it.
+  const stepOf = (ctx: ActionCtx, step: -1 | 1) => {
+    const t = managedSeparator(ctx)
+    if (!t) return null
+    const groups = roomGroups(
+      {
+        channels: t.v.channels.filter(c => c.kind === 'text' || c.kind === 'voice'),
+        categories: t.v.categories,
+        separators: t.v.separators,
+      },
+      true
+    )
+    const items =
+      t.sep.cat === null
+        ? groups.loose
+        : (groups.categories.find(g => g.category.id === t.sep.cat)?.items ?? [])
+    return roomSeparatorStep(items, t.sep.id, step)
+  }
+  const moveStep = (step: -1 | 1) => (ctx: ActionCtx) => {
+    const t = managedSeparator(ctx)
+    const pos = stepOf(ctx, step)
+    if (t && pos !== null) void identity().p2pServer.editSeparator(t.v.id, t.sep.id, { pos })
+  }
+  const onSeparator = { scope: 'p2p', targets: ['p2p_separator'] } as const
+
+  const separatorActions: Action[] = [
+    {
+      id: 'p2p_channel_separator_create',
+      title: 'Create Separator',
+      scope: 'p2p',
+      targets: ['p2p_server', 'p2p_category'],
+      orderFor: ctx => (ctx.target.kind === 'p2p_category' ? 105 : 265),
+      available: ctx => newSeparatorAt(ctx) !== null,
+      run: ctx => {
+        const at = newSeparatorAt(ctx)
+        if (at) identity().p2p.openDialog({ kind: 'separator', room: at.v.id, cat: at.cat })
+      },
+    },
+    {
+      id: 'p2p_channel_separator_edit',
+      title: 'Edit Separator',
+      ...onSeparator,
+      order: 100,
+      available: ctx => managedSeparator(ctx) !== null,
+      run: ctx => {
+        const t = managedSeparator(ctx)
+        if (t) identity().p2p.openDialog({ kind: 'separator', room: t.v.id, id: t.sep.id })
+      },
+    },
+    {
+      id: 'p2p_channel_separator_move_up',
+      title: 'Move Up',
+      ...onSeparator,
+      order: 110,
+      available: ctx => stepOf(ctx, -1) !== null,
+      run: moveStep(-1),
+    },
+    {
+      id: 'p2p_channel_separator_move_down',
+      title: 'Move Down',
+      ...onSeparator,
+      order: 111,
+      available: ctx => stepOf(ctx, 1) !== null,
+      run: moveStep(1),
+    },
+    {
+      id: 'p2p_channel_separator_move_category',
+      title: 'Move to Category',
+      ...onSeparator,
+      order: 112,
+      args: [
+        {
+          kind: 'choice',
+          name: 'cat',
+          prompt: 'Category',
+          choices: ctx => {
+            const t = managedSeparator(ctx)
+            if (!t) return []
+            return [
+              { value: '', label: 'No category', radio: true, checked: t.sep.cat === null },
+              ...t.v.categories.map(c => ({
+                value: c.id,
+                label: c.name,
+                radio: true,
+                checked: t.sep.cat === c.id,
+              })),
+            ]
+          },
+        },
+      ],
+      available: ctx => {
+        const t = managedSeparator(ctx)
+        return !!t && t.v.categories.length > 0
+      },
+      run: (ctx, { cat }) => {
+        const t = managedSeparator(ctx)
+        if (t && cat !== undefined && (cat || null) !== t.sep.cat)
+          void identity().p2pServer.editSeparator(t.v.id, t.sep.id, { cat: cat || null })
+      },
+    },
+    {
+      id: 'p2p_channel_separator_delete',
+      title: 'Delete Separator',
+      danger: true,
+      ...onSeparator,
+      order: 120,
+      available: ctx => managedSeparator(ctx) !== null,
+      run: ctx => {
+        const t = managedSeparator(ctx)
+        if (!t) return
+        ctx.acct.store.getState().askConfirm({
+          title: 'Delete Separator',
+          body: t.sep.label
+            ? `Delete the separator ${t.sep.label}? The channels around it stay.`
+            : 'Delete this separator? The channels around it stay.',
+          confirm: 'Delete',
+          action: identity().inIdentity(
+            () => void identity().p2pServer.deleteSeparator(t.v.id, t.sep.id)
+          ),
+        })
+      },
+    },
+  ]
+
   const p2pServerActions: Action[] = [
     ...serverActions,
     ...folderActions,
@@ -1016,6 +1192,7 @@ export const peerServer = identityActions(identity => {
     ...memberActions,
     ...roleActions,
     ...categoryActions,
+    ...separatorActions,
   ]
 
   return {

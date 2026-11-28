@@ -381,6 +381,15 @@ class SnapFacts implements Facts {
       )
     )
   }
+  get chseps() {
+    return this.one('chseps', () =>
+      lazyMap(
+        id => this.V.chsepOf(id) !== undefined,
+        id => this.V.chsepOf(id),
+        () => this.full().chseps as ReadonlyMap<string, AclContent>
+      )
+    )
+  }
   get overwrites() {
     return this.one('overwrites', () => {
       const of = (ch: string) => this.full().overwrites.get(ch)

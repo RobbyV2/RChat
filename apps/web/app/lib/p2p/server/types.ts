@@ -4,7 +4,7 @@ import type { Rank } from '../acl/rules'
 import type { OverSum } from '../acl/summary'
 import type { RoomExtras } from '../../profile_fields'
 import type { LockState } from '../../profile_reset'
-import type { ProfilesMode } from '../../types'
+import type { CategoryStyle, ProfilesMode, SeparatorStyle } from '../../types'
 import type { ServerAbout } from '../../server_about'
 import type { Disowned, Reapply } from '../acl_room'
 import { b64u, bytesOf, canonical, fromB64u, randomBytes, utf8 } from '../canonical'
@@ -265,13 +265,24 @@ export type ChannelView = { id: string } & ChannelContent & {
     sync: boolean
   }
 
-// A category of channels, its place and its overwrites (which gate nothing themselves: the
-// channels that copy them hold copies).
+// A category of channels, its place, how its header is drawn and its overwrites (which gate
+// nothing themselves: the channels that copy them hold copies).
 export interface CategoryView {
   id: string
   name: string
   pos: number
+  style: CategoryStyle
   over: Record<string, OverSum>
+}
+
+// A separator of the channel list: its label, line style, category (null: none, or one that is
+// gone) and place among the channels of its list (`pos`, the channels' order).
+export interface SeparatorView {
+  id: string
+  label: string
+  style: SeparatorStyle
+  cat: string | null
+  pos: number
 }
 
 // A moderation action waiting for a fresh heads exchange.
@@ -330,6 +341,7 @@ export interface ServerView {
   systemPick: string | null
   channels: ChannelView[]
   categories: CategoryView[]
+  separators: SeparatorView[]
   roles: RoleView[]
   everyone: number
   members: MemberView[]
@@ -502,6 +514,7 @@ export const RESIGN_ACL = [
   'about',
   'category',
   'chcat',
+  'chsep',
   'code',
   'code_revoke',
 ]

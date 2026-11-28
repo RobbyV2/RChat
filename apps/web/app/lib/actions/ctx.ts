@@ -65,6 +65,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'member':
     case 'server':
     case 'category':
+    case 'separator':
     case 'role':
     case 'voice_guest': {
       const open = openPlace(s)
@@ -91,6 +92,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'p2p_member':
     case 'p2p_role':
     case 'p2p_category':
+    case 'p2p_separator':
     case 'widget_message':
     case 'p2p_message':
     case 'p2p_pin_line':
@@ -118,6 +120,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'folder':
     case 'channel':
     case 'category':
+    case 'separator':
     case 'rail_account':
     case 'home':
     case 'dm_list':
@@ -140,6 +143,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'p2p_member':
     case 'p2p_role':
     case 'p2p_category':
+    case 'p2p_separator':
     case 'widget_message':
     case 'p2p_message':
     case 'p2p_pin_line':
@@ -170,6 +174,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'server':
     case 'folder':
     case 'category':
+    case 'separator':
     case 'role':
     case 'rail_account':
     case 'home':
@@ -188,6 +193,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'p2p_member':
     case 'p2p_role':
     case 'p2p_category':
+    case 'p2p_separator':
     case 'widget_message':
     case 'p2p_message':
     case 'p2p_pin_line':
@@ -270,6 +276,11 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
       const category = all?.find(c => c.id === t.category.id)
       return !all ? t : category ? { ...t, category } : null
     }
+    case 'separator': {
+      const all = s.servers[t.server]?.separators
+      const separator = all?.find(x => x.id === t.separator.id)
+      return !all ? t : separator ? { ...t, separator } : null
+    }
     case 'role': {
       const all = s.servers[t.server]?.roles
       return !all || all.some(r => r.id === t.role.id) ? t : null
@@ -305,6 +316,7 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'p2p_member':
     case 'p2p_role':
     case 'p2p_category':
+    case 'p2p_separator':
     case 'widget_message':
     case 'p2p_message':
     case 'p2p_pin_line':

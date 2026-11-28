@@ -799,20 +799,26 @@ const SHORT_ID_MAX = 64
 const shortId = (x: unknown): x is string =>
   typeof x === 'string' && x !== '' && x.length <= SHORT_ID_MAX
 
-// category ({id, name, pos, gone?}, one register per id) and chcat ({ch, cat, sync}, one per
-// channel) are registers like role_meta: no case in authCore, guards or classify. A write counts
-// when it is well formed and its author, in St(w), is an owner or a member who holds Manage
-// channels.
+// category ({id, name, pos, style?, gone?}, one register per id), chcat ({ch, cat, sync}, one
+// per channel) and chsep ({id, label, pos, style?, cat?, gone?}, a separator of the channel
+// list, one register per id) are registers like role_meta: no case in authCore, guards or
+// classify. A write counts when it is well formed and its author, in St(w), is an owner or a
+// member who holds Manage channels. A separator's place may be any finite number (between two
+// others); its style and category are read where it is shown, a malformed one as unset.
 export const channelMetaOk = (e: AclEv, St: FactsQ) => {
   const c = e.c
   const shaped =
     e.t === 'category'
       ? shortId(c.id) &&
         (c.gone === true || (typeof c.name === 'string' && isInt(c.pos, -Infinity)))
-      : e.t === 'chcat' &&
-        shortId(c.ch) &&
-        (c.cat === null || shortId(c.cat)) &&
-        typeof c.sync === 'boolean'
+      : e.t === 'chsep'
+        ? shortId(c.id) &&
+          (c.gone === true ||
+            (typeof c.label === 'string' && typeof c.pos === 'number' && Number.isFinite(c.pos)))
+        : e.t === 'chcat' &&
+          shortId(c.ch) &&
+          (c.cat === null || shortId(c.cat)) &&
+          typeof c.sync === 'boolean'
   return shaped && (St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & CHANNELS) !== 0))
 }
 

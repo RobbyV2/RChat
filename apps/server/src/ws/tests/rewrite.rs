@@ -425,6 +425,7 @@ async fn layout_changes_only_carry_viewable_channels() {
             version: 0,
             uncategorized: Vec::new(),
             categories: Vec::new(),
+            separators: Vec::new(),
         }
         .into(),
         created: Some(secret),

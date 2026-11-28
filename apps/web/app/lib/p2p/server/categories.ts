@@ -1,16 +1,24 @@
 import { fromWire, outranks, widened } from '../../perms'
+import { SEPARATOR_LABEL_MAX, separatorLabel } from '../../categories'
+import type { CategoryStyle, SeparatorStyle } from '../../types'
 import { EVERYONE, rulesOf, tiered } from '../acl/rules'
-import { CATEGORIES_MAX, type OverSum, type Summary } from '../acl/summary'
+import {
+  CATEGORIES_MAX,
+  SEPARATORS_MAX,
+  type OverSum,
+  type SeparatorSum,
+  type Summary,
+} from '../acl/summary'
 import { AGREED } from '../limits'
 import { clip } from '../rate'
 import { channelOf, rankOf, roleRank } from '../state'
 import type { ServerCtx } from './context'
-import { addChannel, setOverwrite } from './emit'
+import { addChannel, lastPlace, setOverwrite } from './emit'
 import { ServerError, newShortId } from './types'
 
-// Categories of a room (`category`, one register per id) and the category of each channel
-// (`chcat`, one per channel). Every write starts from the current content, so fields of newer
-// versions stay.
+// Categories of a room (`category`, one register per id), the category of each channel
+// (`chcat`, one per channel) and the separators of its channel list (`chsep`, one register per
+// id). Every write starts from the current content, so fields of newer versions stay.
 
 const NO_CATEGORY = 'Unknown category'
 const RANKED_TEXT = "You can't copy the rules of a role or member ranked above you."
@@ -27,6 +35,10 @@ const mayWrite = (s: Summary, me: string, subj: string) => {
   const ik = subj.slice(2)
   return s.members[ik]?.m !== 'join' || outranks(mine, tiered(rankOf(s, ik)))
 }
+
+// Fields of a newer version without `key`, which this write sets.
+const without = (extra: Record<string, unknown> | undefined, key: string) =>
+  Object.fromEntries(Object.entries(extra ?? {}).filter(([k]) => k !== key))
 
 const categoryOf = (cx: ServerCtx, room: string, id: string) => {
   const c = cx.sumOf(room).categories?.[id]
@@ -52,12 +64,22 @@ export async function createCategory(cx: ServerCtx, room: string, name: string) 
 export interface CategoryPatch {
   name?: string
   pos?: number
+  style?: CategoryStyle
 }
 
+// A style is written only when it isn't the default, so a write keeps a style this version
+// doesn't know (an unknown field) unless it sets one.
 export async function editCategory(cx: ServerCtx, room: string, id: string, patch: CategoryPatch) {
   const c = categoryOf(cx, room, id)
   const name = patch.name === undefined ? c.name : clip(patch.name.trim(), cx.local.server.nameMax)
-  return cx.emit(room, 'category', () => ({ ...c.extra, id, name, pos: patch.pos ?? c.pos }))
+  const style = patch.style ?? c.style
+  return cx.emit(room, 'category', () => ({
+    ...(patch.style === undefined ? c.extra : without(c.extra, 'style')),
+    id,
+    name,
+    pos: patch.pos ?? c.pos,
+    ...(style && style !== 'default' ? { style } : {}),
+  }))
 }
 
 // Its channels show without a category afterwards.
@@ -70,6 +92,95 @@ export async function deleteCategory(cx: ServerCtx, room: string, id: string) {
     pos: c.pos,
     gone: true,
   }))
+}
+
+const NO_SEPARATOR = 'Unknown separator'
+const LABEL_TEXT = `A separator label can have at most ${SEPARATOR_LABEL_MAX} characters, without line breaks.`
+
+// The content of a `chsep` write of separator `id`: the fields it has, with those of newer
+// versions.
+export const separatorContent = (id: string, sep: SeparatorSum) => ({
+  ...sep.extra,
+  id,
+  label: sep.label,
+  cat: sep.cat,
+  pos: sep.pos,
+  ...(sep.style ? { style: sep.style } : {}),
+})
+
+const separatorOf = (cx: ServerCtx, room: string, id: string) => {
+  const sep = cx.sumOf(room).separators?.[id]
+  if (!sep) throw new ServerError(NO_SEPARATOR)
+  return sep
+}
+
+const labelOf = (raw: string) => {
+  const label = separatorLabel(raw)
+  if (label === null) throw new ServerError(LABEL_TEXT)
+  return label
+}
+
+// A separator at the end of category `cat` (null: of the channels without one).
+export async function createSeparator(
+  cx: ServerCtx,
+  room: string,
+  label: string,
+  style: SeparatorStyle,
+  cat: string | null
+) {
+  const s = cx.sumOf(room)
+  if (Object.keys(s.separators ?? {}).length >= SEPARATORS_MAX)
+    throw new ServerError(`A server can have at most ${SEPARATORS_MAX} separators.`)
+  if (cat !== null) categoryOf(cx, room, cat)
+  const text = labelOf(label)
+  const id = newShortId()
+  return cx
+    .emit(room, 'chsep', () => ({
+      id,
+      label: text,
+      style,
+      cat,
+      pos: lastPlace(s, cx.local.display),
+    }))
+    .then(() => id)
+}
+
+export interface SeparatorPatch {
+  label?: string
+  style?: SeparatorStyle
+  // A new place: a category (null: none) and a place among its channels.
+  cat?: string | null
+  pos?: number
+}
+
+export async function editSeparator(
+  cx: ServerCtx,
+  room: string,
+  id: string,
+  patch: SeparatorPatch
+) {
+  const sep = separatorOf(cx, room, id)
+  if (patch.cat) categoryOf(cx, room, patch.cat)
+  const next: SeparatorSum = {
+    ...sep,
+    label: patch.label === undefined ? sep.label : labelOf(patch.label),
+    style: patch.style ?? sep.style,
+    cat: patch.cat === undefined ? sep.cat : patch.cat,
+    pos:
+      patch.pos ??
+      (patch.cat === undefined ? sep.pos : lastPlace(cx.sumOf(room), cx.local.display)),
+  }
+  return cx.emit(room, 'chsep', () =>
+    separatorContent(
+      id,
+      patch.style === undefined ? next : { ...next, extra: without(sep.extra, 'style') }
+    )
+  )
+}
+
+export async function deleteSeparator(cx: ServerCtx, room: string, id: string) {
+  const sep = separatorOf(cx, room, id)
+  return cx.emit(room, 'chsep', () => ({ ...separatorContent(id, sep), gone: true }))
 }
 
 // Puts a channel in a category (null: none). A move never changes permissions: the channel stops

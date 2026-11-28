@@ -4,11 +4,18 @@ import { AGREED } from '../p2p/limits'
 import { joinWithCode, makeMember, pump, type Member } from './p2p_server_net'
 import { Hub, ManualClock } from './p2p_net'
 import { CHANNELS, P } from '../p2p/acl/rules'
-import { CATEGORIES_MAX, categoriesOf, chcatsOf } from '../p2p/acl/summary'
+import {
+  CATEGORIES_MAX,
+  SEPARATORS_MAX,
+  categoriesOf,
+  chcatsOf,
+  separatorsOf,
+} from '../p2p/acl/summary'
 import { loadPerms } from './helpers/perms'
+import { roomGroups } from '../categories'
 
-// Categories in P2P rooms: the `category` and `chcat` registers, who may write them, and the
-// writers that copy a category's overwrites to the channels that follow it.
+// Categories in P2P rooms: the `category`, `chcat` and `chsep` registers, who may write them,
+// and the writers that copy a category's overwrites to the channels that follow it.
 
 const world = () => {
   const w = new AclWorld({ model: false, agreed: AGREED })
@@ -88,9 +95,16 @@ describe('the category and chcat registers', () => {
 
   test('the room shows the 50 lowest live categories and keeps fields it does not know', () => {
     const w = world()
-    w.ok('O1', 'category', { id: 'k9', name: 'c9', pos: 4, style: 'dots' })
+    w.ok('O1', 'category', { id: 'k9', name: 'c9', pos: 4, style: 'dots', look: 'x' })
+    w.ok('O1', 'category', { id: 'k8', name: 'c8', pos: 3, style: 'stars' })
     w.ok('O1', 'chcat', { ch: 'c0', cat: 'k9', sync: false, note: 'x' })
-    expect(categoriesOf(F(w)).k9).toEqual({ name: 'c9', pos: 4, extra: { style: 'dots' } })
+    expect(categoriesOf(F(w)).k9).toEqual({
+      name: 'c9',
+      pos: 4,
+      style: 'dots',
+      extra: { look: 'x' },
+    })
+    expect(categoriesOf(F(w)).k8).toEqual({ name: 'c8', pos: 3, extra: { style: 'stars' } })
     expect(chcatsOf(F(w)).c0).toEqual({ cat: 'k9', sync: false, extra: { note: 'x' } })
     const many = new Map<string, Record<string, unknown>>()
     for (let i = 0; i <= CATEGORIES_MAX + 1; i++)
@@ -101,6 +115,67 @@ describe('the category and chcat registers', () => {
     expect(shown.k3).toBeUndefined()
     expect(shown.k0).toBeUndefined()
     expect(shown.k1).not.toBeUndefined()
+  })
+})
+
+describe('the chsep register', () => {
+  test('owners and Manage channels holders write it; others and malformed writes count for nothing, without a strike', () => {
+    const w = world()
+    const MGR = w.ok('O1', 'role_create', { pos: 5, bits: CHANNELS }).id
+    for (const d of ['A1', 'B1']) join(w, d)
+    w.ok('O1', 'assign', { to: 'A', role: MGR })
+    const label = () => F(w).chseps.get('p1')?.label ?? null
+    const rows: [string, string, Record<string, unknown>, string | null][] = [
+      ['the owner', 'O1', { id: 'p1', label: '\u27a4 news', pos: 0 }, '\u27a4 news'],
+      ['a channel manager', 'A1', { id: 'p1', label: 'News', pos: 1.5, cat: null }, 'News'],
+      ['a member without Manage channels', 'B1', { id: 'p1', label: 'Mine', pos: 0 }, 'News'],
+      ['a malformed label', 'A1', { id: 'p1', label: 7, pos: 0 }, 'News'],
+      ['a malformed place', 'A1', { id: 'p1', label: 'Bad', pos: 'top' }, 'News'],
+      ['a missing place', 'A1', { id: 'p1', label: 'Bad', pos: null }, 'News'],
+    ]
+    for (const [what, dev, c, want] of rows) {
+      expect([what, w.act(dev, 'chsep', c).v.s]).toEqual([what, 'A'])
+      expect([what, label()]).toEqual([what, want])
+    }
+    w.ok('A1', 'chsep', { id: 'p2', label: '', pos: 2, cat: 5, style: 'wavy', note: 1 })
+    expect(separatorsOf(F(w))).toEqual({
+      p1: { label: 'News', cat: null, pos: 1.5 },
+      p2: { label: '', cat: null, pos: 2, extra: { style: 'wavy', note: 1 } },
+    })
+  })
+
+  test('a separator deleted at the same moment as it is edited stays deleted', () => {
+    const w = world()
+    w.ok('O1', 'chsep', { id: 'p1', label: 'News', pos: 0 })
+    const P0 = w.heads()
+    w.ok('O1', 'chsep', { id: 'p1', label: 'Later', pos: 0 }, { ap: P0 })
+    w.ok('O1', 'chsep', { id: 'p1', label: 'News', pos: 0, gone: true }, { ap: P0 })
+    expect(F(w).chseps.get('p1')?.gone).toBe(true)
+    expect(separatorsOf(F(w))).toEqual({})
+  })
+
+  test('a write whose author loses Manage channels at the same moment does not count', () => {
+    const w = world()
+    const MGR = w.ok('O1', 'role_create', { pos: 5, bits: CHANNELS }).id
+    join(w, 'A1')
+    w.ok('O1', 'assign', { to: 'A', role: MGR })
+    w.ok('O1', 'chsep', { id: 'p1', label: 'News', pos: 0 })
+    const P0 = w.heads()
+    w.ok('O1', 'role_bits', { role: MGR, bit: CHANNELS, on: false }, { ap: P0 })
+    w.ok('A1', 'chsep', { id: 'p1', label: 'Mine', pos: 0 }, { ap: P0 })
+    expect(F(w).chseps.get('p1')?.label).toBe('News')
+  })
+
+  test('the room shows the 50 lowest live separators', () => {
+    const w = world()
+    const many = new Map<string, Record<string, unknown>>()
+    for (let i = 0; i <= SEPARATORS_MAX + 1; i++)
+      many.set(`p${i}`, { id: `p${i}`, label: `s${i}`, pos: SEPARATORS_MAX + 1 - i })
+    many.set('p3', { id: 'p3', label: 's3', pos: 0, gone: true })
+    const shown = separatorsOf({ ...F(w), chseps: many } as ReturnType<typeof F>)
+    expect(Object.keys(shown)).toHaveLength(SEPARATORS_MAX)
+    expect(shown.p3).toBeUndefined()
+    expect(shown.p0).toBeUndefined()
   })
 })
 
@@ -205,6 +280,68 @@ describe('categories in the app', () => {
     expect(b.servers.sumOf(room).chcats[side]).toMatchObject({ sync: false })
   })
 
+  test('separators are made, styled, moved and deleted by managers and show to every member', async () => {
+    const { clock, a, b, room } = await two()
+    const team = await a.servers.createCategory(room, 'Team')
+    await a.servers.editCategory(room, team, { style: 'dots' })
+    const plans = await a.servers.addChannelIn(room, 'plans', team)
+    const top = await a.servers.createSeparator(room, '  \u27a4 Updates \u2605  ', 'dots', null)
+    const inner = await a.servers.createSeparator(room, '', 'line', team)
+    const later = await a.servers.addChannelIn(room, 'later', team)
+    await pump(
+      clock,
+      () => {
+        const v = b.servers.view(room)
+        return v?.separators.length === 2 && v.channels.some(c => c.id === later)
+      },
+      'bob sees both and the last channel'
+    )
+    const seen = b.servers.view(room)!
+    expect(seen.categories[0]).toMatchObject({ id: team, style: 'dots' })
+    expect(seen.separators.map(p => [p.id, p.label, p.style, p.cat])).toEqual([
+      [top, '\u27a4 Updates \u2605', 'dots', null],
+      [inner, '', 'line', team],
+    ])
+    const order = (v: typeof seen) =>
+      roomGroups(v, true).categories[0].items.map(i =>
+        i.kind === 'channel' ? i.channel.id : `|${i.separator.id}`
+      )
+    expect(order(seen)).toEqual([plans, `|${inner}`, later])
+    await a.servers.editSeparator(room, inner, { pos: -1, label: 'Head', style: 'plain' })
+    expect(order(a.servers.view(room)!)).toEqual([`|${inner}`, plans, later])
+    expect(a.servers.sumOf(room).separators[inner]).toMatchObject({ label: 'Head', style: 'plain' })
+    await a.servers.editSeparator(room, top, { cat: team })
+    expect(order(a.servers.view(room)!)).toEqual([`|${inner}`, plans, later, `|${top}`])
+    const fails = (p: Promise<unknown>) =>
+      p.then(
+        () => 'ok',
+        (e: Error) => e.message
+      )
+    expect(await fails(a.servers.createSeparator(room, 'x'.repeat(101), 'dots', null))).toBe(
+      'A separator label can have at most 100 characters, without line breaks.'
+    )
+    await a.servers.deleteCategory(room, team)
+    expect(a.servers.view(room)!.separators.map(p => p.cat)).toEqual([null, null])
+    await a.servers.deleteSeparator(room, inner)
+    await pump(clock, () => b.servers.view(room)?.separators.length === 1, 'bob sees it gone')
+  })
+
+  test('a separator in a category whose channels a member cannot see is hidden with it', async () => {
+    const { clock, a, b, room } = await two()
+    const team = await a.servers.createCategory(room, 'Team')
+    await a.servers.addChannelIn(room, 'secret', team, { restrictView: true })
+    await a.servers.createSeparator(room, 'Inside', 'dots', team)
+    await a.servers.createSeparator(room, 'Outside', 'dots', null)
+    await pump(clock, () => b.servers.view(room)?.separators.length === 2, 'bob has both')
+    const groups = roomGroups(b.servers.view(room)!, false)
+    expect(groups.categories).toEqual([])
+    expect(
+      groups.loose
+        .filter(i => i.kind === 'separator')
+        .map(i => i.kind === 'separator' && i.separator.label)
+    ).toEqual(['Outside'])
+  })
+
   test('a room makes at most 50 categories', async () => {
     const { a, room } = await two()
     const sv = a.servers as unknown as { sumOf: (room: string) => { categories: object } }
@@ -230,15 +367,19 @@ describe('categories in the app', () => {
     const sv = a.servers as unknown as {
       emit: (room: string, t: string, make: () => Record<string, unknown>) => Promise<string>
     }
-    await sv.emit(room, 'category', () => ({ id: team, name: 'Team', pos: 0, style: 'dots' }))
+    await sv.emit(room, 'category', () => ({ id: team, name: 'Team', pos: 0, style: 'stars' }))
     await sv.emit(room, 'chcat', () => ({ ch, cat: team, sync: true, mark: 1 }))
     await a.servers.editCategory(room, team, { name: 'Crew' })
     await a.servers.placeChannel(room, ch, null)
     expect(a.servers.sumOf(room).categories[team]).toEqual({
       name: 'Crew',
       pos: 0,
-      extra: { style: 'dots' },
+      extra: { style: 'stars' },
     })
+    await a.servers.editCategory(room, team, { style: 'line' })
+    expect(a.servers.sumOf(room).categories[team]).toEqual({ name: 'Crew', pos: 0, style: 'line' })
+    await a.servers.editCategory(room, team, { style: 'default' })
+    expect(a.servers.sumOf(room).categories[team]).toEqual({ name: 'Crew', pos: 0 })
     expect(a.servers.sumOf(room).chcats[ch]).toEqual({
       cat: null,
       sync: false,

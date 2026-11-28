@@ -12,12 +12,13 @@ import type {
   ChannelView,
   MemberView,
   RoleView,
+  SeparatorView,
   ServerView,
 } from '../p2p/server/types'
 import type { PaletteGroup } from '../palette'
 import type { ChannelCan } from '../channel_perms'
 import type { RChatState } from '../store_types'
-import type { Category, Channel, DmSummary, Message, Role, UserRef } from '../types'
+import type { Category, Channel, DmSummary, Message, Role, Separator, UserRef } from '../types'
 
 export type Scope =
   | 'global'
@@ -69,6 +70,8 @@ export type Target =
   | { kind: 'folder'; folder: Folder; p2p?: boolean }
   | { kind: 'channel'; server: string; channel: Channel }
   | { kind: 'category'; server: string; category: Category }
+  // A decorative separator of a server's channel list.
+  | { kind: 'separator'; server: string; separator: Separator }
   // A row of a server's role list: `order` every role id, the highest first, as of the order's
   // `version`; `movable` the ones the viewer may move. `after` runs once a change is saved.
   | {
@@ -125,6 +128,7 @@ export type Target =
   | { kind: 'p2p_member'; v: ServerView; m: MemberView }
   | { kind: 'p2p_role'; v: ServerView; r: RoleView }
   | { kind: 'p2p_category'; v: ServerView; cat: CategoryView }
+  | { kind: 'p2p_separator'; v: ServerView; sep: SeparatorView }
   // A P2P message as its list shows it (`m`), and a line that says a message was pinned.
   | { kind: 'p2p_message'; p: P2pMessage; m: Message; chat: ChatFacts }
   | { kind: 'p2p_pin_line'; p: P2pMessage; m: Message }

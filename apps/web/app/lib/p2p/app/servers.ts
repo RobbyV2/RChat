@@ -3,14 +3,15 @@ import { resolve as resolveNotify } from '../../notify'
 import type { RoomExtras } from '../../profile_fields'
 import type { LockSecs, LockState, ResetField } from '../../profile_reset'
 import { lookOf, roomLookOf, shownUser } from '../../server_profile'
-import type { ProfilesMode } from '../../types'
+import type { ProfilesMode, SeparatorStyle } from '../../types'
+import type { CategoryPatch, SeparatorPatch } from '../server/categories'
 import { BanExpiry } from '../ban_expiry'
 import type { P2pStore, RoomRecord, ServerCache } from '../db'
 import { loadDmThread, loadDmThreadAround, loadDmThreads, type P2pMessage } from '../dm'
 import { cacheKey } from '../dag'
 import { knownRules, rulesOf } from '../acl/rules'
 import { cachedSummary } from '../server/load'
-import { categoryViews, channelViews } from '../server/views'
+import { categoryViews, channelViews, separatorViews } from '../server/views'
 import { keyId } from '../keys'
 import { displayName } from '../contacts'
 import type { WireV2 } from '../event_v2'
@@ -111,6 +112,7 @@ export function createServersPart(
       systemPick: null,
       channels: sum && me === 'join' ? channelViews(sum, ik, me, state.limits.display) : [],
       categories: sum && me === 'join' ? categoryViews(sum, state.limits.display) : [],
+      separators: sum && me === 'join' ? separatorViews(sum) : [],
       roles: [],
       everyone: 0,
       members: [],
@@ -825,9 +827,15 @@ export function createServersPart(
     addChannelIn: (room: string, name: string, cat: string, kind: 'text' | 'voice' = 'text') =>
       withServers(s => s.addChannelIn(room, name, cat, { kind })),
     createCategory: (room: string, name: string) => withServers(s => s.createCategory(room, name)),
-    editCategory: (room: string, id: string, patch: { name?: string; pos?: number }) =>
+    editCategory: (room: string, id: string, patch: CategoryPatch) =>
       withServers(s => s.editCategory(room, id, patch)),
     deleteCategory: (room: string, id: string) => withServers(s => s.deleteCategory(room, id)),
+    // Separators of the channel list.
+    createSeparator: (room: string, label: string, style: SeparatorStyle, cat: string | null) =>
+      withServers(s => s.createSeparator(room, label, style, cat)),
+    editSeparator: (room: string, id: string, patch: SeparatorPatch) =>
+      withServers(s => s.editSeparator(room, id, patch)),
+    deleteSeparator: (room: string, id: string) => withServers(s => s.deleteSeparator(room, id)),
     placeChannel: (room: string, ch: string, cat: string | null) =>
       withServers(s => s.placeChannel(room, ch, cat)),
     setCategoryOverwrite: (

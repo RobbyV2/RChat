@@ -67,6 +67,7 @@ import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invi
 import { ProfileResetDialog, ServerProfileDialog } from './p2p_server_profile'
 import { ServerSettingsDialog } from './p2p_server_settings'
 import { PermsDialog } from './p2p_server_roles'
+import { P2pSeparatorDialog } from './p2p_separator_dialog'
 import { ServerInviteRows } from './p2p_server_view'
 import { CoOwnerAsks, LostDeviceDialog, RecoverDialog, TransferAsks } from './p2p_server_flows'
 import {
@@ -1052,6 +1053,15 @@ function P2pDialogsBody() {
           key={`${dialog.room}:${dialog.ch ?? dialog.cat}`}
           room={dialog.room}
           ch={dialog.ch}
+          cat={dialog.cat}
+        />
+      )
+    case 'separator':
+      return (
+        <P2pSeparatorDialog
+          key={`${dialog.room}:${dialog.id ?? 'new'}`}
+          room={dialog.room}
+          id={dialog.id}
           cat={dialog.cat}
         />
       )

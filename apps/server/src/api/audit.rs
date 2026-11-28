@@ -124,6 +124,9 @@ pub enum Action {
     CategoryUpdate,
     CategoryDelete,
     CategoryPerms,
+    SeparatorCreate,
+    SeparatorUpdate,
+    SeparatorDelete,
     ServerUpdate,
     SystemMessages,
     AccessMode,
@@ -190,6 +193,9 @@ pub const ACTIONS: &[Action] = &[
     Action::CategoryUpdate,
     Action::CategoryDelete,
     Action::CategoryPerms,
+    Action::SeparatorCreate,
+    Action::SeparatorUpdate,
+    Action::SeparatorDelete,
     Action::ServerUpdate,
     Action::SystemMessages,
     Action::AccessMode,
@@ -269,6 +275,9 @@ impl Action {
             Action::CategoryUpdate => "channel.category_update",
             Action::CategoryDelete => "channel.category_delete",
             Action::CategoryPerms => "channel.category_perms",
+            Action::SeparatorCreate => "channel.separator_create",
+            Action::SeparatorUpdate => "channel.separator_update",
+            Action::SeparatorDelete => "channel.separator_delete",
             Action::ServerUpdate => "server.update",
             Action::SystemMessages => "server.system_messages",
             Action::AccessMode => "access.mode",
@@ -334,6 +343,7 @@ pub enum TargetKind {
     Role,
     Channel,
     Category,
+    Separator,
     Message,
     Password,
     Server,
@@ -349,6 +359,7 @@ impl TargetKind {
             TargetKind::Role => "role",
             TargetKind::Channel => "channel",
             TargetKind::Category => "category",
+            TargetKind::Separator => "separator",
             TargetKind::Message => "message",
             TargetKind::Password => "password",
             TargetKind::Server => "server",
@@ -360,7 +371,7 @@ impl TargetKind {
 }
 
 /// What the action was done to: a user (`name` is the username), a role, channel or category
-/// (`id` and name at the time), a message (`id`, `name` is its author), an extra password
+/// (`id` and name at the time), a separator (`id` and label at the time), a message (`id`, `name` is its author), an extra password
 /// (`id`, `name` is its label), the server itself (`name` is its display name), a guest in
 /// voice (`name` is its voice name) or a report (`id`, never a name; no id for several reports
 /// at once).
@@ -796,11 +807,11 @@ pub(crate) async fn purge_server(db: &Db, server: &str) -> sqlx::Result<u64> {
 /// What an entry was done to.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuditTarget {
-    /// `user`, `role`, `channel`, `category`, `message`, `password`, `server`, `guest` or
-    /// `report`.
+    /// `user`, `role`, `channel`, `category`, `separator`, `message`, `password`, `server`,
+    /// `guest` or `report`.
     #[schema(example = "user")]
     pub kind: String,
-    /// Id of the role, channel, category, message, password or report; `null` for users, guests,
+    /// Id of the role, channel, category, separator, message, password or report; `null` for users, guests,
     /// the server and several reports at once.
     pub id: Option<i64>,
     /// Name at the time: the username for users, the author's username for messages, the
@@ -831,7 +842,9 @@ pub struct AuditEntry {
     /// order now decides who may moderate whom), `order_init` (the instance ranked the roles of
     /// a server that had no order; `ranked` is their number). `channel`: `create`, `update` (name, topic, slow
     /// mode, restrictions), `delete`, `perm_set`, `perm_clear`, `reorder`, `category_create`,
-    /// `category_update`, `category_delete`. `server`: `update` (name and colors),
+    /// `category_update`, `category_delete`, `separator_create`, `separator_update`,
+    /// `separator_delete` (the target is the separator by its id and label). `server`: `update`
+    /// (name and colors),
     /// `system_messages`. `access`: `mode` (password protection and the permanent password, never
     /// the password itself), `password_create`, `password_revoke`. `message`: `delete` and
     /// `attachment_remove` (of other people's messages), `pin`, `unpin`, `poll_close` and

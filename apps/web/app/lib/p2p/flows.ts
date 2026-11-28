@@ -218,6 +218,7 @@ export const actParts = (t: string, to?: string, ends = false): { act: string; w
     chcat: 'Move a channel to a category',
     upgrade: 'Move the server to a new copy',
     migrate: 'Carry the server over to a new copy',
+    chsep: 'Change a separator',
     settings: 'Change the server settings',
     about: 'Change the server description and icon',
     profile: 'Change their profile',
@@ -306,11 +307,23 @@ export const effectHolds = (
     }
     case 'category': {
       const k = typeof c.id === 'string' ? s.categories?.[c.id] : undefined
-      return c.gone === true ? !k : !!k && k.name === c.name && k.pos === c.pos
+      return c.gone === true
+        ? !k
+        : !!k && k.name === c.name && k.pos === c.pos && same(k.style ?? k.extra?.style, c.style)
     }
     case 'chcat': {
       const k = typeof c.ch === 'string' ? s.chcats?.[c.ch] : undefined
       return !!k && k.cat === (c.cat ?? null) && k.sync === c.sync
+    }
+    case 'chsep': {
+      const k = typeof c.id === 'string' ? s.separators?.[c.id] : undefined
+      return c.gone === true
+        ? !k
+        : !!k &&
+            k.label === c.label &&
+            k.pos === c.pos &&
+            k.cat === (c.cat ?? null) &&
+            same(k.style ?? k.extra?.style, c.style)
     }
     case 'settings':
       return same(s.settings, c)

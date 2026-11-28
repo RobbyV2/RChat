@@ -132,6 +132,19 @@ describe('audit sentences', () => {
     expect(peopleIn([entry({ hidden: true, actor: null })])).toEqual([])
   })
 
+  test('separator entries name the label, or say a separator without one', () => {
+    const sep = (action: string, name: string | null) =>
+      sentenceText(
+        entry({
+          action,
+          target: { kind: 'separator', id: 4, name, user: null, staff: false, deleted: false },
+        })
+      )
+    expect(sep('channel.separator_create', 'updates')).toBe('Alice added the separator "updates"')
+    expect(sep('channel.separator_update', null)).toBe('Alice changed a separator')
+    expect(sep('channel.separator_delete', 'News')).toBe('Alice deleted the separator "News"')
+  })
+
   test('instance staff are never named', () => {
     const parts = sentence(entry({ staff: true, actor: null }))
     expect(parts[0]).toEqual({ text: 'Instance staff' })

@@ -99,6 +99,7 @@ describe('categories in the store', () => {
       version: 3,
       uncategorized: [2],
       categories: [{ id: 10, channels: [3, 1] }],
+      separators: [],
     })
     dispatch({
       type: 'layout_changed',
@@ -164,6 +165,7 @@ describe('categories in the store', () => {
       version: 3,
       uncategorized: [2],
       categories: [{ id: 10, channels: [3, 1] }],
+      separators: [],
     })
     // The old session's answer arrives late and leaves the new session's move alone.
     pending.shift()?.(json({ error: 'The channel list changed. Reload it and try again' }, 409)())
@@ -182,6 +184,41 @@ describe('categories in the store', () => {
     st().moveCategory('club', 10, 0)
     await tick()
     expect(requests.map(r => r.method)).toEqual(['PUT', 'PUT', 'PUT'])
+  })
+
+  test('separators arrive with the layout and move like channels', async () => {
+    dispatch({
+      type: 'layout_changed',
+      server: 'club',
+      layout: {
+        version: 5,
+        uncategorized: [1, 2],
+        categories: [{ id: 10, name: 'Games', style: 'line', channels: [3] }],
+        separators: [{ id: 7, label: 'News', style: 'dots', category_id: null, after: 1 }],
+      },
+    })
+    const rows = () =>
+      channelGroups(st().servers.club, true).loose.map(i =>
+        i.kind === 'channel' ? i.channel.id : `|${i.separator.label}`
+      )
+    expect(rows()).toEqual([1, '|News', 2])
+    expect(st().servers.club.categories?.[0].style).toBe('line')
+    st().moveSeparator('club', 7, 10, 0)
+    expect(rows()).toEqual([1, 2])
+    await tick()
+    expect(requests[0].body).toEqual({
+      version: 5,
+      uncategorized: [1, 2],
+      categories: [{ id: 10, channels: [3] }],
+      separators: [{ id: 7, category_id: 10, after: 0 }],
+    })
+    replies.push(json({ id: 8, label: '', style: 'line', category_id: null, after: 2 }))
+    await st().createSeparator('club', '', 'line', null)
+    expect(requests[1]).toMatchObject({
+      method: 'POST',
+      body: { label: '', style: 'line', category_id: null },
+    })
+    expect(requests[1].url).toEndWith('/servers/club/separators')
   })
 
   test('collapsed categories are kept in the account layout', () => {

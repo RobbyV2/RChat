@@ -22,7 +22,7 @@ pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 pub const SESSION_IDLE_MIN: i64 = 300;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 124] = [
+const RANGES: [(&str, i64, i64); 125] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -102,6 +102,7 @@ const RANGES: [(&str, i64, i64); 124] = [
     ("RARE_REQUESTS_PER_DAY", 0, 100_000),
     ("SERVER_CHANNELS_MAX", 1, 10_000),
     ("SERVER_CATEGORIES_MAX", 1, 1_000),
+    ("SERVER_SEPARATORS_MAX", 1, 1_000),
     ("SERVER_ROLES_MAX", 1, 10_000),
     ("CHANNEL_PINS_MAX", 1, 1_000),
     ("MESSAGE_USER_MENTIONS_MAX", 1, 400),
@@ -334,6 +335,7 @@ pub struct Limits {
     pub rare_requests_per_day: u32,
     pub server_channels_max: i64,
     pub server_categories_max: i64,
+    pub server_separators_max: i64,
     pub server_roles_max: i64,
     pub channel_pins_max: i64,
     pub message_user_mentions_max: usize,
@@ -469,6 +471,7 @@ impl Default for Limits {
             rare_requests_per_day: 100,
             server_channels_max: 500,
             server_categories_max: 100,
+            server_separators_max: 50,
             server_roles_max: 250,
             channel_pins_max: 100,
             message_user_mentions_max: 20,
@@ -773,6 +776,7 @@ impl Limits {
             rare_requests_per_day: e.num("RARE_REQUESTS_PER_DAY", d.rare_requests_per_day)?,
             server_channels_max: e.num("SERVER_CHANNELS_MAX", d.server_channels_max)?,
             server_categories_max: e.num("SERVER_CATEGORIES_MAX", d.server_categories_max)?,
+            server_separators_max: e.num("SERVER_SEPARATORS_MAX", d.server_separators_max)?,
             server_roles_max: e.num("SERVER_ROLES_MAX", d.server_roles_max)?,
             channel_pins_max: e.num("CHANNEL_PINS_MAX", d.channel_pins_max)?,
             message_user_mentions_max: e
@@ -917,6 +921,7 @@ impl Limits {
             rare_requests_per_day,
             server_channels_max,
             server_categories_max,
+            server_separators_max,
             server_roles_max,
             channel_pins_max,
             message_user_mentions_max,
@@ -1093,6 +1098,7 @@ impl Limits {
             ("RARE_REQUESTS_PER_DAY", set(rare_requests_per_day)),
             ("SERVER_CHANNELS_MAX", set(server_channels_max)),
             ("SERVER_CATEGORIES_MAX", set(server_categories_max)),
+            ("SERVER_SEPARATORS_MAX", set(server_separators_max)),
             ("SERVER_ROLES_MAX", set(server_roles_max)),
             ("CHANNEL_PINS_MAX", set(channel_pins_max)),
             ("MESSAGE_USER_MENTIONS_MAX", set(message_user_mentions_max)),
@@ -1737,12 +1743,13 @@ mod tests {
             (
                 d.server_channels_max,
                 d.server_categories_max,
+                d.server_separators_max,
                 d.server_roles_max,
                 d.channel_pins_max,
                 d.friends_max,
                 d.friend_requests_in_max,
             ),
-            (500, 100, 250, 100, 1000, 1000)
+            (500, 100, 50, 250, 100, 1000, 1000)
         );
         assert_eq!(
             (

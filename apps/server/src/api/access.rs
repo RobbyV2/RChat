@@ -1647,7 +1647,36 @@ pub(crate) async fn plain_member_perms(db: &Db, server: &str, username: &str) ->
 /// A channel category with its server, for someone who manages channels there. Unknown ids,
 /// servers the viewer can't open and viewers without Manage channels get the same 404.
 pub async fn resolve_category(db: &Db, id: i64, viewer: &User) -> Result<ServerAccess, ApiError> {
-    let server: String = sqlx::query("SELECT server FROM channel_categories WHERE id = $1")
+    channel_list_part(
+        db,
+        "SELECT server FROM channel_categories WHERE id = $1",
+        id,
+        viewer,
+    )
+    .await
+}
+
+/// A channel separator with its server, for someone who manages channels there. Unknown ids,
+/// servers the viewer can't open and viewers without Manage channels get the same 404.
+pub async fn resolve_separator(db: &Db, id: i64, viewer: &User) -> Result<ServerAccess, ApiError> {
+    channel_list_part(
+        db,
+        "SELECT server FROM channel_separators WHERE id = $1",
+        id,
+        viewer,
+    )
+    .await
+}
+
+/// The server of the part of a channel list `server_of` finds by `id`, for someone who manages
+/// channels there; every denial is the same 404.
+async fn channel_list_part(
+    db: &Db,
+    server_of: &'static str,
+    id: i64,
+    viewer: &User,
+) -> Result<ServerAccess, ApiError> {
+    let server: String = sqlx::query(server_of)
         .bind(id)
         .fetch_optional(db)
         .await?
@@ -4280,13 +4309,19 @@ mod tests {
             "INSERT INTO channel_categories(server, name, position, created_at) VALUES('vault', 'Cat', 0, 0) RETURNING id",
         )
         .await;
+        let separator = id_of(
+            &state.db,
+            "INSERT INTO channel_separators(server, label, position, created_at) VALUES('vault', 'Line', 0, 0) RETURNING id",
+        )
+        .await;
         let (client, server) = serve(&state).await;
         let viewers: [Option<&str>; 2] = [Some("bob"), None];
-        const GUARDED: [&str; 6] = [
+        const GUARDED: [&str; 7] = [
             "/servers/{name}",
             "/invites/{name}",
             "/channels/{id}",
             "/categories/{id}",
+            "/separators/{id}",
             "/messages/{id}",
             "/polls/{id}",
         ];
@@ -4302,6 +4337,7 @@ mod tests {
                 Some("servers" | "invites") => vec!["vault".into(), "ghost".into()],
                 Some("channels") => vec![f.vault_channel.to_string(), f.hidden_channel.to_string()],
                 Some("categories") => vec![category.to_string(), "999999".into()],
+                Some("separators") => vec![separator.to_string(), "999999".into()],
                 Some("messages" | "polls") => {
                     vec![f.vault_message.to_string(), f.hidden_message.to_string()]
                 }

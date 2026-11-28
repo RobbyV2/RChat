@@ -1,12 +1,12 @@
 import { openActionMenu } from '../actions/menu'
-import { channelGroups, roomGroups } from '../categories'
+import { categoryStyleOf, channelGroups, roomGroups, separatorStyleOf } from '../categories'
 import type { AccountSession } from '../client/session'
 import type { P2pApp } from '../p2p/app/runtime'
 import { viewCan } from '../p2p/roles'
 import { ownsP2pServer } from '../p2p/server/types'
 import { P } from '../p2p/state'
 import { myPerms } from '../selectors'
-import { Perm, hasPerm } from '../types'
+import { Perm, hasPerm, type CategoryStyle, type SeparatorStyle } from '../types'
 import { defineFeature, notInDms } from './feature'
 import { built, constant, type Live } from './live'
 
@@ -23,11 +23,25 @@ export interface ChannelEntry {
   connected: boolean
 }
 
+// A decorative line between the channels of a list; `key` names it to the place.
+export interface SeparatorEntry {
+  key: string
+  label: string
+  style: SeparatorStyle
+}
+
+// A row of a channel list: a channel, or a separator between channels.
+export type ListEntry =
+  { kind: 'channel'; channel: ChannelEntry } | { kind: 'separator'; separator: SeparatorEntry }
+
 export interface CategoryEntry {
   key: string
   name: string
+  style: CategoryStyle
   open: boolean
   channels: ChannelEntry[]
+  // The channels with the separators between them.
+  rows: ListEntry[]
 }
 
 export interface ChannelsState {
@@ -38,6 +52,8 @@ export interface ChannelsState {
   // Whether you may add, move and rename channels.
   canManage: boolean
   uncategorized: ChannelEntry[]
+  // The channels outside any category with the separators between them.
+  loose: ListEntry[]
   categories: CategoryEntry[]
   // What the list says with no channel to show.
   empty: string | null
@@ -50,6 +66,7 @@ export interface Channels {
   setOpen: (category: string, open: boolean) => void
   channelMenu: (key: string, x: number, y: number) => void
   categoryMenu: (key: string, x: number, y: number) => void
+  separatorMenu: (key: string, x: number, y: number) => void
 }
 
 const WAITING: ChannelsState = {
@@ -57,6 +74,7 @@ const WAITING: ChannelsState = {
   ownPlace: false,
   canManage: false,
   uncategorized: [],
+  loose: [],
   categories: [],
   empty: null,
 }
@@ -67,6 +85,12 @@ export const noChannels: Live<ChannelsState> = constant(WAITING)
 // The channels a folded category still shows.
 export const unfolded = (category: CategoryEntry) =>
   category.open ? category.channels : category.channels.filter(c => c.active || c.connected)
+
+// The rows a folded category still shows: those channels, without separators.
+export const unfoldedRows = (category: CategoryEntry) =>
+  category.open
+    ? category.rows
+    : category.rows.filter(r => r.kind === 'channel' && (r.channel.active || r.channel.connected))
 
 const hosted = (account: AccountSession, server: string): Channels => {
   const { store } = account
@@ -97,17 +121,33 @@ const hosted = (account: AccountSession, server: string): Channels => {
           active: c.id === active,
           connected: c.id === voice,
         })
+        const rows = (items: typeof groups.loose): ListEntry[] =>
+          items.map(i =>
+            i.kind === 'channel'
+              ? { kind: 'channel', channel: entry(i.channel) }
+              : {
+                  kind: 'separator',
+                  separator: {
+                    key: String(i.separator.id),
+                    label: i.separator.label,
+                    style: separatorStyleOf(i.separator.style),
+                  },
+                }
+          )
         return {
           ready: true,
           ownPlace:
             me !== null && (mine?.find(x => x.name === server)?.creator ?? detail.creator) === me,
           canManage,
           uncategorized: groups.uncategorized.map(entry),
+          loose: rows(groups.loose),
           categories: groups.categories.map(g => ({
             key: String(g.category.id),
             name: g.category.name,
+            style: categoryStyleOf(g.category.style),
             open: !shut.has(g.category.id),
             channels: g.channels.map(entry),
+            rows: rows(g.items),
           })),
           empty: null,
         }
@@ -130,6 +170,11 @@ const hosted = (account: AccountSession, server: string): Channels => {
     categoryMenu: (key, x, y) => {
       const category = detail()?.categories?.find(c => String(c.id) === key)
       if (category) openActionMenu(x, y, { kind: 'category', server, category }, undefined, account)
+    },
+    separatorMenu: (key, x, y) => {
+      const separator = detail()?.separators?.find(s => String(s.id) === key)
+      if (separator)
+        openActionMenu(x, y, { kind: 'separator', server, separator }, undefined, account)
     },
   }
 }
@@ -154,7 +199,10 @@ const peer = (app: P2pApp, room: string): Channels => {
         if (!v) return WAITING
         const canManage = viewCan(v, P.ManageChannels)
         const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
-        const groups = roomGroups({ channels: shown, categories: v.categories }, canManage)
+        const groups = roomGroups(
+          { channels: shown, categories: v.categories, separators: v.separators },
+          canManage
+        )
         const entry = (c: (typeof shown)[number]): ChannelEntry => ({
           key: c.id,
           name: c.name,
@@ -163,16 +211,32 @@ const peer = (app: P2pApp, room: string): Channels => {
           active: c.id === active,
           connected: false,
         })
+        const rows = (items: typeof groups.loose): ListEntry[] =>
+          items.map(i =>
+            i.kind === 'channel'
+              ? { kind: 'channel', channel: entry(i.channel) }
+              : {
+                  kind: 'separator',
+                  separator: {
+                    key: i.separator.id,
+                    label: i.separator.label,
+                    style: separatorStyleOf(i.separator.style),
+                  },
+                }
+          )
         return {
           ready: true,
           ownPlace: ownsP2pServer(v, me),
           canManage,
           uncategorized: groups.uncategorized.map(entry),
+          loose: rows(groups.loose),
           categories: groups.categories.map(g => ({
             key: g.category.id,
             name: g.category.name,
+            style: categoryStyleOf(g.category.style),
             open: !folded.has(g.category.id),
             channels: g.channels.map(entry),
+            rows: rows(g.items),
           })),
           empty:
             shown.length > 0
@@ -215,6 +279,12 @@ const peer = (app: P2pApp, room: string): Channels => {
       const cat = v?.categories.find(c => c.id === key)
       if (v && cat)
         openActionMenu(x, y, { kind: 'p2p_category', v, cat }, undefined, app.owner, app)
+    },
+    separatorMenu: (key, x, y) => {
+      const v = view()
+      const sep = v?.separators.find(s => s.id === key)
+      if (v && sep)
+        openActionMenu(x, y, { kind: 'p2p_separator', v, sep }, undefined, app.owner, app)
     },
   }
 }

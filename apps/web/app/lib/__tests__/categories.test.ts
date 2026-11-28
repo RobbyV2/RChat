@@ -2,20 +2,29 @@ import { describe, expect, test } from 'bun:test'
 import {
   applyLayout,
   categoryOfZone,
+  categoryStyleOf,
   channelGroups,
   groupChannels,
+  itemKey,
+  mergeChannelsAndSeparators,
   namesText,
+  orderKeys,
   subjectNames,
   roomGroups,
+  roomSeparatorStep,
+  separatorLabel,
+  separatorStyleOf,
   syncConfirmText,
   fullIndex,
   layoutOrder,
   moveCategory,
   moveChannel,
+  moveSeparator,
   orderLayout,
   zoneOf,
 } from '../categories'
-import type { Channel, ServerDetail } from '../types'
+import type { SeparatorView } from '../p2p/server/types'
+import type { Channel, Separator, ServerDetail } from '../types'
 
 const ch = (
   id: number,
@@ -82,6 +91,7 @@ describe('moves', () => {
         { id: 10, channels: [3, 2] },
         { id: 11, channels: [] },
       ],
+      separators: [],
     })
     expect(moveChannel(order, 4, 10, 1).categories[0].channels).toEqual([3, 4, 2])
     expect(moveChannel(order, 4, 10, 1).uncategorized).toEqual([1])
@@ -148,8 +158,8 @@ describe('groups of P2P rooms and the sync texts', () => {
           chan('d', 0, 'k1'),
         ],
         categories: [
-          { id: 'k2', name: 'Later', pos: 5, over: {} },
-          { id: 'k1', name: 'Team', pos: 1, over: {} },
+          { id: 'k2', name: 'Later', pos: 5, style: 'default', over: {} },
+          { id: 'k1', name: 'Team', pos: 1, style: 'default', over: {} },
         ],
       },
       false
@@ -197,5 +207,148 @@ describe('groups of P2P rooms and the sync texts', () => {
     expect(syncConfirmText('Team', '#plans', ['Mods'])).toBe(
       'Syncing with Team lets Mods see or send in #plans.'
     )
+  })
+})
+
+const sep = (id: number, after: number, category_id: number | null = null): Separator => ({
+  id,
+  label: `s${id}`,
+  style: 'dots',
+  category_id,
+  after,
+})
+
+describe('separators', () => {
+  test('a list puts each separator below the first `after` channels, in its given order', () => {
+    const items = mergeChannelsAndSeparators(
+      ['a', 'b'],
+      [
+        { id: 1, after: 2 },
+        { id: 2, after: 0 },
+        { id: 3, after: 9 },
+        { id: 4, after: 0 },
+        { id: 5, after: -1 },
+      ]
+    )
+    expect(items.map(i => (i.kind === 'channel' ? i.channel : i.separator.id))).toEqual([
+      2,
+      4,
+      5,
+      'a',
+      'b',
+      1,
+      3,
+    ])
+    expect(mergeChannelsAndSeparators([], [{ after: 3 }])).toHaveLength(1)
+  })
+
+  test('hosted separators group with their lists and hide with an empty category', () => {
+    const d = detail({ separators: [sep(7, 1, 10), sep(8, 0), sep(9, 0, 11), sep(6, 2, 99)] })
+    const all = channelGroups(d, true)
+    expect(all.loose.map(itemKey)).toEqual(['s8', 'c1', 'c4', 's6'])
+    expect(all.categories.map(g => g.items.map(itemKey))).toEqual([['c3', 's7', 'c2'], ['s9']])
+    const seen = channelGroups(d, false)
+    expect(seen.categories.map(g => g.items.map(itemKey))).toEqual([['c3', 's7', 'c2']])
+  })
+
+  test('separators move with channels, across lists and keep their place under a channel move', () => {
+    const d = detail({ separators: [sep(7, 1, 10), sep(8, 0)] })
+    const order = layoutOrder(d)
+    expect(order.separators).toEqual([
+      { id: 8, category_id: null, after: 0 },
+      { id: 7, category_id: 10, after: 1 },
+    ])
+    expect(orderKeys(order, 10)).toEqual(['c3', 's7', 'c2'])
+    const moved = moveChannel(order, 3, 10, 2)
+    expect(orderKeys(moved, 10)).toEqual(['s7', 'c2', 'c3'])
+    const across = moveSeparator(order, 7, null, 1)
+    expect(orderKeys(across, null)).toEqual(['s8', 's7', 'c1', 'c4'])
+    expect(orderKeys(across, 10)).toEqual(['c3', 'c2'])
+    expect(across.separators).toEqual([
+      { id: 8, category_id: null, after: 0 },
+      { id: 7, category_id: null, after: 0 },
+    ])
+    expect(moveSeparator(order, 7, 99, 0)).toBe(order)
+    const layout = orderLayout(d, across)
+    expect(layout.separators?.map(s => [s.id, s.label, s.category_id, s.after])).toEqual([
+      [8, 's8', null, 0],
+      [7, 's7', null, 0],
+    ])
+    expect(layoutOrder(applyLayout(d, layout))).toEqual(across)
+  })
+
+  test('a drop among shown rows maps to rows, channels and separators alike', () => {
+    expect(fullIndex(['c1', 's2', 'c3'], ['c1', 'c3'], 's2', 1)).toBe(1)
+    expect(fullIndex(['c1', 's2', 'c3'], ['c3'], 'c1', 0)).toBe(1)
+  })
+
+  test('an older server without separators keeps the cached ones, and styles parse', () => {
+    const d = detail({ separators: [sep(8, 0)] })
+    const next = applyLayout(d, { version: 9, uncategorized: [1], categories: [] })
+    expect(next.separators).toEqual(d.separators)
+    expect(
+      applyLayout(d, {
+        version: 9,
+        uncategorized: [1],
+        categories: [{ id: 10, name: 'Fun', style: 'dots', channels: [] }],
+      }).categories
+    ).toEqual([{ id: 10, name: 'Fun', position: 0, style: 'dots' }])
+    expect([categoryStyleOf('line'), categoryStyleOf('fancy'), categoryStyleOf(undefined)]).toEqual(
+      ['line', 'default', 'default']
+    )
+    expect([separatorStyleOf('plain'), separatorStyleOf(3)]).toEqual(['plain', 'dots'])
+  })
+
+  test('labels keep symbols and case, and refuse what does not fit', () => {
+    expect(separatorLabel('  \u27a4 Updates \u2605  ')).toBe('\u27a4 Updates \u2605')
+    expect(separatorLabel('')).toBe('')
+    expect(separatorLabel('\u2605'.repeat(100))).toBe('\u2605'.repeat(100))
+    expect(separatorLabel('x'.repeat(101))).toBeNull()
+    expect(separatorLabel('two\nlines')).toBeNull()
+  })
+
+  test('room separators sit below the channels placed at or above them, and step between rows', () => {
+    const chan = (id: string, pos: number, cat: string | null) =>
+      ({ id, pos, cat, name: id, kind: 'text' }) as never
+    const rsep = (id: string, pos: number, cat: string | null): SeparatorView => ({
+      id,
+      label: id,
+      style: 'line',
+      cat,
+      pos,
+    })
+    const groups = roomGroups(
+      {
+        channels: [chan('a', 0, null), chan('b', 2, null), chan('c', 1, 'k1')],
+        categories: [{ id: 'k1', name: 'Team', pos: 0, style: 'dots', over: {} }],
+        separators: [
+          rsep('y', 2, null),
+          rsep('x', 0.5, null),
+          rsep('z', 1, 'k1'),
+          rsep('w', 9, 'gone'),
+        ],
+      },
+      true
+    )
+    const keys = (items: typeof groups.loose) =>
+      items.map(i => (i.kind === 'channel' ? i.channel.id : `|${i.separator.id}`))
+    expect(keys(groups.loose)).toEqual(['a', '|x', 'b', '|y', '|w'])
+    expect(keys(groups.categories[0].items)).toEqual(['c', '|z'])
+    expect(roomSeparatorStep(groups.loose, 'x', -1)).toBe(-1)
+    expect(roomSeparatorStep(groups.loose, 'x', 1)).toBe(2)
+    expect(roomSeparatorStep(groups.loose, 'y', 1)).toBe(10)
+    expect(roomSeparatorStep(groups.loose, 'w', 1)).toBeNull()
+    expect(roomSeparatorStep(groups.categories[0].items, 'z', -1)).toBe(0)
+    expect(roomSeparatorStep(groups.loose, 'q', 1)).toBeNull()
+    const hidden = roomGroups(
+      {
+        channels: [chan('a', 0, null)],
+        categories: [{ id: 'k1', name: 'Team', pos: 0, style: 'dots', over: {} }],
+        separators: [rsep('z', 1, 'k1')],
+      },
+      false
+    )
+    expect(hidden.categories).toEqual([])
+    expect(keys(hidden.loose)).toEqual(['a'])
   })
 })

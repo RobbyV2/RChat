@@ -163,6 +163,7 @@ const server = (over: Partial<ServerView> = {}): ServerView =>
     perms: 0,
     rank: [Infinity, ''],
     categories: [],
+    separators: [],
     roles: ROLES,
     channels: [TEXT, VOICE],
     members: Object.values(MEMBERS),
@@ -286,6 +287,9 @@ const recorder = () => {
     'deleteRole',
     'unlockProfile',
     'deleteCategory',
+    'editCategory',
+    'editSeparator',
+    'deleteSeparator',
     'placeChannel',
     'syncWidens',
     'syncChannel',
@@ -363,6 +367,7 @@ describe("a P2P server's menu (rail tile and header)", () => {
       'Server Settings',
       'Edit Server Profile',
       'Create Category',
+      'Create Separator',
       'Copy Server ID',
       'Leave Server',
     ])
@@ -1318,7 +1323,7 @@ test('P2P chat rows stay out of the palette', () => {
 })
 
 describe('categories', () => {
-  const CAT = { id: 'k1', name: 'Team', pos: 0, over: {} }
+  const CAT = { id: 'k1', name: 'Team', pos: 0, style: 'default' as const, over: {} }
   const onCategory = (v: ServerView): Target => ({ kind: 'p2p_category', v, cat: CAT })
   const IN = { ...TEXT, cat: 'k1', sync: false }
 
@@ -1330,7 +1335,9 @@ describe('categories', () => {
     const v = server({ perms: P.ManageChannels, categories: [CAT] })
     expect(labels(onCategory(v))).toEqual([
       'Create Channel',
+      'Create Separator',
       'Rename Category',
+      'Category Style',
       'Permissions',
       'Delete Category',
     ])
@@ -1385,5 +1392,71 @@ describe('categories', () => {
       ['server.syncChannel', SRV, TEXT.id],
     ])
     widens = []
+  })
+})
+
+describe('separators', () => {
+  const CAT = { id: 'k1', name: 'Team', pos: 0, style: 'dots' as const, over: {} }
+  const SEP = { id: 'p1', label: 'News', style: 'dots' as const, cat: null, pos: 0.5 }
+  const onSep = (v: ServerView, sep = SEP): Target => ({ kind: 'p2p_separator', v, sep })
+
+  test('only those who manage channels get the separator rows; a row moves only where it can', () => {
+    state()
+    expect(labels(onSep(server({ separators: [SEP] })))).toEqual([])
+    const v = server({ perms: P.ManageChannels, categories: [CAT], separators: [SEP] })
+    expect(labels(onSep(v))).toEqual([
+      'Edit Separator',
+      'Move Up',
+      'Move Down',
+      'Move to Category',
+      'Delete Separator',
+    ])
+    const last = { ...SEP, pos: 9 }
+    expect(labels(onSep(server({ perms: P.ManageChannels, separators: [last] }), last))).toEqual([
+      'Edit Separator',
+      'Move Up',
+      'Delete Separator',
+    ])
+    expect(labels({ kind: 'p2p_category', v, cat: CAT })).toContain('Create Separator')
+    expect(
+      row({ kind: 'p2p_category', v, cat: CAT }, 'Category Style')!.submenu!.map(i => [
+        i.label,
+        i.checked,
+      ])
+    ).toEqual([
+      ['Plain caps', false],
+      ['Dotted line', true],
+      ['Solid line', false],
+    ])
+  })
+
+  test('the rows open the form, move between neighbours, change the style and delete after a confirm', async () => {
+    state()
+    const v = server({ perms: P.ManageChannels, categories: [CAT], separators: [SEP] })
+    expect(await run(row(onSep(v), 'Edit Separator'))).toEqual([
+      ['p2p.openDialog', { kind: 'separator', room: SRV, id: 'p1' }],
+    ])
+    expect(await run(row({ kind: 'p2p_category', v, cat: CAT }, 'Create Separator'))).toEqual([
+      ['p2p.openDialog', { kind: 'separator', room: SRV, cat: 'k1' }],
+    ])
+    expect(await run(row(onSep(v), 'Move Up'))).toEqual([
+      ['server.editSeparator', SRV, 'p1', { pos: -1 }],
+    ])
+    expect(await run(row(onSep(v), 'Move Down'))).toEqual([
+      ['server.editSeparator', SRV, 'p1', { pos: 2 }],
+    ])
+    const team = row(onSep(v), 'Move to Category')!.submenu!.find(i => i.label === 'Team')
+    expect(await run(team)).toEqual([['server.editSeparator', SRV, 'p1', { cat: 'k1' }]])
+    const line = row({ kind: 'p2p_category', v, cat: CAT }, 'Category Style')!.submenu![2]
+    expect(await run(line)).toEqual([['server.editCategory', SRV, 'k1', { style: 'line' }]])
+    expect(await run(row(onSep(v), 'Delete Separator'))).toEqual([
+      [
+        'confirm',
+        'Delete Separator',
+        'Delete the separator News? The channels around it stay.',
+        'Delete',
+      ],
+      ['server.deleteSeparator', SRV, 'p1'],
+    ])
   })
 })

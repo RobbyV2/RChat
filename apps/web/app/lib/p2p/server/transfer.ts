@@ -19,6 +19,7 @@ import type { Message } from '../frames'
 import { keyId } from '../keys'
 import type { Session } from '../session'
 import { channelsOf, knownChannel, knownSettings, membershipOf, EVERYONE, nameOf } from '../state'
+import { separatorContent } from './categories'
 import type { ServerCtx } from './context'
 import { SYNC_TEXT, OLD_GONE_TEXT, ServerError, type Migrated } from './types'
 import { type Rt } from './rt'
@@ -343,6 +344,7 @@ export async function carryOver(cx: ServerCtx, to: string) {
               id,
               name: cat.name,
               pos: cat.pos,
+              ...(cat.style ? { style: cat.style } : {}),
             }))
         },
       ])
@@ -352,6 +354,14 @@ export async function carryOver(cx: ServerCtx, to: string) {
         async () => {
           if (!cur().chcats?.[ch])
             await cx.emit(to, 'chcat', () => ({ ...cc.extra, ch, cat: cc.cat, sync: cc.sync }))
+        },
+      ])
+    // The separators of the channel list, with their ids.
+    for (const [id, sep] of Object.entries(s.separators ?? {}))
+      steps.push([
+        `p:${id}`,
+        async () => {
+          if (!cur().separators?.[id]) await cx.emit(to, 'chsep', () => separatorContent(id, sep))
         },
       ])
     if (s.settings)

@@ -3,7 +3,14 @@
 
 import { viewingActions } from './viewing'
 import { channelTarget } from '../viewing'
-import { channelGroups } from '../categories'
+import {
+  CATEGORY_STYLES,
+  STYLE_NAMES,
+  categoryStyleOf,
+  channelGroups,
+  layoutOrder,
+  orderKeys,
+} from '../categories'
 import { sharing } from '../platform'
 import { canDeleteChannel } from '../rules'
 import { myPerms } from '../store'
@@ -37,8 +44,49 @@ const collapse = (ctx: ActionCtx, shut: boolean) => {
     ctx.acct.store.getState().setCategoriesCollapsed(at.server, categoryIds(ctx, at.server), shut)
 }
 
+const separatorOf = ({ target }: ActionCtx) => (target.kind === 'separator' ? target : null)
+
+const managedSeparator = (ctx: ActionCtx) => {
+  const at = separatorOf(ctx)
+  return at && manages(ctx, at.server) ? at : null
+}
+
+// Where a new separator goes: the end of the category acted on, else of the channels without
+// one.
+const newSeparatorAt = (ctx: ActionCtx) => {
+  const t = ctx.target
+  const at =
+    t.kind === 'category'
+      ? { server: t.server, category: t.category.id }
+      : t.kind === 'server'
+        ? { server: t.server, category: null }
+        : null
+  return at && manages(ctx, at.server) ? at : null
+}
+
+// The row a separator moves to one step up or down its list, null at the end.
+const stepOf = (ctx: ActionCtx, step: -1 | 1) => {
+  const at = managedSeparator(ctx)
+  const detail = at && ctx.s.servers[at.server]
+  if (!at || !detail) return null
+  const keys = orderKeys(layoutOrder(detail), at.separator.category_id)
+  const from = keys.indexOf(`s${at.separator.id}`)
+  const to = from + step
+  return from < 0 || to < 0 || to >= keys.length ? null : to
+}
+
+const moveStep = (step: -1 | 1) => (ctx: ActionCtx) => {
+  const at = separatorOf(ctx)
+  const to = stepOf(ctx, step)
+  if (at && to !== null)
+    ctx.acct.store
+      .getState()
+      .moveSeparator(at.server, at.separator.id, at.separator.category_id, to)
+}
+
 const onChannel = { scope: 'channel', targets: ['channel'] } as const
 const onCategory = { scope: 'channel', targets: ['category'] } as const
+const onSeparator = { scope: 'channel', targets: ['separator'] } as const
 
 export const channelActions: Action[] = [
   ...viewingActions(
@@ -226,6 +274,149 @@ export const channelActions: Action[] = [
         ctx.acct.store
           .getState()
           .openDialog({ kind: 'category', server: at.server, id: at.category.id })
+    },
+  },
+  {
+    id: 'category_style',
+    title: 'Category style',
+    ...onCategory,
+    order: 112,
+    args: [
+      {
+        kind: 'choice',
+        name: 'style',
+        prompt: 'Style',
+        choices: ctx =>
+          CATEGORY_STYLES.map(value => ({
+            value,
+            label: STYLE_NAMES[value],
+            radio: true,
+            checked: categoryStyleOf(categoryOf(ctx)?.category.style) === value,
+          })),
+      },
+    ],
+    available: ctx => {
+      const at = categoryOf(ctx)
+      return at !== null && manages(ctx, at.server)
+    },
+    run: (ctx, { style }) => {
+      const at = categoryOf(ctx)
+      if (at && style !== undefined)
+        void ctx.acct.store
+          .getState()
+          .renameCategory(at.category.id, at.category.name, categoryStyleOf(style))
+    },
+  },
+  {
+    id: 'channel_separator_create',
+    title: 'Create separator',
+    scope: 'channel',
+    targets: ['server', 'category'],
+    orderFor: ctx => (ctx.target.kind === 'category' ? 105 : 210),
+    available: ctx => newSeparatorAt(ctx) !== null,
+    run: ctx => {
+      const at = newSeparatorAt(ctx)
+      if (!at) return
+      if (at.category !== null)
+        ctx.acct.store.getState().setCategoriesCollapsed(at.server, [at.category], false)
+      ctx.acct.store
+        .getState()
+        .openDialog({ kind: 'separator', server: at.server, category: at.category })
+    },
+  },
+  {
+    id: 'channel_separator_edit',
+    title: 'Edit separator',
+    ...onSeparator,
+    order: 100,
+    available: ctx => managedSeparator(ctx) !== null,
+    run: ctx => {
+      const at = managedSeparator(ctx)
+      if (at)
+        ctx.acct.store
+          .getState()
+          .openDialog({ kind: 'separator', server: at.server, id: at.separator.id })
+    },
+  },
+  {
+    id: 'channel_separator_move_up',
+    title: 'Move up',
+    ...onSeparator,
+    order: 110,
+    available: ctx => stepOf(ctx, -1) !== null,
+    run: moveStep(-1),
+  },
+  {
+    id: 'channel_separator_move_down',
+    title: 'Move down',
+    ...onSeparator,
+    order: 111,
+    available: ctx => stepOf(ctx, 1) !== null,
+    run: moveStep(1),
+  },
+  {
+    id: 'channel_separator_move_category',
+    title: 'Move to category',
+    ...onSeparator,
+    order: 112,
+    args: [
+      {
+        kind: 'choice',
+        name: 'cat',
+        prompt: 'Category',
+        choices: ctx => {
+          const at = managedSeparator(ctx)
+          if (!at) return []
+          const now = at.separator.category_id
+          return [
+            { value: '', label: 'No category', radio: true, checked: now === null },
+            ...(ctx.s.servers[at.server]?.categories ?? []).map(c => ({
+              value: String(c.id),
+              label: c.name,
+              radio: true,
+              checked: now === c.id,
+            })),
+          ]
+        },
+      },
+    ],
+    available: ctx => {
+      const at = managedSeparator(ctx)
+      return !!at && (ctx.s.servers[at.server]?.categories?.length ?? 0) > 0
+    },
+    run: (ctx, { cat }) => {
+      const at = managedSeparator(ctx)
+      const detail = at && ctx.s.servers[at.server]
+      const to = cat ? Number(cat) : null
+      if (at && detail && cat !== undefined && to !== at.separator.category_id)
+        ctx.acct.store
+          .getState()
+          .moveSeparator(at.server, at.separator.id, to, orderKeys(layoutOrder(detail), to).length)
+    },
+  },
+  {
+    id: 'channel_separator_delete',
+    title: 'Delete separator',
+    ...onSeparator,
+    order: 120,
+    danger: true,
+    args: [
+      {
+        kind: 'confirm',
+        title: 'Delete separator',
+        body: ctx => {
+          const label = separatorOf(ctx)?.separator.label
+          return label
+            ? `Delete the separator ${label}? The channels around it stay.`
+            : 'Delete this separator? The channels around it stay.'
+        },
+        confirm: 'Delete',
+      },
+    ],
+    available: ctx => managedSeparator(ctx) !== null,
+    run: ctx => {
+      const at = managedSeparator(ctx)
+      if (at) void ctx.acct.store.getState().deleteSeparator(at.separator.id)
     },
   },
   {

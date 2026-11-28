@@ -178,6 +178,7 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   rank: [Infinity, ''],
   roles: [],
   categories: [],
+  separators: [],
   everyone: 0,
   history: 'shared',
   profiles: 'all',

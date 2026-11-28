@@ -140,16 +140,36 @@ export interface Channel {
   my_perms?: number
 }
 
+// How a category header is drawn: small capitals, or the name as written with a dotted or
+// solid line after it.
+export type CategoryStyle = 'default' | 'dots' | 'line'
+// How a separator line is drawn after its label: dotted, solid, or no line.
+export type SeparatorStyle = 'dots' | 'line' | 'plain'
+
 export interface Category {
   id: number
   name: string
   position: number
+  // Absent on older servers: default.
+  style?: CategoryStyle
+}
+
+// A decorative line between channels, with an optional label. `after`: the channels of its
+// list (its category's, or those without one) above it that the reader sees.
+export interface Separator {
+  id: number
+  label: string
+  style: SeparatorStyle
+  category_id: number | null
+  after: number
 }
 
 export interface ChannelLayout {
   version: number
   uncategorized: number[]
-  categories: { id: number; name: string; channels: number[] }[]
+  categories: { id: number; name: string; style?: CategoryStyle; channels: number[] }[]
+  // Absent on older servers, which have none.
+  separators?: Separator[]
 }
 
 export interface Role {
@@ -356,6 +376,7 @@ export interface ServerDetail {
   seal?: StoredSeal
   channels: Channel[]
   categories?: Category[]
+  separators?: Separator[]
   layout_version?: number
   read_only?: number[]
   roles: Role[]

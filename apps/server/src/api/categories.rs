@@ -13,8 +13,8 @@ use crate::api::access::{Proof, resolve_category, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::servers::check_name;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, Category, ChannelLayout, LayoutCategory, OkResp,
-    ProfanityTarget, bad, ok,
+    ApiError, ApiErrorBody, Authed, Category, CategoryStyle, ChannelLayout, LayoutCategory, OkResp,
+    ProfanityTarget, Separator, SeparatorStyle, bad, ok,
 };
 use crate::db::{Db, now};
 use crate::limits::Limits;
@@ -23,6 +23,9 @@ use crate::ws::WsEvent;
 
 const STALE: &str = "The channel list changed. Reload it and try again";
 
+/// The place of a new channel or separator: after everything listed in its server.
+pub(crate) const NEXT_POSITION: &str = "(SELECT COALESCE(MAX(p) + 1, 0) FROM (SELECT position AS p FROM channels WHERE server = $1 UNION ALL SELECT position AS p FROM channel_separators WHERE server = $1) AS listed)";
+
 /// Request body for creating or renaming a channel category.
 #[derive(Deserialize, ToSchema)]
 pub struct CategoryReq {
@@ -30,6 +33,23 @@ pub struct CategoryReq {
     /// characters and must pass the category-name profanity filter. Names may repeat.
     #[schema(example = "Games")]
     name: String,
+    /// How its header is drawn. Leave it out to keep the current style (`default` for a new
+    /// category).
+    #[serde(default)]
+    style: Option<CategoryStyle>,
+}
+
+/// Where a separator goes in a new layout.
+#[derive(Deserialize, ToSchema)]
+pub struct SeparatorPlace {
+    /// Separator id.
+    id: i64,
+    /// Category to list it in; `null` lists it among the channels without one.
+    #[serde(default)]
+    category_id: Option<i64>,
+    /// How many channels of that list go above it. Separators with the same value keep the
+    /// order they are sent in.
+    after: i64,
 }
 
 /// A category and its channels in a new layout.
@@ -52,6 +72,10 @@ pub struct LayoutReq {
     uncategorized: Vec<i64>,
     /// Categories, top first, with their channels.
     categories: Vec<CategoryOrder>,
+    /// Where each separator goes, every separator of the server exactly once, top first. Leave
+    /// it out to keep each separator in its list after as many channels as before.
+    #[serde(default)]
+    separators: Option<Vec<SeparatorPlace>>,
 }
 
 fn conflict() -> ApiError {
@@ -60,7 +84,7 @@ fn conflict() -> ApiError {
 
 pub(crate) async fn server_categories(db: &Db, server: &str) -> Result<Vec<Category>, ApiError> {
     let rows = sqlx::query(
-        "SELECT id, name, position FROM channel_categories WHERE server = $1 ORDER BY position, id",
+        "SELECT id, name, position, style FROM channel_categories WHERE server = $1 ORDER BY position, id",
     )
     .bind(server)
     .fetch_all(db)
@@ -71,6 +95,7 @@ pub(crate) async fn server_categories(db: &Db, server: &str) -> Result<Vec<Categ
             id: r.try_get(0)?,
             name: r.try_get(1)?,
             position: r.try_get(2)?,
+            style: CategoryStyle::stored(&r.try_get::<String, _>(3)?),
         });
     }
     Ok(out)
@@ -88,8 +113,9 @@ pub(crate) async fn layout_version(db: &Db, server: &str) -> Result<i64, ApiErro
     )
 }
 
-/// The full layout of `server` as stored, `None` when the server is gone. Channels whose
-/// category no longer exists count as uncategorized.
+/// The full layout of `server` as stored, `None` when the server is gone. Channels and
+/// separators whose category no longer exists count as uncategorized. Channels and separators
+/// share one order: a separator sits below the channels of its list placed at or above it.
 pub(crate) async fn load_layout(
     conn: &mut AnyConnection,
     server: &str,
@@ -103,7 +129,7 @@ pub(crate) async fn load_layout(
     };
     let version: i64 = row.try_get(0)?;
     let cats = sqlx::query(
-        "SELECT id, name FROM channel_categories WHERE server = $1 ORDER BY position, id",
+        "SELECT id, name, style FROM channel_categories WHERE server = $1 ORDER BY position, id",
     )
     .bind(server)
     .fetch_all(&mut *conn)
@@ -113,32 +139,57 @@ pub(crate) async fn load_layout(
         categories.push(LayoutCategory {
             id: r.try_get(0)?,
             name: r.try_get(1)?,
+            style: CategoryStyle::stored(&r.try_get::<String, _>(2)?),
             channels: Vec::new(),
         });
     }
     let at: HashMap<i64, usize> = categories
         .iter()
         .enumerate()
-        .map(|(i, c)| (c.id, i))
+        .map(|(i, c)| (c.id, i + 1))
         .collect();
-    let rows =
-        sqlx::query("SELECT id, category_id FROM channels WHERE server = $1 ORDER BY position, id")
-            .bind(server)
-            .fetch_all(&mut *conn)
-            .await?;
+    let rows = sqlx::query(
+        "SELECT id, category_id, position FROM channels WHERE server = $1 ORDER BY position, id",
+    )
+    .bind(server)
+    .fetch_all(&mut *conn)
+    .await?;
     let mut uncategorized = Vec::new();
+    let mut spots: Vec<Vec<i64>> = vec![Vec::new(); categories.len() + 1];
     for r in &rows {
         let id: i64 = r.try_get(0)?;
         let category: Option<i64> = r.try_get(1)?;
-        match category.and_then(|c| at.get(&c)) {
-            Some(i) => categories[*i].channels.push(id),
-            None => uncategorized.push(id),
+        let group = category.and_then(|c| at.get(&c).copied()).unwrap_or(0);
+        match group {
+            0 => uncategorized.push(id),
+            i => categories[i - 1].channels.push(id),
         }
+        spots[group].push(r.try_get(2)?);
+    }
+    let seps = sqlx::query(
+        "SELECT id, category_id, label, style, position FROM channel_separators WHERE server = $1 ORDER BY position, id",
+    )
+    .bind(server)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut placed: Vec<Vec<Separator>> = vec![Vec::new(); categories.len() + 1];
+    for r in &seps {
+        let category: Option<i64> = r.try_get(1)?;
+        let group = category.and_then(|c| at.get(&c).copied()).unwrap_or(0);
+        let position: i64 = r.try_get(4)?;
+        placed[group].push(Separator {
+            id: r.try_get(0)?,
+            label: r.try_get(2)?,
+            style: SeparatorStyle::stored(&r.try_get::<String, _>(3)?),
+            category_id: (group > 0).then(|| categories[group - 1].id),
+            after: spots[group].partition_point(|p| *p <= position) as i64,
+        });
     }
     Ok(Some(ChannelLayout {
         version,
         uncategorized,
         categories,
+        separators: placed.into_iter().flatten().collect(),
     }))
 }
 
@@ -200,8 +251,53 @@ pub(crate) async fn bump(
     Ok(done.rows_affected() == 1)
 }
 
+/// A channel or a separator in a list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Item {
+    Channel(i64),
+    Separator(i64),
+}
+
+/// The channels and separators of `layout` in list order, each with its category.
+fn items(layout: &ChannelLayout) -> Vec<(Item, Option<i64>)> {
+    let ChannelLayout {
+        version: _,
+        uncategorized,
+        categories,
+        separators,
+    } = layout;
+    let known: HashSet<i64> = categories.iter().map(|c| c.id).collect();
+    let groups = std::iter::once((None, uncategorized))
+        .chain(categories.iter().map(|c| (Some(c.id), &c.channels)));
+    let mut out = Vec::new();
+    for (category, channels) in groups {
+        let mut seps: Vec<&Separator> = separators
+            .iter()
+            .filter(|s| s.category_id.filter(|c| known.contains(c)) == category)
+            .collect();
+        seps.sort_by_key(|s| s.after.clamp(0, channels.len() as i64));
+        let mut seps = seps.into_iter().peekable();
+        for (k, channel) in channels
+            .iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .enumerate()
+        {
+            while let Some(sep) =
+                seps.next_if(|s| s.after.clamp(0, channels.len() as i64) <= k as i64)
+            {
+                out.push((Item::Separator(sep.id), category));
+            }
+            if let Some(id) = channel {
+                out.push((Item::Channel(*id), category));
+            }
+        }
+    }
+    out
+}
+
 /// Stores `layout` as the order of `server`: category positions follow `categories`, channel
-/// positions run through the whole list. Rows that already match are left alone.
+/// and separator positions run through the whole list. Rows that already match are left alone.
 pub(crate) async fn write_layout(
     conn: &mut AnyConnection,
     server: &str,
@@ -236,30 +332,109 @@ pub(crate) async fn write_layout(
             (r.try_get::<Option<i64>, _>(1)?, r.try_get::<i64, _>(2)?),
         );
     }
-    let mut places: Vec<(i64, Option<i64>)> =
-        layout.uncategorized.iter().map(|id| (*id, None)).collect();
-    for c in &layout.categories {
-        places.extend(c.channels.iter().map(|id| (*id, Some(c.id))));
+    let rows =
+        sqlx::query("SELECT id, category_id, position FROM channel_separators WHERE server = $1")
+            .bind(server)
+            .fetch_all(&mut *conn)
+            .await?;
+    let mut sat = HashMap::new();
+    for r in &rows {
+        sat.insert(
+            r.try_get::<i64, _>(0)?,
+            (r.try_get::<Option<i64>, _>(1)?, r.try_get::<i64, _>(2)?),
+        );
     }
-    for (pos, (id, category)) in places.into_iter().enumerate() {
+    for (pos, (item, category)) in items(layout).into_iter().enumerate() {
         let pos = pos as i64;
-        let moved = was.get(&id).is_some_and(|(had, _)| *had != category);
-        if was.get(&id) != Some(&(category, pos)) {
-            let sql = match moved {
-                true => {
-                    "UPDATE channels SET category_id = $1, position = $2, perm_sync = 0 WHERE id = $3"
+        let sql = match item {
+            Item::Channel(id) if was.get(&id) != Some(&(category, pos)) => {
+                match was.get(&id).is_some_and(|(had, _)| *had != category) {
+                    true => {
+                        "UPDATE channels SET category_id = $1, position = $2, perm_sync = 0 WHERE id = $3"
+                    }
+                    false => "UPDATE channels SET category_id = $1, position = $2 WHERE id = $3",
                 }
-                false => "UPDATE channels SET category_id = $1, position = $2 WHERE id = $3",
-            };
-            sqlx::query(sql)
-                .bind(category)
-                .bind(pos)
-                .bind(id)
-                .execute(&mut *conn)
-                .await?;
-        }
+            }
+            Item::Separator(id) if sat.get(&id) != Some(&(category, pos)) => {
+                "UPDATE channel_separators SET category_id = $1, position = $2 WHERE id = $3"
+            }
+            Item::Channel(_) | Item::Separator(_) => continue,
+        };
+        let (Item::Channel(id) | Item::Separator(id)) = item;
+        sqlx::query(sql)
+            .bind(category)
+            .bind(pos)
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
     }
     Ok(())
+}
+
+/// The part of `layout` someone sees: only the channels `visible` accepts, only the categories
+/// holding one of them unless they `manage` channels, and the separators of the lists left,
+/// each after the seen channels above it. Someone who doesn't manage channels gets the version
+/// of what they see (`seen_version`).
+pub(crate) fn seen_part(
+    layout: &ChannelLayout,
+    visible: impl Fn(i64) -> bool,
+    manages: bool,
+) -> ChannelLayout {
+    let ChannelLayout {
+        version,
+        uncategorized,
+        categories,
+        separators,
+    } = layout;
+    let shown =
+        |list: &[i64]| -> Vec<i64> { list.iter().copied().filter(|c| visible(*c)).collect() };
+    let kept: Vec<LayoutCategory> = categories
+        .iter()
+        .map(
+            |LayoutCategory {
+                 id,
+                 name,
+                 style,
+                 channels,
+             }| LayoutCategory {
+                id: *id,
+                name: name.clone(),
+                style: *style,
+                channels: shown(channels),
+            },
+        )
+        .filter(|c| manages || !c.channels.is_empty())
+        .collect();
+    let lists: HashMap<i64, &Vec<i64>> = categories.iter().map(|c| (c.id, &c.channels)).collect();
+    let listed: HashSet<i64> = kept.iter().map(|c| c.id).collect();
+    let separators = separators
+        .iter()
+        .filter_map(|sep| {
+            let list = match sep.category_id {
+                Some(c) if lists.contains_key(&c) => listed.contains(&c).then(|| lists[&c])?,
+                Some(_) | None => uncategorized,
+            };
+            let after = list
+                .iter()
+                .take(sep.after.max(0) as usize)
+                .filter(|c| visible(**c))
+                .count() as i64;
+            Some(Separator {
+                after,
+                ..sep.clone()
+            })
+        })
+        .collect();
+    let mut seen = ChannelLayout {
+        version: *version,
+        uncategorized: shown(uncategorized),
+        categories: kept,
+        separators,
+    };
+    if !manages {
+        seen.version = seen_version(&seen);
+    }
+    seen
 }
 
 /// Emits `layout_changed`. With `created`, only connections that can view that new channel get
@@ -290,21 +465,47 @@ pub(crate) fn seen_version(seen: &ChannelLayout) -> i64 {
         version: _,
         uncategorized,
         categories,
+        separators,
     } = seen;
     let mut hash = Sha256::new();
+    let text = |hash: &mut Sha256, text: &str| {
+        hash.update((text.len() as u64).to_be_bytes());
+        hash.update(text.as_bytes());
+    };
     hash.update(b"rchat-layout\0");
     hash.update((uncategorized.len() as u64).to_be_bytes());
     for id in uncategorized {
         hash.update(id.to_be_bytes());
     }
-    for LayoutCategory { id, name, channels } in categories {
+    for LayoutCategory {
+        id,
+        name,
+        style,
+        channels,
+    } in categories
+    {
         hash.update(id.to_be_bytes());
-        hash.update((name.len() as u64).to_be_bytes());
-        hash.update(name.as_bytes());
+        text(&mut hash, name);
+        text(&mut hash, style.as_str());
         hash.update((channels.len() as u64).to_be_bytes());
         for channel in channels {
             hash.update(channel.to_be_bytes());
         }
+    }
+    hash.update((separators.len() as u64).to_be_bytes());
+    for Separator {
+        id,
+        label,
+        style,
+        category_id,
+        after,
+    } in separators
+    {
+        hash.update(id.to_be_bytes());
+        text(&mut hash, label);
+        text(&mut hash, style.as_str());
+        hash.update(category_id.unwrap_or(-1).to_be_bytes());
+        hash.update(after.to_be_bytes());
     }
     let mut top = [0u8; 8];
     top.copy_from_slice(&hash.finalize()[..8]);
@@ -367,23 +568,32 @@ pub(crate) async fn create_category(
             "server_categories_max",
         ));
     }
+    let style = req.style.unwrap_or_default();
     let row = sqlx::query(
-        "INSERT INTO channel_categories(server, name, position, created_at) SELECT $1, $2, COALESCE(MAX(position) + 1, 0), $3 FROM channel_categories WHERE server = $1 RETURNING id, position",
+        "INSERT INTO channel_categories(server, name, position, created_at, style) SELECT $1, $2, COALESCE(MAX(position) + 1, 0), $3, $4 FROM channel_categories WHERE server = $1 RETURNING id, position",
     )
     .bind(&server)
     .bind(&category_name)
     .bind(now())
+    .bind(style.as_str())
     .fetch_one(&mut *tx)
     .await?;
     let category = Category {
         id: row.try_get(0)?,
         name: category_name,
         position: row.try_get(1)?,
+        style,
+    };
+    let details = Details::new().change("name", None::<String>, category.name.as_str());
+    let details = match style {
+        CategoryStyle::Default => details,
+        CategoryStyle::Dots | CategoryStyle::Line => {
+            details.change("style", None::<String>, style.as_str())
+        }
     };
     audit::record(
         &mut tx,
-        category_entry(&server, &actor, Action::CategoryCreate, &category)
-            .details(Details::new().change("name", None::<String>, category.name.as_str())),
+        category_entry(&server, &actor, Action::CategoryCreate, &category).details(details),
     )
     .await?;
     let layout = load_layout(&mut tx, &server).await?;
@@ -396,8 +606,9 @@ pub(crate) async fn create_category(
 
 /// Rename a category
 ///
-/// Renames a channel category. Requires the Manage channels permission in its server. Raises
-/// the layout version and emits `layout_changed` to the server. General rate-limit bucket.
+/// Renames a channel category and, with `style`, changes how its header is drawn. Requires the
+/// Manage channels permission in its server. Raises the layout version and emits
+/// `layout_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     patch,
     path = "/api/v1/categories/{id}",
@@ -427,18 +638,23 @@ pub(crate) async fn rename_category(
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let before = load_layout(&mut tx, &server).await?;
-    let was: Option<String> =
-        sqlx::query("SELECT name FROM channel_categories WHERE id = $1 AND server = $2")
+    let was =
+        sqlx::query("SELECT name, style FROM channel_categories WHERE id = $1 AND server = $2")
             .bind(id)
             .bind(&server)
             .fetch_optional(&mut *tx)
             .await?
-            .map(|r| r.try_get(0))
-            .transpose()?;
+            .ok_or_else(crate::api::access::not_found)?;
+    let (was_name, was_style): (String, CategoryStyle) = (
+        was.try_get(0)?,
+        CategoryStyle::stored(&was.try_get::<String, _>(1)?),
+    );
+    let style = req.style.unwrap_or(was_style);
     let row = sqlx::query(
-        "UPDATE channel_categories SET name = $1 WHERE id = $2 AND server = $3 RETURNING position",
+        "UPDATE channel_categories SET name = $1, style = $2 WHERE id = $3 AND server = $4 RETURNING position",
     )
     .bind(&category_name)
+    .bind(style.as_str())
     .bind(id)
     .bind(&server)
     .fetch_optional(&mut *tx)
@@ -448,8 +664,11 @@ pub(crate) async fn rename_category(
         id,
         name: category_name,
         position: row.try_get(0)?,
+        style,
     };
-    let changes = Details::new().change("name", was, category.name.as_str());
+    let changes = Details::new()
+        .change("name", was_name, category.name.as_str())
+        .change("style", was_style.as_str(), style.as_str());
     if changes.has_changes() {
         audit::record(
             &mut tx,
@@ -467,10 +686,10 @@ pub(crate) async fn rename_category(
 
 /// Delete a category
 ///
-/// Deletes a channel category. Its channels move to the end of the channels without a
-/// category, in the same order; no channel is deleted. Requires the Manage channels permission
-/// in its server. Raises the layout version and emits `layout_changed` to the server. General
-/// rate-limit bucket.
+/// Deletes a channel category. Its channels and separators move to the end of the channels
+/// without a category, in the same order; no channel or separator is deleted. Requires the
+/// Manage channels permission in its server. Raises the layout version and emits
+/// `layout_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     delete,
     path = "/api/v1/categories/{id}",
@@ -510,6 +729,13 @@ pub(crate) async fn delete_category(
             .details(Details::new().change("name", gone.name.as_str(), None::<String>)),
     )
     .await?;
+    let below = layout.uncategorized.len() as i64;
+    for sep in &mut layout.separators {
+        if sep.category_id == Some(id) {
+            sep.category_id = None;
+            sep.after += below;
+        }
+    }
     layout.uncategorized.extend(gone.channels);
     write_layout(&mut tx, &server, &layout).await?;
     sqlx::query("DELETE FROM channel_categories WHERE id = $1")
@@ -521,17 +747,20 @@ pub(crate) async fn delete_category(
     Ok(ok())
 }
 
-type Shape = (Vec<i64>, Vec<(i64, Vec<i64>)>);
+/// The order a layout puts channels, categories and separators in.
+#[derive(PartialEq)]
+struct Shape {
+    uncategorized: Vec<i64>,
+    categories: Vec<i64>,
+    items: Vec<(Item, Option<i64>)>,
+}
 
 fn shape(layout: &ChannelLayout) -> Shape {
-    (
-        layout.uncategorized.clone(),
-        layout
-            .categories
-            .iter()
-            .map(|c| (c.id, c.channels.clone()))
-            .collect(),
-    )
+    Shape {
+        uncategorized: layout.uncategorized.clone(),
+        categories: layout.categories.iter().map(|c| c.id).collect(),
+        items: items(layout),
+    }
 }
 
 fn category_entry(server: &str, actor: &Actor, action: Action, category: &Category) -> Entry {
@@ -570,6 +799,36 @@ fn check_order(req: &LayoutReq, current: &ChannelLayout) -> Result<(), ApiError>
             return Err(wrong());
         }
     }
+    if seen.len() != want.len() {
+        return Err(wrong());
+    }
+    let Some(places) = &req.separators else {
+        return Ok(());
+    };
+    let wrong =
+        || bad("The order must list every separator exactly once, after channels of its list");
+    let want: HashSet<i64> = current.separators.iter().map(|s| s.id).collect();
+    let lists: HashMap<Option<i64>, usize> = std::iter::once((None, req.uncategorized.len()))
+        .chain(
+            req.categories
+                .iter()
+                .map(|c| (Some(c.id), c.channels.len())),
+        )
+        .collect();
+    let mut seen = HashSet::new();
+    for SeparatorPlace {
+        id,
+        category_id,
+        after,
+    } in places
+    {
+        let fits = lists
+            .get(category_id)
+            .is_some_and(|n| (0..=*n as i64).contains(after));
+        if !want.contains(id) || !seen.insert(*id) || !fits {
+            return Err(wrong());
+        }
+    }
     match seen.len() == want.len() {
         true => Ok(()),
         false => Err(wrong()),
@@ -578,14 +837,14 @@ fn check_order(req: &LayoutReq, current: &ChannelLayout) -> Result<(), ApiError>
 
 /// Reorder channels and categories
 ///
-/// Replaces the order of the server's channel list: which category each channel is in, the
-/// order of channels within it and the order of the categories. The body must list every
-/// channel and category of the server exactly once and name the `layout_version` it is based
-/// on; when the layout changed since, nothing is stored and the answer is 409, so reload the
-/// server and try again. Of two concurrent reorders from the same version, one wins and the
-/// other gets 409. Requires the Manage channels permission. Raises the layout version and
-/// emits `layout_changed` to the server, where each connection only gets the channels it can
-/// see. General rate-limit bucket.
+/// Replaces the order of the server's channel list: which category each channel and separator
+/// is in, the order of channels and separators within it and the order of the categories. The
+/// body must list every channel and category of the server exactly once (and every separator,
+/// when it has `separators`) and name the `layout_version` it is based on; when the layout
+/// changed since, nothing is stored and the answer is 409, so reload the server and try again.
+/// Of two concurrent reorders from the same version, one wins and the other gets 409. Requires
+/// the Manage channels permission. Raises the layout version and emits `layout_changed` to the
+/// server, where each connection only gets the channels it can see. General rate-limit bucket.
 #[utoipa::path(
     put,
     path = "/api/v1/servers/{name}/layout",
@@ -594,7 +853,7 @@ fn check_order(req: &LayoutReq, current: &ChannelLayout) -> Result<(), ApiError>
     request_body = LayoutReq,
     responses(
         (status = 200, description = "The stored layout with its new version", body = ChannelLayout),
-        (status = 400, description = "`The order must list every channel and category exactly once`: an id is missing, repeated or not part of this server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "`The order must list every channel and category exactly once`: an id is missing, repeated or not part of this server. `The order must list every separator exactly once, after channels of its list`: a separator is missing, repeated, not part of this server, in a category the order does not list, or after more channels than its list has. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
@@ -618,6 +877,8 @@ pub(crate) async fn reorder_layout(
             .sum::<usize>();
     if listed as i64 > Limits::most("SERVER_CHANNELS_MAX")
         || req.categories.len() as i64 > Limits::most("SERVER_CATEGORIES_MAX")
+        || req.separators.as_ref().map_or(0, Vec::len) as i64
+            > Limits::most("SERVER_SEPARATORS_MAX")
     {
         return Err(bad(
             "The order must list every channel and category exactly once",
@@ -638,23 +899,69 @@ pub(crate) async fn reorder_layout(
     check_order(&req, &current)?;
     let was = shape(&current);
     let before = current.clone();
-    let names: HashMap<i64, String> = current
-        .categories
+    let ChannelLayout {
+        version,
+        uncategorized: _,
+        categories: old_categories,
+        separators: old_separators,
+    } = current;
+    let looks: HashMap<i64, (String, CategoryStyle)> = old_categories
         .into_iter()
-        .map(|c| (c.id, c.name))
+        .map(|c| (c.id, (c.name, c.style)))
         .collect();
-    let layout = ChannelLayout {
-        version: current.version,
-        uncategorized: req.uncategorized,
-        categories: req
-            .categories
-            .into_iter()
-            .map(|c| LayoutCategory {
-                name: names.get(&c.id).cloned().unwrap_or_default(),
+    let LayoutReq {
+        version: _,
+        uncategorized,
+        categories,
+        separators,
+    } = req;
+    let categories: Vec<LayoutCategory> = categories
+        .into_iter()
+        .map(|c| {
+            let (name, style) = looks.get(&c.id).cloned().unwrap_or_default();
+            LayoutCategory {
                 id: c.id,
+                name,
+                style,
                 channels: c.channels,
-            })
-            .collect(),
+            }
+        })
+        .collect();
+    let separators = match separators {
+        Some(places) => {
+            let old: HashMap<i64, Separator> =
+                old_separators.into_iter().map(|s| (s.id, s)).collect();
+            places
+                .into_iter()
+                .filter_map(|p| {
+                    old.get(&p.id).map(|s| Separator {
+                        category_id: p.category_id,
+                        after: p.after,
+                        ..s.clone()
+                    })
+                })
+                .collect()
+        }
+        None => {
+            let lists: HashMap<Option<i64>, usize> = std::iter::once((None, uncategorized.len()))
+                .chain(categories.iter().map(|c| (Some(c.id), c.channels.len())))
+                .collect();
+            old_separators
+                .into_iter()
+                .map(|s| Separator {
+                    after: s
+                        .after
+                        .min(lists.get(&s.category_id).copied().unwrap_or(0) as i64),
+                    ..s
+                })
+                .collect()
+        }
+    };
+    let layout = ChannelLayout {
+        version,
+        uncategorized,
+        categories,
+        separators,
     };
     write_layout(&mut tx, &server, &layout).await?;
     if shape(&layout) != was {
@@ -685,6 +992,7 @@ mod tests {
                 Path("rchat".to_string()),
                 Json(CategoryReq {
                     name: name.to_string(),
+                    style: None,
                 }),
             )
         };
@@ -719,9 +1027,11 @@ mod tests {
                 .map(|(id, name, channels)| LayoutCategory {
                     id: *id,
                     name: name.to_string(),
+                    style: CategoryStyle::Default,
                     channels: channels.to_vec(),
                 })
                 .collect(),
+            separators: Vec::new(),
         }
     }
 

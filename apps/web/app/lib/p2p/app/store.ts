@@ -37,6 +37,8 @@ export type P2pDialog =
   | { kind: 'server_profile'; room: string }
   | { kind: 'profile_reset'; room: string; ik: string }
   | { kind: 'perms'; room: string; ch?: string; cat?: string }
+  // A new separator at the end of `cat` (null: of the channels without one), or separator `id`.
+  | { kind: 'separator'; room: string; id?: string; cat?: string | null }
   | { kind: 'p2p_folder'; id: string; focus?: 'color' }
   | { kind: 'lost_device'; dk: string }
   | { kind: 'recover' }

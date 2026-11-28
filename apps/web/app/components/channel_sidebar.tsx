@@ -57,6 +57,9 @@ import {
   categoryOfZone,
   channelGroups,
   fullIndex,
+  itemKey,
+  type ChannelItem,
+  separatorKey,
   zoneOf,
 } from '../lib/categories'
 import { UserAvatar } from './user_avatar'
@@ -781,6 +784,7 @@ export function ChannelSidebar() {
   const openDialog = useStore(s => s.openDialog)
   const createChannel = useStore(s => s.createChannel)
   const moveChannel = useStore(s => s.moveChannel)
+  const moveSeparator = useStore(s => s.moveSeparator)
   const moveCategory = useStore(s => s.moveCategory)
   const setCategoriesCollapsed = useStore(s => s.setCategoriesCollapsed)
   const renameChannel = useStore(s => s.renameChannel)
@@ -870,31 +874,45 @@ export function ChannelSidebar() {
 
   const keepShown = (c: Channel) => c.id === activeId || voice?.channelId === c.id
 
+  // A collapsed category shows only the open channel and the one in voice, without separators.
+  const shownItems = (items: ChannelItem[], open: boolean) =>
+    open ? items : items.filter(i => i.kind === 'channel' && keepShown(i.channel))
+
   const shownIn = (category: number | null) => {
-    const group =
+    const items =
       category === null
-        ? groups.uncategorized
-        : groups.categories.find(g => g.category.id === category)?.channels
-    if (!group) return { full: [], shown: [] }
-    const full = group.map(c => c.id)
+        ? groups.loose
+        : groups.categories.find(g => g.category.id === category)?.items
+    if (!items) return { full: [], shown: [] }
     const open = category === null || !shut.has(category)
-    return { full, shown: open ? full : group.filter(c => keepShown(c)).map(c => c.id) }
+    return { full: items.map(itemKey), shown: shownItems(items, open).map(itemKey) }
   }
 
-  const channelDragSpec = (c: Channel): DragSpec | undefined =>
+  const rowDragSpec = (key: string, move: (category: number | null, index: number) => void) =>
     canManage
-      ? {
+      ? ({
           group: 'channel',
-          key: `ch:${c.id}`,
+          key,
           zones: zone => categoryOfZone(zone) !== undefined,
           onDrop: ({ zone, index }) => {
             const category = categoryOfZone(zone)
             if (category === undefined) return
-            const { full, shown } = shownIn(category)
-            moveChannel(server, c.id, category, fullIndex(full, shown, c.id, index))
+            move(category, index)
           },
-        }
+        } satisfies DragSpec)
       : undefined
+
+  const channelDragSpec = (c: Channel): DragSpec | undefined =>
+    rowDragSpec(`ch:${c.id}`, (category, index) => {
+      const { full, shown } = shownIn(category)
+      moveChannel(server, c.id, category, fullIndex(full, shown, `c${c.id}`, index))
+    })
+
+  const separatorDragSpec = (id: number): DragSpec | undefined =>
+    rowDragSpec(separatorKey(id), (category, index) => {
+      const { full, shown } = shownIn(category)
+      moveSeparator(server, id, category, fullIndex(full, shown, `s${id}`, index))
+    })
 
   const categoryDragSpec = (category: Category): DragSpec | undefined =>
     canManage
@@ -1083,6 +1101,7 @@ export function ChannelSidebar() {
             const category = categoryByKey.get(entry.key)
             return category ? categoryDragSpec(category) : undefined
           },
+          separator: entry => separatorDragSpec(Number(entry.key)),
           zoneOf: category => (category === null ? NO_CATEGORY : zoneOf(Number(category))),
           categoriesZone: CATEGORIES_ZONE,
           moving: channelDrag,

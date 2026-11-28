@@ -184,6 +184,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("media", "seal_key {INT}"),
     ("media", "name_sealed {BYTES}"),
     ("media", "plain_object {INT}"),
+    (
+        "channel_categories",
+        "style TEXT NOT NULL DEFAULT 'default' CHECK(style IN ('default','dots','line'))",
+    ),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -322,7 +326,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 64: sealed copies: report text and notes, webhook delivery payloads, bios and P2P backups.
 /// 65: sealed uploads (`media.seal_key`, `media.name_sealed`, `media.plain_object`).
 /// 66: jobs that encrypt or decrypt the stored messages of a place (`seal_jobs`).
-pub const SCHEMA_VERSION: i64 = 66;
+/// 67: decorative channel separators (`channel_separators`) and category styles
+/// (`channel_categories.style`).
+pub const SCHEMA_VERSION: i64 = 67;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -336,6 +342,9 @@ pub(super) const ROLE_LOOKS_VERSION: i64 = 56;
 /// The schema version that adds category permission rules.
 #[cfg(test)]
 pub(super) const CATEGORY_PERMS_VERSION: i64 = 59;
+/// The schema version that adds channel separators and category styles.
+#[cfg(test)]
+pub(super) const SEPARATORS_VERSION: i64 = 67;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 20] {

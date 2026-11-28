@@ -501,6 +501,12 @@ export function sentence(entry: AuditEntry): Part[] {
     }
     case 'channel.category_delete':
       return [...actor, t(` deleted the category ${label}`)]
+    case 'channel.separator_create':
+      return [...actor, t(label ? ` added the separator ${label}` : ' added a separator')]
+    case 'channel.separator_update':
+      return [...actor, t(label ? ` changed the separator ${label}` : ' changed a separator')]
+    case 'channel.separator_delete':
+      return [...actor, t(label ? ` deleted the separator ${label}` : ' deleted a separator')]
     case 'server.update': {
       const list = changesOf(entry)
       const only = list.length === 1 ? list[0] : null

@@ -2,7 +2,8 @@ import { timeoutWrite, type EvalResult } from './facts'
 import type { Ix } from './reach'
 import { roomMode } from '../../profile_fields'
 import type { ResetFact } from '../../profile_reset'
-import type { ProfilesMode } from '../../types'
+import type { CategoryStyle, ProfilesMode, SeparatorStyle } from '../../types'
+import { CATEGORY_STYLES, SEPARATOR_STYLES } from '../../categories'
 import {
   banEnd,
   banReason,
@@ -111,10 +112,22 @@ export interface OverSum {
   deny: number
 }
 
-// A category: its name and place, and the fields of its latest write this version doesn't
-// know, kept by the next write.
+// A category: its name, place and header style, and the fields of its latest write this
+// version doesn't know (a style it doesn't know among them), kept by the next write.
 export interface CategorySum {
   name: string
+  pos: number
+  style?: CategoryStyle
+  extra?: Record<string, unknown>
+}
+
+// A separator of the channel list: its label, how its line is drawn, its category (null for
+// none) and place among the channels (`pos`, the same order as theirs), with the fields of its
+// latest write this version doesn't know.
+export interface SeparatorSum {
+  label: string
+  style?: SeparatorStyle
+  cat: string | null
   pos: number
   extra?: Record<string, unknown>
 }
@@ -147,6 +160,7 @@ export interface Summary {
   overwrites: Record<string, Record<string, OverSum>>
   categories: Record<string, CategorySum>
   chcats: Record<string, ChcatSum>
+  separators: Record<string, SeparatorSum>
   settings: AclContent | null
   // What members may set in their room profile; null (no write counts) reads as everything.
   profiles: ProfilesMode | null
@@ -169,7 +183,8 @@ export interface Summary {
 // without a prototype, so a key like `__proto__` is only a key.
 export const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
 
-type Keyed = 'members' | 'roles' | 'channels' | 'overwrites' | 'categories' | 'chcats' | 'codes'
+type Keyed =
+  'members' | 'roles' | 'channels' | 'overwrites' | 'categories' | 'chcats' | 'separators' | 'codes'
 const KEYED: readonly Keyed[] = [
   'members',
   'roles',
@@ -177,6 +192,7 @@ const KEYED: readonly Keyed[] = [
   'overwrites',
   'categories',
   'chcats',
+  'separators',
   'codes',
 ]
 
@@ -197,6 +213,7 @@ export const emptySummary = (): Summary => ({
   overwrites: dict(),
   categories: dict(),
   chcats: dict(),
+  separators: dict(),
   settings: null,
   profiles: null,
   about: null,
@@ -325,6 +342,11 @@ const extraOf = (c: AclContent, known: ReadonlySet<string>) => {
 }
 const CATEGORY_FIELDS = new Set(['id', 'name', 'pos', 'gone'])
 const CHCAT_FIELDS = new Set(['ch', 'cat', 'sync'])
+const CHSEP_FIELDS = new Set(['id', 'label', 'cat', 'pos', 'gone'])
+// A style this version knows, else undefined (and the written value stays an unknown field).
+const styleIn = <S extends string>(styles: readonly S[], x: unknown): S | undefined =>
+  styles.find(s => s === x)
+const shortIdOr = (x: unknown) => (typeof x === 'string' && x !== '' && x.length <= 64 ? x : null)
 
 // The live categories (not gone), the CATEGORIES_MAX lowest by place then id.
 export const CATEGORIES_MAX = 50
@@ -333,13 +355,40 @@ export const categoriesOf = (F: EvalResult['facts']) => {
     .filter(([, c]) => c.gone !== true && typeof c.name === 'string')
     .map(([id, c]): [string, CategorySum] => {
       const sum: CategorySum = { name: c.name as string, pos: c.pos as number }
-      const extra = extraOf(c, CATEGORY_FIELDS)
+      const style = styleIn(CATEGORY_STYLES, c.style)
+      if (style) sum.style = style
+      const extra = extraOf(c, style ? new Set([...CATEGORY_FIELDS, 'style']) : CATEGORY_FIELDS)
       if (extra) sum.extra = extra
       return [id, sum]
     })
     .sort(([a, x], [b, y]) => x.pos - y.pos || (a < b ? -1 : a > b ? 1 : 0))
     .slice(0, CATEGORIES_MAX)
   const out = dict<CategorySum>()
+  for (const [id, c] of live) out[id] = c
+  return out
+}
+
+// The live separators (not gone), the SEPARATORS_MAX lowest by place then id. A category that
+// isn't a short id reads as none.
+export const SEPARATORS_MAX = 50
+export const separatorsOf = (F: EvalResult['facts']) => {
+  const live = [...F.chseps]
+    .filter(([, c]) => c.gone !== true && typeof c.label === 'string')
+    .map(([id, c]): [string, SeparatorSum] => {
+      const sum: SeparatorSum = {
+        label: c.label as string,
+        cat: shortIdOr(c.cat),
+        pos: c.pos as number,
+      }
+      const style = styleIn(SEPARATOR_STYLES, c.style)
+      if (style) sum.style = style
+      const extra = extraOf(c, style ? new Set([...CHSEP_FIELDS, 'style']) : CHSEP_FIELDS)
+      if (extra) sum.extra = extra
+      return [id, sum]
+    })
+    .sort(([a, x], [b, y]) => x.pos - y.pos || (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, SEPARATORS_MAX)
+  const out = dict<SeparatorSum>()
   for (const [id, c] of live) out[id] = c
   return out
 }
@@ -464,6 +513,7 @@ export function buildSummary(
   const overwrites = overwritesOf(F)
   const categories = categoriesOf(F)
   const chcats = chcatsOf(F)
+  const separators = separatorsOf(F)
   const gone = src.gone
   return {
     summary: {
@@ -477,6 +527,7 @@ export function buildSummary(
       overwrites,
       categories,
       chcats,
+      separators,
       settings: F.setting ?? null,
       profiles: roomMode(F.profileMode) ?? null,
       about: F.about ?? null,

@@ -42,6 +42,7 @@ import {
   type OverSum,
   type CategorySum,
   type ChcatSum,
+  type SeparatorSum,
   type RoleSum,
   type SumDelta,
   type SumMemo,
@@ -326,6 +327,7 @@ export interface Carried {
   overwrites?: Record<string, Record<string, OverSum>>
   categories?: Record<string, CategorySum>
   chcats?: Record<string, ChcatSum>
+  separators?: Record<string, SeparatorSum>
   settings: AclContent | null
 }
 

@@ -178,10 +178,51 @@
           "commands": [],
           "name": "import",
           "usage": "server keys import [OPTIONS] --in <INPUT>"
+        },
+        {
+          "about": "Store encrypted messages, their files, and the encrypted copies plain again: of every place, or of one server or DM. Keys can be removed once nothing encrypted is left",
+          "args": [
+            {
+              "help": "Only this server",
+              "id": "server",
+              "long": "server",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "SERVER"
+            },
+            {
+              "help": "Only this DM, by its id",
+              "id": "dm",
+              "long": "dm",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "DM"
+            }
+          ],
+          "commands": [],
+          "name": "unseal",
+          "usage": "server keys unseal [OPTIONS]"
         }
       ],
       "name": "keys",
       "usage": "server keys <COMMAND>"
+    },
+    {
+      "about": "Maintain the instance's database",
+      "args": [],
+      "commands": [
+        {
+          "about": "Rewrite the SQLite database so the pages deleted or rewritten text left behind are gone from the file. Stop the server first. Postgres: run VACUUM FULL (or pg_repack) instead",
+          "args": [],
+          "commands": [],
+          "name": "compact",
+          "usage": "server db compact"
+        }
+      ],
+      "name": "db",
+      "usage": "server db <COMMAND>"
     }
   ],
   "name": "server",

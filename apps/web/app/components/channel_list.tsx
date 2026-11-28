@@ -4,11 +4,15 @@ import type { ReactNode, Ref } from 'react'
 import { ChevronDown, ChevronRight, Hash, Lock, Plus } from 'lucide-react'
 import {
   unfolded,
+  unfoldedRows,
   type CategoryEntry,
   type ChannelEntry,
   type Channels,
   type ChannelsState,
+  type ListEntry,
+  type SeparatorEntry,
 } from '../lib/place/channels'
+import { CategoryLine, ChannelSeparatorRow, categoryNameCls } from './channel_separator'
 import { longPress } from './context_menu'
 import { IconButton } from './controls'
 import type { DragSpec } from './drag'
@@ -29,6 +33,7 @@ export interface ChannelDrag {
   scope: Ref<HTMLDivElement>
   channel: (channel: ChannelEntry) => DragSpec | undefined
   category: (category: CategoryEntry) => DragSpec | undefined
+  separator?: (separator: SeparatorEntry) => DragSpec | undefined
   // The drop zone of a category's channels (null: the channels outside any), and the one the
   // categories themselves are ordered in.
   zoneOf: (category: string | null) => string
@@ -99,6 +104,19 @@ export function ChannelList({
     )
   }
   const row = (c: ChannelEntry) => replace?.(c) ?? (c.kind === 'voice' ? voice(c) : textRow(c))
+  const listRow = (r: ListEntry) =>
+    r.kind === 'channel' ? (
+      row(r.channel)
+    ) : (
+      <ChannelSeparatorRow
+        key={`sep:${r.separator.key}`}
+        label={r.separator.label}
+        style={r.separator.style}
+        own={state.ownPlace}
+        menu={(x, y) => channels.separatorMenu(r.separator.key, x, y)}
+        drag={drag?.separator?.(r.separator)}
+      />
+    )
   const zoneCls = (zone: string | undefined, empty: boolean) =>
     `flex flex-col rounded-lg transition-colors ${
       drag?.moving && empty
@@ -107,8 +125,9 @@ export function ChannelList({
     } ${drag?.moving && zone !== undefined && drag.over === zone ? 'bg-primary-container/40' : ''}`
 
   const categoryBlock = (category: CategoryEntry) => {
-    const visible = unfolded(category)
-    const hidden = category.channels.filter(c => !visible.includes(c))
+    const visible = unfoldedRows(category)
+    const kept = unfolded(category)
+    const hidden = category.channels.filter(c => !kept.includes(c))
     const zone = drag?.zoneOf(category.key)
     return (
       <Surface
@@ -136,7 +155,7 @@ export function ChannelList({
               gap="2xs"
               text="xs"
               ink="muted"
-              look="rounded-md font-medium tracking-wider uppercase -outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+              look={`rounded-md font-medium -outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11 ${categoryNameCls(category.style)}`}
               place="min-w-0 flex-1"
             >
               {category.open ? (
@@ -147,6 +166,7 @@ export function ChannelList({
               <span className="truncate">
                 <Masked text={category.name} own={state.ownPlace} />
               </span>
+              <CategoryLine style={category.style} />
               {categoryEnd?.(category, hidden)}
             </Inset>
             {state.canManage && onAdd && (
@@ -166,7 +186,7 @@ export function ChannelList({
           data-drop-label={zone === undefined ? undefined : category.name}
           className={zoneCls(zone, visible.length === 0)}
         >
-          {visible.map(row)}
+          {visible.map(listRow)}
           {createRow?.(category.key)}
         </div>
       </Surface>
@@ -180,12 +200,9 @@ export function ChannelList({
         <div
           data-drop-zone={loose}
           data-drop-label={loose === undefined ? undefined : 'No category'}
-          className={zoneCls(
-            loose,
-            state.uncategorized.length === 0 && state.categories.length > 0
-          )}
+          className={zoneCls(loose, state.loose.length === 0 && state.categories.length > 0)}
         >
-          {state.uncategorized.map(row)}
+          {state.loose.map(listRow)}
           {createRow?.(null)}
         </div>
         {state.categories.length > 0 && (

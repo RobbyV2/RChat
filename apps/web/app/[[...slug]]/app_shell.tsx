@@ -37,7 +37,7 @@ import { MessagePane } from '../components/message_pane'
 import { HomePage } from '../components/home'
 import { ServerDialogs } from '../components/server_dialogs'
 import { FolderDialog } from '../components/folder_dialog'
-import { CategoryDialog } from '../components/category_dialog'
+import { CategoryDialog, SeparatorDialog } from '../components/category_dialog'
 import MemberSidebar from '../components/member_sidebar'
 import { AdminHost, AdminDialogHost } from '../components/admin/admin_host'
 import ServerSettings, { ConfirmDialog } from '../components/server_settings'
@@ -320,6 +320,7 @@ function OverlayLayer() {
       <ServerDialogs />
       <FolderDialog />
       <CategoryDialog />
+      <SeparatorDialog />
       <AddFriendsDialog />
       <PollVotersDialog />
       <ScheduledDialog />

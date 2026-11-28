@@ -602,6 +602,7 @@ describe('in messages', () => {
         members: people,
         channels: [],
         categories: [],
+        separators: [],
         chans: {},
       }) as unknown as ServerView
     const none = { allow: 0, deny: 0 }

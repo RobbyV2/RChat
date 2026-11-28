@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "RChat API",
-    "description": "RChat is a self-hosted chat server: servers with text and voice channels, roles and per-channel permissions, threads, direct messages with calls, media uploads, link previews and search. This document covers version 1 of the REST API plus the `/.well-known` discovery documents.\n\n**Versions.** `/api/v1/...` is version 1. `/api/...` without a version uses the latest version.\n\n**Authentication.** Register or log in to get a session token and send it as `Authorization: Bearer <token>`. Endpoints marked with an optional security requirement also work without a token for guests, when the instance has guest access turned on (`guests_enabled` in `GET /api/v1/settings`); otherwise they answer 401. On endpoints that need a token, `401 Unauthorized` means the token is missing or unknown. When the token cannot be checked (the database is unavailable), any endpoint that reads it answers `503 {\"error\": \"Cannot check your session right now. Try again soon\"}`: keep the token and retry. Servers may opt in to guest text and voice when enabled by the site. Password-protected servers additionally need a guest grant from `POST /api/v1/servers/{name}/guest_access`, sent in the `X-Guest-Grant` header (comma-separated, up to 100 grants).\n\n**Audit reasons.** A request that changes something may say why in an `X-Audit-Reason` header (percent-encoded UTF-8, at most 300 characters). Every server audit log entry the request writes keeps it as `reason` in its details.\n\n**Names.** Server names and usernames are case-insensitive: they are matched by their lowercase form, and responses carry the lowercase `name`/`username` alongside `display_name`: a server's name in its original case, or the name a user shows, which starts as the username as registered and can change. Only usernames are used for mentions and sign-in.\n\n**Timestamps** are Unix time in seconds unless a field says otherwise.\n\n**Pagination.** List endpoints return a JSON array. When more items follow, the `X-Next-Cursor` response header holds an opaque cursor; pass it back as the `cursor` query parameter for the next page. The header is absent on the last page. Each endpoint lists its page size and limits.\n\n**Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, OIDC start, callback and exchange, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings, P2P backup uploads and deletes, sending and exporting reports, and media upload also share a strict per-IP bucket (`RATE_LIMIT_STRICT_PER_SECOND`, default 2 per second, burst `RATE_LIMIT_STRICT_BURST`, default 30). Invite previews, joining a server and the webhook execution routes each have their own per-IP bucket (`RATE_LIMIT_INVITE_PER_SECOND` and `RATE_LIMIT_INVITE_BURST`, by default the strict bucket's size); with `REDIS_URL` set, the invite preview and join buckets count across copies. Exceeding a bucket answers `429 {\"error\": \"Too Many Requests! Wait for ns\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After: n` (whole seconds, rounded up). Messages each account sends (channel, thread and DM messages, forwards and polls), and guest text per client address, count in a bucket of `MESSAGE_RATE_BURST` (default 100) that refills `MESSAGE_RATE_PER_MINUTE` a minute (default 2400), across copies when `REDIS_URL` is set; past it the answer is `429 {\"error\": \"Sending too fast, try again in a moment\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After`. Requests a person makes a few times a day at most (sign-ups, new display names, password changes, backup phrase changes, recovery, server name checks, new, renamed and deleted servers, server passwords, webhooks and their secrets and tests, config links, P2P backups and P2P bindings) are rare requests: each kind counts per account, or per client address for sign-ups and recovery, at most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default. Password and backup phrase changes count only once the current password or phrase is confirmed. Past them the answer is `429 {\"error\": \"You've done this too often. Try again later.\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After`.\n\n**Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Many also carry `reason`, an object for programs: `kind` says what happened (`off_site`: turned off for this site; `off_account`: turned off for your account; `off_server`: turned off in this server; `off_app` and `app`: an app's setting or rule; `limit`: you reached a limit; `capacity`: the site is full right now; `invalid`: a value is wrong; `rate`: too many requests; `conflict`: someone else changed it or the name is taken; `sign_in`: the session ended; `unavailable`: the server can't do it right now; `locked`: a moderator locked it; `confirm`: confirm first), `control` names the setting or limit (for `confirm`, what to confirm), `retry_after` is the wait in seconds (also sent as the `Retry-After` header), `field` names the wrong value, `until` is when a lock ends (unix seconds) and `channel` the channel a `confirm` opens. Status codes and `error` texts are the same with and without it. An error without `reason` is a denial about a server, channel or message you cannot open, or an error that has no kind yet. When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\", \"reason\": {\"kind\": \"unavailable\", \"retry_after\": 1}}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.\n\n**Private servers stay hidden.** A password-protected server is indistinguishable from one that does not exist to anyone without access (membership, a valid guest grant, or the password where an endpoint takes one). Every endpoint that takes a server name answers both with the same `404 {\"error\": \"Server not found or wrong password\"}`; endpoints that take a password (`join`, `guest_access`, invites) answer a missing password with the same `401 {\"error\": \"Password required\"}` and a wrong one with that 404, and always hash the password, also for names that do not exist. Endpoints that take a channel or message id answer `404 {\"error\": \"Not found\"}` for ids that do not exist, that you cannot see (hidden channels, messages before your join without read history) or that belong to a server you cannot access. Bans are only reported (403) once access was proven. Servers people join with an invite (`join_mode` `invite`) and closed servers are hidden the same way, under a random key. While the instance's `server_joining` (`GET /api/v1/settings`) is `invites` or `nobody`, a server without a password is hidden in the same way from everyone who is not a member, signed in or not, and under `nobody` a missing password gets the 404 too. `GET /api/v1/servers/{name}/available` is the one deliberate existence check, because creating a server reveals the same.\n\n**Realtime.** `GET /api/v1/ws` upgrades to a WebSocket. Clients send JSON frames tagged by `type` (`auth` first, with the token or without one for a guest, then `viewing`, `subscribe`, voice, call and `rtc_signal` frames) and receive JSON events tagged by `type` in snake_case (`message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`, `read_updated`, `ping`, `ping_count`, `voice_state`, `call_state` and more; see `WsEvent` in `apps/server/src/ws/event.rs`). `ping` (`{username, ping: Ping}`) reaches only the pinged user's connections when someone mentions them; `ping_count` (`{username, scope, pings, pings_until, thread_pings}`, same fields as a `GET /api/v1/unreads` item) gives a scope's unseen pings after some were removed. `@everyone`, `@here` and role mentions send no per-user event: the `message` event carries `group_mentions`, each client decides whether the message addresses it (member, online, holds the role). `group_pings_seen` (`{username, scope, message_ids}`) tells the user's connections that `POST /api/v1/inbox/read` or `POST /api/v1/inbox/read_all` marked those group mentions seen. A signed-in user is online while any of their connections is open, whatever server or page it shows (unless they appear offline), and goes offline about 10 seconds after the last one closes. Switching to appear offline hides them at once; coming back online is allowed a few times in a row, then about once per 10 seconds, and the last setting wins. An account keeps at most `WS_CONNECTIONS_PER_USER` connections (default 20; opening another closes the oldest with close code 4008), and opening them faster than `WS_CONNECT_BURST` / `WS_CONNECTS_PER_MINUTE` (counted per instance and across the cluster) closes the new one with code 4029. One client address keeps at most `WS_SOCKETS_PER_IP` connections per instance (default 200; past it the upgrade answers 429) and `WS_GUEST_SOCKETS_PER_IP` of them as guests (default 50; past it the guest connection closes with code 4029); an IPv6 /64 counts as one address. All guest connections of one instance together are capped at `WS_GUEST_SOCKETS_MAX` (default 2000, 0 turns guest connections off; past it the guest connection closes with code 4029). All connections of one copy together are capped at `WS_SOCKETS_MAX` (default no cap; past it the upgrade answers 503 with reason `capacity`, and `/api/v1/ready` answers 503 with `sockets: false`). A connection that sends no `auth` frame within 10 seconds closes with code 4001. `subscribe` frames are paced per connection by the number of servers they newly check (at most 100 servers per frame, 50 for guests); one past the pace waits and a later one replaces it. `voice_join` and `voice_leave` are paced per account (a few per second; the latest waits and wins), `call_start` and `call_accept` too (each on its own), and `rtc_signal` payloads are at most 20 KiB with a per-account byte budget (enough to negotiate with a full voice room twice at once); past these the server answers an `error` frame (`{message}`, plus the `reason` object of REST errors when the error has one). These paces count per server process. `voice_join` may carry `muted` and `deafened`, what the joiner says about its own mic and sound, and `voice_audio` (`{muted, deafened}`) changes them for the voice seat that connection holds (ignored without one); accounts, guests and voice frames may send it, paced per account on its own (a few per second; the latest waits and wins). Listeners of the channel get each change as `voice_audio` (`{server, channel_id, username, muted, deafened}`); the `voice_state` of the snapshot a connection gets on opening or subscribing lists the room's users not at the default in `audio`. `presence_changed` (`{server, username, online, online_count}`) reaches the connections viewing that server when a member's first connection opens or last one closes, and when members join, leave, are kicked or banned, and `GET /api/v1/unreads` lists the unread ones as `group_pings`. `layout_changed` (`{server, layout}`, a `ChannelLayout`) carries the new channel order, with only the channels each connection can see and only the categories holding one of them (all categories for people who manage channels); a connection that doesn't manage channels gets it only when the part it sees changed. A connection without read history of a channel gets no events about a thread whose root was sent before it joined: no replies, edits, reactions, deletions, link previews or typing there. In a server that keeps its members to itself, connections from outside get no `message_deleted` or `messages_deleted` ids of `join` and `leave` messages. Every `position` a client gets (channels and categories, in REST answers and events) counts only what that client can see, so it runs 0, 1, 2 and so on without gaps. `read_updated` (`{username, scope, last_read, pings_until}`) tells the reader's other connections that `POST /api/v1/read` (or, once per scope, `POST /api/v1/read/batch`) stored a position or marked pings seen; clients clear only pings with an id up to `pings_until` (0: none), so newer pings keep their badge. The REST operations below name the events they emit.",
+    "description": "RChat is a self-hosted chat server: servers with text and voice channels, roles and per-channel permissions, threads, direct messages with calls, media uploads, link previews and search. This document covers version 1 of the REST API plus the `/.well-known` discovery documents.\n\n**Versions.** `/api/v1/...` is version 1. `/api/...` without a version uses the latest version.\n\n**Authentication.** Register or log in to get a session token and send it as `Authorization: Bearer <token>`. Endpoints marked with an optional security requirement also work without a token for guests, when the instance has guest access turned on (`guests_enabled` in `GET /api/v1/settings`); otherwise they answer 401. On endpoints that need a token, `401 Unauthorized` means the token is missing or unknown. When the token cannot be checked (the database is unavailable), any endpoint that reads it answers `503 {\"error\": \"Cannot check your session right now. Try again soon\"}`: keep the token and retry. Servers may opt in to guest text and voice when enabled by the site. Password-protected servers additionally need a guest grant from `POST /api/v1/servers/{name}/guest_access`, sent in the `X-Guest-Grant` header (comma-separated, up to 100 grants).\n\n**Audit reasons.** A request that changes something may say why in an `X-Audit-Reason` header (percent-encoded UTF-8, at most 300 characters). Every server audit log entry the request writes keeps it as `reason` in its details.\n\n**Names.** Server names and usernames are case-insensitive: they are matched by their lowercase form, and responses carry the lowercase `name`/`username` alongside `display_name`: a server's name in its original case, or the name a user shows, which starts as the username as registered and can change. Only usernames are used for mentions and sign-in.\n\n**Timestamps** are Unix time in seconds unless a field says otherwise.\n\n**Pagination.** List endpoints return a JSON array. When more items follow, the `X-Next-Cursor` response header holds an opaque cursor; pass it back as the `cursor` query parameter for the next page. The header is absent on the last page. Each endpoint lists its page size and limits.\n\n**Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, OIDC start, callback and exchange, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings, P2P backup uploads and deletes, sending and exporting reports, and media upload also share a strict per-IP bucket (`RATE_LIMIT_STRICT_PER_SECOND`, default 2 per second, burst `RATE_LIMIT_STRICT_BURST`, default 30). Invite previews, joining a server and the webhook execution routes each have their own per-IP bucket (`RATE_LIMIT_INVITE_PER_SECOND` and `RATE_LIMIT_INVITE_BURST`, by default the strict bucket's size); with `REDIS_URL` set, the invite preview and join buckets count across copies. Exceeding a bucket answers `429 {\"error\": \"Too Many Requests! Wait for ns\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After: n` (whole seconds, rounded up). Messages each account sends (channel, thread and DM messages, forwards and polls, and switches of encrypted storage, which post a system message), and guest text per client address, count in a bucket of `MESSAGE_RATE_BURST` (default 100) that refills `MESSAGE_RATE_PER_MINUTE` a minute (default 2400), across copies when `REDIS_URL` is set; past it the answer is `429 {\"error\": \"Sending too fast, try again in a moment\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After`. Requests a person makes a few times a day at most (sign-ups, new display names, password changes, backup phrase changes, recovery, server name checks, new, renamed and deleted servers, server passwords, webhooks and their secrets and tests, config links, P2P backups and P2P bindings) are rare requests: each kind counts per account, or per client address for sign-ups and recovery, at most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default. Password and backup phrase changes count only once the current password or phrase is confirmed. Past them the answer is `429 {\"error\": \"You've done this too often. Try again later.\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After`.\n\n**Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Many also carry `reason`, an object for programs: `kind` says what happened (`off_site`: turned off for this site; `off_account`: turned off for your account; `off_server`: turned off in this server; `off_app` and `app`: an app's setting or rule; `limit`: you reached a limit; `capacity`: the site is full right now; `invalid`: a value is wrong; `rate`: too many requests; `conflict`: someone else changed it or the name is taken; `sign_in`: the session ended; `unavailable`: the server can't do it right now; `locked`: a moderator locked it; `confirm`: confirm first; `forced`: this site requires it; `keys`: this site has no encryption key ready), `control` names the setting or limit (for `confirm`, what to confirm), `retry_after` is the wait in seconds (also sent as the `Retry-After` header), `field` names the wrong value, `until` is when a lock ends (unix seconds) and `channel` the channel a `confirm` opens. Status codes and `error` texts are the same with and without it. An error without `reason` is a denial about a server, channel or message you cannot open, or an error that has no kind yet. When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\", \"reason\": {\"kind\": \"unavailable\", \"retry_after\": 1}}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.\n\n**Private servers stay hidden.** A password-protected server is indistinguishable from one that does not exist to anyone without access (membership, a valid guest grant, or the password where an endpoint takes one). Every endpoint that takes a server name answers both with the same `404 {\"error\": \"Server not found or wrong password\"}`; endpoints that take a password (`join`, `guest_access`, invites) answer a missing password with the same `401 {\"error\": \"Password required\"}` and a wrong one with that 404, and always hash the password, also for names that do not exist. Endpoints that take a channel or message id answer `404 {\"error\": \"Not found\"}` for ids that do not exist, that you cannot see (hidden channels, messages before your join without read history) or that belong to a server you cannot access. Bans are only reported (403) once access was proven. Servers people join with an invite (`join_mode` `invite`) and closed servers are hidden the same way, under a random key. While the instance's `server_joining` (`GET /api/v1/settings`) is `invites` or `nobody`, a server without a password is hidden in the same way from everyone who is not a member, signed in or not, and under `nobody` a missing password gets the 404 too. `GET /api/v1/servers/{name}/available` is the one deliberate existence check, because creating a server reveals the same.\n\n**Realtime.** `GET /api/v1/ws` upgrades to a WebSocket. Clients send JSON frames tagged by `type` (`auth` first, with the token or without one for a guest, then `viewing`, `subscribe`, voice, call and `rtc_signal` frames) and receive JSON events tagged by `type` in snake_case (`message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`, `read_updated`, `ping`, `ping_count`, `voice_state`, `call_state` and more; see `WsEvent` in `apps/server/src/ws/event.rs`). `ping` (`{username, ping: Ping}`) reaches only the pinged user's connections when someone mentions them; `ping_count` (`{username, scope, pings, pings_until, thread_pings}`, same fields as a `GET /api/v1/unreads` item) gives a scope's unseen pings after some were removed. `@everyone`, `@here` and role mentions send no per-user event: the `message` event carries `group_mentions`, each client decides whether the message addresses it (member, online, holds the role). `group_pings_seen` (`{username, scope, message_ids}`) tells the user's connections that `POST /api/v1/inbox/read` or `POST /api/v1/inbox/read_all` marked those group mentions seen. A signed-in user is online while any of their connections is open, whatever server or page it shows (unless they appear offline), and goes offline about 10 seconds after the last one closes. Switching to appear offline hides them at once; coming back online is allowed a few times in a row, then about once per 10 seconds, and the last setting wins. An account keeps at most `WS_CONNECTIONS_PER_USER` connections (default 20; opening another closes the oldest with close code 4008), and opening them faster than `WS_CONNECT_BURST` / `WS_CONNECTS_PER_MINUTE` (counted per instance and across the cluster) closes the new one with code 4029. One client address keeps at most `WS_SOCKETS_PER_IP` connections per instance (default 200; past it the upgrade answers 429) and `WS_GUEST_SOCKETS_PER_IP` of them as guests (default 50; past it the guest connection closes with code 4029); an IPv6 /64 counts as one address. All guest connections of one instance together are capped at `WS_GUEST_SOCKETS_MAX` (default 2000, 0 turns guest connections off; past it the guest connection closes with code 4029). All connections of one copy together are capped at `WS_SOCKETS_MAX` (default no cap; past it the upgrade answers 503 with reason `capacity`, and `/api/v1/ready` answers 503 with `sockets: false`). A connection that sends no `auth` frame within 10 seconds closes with code 4001. `subscribe` frames are paced per connection by the number of servers they newly check (at most 100 servers per frame, 50 for guests); one past the pace waits and a later one replaces it. `voice_join` and `voice_leave` are paced per account (a few per second; the latest waits and wins), `call_start` and `call_accept` too (each on its own), and `rtc_signal` payloads are at most 20 KiB with a per-account byte budget (enough to negotiate with a full voice room twice at once); past these the server answers an `error` frame (`{message}`, plus the `reason` object of REST errors when the error has one). These paces count per server process. `voice_join` may carry `muted` and `deafened`, what the joiner says about its own mic and sound, and `voice_audio` (`{muted, deafened}`) changes them for the voice seat that connection holds (ignored without one); accounts, guests and voice frames may send it, paced per account on its own (a few per second; the latest waits and wins). Listeners of the channel get each change as `voice_audio` (`{server, channel_id, username, muted, deafened}`); the `voice_state` of the snapshot a connection gets on opening or subscribing lists the room's users not at the default in `audio`. `presence_changed` (`{server, username, online, online_count}`) reaches the connections viewing that server when a member's first connection opens or last one closes, and when members join, leave, are kicked or banned, and `GET /api/v1/unreads` lists the unread ones as `group_pings`. `layout_changed` (`{server, layout}`, a `ChannelLayout`) carries the new channel order, with only the channels each connection can see and only the categories holding one of them (all categories for people who manage channels); a connection that doesn't manage channels gets it only when the part it sees changed. A connection without read history of a channel gets no events about a thread whose root was sent before it joined: no replies, edits, reactions, deletions, link previews or typing there. In a server that keeps its members to itself, connections from outside get no `message_deleted` or `messages_deleted` ids of `join` and `leave` messages. Every `position` a client gets (channels and categories, in REST answers and events) counts only what that client can see, so it runs 0, 1, 2 and so on without gaps. `read_updated` (`{username, scope, last_read, pings_until}`) tells the reader's other connections that `POST /api/v1/read` (or, once per scope, `POST /api/v1/read/batch`) stored a position or marked pings seen; clients clear only pings with an id up to `pings_until` (0: none), so newer pings keep their badge. The REST operations below name the events they emit.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -1607,7 +1607,7 @@
           "Channels"
         ],
         "summary": "Delete a category",
-        "description": "Deletes a channel category. Its channels move to the end of the channels without a\ncategory, in the same order; no channel is deleted. Requires the Manage channels permission\nin its server. Raises the layout version and emits `layout_changed` to the server. General\nrate-limit bucket.",
+        "description": "Deletes a channel category. Its channels and separators move to the end of the channels\nwithout a category, in the same order; no channel or separator is deleted. Requires the\nManage channels permission in its server. Raises the layout version and emits\n`layout_changed` to the server. General rate-limit bucket.",
         "operationId": "delete_category",
         "parameters": [
           {
@@ -1708,7 +1708,7 @@
           "Channels"
         ],
         "summary": "Rename a category",
-        "description": "Renames a channel category. Requires the Manage channels permission in its server. Raises\nthe layout version and emits `layout_changed` to the server. General rate-limit bucket.",
+        "description": "Renames a channel category and, with `style`, changes how its header is drawn. Requires the\nManage channels permission in its server. Raises the layout version and emits\n`layout_changed` to the server. General rate-limit bucket.",
         "operationId": "rename_category",
         "parameters": [
           {
@@ -3469,7 +3469,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Only threads whose root text, or the root author's username, display name or webhook\nname, contains this, ignoring case. Case folding depends on the database: Postgres folds\nevery letter, SQLite only ASCII letters (other letters match in the same case). At most\n200 characters, no NUL. Blank lists every thread.",
+            "description": "Only threads whose root text, or the root author's username, display name or webhook\nname, contains this, ignoring case. Case folding depends on the database: Postgres folds\nevery letter, SQLite only ASCII letters (other letters match in the same case); the text\nof a root stored encrypted is matched once read, folding every letter. A page can hold\nfewer threads than 50 while `X-Next-Cursor` says more follow. At most 200 characters, no\nNUL. Blank lists every thread.",
             "required": false,
             "schema": {
               "type": [
@@ -4644,6 +4644,134 @@
         ]
       }
     },
+    "/api/v1/dms/{id}/seal": {
+      "put": {
+        "tags": [
+          "Direct messages"
+        ],
+        "summary": "Turn encrypted storage of a DM on or off",
+        "description": "Either participant switches it. From then on new messages, edits and polls of the DM are\nstored encrypted with a key this site keeps, or plain again. Messages stored before stay as\nthey were, and turning it off decrypts nothing. This is not end-to-end encryption. A change\nposts a `storage` system message in the DM and sends `dm_updated` to both participants, so\na request counts as a message against the message rate, and a block between the\nparticipants refuses it like a message.",
+        "operationId": "put_dm_seal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "DM conversation id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SealReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored; body `{\"ok\": true}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request: an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Required by this site`: the site requires encrypted storage, so it can't be turned off (`reason.kind` `forced`). Or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: no such DM, or you are not in it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`This site needs an encryption key first` or `Not available while this site updates` (`reason.kind` `keys`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket. Or `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): past `MESSAGE_RATE_BURST` or `MESSAGE_RATE_PER_MINUTE`, as for messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/dms/{id}/threads": {
       "get": {
         "tags": [
@@ -4666,7 +4794,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Only threads whose root text, or the root author's username, display name or webhook\nname, contains this, ignoring case. Case folding depends on the database: Postgres folds\nevery letter, SQLite only ASCII letters (other letters match in the same case). At most\n200 characters, no NUL. Blank lists every thread.",
+            "description": "Only threads whose root text, or the root author's username, display name or webhook\nname, contains this, ignoring case. Case folding depends on the database: Postgres folds\nevery letter, SQLite only ASCII letters (other letters match in the same case); the text\nof a root stored encrypted is matched once read, folding every letter. A page can hold\nfewer threads than 50 while `X-Next-Cursor` says more follow. At most 200 characters, no\nNUL. Blank lists every thread.",
             "required": false,
             "schema": {
               "type": [
@@ -7046,6 +7174,16 @@
               }
             }
           },
+          "500": {
+            "description": "`This backup can't be opened`: the version is stored encrypted and its record does not open with the keys this site holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "503": {
             "description": "`Too many transfers right now, try again in a moment`: the upload buffer is full, or the token could not be checked (the database is unavailable). The session is not ended; retry later. Also `Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
             "content": {
@@ -7527,6 +7665,16 @@
           },
           "429": {
             "description": "Your backup downloads and uploads already hold 3 places or your share of the upload buffer (JSON `Too many backup transfers at once, try again in a moment`), or too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`This backup can't be opened`: the version is stored encrypted and its record does not open with the keys this site holds",
             "content": {
               "application/json": {
                 "schema": {
@@ -9619,9 +9767,21 @@
           "Media"
         ],
         "summary": "Upload a file",
-        "description": "Stores one file for attaching to a message: send it as the first part of a\n`multipart/form-data` body (any field name). The part's file name (default `file`) is kept\nwithout path parts and control characters, cut to 255 bytes (keeping a short extension);\nits content type (default `application/octet-stream`) is kept as `type/subtype` without\nparameters when it is at most 127 bytes, else stored as `application/octet-stream`. Then\npass the returned `id` as\n`media_id` when sending a message; only the uploader can attach it, and only to one\nmessage. The file is deleted 24 hours after upload (attached or not), or at the time its\nserver chose when it is posted in a server (`upload_expiry` of the server); messages carrying\nit then show it as removed (`media_removed` event). At most `limits.upload_bytes`\nof `GET /api/v1/instance` per file, by default 25 MiB (`UPLOAD_MAX_MIB`), and\nat most the instance's per-account budget (`UPLOAD_BUDGET_MIB`, 2 GiB unless set) of your\nfiles at once. Each counts from its upload until it is removed, for at most 24 hours (files\nyour webhooks sent count too). Time a server adds with its `upload_expiry` counts against\nthat server and its owner instead (`kept` and `owner_kept` of\n`GET /api/v1/servers/{name}/upload_expiry`).\nAt most 3 of your uploads are read at once. Each takes room for its whole declared body in\nthe instance's upload buffer (`UPLOAD_BUFFER_MIB`) before any of it is read, and together\nthey hold at most a quarter of it, three uploads (up to half of it) or one upload, whichever\nis most. A body that sends nothing for 30 seconds, or takes over 10 minutes in all, is\ndropped with 408.\n\nRequires a bearer token and the instance's uploads setting. Strict rate-limit bucket.",
+        "description": "Stores one file for attaching to a message: send it as the first part of a\n`multipart/form-data` body (any field name). The part's file name (default `file`) is kept\nwithout path parts and control characters, cut to 255 bytes (keeping a short extension);\nits content type (default `application/octet-stream`) is kept as `type/subtype` without\nparameters when it is at most 127 bytes, else stored as `application/octet-stream`. Then\npass the returned `id` as\n`media_id` when sending a message; only the uploader can attach it, and only to one\nmessage. The file is deleted 24 hours after upload (attached or not), or at the time its\nserver chose when it is posted in a server (`upload_expiry` of the server); messages carrying\nit then show it as removed (`media_removed` event). At most `limits.upload_bytes`\nof `GET /api/v1/instance` per file, by default 25 MiB (`UPLOAD_MAX_MIB`), and\nat most the instance's per-account budget (`UPLOAD_BUDGET_MIB`, 2 GiB unless set) of your\nfiles at once. Each counts from its upload until it is removed, for at most 24 hours (files\nyour webhooks sent count too). Time a server adds with its `upload_expiry` counts against\nthat server and its owner instead (`kept` and `owner_kept` of\n`GET /api/v1/servers/{name}/upload_expiry`).\nAt most 3 of your uploads are read at once. Each takes room for its whole declared body in\nthe instance's upload buffer (`UPLOAD_BUFFER_MIB`) before any of it is read, and together\nthey hold at most a quarter of it, three uploads (up to half of it) or one upload, whichever\nis most. A body that sends nothing for 30 seconds, or takes over 10 minutes in all, is\ndropped with 408.\n\nWith `place` naming the channel or DM the file will be posted in, a place that stores new\nmessages encrypted gets the file stored encrypted from its first byte (the place must be one\nyou can see). Without it, the file is encrypted when it is posted in such a place.\n\nRequires a bearer token and the instance's uploads setting. Strict rate-limit bucket.",
         "operationId": "upload_media",
         "parameters": [
+          {
+            "name": "place",
+            "in": "query",
+            "description": "`c:<channel id>` or `d:<dm id>`: the channel (a thread's channel for a thread reply) or\nDM the file will be posted in. While that place stores new messages encrypted, the file\nis stored encrypted from its first byte; otherwise it is encrypted when it is posted in\nsuch a place.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "X-Audit-Reason",
             "in": "header",
@@ -9660,7 +9820,7 @@
             }
           },
           "400": {
-            "description": "No file part (JSON `No file provided`) or a malformed multipart body (JSON \"Error parsing `multipart/form-data` request\"), which includes a part head over 16 KiB: from the start of the body, or the end of the part before, to the blank line after the part's headers. A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "description": "`place must be c:<channel id> or d:<dm id>`, or no file part (JSON `No file provided`) or a malformed multipart body (JSON \"Error parsing `multipart/form-data` request\"), which includes a part head over 16 KiB: from the start of the body, or the end of the part before, to the blank line after the part's headers. A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9694,8 +9854,28 @@
               }
             }
           },
+          "404": {
+            "description": "`Not found`: `place` names a channel you cannot see or a DM you are not in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "408": {
             "description": "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`This site needs an encryption key first`: `place` stores messages encrypted and the key to store files encrypted is not there (reason `keys`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9842,6 +10022,16 @@
           },
           "429": {
             "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`This file can't be opened`: it is stored encrypted and its key is not held. A stored encrypted chunk that does not open ends the body early",
             "content": {
               "application/json": {
                 "schema": {
@@ -13480,7 +13670,7 @@
             }
           },
           "400": {
-            "description": "`Only server reports can be escalated` or `Note must be at most 1000 characters`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "description": "`Only server reports can be escalated`, `Note must be at most 1000 characters`, or `This report can't be opened`: its stored text does not open with the keys this site holds. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -13797,6 +13987,302 @@
         ]
       }
     },
+    "/api/v1/seal_jobs": {
+      "get": {
+        "tags": [
+          "Encryption"
+        ],
+        "summary": "List the jobs of a place",
+        "description": "The newest 10 jobs over the stored messages of `place` that you may run, newest first.\nGeneral rate-limit bucket.",
+        "operationId": "list_jobs",
+        "parameters": [
+          {
+            "name": "place",
+            "in": "query",
+            "description": "`s:<server>`, `d:<dm id>` or `*`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The jobs, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SealJob"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`place must be s:<server>, d:<dm id> or *`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: a server or DM you have no access to; identical responses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Encryption"
+        ],
+        "summary": "Start a job over stored messages",
+        "description": "Starts encrypting the messages a place stored plain before it began storing new messages\nencrypted (`seal`: the earlier messages of a server for a member with Manage server, of a DM\nfor a participant; only a place that stores new messages encrypted is touched). Their files\ngo with them. Other places and directions are for this site's staff; anyone else gets the\nuniform 404. It confirms it is you with `reauth`. One job per place and\ndirection runs at a time: asking again answers the running one. Progress arrives as\n`seal_job_progress` WebSocket events to your own connections. General rate-limit bucket.",
+        "operationId": "start_job",
+        "parameters": [
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewSealJob"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The job, started or already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SealJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`place must be s:<server>, d:<dm id> or *`, or not exactly one way to confirm in `reauth`; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token, `Wrong password`, `Wrong backup phrase`, or `Confirm with your password`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Missing permission`: no Manage server in the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: a server or DM you have no access to, or a job you may not start; identical responses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`This site needs an encryption key first` or `Not available while this site updates` (reason `keys`): encrypting needs a key every copy holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Changes from this session locked for the day (UTC) after 50 wrong passwords or phrases",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket, or less than 3 seconds since this session's last try",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/seal_jobs/{id}": {
+      "get": {
+        "tags": [
+          "Encryption"
+        ],
+        "summary": "Get a job over stored messages",
+        "description": "A job started with `POST /api/v1/seal_jobs`, for whoever may start one like it. General\nrate-limit bucket.",
+        "operationId": "get_job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Job id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SealJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: no such job, or one you may not run; identical responses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/search": {
       "get": {
         "tags": [
@@ -13991,6 +14477,225 @@
         },
         "security": [
           {},
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/separators/{id}": {
+      "delete": {
+        "tags": [
+          "Channels"
+        ],
+        "summary": "Delete a separator",
+        "description": "Deletes a separator; the channels around it stay where they are. Requires the Manage\nchannels permission in its server. Raises the layout version and emits `layout_changed` to\nthe server. General rate-limit bucket.",
+        "operationId": "delete_separator",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Separator id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Separator deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A non-integer `id` gives a plain-text 400; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: no such separator, one in a server you have no access to, or you lack the Manage channels permission there (identical responses)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Channels"
+        ],
+        "summary": "Change a separator",
+        "description": "Changes the label or style of a separator. Requires the Manage channels permission in its\nserver. Raises the layout version and emits `layout_changed` to the server. General\nrate-limit bucket.",
+        "operationId": "update_separator",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Separator id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeparatorPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The changed separator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Separator"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid label (longer than 100 characters, with control characters or blocked by the profanity filter; reason `invalid`). A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: no such separator, one in a server you have no access to, or you lack the Manage channels permission there (identical responses)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body is not valid for this schema (plain-text framework error)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
           {
             "bearer": []
           }
@@ -14485,7 +15190,7 @@
             }
           },
           "403": {
-            "description": "Missing the Manage server settings permission, missing Kick for `members: remove`, a password or `join` change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)",
+            "description": "Missing the Manage server settings permission, missing Kick for `members: remove`, a password or `join` change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`), or `seal: false` while the site requires encrypted storage (`Required by this site`, with reason `forced`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -14505,7 +15210,7 @@
             }
           },
           "409": {
-            "description": "The new name belonged to a deleted server that is still being purged; try again later",
+            "description": "The new name belonged to a deleted server that is still being purged; try again later. With reason `keys`, for `seal: true`: `This site needs an encryption key first` or `Not available while this site updates`",
             "content": {
               "application/json": {
                 "schema": {
@@ -14525,7 +15230,7 @@
             }
           },
           "429": {
-            "description": "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords",
+            "description": "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords. With `seal`, `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): a switch posts a system message, so it counts against `MESSAGE_RATE_BURST` and `MESSAGE_RATE_PER_MINUTE` like one",
             "content": {
               "application/json": {
                 "schema": {
@@ -16869,7 +17574,7 @@
           "Channels"
         ],
         "summary": "Reorder channels and categories",
-        "description": "Replaces the order of the server's channel list: which category each channel is in, the\norder of channels within it and the order of the categories. The body must list every\nchannel and category of the server exactly once and name the `layout_version` it is based\non; when the layout changed since, nothing is stored and the answer is 409, so reload the\nserver and try again. Of two concurrent reorders from the same version, one wins and the\nother gets 409. Requires the Manage channels permission. Raises the layout version and\nemits `layout_changed` to the server, where each connection only gets the channels it can\nsee. General rate-limit bucket.",
+        "description": "Replaces the order of the server's channel list: which category each channel and separator\nis in, the order of channels and separators within it and the order of the categories. The\nbody must list every channel and category of the server exactly once (and every separator,\nwhen it has `separators`) and name the `layout_version` it is based on; when the layout\nchanged since, nothing is stored and the answer is 409, so reload the server and try again.\nOf two concurrent reorders from the same version, one wins and the other gets 409. Requires\nthe Manage channels permission. Raises the layout version and emits `layout_changed` to the\nserver, where each connection only gets the channels it can see. General rate-limit bucket.",
         "operationId": "reorder_layout",
         "parameters": [
           {
@@ -16913,7 +17618,7 @@
             }
           },
           "400": {
-            "description": "`The order must list every channel and category exactly once`: an id is missing, repeated or not part of this server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "description": "`The order must list every channel and category exactly once`: an id is missing, repeated or not part of this server. `The order must list every separator exactly once, after channels of its list`: a separator is missing, repeated, not part of this server, in a category the order does not list, or after more channels than its list has. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -21931,6 +22636,133 @@
         ]
       }
     },
+    "/api/v1/servers/{name}/separators": {
+      "post": {
+        "tags": [
+          "Channels"
+        ],
+        "summary": "Create a separator",
+        "description": "Adds a decorative separator, a line with an optional label, at the end of a category or of\nthe channels without one. A server can have at most 50 separators by default\n(`SERVER_SEPARATORS_MAX`). Requires the Manage channels permission. Raises the layout version\nand emits `layout_changed` to the server. General rate-limit bucket.",
+        "operationId": "create_separator",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Server name, case-insensitive",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewSeparatorReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The created separator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Separator"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid label (longer than 100 characters, with control characters or blocked by the profanity filter; reason `invalid`) or `A server can have at most 50 separators` with the configured number (`SERVER_SEPARATORS_MAX`, reason `limit`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing the Manage channels permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). `Not found`: `category_id` is not a category of this server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body is not valid for this schema (plain-text framework error)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/servers/{name}/system_messages": {
       "get": {
         "tags": [
@@ -26774,7 +27606,7 @@
         "properties": {
           "action": {
             "type": "string",
-            "description": "Dotted action name; the part before the dot is its group. `member`: `join` (with an\nextra password or invite link: the target is that password by its id and label, never\nits code; `kind` in the details is `password`, `link` or `standing`), `kick`, `ban`,\n`unban`, `timeout`, `untimeout`, `profile_name` (a member's own server name),\n`profile_reset` and `profile_unlock` (of a member's server profile), `voice_disconnect`,\n`voice_mute`, `voice_unmute` (of a guest in voice), `admin_grant`, `admin_revoke`, `admin_transfer`, `admin_perms`. `role`: `create`,\n`update`, `delete`, `assign`, `unassign`, `reorder` (`roles` in the details names up to\n20 roles that changed place, `more_roles` counts the rest), `order_confirm` (the role\norder now decides who may moderate whom), `order_init` (the instance ranked the roles of\na server that had no order; `ranked` is their number). `channel`: `create`, `update` (name, topic, slow\nmode, restrictions), `delete`, `perm_set`, `perm_clear`, `reorder`, `category_create`,\n`category_update`, `category_delete`. `server`: `update` (name and colors),\n`system_messages`. `access`: `mode` (password protection and the permanent password, never\nthe password itself), `password_create`, `password_revoke`. `message`: `delete` and\n`attachment_remove` (of other people's messages), `pin`, `unpin`, `poll_close` and\n`poll_reopen` (of other people's polls). `report`: `status`, `assign`, `note`, `escalate`\n(the target is the report's id, never a name; `channel` in the details is the channel\nof the reported message), `mute` and `unmute` (of someone's reports to this server),\n`export` (no target). Clients should show\nunknown actions generically; new ones may be added.",
+            "description": "Dotted action name; the part before the dot is its group. `member`: `join` (with an\nextra password or invite link: the target is that password by its id and label, never\nits code; `kind` in the details is `password`, `link` or `standing`), `kick`, `ban`,\n`unban`, `timeout`, `untimeout`, `profile_name` (a member's own server name),\n`profile_reset` and `profile_unlock` (of a member's server profile), `voice_disconnect`,\n`voice_mute`, `voice_unmute` (of a guest in voice), `admin_grant`, `admin_revoke`, `admin_transfer`, `admin_perms`. `role`: `create`,\n`update`, `delete`, `assign`, `unassign`, `reorder` (`roles` in the details names up to\n20 roles that changed place, `more_roles` counts the rest), `order_confirm` (the role\norder now decides who may moderate whom), `order_init` (the instance ranked the roles of\na server that had no order; `ranked` is their number). `channel`: `create`, `update` (name, topic, slow\nmode, restrictions), `delete`, `perm_set`, `perm_clear`, `reorder`, `category_create`,\n`category_update`, `category_delete`, `separator_create`, `separator_update`,\n`separator_delete` (the target is the separator by its id and label). `server`: `update`\n(name and colors),\n`system_messages`. `access`: `mode` (password protection and the permanent password, never\nthe password itself), `password_create`, `password_revoke`. `message`: `delete` and\n`attachment_remove` (of other people's messages), `pin`, `unpin`, `poll_close` and\n`poll_reopen` (of other people's polls). `report`: `status`, `assign`, `note`, `escalate`\n(the target is the report's id, never a name; `channel` in the details is the channel\nof the reported message), `mute` and `unmute` (of someone's reports to this server),\n`export` (no target). Clients should show\nunknown actions generically; new ones may be added.",
             "example": "member.ban"
           },
           "actor": {
@@ -26842,11 +27674,11 @@
               "null"
             ],
             "format": "int64",
-            "description": "Id of the role, channel, category, message, password or report; `null` for users, guests,\nthe server and several reports at once."
+            "description": "Id of the role, channel, category, separator, message, password or report; `null` for users, guests,\nthe server and several reports at once."
           },
           "kind": {
             "type": "string",
-            "description": "`user`, `role`, `channel`, `category`, `message`, `password`, `server`, `guest` or\n`report`.",
+            "description": "`user`, `role`, `channel`, `category`, `separator`, `message`, `password`, `server`,\n`guest` or `report`.",
             "example": "user"
           },
           "name": {
@@ -27588,6 +28420,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Sort key: categories are listed by ascending `position`, then by `id`. Counted over the\ncategories the caller gets."
+          },
+          "style": {
+            "$ref": "#/components/schemas/CategoryStyle",
+            "description": "How its header is drawn."
           }
         }
       },
@@ -27662,8 +28498,28 @@
             "type": "string",
             "description": "Category name. Surrounding whitespace is trimmed; must not be blank, at most 100\ncharacters and must pass the category-name profanity filter. Names may repeat.",
             "example": "Games"
+          },
+          "style": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CategoryStyle",
+                "description": "How its header is drawn. Leave it out to keep the current style (`default` for a new\ncategory)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
+      },
+      "CategoryStyle": {
+        "type": "string",
+        "description": "How a category header is drawn.",
+        "enum": [
+          "default",
+          "dots",
+          "line"
+        ]
       },
       "Challenge": {
         "type": "object",
@@ -27807,6 +28663,13 @@
             },
             "description": "Categories, top first."
           },
+          "separators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Separator"
+            },
+            "description": "Separators in list order: those without a category first, then those of each category\nin category order. Separators of categories left out are left out too."
+          },
           "uncategorized": {
             "type": "array",
             "items": {
@@ -27818,7 +28681,7 @@
           "version": {
             "type": "integer",
             "format": "int64",
-            "description": "Layout version. For people who manage channels, every change through the layout or\ncategory endpoints, and creating or deleting a channel, raises it; send it back when\nreordering. Everyone else gets a value that changes only when the part of the layout they\ncan see changes."
+            "description": "Layout version. For people who manage channels, every change through the layout,\ncategory or separator endpoints, and creating or deleting a channel, raises it; send it\nback when reordering. Everyone else gets a value that changes only when the part of the\nlayout they can see changes."
           }
         }
       },
@@ -28401,6 +29264,14 @@
           }
         }
       },
+      "Direction": {
+        "type": "string",
+        "description": "What a job does to the stored messages of its place.",
+        "enum": [
+          "seal",
+          "unseal"
+        ]
+      },
       "DmCreation": {
         "type": "string",
         "description": "Who may start a direct conversation with `POST /api/v1/dms`: `everyone`, `friends` (only\nwith a friend) or `nobody`. Conversations that exist keep working, and so does the self DM.",
@@ -28426,7 +29297,8 @@
           "other",
           "is_self",
           "closed",
-          "friend"
+          "friend",
+          "seal"
         ],
         "properties": {
           "closed": {
@@ -28465,6 +29337,10 @@
           "other": {
             "$ref": "#/components/schemas/UserRef",
             "description": "The other participant; the signed-in user for the conversation with yourself."
+          },
+          "seal": {
+            "$ref": "#/components/schemas/SealView",
+            "description": "Whether new messages of the DM are stored encrypted with a key this site keeps (this is\nnot end-to-end encryption), and whether the site requires it. Set with\n`PUT /api/v1/dms/{id}/seal`."
           }
         }
       },
@@ -30146,6 +31022,15 @@
           "readable"
         ]
       },
+      "JobState": {
+        "type": "string",
+        "description": "Where a job is.",
+        "enum": [
+          "running",
+          "done",
+          "failed"
+        ]
+      },
       "JobStatus": {
         "type": "string",
         "description": "Where a bulk delete job is: `running`, `done`, `cancelled` (by you) or `failed` (the scope\nwent away or an error stopped it).",
@@ -30250,6 +31135,10 @@
           "name": {
             "type": "string",
             "description": "Category name."
+          },
+          "style": {
+            "$ref": "#/components/schemas/CategoryStyle",
+            "description": "How its header is drawn."
           }
         }
       },
@@ -30268,6 +31157,16 @@
               "$ref": "#/components/schemas/CategoryOrder"
             },
             "description": "Categories, top first, with their channels."
+          },
+          "separators": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SeparatorPlace"
+            },
+            "description": "Where each separator goes, every separator of the server exactly once, top first. Leave\nit out to keep each separator in its list after as many channels as before."
           },
           "uncategorized": {
             "type": "array",
@@ -31358,6 +32257,10 @@
             "format": "int64",
             "description": "For a thread reply, the id of the message the thread hangs off; `null` otherwise."
           },
+          "unreadable": {
+            "type": "boolean",
+            "description": "The stored message can't be opened: its encryption key is missing or the stored record\nis damaged. `content` is empty then. Left out otherwise."
+          },
           "webhook": {
             "oneOf": [
               {
@@ -31670,6 +32573,52 @@
               "null"
             ],
             "description": "The password. Trimmed; blank or omitted generates four random words joined by `-`. At\nmost 200 characters, and different from the permanent password and from every other\npassword of the server (also dead ones that are still listed)."
+          }
+        }
+      },
+      "NewSealJob": {
+        "type": "object",
+        "description": "Starting a job.",
+        "required": [
+          "place",
+          "direction",
+          "reauth"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/Direction",
+            "description": "What it does."
+          },
+          "place": {
+            "type": "string",
+            "description": "`s:<server>`, `d:<dm id>` or `*` (every place)."
+          },
+          "reauth": {
+            "$ref": "#/components/schemas/ReAuthBody",
+            "description": "Confirms it is you."
+          }
+        }
+      },
+      "NewSeparatorReq": {
+        "type": "object",
+        "description": "Request body for creating a separator.",
+        "properties": {
+          "category_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Category to list it at the end of; `null` or left out lists it at the end of the channels\nwithout one."
+          },
+          "label": {
+            "type": "string",
+            "description": "Text on the line, kept exactly as written after trimming surrounding whitespace: at most\n100 characters, no control characters, and it must pass the category-name profanity\nfilter. Empty or left out: a bare line.",
+            "example": "updates"
+          },
+          "style": {
+            "$ref": "#/components/schemas/SeparatorStyle",
+            "description": "How the line is drawn; `dots` when left out."
           }
         }
       },
@@ -32973,6 +33922,14 @@
           {
             "type": "object",
             "properties": {
+              "encryption_ready": {
+                "type": "string",
+                "description": "Whether encrypted storage can be turned on here: `ready`; `first_need` (no key yet, the\nfirst switch makes one); `keys` (`This site needs an encryption key first`); or\n`updating` (`Not available while this site updates`)."
+              },
+              "encryption_required": {
+                "type": "boolean",
+                "description": "The site requires encrypted storage: every server and DM stores new messages encrypted,\nand the app encrypts what it stores of P2P rooms and DMs on this device. Older servers\nsend nothing, which reads as off."
+              },
               "guest_servers": {
                 "type": "array",
                 "items": {
@@ -33237,7 +34194,9 @@
           "sign_in",
           "unavailable",
           "locked",
-          "confirm"
+          "confirm",
+          "forced",
+          "keys"
         ]
       },
       "RecoverReq": {
@@ -34573,6 +35532,101 @@
           "failed"
         ]
       },
+      "SealJob": {
+        "type": "object",
+        "description": "A job over the stored messages of one place.",
+        "required": [
+          "id",
+          "place",
+          "direction",
+          "upto",
+          "done",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds."
+          },
+          "direction": {
+            "$ref": "#/components/schemas/Direction",
+            "description": "What it does."
+          },
+          "done": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The message id it has finished up to."
+          },
+          "finished_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix seconds, once it ended."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The job's id."
+          },
+          "place": {
+            "type": "string",
+            "description": "`s:<server>`, `d:<dm id>` or `*` (every place).",
+            "example": "s:club"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState",
+            "description": "Whether it runs, ended, or stopped on an error."
+          },
+          "upto": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The newest message id when the job started: it covers messages up to it."
+          }
+        }
+      },
+      "SealReq": {
+        "type": "object",
+        "description": "What `PUT /api/v1/dms/{id}/seal` takes.",
+        "required": [
+          "on"
+        ],
+        "properties": {
+          "on": {
+            "type": "boolean",
+            "description": "Whether new messages are stored encrypted."
+          }
+        }
+      },
+      "SealView": {
+        "type": "object",
+        "description": "Whether a server or DM stores new messages encrypted.",
+        "required": [
+          "on",
+          "forced"
+        ],
+        "properties": {
+          "forced": {
+            "type": "boolean",
+            "description": "The site requires it, so the switch can't be turned off."
+          },
+          "on": {
+            "type": "boolean",
+            "description": "New messages are stored encrypted, by the place's own switch or because the site\nrequires it."
+          },
+          "own": {
+            "type": "boolean",
+            "description": "The place's own switch, whatever the site requires."
+          },
+          "server_forced": {
+            "type": "boolean",
+            "description": "The site requires it of this server in particular; false for a DM. With\n`encryption_required` of the settings, a client keeps `on` and `forced` current when only\nthe site-wide requirement changes."
+          }
+        }
+      },
       "SearchResult": {
         "type": "object",
         "description": "One search hit with where it was posted.",
@@ -34735,6 +35789,104 @@
           }
         }
       },
+      "Separator": {
+        "type": "object",
+        "description": "A decorative separator in a channel list: a line with an optional label between channels.\nIt is not a channel: it has no messages, voice or permissions of its own.",
+        "required": [
+          "id",
+          "label"
+        ],
+        "properties": {
+          "after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many channels of its list are above it, counting the channels the caller can see.\nSeparators with the same `after` keep the order they have in their list."
+          },
+          "category_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Id of the category it is listed in; `null` lists it among the channels without one."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Separator id, unique across the instance."
+          },
+          "label": {
+            "type": "string",
+            "description": "Text on the line, exactly as written: at most 100 characters, empty for a bare line.",
+            "example": "updates"
+          },
+          "style": {
+            "$ref": "#/components/schemas/SeparatorStyle",
+            "description": "How the line is drawn."
+          }
+        }
+      },
+      "SeparatorPatch": {
+        "type": "object",
+        "description": "Request body for changing a separator. Fields left out stay as they are. Its place changes\nwith `PUT /api/v1/servers/{name}/layout`.",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New text on the line, as for creating one; empty for a bare line."
+          },
+          "style": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeparatorStyle",
+                "description": "New style."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SeparatorPlace": {
+        "type": "object",
+        "description": "Where a separator goes in a new layout.",
+        "required": [
+          "id",
+          "after"
+        ],
+        "properties": {
+          "after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many channels of that list go above it. Separators with the same value keep the\norder they are sent in."
+          },
+          "category_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Category to list it in; `null` lists it among the channels without one."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Separator id."
+          }
+        }
+      },
+      "SeparatorStyle": {
+        "type": "string",
+        "description": "How a separator line is drawn.",
+        "enum": [
+          "dots",
+          "line",
+          "plain"
+        ]
+      },
       "ServerAvailable": {
         "type": "object",
         "description": "Whether a server name is free to create.",
@@ -34806,8 +35958,10 @@
           "join_mode",
           "listed",
           "icon_kind",
+          "seal",
           "channels",
           "categories",
+          "separators",
           "layout_version",
           "read_only",
           "roles",
@@ -34976,6 +36130,17 @@
             "type": "integer",
             "format": "int64",
             "description": "Version of the role order, for `PUT /api/v1/servers/{name}/roles/order` and\n`POST /api/v1/servers/{name}/roles/order/confirm`."
+          },
+          "seal": {
+            "$ref": "#/components/schemas/SealView",
+            "description": "Whether new messages are stored encrypted (see `ServerSummaryLite`). Set with"
+          },
+          "separators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Separator"
+            },
+            "description": "Decorative separators of the channel list, in list order (see `Separator.after`).\nSeparators of categories left out are left out too."
           },
           "upload_expiry": {
             "$ref": "#/components/schemas/UploadExpiry",
@@ -35339,6 +36504,13 @@
               "null"
             ],
             "description": "\"Anyone can read this server\": `true` lets people who aren't members read the server by\nits name without joining (guests too, while guest access is on), `false` never does,\n`null` follows the instance again (readable while the server has no password and\n`server_joining` is `everyone`). It lets nobody join or post; readers may use its voice\nchannels. Omit to leave it unchanged. `true` is refused while the instance's\n`public_reading` is off."
+          },
+          "seal": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether new messages, edits and polls of the server are stored encrypted with a key this\nsite keeps. Messages stored before stay as they were, and turning it off decrypts\nnothing. This is not end-to-end encryption. A change posts a `storage` system message.\nOmit to leave it unchanged."
           }
         }
       },
@@ -35527,7 +36699,8 @@
         "required": [
           "name",
           "display_name",
-          "has_password"
+          "has_password",
+          "seal"
         ],
         "properties": {
           "banner_color": {
@@ -35606,6 +36779,10 @@
               "null"
             ],
             "description": "\"Anyone can read this server\": `true` lets people who aren't members read it by its\nname, `false` never does, `null` follows the instance (readable while the server has no\npassword and `server_joining` is `everyone`). Nobody reads it while the instance's\n`public_reading` is off."
+          },
+          "seal": {
+            "$ref": "#/components/schemas/SealView",
+            "description": "Whether new messages of the server are stored encrypted with a key this site keeps\n(this is not end-to-end encryption), and whether the site requires it. Set with\n`PATCH /api/v1/servers/{name}`. Older servers send nothing, which reads as off."
           }
         }
       },
@@ -37224,6 +38401,10 @@
     {
       "name": "Media",
       "description": "File uploads attached to messages, and downloads."
+    },
+    {
+      "name": "Encryption",
+      "description": "Jobs that store a place's earlier messages encrypted, or its encrypted messages plain again."
     },
     {
       "name": "Search",

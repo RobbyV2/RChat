@@ -20,7 +20,7 @@ import {
   type LockState,
   type ResetField,
 } from '../../profile_reset'
-import type { ProfilesMode } from '../../types'
+import type { ProfilesMode, SeparatorStyle } from '../../types'
 import { mergeCerts, mergeRevocations, displayName } from '../contacts'
 import { LOCAL, type Local } from '../limits'
 import { RateWindow, clip } from '../rate'
@@ -114,6 +114,7 @@ export type {
   RoleView,
   CategoryView,
   ChannelView,
+  SeparatorView,
   ModView,
   ReachedView,
   ServerView,
@@ -1397,6 +1398,18 @@ export class Servers {
 
   deleteCategory(room: string, id: string) {
     return categories.deleteCategory(ctx(this), room, id)
+  }
+
+  createSeparator(room: string, label: string, style: SeparatorStyle, cat: string | null) {
+    return categories.createSeparator(ctx(this), room, label, style, cat)
+  }
+
+  editSeparator(room: string, id: string, patch: categories.SeparatorPatch) {
+    return categories.editSeparator(ctx(this), room, id, patch)
+  }
+
+  deleteSeparator(room: string, id: string) {
+    return categories.deleteSeparator(ctx(this), room, id)
   }
 
   placeChannel(room: string, ch: string, cat: string | null) {

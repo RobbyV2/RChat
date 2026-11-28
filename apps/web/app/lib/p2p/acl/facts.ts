@@ -126,13 +126,15 @@ export interface Facts extends FactsQ {
   profileReset: RMap<string, ResetFact>
   // The server's description and icon (`about`, a display register).
   about: AclContent | undefined
-  // Categories by id and the category of each channel (`category`, `chcat`, registers).
+  // Categories by id, the category of each channel and the separators of the channel list by
+  // id (`category`, `chcat`, `chsep`, registers).
   categories: RMap<string, AclContent>
   chcats: RMap<string, AclContent>
   // Whether devices store the room's events sealed (`store`, a register read at display).
   store: AclContent | undefined
   // The `store` writes that count, for the lines that say who switched it.
   storeWrites: RSet<string>
+  chseps: RMap<string, AclContent>
   addsTo: RMap<string, readonly Pend[]>
   consumed: RSet<string>
   codeOk: RSet<string>
@@ -916,6 +918,14 @@ export abstract class View {
     const r = this.channelMeta(this.ix.chcatEv.get(ch))
     return r && this.ix.ev[r.win].c
   }
+  // ChSep(id) (`chsep`): the same register; a separator deleted by one of the concurrent latest
+  // writes stays deleted.
+  chsepOf(id: string): AclContent | undefined {
+    const r = this.channelMeta(this.ix.chsepEv.get(id))
+    if (!r) return undefined
+    const c = this.ix.ev[r.win].c
+    return r.maxes.some(x => this.ix.ev[x].c.gone === true) ? { ...c, gone: true } : c
+  }
   private channelMeta(xs: readonly number[] | undefined) {
     const ix = this.ix
     const ws = (xs ?? EMPTY).filter(x => {
@@ -1149,6 +1159,11 @@ export function fullFacts(V: View): Facts {
     const c = V.chcatOf(ch)
     if (c) chcats.set(ch, c)
   }
+  const chseps = new Map<string, AclContent>()
+  for (const id of ix.chsepEv.keys()) {
+    const c = V.chsepOf(id)
+    if (c) chseps.set(id, c)
+  }
   const overwrites = new Map<string, Map<string, AclContent>>()
   for (const [key, xs] of ix.chpermEv) {
     const { ch, subj } = ix.ev[xs[0]].c
@@ -1192,6 +1207,7 @@ export function fullFacts(V: View): Facts {
     chcats,
     store: V.storeOf(),
     storeWrites: V.storeWrites(),
+    chseps,
     addsTo,
     consumed,
     codeOk,
@@ -1268,6 +1284,7 @@ const EMPTY_FACTS: Facts = {
   chcats: new Map(),
   store: undefined,
   storeWrites: new Set(),
+  chseps: new Map(),
   addsTo: new Map(),
   consumed: new Set(),
   codeOk: new Set(),

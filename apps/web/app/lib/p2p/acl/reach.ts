@@ -131,6 +131,7 @@ export class Ix {
   categoryEv = new Map<string, number[]>()
   chcatEv = new Map<string, number[]>()
   storeEv: number[] = []
+  chsepEv = new Map<string, number[]>()
   profileBy = new Map<string, number[]>()
   settingsEv: number[] = []
   aboutEv: number[] = []
@@ -263,6 +264,9 @@ export class Ix {
         break
       case 'store':
         this.storeEv.push(i)
+        break
+      case 'chsep':
+        if (typeof c.id === 'string') pushM(this.chsepEv, c.id, i)
         break
       case 'assign':
         pushM(this.assignEv, `${c.to}|${c.role}`, i)

@@ -31,6 +31,7 @@ import type {
   InboxUntil,
   AvatarKind,
   Category,
+  CategoryStyle,
   Channel,
   ChannelKind,
   ChannelLayout,
@@ -42,6 +43,8 @@ import type {
   LinkedProvider,
   ReAuthBody,
   SealJob,
+  Separator,
+  SeparatorStyle,
   ExchangeRequest,
   ExchangeResponse,
   Invite,
@@ -880,9 +883,23 @@ export const endpoints = (c: ApiClient) => ({
     }),
   createCategory: (server: string, name: string) =>
     c.req<Category>('POST', `/servers/${seg(server)}/categories`, { name }),
-  renameCategory: (id: number, name: string) =>
-    c.req<Category>('PATCH', `/categories/${id}`, { name }),
+  renameCategory: (id: number, name: string, style?: CategoryStyle) =>
+    c.req<Category>('PATCH', `/categories/${id}`, { name, ...(style ? { style } : {}) }),
   deleteCategory: (id: number) => c.req<unknown>('DELETE', `/categories/${id}`),
+  createSeparator: (
+    server: string,
+    label: string,
+    style: SeparatorStyle,
+    category: number | null
+  ) =>
+    c.req<Separator>('POST', `/servers/${seg(server)}/separators`, {
+      label,
+      style,
+      category_id: category,
+    }),
+  editSeparator: (id: number, patch: { label?: string; style?: SeparatorStyle }) =>
+    c.req<Separator>('PATCH', `/separators/${id}`, patch),
+  deleteSeparator: (id: number) => c.req<unknown>('DELETE', `/separators/${id}`),
   reorderLayout: (server: string, order: LayoutOrder & { version: number }) =>
     c.req<ChannelLayout>('PUT', `/servers/${seg(server)}/layout`, order),
   updateChannel: (

@@ -54,8 +54,10 @@ import {
   type MemberView,
   type CategoryView,
   type ChannelView,
+  type SeparatorView,
   type ServerView,
 } from './types'
+import { SEPARATOR_LABEL_MAX } from '../../categories'
 import { type Rt } from './rt'
 
 // The read-only part of a room's runtime record a view reads.
@@ -223,6 +225,7 @@ export function serverView(
     systemPick: systemPick(s, env.lim.display),
     channels: readOnly ? [] : channelViews(s, env.me, me, env.lim.display),
     categories: readOnly ? [] : categoryViews(s, env.lim.display),
+    separators: readOnly ? [] : separatorViews(s),
     roles: readOnly
       ? []
       : order.map(r => ({
@@ -306,7 +309,22 @@ export function categoryViews(s: Summary, lim: Pick<Local['display'], 'name'>): 
       id,
       name: Array.from(c.name).slice(0, lim.name).join(''),
       pos: c.pos,
+      style: c.style ?? 'default',
       over: s.overwrites?.[id] ?? {},
+    }))
+    .sort((a, b) => a.pos - b.pos || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
+// The live separators, by place then id, with labels cut to the label limit and a category
+// that is gone read as none.
+export function separatorViews(s: Summary): SeparatorView[] {
+  return Object.entries(s.separators ?? {})
+    .map(([id, p]) => ({
+      id,
+      label: Array.from(p.label).slice(0, SEPARATOR_LABEL_MAX).join(''),
+      style: p.style ?? 'dots',
+      cat: p.cat && s.categories?.[p.cat] ? p.cat : null,
+      pos: p.pos,
     }))
     .sort((a, b) => a.pos - b.pos || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }

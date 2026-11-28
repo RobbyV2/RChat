@@ -56,6 +56,7 @@ pub mod scim;
 pub mod seal;
 pub mod sealed;
 pub mod search_limits;
+pub mod separators;
 pub mod server_about;
 pub mod servers;
 pub mod staff_audit;
@@ -94,6 +95,7 @@ pub use crate::api::error::{
 };
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{Builtin, DmCreation, ServerCreation, ServerJoining, TempChange};
+pub use crate::api::separators::{CategoryStyle, SeparatorStyle};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::limits::http;
@@ -502,6 +504,9 @@ pub struct Category {
     /// Sort key: categories are listed by ascending `position`, then by `id`. Counted over the
     /// categories the caller gets.
     pub position: i64,
+    /// How its header is drawn.
+    #[serde(default)]
+    pub style: CategoryStyle,
 }
 
 /// A category in a channel layout, with its channels.
@@ -511,23 +516,51 @@ pub struct LayoutCategory {
     pub id: i64,
     /// Category name.
     pub name: String,
+    /// How its header is drawn.
+    #[serde(default)]
+    pub style: CategoryStyle,
     /// Ids of the category's channels, top first.
     pub channels: Vec<i64>,
+}
+
+/// A decorative separator in a channel list: a line with an optional label between channels.
+/// It is not a channel: it has no messages, voice or permissions of its own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Separator {
+    /// Separator id, unique across the instance.
+    pub id: i64,
+    /// Text on the line, exactly as written: at most 100 characters, empty for a bare line.
+    #[schema(example = "updates")]
+    pub label: String,
+    /// How the line is drawn.
+    #[serde(default)]
+    pub style: SeparatorStyle,
+    /// Id of the category it is listed in; `null` lists it among the channels without one.
+    #[serde(default)]
+    pub category_id: Option<i64>,
+    /// How many channels of its list are above it, counting the channels the caller can see.
+    /// Separators with the same `after` keep the order they have in their list.
+    #[serde(default)]
+    pub after: i64,
 }
 
 /// The order of a server's channel list: channels without a category first, then each
 /// category with its channels.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ChannelLayout {
-    /// Layout version. For people who manage channels, every change through the layout or
-    /// category endpoints, and creating or deleting a channel, raises it; send it back when
-    /// reordering. Everyone else gets a value that changes only when the part of the layout they
-    /// can see changes.
+    /// Layout version. For people who manage channels, every change through the layout,
+    /// category or separator endpoints, and creating or deleting a channel, raises it; send it
+    /// back when reordering. Everyone else gets a value that changes only when the part of the
+    /// layout they can see changes.
     pub version: i64,
     /// Ids of channels without a category, top first.
     pub uncategorized: Vec<i64>,
     /// Categories, top first.
     pub categories: Vec<LayoutCategory>,
+    /// Separators in list order: those without a category first, then those of each category
+    /// in category order. Separators of categories left out are left out too.
+    #[serde(default)]
+    pub separators: Vec<Separator>,
 }
 
 /// A server role.
@@ -737,6 +770,9 @@ pub struct ServerDetail {
     /// Channel categories, ordered by `position`. Categories without a channel the caller can
     /// see are left out, unless the caller manages channels.
     pub categories: Vec<Category>,
+    /// Decorative separators of the channel list, in list order (see `Separator.after`).
+    /// Separators of categories left out are left out too.
+    pub separators: Vec<Separator>,
     /// Version of the channel layout, for `PUT /api/v1/servers/{name}/layout` (see
     /// `ChannelLayout.version`).
     pub layout_version: i64,
@@ -2505,8 +2541,16 @@ fn api_routes(
         )
         .route("/servers/{name}/layout", put(categories::reorder_layout))
         .route(
+            "/servers/{name}/separators",
+            post(separators::create_separator),
+        )
+        .route(
             "/categories/{id}",
             patch(categories::rename_category).delete(categories::delete_category),
+        )
+        .route(
+            "/separators/{id}",
+            patch(separators::update_separator).delete(separators::delete_separator),
         )
         .route(
             "/categories/{id}/perms",

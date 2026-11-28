@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use axum::extract::ws::Utf8Bytes;
 use tokio::time::Instant;
 
@@ -5,8 +7,8 @@ use super::access::{Access, channel_gate, deleted_gate};
 use super::event::WsEvent;
 
 use crate::api::access::ws_sees_timeouts;
-use crate::api::categories::seen_version;
-use crate::api::{Channel, ChannelLayout, LayoutCategory};
+use crate::api::categories::{listed, seen_part};
+use crate::api::{Channel, ChannelLayout};
 use crate::hub::Hub;
 use crate::state::AppState;
 
@@ -318,8 +320,9 @@ pub(super) async fn layout_for(
     }))
 }
 
-/// `layout` with only the channels this connection can view, and only the categories that hold
-/// one of them unless it `manages` channels. `None` when the connection must close.
+/// `layout` with only the channels this connection can view, only the categories that hold one
+/// of them unless it `manages` channels, and the separators of the lists left (`seen_part`).
+/// `None` when the connection must close.
 async fn seen_layout(
     state: &AppState,
     access: &mut Access,
@@ -327,42 +330,13 @@ async fn seen_layout(
     layout: &ChannelLayout,
     manages: bool,
 ) -> Option<ChannelLayout> {
-    let ChannelLayout {
-        version,
-        uncategorized: all,
-        categories: all_categories,
-    } = layout;
-    let mut uncategorized = Vec::new();
-    for cid in all {
-        if channel_gate(state, access, server, *cid).await? {
-            uncategorized.push(*cid);
+    let mut visible = HashSet::new();
+    for cid in listed(layout) {
+        if channel_gate(state, access, server, cid).await? {
+            visible.insert(cid);
         }
     }
-    let mut categories = Vec::new();
-    for LayoutCategory { id, name, channels } in all_categories {
-        let mut shown = Vec::new();
-        for cid in channels {
-            if channel_gate(state, access, server, *cid).await? {
-                shown.push(*cid);
-            }
-        }
-        if !shown.is_empty() || manages {
-            categories.push(LayoutCategory {
-                id: *id,
-                name: name.clone(),
-                channels: shown,
-            });
-        }
-    }
-    let mut seen = ChannelLayout {
-        version: *version,
-        uncategorized,
-        categories,
-    };
-    if !manages {
-        seen.version = seen_version(&seen);
-    }
-    Some(seen)
+    Some(seen_part(layout, |cid| visible.contains(&cid), manages))
 }
 
 pub(super) const PRESENCE_SNAPSHOT_MAX: usize = 50;
