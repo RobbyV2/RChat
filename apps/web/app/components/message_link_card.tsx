@@ -70,7 +70,7 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
     if (!card || card.dm_id !== null) return true
     const t =
       card.server && ownerSession.viewing.instanceTarget(s, card.server, card.channel_id ?? -1)
-    return !!t && ownerSession.viewing.canView(t)
+    return !!t && !!ownerSession.viewing.canView(t)
   })
   const known = useStore(s => id in s.linkCards)
   const forward = useForwardAccess(card, {

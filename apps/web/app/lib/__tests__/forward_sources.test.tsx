@@ -17,10 +17,12 @@ import { instanceInbox } from '../inbox_source'
 import { home } from './home_instance'
 import { resetSessionCaches, useStore } from '../store'
 import type { ForwardRef, Message, MessageLocation } from '../types'
-import { channelTarget, markPersonally, requestViewing, useViewing } from '../viewing'
+import { channelTarget, markPersonally, requestViewing } from '../viewing'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { searchResults } from './helpers/loads'
 import { writeJson } from '../api/masks'
+import { answerPrompt } from './helpers/viewing'
+import { defaultViewing } from '../viewing'
 
 // Server rendering reads the store's initial state, so the test state goes there too.
 const initial = useStore.getInitialState()
@@ -61,7 +63,7 @@ const openOnce = async (id: number, sensitive: boolean) => {
   const opening = requestViewing(
     channelTarget(useStore.getState().me?.username ?? null, 'instance', 'club', { id, sensitive })
   )
-  useViewing.getState().prompt?.answer(true, false)
+  answerPrompt(defaultViewing, true, false)
   await opening
 }
 
@@ -155,7 +157,7 @@ test('a frame shows copies from its own room and from rooms open in its profile'
   const opening = requestViewing(
     channelTarget(null, 'instance', 'club', { id: 2, sensitive: true }, frame)
   )
-  useViewing.getState().prompt?.answer(true, false)
+  answerPrompt(defaultViewing, true, false)
   await opening
   expect(frameCopyOpen(fwd(), room, null, frame)).toBe(true)
   expect(frameCopyOpen(fwd(), room, 'reader', frame)).toBe(false)
@@ -203,7 +205,7 @@ test('a closed voice room keeps its people out of the client until it opens', as
     expect(st().voiceUsers).toEqual({})
     expect(refreshed).toBe(0)
     const opening = requestViewing(channelTarget('reader', 'instance', 'club', recordings))
-    useViewing.getState().prompt?.answer(true, false)
+    answerPrompt(defaultViewing, true, false)
     await opening
     expect(refreshed).toBe(1)
     st().applyWsEvent({ type: 'voice_state', server: 'club', channel_id: 4, users: ['writer'] })

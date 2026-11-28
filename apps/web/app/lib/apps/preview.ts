@@ -97,8 +97,15 @@ export const previewPlace = (s: RChatState, server: string) =>
   s.me.servers.some(x => x.name === server)
 function createPreview(owner: AccountSession) {
   const { store, conn, viewing } = owner
-  const { approveAppVisit, canView, forgetViewing, leaveAppVisit, useViewing, requestViewing } =
-    viewing
+  const {
+    approveAppVisit,
+    canView,
+    cancelViewing,
+    forgetViewing,
+    leaveAppVisit,
+    useViewing,
+    requestViewing,
+  } = viewing
   const usePreview = create<PreviewState>(() => empty)
   let intent = 0
 
@@ -115,7 +122,7 @@ function createPreview(owner: AccountSession) {
   }
   function cancelPreviewViewing(target?: ViewingTarget) {
     if (pendingPrompt && (!target || pendingPrompt.target === target))
-      pendingPrompt.answer(false, false)
+      cancelViewing(pendingPrompt.target)
   }
 
   const current = (app: LoadedPreview) => {
@@ -217,7 +224,7 @@ function createPreview(owner: AccountSession) {
             ctx.acct === owner &&
             current(app) &&
             ctx.server === app.server &&
-            (ctx.via === 'bar' || (ctx.via === 'palette' && a.palette && canView(app.target))),
+            (ctx.via === 'bar' || (ctx.via === 'palette' && a.palette && !!canView(app.target))),
           args: a.args.map(f => ({
             kind: 'text' as const,
             name: f.name,

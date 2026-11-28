@@ -30,7 +30,7 @@ export const viewingActions = (
       title: 'Hide channel again',
       available: ctx => {
         const t = target(ctx)
-        return !!t && ctx.acct.viewing.needsWarning(t) && ctx.acct.viewing.canView(t)
+        return !!t && ctx.acct.viewing.needsWarning(t) && !!ctx.acct.viewing.canView(t)
       },
       run: ctx => {
         const t = target(ctx)

@@ -250,7 +250,7 @@ export const selectionSlice = (d: SelectionDeps) => {
         const id =
           root?.channel_id ?? (sel.scope.startsWith('c') ? Number(sel.scope.slice(1)) : null)
         const target = server && id !== null ? instanceTarget(s, server, id) : null
-        return s.selection?.scope === sel.scope && (!target || canView(target))
+        return s.selection?.scope === sel.scope && (!target || !!canView(target))
       }
       const page = await fetchAfter(sel.scope, after, at, visible)
       if (!visible()) throw new Ended('The view ended')

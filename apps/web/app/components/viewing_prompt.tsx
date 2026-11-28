@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
+import type { PromptHost } from '../lib/viewing'
 import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { Masked, TopDialog } from './ui'
@@ -17,19 +18,27 @@ export function ViewingPrompt() {
 }
 
 function AccountPrompt() {
-  const { useViewing, syncViewingStorage } = useAccount().viewing
+  const { useViewing, syncViewingStorage, registerPromptHost } = useAccount().viewing
   const prompt = useViewing(s => s.prompt)
+  const [host, setHost] = useState<PromptHost | null>(null)
+  useEffect(() => {
+    const mine = registerPromptHost()
+    setHost(mine)
+    return () => mine?.release()
+  }, [registerPromptHost])
   useEffect(() => {
     window.addEventListener('storage', syncViewingStorage)
     return () => window.removeEventListener('storage', syncViewingStorage)
   }, [syncViewingStorage])
-  return prompt ? <Warning key={prompt.target.key} prompt={prompt} /> : null
+  return prompt && host ? <Warning key={prompt.target.key} prompt={prompt} host={host} /> : null
 }
 
 function Warning({
   prompt,
+  host,
 }: {
   prompt: NonNullable<ReturnType<AccountSession['viewing']['useViewing']['getState']>['prompt']>
+  host: PromptHost
 }) {
   const title = useId()
   const description = useId()
@@ -42,7 +51,7 @@ function Warning({
       describedBy={description}
       initialFocus={back}
       onTop
-      onCancel={() => prompt.answer(false, false)}
+      onCancel={() => host.answer(prompt, false, false)}
     >
       <Stack gap="lg">
         <Stack gap="md">
@@ -70,10 +79,10 @@ function Warning({
           </label>
         </Stack>
         <Row gap="sm" justify="end">
-          <Button ref={back} size="md" onClick={() => prompt.answer(false, false)}>
+          <Button ref={back} size="md" onClick={() => host.answer(prompt, false, false)}>
             Cancel
           </Button>
-          <Button variant="filled" size="md" onClick={() => prompt.answer(true, remember)}>
+          <Button variant="filled" size="md" onClick={() => host.answer(prompt, true, remember)}>
             Open
           </Button>
         </Row>

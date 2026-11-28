@@ -392,7 +392,7 @@ const copyAccess = (fwd: ForwardRef, client: WidgetConnection) => {
   const target = client.metadata
     ? frameCopyTarget(fwd, client.metadata, client.account, frameInstance())
     : null
-  return { open: !!client.metadata && (!target || canView(target)), target }
+  return { open: !!client.metadata && (!target || !!canView(target)), target }
 }
 
 export default function WidgetPage() {
@@ -435,8 +435,10 @@ export default function WidgetPage() {
     const args = new URLSearchParams(location.search)
     const theme = args.get('theme')
     if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme
-    const connection = new WidgetConnection(args.get('id') ?? '', redraw, (room, account) =>
-      canView(viewingTarget(room, account))
+    const connection = new WidgetConnection(
+      args.get('id') ?? '',
+      redraw,
+      (room, account) => !!canView(viewingTarget(room, account))
     )
     const unsubscribe = useViewing.subscribe((next, prior) => {
       if (next.revision !== prior.revision) connection.updateViewing()

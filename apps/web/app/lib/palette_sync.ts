@@ -270,7 +270,7 @@ export function createPaletteIndexer(acct: AccountSession) {
       : verified.get(d.server)?.get(d.channel)
     return (
       !!channel &&
-      canView(channelTarget(s.me?.username ?? null, 'instance', d.server, channel, home))
+      !!canView(channelTarget(s.me?.username ?? null, 'instance', d.server, channel, home))
     )
   }
 

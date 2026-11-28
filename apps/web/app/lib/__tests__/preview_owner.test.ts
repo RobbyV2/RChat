@@ -9,6 +9,7 @@ import { registerAppActions } from '../actions'
 import { openActionMenu } from '../actions/menu'
 import { defineAction } from '../actions/registry'
 import { me } from './fixtures'
+import { answerPrompt } from './helpers/viewing'
 
 function open(owner: AccountSession) {
   owner.store.setState({
@@ -31,7 +32,7 @@ test('file approvals and preview actions belong to the account where the definit
       const pending = preview.launchPreview('garden', fileSource(file))
       const prompt = owner.viewing.useViewing.getState().prompt
       expect(prompt?.target.kind).toBe('app')
-      prompt!.answer(true, true)
+      answerPrompt(owner.viewing, true, true, prompt)
       await pending
       expect(preview.usePreview.getState().loaded?.definition.id).toBe(example.id)
       preview.closePreview()
@@ -71,7 +72,7 @@ test('losing the owner’s preview while a definition is loading discards the la
       return body.promise
     },
   })
-  owner.viewing.useViewing.getState().prompt!.answer(true, false)
+  answerPrompt(owner.viewing, true, false)
   await reading.promise
   owner.store.setState({ view: null })
   open(owner)
@@ -129,7 +130,7 @@ test('leaving a preview server dismisses its slash consent and preserves a repla
       'garden',
       fileSource(new File([JSON.stringify(example)], 'field.json'))
     )
-    owner.viewing.useViewing.getState().prompt!.answer(true, false)
+    answerPrompt(owner.viewing, true, false)
     await pending
     preview.closePreview()
     expect(preview.dispatchPreviewText('/fieldnote moss')).toBe(true)
@@ -147,10 +148,10 @@ test('leaving a preview server dismisses its slash consent and preserves a repla
     owner.store.setState({ view: { kind: 'dm', dmId: 4 } })
     expect(preview.usePreview.getState().loaded).toBeNull()
     expect(owner.viewing.useViewing.getState().prompt).toBe(replacement)
-    consent!.answer(true, true)
-    expect(owner.viewing.canView(consent!.target)).toBe(false)
-    replacement?.answer(false, false)
-    if (other) expect(await other).toBe(false)
+    answerPrompt(owner.viewing, true, true, consent)
+    expect(!!owner.viewing.canView(consent!.target)).toBe(false)
+    answerPrompt(owner.viewing, false, false, replacement)
+    if (other) expect(!!(await other)).toBe(false)
     expect(owner.store.getState().activeDialog).toBeNull()
   }
 })

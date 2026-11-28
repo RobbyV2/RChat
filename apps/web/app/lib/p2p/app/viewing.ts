@@ -15,7 +15,7 @@ export function createViewingPart(scope: IdentityScope) {
 
   const peerVisible = (s: P2pState, room: string, id: string) => {
     const target = peerTarget(s, room, id)
-    return !!target && scope.owner.viewing.canView(target)
+    return !!target && !!scope.owner.viewing.canView(target)
   }
   return { peerTarget, peerVisible }
 }

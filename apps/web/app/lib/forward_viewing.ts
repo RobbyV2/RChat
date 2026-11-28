@@ -47,7 +47,7 @@ export const frameCopyTarget = (
 
 export const frameCopyOpen = (...args: Parameters<typeof frameCopyTarget>) => {
   const target = frameCopyTarget(...args)
-  return !target || canView(target)
+  return !target || !!canView(target)
 }
 
 // `label`: the source's shared label as a copy carries it, used for servers this client

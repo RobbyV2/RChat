@@ -6,6 +6,7 @@ import { home } from './home_instance'
 import { useStore } from '../store'
 import { serverDetail, textChannel, user } from './fixtures'
 import { testAccount } from './test_account'
+import { answerPrompt } from './helpers/viewing'
 
 function Reader() {
   const account = useAccount()
@@ -154,9 +155,9 @@ test('ending one session preserves the other account’s viewing consent', async
   expect(a.key).not.toBe(b.key)
   const first = alice.viewing.requestViewing(a)
   const second = bob.viewing.requestViewing(b)
-  bob.viewing.useViewing.getState().prompt!.answer(true, false)
+  answerPrompt(bob.viewing, true, false)
   alice.store.resetSessionCaches()
-  expect(await first).toBe(false)
-  expect(await second).toBe(true)
-  expect(bob.viewing.canView(b)).toBe(true)
+  expect(!!(await first)).toBe(false)
+  expect(!!(await second)).toBe(true)
+  expect(!!bob.viewing.canView(b)).toBe(true)
 })

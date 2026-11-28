@@ -6,10 +6,11 @@ const peerApp = createPeerFixture(peerOwner, 'reader')
 const { p2pSearch, p2pServer, put, useP2p, peerTarget } = peerApp
 import { expect, test } from 'bun:test'
 
-const { endViewing, forgetViewing, useViewing } = peerOwner.viewing
+const { endViewing, forgetViewing } = peerOwner.viewing
 import { Hub, ManualClock } from './p2p_net'
 import { general, joinWithCode, makeMember, pump } from './p2p_server_net'
 import { until } from './fixtures'
+import { answerPrompt } from './helpers/viewing'
 
 test('a peer receives the shared channel label and chooses before its local message history is read', async () => {
   const start = useP2p.getState()
@@ -45,12 +46,12 @@ test('a peer receives the shared channel label and chooses before its local mess
     try {
       const cancel = p2pServer.openChannel(id)
       expect(reads).toBe(0)
-      useViewing.getState().prompt!.answer(false, false)
+      answerPrompt(peerOwner.viewing, false, false)
       expect(await cancel).toBe(false)
       expect(useP2p.getState().chat).toBeNull()
       expect(reads).toBe(0)
       const open = p2pServer.openChannel(id)
-      useViewing.getState().prompt!.answer(true, false)
+      answerPrompt(peerOwner.viewing, true, false)
       expect(await open).toBe(true)
       await until(() => useP2p.getState().chat?.loading === false)
       expect(reads).toBe(1)

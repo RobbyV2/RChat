@@ -64,7 +64,7 @@ export function createInboxSources(acct: AccountSession) {
       const item = entry.raw as InboxItem
       if (!item.server || !item.scope?.startsWith('c')) return true
       const t = instanceTarget(store.getState(), item.server, Number(item.scope.slice(1)))
-      return !!t && canView(t)
+      return !!t && !!canView(t)
     },
     previewTarget: entry => {
       const item = entry.raw as InboxItem

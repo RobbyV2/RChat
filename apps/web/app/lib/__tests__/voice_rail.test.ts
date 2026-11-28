@@ -21,6 +21,7 @@ import {
 } from '../voice_rail'
 import { me, memoryStorage, serverDetail, textChannel } from './fixtures'
 import { shownPeer } from './shown_peer'
+import { answerPrompt } from './helpers/viewing'
 
 afterEach(() => {
   resetSessionCaches()
@@ -71,9 +72,9 @@ describe('the hosted voice count', () => {
     expect(hostedVoiceCounts(s, 'alice', viewing)).toEqual({})
     const target = channelTarget('alice', 'instance', 'club', voiceRoom(2), viewing.connection)
     const opening = viewing.requestViewing({ ...target, sensitive: true })
-    viewing.useViewing.getState().prompt?.answer(true, false)
+    answerPrompt(viewing, true, false)
     try {
-      expect(await opening).toBe(true)
+      expect(!!(await opening)).toBe(true)
       expect(hostedVoiceCounts(s, 'alice', viewing)).toEqual({ club: 2 })
     } finally {
       viewing.leaveVisit()
@@ -105,7 +106,7 @@ describe('the hosted voice count', () => {
       connection: viewing.connection,
       canView: t => {
         calls.push(t.key)
-        return true
+        return viewing.canView({ ...t, sensitive: false })
       },
     })
     const s = { ...hosted(), me: me('alice') }

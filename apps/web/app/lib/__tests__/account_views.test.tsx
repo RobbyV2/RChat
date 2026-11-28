@@ -7,6 +7,7 @@ import { AccountProvider } from '../client/react'
 import { startApp } from '../start'
 import { msg, serverDetail, textChannel } from './fixtures'
 import { testAccount } from './test_account'
+import { answerPrompt } from './helpers/viewing'
 
 test('search results use the viewing consent of their account for colliding channels', async () => {
   const first = testAccount('reader', 'https://first.test')
@@ -31,7 +32,7 @@ test('search results use the viewing consent of their account for colliding chan
     }
     const target = first.viewing.instanceTarget(first.store.getState(), 'club', 1)!
     const pending = first.viewing.requestViewing(target)
-    first.viewing.useViewing.getState().prompt!.answer(true, false)
+    answerPrompt(first.viewing, true, false)
     await pending
     const render = (account: typeof first) =>
       renderToStaticMarkup(

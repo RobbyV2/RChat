@@ -14,6 +14,8 @@ import { afterEach, expect, test } from 'bun:test'
 import { parseForward, forwardKey } from '../forward'
 import { getHomeSession, resetSessionCaches, useStore } from '../store'
 import { me, serverDetail, textChannel, msg, user, memoryStorage } from './fixtures'
+import { answerPrompt } from './helpers/viewing'
+import { defaultViewing } from '../viewing'
 
 const { files: p2p } = getHomeSession()
 
@@ -41,7 +43,7 @@ test('opening a sensitive channel asks before reading history or displaying a ca
   await Promise.resolve()
   expect(calls.filter(url => url.includes('/messages'))).toEqual([])
   expect(useStore.getState().view).toEqual({ kind: 'channel', server: 'club', channelId: 1 })
-  useViewing.getState().prompt?.answer(false, false)
+  answerPrompt(defaultViewing, false, false)
   await opening
   expect(calls).toEqual([])
 })
@@ -56,21 +58,21 @@ test('local marks and remembered choices are isolated by account, server, transp
     channelTarget(null, 'instance', 'garden', ch),
   ]
   markPersonally(t, true)
-  expect(canView(t)).toBe(false)
+  expect(!!canView(t)).toBe(false)
   expect(others.every(o => !personallyMarked(o))).toBe(true)
   const once = requestViewing(t)
-  useViewing.getState().prompt!.answer(true, false)
-  expect(await once).toBe(true)
+  answerPrompt(defaultViewing, true, false)
+  expect(!!(await once)).toBe(true)
   leaveVisit()
-  expect(canView(t)).toBe(false)
+  expect(!!canView(t)).toBe(false)
   const always = requestViewing(t)
-  useViewing.getState().prompt!.answer(true, true)
+  answerPrompt(defaultViewing, true, true)
   await always
   endViewing()
-  expect(canView({ ...t, name: 'changed' })).toBe(true)
+  expect(!!canView({ ...t, name: 'changed' })).toBe(true)
   expect(others.every(o => !canView({ ...o, sensitive: true }))).toBe(true)
   forgetViewing(t)
-  expect(canView(t)).toBe(false)
+  expect(!!canView(t)).toBe(false)
 })
 
 test('cancel, open, and re-hide work in a tab with blocked storage', async () => {
@@ -95,15 +97,15 @@ test('cancel, open, and re-hide work in a tab with blocked storage', async () =>
       sensitive: true,
     })
     const cancelled = requestViewing(target)
-    useViewing.getState().prompt!.answer(false, false)
-    expect(await cancelled).toBe(false)
+    answerPrompt(defaultViewing, false, false)
+    expect(!!(await cancelled)).toBe(false)
     const opening = requestViewing(target)
-    useViewing.getState().prompt!.answer(true, true)
-    expect(await opening).toBe(true)
+    answerPrompt(defaultViewing, true, true)
+    expect(!!(await opening)).toBe(true)
     leaveVisit()
-    expect(canView(target)).toBe(true)
+    expect(!!canView(target)).toBe(true)
     forgetViewing(target)
-    expect(canView(target)).toBe(false)
+    expect(!!canView(target)).toBe(false)
   } finally {
     Object.assign(globalThis, { localStorage: storage })
   }
@@ -172,7 +174,7 @@ test('a disconnected channel rail refreshes metadata before admission', async ()
   const opened = useStore.getState().openChannel('club', 2)
   await flush()
   expect(useViewing.getState().prompt?.target.name).toBe(channels[1].name)
-  useViewing.getState().prompt!.answer(false, false)
+  answerPrompt(defaultViewing, false, false)
   await opened
   expect(calls.filter(p => p.includes('/servers/club'))).toHaveLength(1)
   expect(calls.some(p => p.includes('/messages'))).toBe(false)

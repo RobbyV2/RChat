@@ -22,6 +22,8 @@ import { readPreview } from '../apps/preview_definition'
 import { resetSessionCaches, useStore } from '../store'
 import { useViewing } from '../viewing'
 import { me, serverDetail, textChannel, memoryStorage, until } from './fixtures'
+import { answerPrompt } from './helpers/viewing'
+import { defaultViewing } from '../viewing'
 
 afterEach(() => {
   resetSessionCaches()
@@ -43,7 +45,7 @@ const openLauncher = () => {
 const answer = (open: boolean, remember = false) => {
   const warn = useViewing.getState().prompt
   expect(warn?.target.kind).toBe('app')
-  warn!.answer(open, remember)
+  answerPrompt(defaultViewing, open, remember)
 }
 
 test('the server menu exposes a local author preview', () => {

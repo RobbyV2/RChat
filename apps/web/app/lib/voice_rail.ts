@@ -39,8 +39,10 @@ export const hostedVoiceCounts = (s: Hosted, account: string | null, viewing: Vi
   const counts: Record<string, number> = {}
   for (const server of rosterServers(s)) {
     if (!listCurrent(s, server)) continue
-    const n = listedVoiceCount(s.servers[server].channels, s.voiceUsers, c =>
-      viewing.canView(channelTarget(account, 'instance', server, c, viewing.connection))
+    const n = listedVoiceCount(
+      s.servers[server].channels,
+      s.voiceUsers,
+      c => !!viewing.canView(channelTarget(account, 'instance', server, c, viewing.connection))
     )
     if (n) counts[server] = n
   }

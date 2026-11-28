@@ -70,6 +70,27 @@ export const instanceTarget = (
     : null
 }
 
+const minted = Symbol('view pass')
+
+// Consent to view one target, given by this device's profile: the target is not marked, its
+// choice is remembered, or its prompt was answered for this visit. Only `canView` and
+// `requestViewing` make one.
+export class ViewPass {
+  constructor(
+    key: typeof minted,
+    readonly target: string
+  ) {
+    if (key !== minted) throw new TypeError('a view pass comes from the viewing consent')
+  }
+}
+
+// The one screen that shows the prompt and answers it. `release` gives the place up.
+export interface PromptHost {
+  // Answers `prompt` while it is still the one asking.
+  answer(prompt: { target: ViewingTarget }, open: boolean, remember: boolean): void
+  release(): void
+}
+
 type Choice = { personal: boolean; remember: boolean }
 const clean: Choice = { personal: false, remember: false }
 export function createViewing(connection: ViewingInstance | (() => ViewingInstance)) {
@@ -90,9 +111,26 @@ export function createViewing(connection: ViewingInstance | (() => ViewingInstan
     return value
   }
 
+  // What the store shows of an open prompt. Its answer is not here: only the prompt's host
+  // holds it.
   interface Prompt {
     target: ViewingTarget
-    answer(open: boolean, remember: boolean): void
+  }
+  let answer: ((open: boolean, remember: boolean) => void) | null = null
+  let hosted = false
+  const registerPromptHost = (): PromptHost | null => {
+    if (hosted) return null
+    hosted = true
+    let held = true
+    return {
+      answer: (prompt, open, remember) => {
+        if (held && useViewing.getState().prompt === prompt) answer?.(open, remember)
+      },
+      release: () => {
+        if (held) hosted = false
+        held = false
+      },
+    }
   }
   const useViewing = create<{ prompt: Prompt | null; revision: number }>(() => ({
     prompt: null,
@@ -114,11 +152,16 @@ export function createViewing(connection: ViewingInstance | (() => ViewingInstan
   }
   const personallyMarked = (t: ViewingTarget) => choice(t.key).personal
   const needsWarning = (t: ViewingTarget) => t.kind === 'app' || t.sensitive || personallyMarked(t)
-  const canView = (t: ViewingTarget) =>
+  const canView = (t: ViewingTarget): ViewPass | null =>
     !needsWarning(t) ||
     choice(t.key).remember ||
     (t.kind === 'app' ? appVisit === t.key : visits.has(t.key))
-  const cancelViewing = () => useViewing.getState().prompt?.answer(false, false)
+      ? new ViewPass(minted, t.key)
+      : null
+  // Turns the open prompt down: `of` to do so only while it is the one asking about that target.
+  const cancelViewing = (of?: ViewingTarget) => {
+    if (!of || useViewing.getState().prompt?.target === of) answer?.(false, false)
+  }
   const leaveVisit = (next?: string) => {
     const left = [...visits].filter(key => key !== next)
     for (const key of left) visits.delete(key)
@@ -147,26 +190,27 @@ export function createViewing(connection: ViewingInstance | (() => ViewingInstan
   const requestViewing = (
     target: ViewingTarget,
     afterAppChoice?: (remember: boolean) => void
-  ): Promise<boolean> => {
+  ): Promise<ViewPass | null> => {
     cancelViewing()
-    if (canView(target)) return Promise.resolve(true)
+    const held = canView(target)
+    if (held) return Promise.resolve(held)
     return new Promise(resolve => {
-      const prompt: Prompt = {
-        target,
-        answer(open, remember) {
-          if (useViewing.getState().prompt !== prompt) return
-          if (open) {
-            if (target.kind === 'app' && afterAppChoice) {
-              appVisit = target.key
-              afterAppChoice(remember)
-            } else if (remember) save(target.key, { ...choice(target.key), remember: true })
-            else if (target.kind === 'app') appVisit = target.key
-            else visits.add(target.key)
-          }
-          useViewing.setState(s => ({ prompt: null, revision: s.revision + 1 }))
-          resolve(open)
-        },
+      const prompt: Prompt = { target }
+      const decide = (open: boolean, remember: boolean) => {
+        if (useViewing.getState().prompt !== prompt) return
+        answer = null
+        if (open) {
+          if (target.kind === 'app' && afterAppChoice) {
+            appVisit = target.key
+            afterAppChoice(remember)
+          } else if (remember) save(target.key, { ...choice(target.key), remember: true })
+          else if (target.kind === 'app') appVisit = target.key
+          else visits.add(target.key)
+        }
+        useViewing.setState(s => ({ prompt: null, revision: s.revision + 1 }))
+        resolve(open ? new ViewPass(minted, target.key) : null)
       }
+      answer = decide
       useViewing.setState({ prompt })
     })
   }
@@ -209,6 +253,7 @@ export function createViewing(connection: ViewingInstance | (() => ViewingInstan
     markPersonally,
     approveAppVisit,
     requestViewing,
+    registerPromptHost,
     endViewing,
     syncViewingStorage,
     instanceTarget: (s: Parameters<typeof instanceTarget>[0], server: string, id: number) =>
@@ -232,6 +277,7 @@ export const {
   markPersonally,
   approveAppVisit,
   requestViewing,
+  registerPromptHost,
   endViewing,
   syncViewingStorage,
 } = defaultViewing
