@@ -133,12 +133,16 @@ describe('app builds', () => {
     }
   })
 
-  test('the Tauri build command builds the wasm before the static export', () => {
+  test('the Tauri build command builds the wasm before the static export, then bundles the docs', () => {
     const scripts = JSON.parse(read('package.json')).scripts as Record<string, string>
     const tauri = JSON.parse(read('apps/desktop/src-tauri/tauri.conf.json'))
     const run = (tauri.build.beforeBuildCommand.script as string).match(/^bun run ([\w:]+)$/)?.[1]
     const steps = (scripts[run ?? ''] ?? '').split(' && ')
-    expect(steps).toEqual(['bun run build:wasm', 'bun run build:desktop'])
+    expect(steps).toEqual([
+      'bun run build:wasm',
+      'bun run build:desktop',
+      'bun scripts/bundle_docs.ts',
+    ])
     expect(scripts['build:wasm']).toContain(
       'wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release'
     )
