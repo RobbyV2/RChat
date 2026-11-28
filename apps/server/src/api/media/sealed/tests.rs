@@ -282,10 +282,10 @@ async fn files_follow_their_place_in_s3() {
             Some("image/png".to_string())
         );
         post(&state, cid, &plain).await;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
         while stub.object(&s3_key(&plain)).is_some() || !row(db, &plain).await.1 {
             assert!(
-                std::time::Instant::now() < deadline,
+                tokio::time::Instant::now() < deadline,
                 "a posted plain object is sealed in the background"
             );
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;

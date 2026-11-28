@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::Json;
 use axum::extract::{FromRequest, Path, Query, Request, State};
@@ -4150,9 +4151,9 @@ mod tests {
             String::from_utf8_lossy(&got).to_string()
         };
         let until = |kib: u64, why: &'static str| async move {
-            let ceiling = std::time::Instant::now() + Duration::from_secs(10);
+            let ceiling = tokio::time::Instant::now() + Duration::from_secs(10);
             while media::share_held(db, "owner") != kib {
-                assert!(std::time::Instant::now() < ceiling, "{why}");
+                assert!(tokio::time::Instant::now() < ceiling, "{why}");
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         };

@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

@@ -1,7 +1,8 @@
 pub(super) mod postgres;
 
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use sqlx::Row;
 

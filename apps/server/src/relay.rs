@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, Mutex, RwLock, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -927,7 +928,7 @@ impl Conn for Relayed {
 
     async fn recv_from(&self, buf: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
         loop {
-            let deadline = tokio::time::Instant::from_std(self.idle_until());
+            let deadline = self.idle_until();
             tokio::select! {
                 got = self.inner.recv_from(buf) => {
                     let (n, from) = got?;

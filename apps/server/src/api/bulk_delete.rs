@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -1115,7 +1116,7 @@ pub(crate) async fn run_job(state: &AppState, id: i64) {
     }
     let mut errors = 0;
     loop {
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let out = match BATCHES.acquire().await {
             Ok(_permit) => step(state, id).await,
             Err(_) => Ok(false),

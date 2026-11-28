@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use tokio::time::Instant;
 
 use axum::Json;
 use axum::extract::{Path, Query, RawQuery, State};
@@ -14298,7 +14298,7 @@ mod tests {
                 .try_get::<i64, _>(0)
                 .expect("n")
         };
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let m = say(&state, (Some(cid), None, None), "boss", "@everyone @crew").await;
         let sent = started.elapsed();
         assert_eq!(m.group_mentions.len(), 2);
@@ -14308,7 +14308,7 @@ mod tests {
             "one row per mention"
         );
         assert_eq!(count("SELECT COUNT(*) FROM pings").await, 0, "no fan-out");
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let here = say(&state, (Some(cid), None, None), "boss", "@here").await;
         let here_sent = started.elapsed();
         assert_eq!(here.group_mentions.len(), 1);
@@ -14319,7 +14319,7 @@ mod tests {
             "online only"
         );
 
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let odd = group_items(&state, "u1").await;
         let read_odd = started.elapsed();
         let even = group_items(&state, "u4000").await;

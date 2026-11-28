@@ -219,13 +219,13 @@ impl Pace {
             window: every,
         };
         Pace {
-            bucket: Single::new(policy, Instant::now().into_std()),
+            bucket: Single::new(policy, Instant::now()),
             due: None,
         }
     }
 
     pub(super) fn hit(&mut self, now: Instant) -> bool {
-        let ran = self.bucket.take(1.0, now.into_std());
+        let ran = self.bucket.take(1.0, now);
         self.due = match ran {
             true => None,
             false => self.next(now),
@@ -234,15 +234,13 @@ impl Pace {
     }
 
     pub(super) fn fire(&mut self, now: Instant) {
-        self.bucket.spend(1.0, now.into_std());
+        self.bucket.spend(1.0, now);
         self.due = None;
     }
 
     // When the next run may start, at `now` or later.
     pub(super) fn next(&self, now: Instant) -> Option<Instant> {
-        self.bucket
-            .ready_at(1.0, now.into_std())
-            .map(Instant::from_std)
+        self.bucket.ready_at(1.0, now)
     }
 }
 
@@ -269,7 +267,7 @@ impl SubPace {
             ),
         };
         SubPace {
-            bucket: Single::new(Policy::Tokens { burst, per_sec }, Instant::now().into_std()),
+            bucket: Single::new(Policy::Tokens { burst, per_sec }, Instant::now()),
             cap,
             wanted: None,
             due: None,
@@ -301,11 +299,8 @@ impl SubPace {
     ) -> Option<(Vec<String>, HashMap<String, String>)> {
         let (servers, grants) = self.wanted.take()?;
         let cost = SUB_FRAME_COST + fresh(&servers, &grants) as f64;
-        if !self.bucket.take(cost, now.into_std()) {
-            self.due = self
-                .bucket
-                .ready_at(cost, now.into_std())
-                .map(Instant::from_std);
+        if !self.bucket.take(cost, now) {
+            self.due = self.bucket.ready_at(cost, now);
             self.wanted = Some((servers, grants));
             return None;
         }

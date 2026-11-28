@@ -220,7 +220,7 @@ pub(super) fn frame_bucket(now: Instant) -> Single {
         burst: MSG_BURST,
         per_sec: MSG_RATE,
     };
-    Single::new(policy, now.into_std())
+    Single::new(policy, now)
 }
 
 /// The answer to an upgrade past `WS_SOCKETS_MAX`, with its `Retry-After`.
@@ -230,7 +230,7 @@ const BUSY_RETRY_SECS: u64 = 5;
 // Whether a client frame is read, dropped (`Some(false)`), or ends a connection that kept
 // sending past a second burst (`None`).
 pub(super) fn admit_frame(frames: &mut Single, now: Instant) -> Option<bool> {
-    match frames.spend(1.0, now.into_std()) {
+    match frames.spend(1.0, now) {
         left if left >= 0.0 => Some(true),
         left if left < -MSG_BURST => None,
         _ => Some(false),

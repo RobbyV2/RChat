@@ -46,7 +46,7 @@ impl Typer {
                     burst: TYPING_BURST,
                     per_sec: TYPING_RATE,
                 },
-                Instant::now().into_std(),
+                Instant::now(),
             ),
             active: None,
         }
@@ -87,7 +87,7 @@ impl Typer {
         {
             return Vec::new();
         }
-        if self.bucket.spend(1.0, at.into_std()) < 0.0 {
+        if self.bucket.spend(1.0, at) < 0.0 {
             return Vec::new();
         }
         let place = ws_typing_place(db, user, &scope).await;

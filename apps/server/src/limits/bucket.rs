@@ -2,7 +2,8 @@ use std::borrow::Borrow;
 use std::collections::VecDeque;
 use std::hash::{BuildHasher, Hash, RandomState};
 use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use hashbrown::HashTable;
 

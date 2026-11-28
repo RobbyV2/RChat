@@ -2792,7 +2792,7 @@ async fn grant_network(db: &Db, limits: &crate::limits::Limits) -> Result<String
     if let Some(ip) = ip {
         let pool = crate::db::pool_key(db);
         let group = crate::api::budget::group(ip);
-        let now = std::time::Instant::now();
+        let now = tokio::time::Instant::now();
         if !GRANT_NETWORK_MINTS
             .under(network_mints(limits.guest_grant_mints_per_network))
             .take(&format!("{pool}\n{wide}"), 1.0, now)
@@ -12060,8 +12060,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_burst_of_interacted_requests_leaves_room_for_a_server_read() {
-        use std::time::{Duration, Instant};
+        use std::time::Duration;
         use tokio::task::JoinSet;
+        use tokio::time::Instant;
         use tokio::time::timeout;
 
         async fn blocked_lists(lock: &mut sqlx::Transaction<'_, sqlx::Any>) -> i64 {

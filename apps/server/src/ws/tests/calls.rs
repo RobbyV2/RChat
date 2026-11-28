@@ -1658,7 +1658,7 @@ async fn voice_hops_are_paced_per_account_and_the_last_wins() {
     let mut rx = state.hub.subscribe();
     let mut tabs: Vec<VoiceWait> = (0..20).map(|_| VoiceWait::default()).collect();
     let now = Instant::now();
-    let at = now.into_std();
+    let at = now;
     let mut ran = 0;
     for n in 0..100 {
         let channel_id = if n % 2 == 0 { a } else { b };
@@ -1692,7 +1692,7 @@ async fn voice_hops_are_paced_per_account_and_the_last_wins() {
     assert!(tabs[1].due.is_some());
     let later = now + VOICE_EVERY * 2;
     assert!(matches!(
-        tabs[1].fire(|| state.hub.voice_ok_at("bob", later.into_std()), later),
+        tabs[1].fire(|| state.hub.voice_ok_at("bob", later), later),
         Some(ClientMsg::VoiceJoin { channel_id, muted: _, deafened: _ }) if channel_id == b
     ));
     assert!(
@@ -2438,7 +2438,7 @@ async fn voice_audio_is_paced_and_the_latest_wins() {
         .map(|_| VoiceWait::every(crate::hub::AUDIO_EVERY))
         .collect();
     let now = Instant::now();
-    let at = now.into_std();
+    let at = now;
     let mut ran = 0;
     for n in 0..100 {
         let msg = audio_msg(n % 2 == 0, false);
@@ -2489,7 +2489,7 @@ async fn voice_audio_is_paced_and_the_latest_wins() {
     );
     let later = now + crate::hub::AUDIO_EVERY * 2;
     let last = tabs[0]
-        .fire(|| state.hub.audio_ok_at("bob", later.into_std()), later)
+        .fire(|| state.hub.audio_ok_at("bob", later), later)
         .expect("the latest goes once the pace allows");
     voice_msg(&state, "bob", 1, last).await.expect("audio");
     assert_eq!(audio_heard(&state), vec![(cid, s("bob"), false, true)]);

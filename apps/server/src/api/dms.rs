@@ -1562,7 +1562,7 @@ mod tests {
     }
 
     async fn big_account(db: &Db) {
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let names: Vec<(String, String)> = (0..2000)
             .map(|n| {
                 let side = match n % 2 {
@@ -1664,7 +1664,7 @@ mod tests {
             let mut best = [std::time::Duration::MAX; 2];
             for _ in 0..11 {
                 for (n, cursor) in [None, Some(middle.as_str())].into_iter().enumerate() {
-                    let started = std::time::Instant::now();
+                    let started = tokio::time::Instant::now();
                     let page = dm_page(db, "alice", order, 0, cursor, 50)
                         .await
                         .expect("page");

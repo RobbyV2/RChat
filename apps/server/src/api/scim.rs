@@ -109,7 +109,7 @@ pub fn routes(state: AppState, key: ClientIp, enabled: bool) -> Router {
                     let ip = key
                         .extract(&req)
                         .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED.into());
-                    return if bucket.take(&ip, 1.0, std::time::Instant::now()) {
+                    return if bucket.take(&ip, 1.0, tokio::time::Instant::now()) {
                         ScimError::new(StatusCode::UNAUTHORIZED, "Unauthorized")
                     } else {
                         ScimError::new(StatusCode::TOO_MANY_REQUESTS, "Too many requests")

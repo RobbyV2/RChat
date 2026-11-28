@@ -3,7 +3,8 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::Json;
 use axum::extract::{Path, State};

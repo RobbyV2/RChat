@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -335,7 +336,7 @@ pub async fn insert_pings(
 /// process. Each insert here lowers it; seeing or removing pings only adds real room, so the
 /// value stays on the safe side. It is counted again after `HEADROOM_SECS`, which covers
 /// pings that other processes insert.
-static HEADROOM: LazyLock<std::sync::Mutex<HashMap<String, (std::time::Instant, i64)>>> =
+static HEADROOM: LazyLock<std::sync::Mutex<HashMap<String, (tokio::time::Instant, i64)>>> =
     LazyLock::new(Default::default);
 const HEADROOM_SECS: u64 = 60;
 const HEADROOM_KEYS: usize = 100_000;
@@ -369,7 +370,7 @@ fn set_headroom(key: String, n: i64) {
     if map.len() >= HEADROOM_KEYS && !map.contains_key(&key) {
         map.clear();
     }
-    map.insert(key, (std::time::Instant::now(), n));
+    map.insert(key, (tokio::time::Instant::now(), n));
 }
 
 /// Keeps `username` at `PINGS_MAX` unseen pings. Past it, the oldest unseen pings of the actor

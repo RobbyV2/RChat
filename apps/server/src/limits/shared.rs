@@ -1,5 +1,6 @@
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use redis::aio::ConnectionManager;
 use sha1::{Digest, Sha1};

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -830,7 +831,7 @@ mod tests {
             "https://93.184.216.34:8443/x.png",
             "ftp://93.184.216.34/x.png",
         ] {
-            let started = std::time::Instant::now();
+            let started = tokio::time::Instant::now();
             assert!(
                 fetch_image(&Url::parse(url).expect("url"), &policy)
                     .await

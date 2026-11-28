@@ -71,7 +71,8 @@ pub mod widgets;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
@@ -4006,7 +4007,7 @@ mod tests {
         let other = ran.clone();
         let checks = tokio::spawn(async move {
             tokio::spawn(async move { other.store(true, Ordering::SeqCst) });
-            let start = std::time::Instant::now();
+            let start = tokio::time::Instant::now();
             while !ran.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(30) {
                 assert!(all.blocks(ProfanityTarget::Messages, "this shit"));
             }

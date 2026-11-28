@@ -1658,7 +1658,7 @@ fn ops_cost_nothing_per_guest_in_voice() {
     }
     assert_eq!(replica.voice_addrs.len(), 2_000);
     assert_eq!(replica.voice_mutes.len(), 100);
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     for n in 0..10_000 {
         replica.apply(1, Op::Heartbeat, T0 + n);
     }
@@ -1764,7 +1764,7 @@ fn snapshots_walk_only_the_mutes_of_their_servers() {
     replica.apply(1, guest_join(muted, 1, "club", 10, "10.1.0.7"), T0);
     replica.apply(1, guest_join(other, 2, "club", 10, "2001:db8:7::"), T0);
     let held = [s("club")];
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     for _ in 0..10 {
         replica.voice_snapshot_for(held.iter(), None);
     }

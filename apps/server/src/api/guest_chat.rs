@@ -5,7 +5,8 @@ use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 use utoipa::ToSchema;
 
 use super::access::overwrite_sql::overwrite_sql;

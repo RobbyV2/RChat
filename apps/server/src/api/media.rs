@@ -2689,10 +2689,10 @@ mod tests {
                 ))
             })
             .collect();
-        let ceiling = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let ceiling = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
         while room.available_permits() > 10 {
             assert!(
-                std::time::Instant::now() < ceiling,
+                tokio::time::Instant::now() < ceiling,
                 "each body reserves its declared size"
             );
             tokio::task::yield_now().await;
@@ -2715,7 +2715,7 @@ mod tests {
         .await
         .expect("another account's upload goes through");
         drop(small);
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let large = read(
             pieces(4, 8),
             Some(32 * 1024),
@@ -2815,9 +2815,9 @@ mod tests {
             waits,
             slot(&db, "mallory"),
         ));
-        let ceiling = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let ceiling = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
         while buffer.available_permits() > 75 {
-            assert!(std::time::Instant::now() < ceiling, "the upload is held");
+            assert!(tokio::time::Instant::now() < ceiling, "the upload is held");
             tokio::task::yield_now().await;
         }
         let more = read(
@@ -2889,7 +2889,7 @@ mod tests {
                 Ok(_) => panic!("3 MiB is over the cap"),
             }
         }
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let declared = read_small(
             futures_util::stream::pending::<Result<axum::body::Bytes, std::io::Error>>(),
             Some(3 * 1024 * 1024),
@@ -3406,7 +3406,7 @@ mod tests {
             let (mut form, watch) = form_within(form_request(stream), 128 * 1024, waits)
                 .await
                 .expect("form");
-            let started = std::time::Instant::now();
+            let started = tokio::time::Instant::now();
             let code = match next_part(&mut form).await {
                 Ok(Some(field)) => match read_json_part(field, usize::MAX, &watch).await {
                     Ok(_) => StatusCode::OK,
@@ -3454,7 +3454,7 @@ mod tests {
         let (mut form, watch) = form_within(form_request(endless), usize::MAX, waits)
             .await
             .expect("form");
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let parts = async {
             let mut read = 0;
             loop {
@@ -3491,9 +3491,9 @@ mod tests {
         let until = |kib: u64, why: &'static str| {
             let db = state.db.clone();
             async move {
-                let ceiling = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                let ceiling = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
                 while share_held(&db, "alice") != kib {
-                    assert!(std::time::Instant::now() < ceiling, "{why}");
+                    assert!(tokio::time::Instant::now() < ceiling, "{why}");
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
             }

@@ -264,7 +264,7 @@ fn frame_pace(burst: u32, per_sec: u32, now: Instant) -> Single {
         burst: f64::from(burst),
         per_sec: f64::from(per_sec),
     };
-    Single::new(policy, now.into_std())
+    Single::new(policy, now)
 }
 
 /// A message kept for a peer that is not connected, with its sender and the sender's client
@@ -643,7 +643,7 @@ impl Peers {
                 Heard::Gone
             }
             OFFER | ANSWER | CANDIDATE | LEAVE | EXPIRE if dst.len() <= ID_MAX => {
-                match pace.take(1.0, Instant::now().into_std()) {
+                match pace.take(1.0, Instant::now()) {
                     true => realm.relay(&kind, id, dst, payload.as_ref()),
                     false => realm.relay(EXPIRE, dst, id, None),
                 }
@@ -2071,7 +2071,7 @@ mod tests {
     fn a_connection_relays_a_burst_and_then_at_a_pace() {
         let start = Instant::now();
         let mut frames = frame_pace(100, 10, start);
-        let mut take = |at: Instant| frames.take(1.0, at.into_std());
+        let mut take = |at: Instant| frames.take(1.0, at);
         for _ in 0..100 {
             assert!(take(start));
         }
@@ -2086,7 +2086,7 @@ mod tests {
         let passed = (0..500).filter(|_| take(idle)).count();
         assert_eq!(passed, 100, "idle time never adds more than the burst");
         let mut none = frame_pace(2, 0, start);
-        let mut take = |at: Instant| none.take(1.0, at.into_std());
+        let mut take = |at: Instant| none.take(1.0, at);
         assert!(take(idle) && take(idle) && !take(idle + Duration::from_secs(60)));
         let stock = Settings::default();
         assert_eq!((stock.burst, stock.per_sec), (1000, 100));

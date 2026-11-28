@@ -75,7 +75,7 @@ async fn start(
 
 /// Waits until job `id` ended, and answers it.
 async fn ended(state: &AppState, id: i64) -> SealJob {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         let (job, _) = super::load(&state.db, id)
             .await
@@ -84,7 +84,7 @@ async fn ended(state: &AppState, id: i64) -> SealJob {
         if job.state != JobState::Running {
             return job;
         }
-        assert!(std::time::Instant::now() < deadline, "job {id} runs on");
+        assert!(tokio::time::Instant::now() < deadline, "job {id} runs on");
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 }

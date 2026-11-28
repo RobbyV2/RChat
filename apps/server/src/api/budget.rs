@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::extract::Request;
 use axum::middleware::Next;

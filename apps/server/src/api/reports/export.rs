@@ -226,7 +226,7 @@ pub(crate) async fn export_in(
     format: Format,
 ) -> Result<Response, ApiError> {
     let key = format!("{}\n{}", pool_key(&state.db), user.username);
-    if let Err(wait) = EXPORTS.try_take(&key, 1.0, std::time::Instant::now()) {
+    if let Err(wait) = EXPORTS.try_take(&key, 1.0, tokio::time::Instant::now()) {
         let wait = wait.as_secs_f64().ceil().max(1.0) as u64;
         return Err(ApiError::rate(TOO_MANY_EXPORTS, Some(wait)));
     }

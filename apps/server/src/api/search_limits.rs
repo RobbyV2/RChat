@@ -135,7 +135,7 @@ pub async fn admit(state: &AppState, caller: Option<&User>) -> Result<Admitted, 
     let limits = &state.limits;
     let token = TOKENS
         .under(policy(limits))
-        .hold(who.clone(), 1.0, std::time::Instant::now())
+        .hold(who.clone(), 1.0, tokio::time::Instant::now())
         .map_err(|wait| lookup::limited(PER_MINUTE, TOO_MANY, wait))?;
     let own = own_place(&who, u64::from(limits.message_search_at_once)).await?;
     let deadline = Instant::now() + SITE_WAIT;
@@ -243,7 +243,8 @@ mod tests {
     use std::net::IpAddr;
     use std::pin::Pin;
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    use tokio::time::Instant;
 
     use axum::extract::{RawQuery, State};
     use axum::http::{HeaderMap, StatusCode};

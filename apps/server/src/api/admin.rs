@@ -4007,7 +4007,7 @@ mod tests {
         Settings::follow(&a);
         Settings::follow(&b);
         assert!(Settings::cached(&b.db).await.p2p);
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let patch: SettingsPatch =
             serde_json::from_value(json!({"p2p": false, "registration": "closed"})).expect("patch");
         let _ = patch_settings(

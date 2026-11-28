@@ -1621,7 +1621,7 @@ mod tests {
         exec(db, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200) INSERT INTO members(server, username, is_admin, perms, joined_at) SELECT 'h' || i, 'm' || i, 0, 0, 1 FROM n").await;
         let mut best = std::time::Duration::MAX;
         for _ in 0..3 {
-            let start = std::time::Instant::now();
+            let start = tokio::time::Instant::now();
             for n in 0..20 {
                 let found = searched(&state, by("alice"), &format!("m{}", n % 9 + 1), None)
                     .await

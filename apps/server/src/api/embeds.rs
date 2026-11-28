@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};

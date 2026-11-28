@@ -494,7 +494,7 @@ async fn unconfirmed_cleanup_finishes_in_the_background() {
     let conn = hub.next_conn();
     hub.set_online("alice", conn, &["rchat"]);
     hub.set_p2p("alice", conn, "peer".to_string(), vec!["f".to_string()]);
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let (ends, drop) = hub.drop_conn("alice", conn).await;
     assert!(started.elapsed() >= CALL_TIMEOUT);
     assert!(ends.is_empty() && matches!(drop, P2pDrop::Kept));

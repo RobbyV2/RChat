@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Instant;
+use tokio::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use sqlx::Row;

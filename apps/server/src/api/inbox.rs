@@ -1866,7 +1866,7 @@ mod tests {
         let mut items = Vec::new();
         let mut slowest = std::time::Duration::ZERO;
         for _ in 0..10 {
-            let started = std::time::Instant::now();
+            let started = tokio::time::Instant::now();
             let p = page(&state, "alice", json!({"cursor": cursor}))
                 .await
                 .expect("page");

@@ -273,7 +273,7 @@ async fn a_statement_over_the_limit_fails_on_postgres() {
         return;
     };
     let db = open_with(Some(&pg.url), &limited(1)).await.expect("open");
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let slow = sqlx::query("SELECT COUNT(*) FROM pg_sleep(2)")
         .execute(&db)
         .await
@@ -415,7 +415,7 @@ async fn init_purges_and_builds_have_no_statement_limit() {
         tokio::time::sleep(Duration::from_millis(1500)).await;
         other.close().await.expect("the other copy is done");
     });
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     let db = open_with(Some(&pg.url), &limited(1))
         .await
         .expect("an init that waits longer than the limit");
