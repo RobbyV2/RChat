@@ -172,22 +172,6 @@ function DmRowEnd({ id, unread, pings }: { id: number; unread: boolean; pings: n
   )
 }
 
-// A channel row's (or a folded category's) end, with who types in `scopes`.
-function HostedChannelEnd({
-  scopes,
-  server,
-  pings,
-  unread,
-}: {
-  scopes: readonly string[]
-  server: string
-  pings: number
-  unread: boolean
-}) {
-  const typers = useHostedTypers(scopes, server)
-  return <ChannelEnd typers={typers} pings={pings} unread={unread} />
-}
-
 const NO_ROSTER: string[] = []
 // People in a room closed by a local viewing choice stay unnamed and uncounted.
 const rosterOf = (
@@ -787,9 +771,6 @@ export function ChannelSidebar() {
   const voice = useStore(s => s.voice)
   useStore(s => s.reads)
   useStore(s => s.notifyPrefs)
-  const pings = useStore(badgePings)
-  const unread = (scope: string) => scopeUnread(acct.store.getState(), scope)
-  const pingsOf = (scope: string) => scopePings(pings, scope)
   useStore(s => s.rtcTick)
   useStore(s => s.members)
   useStore(s => s.memberInfo)
@@ -1000,8 +981,6 @@ export function ChannelSidebar() {
         </Row>
       </Surface>
     ) : null
-  const textScopes = (entries: ChannelEntry[]) =>
-    entries.filter(c => c.kind === 'text').map(c => `c${c.key}`)
 
   return (
     <aside className={base}>
@@ -1043,21 +1022,6 @@ export function ChannelSidebar() {
       <ChannelList
         channels={listed}
         state={listState}
-        look={c => ({
-          muted: scopeMuted(acct.store.getState(), { kind: 'channel', id: Number(c.key), server }),
-          bold: false,
-        })}
-        end={c => (
-          <>
-            <MutedIcon scope={{ kind: 'channel', id: Number(c.key), server }} />
-            <HostedChannelEnd
-              scopes={[`c${c.key}`]}
-              server={server}
-              pings={pingsOf(`c${c.key}`)}
-              unread={unread(`c${c.key}`)}
-            />
-          </>
-        )}
         voice={entry => {
           const c = channelOf(entry)
           return (
@@ -1067,20 +1031,6 @@ export function ChannelSidebar() {
               own={ownServer}
               menu={(x, y) => listed.channelMenu(entry.key, x, y)}
               drag={c ? channelDragSpec(c) : undefined}
-            />
-          )
-        }}
-        categoryEnd={(_category, hidden) => {
-          const hiddenPings = hidden.reduce((n, c) => n + pingsOf(`c${c.key}`), 0)
-          const scopes = textScopes(hidden)
-          return hiddenPings > 0 ? (
-            <PingBadge count={hiddenPings} className="ml-auto" />
-          ) : (
-            <HostedChannelEnd
-              scopes={scopes}
-              server={server}
-              pings={0}
-              unread={scopes.some(unread)}
             />
           )
         }}

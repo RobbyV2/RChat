@@ -113,6 +113,50 @@ placeContract(channels, (kind, world) => {
     expect(calls.at(-1)).toEqual(hosted ? ['open', world().server, 2] : ['open', 'c2'])
   })
 
+  test('a text row ends with what is unread there and who types', () => {
+    const here = listed()
+    const { ann } = world()
+    const quiet = here.ends.get()
+    expect(here.ends.get()).toBe(quiet)
+    expect([...quiet.of.keys()]).toEqual([ids[0], ids[1]])
+    expect(quiet.of.get(ids[1])).toMatchObject({
+      muted: false,
+      pings: 0,
+      unread: false,
+      typers: [],
+    })
+    if (hosted)
+      ann.account.store.setState({
+        typingOn: true,
+        typing: { c2: { bob: { name: 'Bob', until: Number.MAX_SAFE_INTEGER } } },
+      })
+    else if (ann.app) {
+      ann.account.store.setState({ typingOn: true })
+      ann.app.useP2p.setState(s => ({
+        serverTyping: { [`${world().room}/c2`]: ['B'] },
+        servers: {
+          [world().room]: {
+            ...s.servers[world().room],
+            chans: { c2: { unread: true, pings: 2 } },
+          } as never,
+        },
+      }))
+    }
+    const busy = here.ends.get().of.get(ids[1])
+    expect(busy?.typers).toHaveLength(1)
+    if (!hosted) expect(busy).toMatchObject({ unread: true, bold: true, pings: 2 })
+    expect(here.ends.get().server).toBe(hosted ? world().server : null)
+    here.setOpen(ids[3], false)
+    Object.assign(ann.account.store.getInitialState(), ann.account.store.getState())
+    if (ann.app) Object.assign(ann.app.useP2p.getInitialState(), ann.app.useP2p.getState())
+    const html = renderToStaticMarkup(
+      <AccountProvider session={ann.account}>
+        <ChannelList channels={here} state={here.state.get()} voice={() => null} />
+      </AccountProvider>
+    )
+    expect(html).toContain(hosted ? 'data-typing-dots' : '>2<')
+  })
+
   test('one list draws either side', () => {
     const here = listed()
     const html = renderToStaticMarkup(
@@ -120,15 +164,12 @@ placeContract(channels, (kind, world) => {
         <ChannelList
           channels={here}
           state={here.state.get()}
-          look={() => ({ muted: false, bold: false })}
-          end={c => <i>{`end ${c.key}`}</i>}
           voice={c => <b key={c.key}>{`voice ${c.key}`}</b>}
         />
       </AccountProvider>
     )
     expect(html).toContain('c1')
     expect(html).toContain('Deck')
-    expect(html).toContain(`<i>end ${ids[1]}</i>`)
     expect(html).toContain(`<b>voice ${ids[2]}</b>`)
     expect(html).toContain('aria-expanded="true"')
   })

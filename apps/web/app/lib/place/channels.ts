@@ -5,7 +5,11 @@ import type { P2pApp } from '../p2p/app/runtime'
 import { viewCan } from '../p2p/roles'
 import { ownsP2pServer } from '../p2p/server/types'
 import { P } from '../p2p/state'
-import { myPerms } from '../selectors'
+import { badgePings, myPerms, scopeMuted, scopeUnread } from '../selectors'
+import { levelOf, mutedOf, type NotifyScope } from '../notify'
+import { channelScope, serverScope } from '../p2p/app'
+import { scopePings } from '../pings'
+import { p2pRowTypers, rowTypers } from '../typing_rows'
 import { Perm, hasPerm, type CategoryStyle, type SeparatorStyle } from '../types'
 import { defineFeature, notInDms } from './feature'
 import { built, constant, type Live } from './live'
@@ -59,8 +63,37 @@ export interface ChannelsState {
   empty: string | null
 }
 
+// The end of a text channel's row: what you have not read there, who types, and whether it is
+// muted.
+export interface ChannelEnding {
+  // What the notification settings know the channel as.
+  scope: NotifyScope
+  muted: boolean
+  // The row stands out while something there is unread.
+  bold: boolean
+  pings: number
+  unread: boolean
+  typers: readonly string[]
+}
+
+export interface EndingsState {
+  of: ReadonlyMap<string, ChannelEnding>
+  // The typers whose look in `server` is not loaded yet.
+  ask: readonly string[]
+  server: string | null
+}
+
+const NO_NAMES: readonly string[] = []
+
+export const noEndings: Live<EndingsState> = constant({
+  of: new Map(),
+  ask: NO_NAMES,
+  server: null,
+})
+
 export interface Channels {
   state: Live<ChannelsState>
+  ends: Live<EndingsState>
   // Shows a text channel.
   open: (key: string) => void
   setOpen: (category: string, open: boolean) => void
@@ -153,8 +186,50 @@ const hosted = (account: AccountSession, server: string): Channels => {
         }
       }
     )
+  const ends = (initial: boolean) =>
+    built(
+      () => {
+        const s = initial ? store.getInitialState() : store.getState()
+        return [
+          s.servers[server]?.channels,
+          s.reads,
+          s.notifyPrefs,
+          badgePings(s),
+          s.typingOn,
+          s.typing,
+          s.blocked,
+          s.members[server],
+          s.memberInfo[server],
+        ] as const
+      },
+      ([listed, , , pings]): EndingsState => {
+        const s = initial ? store.getInitialState() : store.getState()
+        const of = new Map<string, ChannelEnding>()
+        const ask = new Set<string>()
+        for (const c of listed ?? []) {
+          if (c.kind === 'voice') continue
+          const scope: NotifyScope = { kind: 'channel', id: c.id, server }
+          const typing = rowTypers(s, [`c${c.id}`], server)
+          for (const a of typing.ask) ask.add(a)
+          of.set(String(c.id), {
+            scope,
+            muted: scopeMuted(s, scope),
+            bold: false,
+            pings: scopePings(pings, `c${c.id}`),
+            unread: scopeUnread(s, `c${c.id}`),
+            typers: typing.names,
+          })
+        }
+        return { of, ask: ask.size ? [...ask] : NO_NAMES, server }
+      }
+    )
   const detail = () => store.getState().servers[server]
   return {
+    ends: {
+      get: ends(false),
+      initial: ends(true),
+      subscribe: changed => store.subscribe(changed),
+    },
     state: {
       get: state(false),
       initial: state(true),
@@ -247,8 +322,57 @@ const peer = (app: P2pApp, room: string): Channels => {
         }
       }
     )
+  const ends = (initial: boolean) =>
+    built(
+      () => {
+        const s = initial ? useP2p.getInitialState() : useP2p.getState()
+        const site = initial ? app.owner.store.getInitialState() : app.owner.store.getState()
+        return [
+          s.servers[room]?.channels,
+          s.servers[room]?.chans,
+          s.serverTyping,
+          s.contacts,
+          site.notifyPrefs,
+          site.typingOn,
+        ] as const
+      },
+      ([listed, chans, typing, contacts, prefs, typingOn]): EndingsState => {
+        const now = app.owner.time.now()
+        const blocked = new Set(contacts.filter(c => c.state === 'blocked').map(c => c.ik))
+        const whole = mutedOf(prefs, serverScope(room), now)
+        const of = new Map<string, ChannelEnding>()
+        for (const c of listed ?? []) {
+          if (c.kind !== 'text') continue
+          const counts = chans?.[c.id]
+          const scope = channelScope(room, c.id)
+          const muted = mutedOf(prefs, scope, now) || whole
+          const unread = !!counts?.unread && !muted
+          of.set(c.id, {
+            scope,
+            muted,
+            bold: unread,
+            pings: counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0,
+            unread,
+            typers: typingOn
+              ? p2pRowTypers(typing[`${room}/${c.id}`] ?? NO_NAMES, blocked, ik =>
+                  app.memberName(room, ik)
+                )
+              : NO_NAMES,
+          })
+        }
+        return { of, ask: NO_NAMES, server: null }
+      }
+    )
   const view = () => useP2p.getState().servers[room]
   return {
+    ends: {
+      get: ends(false),
+      initial: ends(true),
+      subscribe: changed => {
+        const stops = [useP2p.subscribe(changed), app.owner.store.subscribe(changed)]
+        return () => stops.forEach(stop => stop())
+      },
+    },
     state: {
       get: state(false),
       initial: state(true),

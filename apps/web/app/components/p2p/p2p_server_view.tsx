@@ -14,11 +14,7 @@ import { useAccount } from '../../lib/client/react'
 import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
 import { PlaceProvider, useLive, useP2pRoom } from '../../lib/place/react'
 import { featureAt, isUnsupported } from '../../lib/place/feature'
-import {
-  channels as channelsFeature,
-  noChannels,
-  type ChannelEntry,
-} from '../../lib/place/channels'
+import { channels as channelsFeature, noChannels } from '../../lib/place/channels'
 import { ChannelList } from '../channel_list'
 import { VoiceRow } from '../voice_row'
 import { Button, IconButton, LinkButton, Tile, CardButton } from '../controls'
@@ -42,14 +38,14 @@ import {
 import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
-import { channelScope, serverScope } from '../../lib/p2p/app'
+import { serverScope } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
 import { type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import { serverPings, serverUnread } from '../../lib/p2p/alerts'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
-import { levelOf, mutedOf } from '../../lib/notify'
+import { mutedOf } from '../../lib/notify'
 import { folderKey, railItems, serverKey, type Folder } from '../../lib/nav_layout'
 import { folderStyle } from '../../lib/folder_colors'
 import { ctxFor } from '../../lib/actions/ctx'
@@ -63,9 +59,7 @@ import type { DropTarget } from '../../lib/drag'
 import { AboutLine, ServerIcon } from '../server_about'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge, pingLabel } from '../ping_badge'
-import { ChannelEnd } from '../typing_indicator'
 import { RailVoiceBadge, useP2pVoice } from '../rail_voice_badge'
-import { p2pRowTypers } from '../../lib/typing_rows'
 import { voiceLabel } from '../../lib/voice_rail'
 import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
@@ -84,7 +78,6 @@ import { hex } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
 import { serversLoading } from '../../lib/p2p/conversations'
 import { ChannelListSkeleton, Held, MessageListSkeleton, ServerRailSkeleton } from '../skeletons'
-import { time } from '../../lib/platform/time'
 
 // P2P servers in the app: their group at the bottom of the rail (dashed rings, the Waypoints
 // badge, folders of their own), and the open server: channels, the channel's messages and the
@@ -125,35 +118,6 @@ const dropServer =
     else if (into !== null) p2pRail.moveIntoFolder(room, into, index)
     else p2pRail.move(room, index)
   }
-
-// A P2P channel row's end, with who is typing in the channel (while typing indicators are on),
-// leaving out blocked contacts.
-function P2pChannelEnd({
-  room,
-  ch,
-  pings,
-  unread,
-}: {
-  room: string
-  ch: string
-  pings: number
-  unread: boolean
-}) {
-  const { useP2p, memberName } = useP2pApp()!
-  const on = useStore(s => s.typingOn)
-  const iks = useP2p(s => (on ? (s.serverTyping[`${room}/${ch}`] ?? NO_TYPERS) : NO_TYPERS))
-  const contacts = useP2p(s => s.contacts)
-  const blocked = useMemo(
-    () => new Set(contacts.filter(c => c.state === 'blocked').map(c => c.ik)),
-    [contacts]
-  )
-  const names = useMemo(
-    () => p2pRowTypers(iks, blocked, ik => memberName(room, ik)),
-    [iks, blocked, memberName, room]
-  )
-  return <ChannelEnd typers={names} pings={pings} unread={unread} />
-}
-const NO_TYPERS: string[] = []
 
 // The tile's ring is dashed and a Waypoints badge sits on it: this server lives on its members'
 // devices.
@@ -467,7 +431,6 @@ function P2pServerSidebarBody() {
 
   const { room, v } = useOpen()
   const loading = useP2p(serversLoading)
-  const prefs = useStore(s => s.notifyPrefs)
   const [adding, setAdding] = useState<string | null>(null)
   const [kind, setKind] = useState<'text' | 'voice'>('text')
   const place = useP2pRoom(room)
@@ -480,14 +443,6 @@ function P2pServerSidebarBody() {
         {room && loading && <ChannelListSkeleton seed={room} header className="min-h-0 flex-1" />}
       </aside>
     )
-  const facts = (c: ChannelEntry) => {
-    const counts = v.chans[c.key]
-    const scope = channelScope(v.id, c.key)
-    const muted =
-      mutedOf(prefs, scope, time().now()) || mutedOf(prefs, serverScope(v.id), time().now())
-    const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
-    return { scope, muted, pings, unread: !!counts?.unread && !muted }
-  }
   const submit = () => {
     const name = (adding ?? '').trim()
     setAdding(null)
@@ -535,19 +490,6 @@ function P2pServerSidebarBody() {
         <ChannelList
           channels={listed}
           state={listState}
-          look={c => {
-            const { muted, unread } = facts(c)
-            return { muted, bold: unread }
-          }}
-          end={c => {
-            const { scope, pings, unread } = facts(c)
-            return (
-              <>
-                <MutedIcon scope={scope} />
-                <P2pChannelEnd room={v.id} ch={c.key} pings={pings} unread={unread} />
-              </>
-            )
-          }}
           voice={entry => (
             <VoiceRow
               key={entry.key}

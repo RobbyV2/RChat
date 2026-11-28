@@ -9,6 +9,7 @@ import {
   type ChannelEntry,
   type Channels,
   type ChannelsState,
+  type EndingsState,
   type ListEntry,
   type SeparatorEntry,
 } from '../lib/place/channels'
@@ -19,6 +20,11 @@ import { IconButton, SideRow } from './controls'
 import type { DragSpec } from './drag'
 import { Row, Stack, Surface } from './layout'
 import { Masked } from './ui'
+import { useLive } from '../lib/place/react'
+import { MutedIcon } from './notify_menu'
+import { PingBadge } from './ping_badge'
+import { useLooksFor } from './shown_user'
+import { ChannelEnd } from './typing_indicator'
 import { look as moves } from '../lib/motion/play'
 
 function PrivateIcon() {
@@ -44,16 +50,22 @@ export interface ChannelDrag {
   over: string | null
 }
 
+// The end of a category's header for the channels its fold hides: their pings, else who types in
+// them and whether any is unread.
+function FoldedEnd({ ends, hidden }: { ends: EndingsState; hidden: ChannelEntry[] }) {
+  const found = hidden.flatMap(c => ends.of.get(c.key) ?? [])
+  const pings = found.reduce((n, e) => n + e.pings, 0)
+  if (pings > 0) return <PingBadge count={pings} className="ml-auto" />
+  const typers = [...new Set(found.flatMap(e => e.typers))]
+  return <ChannelEnd typers={typers} pings={0} unread={found.some(e => e.unread)} />
+}
+
 // The channels of a server or a room in their categories, whichever place they are in. A voice
-// channel's row, the end of a row (badges, who types) and the fields that add or rename a channel
-// are the caller's.
+// channel's row and the fields that add or rename a channel are the caller's.
 export function ChannelList({
   channels,
   state,
-  look,
-  end,
   voice,
-  categoryEnd,
   replace,
   createRow,
   onAdd,
@@ -63,12 +75,7 @@ export function ChannelList({
 }: {
   channels: Channels
   state: ChannelsState
-  // How a row shows what you have not read (`bold`) or have muted.
-  look: (channel: ChannelEntry) => { muted: boolean; bold: boolean }
-  end: (channel: ChannelEntry) => ReactNode
   voice: (channel: ChannelEntry) => ReactNode
-  // The end of a category's header, given the channels its fold hides.
-  categoryEnd?: (category: CategoryEntry, hidden: ChannelEntry[]) => ReactNode
   // What stands in a channel's place (the field that renames it), or null.
   replace?: (channel: ChannelEntry) => ReactNode
   // The field that adds a channel to a category (null: outside any), while it is open.
@@ -79,8 +86,12 @@ export function ChannelList({
   rowProps?: (channel: ChannelEntry) => Record<`data-${string}`, string>
   categoryProps?: (category: CategoryEntry) => Record<`data-${string}`, string>
 }) {
+  const ends = useLive(channels.ends)
+  useLooksFor(ends.server, ends.ask)
   const textRow = (c: ChannelEntry) => {
-    const { muted, bold } = look(c)
+    const end = ends.of.get(c.key)
+    const muted = end?.muted ?? false
+    const bold = end?.bold ?? false
     return (
       <SideRow
         key={c.key}
@@ -96,7 +107,12 @@ export function ChannelList({
           <Masked text={c.name} own={state.ownPlace} />
         </span>
         {c.private && <PrivateIcon />}
-        {end(c)}
+        {end && (
+          <>
+            <MutedIcon scope={end.scope} />
+            <ChannelEnd typers={end.typers} pings={end.pings} unread={end.unread} />
+          </>
+        )}
       </SideRow>
     )
   }
@@ -157,7 +173,7 @@ export function ChannelList({
                 <Masked text={category.name} own={state.ownPlace} />
               </span>
               <CategoryLine style={category.style} />
-              {categoryEnd?.(category, hidden)}
+              <FoldedEnd ends={ends} hidden={hidden} />
             </SideRow>
             {state.canManage && onAdd && (
               <IconButton
