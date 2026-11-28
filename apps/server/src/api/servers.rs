@@ -3582,7 +3582,7 @@ pub(crate) async fn update_server(
         guard_rchat(&state.db, &key).await?;
     }
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageServer).await?;
+    let may_manage_server = access.grant::<grants::ManageServer>(&state.db).await?;
     if seal.is_some() {
         crate::api::messages::message_rate(&state, &user).await?;
     }
@@ -3637,7 +3637,7 @@ pub(crate) async fn update_server(
     };
     let purge = password.is_some() && members == PasswordMembers::Remove;
     if purge {
-        access.require_perm(&state.db, Perm::Kick).await?;
+        let _may_kick = access.grant::<grants::Kick>(&state.db).await?;
     }
     let mine = access.perms(&state.db).await?;
     let own = access.member_own_perms(&state.db).await?;
@@ -3722,7 +3722,7 @@ pub(crate) async fn update_server(
     };
     let closing = join == Some(JoinMode::Closed);
     let public_now = matches!(password_hash, Some(None));
-    let actor = access.audit_actor(&state.db, Perm::ManageServer).await?;
+    let actor = may_manage_server.actor().clone();
     let had_permanent = match password_hash {
         Some(_) => access.has_permanent_password(&state.db).await?,
         None => false,
@@ -4281,7 +4281,7 @@ pub(crate) async fn delete_server(
     let key = name.to_lowercase();
     guard_rchat(&state.db, &key).await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::DeleteServer).await?;
+    let _may_delete_server = access.grant::<grants::DeleteServer>(&state.db).await?;
     rare::take(&state, Rare::DeletedServer, Some(&user))?;
     match crate::api::admin::remove_server(&state, access.name()).await? {
         true => Ok(ok()),
@@ -4330,7 +4330,7 @@ pub(crate) async fn create_channel(
     )
     .await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageChannels).await?;
+    let may_manage_channels = access.grant::<grants::ManageChannels>(&state.db).await?;
     if kind == ChannelKind::Voice && req.text_only {
         return Err(ApiError::invalid(
             "Text only applies to text channels",
@@ -4343,7 +4343,7 @@ pub(crate) async fn create_channel(
     {
         category_perms::check_copy(&state.db, &access, category).await?;
     }
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = may_manage_channels.actor().clone();
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &key, None).await?;
     let taken = sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2")
@@ -4502,7 +4502,7 @@ pub(crate) async fn update_channel(
     let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
     channel
         .server()
-        .require_perm(&state.db, Perm::ManageChannels)
+        .grant::<grants::ManageChannels>(&state.db)
         .await?;
     let (server, kind, old_name) = (
         channel.server().name().to_string(),
@@ -4561,8 +4561,10 @@ pub(crate) async fn update_channel(
     };
     let actor = channel
         .server()
-        .audit_actor(&state.db, Perm::ManageChannels)
-        .await?;
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     let old = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT c.name, c.topic, c.slowmode_seconds, c.restrict_view, c.restrict_send, CASE WHEN {} THEN 1 ELSE 0 END, c.sensitive, c.text_only FROM channels c WHERE c.id = $1",
@@ -4741,7 +4743,7 @@ pub(crate) async fn delete_channel(
     let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
     channel
         .server()
-        .require_perm(&state.db, Perm::ManageChannels)
+        .grant::<grants::ManageChannels>(&state.db)
         .await?;
     let (server, kind) = (channel.server().name().to_string(), channel.kind());
     let count: i64 = sqlx::query("SELECT COUNT(*) FROM channels WHERE server = $1")
@@ -4772,8 +4774,10 @@ pub(crate) async fn delete_channel(
     let rules = channel.view_rules(&state.db).await?;
     let actor = channel
         .server()
-        .audit_actor(&state.db, Perm::ManageChannels)
-        .await?;
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let gone = audit::channel_ref(&state.db, id)
         .await?
         .ok_or_else(crate::api::access::not_found)?;
@@ -5056,8 +5060,8 @@ pub(crate) async fn unban_member(
     let target = target.to_lowercase();
     let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::Kick).await?;
-    let actor = access.audit_actor(&state.db, Perm::Kick).await?;
+    let may_kick = access.grant::<grants::Kick>(&state.db).await?;
+    let actor = may_kick.actor().clone();
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     let removed = sqlx::query("DELETE FROM server_bans WHERE server = $1 AND username = $2")
@@ -5106,7 +5110,7 @@ pub(crate) async fn list_bans(
 ) -> Result<Paged<ServerBan>, ApiError> {
     let db = &state.read();
     let access = resolve_server(db, &name, Some(&user), &Proof::none()).await?;
-    access.require_perm(db, Perm::Kick).await?;
+    let _may_kick = access.grant::<grants::Kick>(db).await?;
     let key = access.name();
     let MembersQuery {
         offset,
@@ -5215,7 +5219,7 @@ async fn set_admin(
 ) -> Result<Json<OkResp>, ApiError> {
     let actor = &acting_on(actor, target);
     let access = resolve_server(&state.db, server, Some(actor), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageAdmins).await?;
+    let may_manage_admins = access.grant::<grants::ManageAdmins>(&state.db).await?;
     let server = access.name();
     let db = &state.db;
     let check = |access: ServerAccess| async move {
@@ -5229,10 +5233,7 @@ async fn set_admin(
         true => access.require_grant(db, ALL_PERMS).await?,
         false => require_revoke(db, &access, target).await?,
     }
-    let actor = access
-        .audit_actor(&state.db, Perm::ManageAdmins)
-        .await?
-        .staff_if(bypassed);
+    let actor = may_manage_admins.actor().clone().staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     let was = access.role_in(&mut *tx, target).await?;
     let changed = sqlx::query(
@@ -5390,11 +5391,11 @@ pub(crate) async fn transfer_admin(
         return Err(ApiError::invalid("Cannot transfer to yourself", "username"));
     }
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageAdmins).await?;
+    let may_manage_admins = access.grant::<grants::ManageAdmins>(&state.db).await?;
     let key = access.name().to_string();
     let mine = access.perms(&state.db).await?;
     let own = access.member_own_perms(&state.db).await?;
-    let actor = access.audit_actor(&state.db, Perm::ManageAdmins).await?;
+    let actor = may_manage_admins.actor().clone();
     let mut tx = state.db.begin().await?;
     let stored: i64 = match sqlx::query(
         "UPDATE members SET is_admin = 1 WHERE server = $1 AND username = $2 RETURNING perms",
@@ -5495,11 +5496,11 @@ pub(crate) async fn set_admin_perms(
     let target = target.to_lowercase();
     let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageAdmins).await?;
+    let may_manage_admins = access.grant::<grants::ManageAdmins>(&state.db).await?;
     let key = access.name().to_string();
     let mine = access.perms(&state.db).await?;
     let own = access.member_own_perms(&state.db).await?;
-    let actor = access.audit_actor(&state.db, Perm::ManageAdmins).await?;
+    let actor = may_manage_admins.actor().clone();
     let mut tx = state.db.begin().await?;
     let stored: i64 = match sqlx::query(
         "SELECT perms FROM members WHERE server = $1 AND username = $2 AND is_admin != 0",
@@ -5615,14 +5616,13 @@ fn rule_actor(user: &User, subject: &str) -> User {
     }
 }
 
-async fn role_guard(
+async fn role_guard<B: grants::Bit>(
     state: &AppState,
     name: &str,
     user: &User,
-    perm: Perm,
 ) -> Result<ServerAccess, ApiError> {
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
-    access.require_perm(&state.db, perm).await?;
+    access.grant::<B>(&state.db).await?;
     Ok(access)
 }
 
@@ -5928,7 +5928,7 @@ pub(crate) async fn create_role(
     Path(name): Path<String>,
     Json(req): Json<RoleReq>,
 ) -> Result<Json<Role>, ApiError> {
-    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let access = role_guard::<grants::ManageRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     let role_name = req.name.trim().to_string();
     check_name(
@@ -5950,8 +5950,10 @@ pub(crate) async fn create_role(
         })
         .await;
     let actor = access
-        .audit_actor(&state.db, Perm::ManageRoles)
+        .grant::<grants::ManageRoles>(&state.db)
         .await?
+        .actor()
+        .clone()
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     crate::db::lock_server(&mut tx, &key).await?;
@@ -6053,7 +6055,7 @@ pub(crate) async fn update_role(
     Path((name, id)): Path<(String, i64)>,
     Json(req): Json<RolePatch>,
 ) -> Result<Json<Role>, ApiError> {
-    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let access = role_guard::<grants::ManageRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     let current = require_role(&state.db, &key, id).await?;
     require_role_change(&state.db, &access, id, current).await?;
@@ -6112,8 +6114,10 @@ pub(crate) async fn update_role(
         })
         .await;
     let actor = access
-        .audit_actor(&state.db, Perm::ManageRoles)
+        .grant::<grants::ManageRoles>(&state.db)
         .await?
+        .actor()
+        .clone()
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
@@ -6324,7 +6328,7 @@ pub(crate) async fn delete_role(
     Authed(user): Authed,
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let access = role_guard::<grants::ManageRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     let current = require_role(&state.db, &key, id).await?;
     let mine = require_role_change(&state.db, &access, id, current).await?;
@@ -6350,8 +6354,10 @@ pub(crate) async fn delete_role(
         })
         .await;
     let actor = access
-        .audit_actor(&state.db, Perm::ManageRoles)
+        .grant::<grants::ManageRoles>(&state.db)
         .await?
+        .actor()
+        .clone()
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
@@ -6429,7 +6435,7 @@ pub(crate) async fn assign_role(
 ) -> Result<Json<OkResp>, ApiError> {
     let target = req.username.to_lowercase();
     let user = acting_on(&user, &target);
-    let access = role_guard(&state, &name, &user, Perm::AssignRoles).await?;
+    let access = role_guard::<grants::AssignRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     let role_perms = require_role(&state.db, &key, id).await?;
     if !access.member_in(&state.db, &target).await? {
@@ -6474,8 +6480,10 @@ pub(crate) async fn assign_role(
         })
         .await;
     let actor = access
-        .audit_actor(&state.db, Perm::AssignRoles)
+        .grant::<grants::AssignRoles>(&state.db)
         .await?
+        .actor()
+        .clone()
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
@@ -6571,7 +6579,7 @@ pub(crate) async fn unassign_role(
 ) -> Result<Json<OkResp>, ApiError> {
     let target = target.to_lowercase();
     let user = acting_on(&user, &target);
-    let access = role_guard(&state, &name, &user, Perm::AssignRoles).await?;
+    let access = role_guard::<grants::AssignRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     require_role(&state.db, &key, id).await?;
     if target != user.username {
@@ -6605,8 +6613,10 @@ pub(crate) async fn unassign_role(
         })
         .await;
     let actor = access
-        .audit_actor(&state.db, Perm::AssignRoles)
+        .grant::<grants::AssignRoles>(&state.db)
         .await?
+        .actor()
+        .clone()
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
@@ -6766,7 +6776,7 @@ async fn channel_perm_guard(
     let channel = resolve_channel(&state.db, id, Some(user), &Proof::none()).await?;
     channel
         .server()
-        .require_perm(&state.db, Perm::ManageChannels)
+        .grant::<grants::ManageChannels>(&state.db)
         .await?;
     Ok(channel)
 }
@@ -7140,8 +7150,10 @@ pub(crate) async fn set_channel_perm(
     let server = channel.server().name().to_string();
     let actor = channel
         .server()
-        .audit_actor(&state.db, Perm::ManageChannels)
-        .await?;
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let ChannelPermSet {
         subject,
         allow,
@@ -7336,8 +7348,10 @@ pub(crate) async fn clear_channel_perm(
     let server = channel.server().name().to_string();
     let actor = channel
         .server()
-        .audit_actor(&state.db, Perm::ManageChannels)
-        .await?;
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let subject = subject.to_lowercase();
     let was = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM channel_perms cp WHERE cp.channel_id = $1 AND cp.subject = $2",
@@ -7533,13 +7547,17 @@ pub(crate) async fn reorder_roles(
     Path(name): Path<String>,
     Json(req): Json<RoleOrderReq>,
 ) -> Result<Json<RoleOrder>, ApiError> {
-    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let access = role_guard::<grants::ManageRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     let RoleOrderReq {
         order: asked,
         version,
     } = req;
-    let actor = access.audit_actor(&state.db, Perm::ManageRoles).await?;
+    let actor = access
+        .grant::<grants::ManageRoles>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
     let (stored, confirmed) = role_order_state(&mut *tx, &key).await?;
@@ -7660,9 +7678,13 @@ pub(crate) async fn confirm_role_order(
     Path(name): Path<String>,
     Json(req): Json<RoleOrderConfirmReq>,
 ) -> Result<Json<RoleOrderConfirmed>, ApiError> {
-    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let access = role_guard::<grants::ManageRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageRoles).await?;
+    let actor = access
+        .grant::<grants::ManageRoles>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
     let (stored, confirmed) = role_order_state(&mut *tx, &key).await?;
@@ -7834,13 +7856,17 @@ pub(crate) async fn set_role_display(
     Path(name): Path<String>,
     Json(req): Json<RoleDisplayReq>,
 ) -> Result<Json<RoleOrder>, ApiError> {
-    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let access = role_guard::<grants::ManageRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     let RoleDisplayReq {
         order: asked,
         version,
     } = req;
-    let actor = access.audit_actor(&state.db, Perm::ManageRoles).await?;
+    let actor = access
+        .grant::<grants::ManageRoles>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
     let (stored, confirmed) = role_order_state(&mut *tx, &key).await?;
@@ -7927,10 +7953,14 @@ pub(crate) async fn follow_role_order(
     Path(name): Path<String>,
     Json(req): Json<RoleDisplayFollowReq>,
 ) -> Result<Json<RoleOrder>, ApiError> {
-    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let access = role_guard::<grants::ManageRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     let RoleDisplayFollowReq { version } = req;
-    let actor = access.audit_actor(&state.db, Perm::ManageRoles).await?;
+    let actor = access
+        .grant::<grants::ManageRoles>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
     let (stored, confirmed) = role_order_state(&mut *tx, &key).await?;
@@ -8018,7 +8048,7 @@ pub(crate) async fn set_everyone_perms(
     Path(name): Path<String>,
     Json(req): Json<EveryoneReq>,
 ) -> Result<Json<EveryonePerms>, ApiError> {
-    let access = role_guard(&state, &name, &user, Perm::ManageRoles).await?;
+    let access = role_guard::<grants::ManageRoles>(&state, &name, &user).await?;
     let key = access.name().to_string();
     let EveryoneReq { perms, mask } = req;
     let may = mask.unwrap_or(EVERYONE_BITS) & EVERYONE_BITS;
@@ -8052,8 +8082,10 @@ pub(crate) async fn set_everyone_perms(
         None => false,
     };
     let actor = access
-        .audit_actor(&state.db, Perm::ManageRoles)
+        .grant::<grants::ManageRoles>(&state.db)
         .await?
+        .actor()
+        .clone()
         .staff_if(bypassed);
     if after != before {
         let mut tx = state.db.begin().await?;
@@ -12992,7 +13024,7 @@ mod tests {
         give_role(db, "club", "bob", editor).await;
         give_role(db, "club", "carol", editor).await;
         let id = new_role(db, "helper", 0).await;
-        let access = role_guard(&state, "club", &mem_user("bob", false), Perm::ManageRoles)
+        let access = role_guard::<grants::ManageRoles>(&state, "club", &mem_user("bob", false))
             .await
             .unwrap();
         require_role_change(db, &access, id, 0).await.unwrap();
@@ -13093,7 +13125,7 @@ mod tests {
         assert!(grant(&state, bob(), "dora").await.is_err());
         let admin = new_role(db, "admin", Perm::ManageAdmins as i64).await;
         assert!(assign(&state, carol(), admin, "carol").await.is_err());
-        let other = role_guard(&state, "rchat", &bob(), Perm::ManageRoles).await;
+        let other = role_guard::<grants::ManageRoles>(&state, "rchat", &bob()).await;
         assert!(other.is_err());
         done(state, path).await;
     }
@@ -13284,7 +13316,7 @@ mod tests {
                 resolve_server(db, "club", Some(&user), &Proof::none())
                     .await
                     .expect("access")
-                    .require_perm(db, Perm::ManageReports)
+                    .grant::<grants::ManageReports>(db)
                     .await
                     .is_ok()
             }

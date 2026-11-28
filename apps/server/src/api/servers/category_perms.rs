@@ -363,7 +363,11 @@ async fn change_category_rule(
     now: Option<PermRow>,
 ) -> Result<(), ApiError> {
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = access
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut bypassed =
         guard_category_rule(&state.db, access, subject, was.as_ref(), now.as_ref()).await?;
     let synced: Vec<i64> = sqlx::query_scalar(
@@ -497,7 +501,11 @@ pub(crate) async fn sync_channel_perms(
     let channel = channel_perm_guard(&state, id, &user).await?;
     let access = channel.server();
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = access
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let row = sqlx::query(
         "SELECT category_id, restrict_view, restrict_send, kind FROM channels WHERE id = $1",
     )

@@ -10,8 +10,8 @@ use tokio::time::Instant;
 use utoipa::ToSchema;
 
 use super::access::overwrite_sql::overwrite_sql;
-use super::access::perms::{Perm, held};
-use super::access::{Proof, not_found, resolve_channel, resolve_message};
+use super::access::perms::held;
+use super::access::{Proof, grants, not_found, resolve_channel, resolve_message};
 use super::audit::{self, Action, Details, Entry, Target};
 use super::budget;
 use super::messages::{Quotes, cannot_reply, load_message, partial_quote};
@@ -356,14 +356,19 @@ pub(crate) async fn pause(
     let message = resolve_message(db, id, Some(&user), &Proof::none()).await?;
     let server = message.channel().ok_or_else(not_found)?.server();
     server
-        .require_perm(db, Perm::TimeoutMembers)
+        .grant::<grants::TimeoutMembers>(db)
         .await
+        .map(|_| ())
         .map_err(|e| if e.failed() { e } else { not_found() })?;
     let author = &message.scope().author();
     if !crate::ws::is_guest(author) {
         return Err(not_found());
     }
-    let actor = server.audit_actor(db, Perm::TimeoutMembers).await?;
+    let actor = server
+        .grant::<grants::TimeoutMembers>(db)
+        .await?
+        .actor()
+        .clone();
     let until = state.clock.unix() + PAUSE;
     let mut tx = db.begin().await?;
     if sqlx::query(

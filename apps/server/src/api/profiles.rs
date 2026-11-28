@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::access::perms::Perm;
 use crate::api::access::{
     ProfileRight, Proof, ServerAccess, USER_SCOPE_SMALL, acting_on, grants, not_found,
     resolve_server,
@@ -1064,7 +1063,7 @@ async fn moderated(
     let target = username.to_lowercase();
     let user = acting_on(user, &target);
     let access = resolve_server(&state.db, name, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageProfiles).await?;
+    let _may_manage_profiles = access.grant::<grants::ManageProfiles>(&state.db).await?;
     Ok((access, target))
 }
 
@@ -1284,6 +1283,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::api::access::perms::Perm;
     use crate::api::access::{DENIED, TIMED_OUT};
     use crate::api::servers::{leave_server, list_members};
     use crate::api::test_util::{add_member, done, each_db, mem_user, temp_state};

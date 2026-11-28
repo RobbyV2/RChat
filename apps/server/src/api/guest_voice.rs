@@ -1,8 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 
-use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, not_found, resolve_server};
+use crate::api::access::{Proof, grants, not_found, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target};
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, ok};
 use crate::db::User;
@@ -20,21 +19,23 @@ struct OnGuest {
 
 /// Where staff holding `perm` in `server` act on the guest named `guest` in its voice.
 /// Everything else answers the same 404.
-async fn staff_on_guest(
+async fn staff_on_guest<B: grants::Bit>(
     state: &AppState,
     user: &User,
     server: &str,
     guest: &str,
-    perm: Perm,
 ) -> Result<OnGuest, ApiError> {
     let db = &state.db;
     let access = resolve_server(db, server, Some(user), &Proof::none()).await?;
-    if let Err(e) = access.require_perm(db, perm).await {
-        return Err(match e.failed() {
-            true => e,
-            false => not_found(),
-        });
-    }
+    let granted = match access.grant::<B>(db).await {
+        Ok(granted) => granted,
+        Err(e) => {
+            return Err(match e.failed() {
+                true => e,
+                false => not_found(),
+            });
+        }
+    };
     let key = access.name().to_string();
     let seat = match is_guest(guest) {
         true => state.hub.voice_seat(guest, &key),
@@ -42,9 +43,9 @@ async fn staff_on_guest(
     }
     .ok_or_else(not_found)?;
     let bypassed = access
-        .bypassed(|m| async move { m.require_perm(db, perm).await })
+        .bypassed(|m| async move { m.grant::<B>(db).await.map(|_| ()) })
         .await;
-    let actor = access.audit_actor(db, perm).await?.staff_if(bypassed);
+    let actor = granted.actor().clone().staff_if(bypassed);
     Ok(OnGuest {
         server: key,
         actor,
@@ -134,7 +135,7 @@ pub(crate) async fn disconnect_guest(
     Authed(user): Authed,
     Path((name, guest)): Path<(String, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let at = staff_on_guest(&state, &user, &name, &guest, Perm::Kick).await?;
+    let at = staff_on_guest::<grants::Kick>(&state, &user, &name, &guest).await?;
     disconnect_at(&state, &at, &guest).await?;
     Ok(ok())
 }
@@ -146,7 +147,7 @@ async fn set_hushed(
     guest: &str,
     muted: bool,
 ) -> Result<Json<OkResp>, ApiError> {
-    let at = staff_on_guest(state, user, name, guest, Perm::TimeoutMembers).await?;
+    let at = staff_on_guest::<grants::TimeoutMembers>(state, user, name, guest).await?;
     hush_at(state, &at, guest, muted).await?;
     Ok(ok())
 }
@@ -561,10 +562,10 @@ mod tests {
         } = club("guest_voice_check").await;
         guest_in(&state, GUEST, "club", talk).await;
         let user = |name: &str| mem_user(name, false);
-        let kick = staff_on_guest(&state, &user("kim"), "club", GUEST, Perm::Kick)
+        let kick = staff_on_guest::<grants::Kick>(&state, &user("kim"), "club", GUEST)
             .await
             .expect("kim may");
-        let hush = staff_on_guest(&state, &user("tim"), "club", GUEST, Perm::TimeoutMembers)
+        let hush = staff_on_guest::<grants::TimeoutMembers>(&state, &user("tim"), "club", GUEST)
             .await
             .expect("tim may");
         state.hub.voice_leave(GUEST).await;

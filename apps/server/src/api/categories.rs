@@ -8,8 +8,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{AnyConnection, Row};
 use utoipa::ToSchema;
 
-use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, resolve_category, resolve_server};
+use crate::api::access::{Proof, grants, resolve_category, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::servers::check_name;
 use crate::api::{
@@ -548,9 +547,9 @@ pub(crate) async fn create_category(
     let category_name = clean_name(&state.db, &req.name).await?;
     let access =
         resolve_server(&state.db, &name.to_lowercase(), Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageChannels).await?;
+    let may_manage_channels = access.grant::<grants::ManageChannels>(&state.db).await?;
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = may_manage_channels.actor().clone();
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let before = load_layout(&mut tx, &server).await?;
@@ -633,7 +632,11 @@ pub(crate) async fn rename_category(
     let access = resolve_category(&state.db, id, &user).await?;
     let category_name = clean_name(&state.db, &req.name).await?;
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = access
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let before = load_layout(&mut tx, &server).await?;
@@ -710,7 +713,11 @@ pub(crate) async fn delete_category(
 ) -> Result<Json<OkResp>, ApiError> {
     let access = resolve_category(&state.db, id, &user).await?;
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = access
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let mut layout = load_layout(&mut tx, &server)
@@ -895,9 +902,9 @@ pub(crate) async fn reorder_layout(
     }
     let access =
         resolve_server(&state.db, &name.to_lowercase(), Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageChannels).await?;
+    let may_manage_channels = access.grant::<grants::ManageChannels>(&state.db).await?;
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = may_manage_channels.actor().clone();
     let mut tx = state.db.begin().await?;
     if !bump(&mut tx, &server, Some(req.version)).await? {
         return Err(conflict());

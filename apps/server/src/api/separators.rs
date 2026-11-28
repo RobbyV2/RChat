@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, not_found, resolve_separator, resolve_server};
+use crate::api::access::{Proof, grants, not_found, resolve_separator, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::categories::{NEXT_POSITION, announce, bump, load_layout};
 use crate::api::{
@@ -182,9 +181,9 @@ pub(crate) async fn create_separator(
     let label = clean_label(&state.db, &label).await?;
     let access =
         resolve_server(&state.db, &name.to_lowercase(), Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::ManageChannels).await?;
+    let may_manage_channels = access.grant::<grants::ManageChannels>(&state.db).await?;
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = may_manage_channels.actor().clone();
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let before = load_layout(&mut tx, &server).await?;
@@ -266,7 +265,11 @@ pub(crate) async fn update_separator(
         None => None,
     };
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = access
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let before = load_layout(&mut tx, &server).await?;
@@ -327,7 +330,11 @@ pub(crate) async fn delete_separator(
 ) -> Result<Json<OkResp>, ApiError> {
     let access = resolve_separator(&state.db, id, &user).await?;
     let server = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
+    let actor = access
+        .grant::<grants::ManageChannels>(&state.db)
+        .await?
+        .actor()
+        .clone();
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let before = load_layout(&mut tx, &server).await?;
