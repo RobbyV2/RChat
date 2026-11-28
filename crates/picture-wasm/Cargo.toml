@@ -1,0 +1,17 @@
+[package]
+name = "rchat-picture-wasm"
+version = "0.3.0"
+edition = "2024"
+license = "MIT"
+description = "The profile picture codec as its own wasm module, loaded when a device makes a picture"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+rchat-avatar = { path = "../avatar" }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

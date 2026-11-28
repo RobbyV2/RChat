@@ -143,9 +143,10 @@ describe('app builds', () => {
       'bun run build:desktop',
       'bun scripts/bundle_docs.ts',
     ])
-    expect(scripts['build:wasm']).toContain(
-      'wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release'
-    )
+    for (const crate of ['wasm', 'picture-wasm'])
+      expect(scripts['build:wasm']).toContain(
+        `wasm-pack build crates/${crate} --mode no-install --target web --out-dir ../../apps/web/public/wasm --release`
+      )
   })
 
   test('every desktop and mobile job has wasm-pack and the wasm target', () => {

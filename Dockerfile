@@ -19,6 +19,7 @@ COPY . .
 RUN cargo build --release --bin server
 # no-install: the wasm-bindgen above, and no unchecked wasm-opt download (the module is ~6% larger).
 RUN wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release
+RUN wasm-pack build crates/picture-wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release
 
 # Stage 4: Build Next.js
 FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS js-builder
@@ -31,10 +32,10 @@ RUN bun install --frozen-lockfile
 
 COPY . ./
 COPY --from=rust-builder /app/apps/web/public/wasm ./apps/web/public/wasm
-# The same module as JavaScript, for pages without WebAssembly (binaryen comes from bun.lock).
+# The same modules as JavaScript, for pages without WebAssembly (binaryen comes from bun.lock).
 COPY --from=rust-builder /usr/local/cargo/bin/wasm-bindgen /usr/local/bin/wasm-bindgen
-COPY --from=rust-builder /app/target/wasm32-unknown-unknown/release/rust_next_wasm.wasm /tmp/rust_next_wasm.wasm
-RUN bun scripts/wasm_js.ts /tmp/rust_next_wasm.wasm
+COPY --from=rust-builder /app/target/wasm32-unknown-unknown/release/rust_next_wasm.wasm /app/target/wasm32-unknown-unknown/release/rchat_picture_wasm.wasm /tmp/
+RUN bun scripts/wasm_js.ts /tmp/rust_next_wasm.wasm /tmp/rchat_picture_wasm.wasm
 
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL

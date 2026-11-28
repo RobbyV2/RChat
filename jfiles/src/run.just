@@ -8,7 +8,7 @@ dev: deps
   set -euo pipefail
   cd "{{ROOT}}"
   echo "Building WASM (dev)..."
-  wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev && bun scripts/wasm_js.ts --dev
+  wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev && wasm-pack build crates/picture-wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev && bun scripts/wasm_js.ts --dev
   trap 'kill 0' SIGINT
   {{DOTENVX}} bash -c 'FRONTEND_HOST=${FRONTEND_HOST:-127.0.0.1} exec bun run dev' 2>&1 | sed 's/^/[WEB] /' &
   {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs --wanted && exec bun deploy/peer/server.mjs' 2>&1 | sed 's/^/[PEER] /' &
@@ -53,7 +53,7 @@ prod mode="ask": deps
   if [ "$build" = 1 ]; then
     rm -f "$stamp_file"
     echo "Building WASM..."
-    wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release && bun scripts/wasm_js.ts
+    wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release && wasm-pack build crates/picture-wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release && bun scripts/wasm_js.ts
     echo "Building frontend..."
     {{DOTENVX}} bun run build
     rm -rf apps/web/.next/standalone/apps/web/public apps/web/.next/standalone/apps/web/.next/static

@@ -13,7 +13,7 @@ export const WASM = join(
   'wasm'
 )
 
-const built = (file: string) => {
+export const built = (file: string) => {
   const path = join(WASM, file)
   if (!existsSync(path)) throw new Error(`${file} is missing: run bun run build:wasm`)
   return path

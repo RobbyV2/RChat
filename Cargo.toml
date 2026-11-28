@@ -12,6 +12,7 @@ members = [
   "crates/fed",
   "crates/identity",
   "crates/perms",
+  "crates/picture-wasm",
   "crates/pow",
   "crates/pow-wasm",
   "crates/profanity",

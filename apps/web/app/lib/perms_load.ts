@@ -11,17 +11,22 @@ export const setRulesBase = (to: string | null) => {
   base = to
 }
 
-export const moduleAt = (from: string) => async (): Promise<PermsModule> => {
-  const path = `${from}/rust_next_wasm`
-  if (!probeWasm())
-    return (await import(
-      /* webpackIgnore: true */ /* turbopackIgnore: true */ `${path}_js.js`
-    )) as PermsModule
-  const wasm = (await import(
-    /* webpackIgnore: true */ /* turbopackIgnore: true */ `${path}.js`
-  )) as PermsModule & { default: (init: { module_or_path: string }) => Promise<unknown> }
-  await wasm.default({ module_or_path: `${path}_bg.wasm` })
-  return wasm
-}
+// The built module `name` under `from`: its WebAssembly build, or its JavaScript build.
+export const builtModule =
+  <M>(from: string, name: string) =>
+  async (): Promise<M> => {
+    const path = `${from}/${name}`
+    if (!probeWasm())
+      return (await import(
+        /* webpackIgnore: true */ /* turbopackIgnore: true */ `${path}_js.js`
+      )) as M
+    const wasm = (await import(
+      /* webpackIgnore: true */ /* turbopackIgnore: true */ `${path}.js`
+    )) as M & { default: (init: { module_or_path: string }) => Promise<unknown> }
+    await wasm.default({ module_or_path: `${path}_bg.wasm` })
+    return wasm
+  }
+
+export const moduleAt = (from: string) => builtModule<PermsModule>(from, 'rust_next_wasm')
 
 export const loadPermissionRules = (from = rulesBase()) => ready(moduleAt(from))

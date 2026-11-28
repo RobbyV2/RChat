@@ -5423,6 +5423,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rchat-picture-wasm"
+version = "0.3.0"
+dependencies = [
+ "console_error_panic_hook",
+ "rchat-avatar",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "rchat-pow"
 version = "0.3.0"
 dependencies = [
@@ -5807,7 +5816,6 @@ name = "rust-next-wasm"
 version = "0.3.0"
 dependencies = [
  "console_error_panic_hook",
- "rchat-avatar",
  "rchat-perms",
  "rchat-profanity",
  "serde_json",

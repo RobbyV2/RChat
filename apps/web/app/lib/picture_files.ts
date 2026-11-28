@@ -1,8 +1,9 @@
 import { ANIMATION_TYPE, AVATAR_IMAGES, type AvatarCrop } from './avatar_images'
-import { moduleAt, rulesBase } from './perms_load'
+import { builtModule, rulesBase } from './perms_load'
 
-// Profile pictures made on this device, for a P2P identity: the shared module makes the same
-// files an instance makes for an upload.
+// Profile pictures made on this device, for a P2P identity: the picture module makes the same
+// files an instance makes for an upload. It is its own built module, fetched the first time a
+// picture is made.
 interface Made {
   mime: string
   file(at: number): Uint8Array
@@ -38,9 +39,11 @@ export const NO_PICTURE_MODULE = 'Not available on this device'
 
 let loaded: Promise<PictureModule> | null = null
 
-// The shared module, loaded once; a failed load is tried again on the next call.
+export const PICTURE_MODULE = 'rchat_picture_wasm'
+
+// The picture module, loaded once; a failed load is tried again on the next call.
 export const loadPictureModule = (from = rulesBase()): Promise<PictureModule> => {
-  loaded ??= (moduleAt(from)() as unknown as Promise<PictureModule>).catch(e => {
+  loaded ??= builtModule<PictureModule>(from, PICTURE_MODULE)().catch(e => {
     loaded = null
     throw e
   })

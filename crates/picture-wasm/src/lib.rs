@@ -4,6 +4,11 @@
 use rchat_avatar::{Bounds, Crop, Encoded, Refused, animate, encode};
 use wasm_bindgen::prelude::*;
 
+#[wasm_bindgen(start)]
+pub fn init_panic_hook() {
+    console_error_panic_hook::set_once();
+}
+
 /// The files of a picture, in the order of `rchat_avatar::SIZES`.
 #[wasm_bindgen]
 pub struct PictureFiles {
