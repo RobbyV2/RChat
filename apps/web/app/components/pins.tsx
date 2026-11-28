@@ -30,7 +30,7 @@ import { SHEET_QUERY } from './emoji_picker'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
 import { Button, IconButton, LinkButton } from './controls'
-import { CloseButton, Masked, Sheet, useOwn } from './ui'
+import { CloseButton, Masked, Sheet, useOwn, Popover } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
 import { Name } from './name'
 import { useAuthor } from '../lib/place/use_looks'
@@ -432,15 +432,9 @@ export function HeaderPopover({
     )
 
   return (
-    <div
-      ref={rootRef}
-      role="dialog"
-      aria-labelledby={titleId}
-      data-popover
-      className="absolute top-14 right-2 z-popover flex max-h-popover w-104 max-w-popover flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3"
-    >
+    <Popover at="pane" ref={rootRef} aria-labelledby={titleId}>
       {body}
-    </div>
+    </Popover>
   )
 }
 

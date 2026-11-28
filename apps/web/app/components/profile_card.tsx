@@ -81,7 +81,7 @@ import { useLook } from './shown_user'
 import { UserAvatar } from './user_avatar'
 import { Button, IconButton, ListRow, LinkButton } from './controls'
 import { Row, Stack, Surface, Inset, Lift } from './layout'
-import { Masked, Sheet, useOwnServer, fieldCls } from './ui'
+import { Masked, Sheet, useOwnServer, fieldCls, Popover } from './ui'
 import { useCopied } from '../lib/use_copied'
 import { dmPlaceholder } from '../lib/display_name'
 import { ProfileFriendButton } from './friends'
@@ -891,19 +891,16 @@ function CardBody({
   }
 
   return (
-    <div
+    <Popover
+      at={pos ? { left: pos.x, top: pos.y } : null}
+      size="card"
+      layer="top"
+      scroll
       ref={ref}
-      role="dialog"
       aria-labelledby={titleId}
       {...focusProps}
-      style={{
-        left: pos?.x ?? x,
-        top: pos?.y ?? y,
-        visibility: pos ? 'visible' : 'hidden',
-      }}
-      className="fixed z-top flex max-h-screen-inset w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high shadow-elevation-3 outline-none"
     >
       {body}
-    </div>
+    </Popover>
   )
 }

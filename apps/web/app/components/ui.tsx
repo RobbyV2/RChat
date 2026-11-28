@@ -11,6 +11,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type HTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -239,6 +240,88 @@ export function Overlay({
   )
 }
 
+// The shape of every panel that floats over the app: a floating sheet and a popover.
+const FLOAT_SHAPE = 'rounded-2xl border border-outline-variant'
+
+export type PopoverSize = 'card' | 'list' | 'text' | 'picker'
+// `pane`: under the header, at the end of the pane it is rendered in. A measured place in the
+// window otherwise; null while it is not measured yet (the popover is laid out, unseen, so it can
+// be).
+export type PopoverAt = 'pane' | Pick<CSSProperties, 'top' | 'left' | 'right' | 'bottom'> | null
+
+const POPOVER_SIZE: Record<PopoverSize, string> = {
+  card: 'max-h-screen-inset w-75 max-w-screen-inset',
+  list: 'max-h-popover w-104 max-w-popover',
+  text: 'max-h-float w-112 max-w-screen-inset',
+  picker: 'h-110 max-h-screen-inset w-110 max-w-screen-inset',
+}
+const POPOVER_WIDTH: Record<PopoverSize, number> = { card: 300, list: 416, text: 448, picker: 440 }
+
+// A place under `anchor`, kept inside the window, for a popover of `size`; null until measured
+// and while `on` is false.
+export function usePlaceUnder(
+  anchor: RefObject<HTMLElement | null>,
+  size: PopoverSize,
+  on = true
+): PopoverAt {
+  const [at, setAt] = useState<{ top: number; left: number } | null>(null)
+  useLayoutEffect(() => {
+    if (!on) return
+    const place = () => {
+      const rect = anchor.current?.getBoundingClientRect()
+      if (!rect) return
+      const width = Math.min(POPOVER_WIDTH[size], window.innerWidth - 16)
+      setAt({
+        top: rect.bottom + 8,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+      })
+    }
+    place()
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [anchor, size, on])
+  return on ? at : null
+}
+
+// A panel anchored to what opened it, on a wide screen (a phone shows a `Sheet`): it owns its
+// surface, shape, shadow, layer and size, and sits where `at` says. Closing (Esc, a press
+// outside) and focus stay with the caller. A `scroll` popover scrolls itself.
+export function Popover({
+  at,
+  size = 'list',
+  layer = 'popover',
+  surface = 'high',
+  scroll = false,
+  ref,
+  children,
+  ...rest
+}: Omit<DivAttrs, 'style'> & {
+  at: PopoverAt
+  size?: PopoverSize
+  layer?: 'popover' | 'top'
+  surface?: SheetSurface
+  scroll?: boolean
+  ref?: Ref<HTMLDivElement>
+  children: ReactNode
+}) {
+  return (
+    <div
+      {...rest}
+      ref={ref}
+      role="dialog"
+      data-popover=""
+      style={at === 'pane' || at === null ? undefined : at}
+      className={`${at === 'pane' ? 'absolute top-14 right-2' : 'fixed'} ${
+        layer === 'top' ? 'z-top' : 'z-popover'
+      } flex flex-col ${POPOVER_SIZE[size]} ${FLOAT_SHAPE} ${SURFACE[surface]} shadow-elevation-3 outline-none ${
+        scroll ? 'overflow-x-hidden overflow-y-auto overscroll-contain' : 'overflow-hidden'
+      }${at === null ? ' pointer-events-none invisible' : ''}`}
+    >
+      {children}
+    </div>
+  )
+}
+
 // A panel on an `Overlay`. As a `sheet` (on a phone) it rises from the bottom of the app over a dim
 // backdrop, under a grip (`gripProps` makes it a drag handle): `fit` is as high as what it holds
 // (85% at most), `list` too but at least 16rem (a list that loads), `half` 60% and `tall` 85% of
@@ -282,7 +365,7 @@ export function Sheet({
   const backdrop = sheet ? 'dim' : (float?.backdrop ?? 'dim')
   const look = sheet
     ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} animate-sheet-up rounded-t-3xl safe-x pb-[max(var(--space-md),env(safe-area-inset-bottom))]`
-    : `absolute ${float?.at ?? 'inset-0 m-auto h-fit max-h-[85%] w-[min(28rem,calc(100%-2rem))]'} rounded-2xl border border-outline-variant`
+    : `absolute ${float?.at ?? 'inset-0 m-auto h-fit max-h-[85%] w-[min(28rem,calc(100%-2rem))]'} ${FLOAT_SHAPE}`
   return (
     <Overlay {...overlay} layer={layer} backdrop={backdrop} onClose={onClose}>
       <div

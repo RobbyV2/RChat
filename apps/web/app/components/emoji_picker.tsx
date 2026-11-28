@@ -52,7 +52,7 @@ import {
 import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { useMedia } from './context_menu'
 import { IconButton, EmojiCell } from './controls'
-import { Sheet } from './ui'
+import { Sheet, Popover } from './ui'
 import { Stack, Surface, Inset, Grid } from './layout'
 import { time } from '../lib/platform/time'
 import { useLive } from '../lib/place/react'
@@ -257,20 +257,17 @@ export function EmojiPicker({
   }
 
   return createPortal(
-    <div
+    <Popover
       {...guard}
       onClick={stop}
+      at={pos}
+      size="picker"
+      layer="top"
       ref={rootRef}
-      role="dialog"
       aria-label={label}
-      data-popover
-      style={pos ?? undefined}
-      className={`fixed z-top flex h-110 max-h-screen-inset w-110 max-w-screen-inset flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3 ${
-        pos ? '' : 'pointer-events-none opacity-0'
-      }`}
     >
       {body}
-    </div>,
+    </Popover>,
     document.body
   )
 }

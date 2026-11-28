@@ -1,7 +1,7 @@
 'use client'
 import { Button, LinkButton } from './controls'
 import { useStoreApi } from '../lib/client/react'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Hash, Volume2 } from 'lucide-react'
 import { useStore } from '../lib/store'
@@ -18,7 +18,16 @@ import type { Channel } from '../lib/types'
 import { useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { MessageLink } from './markdown_message'
-import { CloseButton, fieldCls, FieldError, Masked, Sheet, useOwnServer } from './ui'
+import {
+  CloseButton,
+  fieldCls,
+  FieldError,
+  Masked,
+  Sheet,
+  useOwnServer,
+  Popover,
+  usePlaceUnder,
+} from './ui'
 import { Row, Surface, Stack, Inset } from './layout'
 
 const topicFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
@@ -98,27 +107,11 @@ function TopicWindow({
   const ownServer = useOwnServer(useStore(s => (s.view?.kind === 'channel' ? s.view.server : null)))
   const rootRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
-  const [at, setAt] = useState<{ top: number; left: number } | null>(null)
+  const at = usePlaceUnder(anchor, 'text', !sheet)
   const closeRef = useRef(onClose)
   useEffect(() => {
     closeRef.current = onClose
   })
-
-  useLayoutEffect(() => {
-    if (sheet) return
-    const place = () => {
-      const rect = anchor.current?.getBoundingClientRect()
-      if (!rect) return
-      const width = Math.min(448, window.innerWidth - 16)
-      setAt({
-        top: rect.bottom + 8,
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
-      })
-    }
-    place()
-    window.addEventListener('resize', place)
-    return () => window.removeEventListener('resize', place)
-  }, [sheet, anchor])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -211,17 +204,9 @@ function TopicWindow({
     )
 
   return createPortal(
-    <div
-      ref={rootRef}
-      role="dialog"
-      aria-labelledby={titleId}
-      tabIndex={-1}
-      data-popover
-      style={at ? { top: at.top, left: at.left } : { visibility: 'hidden' }}
-      className="fixed z-popover flex max-h-float w-112 max-w-screen-inset flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3 outline-none"
-    >
+    <Popover at={at} size="text" ref={rootRef} aria-labelledby={titleId} tabIndex={-1}>
       {body}
-    </div>,
+    </Popover>,
     document.body
   )
 }
