@@ -1493,16 +1493,20 @@ describe('where a forwarded copy’s original is', () => {
 })
 
 describe('account chips', () => {
-  test('a chip is a control the keyboard reaches', () => {
+  test('a chip on its own is a button the keyboard reaches; inside another control it is a mark', () => {
     p2pState({
       enabled: true,
       badges: { [ALICE]: { ik: ALICE, ok: null, todo: { token: 't', tried: 0 } } },
     })
-    const html = render(<AccountChip ik={ALICE} />)
+    const html = render(<AccountChip ik={ALICE} pressable />)
     expect(html).toContain('data-account-badge="unchecked"')
-    expect(html).toContain('role="button"')
-    expect(html).toContain('tabindex="0"')
+    expect(html.startsWith('<button type="button"')).toBe(true)
     expect(html).toContain('aria-haspopup="menu"')
+    const mark = render(<AccountChip ik={ALICE} />)
+    expect(mark).toContain('data-account-badge="unchecked"')
+    expect(mark).not.toContain('<button')
+    expect(mark).not.toContain('tabindex')
+    expect(mark).not.toContain('role="button"')
   })
 })
 

@@ -3,7 +3,7 @@
 import { Name } from './name'
 import { personCalled, serverCalled } from '../lib/names'
 import { PeerActorTag, ViewActorTag } from './view_actor'
-import { useAccount, useStoreApi } from '../lib/client/react'
+import { useAccount } from '../lib/client/react'
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { FileText, Hash, Search } from 'lucide-react'
 import { useMask } from '../lib/store'
@@ -13,10 +13,9 @@ import { Inset, Row, Stack, Surface } from './layout'
 import { fieldCls, Masked, PanelHeader, Sentinel, smallFieldCls, useEscape } from './ui'
 import { MessageListSkeleton } from './skeletons'
 import { ShownAvatar, ShownName } from './shown_user'
-import { avatarTriggerCls } from './message_row'
 import { MessageTime } from './timestamp'
 import { plainStamps } from '../lib/timestamps'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { ForwardedTag, SpoilerLine } from './replies'
 import { PreviewRow, PreviewFilename, RevealChannelPreview } from './preview_reveal'
 import { spoilerParts } from '../lib/spoilers'
@@ -74,7 +73,6 @@ function HitText({ r }: { r: SearchHit }) {
 
 // Who wrote a hit, as its side shows people.
 function HitAuthor({ r }: { r: SearchHit }) {
-  const store = useStoreApi()
   const { author } = r
   if (author === null) return <>Open channel</>
   if (author.kind === 'key')
@@ -88,20 +86,24 @@ function HitAuthor({ r }: { r: SearchHit }) {
     )
   return (
     <>
-      <span
-        {...profileTrigger(store, author.user, author.server, false)}
-        title="View profile"
-        className={`shrink-0 ${avatarTriggerCls}`}
-      >
-        <ShownAvatar user={author.user} server={author.server} size={20} />
-      </span>
-      <ShownName
+      <ProfileButton
         user={author.user}
         server={author.server}
-        link
-        {...profileTrigger(store, author.user, author.server)}
-        look="truncate text-sm font-medium"
-      />
+        focusable={false}
+        shape="round"
+        title="View profile"
+        place="flex shrink-0"
+      >
+        <ShownAvatar user={author.user} server={author.server} size={20} />
+      </ProfileButton>
+      <ProfileButton user={author.user} server={author.server}>
+        <ShownName
+          user={author.user}
+          server={author.server}
+          link
+          look="min-w-0 truncate text-sm font-medium"
+        />
+      </ProfileButton>
     </>
   )
 }

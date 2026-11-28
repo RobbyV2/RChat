@@ -879,7 +879,7 @@ function BadgeRow({ ik }: { ik: string }) {
   return (
     <Surface data-badge-row pad="md" gap="2xs" tone="base" radius="lg">
       <span className="flex min-w-0">
-        <AccountChip ik={ik} />
+        <AccountChip ik={ik} pressable />
       </span>
       <p className="text-xs text-on-surface-variant">
         {state === 'confirmed' && ok

@@ -1,6 +1,6 @@
 'use client'
 
-import { IconButton, IconLink, CardButton, MediaButton } from './controls'
+import { IconButton, IconLink, CardButton, Hotspot, MediaButton } from './controls'
 import { ask, mediaUrlOf, sendTo } from '../lib/asks'
 import { Name, useNameLabel, useNameLabels } from './name'
 import { handleName, labelWith, personCalled, unnamed } from '../lib/names'
@@ -30,7 +30,7 @@ import {
   X,
 } from 'lucide-react'
 import { messageInstanceTarget, routeInstanceLink } from '../lib/client/instance_links'
-import { useAccount, useStoreApi } from '../lib/client/react'
+import { useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 import { fileLang, fenceTag } from '../lib/code'
 import type { CodeNode } from '../lib/highlight'
@@ -87,7 +87,7 @@ import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard, WidgetLinkCards, WidgetMessageLinkCard } from './message_link_card'
 import { RichEmbeds } from './webhooks'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { EditedMark } from './message_editor'
 import {
   blobText,
@@ -307,44 +307,45 @@ function SpoilerText({
   return (
     <Tag
       data-spoiler="hidden"
-      role="button"
-      tabIndex={0}
-      aria-label="Spoiler, press to reveal"
-      title="Spoiler"
       onClick={reveal}
-      onKeyDown={e => {
-        if (e.key === 'Enter' || e.key === ' ') reveal(e)
-      }}
-      className={`${box} cursor-pointer bg-spoiler select-none hover:bg-spoiler/85 focus-visible:outline-2 focus-visible:outline-primary`}
+      className={`${box} relative cursor-pointer bg-spoiler select-none hover:bg-spoiler/85`}
     >
       <Tag className="invisible" aria-hidden>
         <MaskControl>{children}</MaskControl>
       </Tag>
+      <Hotspot label="Spoiler, press to reveal" tooltip="Spoiler" onClick={reveal} />
     </Tag>
   )
 }
 
 function Mention({ username }: { username: string }) {
-  const store = useStoreApi()
   const chat = useChat()
   const { user, mine, label, card } = useWatch(() => chat.mention(username), [chat, username])
   // The pill keeps the handle that resolves; the name the server shows is its tooltip.
   const named = useLook(card?.server ?? null, username)?.name ?? null
   const tip = useNameLabel(personCalled(named ?? '', username, mine))
+  const mention = (
+    <Name
+      data-mention={username}
+      of={handleName(label, mine)}
+      before="@"
+      titled={named === null ? false : tip}
+      look={
+        mine
+          ? `md-mark bg-primary-container text-on-primary-container${card ? ' hover:underline' : ''}`
+          : `md-mark bg-primary/15 text-primary${card ? ' hover:underline' : ''}`
+      }
+    />
+  )
   return (
     <MaskControl>
-      <Name
-        {...(card ? profileTrigger(store, user, card.server) : {})}
-        data-mention={username}
-        of={handleName(label, mine)}
-        before="@"
-        titled={named === null ? false : tip}
-        look={
-          mine
-            ? 'md-mark cursor-pointer hover:underline bg-primary-container text-on-primary-container'
-            : 'md-mark cursor-pointer hover:underline bg-primary/15 text-primary'
-        }
-      />
+      {card ? (
+        <ProfileButton user={user} server={card.server} inline>
+          {mention}
+        </ProfileButton>
+      ) : (
+        mention
+      )}
     </MaskControl>
   )
 }

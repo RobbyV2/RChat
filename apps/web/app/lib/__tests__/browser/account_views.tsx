@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client'
 import { VoiceGrid } from '../../../components/voice_grid'
 import { profileKey, rememberProfile } from '../../profile'
 import { ServerUploadExpiry } from '../../../components/upload_expiry'
-import { profileTrigger } from '../../../components/profile_card'
-import { AccountProvider, useStoreApi } from '../../client/react'
+import { ProfileButton } from '../../../components/profile_card'
+import { AccountProvider } from '../../client/react'
 import { client } from '../../client/client'
 import { AccountSession } from '../../client/session'
 import { endpointsFrom, InstanceConnection } from '../../instances'
@@ -87,24 +87,20 @@ for (const account of [shown, owner]) {
   })
 }
 
-function ProfileButton() {
-  const store = useStoreApi()
+function ProfileOpener() {
   return (
-    <span
-      {...profileTrigger(
-        store,
-        {
-          username: 'reader',
-          display_name: 'Reader',
-          avatar_kind: 'identicon',
-          avatar_color: null,
-          avatar_image: null,
-        },
-        'club'
-      )}
+    <ProfileButton
+      user={{
+        username: 'reader',
+        display_name: 'Reader',
+        avatar_kind: 'identicon',
+        avatar_color: null,
+        avatar_image: null,
+      }}
+      server="club"
     >
       Reader
-    </span>
+    </ProfileButton>
   )
 }
 function Views() {
@@ -112,7 +108,7 @@ function Views() {
   return (
     <AccountProvider session={session}>
       <button onClick={() => setSession(shown)}>Switch account</button>
-      <ProfileButton />
+      <ProfileOpener />
       <VoiceGrid channelId={1} />
       <ServerUploadExpiry key={session.renderKey} server="club" />
     </AccountProvider>

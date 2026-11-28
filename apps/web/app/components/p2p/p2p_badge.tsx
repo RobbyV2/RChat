@@ -28,6 +28,7 @@ import { badgeState, type BadgeSlot, type BadgeState } from '../../lib/p2p/badge
 
 import { openActionMenu } from '../../lib/actions/menu'
 import { longPress } from '../context_menu'
+import { Pressable } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { time } from '../../lib/platform/time'
 import { FUNCTIONAL } from '../../lib/motion/functional'
@@ -222,9 +223,18 @@ export const useHasChip = (ik: string) =>
 
 // "Confirmed as alice@host" next to the shield, or "Confirmation expired" / "Couldn't check".
 // `short` leaves out "Confirmed as" (and says "Expired"), `icon` keeps only the icon (a phone's
-// DM header). Hover
-// shows the check date; long-press (or right-click) opens it with the account.
-function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 'short' | 'icon' }) {
+// DM header). Hover shows the check date; long-press (or right-click) opens it with the account.
+// `pressable` makes it a button that opens the same menu; one inside another control (a row, a
+// header) is not one, since a button cannot hold another.
+function AccountChipBody({
+  ik,
+  size = 'full',
+  pressable = false,
+}: {
+  ik: string
+  size?: 'full' | 'short' | 'icon'
+  pressable?: boolean
+}) {
   const identity = useP2pApp()!
 
   const acct = useAccount()
@@ -249,22 +259,11 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
       acct,
       identity
     )
-  return (
+  const chip = (
     <Surface
       data-account-badge={state}
       title={line}
-      aria-label={line}
-      aria-haspopup="menu"
-      role="button"
-      tabIndex={0}
-      onKeyDown={e => {
-        if (e.key !== 'Enter' && e.key !== ' ') return
-        e.preventDefault()
-        e.stopPropagation()
-        const r = e.currentTarget.getBoundingClientRect()
-        open(r.left, r.bottom)
-      }}
-      {...longPress(open)}
+      {...(pressable ? {} : { 'aria-label': line, ...longPress(open) })}
       as="span"
       row
       pad={size === 'icon' ? '3xs' : 'xs'}
@@ -285,6 +284,23 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
         <span className="truncate">{size === 'short' ? short : text}</span>
       )}
     </Surface>
+  )
+  return pressable ? (
+    <Pressable
+      label={line}
+      aria-haspopup="menu"
+      {...longPress(open)}
+      onClick={e => {
+        e.stopPropagation()
+        const r = e.currentTarget.getBoundingClientRect()
+        open(r.left, r.bottom)
+      }}
+      shape="round"
+    >
+      {chip}
+    </Pressable>
+  ) : (
+    chip
   )
 }
 

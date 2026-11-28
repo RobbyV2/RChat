@@ -48,7 +48,7 @@ import { ComposerBar, SpoilerLine } from './replies'
 import { snippetParts } from '../lib/replies'
 import { MarkdownMessage } from './markdown_message'
 import { UserAvatar } from './user_avatar'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { RevealChannelPreview } from './preview_reveal'
 import { BlockedQuote } from './blocking'
 import { MessageTime } from './timestamp'
@@ -589,7 +589,6 @@ export function ForwardCard({
   // A snapshot in a P2P conversation: its pill comes from the viewer's identity.
   local?: boolean
 }) {
-  const store = useStoreApi()
   const openForward = useStore(s => s.openForward)
   const fwd = m.forward
   const blocked = useStore(s => (fwd?.author ? s.blocked[fwd.author.username] === true : false))
@@ -636,21 +635,41 @@ export function ForwardCard({
           <Row as="span" gap="sm" place="max-w-full" data-forward-author>
             {author ? (
               <>
-                <span
-                  {...(local ? {} : profileTrigger(store, author, null, false))}
-                  title={local ? undefined : 'View profile'}
-                  className={`block shrink-0 rounded-full ${local ? '' : 'cursor-pointer hover:opacity-85'}`}
-                >
-                  <UserAvatar person={asAccount(author, 'forward')} size={20} />
-                </span>
-                <Name
-                  of={personName(asAccount(author, 'forward'))}
-                  withUsername
-                  link={!local}
-                  {...(local ? {} : profileTrigger(store, author, null))}
-                  place="min-w-0"
-                  look="truncate rounded-sm text-sm font-medium"
-                />
+                {local ? (
+                  <>
+                    <span className="block shrink-0 rounded-full">
+                      <UserAvatar person={asAccount(author, 'forward')} size={20} />
+                    </span>
+                    <Name
+                      of={personName(asAccount(author, 'forward'))}
+                      withUsername
+                      place="min-w-0"
+                      look="truncate rounded-sm text-sm font-medium"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <ProfileButton
+                      user={author}
+                      server={null}
+                      focusable={false}
+                      shape="round"
+                      title="View profile"
+                      place="flex shrink-0"
+                    >
+                      <UserAvatar person={asAccount(author, 'forward')} size={20} />
+                    </ProfileButton>
+                    <ProfileButton user={author} server={null}>
+                      <Name
+                        of={personName(asAccount(author, 'forward'))}
+                        withUsername
+                        link
+                        place="min-w-0"
+                        look="truncate rounded-sm text-sm font-medium"
+                      />
+                    </ProfileButton>
+                  </>
+                )}
                 {isWebhookAuthor(author.username) && <WebhookBadge />}
               </>
             ) : (

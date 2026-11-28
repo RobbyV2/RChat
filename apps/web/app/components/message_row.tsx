@@ -4,7 +4,6 @@ import { Button, LinkButton } from './controls'
 import { UNREADABLE_TEXT } from '../lib/sealing'
 import { memo, type ReactNode } from 'react'
 import { Check, CircleAlert, Clock, EyeOff, MessageSquareText, Reply, Trash2 } from 'lucide-react'
-import { useStoreApi } from '../lib/client/react'
 import { hiddenRemovedText, SLOW_HIDDEN_TEXT } from '../lib/p2p/flows'
 import { canQuote } from '../lib/replies'
 import { isNotice } from '../lib/system_messages'
@@ -25,7 +24,7 @@ import { RowFiles } from './row_files'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { PollCard } from './poll_card'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { ReactionBar } from './reactions'
 import { ReplyPreview } from './replies'
 import { RoleIcon } from './role_icon'
@@ -53,7 +52,6 @@ export function AuthorRow({
   meta: ReactNode
   children: ReactNode
 }) {
-  const store = useStoreApi()
   const { who, name, color, icon } = face
   if (who.kind === 'key')
     return (
@@ -75,26 +73,30 @@ export function AuthorRow({
   return (
     <Row gap="md" align="stretch">
       <div className="shrink-0">
-        <span
-          {...profileTrigger(store, author, server, false)}
+        <ProfileButton
+          user={author}
+          server={server}
+          focusable={false}
+          shape="round"
           title="View profile"
-          className={avatarTriggerCls}
+          place="flex"
         >
           <UserAvatar person={author} size={size} />
-        </span>
+        </ProfileButton>
       </div>
       <div className="min-w-0 flex-1">
         <Row gap="sm" align="baseline" wrap place="min-w-0">
-          <Name
-            of={name}
-            withUsername
-            fit
-            link
-            {...profileTrigger(store, author, server)}
-            color={color}
-            place="min-w-0"
-            look="truncate text-sm font-medium"
-          />
+          <ProfileButton user={author} server={server}>
+            <Name
+              of={name}
+              withUsername
+              fit
+              link
+              color={color}
+              place="min-w-0"
+              look="truncate text-sm font-medium"
+            />
+          </ProfileButton>
           <RoleIcon emoji={icon?.emoji} role={icon?.role} />
           {isWebhookAuthor(author.username) && <WebhookBadge />}
           {meta}

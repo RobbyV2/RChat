@@ -3,7 +3,6 @@
 import { fromLive } from '../lib/load'
 import { time } from '../lib/platform/time'
 import { Loaded, useLoad } from './loaded'
-import { useStoreApi } from '../lib/client/react'
 import { isUnsupported } from '../lib/place/feature'
 import { pins as pinsFeature, type Pinned, type Pins, type PinsState } from '../lib/place/pins'
 import { useFeature, useLive, usePlace } from '../lib/place/react'
@@ -20,7 +19,7 @@ import { useForwardAccess } from '../lib/forward_access'
 import type { Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { Button, IconButton, LinkButton } from './controls'
 import { Anchored, CloseButton, Masked, PaneCorner, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
@@ -126,7 +125,6 @@ export function PinNotice({
   divider: ReactNode
   onMenu: (m: Message, x: number, y: number) => void
 }) {
-  const store = useStoreApi()
   const place = usePlace()
   const face = useAuthor(m, event)
   const { who } = face
@@ -141,13 +139,13 @@ export function PinNotice({
       divider={divider}
       press={longPress((x, y) => onMenu(m, x, y))}
       name={
-        <Name
-          of={face.name}
-          withUsername
-          link={who.kind === 'account'}
-          {...(who.kind === 'account' ? profileTrigger(store, who.person, who.server) : {})}
-          look="font-medium text-on-surface"
-        />
+        who.kind === 'account' ? (
+          <ProfileButton user={who.person} server={who.server} inline>
+            <Name of={face.name} withUsername link look="font-medium text-on-surface" />
+          </ProfileButton>
+        ) : (
+          <Name of={face.name} withUsername look="font-medium text-on-surface" />
+        )
       }
       place={place !== null && inDm(place) ? 'conversation' : 'channel'}
       ts={m.created_at}
@@ -231,7 +229,6 @@ function PinEntry({
   onUnpin: (key: string) => void
   profiles: boolean
 }) {
-  const store = useStoreApi()
   const { key, message: m } = pinned
   const { access, target } = useForwardAccess(m, { server: server ?? undefined })
   const text = { ...m, media: null, embeds: [] }
@@ -255,14 +252,24 @@ function PinEntry({
     >
       <Row gap="sm" look="pointer-coarse:min-h-11" place="min-w-0">
         <ShownAvatar user={m.author} server={server} size={24} />
-        <ShownName
-          user={m.author}
-          server={server}
-          link={profiles}
-          {...(profiles ? profileTrigger(store, m.author, server) : {})}
-          place="min-w-0"
-          look="truncate text-sm font-medium text-on-surface"
-        />
+        {profiles ? (
+          <ProfileButton user={m.author} server={server}>
+            <ShownName
+              user={m.author}
+              server={server}
+              link
+              place="min-w-0"
+              look="truncate text-sm font-medium text-on-surface"
+            />
+          </ProfileButton>
+        ) : (
+          <ShownName
+            user={m.author}
+            server={server}
+            place="min-w-0"
+            look="truncate text-sm font-medium text-on-surface"
+          />
+        )}
         <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
         <span aria-hidden className="w-20 shrink-0 pointer-coarse:w-30" />
       </Row>

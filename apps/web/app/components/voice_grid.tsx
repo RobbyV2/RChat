@@ -40,7 +40,7 @@ import {
   VolumeOff,
 } from 'lucide-react'
 import { client } from '../lib/client/client'
-import { AccountProvider, useAccount, useLiveSessions, useStoreApi } from '../lib/client/react'
+import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import { type P2pState } from '../lib/p2p/app'
 import { pastFit, voiceNotice, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
@@ -74,7 +74,7 @@ import { VOICE_STATUS_ON, voiceStatus, type VoiceStatus } from '../lib/voice_sta
 import { VoiceStatusIcons } from './voice_status'
 import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { Dialog, Masked, useEscape, useOwn } from './ui'
@@ -399,7 +399,6 @@ export function Tile({
   height?: number
   onToggle: () => void
 }) {
-  const store = useStoreApi()
   const { user, stream, hasVideo, status, speaking, mirror, pending, tint, screen } = tile
   const streamer = useStore(s => s.streamer)
   const box = height ?? (compact ? 72 : 240)
@@ -482,39 +481,51 @@ export function Tile({
         tooltip={focused ? 'Back to grid' : 'Focus'}
         pressed={focused}
       />
-      <Surface
-        {...(tile.local || isGuestName(user.username) ? {} : profileTrigger(store, user, server))}
-        title={tile.local || isGuestName(user.username) ? undefined : 'View profile'}
-        as="span"
-        row
-        pad={compact ? 'xs' : 'sm'}
-        inset="chip"
-        gap="2xs"
-        tone="plain"
-        radius="md"
-        look={`max-w-11/12 bg-scrim/70 font-medium text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary ${isGuestName(user.username) ? '' : 'cursor-pointer'} ${compact ? 'text-2xs' : 'text-xs'}`}
-        place="absolute bottom-1.5 left-1.5"
-      >
-        {screen ? (
-          <Monitor size={compact ? 11 : 13} className="shrink-0" aria-hidden />
+      {(() => {
+        const opens = !tile.local && !isGuestName(user.username)
+        const chip = (
+          <Surface
+            as="span"
+            row
+            pad={compact ? 'xs' : 'sm'}
+            inset="chip"
+            gap="2xs"
+            tone="plain"
+            radius="md"
+            look={`bg-scrim/70 font-medium text-white ${opens ? 'hover:bg-scrim/85' : 'max-w-11/12'} ${compact ? 'text-2xs' : 'text-xs'}`}
+            place={opens ? 'min-w-0' : 'absolute bottom-1.5 left-1.5'}
+          >
+            {screen ? (
+              <Monitor size={compact ? 11 : 13} className="shrink-0" aria-hidden />
+            ) : (
+              <VoiceStatusIcons
+                status={status}
+                self={tile.own ?? mine}
+                size={compact ? 10 : 12}
+                variant="tile"
+              />
+            )}
+            {tile.local ? (
+              <Name of={p2pName(user.display_name, tile.own)} look="truncate" />
+            ) : (
+              <Name of={personName(shownUser(user, null), tile.own)} withUsername look="truncate" />
+            )}
+            {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
+            {status.forced === 'staff' && !screen && !compact && (
+              <span className="shrink-0 opacity-75">{STAFF_MUTED}</span>
+            )}
+          </Surface>
+        )
+        return opens ? (
+          <Row as="span" gap="none" place="absolute bottom-1.5 left-1.5 max-w-11/12">
+            <ProfileButton user={user} server={server} title="View profile">
+              {chip}
+            </ProfileButton>
+          </Row>
         ) : (
-          <VoiceStatusIcons
-            status={status}
-            self={tile.own ?? mine}
-            size={compact ? 10 : 12}
-            variant="tile"
-          />
-        )}
-        {tile.local ? (
-          <Name of={p2pName(user.display_name, tile.own)} look="truncate" />
-        ) : (
-          <Name of={personName(shownUser(user, null), tile.own)} withUsername look="truncate" />
-        )}
-        {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
-        {status.forced === 'staff' && !screen && !compact && (
-          <span className="shrink-0 opacity-75">{STAFF_MUTED}</span>
-        )}
-      </Surface>
+          chip
+        )
+      })()}
       {menu && (
         <IconButton
           aria-haspopup="menu"

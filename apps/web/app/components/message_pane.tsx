@@ -6,7 +6,7 @@ import { StoredLock } from './storage_settings'
 import { ViewActorTag } from './view_actor'
 import { useP2pApp } from '../lib/client/p2p_react'
 
-import { useAccount, useStoreApi } from '../lib/client/react'
+import { useAccount } from '../lib/client/react'
 
 import { Fragment, useEffect, useMemo, useRef } from 'react'
 import {
@@ -40,7 +40,7 @@ import { Composer } from './composer'
 import StatusClock from './status_clock'
 import { InboxButton } from './inbox'
 import { longPress, useMedia } from './context_menu'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
 import { ChannelTopic } from './channel_topic'
 import { CallButtons } from './call_buttons'
@@ -81,25 +81,25 @@ const EMPTY_OUT: Outgoing[] = []
 
 // The other person in a DM's header: avatar and name, opening their profile.
 export function DmPeer({ other }: { other: UserRef }) {
-  const store = useStoreApi()
   return (
-    <Surface
-      {...profileTrigger(store, other, null)}
-      as="span"
-      row
-      pad="sm"
-      inset="chip"
-      gap="sm"
-      tone="plain"
-      radius="full"
-      look="cursor-pointer outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
-      place="min-w-0"
-    >
-      <span className={`flex shrink-0 ${showsUsername(other) ? 'max-sm:hidden' : ''}`.trim()}>
-        <UserAvatar person={asAccount(other, 'dm')} size={24} />
-      </span>
-      <Name of={personName(asAccount(other, 'dm'))} withUsername look="truncate" />
-    </Surface>
+    <ProfileButton user={other} server={null} shape="round">
+      <Surface
+        as="span"
+        row
+        pad="sm"
+        inset="chip"
+        gap="sm"
+        tone="plain"
+        radius="full"
+        look="hover:bg-surface-container-high"
+        place="min-w-0"
+      >
+        <span className={`flex shrink-0 ${showsUsername(other) ? 'max-sm:hidden' : ''}`.trim()}>
+          <UserAvatar person={asAccount(other, 'dm')} size={24} />
+        </span>
+        <Name of={personName(asAccount(other, 'dm'))} withUsername look="truncate" />
+      </Surface>
+    </ProfileButton>
   )
 }
 

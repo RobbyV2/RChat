@@ -31,6 +31,7 @@ import {
   pillLook,
   placed,
   pollChoiceLook,
+  pressableLook,
   railToggleLook,
   rowLook,
   sectionHeadingLook,
@@ -60,6 +61,7 @@ import {
   type LinkSize,
   type LinkTone,
   type MediaShape,
+  type PressableShape,
   type Place,
   type RowTone,
   type RowVariant,
@@ -800,6 +802,44 @@ export function MediaButton<const S extends string = never>({
       title={title}
       aria-label={label}
       className={placed('block', mediaButtonLook(shape, zoom), place)}
+    >
+      {children}
+    </button>
+  )
+}
+
+export type PressableProps<S extends string> = NativeButton &
+  Placed<S> & {
+    inline?: boolean
+    shape?: PressableShape
+    title?: string
+    label?: string
+    ref?: Ref<HTMLButtonElement>
+    children: ReactNode
+  }
+
+// A button with no look of its own around what it holds (a name, an avatar, a row of them): it
+// adds the pointer and the focus ring (`shape`: around text, an avatar, or inside a list row's
+// edge); `inline` flows in a line of text. What it holds keeps its own look.
+export function Pressable<const S extends string = never>({
+  inline = false,
+  shape = 'text',
+  type = 'button',
+  title,
+  label,
+  place,
+  ref,
+  children,
+  ...rest
+}: PressableProps<S>) {
+  return (
+    <button
+      type={type}
+      {...rest}
+      ref={ref}
+      title={title}
+      aria-label={label}
+      className={placed(inline ? 'inline' : 'inline-flex', pressableLook(inline, shape), place)}
     >
       {children}
     </button>

@@ -104,9 +104,9 @@ describe('the message view', () => {
   test('a spoiler is a button until revealed, one per spoiler', () => {
     const html = render('a ||one|| b ||two||')
     expect(hidden(html)).toBe(2)
-    expect(html).toContain('role="button"')
-    expect(html).toContain('tabindex="0"')
+    expect(html.split('<button type="button"').length - 1).toBe(2)
     expect(html).toContain('aria-label="Spoiler, press to reveal"')
+    expect(html).not.toContain('role="button"')
     expect(html).toContain('<span class="invisible" aria-hidden="true">one</span>')
     expect(html.includes('||')).toBe(false)
   })
@@ -139,7 +139,8 @@ describe('the message view', () => {
     expect(hidden(split)).toBe(2)
     expect(split.includes('||')).toBe(false)
     expect(split).toContain('<span class="invisible" aria-hidden="true">a </span>')
-    expect(split).toContain('<span class="invisible" aria-hidden="true">b</span></span> c</strong>')
+    expect(split).toContain('<span class="invisible" aria-hidden="true">b</span><button')
+    expect(split).toContain('</button></span> c</strong>')
   })
 
   test('a link inside a spoiler has no preview, a Spoiler card instead', () => {

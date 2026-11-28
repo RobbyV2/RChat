@@ -21,6 +21,7 @@ tester.run('buttons', rule, {
     { code: "document.createElement('button')" },
     { code: '<a href={url} className="truncate underline">{name}</a>' },
     { code: '<div className={tileLook("idle")} />' },
+    { code: '<div role="menu" />' },
   ],
   invalid: [
     { code: '<button onClick={save}>Save</button>', errors: [{ messageId: 'raw' }] },
@@ -32,6 +33,8 @@ tester.run('buttons', rule, {
     { code: "<Row as={'button'} gap='sm' />", errors: [{ messageId: 'raw' }] },
     { code: "createElement('button', { onClick: save })", errors: [{ messageId: 'raw' }] },
     { code: "React.createElement('button', null)", errors: [{ messageId: 'raw' }] },
+    { code: '<span role="button" tabIndex={0} onClick={open} />', errors: [{ messageId: 'role' }] },
+    { code: '<Surface role={\'button\'} pad="sm" />', errors: [{ messageId: 'role' }] },
     {
       code: "<a href={url} className={`inline-flex ${iconButtonLook('plain', 'sm')}`} />",
       errors: [{ messageId: 'anchor' }],

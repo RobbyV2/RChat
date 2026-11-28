@@ -58,7 +58,7 @@ import type { ActiveDialog } from '../lib/store_types'
 import type { Friend, FriendRequest, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { PingBadge } from './ping_badge'
 import { Button, IconButton, ListRow, Chip, Tab, LinkButton, SideRow } from './controls'
 import { Dialog, fieldCls, FieldError, PanelHeader, Sentinel, useEscape, smallFieldCls } from './ui'
@@ -115,7 +115,6 @@ const friendAt = (user: UserRef): Target => ({
 
 export function FriendRow({ friend }: { friend: Friend }) {
   const acct = useAccount()
-  const { store } = acct
 
   const { user, online } = friend
   const called = useNameLabel(personCalled(user.display_name, user.username), 'this friend')
@@ -127,20 +126,19 @@ export function FriendRow({ friend }: { friend: Friend }) {
     >
       <Surface tone="plain" radius="none" pad="md" inset="bar">
         <Row gap="md">
-          <Row
-            gap="md"
+          <ProfileButton
+            user={user}
+            server={null}
             place="flex-1"
-            {...profileTrigger(store, user, null)}
-            onClickCapture={() => {
+            onClick={() => {
               if (client.shown() !== acct) client.show(acct)
             }}
-            onKeyDownCapture={e => {
-              if ((e.key === 'Enter' || e.key === ' ') && client.shown() !== acct) client.show(acct)
-            }}
           >
-            <Avatar user={user} online={online} />
-            <FriendName user={user} sub={online ? 'Online' : 'Offline'} />
-          </Row>
+            <Row as="span" gap="md" place="min-w-0 flex-1">
+              <Avatar user={user} online={online} />
+              <FriendName user={user} sub={online ? 'Online' : 'Offline'} />
+            </Row>
+          </ProfileButton>
           <IconButton
             icon={MessageCircle}
             label={labelWith`Message ${called}`}
@@ -166,7 +164,6 @@ export function FriendRow({ friend }: { friend: Friend }) {
 
 export function RequestRow({ request }: { request: FriendRequest }) {
   const acct = useAccount()
-  const { store } = acct
 
   const acceptFriend = useStore(s => s.acceptFriend)
   const denyFriend = useStore(s => s.denyFriend)
@@ -189,20 +186,19 @@ export function RequestRow({ request }: { request: FriendRequest }) {
     >
       <Surface tone="plain" radius="none" pad="md" inset="bar">
         <Row gap="md">
-          <Row
-            gap="md"
+          <ProfileButton
+            user={user}
+            server={null}
             place="flex-1"
-            {...profileTrigger(store, user, null)}
-            onClickCapture={() => {
+            onClick={() => {
               if (client.shown() !== acct) client.show(acct)
             }}
-            onKeyDownCapture={e => {
-              if ((e.key === 'Enter' || e.key === ' ') && client.shown() !== acct) client.show(acct)
-            }}
           >
-            <Avatar user={user} />
-            <FriendName user={user} sub={incoming ? 'Incoming request' : 'Outgoing request'} />
-          </Row>
+            <Row as="span" gap="md" place="min-w-0 flex-1">
+              <Avatar user={user} />
+              <FriendName user={user} sub={incoming ? 'Incoming request' : 'Outgoing request'} />
+            </Row>
+          </ProfileButton>
           {incoming ? (
             <>
               <IconButton

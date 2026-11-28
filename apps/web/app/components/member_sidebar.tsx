@@ -1,5 +1,7 @@
 'use client'
 
+import { Pressable } from './controls'
+
 import type { Person } from '../lib/people'
 import { Name } from './name'
 import { personName, p2pName } from '../lib/names'
@@ -19,7 +21,7 @@ import { longPress } from './context_menu'
 import { Inset, Row, Surface } from './layout'
 import { AccountChip, ContactShield, MemberAvatar, PresenceDot } from './p2p/p2p_badge'
 import { MemberCard } from './p2p/p2p_server_roles'
-import { Badge, profileTrigger } from './profile_card'
+import { Badge, ProfileButton } from './profile_card'
 import { RoleIcon } from './role_icon'
 import { MemberListSkeleton } from './skeletons'
 import { MembersHiddenState } from './members_hidden'
@@ -28,8 +30,6 @@ import { Masked, Sentinel } from './ui'
 import { UserAvatar } from './user_avatar'
 import { PeerActorTag, ViewActorTag } from './view_actor'
 import { time } from '../lib/platform/time'
-
-const rowFocus = '-outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary'
 
 const ROW = 40
 const HEAD = 32
@@ -155,33 +155,18 @@ function MemberRow({
     const r = el.getBoundingClientRect()
     menu(r.left + 24, r.bottom)
   }
-  const trigger =
-    opens.kind === 'profile'
-      ? profileTrigger(acct.store, opens.user, opens.server)
-      : {
-          role: 'button' as const,
-          tabIndex: 0,
-          onClick: (e: React.MouseEvent<HTMLElement>) => under(e.currentTarget),
-          onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => {
-            if (e.key !== 'Enter' && e.key !== ' ') return
-            e.preventDefault()
-            under(e.currentTarget)
-          },
-        }
   const icon = look.icon && { ...look.icon, role: mask ? mask(look.icon.role) : look.icon.role }
-  return (
+  const row = (
     <Surface
-      data-member={entry.who}
-      {...(entry.menu ? longPress(menu) : {})}
-      {...trigger}
+      as="span"
       row
       pad="sm"
       inset="sides"
       gap="sm"
       tone="plain"
       radius="lg"
-      look={`${ROW_HEIGHT[linesOf(entry)]} cursor-pointer hover:bg-surface-container-high ${rowFocus} ${entry.faded ? 'opacity-70' : entry.online ? '' : 'opacity-50'}`}
-      place="overflow-hidden"
+      look={`${ROW_HEIGHT[linesOf(entry)]} hover:bg-surface-container-high ${entry.faded ? 'opacity-70' : entry.online ? '' : 'opacity-50'}`}
+      place="w-full overflow-hidden"
     >
       <Face entry={entry} />
       <span className="flex min-w-0 flex-1 flex-col">
@@ -218,6 +203,28 @@ function MemberRow({
       )}
       {entry.shield && <ContactShield kind={entry.shield} size={14} />}
     </Surface>
+  )
+  const press = entry.menu ? longPress(menu) : {}
+  return opens.kind === 'profile' ? (
+    <ProfileButton
+      user={opens.user}
+      server={opens.server}
+      data-member={entry.who}
+      {...press}
+      shape="row"
+    >
+      {row}
+    </ProfileButton>
+  ) : (
+    <Pressable
+      data-member={entry.who}
+      {...press}
+      shape="row"
+      aria-haspopup="menu"
+      onClick={e => under(e.currentTarget)}
+    >
+      {row}
+    </Pressable>
   )
 }
 

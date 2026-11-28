@@ -181,7 +181,7 @@ function FaceRow() {
 
 test('message headers show the username next to a display name, fitted to the row', () => {
   const html = render(<FaceRow />)
-  expect(html).toContain(`title="alice (bob)" role="button"`)
+  expect(/<button type="button"[^>]*><span[^>]*title="alice \(bob\)"/.test(html)).toBe(true)
   expect(html).toContain(FITTED('alice', 'bob'))
   Object.assign(initial, { streamer: true })
   const streamer = render(<FaceRow />)

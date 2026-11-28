@@ -1,6 +1,5 @@
 'use client'
 
-import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Lock, LockOpen } from 'lucide-react'
 import { errorText, useMask } from '../lib/store'
@@ -26,7 +25,7 @@ import { Button } from './controls'
 import { SettingNotes, SettingSwitch } from './settings_fields'
 import { longPress } from './context_menu'
 import { MessageTime } from './timestamp'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { fieldCls, FieldError } from './ui'
 import { Name } from './name'
 import { personCalled } from '../lib/names'
@@ -49,7 +48,6 @@ export function SystemNotice({
   local?: boolean
   onMenu?: (m: Message, x: number, y: number) => void
 }) {
-  const store = useStoreApi()
   const [before, after] = systemParts(m)
   const join = m.kind === 'join'
   const storage = isStorage(m)
@@ -81,13 +79,9 @@ export function SystemNotice({
               look="font-medium text-on-surface"
             />
           ) : (
-            <ShownName
-              user={m.author}
-              server={server}
-              link
-              {...profileTrigger(store, m.author, server)}
-              look="font-medium text-on-surface"
-            />
+            <ProfileButton user={m.author} server={server} inline>
+              <ShownName user={m.author} server={server} link look="font-medium text-on-surface" />
+            </ProfileButton>
           )}
           {after} <MessageTime ts={m.created_at} className="text-xs opacity-70" />
         </p>

@@ -13,6 +13,7 @@ import {
   IconLink,
   LinkButton,
   ListRow,
+  Pressable,
   Pill,
   SectionHeading,
   SideRow,
@@ -348,5 +349,31 @@ describe('links that look like controls', () => {
       <IconLink href="/f" icon={Download} label="Download" tooltip="Download a.txt" />
     )
     expect(attr(tipped, 'title')).toBe('Download a.txt')
+  })
+})
+
+describe('Pressable', () => {
+  test('is a real button with no box of its own around what it holds', () => {
+    const html = renderToStaticMarkup(
+      <Pressable title="View profile">
+        <span>alice</span>
+      </Pressable>
+    )
+    expect(html.startsWith('<button type="button"')).toBe(true)
+    expect(attr(html, 'title')).toBe('View profile')
+    const cls = attr(html, 'class') ?? ''
+    for (const c of ['inline-flex', 'min-w-0', 'cursor-pointer', 'focus-visible:outline-2'])
+      expect(cls.split(' ')).toContain(c)
+    expect(/(^| )(p|px|py|bg)-/.test(cls)).toBe(false)
+  })
+
+  test('flows in a line of text when inline, and rings an avatar or a row by its shape', () => {
+    const inline = attr(renderToStaticMarkup(<Pressable inline>@bob</Pressable>), 'class') ?? ''
+    expect(inline.split(' ')).toContain('inline')
+    expect(inline.split(' ')).not.toContain('inline-flex')
+    const round = renderToStaticMarkup(<Pressable shape="round">x</Pressable>)
+    expect(attr(round, 'class')).toContain('rounded-full')
+    const row = renderToStaticMarkup(<Pressable shape="row">x</Pressable>)
+    expect(attr(row, 'class')).toContain('w-full rounded-lg -outline-offset-2')
   })
 })

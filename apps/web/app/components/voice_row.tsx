@@ -4,7 +4,7 @@ import { p2pName, type NameValue } from '../lib/names'
 import { personName } from '../lib/names'
 import { Name } from './name'
 import { Lock, Volume2 } from 'lucide-react'
-import { useAccount, useStore } from '../lib/client/react'
+import { useStore } from '../lib/client/react'
 import { isGuestName } from '../lib/guest_voice'
 import type { ChannelEntry } from '../lib/place/channels'
 import { isUnsupported } from '../lib/place/feature'
@@ -18,7 +18,7 @@ import { longPress } from './context_menu'
 import type { DragSpec } from './drag'
 import { useGuestMenu } from './guest_voice_menu'
 import { MemberAvatar } from './p2p/p2p_badge'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { useShown } from './shown_user'
 import { Masked } from './ui'
 import { UserAvatar } from './user_avatar'
@@ -26,7 +26,7 @@ import { LiveBadge } from './voice_grid'
 import { VoiceStatusIcons } from './voice_status'
 import { Surface } from './layout'
 import { sideSeatLook } from '../lib/controls'
-import { SideRow } from './controls'
+import { SideRow, Pressable } from './controls'
 
 const seatCls = sideSeatLook
 const opensCls =
@@ -80,22 +80,21 @@ function AccountSeat({
   username: string
   server: string
 }) {
-  const { store } = useAccount()
   const user = useStore(s => userRefFor(s, username))
   const shown = useShown(user, server)
   const menu = useGuestMenu(server, username)
   const guest = isGuestName(username)
-  return (
-    <div
-      {...(guest ? (menu ? longPress(menu) : {}) : profileTrigger(store, user, server))}
-      className={`${seatCls} ${guest ? '' : opensCls}`}
-    >
-      <SeatBody
-        seat={seat}
-        face={<UserAvatar person={shown} size={22} />}
-        name={personName(shown)}
-      />
+  const body = (
+    <SeatBody seat={seat} face={<UserAvatar person={shown} size={22} />} name={personName(shown)} />
+  )
+  return guest ? (
+    <div {...(menu ? longPress(menu) : {})} className={seatCls}>
+      {body}
     </div>
+  ) : (
+    <ProfileButton user={user} server={server} place="flex w-full">
+      <span className={`${seatCls} ${opensCls} min-w-0 flex-1`}>{body}</span>
+    </ProfileButton>
   )
 }
 
@@ -110,22 +109,29 @@ function KeySeat({
   face: Extract<VoiceSeat['face'], { kind: 'key' }>
   open: ((x: number, y: number) => void) | null
 }) {
-  return (
-    <div
+  const body = (
+    <SeatBody
+      seat={seat}
+      face={<MemberAvatar members={face.of} ik={face.ik} size={22} />}
+      name={p2pName(face.name, seat.self)}
+    />
+  )
+  return open ? (
+    <Pressable
       data-voice-member={face.name}
-      {...(open ? longPress(open) : {})}
+      {...longPress(open)}
       onClick={e => {
-        if (!open) return
         const r = e.currentTarget.getBoundingClientRect()
         open(r.left + 24, r.bottom)
       }}
-      className={`${seatCls} ${open ? opensCls : ''}`}
+      aria-haspopup="menu"
+      place="flex w-full"
     >
-      <SeatBody
-        seat={seat}
-        face={<MemberAvatar members={face.of} ik={face.ik} size={22} />}
-        name={p2pName(face.name, seat.self)}
-      />
+      <span className={`${seatCls} ${opensCls} min-w-0 flex-1`}>{body}</span>
+    </Pressable>
+  ) : (
+    <div data-voice-member={face.name} className={seatCls}>
+      {body}
     </div>
   )
 }

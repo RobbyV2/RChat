@@ -31,7 +31,7 @@ import { accountPath } from '../lib/view'
 import { knownLinkOrigin, routeInstanceLink, linkChoice } from '../lib/client/instance_links'
 import { client } from '../lib/client/client'
 import { routeOwnerFor } from '../lib/client/account_paths'
-import { useAccount, useStoreApi } from '../lib/client/react'
+import { useAccount } from '../lib/client/react'
 import type { InstanceConnection } from '../lib/instances'
 import { useForwardAccess } from '../lib/forward_access'
 import { carriedTarget } from '../lib/forward_viewing'
@@ -68,7 +68,7 @@ import { SpoilerLine } from './replies'
 import { PreviewFilename, RevealChannelPreview } from './preview_reveal'
 import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
-import { profileTrigger } from './profile_card'
+import { ProfileButton } from './profile_card'
 import { time } from '../lib/platform/time'
 import type { Load } from '../lib/load'
 import {
@@ -402,7 +402,6 @@ export function PreviewLine({
   // Another instance's preview: only the label a copy carries can decide.
   remote?: InstanceConnection
 }) {
-  const store = useStoreApi()
   const say = useNameLabels()
   const account = useStore(s => s.me?.username ?? null)
   const { useViewing, canView } = useAccount().viewing
@@ -425,18 +424,23 @@ export function PreviewLine({
           big ? 'line-clamp-2 text-sm' : 'truncate text-xs leading-4.5'
         }`}
       >
-        <Name
-          of={personName(asAccount(author, 'invite'))}
-          withUsername
-          link={!host}
-          {...(host ? {} : profileTrigger(store, author, null))}
-          titled={
-            host
-              ? labelWith`${say(handleName(author.username))}@${say(instanceAddress(normalizeHost(host)))}`
-              : false
-          }
-          look="font-medium text-on-surface"
-        />{' '}
+        {host ? (
+          <Name
+            of={personName(asAccount(author, 'invite'))}
+            withUsername
+            titled={labelWith`${say(handleName(author.username))}@${say(instanceAddress(normalizeHost(host)))}`}
+            look="font-medium text-on-surface"
+          />
+        ) : (
+          <ProfileButton user={author} server={null} inline>
+            <Name
+              of={personName(asAccount(author, 'invite'))}
+              withUsername
+              link
+              look="font-medium text-on-surface"
+            />
+          </ProfileButton>
+        )}{' '}
         <span className="text-on-surface-variant">
           {hidden ? (
             <>

@@ -537,6 +537,20 @@ export const mediaButtonLook = (shape: MediaShape, zoom: boolean) =>
 
 // A button with nothing to show that covers its positioned parent: pressing the parent anywhere
 // presses it. A `tint` one shades the parent under the mouse.
+export type PressableShape = 'text' | 'round' | 'row'
+
+const PRESSABLE_SHAPE: Record<PressableShape, string> = {
+  text: `rounded-sm ${FOCUS}`,
+  round: `rounded-full ${FOCUS}`,
+  row: `w-full rounded-lg -outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary`,
+}
+
+// A button with no box of its own around what it holds: the pointer and the focus ring only,
+// round around an avatar, inside the edge of a list row, and flowing in a line of text when
+// `inline`.
+export const pressableLook = (inline: boolean, shape: PressableShape) =>
+  `${inline ? '' : 'max-w-full min-w-0 items-center '}cursor-pointer text-left ${PRESSABLE_SHAPE[shape]}`
+
 export const hotspotLook = (tint: boolean) =>
   `absolute inset-0 cursor-pointer rounded-inherit -outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary ${tint ? 'transition-colors hover-idle:bg-on-surface/5' : ''}`
 

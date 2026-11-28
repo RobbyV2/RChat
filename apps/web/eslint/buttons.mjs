@@ -1,5 +1,5 @@
-// Flags a button built by hand: a `<button>` element, an element rendered `as="button"`, or
-// `createElement('button', ...)`; and a link dressed as a control: an `<a>`, a `<Link>` or any
+// Flags a button built by hand: a `<button>` element, an element rendered `as="button"`, an
+// element that calls itself one (`role="button"`), or `createElement('button', ...)`; and a link dressed as a control: an `<a>`, a `<Link>` or any
 // element with an `href` whose class list uses a control look (a name ending in `Look`). A
 // screen's buttons and button-like links are the controls of components/controls.tsx and
 // components/ui.tsx, which carry the colors, states, focus ring and touch size of each kind.
@@ -34,6 +34,7 @@ export default {
     schema: [],
     messages: {
       raw: 'A button comes from the shared controls (Button, IconButton, ListRow, Chip, Tab, CardButton, ... in components/controls.tsx), never a hand-written <button>.',
+      role: 'An element that acts as a button is a real one from components/controls.tsx (Pressable around content that keeps its own look, Hotspot over a positioned box), never role="button".',
       anchor:
         'A link that looks like a control is a ButtonLink, IconLink or LinkButton from components/controls.tsx, never a control look in its class list.',
     },
@@ -42,6 +43,8 @@ export default {
     return {
       JSXOpeningElement(node) {
         if (named(node.name, 'button')) return context.report({ node, messageId: 'raw' })
+        const role = attributeOf(node, 'role')
+        if (role && text(role.value) === 'button') context.report({ node: role, messageId: 'role' })
         const link =
           (node.name.type === 'JSXIdentifier' && LINKS.has(node.name.name)) ||
           attributeOf(node, 'href') !== undefined

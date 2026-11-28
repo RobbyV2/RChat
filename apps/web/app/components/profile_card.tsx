@@ -11,11 +11,7 @@ import { askKick, openBan, openTimeout } from '../lib/place/moderation'
 import { HostedServer } from '../lib/place/place'
 
 import { useEffect, useId, useRef, useState } from 'react'
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactNode,
-} from 'react'
+import type { ReactNode } from 'react'
 import {
   ArrowRightLeft,
   Ban,
@@ -76,7 +72,7 @@ import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { useLook } from './shown_user'
 import { UserAvatar } from './user_avatar'
-import { Button, IconButton, ListRow, LinkButton } from './controls'
+import { Button, IconButton, ListRow, LinkButton, Pressable, type PressableProps } from './controls'
 import { Row, Stack, Surface, Inset, Lift } from './layout'
 import { Anchored, Masked, useOwnServer, fieldCls } from './ui'
 import { useCopied } from '../lib/use_copied'
@@ -125,43 +121,41 @@ const openFrom = (
   s.openProfile(user, server, x, y)
 }
 
-interface ProfileTriggerProps {
-  role: 'button'
-  tabIndex: number
-  onClick: (e: ReactMouseEvent<HTMLElement>) => void
-  onKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => void
-}
-
-export function profileTrigger(
-  store: ReturnType<typeof useStoreApi>,
-  user: UserRef,
-  server: string | null,
-  focusable = true
-): ProfileTriggerProps {
-  return {
-    role: 'button',
-    tabIndex: focusable ? 0 : -1,
-    onClick: e => {
-      e.stopPropagation()
-      const r = e.currentTarget.getBoundingClientRect()
-      const keyboard = e.detail === 0
-      openFrom(
-        store,
-        e.currentTarget,
-        user,
-        server,
-        keyboard ? r.right : e.clientX,
-        keyboard ? r.top : e.clientY
-      )
-    },
-    onKeyDown: e => {
-      if (e.key !== 'Enter' && e.key !== ' ') return
-      e.preventDefault()
-      e.stopPropagation()
-      const r = e.currentTarget.getBoundingClientRect()
-      openFrom(store, e.currentTarget, user, server, r.right, r.top)
-    },
-  }
+// Opens the profile card of `user` (in `server`) beside it: at the press, or at its end when
+// pressed with the keyboard; pressed again, it closes the card. `focusable={false}` leaves it out
+// of the Tab order (an avatar beside a name that opens the same card).
+export function ProfileButton<const S extends string = never>({
+  user,
+  server,
+  focusable = true,
+  onClick,
+  ...rest
+}: Omit<PressableProps<S>, 'tabIndex'> & {
+  user: UserRef
+  server: string | null
+  focusable?: boolean
+}) {
+  const store = useStoreApi()
+  return (
+    <Pressable
+      {...rest}
+      tabIndex={focusable ? undefined : -1}
+      onClick={e => {
+        onClick?.(e)
+        e.stopPropagation()
+        const r = e.currentTarget.getBoundingClientRect()
+        const keyboard = e.detail === 0
+        openFrom(
+          store,
+          e.currentTarget,
+          user,
+          server,
+          keyboard ? r.right : e.clientX,
+          keyboard ? r.top : e.clientY
+        )
+      }}
+    />
+  )
 }
 
 const asMember = (p: Profile): Member | null =>
