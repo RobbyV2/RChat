@@ -1,13 +1,19 @@
 // The Branding section of the site administration page: the controls that name the instance
 // and the app it serves, with their limits and the name of each in the server config.
 
+import { BRAND_ROWS } from './admin/rows.gen'
 import type { BrandLink, InstanceSuggestion, InstanceSuggestions } from './types'
 import { anything, obj, opt, parseJson, str, type Schema } from './schema'
 
-export const BRAND_NAME_MAX = 64
-export const BRAND_SHORT_NAME_MAX = 16
-export const BRAND_ABOUT_MAX = 1000
-export const BRAND_LOGIN_NOTE_MAX = 300
+const textMax = (key: string) => {
+  const row = BRAND_ROWS.find(r => r.key === key)
+  return row?.kind === 'text' ? row.max : 0
+}
+
+export const BRAND_NAME_MAX = textMax('instance_name')
+export const BRAND_SHORT_NAME_MAX = textMax('app_short_name')
+export const BRAND_ABOUT_MAX = textMax('brand_about')
+export const BRAND_LOGIN_NOTE_MAX = textMax('login_note')
 export const BRAND_LINKS_MAX = 4
 export const BRAND_LABEL_MAX = 32
 export const BRAND_SUGGESTIONS_MAX = 20
@@ -26,79 +32,7 @@ export type BrandRow =
   | (Base & { kind: 'links' })
   | (Base & { kind: 'suggestions' })
 
-export const BRAND_ROWS: BrandRow[] = [
-  {
-    key: 'instance_name',
-    env: 'INSTANCE_NAME',
-    kind: 'text',
-    min: 1,
-    max: BRAND_NAME_MAX,
-    lines: false,
-    label: 'Instance name',
-    line: 'The name people see for the instance, here and in other apps.',
-    keywords: ['site name', 'title'],
-  },
-  {
-    key: 'app_name',
-    env: 'BRAND_APP_NAME',
-    kind: 'text',
-    min: 0,
-    max: BRAND_NAME_MAX,
-    lines: false,
-    label: 'App name',
-    line: 'The name of the app served here: the page title and the installed app. Empty uses the instance name.',
-    keywords: ['title', 'white label'],
-  },
-  {
-    key: 'app_short_name',
-    env: 'BRAND_SHORT_NAME',
-    kind: 'text',
-    min: 0,
-    max: BRAND_SHORT_NAME_MAX,
-    lines: false,
-    label: 'Short name',
-    line: 'The name under the icon on a home screen. Empty uses the app name.',
-    keywords: ['home screen', 'install'],
-  },
-  {
-    key: 'brand_about',
-    env: 'BRAND_ABOUT',
-    kind: 'text',
-    min: 0,
-    max: BRAND_ABOUT_MAX,
-    lines: true,
-    label: 'About text',
-    line: 'Plain text shown where the app tells about itself.',
-    keywords: ['description', 'information'],
-  },
-  {
-    key: 'brand_links',
-    env: 'BRAND_LINKS',
-    kind: 'links',
-    label: 'Links',
-    line: 'Up to 4 links shown with the about text and under the sign-in form.',
-    keywords: ['help', 'terms', 'privacy'],
-  },
-  {
-    key: 'login_note',
-    env: 'BRAND_LOGIN_NOTE',
-    kind: 'text',
-    min: 0,
-    max: BRAND_LOGIN_NOTE_MAX,
-    lines: true,
-    label: 'Sign-in note',
-    line: 'Plain text under the sign-in form, for example how to get an account.',
-    keywords: ['login', 'log in'],
-  },
-  {
-    key: 'instance_suggestions',
-    env: 'INSTANCE_SUGGESTIONS',
-    kind: 'suggestions',
-    label: 'Instances the app suggests',
-    line: 'Up to 20 instances offered when someone adds an instance.',
-    keywords: ['servers list', 'default list', 'other instances'],
-  },
-]
+export { BRAND_ROWS }
 
 export const brandRow = (key: string) => BRAND_ROWS.find(r => r.key === key)
 

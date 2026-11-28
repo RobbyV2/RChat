@@ -194,3 +194,73 @@ fn each_line_shows_the_default_and_its_comment_says_what_the_setting_takes() {
     }
     assert_eq!(wrong, Vec::<String>::new());
 }
+
+const ROWS_FILE: &str = "../../apps/web/app/lib/admin/rows.gen.ts";
+
+// `UPDATE_FIXTURES=1 cargo test -p rchat-settings` rewrites the web app's rows too.
+#[test]
+fn the_admin_rows_are_the_registry() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(ROWS_FILE);
+    let want = rchat_settings::admin::rows_ts();
+    if std::env::var_os("UPDATE_FIXTURES").is_some() {
+        std::fs::create_dir_all(path.parent().expect("dir")).expect("dir");
+        std::fs::write(&path, &want).expect("write the rows");
+    }
+    let got = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        got == want,
+        "run UPDATE_FIXTURES=1 cargo test -p rchat-settings"
+    );
+}
+
+#[test]
+fn every_live_setting_has_one_row_that_fits_its_kind() {
+    use rchat_settings::admin::{GROUPS, Place, ROWS, View};
+    let mut seen = BTreeSet::new();
+    for r in ROWS {
+        let s = r.setting;
+        assert_eq!(s.scope, Scope::Live, "{}", s.env);
+        assert!(seen.insert(s.env), "{} twice", s.env);
+        if let Place::Features { group, under } = r.place {
+            assert!(GROUPS.contains(&group), "{}", s.env);
+            if let Some(under) = under {
+                assert!(
+                    ROWS.iter().any(|o| o.setting.key == Some(under)),
+                    "{}",
+                    s.env
+                );
+            }
+        }
+        let fits = match (&r.view, s.kind) {
+            (View::Switch { off: _ }, Kind::Switch) => true,
+            (
+                View::Choice {
+                    options,
+                    list: _,
+                    note: _,
+                },
+                Kind::Choice(words),
+            ) => options.iter().map(|o| o.value).eq(words.iter().copied()),
+            (View::Number { unit: _ }, Kind::Number { min: _, max: _ }) => true,
+            (View::Targets, Kind::Targets) | (View::Names, Kind::Names) => true,
+            (View::Link { to: _, action: _ }, Kind::Servers) | (View::Info, Kind::Forms) => true,
+            (
+                View::Text { placeholder: _ },
+                Kind::Text {
+                    min: _,
+                    max: _,
+                    lines: _,
+                },
+            ) => true,
+            (View::Links, Kind::Links) | (View::Suggestions, Kind::Suggestions) => true,
+            (_, _) => false,
+        };
+        assert!(fits, "{}", s.env);
+    }
+    let live: BTreeSet<&str> = ALL
+        .iter()
+        .filter(|s| s.scope == Scope::Live)
+        .map(|s| s.env)
+        .collect();
+    assert_eq!(seen, live);
+}

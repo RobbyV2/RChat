@@ -1,6 +1,7 @@
 // The site administration page's view of the server config: where each control's value comes
 // from, and how to set a control to what the config says.
 
+import { CONTROL_KINDS } from './admin/rows.gen'
 import { brandRow, linksOf, suggestionsOf } from './admin_brand'
 import { PROFANITY_TARGETS } from './rules'
 import type { AdminConfig, ConfigControl, ConfigLimit, SiteSettingsPatch } from './types'
@@ -19,15 +20,14 @@ export const sourceOf = (c: ConfigControl): Source => {
 export const controlOf = (config: AdminConfig | null, key: string) =>
   config?.controls.find(c => c.key === key) ?? null
 
-// The controls whose values are lists, by how the settings take them.
-const LISTS = new Set(['server_creators', 'default_servers'])
-const NUMBERS = new Set(['upload_expiry_max_days', 'temp_password_hours'])
-// The report forms are a document: only the config or their own editor replaces them.
-const DOCUMENTS = new Set(['report_forms'])
-// Brand values the settings take as lists and objects; the config view shows them as JSON.
+// How the settings take a control's value, by its kind in the settings registry. The report
+// forms are a document: only the config or their own editor replaces them. Brand links and
+// suggestions are lists and objects; the config view shows them as JSON.
+const kindOf = (key: string) => CONTROL_KINDS[key]
+const isList = (key: string) => kindOf(key) === 'names' || kindOf(key) === 'servers'
 const BRAND_JSON: Record<string, (shown: string) => unknown> = {
-  brand_links: linksOf,
-  instance_suggestions: suggestionsOf,
+  links: linksOf,
+  suggestions: suggestionsOf,
 }
 
 const list = (shown: string) =>
@@ -50,14 +50,14 @@ const targets = (shown: string): SiteSettingsPatch => {
 // The change that sets a control to `shown`, a value as the config view shows it. Null when the
 // page cannot set this control.
 export const patchFor = (key: string, shown: string): SiteSettingsPatch | null => {
-  if (DOCUMENTS.has(key)) return null
+  if (kindOf(key) === 'forms') return null
   if (key === 'profanity_targets') return targets(shown)
-  const json = BRAND_JSON[key]
+  const json = BRAND_JSON[kindOf(key) ?? '']
   if (json) return { [key]: json(shown) } as SiteSettingsPatch
   if (brandRow(key)) return { [key]: shown } as SiteSettingsPatch
-  const value = LISTS.has(key)
+  const value = isList(key)
     ? list(shown)
-    : NUMBERS.has(key)
+    : kindOf(key) === 'number'
       ? Number(shown)
       : shown === 'on'
         ? true

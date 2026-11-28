@@ -3,6 +3,7 @@
 
 use std::marker::PhantomData;
 
+pub mod admin;
 pub mod env;
 pub mod items;
 mod read;

@@ -1,3 +1,4 @@
+import { SETTING_DEFAULTS as D } from './admin/rows.gen'
 import type { InstanceInfo } from './types'
 
 const MIB = 1024 * 1024
@@ -23,14 +24,14 @@ export interface ClientLimits {
 }
 
 export const DEFAULT_LIMITS: Readonly<ClientLimits> = Object.freeze({
-  message_chars: 4000,
-  upload_bytes: 25 * MIB,
-  avatar_upload_bytes: 8 * MIB,
-  reconnect_base_ms: 1000,
-  reconnect_cap_ms: 30000,
-  reconnect_floor_ms: 250,
-  resync_jitter_ms: 10000,
-  catch_up_delay_ms: 5000,
+  message_chars: D.MESSAGE_MAX_CHARS,
+  upload_bytes: D.UPLOAD_MAX_MIB * MIB,
+  avatar_upload_bytes: D.AVATAR_UPLOAD_MAX_MIB * MIB,
+  reconnect_base_ms: D.RECONNECT_BASE_MS,
+  reconnect_cap_ms: D.RECONNECT_CAP_MS,
+  reconnect_floor_ms: D.RECONNECT_FLOOR_MS,
+  resync_jitter_ms: D.RESYNC_JITTER_MS,
+  catch_up_delay_ms: D.CATCH_UP_DELAY_MS,
   servers_per_account: 0,
   scheduled_per_account: 0,
   session_max_age_secs: 0,
