@@ -14,6 +14,7 @@ import { EMPTY_NOTIFY } from '../notify'
 import type { ReadMark } from '../lists'
 import { advance, me, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -59,7 +60,7 @@ beforeEach(() => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     requests.push({ url, body: (init?.body as string | undefined) ?? null })
-    return new Response(JSON.stringify(route(url)), { status: 200 })
+    return new Response(writeJson(route(url)), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: me('bob', {
@@ -261,8 +262,8 @@ describe('mark as read actions', () => {
       const url = String(input)
       requests.push({ url, body: (init?.body as string | undefined) ?? null })
       if (url.endsWith('/read/batch'))
-        return new Response(JSON.stringify({ error: 'Down' }), { status: 503 })
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        return new Response(writeJson({ error: 'Down' }), { status: 503 })
+      return new Response(writeJson({ ok: true }), { status: 200 })
     }) as typeof fetch
     useStore.setState({ reads: { c11: { lastRead: 1, latest: 4, server: 's' } }, pings: {} })
     await st().markScopesRead(['c11'])

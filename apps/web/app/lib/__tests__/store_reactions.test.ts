@@ -4,6 +4,7 @@ import { useStore } from '../store'
 import type { Message, Reaction, WsEvent } from '../types'
 import { me, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -11,7 +12,7 @@ const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
 let requests: { method: string; url: string }[] = []
 let respond: (method: string, url: string) => Response = () =>
-  new Response(JSON.stringify({ ok: true }), { status: 200 })
+  new Response(writeJson({ ok: true }), { status: 200 })
 const tick = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
   await flush()
@@ -46,7 +47,7 @@ beforeEach(() => {
     history: { state: null, pushState: () => {}, replaceState: () => {} },
   }
   requests = []
-  respond = () => new Response(JSON.stringify({ ok: true }), { status: 200 })
+  respond = () => new Response(writeJson({ ok: true }), { status: 200 })
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
@@ -122,7 +123,7 @@ describe('toggling', () => {
   })
 
   test('a failed request rolls back and shows the error', async () => {
-    respond = () => new Response(JSON.stringify({ error: 'Too many reactions' }), { status: 400 })
+    respond = () => new Response(writeJson({ error: 'Too many reactions' }), { status: 400 })
     dispatch(event('reaction_added', '😭', 'alice'))
     st().toggleReaction(chan()!, '😭')
     expect(shape(chan())).toEqual(['😭2*'])
@@ -157,7 +158,7 @@ describe('toggling', () => {
   })
 
   test('reactors are cached per emoji until a change', async () => {
-    respond = () => new Response(JSON.stringify([user('alice')]), { status: 200 })
+    respond = () => new Response(writeJson([user('alice')]), { status: 200 })
     expect((await st().loadReactors(10, '😭')).map(u => u.username)).toEqual(['alice'])
     await st().loadReactors(10, '😭')
     expect(requests.length).toBe(1)

@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { drain, me, memoryStorage, serverDetail } from './fixtures'
 import { installPrimaryAccount } from './home_instance'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -68,10 +69,10 @@ beforeEach(() => {
     const url = String(input).replace(/^https?:\/\/[^/]+/, '')
     asked.push(url)
     if (url === '/api/servers/rchat')
-      return new Response(JSON.stringify(serverDetail('rchat', { channels: [chan] })), {
+      return new Response(writeJson(serverDetail('rchat', { channels: [chan] })), {
         status: 200,
       })
-    return new Response(JSON.stringify([]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
 })
 

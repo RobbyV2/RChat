@@ -4,6 +4,7 @@ import { dmsUnread, serverUnread, useStore } from '../store'
 import type { DmSummary, Message, ServerSummary, WsEvent } from '../types'
 import { advance, me, member, msg, paged, serverDetail, textChannel, until, user } from './fixtures'
 import { emptyLayout, layoutServers } from '../nav_layout'
+import { writeJson } from '../api/masks'
 
 const dispatch = (ev: WsEvent) => useStore.getState().applyWsEvent(ev)
 const st = () => useStore.getState()
@@ -19,7 +20,7 @@ let requests: string[] = []
 const serve = (body: unknown) => {
   globalThis.fetch = (async (input: string | URL | Request) => {
     requests.push(String(input))
-    return new Response(JSON.stringify(body), { status: 200 })
+    return new Response(writeJson(body), { status: 200 })
   }) as typeof fetch
 }
 
@@ -30,7 +31,7 @@ const hold = () => {
       requests.push(String(input))
       held.push((body, next) =>
         resolve(
-          new Response(JSON.stringify(body), {
+          new Response(writeJson(body), {
             status: 200,
             headers: next ? { 'X-Next-Cursor': next } : {},
           })
@@ -476,7 +477,7 @@ describe('resync after the socket lagged', () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = new URL(String(input))
       requests.push(url.pathname + url.search)
-      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
+      const json = (body: unknown, status = 200) => new Response(writeJson(body), { status })
       if (url.pathname.endsWith('/me/servers')) {
         await namesHeld
         return json(
@@ -517,7 +518,7 @@ describe('resync after the socket lagged', () => {
       const url = new URL(String(input))
       requests.push(url.pathname + url.search)
       if (url.pathname.endsWith('/servers/gone'))
-        return new Response(JSON.stringify({ error: 'Server not found or wrong password' }), {
+        return new Response(writeJson({ error: 'Server not found or wrong password' }), {
           status: 404,
         })
       const body = url.pathname.endsWith('/me/servers')
@@ -528,7 +529,7 @@ describe('resync after the socket lagged', () => {
         : url.pathname.endsWith('/me')
           ? me('alice', { servers: [srv('rchat')] })
           : { items: [] }
-      return new Response(JSON.stringify(body), { status: 200 })
+      return new Response(writeJson(body), { status: 200 })
     }) as typeof fetch
     dispatch({ type: 'resync' })
     await advance(320)
@@ -558,7 +559,7 @@ describe('resync after the socket lagged', () => {
         : url.pathname.endsWith('/me')
           ? me('alice', { servers: [srv('rchat'), srv('club')] })
           : { items: [] }
-      return new Response(JSON.stringify(body), { status: 200 })
+      return new Response(writeJson(body), { status: 200 })
     }) as typeof fetch
     dispatch({ type: 'resync' })
     await advance(300)
@@ -589,7 +590,7 @@ describe('resync after the socket lagged', () => {
               servers_more: true,
             })
           : { items: [] }
-      return new Response(JSON.stringify(body), { status: 200 })
+      return new Response(writeJson(body), { status: 200 })
     }) as typeof fetch
     dispatch({ type: 'resync' })
     dispatch({ type: 'resync' })

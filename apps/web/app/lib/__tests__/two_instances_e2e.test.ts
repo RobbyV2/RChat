@@ -7,6 +7,7 @@ import { scopePingCount } from '../store'
 import type { WsEvent } from '../types'
 import { drain, me, memoryStorage, msg, user } from './fixtures'
 import { Hub, waitFor } from './p2p_net'
+import { writeJson } from '../api/masks'
 
 test('two instances bootstrap the same username and route messages, badges and peer identities independently', async () => {
   const accounts = ['east', 'west'].map(name =>
@@ -32,7 +33,7 @@ test('two instances bootstrap the same username and route messages, badges and p
       this.frames.push(JSON.parse(text))
     }
     deliver(event: WsEvent) {
-      this.onmessage?.({ data: JSON.stringify(event) })
+      this.onmessage?.({ data: writeJson(event) })
     }
     close() {
       this.readyState = 3

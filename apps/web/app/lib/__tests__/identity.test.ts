@@ -20,6 +20,7 @@ import {
   verifyAssertion,
   verifyBinding,
 } from '../identity'
+import { writeJson } from '../api/masks'
 
 const ISS = 'https://chat.example.com'
 const AUD = 'https://other.example'
@@ -210,7 +211,7 @@ describe('verifyAssertion against the issuer JWKS', () => {
     fetched = []
     globalThis.fetch = (async (input: string | URL | Request) => {
       fetched.push(String(input instanceof Request ? input.url : input))
-      return new Response(JSON.stringify(served), {
+      return new Response(writeJson(served), {
         headers: { 'Content-Type': 'application/json' },
       })
     }) as typeof fetch
@@ -258,7 +259,7 @@ describe('verifyAssertion against the issuer JWKS', () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input instanceof Request ? input.url : input)
       fetched.push(url)
-      return new Response(JSON.stringify(byUrl[url] ?? { keys: [] }), {
+      return new Response(writeJson(byUrl[url] ?? { keys: [] }), {
         headers: { 'Content-Type': 'application/json' },
       })
     }) as typeof fetch
@@ -407,7 +408,7 @@ describe('verifyBinding against the issuer JWKS', () => {
     status = 200
     globalThis.fetch = (async (input: string | URL | Request) => {
       fetched.push(String(input instanceof Request ? input.url : input))
-      return new Response(JSON.stringify(served), {
+      return new Response(writeJson(served), {
         status,
         headers: { 'Content-Type': 'application/json' },
       })

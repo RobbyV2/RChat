@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -43,8 +44,8 @@ beforeEach(() => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input).replace(/^https?:\/\/[^/]+/, '')
     if (init?.method === 'POST' && url === '/api/channels/77/messages')
-      return new Response(JSON.stringify(reply.body), { status: reply.status })
-    return new Response(JSON.stringify([]), { status: 200 })
+      return new Response(writeJson(reply.body), { status: reply.status })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
 })
 

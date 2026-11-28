@@ -10,6 +10,7 @@ import {
 } from '../instances'
 import { AUTO, defaultRelays, resolveIce } from '../relays'
 import type { InstanceInfo } from '../types'
+import { writeJson } from '../api/masks'
 
 // What a server with default settings says about itself at `origin`.
 const documentAt = (origin: string): InstanceInfo => {
@@ -155,7 +156,7 @@ describe('one address', () => {
         asked.push(input)
         return input.endsWith('/api/instance')
           ? new Response('', { status: 404 })
-          : new Response(JSON.stringify(documentAt(origin)), {
+          : new Response(writeJson(documentAt(origin)), {
               headers: { 'Content-Type': 'application/json' },
             })
       })

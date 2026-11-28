@@ -19,6 +19,7 @@ import { useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const doc = (id: number, over: Partial<IndexDoc> = {}): IndexDoc => ({
   id: `m${id}`,
@@ -215,10 +216,10 @@ describe('following the app', () => {
       fetched.push(url.replace(/^https?:\/\/[^/]+/, ''))
       if (/\/servers\/gone$/.test(url))
         return new Response('{"error":"Server not found"}', { status: 404 })
-      if (/\/servers\/s$/.test(url)) return new Response(JSON.stringify(state().servers.s))
+      if (/\/servers\/s$/.test(url)) return new Response(writeJson(state().servers.s))
       const page = /\/(channels|dms)\/(\d+)\/messages/.exec(url)
       const key = page && `${page[1] === 'dms' ? 'd' : 'c'}${page[2]}`
-      if (key && pages[key]) return new Response(JSON.stringify(pages[key]))
+      if (key && pages[key]) return new Response(writeJson(pages[key]))
       return new Response('[]')
     }) as typeof fetch
   })

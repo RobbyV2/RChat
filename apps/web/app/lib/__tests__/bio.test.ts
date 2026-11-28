@@ -4,6 +4,7 @@ import { sessionMark } from '../slices/ctx'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio } from '../rules'
 import { useStore } from '../store'
 import { me, user } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -67,10 +68,10 @@ describe('bio text', () => {
 
 describe('bio in the store', () => {
   test('saving updates me, and a blank text clears it', async () => {
-    reply = () => new Response(JSON.stringify({ ...user('alice'), banner_color: null, bio: 'Hi' }))
+    reply = () => new Response(writeJson({ ...user('alice'), banner_color: null, bio: 'Hi' }))
     expect(await st().setBio('Hi')).toBeNull()
     expect(st().me?.bio).toBe('Hi')
-    reply = () => new Response(JSON.stringify({ ...user('alice'), banner_color: null, bio: null }))
+    reply = () => new Response(writeJson({ ...user('alice'), banner_color: null, bio: null }))
     expect(await st().setBio('   ')).toBeNull()
     expect(await st().setBio('\ufeff')).toBeNull()
     expect(sent).toEqual([{ bio: 'Hi' }, { bio: null }, { bio: '\ufeff' }])
@@ -80,7 +81,7 @@ describe('bio in the store', () => {
   test('a rejected description returns the error and keeps the old one', async () => {
     useStore.setState({ me: me('alice', { bio: 'old' }) })
     reply = () =>
-      new Response(JSON.stringify({ error: 'Content blocked by profanity filter' }), {
+      new Response(writeJson({ error: 'Content blocked by profanity filter' }), {
         status: 400,
       })
     expect(await st().setBio('bad')).toBe('Content blocked by profanity filter')

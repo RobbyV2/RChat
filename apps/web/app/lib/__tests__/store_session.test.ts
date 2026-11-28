@@ -8,6 +8,7 @@ import { historyKey } from '../openapi'
 import { useStore, resetSessionCaches } from '../store'
 import { me, serverDetail } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -156,7 +157,7 @@ describe('session', () => {
 
   test('refreshing the account only takes the password kind', async () => {
     reply = () =>
-      new Response(JSON.stringify(me('bob', { password_kind: 'words', appear_offline: false })))
+      new Response(writeJson(me('bob', { password_kind: 'words', appear_offline: false })))
     api.setToken(Secret.of('tok'))
     useStore.setState({ token: Secret.of('tok'), me: me('bob', { appear_offline: true }) })
     await st().refreshAccount()
@@ -180,7 +181,7 @@ describe('session', () => {
   test('a server that answers banned is dropped once with a notice and no error toast', async () => {
     reply = url =>
       url.includes('/servers/club')
-        ? new Response(JSON.stringify({ error: 'You are banned from this server' }), {
+        ? new Response(writeJson({ error: 'You are banned from this server' }), {
             status: 403,
           })
         : new Response('[]')

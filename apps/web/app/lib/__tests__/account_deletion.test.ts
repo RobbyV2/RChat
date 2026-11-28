@@ -11,6 +11,7 @@ import {
 import { client } from '../client/client'
 import { useStore } from '../store'
 import { me } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const DAY = 86_400
 
@@ -141,11 +142,11 @@ describe('the account', () => {
       })
       if (url.endsWith('/me/delete') && method === 'POST')
         return status === 200
-          ? new Response(JSON.stringify({ delete_at: 99 }), { status: 200 })
-          : new Response(JSON.stringify({ error: "This account can't be deleted on this site" }), {
+          ? new Response(writeJson({ delete_at: 99 }), { status: 200 })
+          : new Response(writeJson({ error: "This account can't be deleted on this site" }), {
               status,
             })
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      return new Response(writeJson({ ok: true }), { status: 200 })
     }) as typeof fetch
     useStore.setState({
       me: me('alice'),

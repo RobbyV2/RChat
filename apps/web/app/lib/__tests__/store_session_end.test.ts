@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -57,26 +58,25 @@ beforeEach(() => {
       const id = 50 + sent.length
       const wait = gate
       if (wait) await wait
-      if (refuse) return new Response(JSON.stringify({ error: 'Not allowed' }), { status: 403 })
-      return new Response(
-        JSON.stringify(msg(id, { channel_id: 77, author: user(content), content })),
-        { status: 200 }
-      )
+      if (refuse) return new Response(writeJson({ error: 'Not allowed' }), { status: 403 })
+      return new Response(writeJson(msg(id, { channel_id: 77, author: user(content), content })), {
+        status: 200,
+      })
     }
     if (init?.method === 'POST' && url === '/api/media?place=c%3A77') {
       uploads += 1
       const wait = gate
       if (wait) await wait
-      return new Response(JSON.stringify({ id: `m${uploads}` }), { status: 200 })
+      return new Response(writeJson({ id: `m${uploads}` }), { status: 200 })
     }
     if (url.startsWith('/api/messages/9/reactions/')) {
       reacts.push(`${init?.method} ${decodeURIComponent(url.slice(26))}`)
       const wait = gate
       if (wait) await wait
-      if (refuse) return new Response(JSON.stringify({ error: 'Not allowed' }), { status: 403 })
-      return new Response(JSON.stringify({}), { status: 200 })
+      if (refuse) return new Response(writeJson({ error: 'Not allowed' }), { status: 403 })
+      return new Response(writeJson({}), { status: 200 })
     }
-    return new Response(JSON.stringify([]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
 })
 

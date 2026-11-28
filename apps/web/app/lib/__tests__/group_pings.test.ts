@@ -35,6 +35,7 @@ import { context, headline, type Piece } from '../notices'
 import type { GroupMention, Message, Unread, WsEvent } from '../types'
 import { me, member, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -68,7 +69,7 @@ beforeEach(() => {
     history: { state: null, pushState: () => {}, replaceState: () => {} },
   }
   globalThis.fetch = (async () =>
-    new Response(JSON.stringify({}), { status: 200 })) as unknown as typeof fetch
+    new Response(writeJson({}), { status: 200 })) as unknown as typeof fetch
   useStore.setState({
     me: me('bob', {
       servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],

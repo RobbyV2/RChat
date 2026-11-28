@@ -3,6 +3,7 @@ import { api } from './home_instance'
 import { useStore } from '../store'
 import { ALL_PERMS, Perm } from '../types'
 import { member, paged } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const realFetch = globalThis.fetch
 let requests: URL[] = []
@@ -13,7 +14,7 @@ beforeEach(() => {
   next = null
   globalThis.fetch = (async (input: string | URL | Request) => {
     requests.push(new URL(String(input), 'http://localhost'))
-    return new Response(JSON.stringify([]), {
+    return new Response(writeJson([]), {
       status: 200,
       headers: next ? { 'X-Next-Cursor': next } : {},
     })
@@ -46,7 +47,7 @@ describe('cursor pages', () => {
   test('unreads ask for the capped list', async () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       requests.push(new URL(String(input), 'http://localhost'))
-      return new Response(JSON.stringify({ items: [], more: true }), { status: 200 })
+      return new Response(writeJson({ items: [], more: true }), { status: 200 })
     }) as typeof fetch
     expect(await api.getUnreads()).toEqual({ items: [], more: true })
     expect(requests.map(r => r.search)).toEqual([''])
@@ -58,10 +59,10 @@ describe('admin perms', () => {
     const bodies: unknown[] = []
     globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body)))
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      return new Response(writeJson({ ok: true }), { status: 200 })
     }) as typeof fetch
     await api.setAdminPerms('club', 'bob', Perm.Kick)
-    expect(bodies).toEqual([{ perms: Perm.Kick, mask: ALL_PERMS }])
+    expect(bodies).toEqual([{ perms: Number(Perm.Kick), mask: Number(ALL_PERMS) }])
   })
 })
 
@@ -71,7 +72,7 @@ describe('resetting a member server profile', () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) : null
       sent.push([init?.method ?? 'GET', new URL(String(input), 'http://localhost').pathname, body])
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      return new Response(writeJson({ ok: true }), { status: 200 })
     }) as typeof fetch
     await api.resetMemberProfile('club', 'bob b', ['avatar', 'name'], 604800, ' spam ')
     await api.resetMemberProfile('club', 'bob', ['bio'], null, '')

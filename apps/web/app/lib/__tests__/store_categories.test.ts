@@ -5,6 +5,7 @@ import { channelGroups } from '../categories'
 import { emptyLayout } from '../nav_layout'
 import type { Channel, ChannelLayout, WsEvent } from '../types'
 import { me, serverDetail, until } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const dispatch = (ev: WsEvent) => useStore.getState().applyWsEvent(ev)
 const st = () => useStore.getState()
@@ -74,7 +75,7 @@ afterEach(() => {
 const json =
   (body: unknown, status = 200) =>
   () =>
-    new Response(JSON.stringify(body), { status })
+    new Response(writeJson(body), { status })
 
 describe('categories in the store', () => {
   test('a live layout reorders the cached server', () => {

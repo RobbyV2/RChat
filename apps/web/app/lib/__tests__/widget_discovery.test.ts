@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test'
 import { WidgetConnection } from '../widget_connection'
 import { me, msg } from './fixtures'
 import type { WidgetRoomMetadata } from '../widgets'
+import { writeJson } from '../api/masks'
 
 const memoryStorage = () => {
   const data = new Map<string, string>()
@@ -55,8 +56,8 @@ async function withWidget(
         constructor(readonly url: string) {
           sockets.push(url)
           ready = () =>
-            this.onmessage?.({ data: JSON.stringify({ type: 'widget_ready', name: 'guest' }) })
-          deliver = event => this.onmessage?.({ data: JSON.stringify(event) })
+            this.onmessage?.({ data: writeJson({ type: 'widget_ready', name: 'guest' }) })
+          deliver = event => this.onmessage?.({ data: writeJson(event) })
         }
         close() {
           closed.push(this.url)

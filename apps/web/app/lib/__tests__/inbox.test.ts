@@ -32,6 +32,7 @@ import { EMPTY_NOTIFY, setLevel, setSuppress } from '../notify'
 import type { InboxItem, WsEvent } from '../types'
 import { me, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const item = (source: InboxItem['source'], id: number, at: number, over: Partial<InboxItem> = {}) =>
   ({
@@ -285,7 +286,7 @@ describe('the instance source', () => {
       const page = later
         ? { items: [item('ping', 1, 1)], next: null, until: null }
         : { items: [role, nothing], next: 'c2', until: { pings: 9, groups: 9, friends: 0 } }
-      return new Response(JSON.stringify(page), { status: 200 })
+      return new Response(writeJson(page), { status: 200 })
     }) as unknown as typeof fetch
     try {
       useStore.setState({ notifyPrefs: prefs, servers: { s: serverDetail('s') } })
@@ -334,7 +335,7 @@ describe('the instance source', () => {
         next: null,
         until: { pings: 6, groups: 80, friends: 1 },
       }
-      return new Response(JSON.stringify(String(url).includes('/inbox?') ? page : { ok: true }), {
+      return new Response(writeJson(String(url).includes('/inbox?') ? page : { ok: true }), {
         status: 200,
       })
     }) as unknown as typeof fetch

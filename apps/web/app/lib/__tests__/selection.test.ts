@@ -36,6 +36,7 @@ import { webSharing } from '../platform/web_sharing'
 import type { BulkJob, Message, WsEvent } from '../types'
 import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 beforeAll(registerAppActions)
 
@@ -266,7 +267,7 @@ describe('selection store', () => {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined
       calls.push({ method: init?.method ?? 'GET', url: url.replace(/^https?:\/\/[^/]+/, ''), body })
       const hit = routes.find(([re]) => re.test(url))
-      return new Response(JSON.stringify(hit ? hit[1](body) : []), { status: 200 })
+      return new Response(writeJson(hit ? hit[1](body) : []), { status: 200 })
     }) as typeof fetch
     Object.assign(globalThis, { localStorage: memoryStorage })
     g.window = {
@@ -526,11 +527,10 @@ describe('selection store', () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input)
       calls.push({ method: 'GET', url })
-      if (/bulk_delete/.test(url))
-        return new Response(JSON.stringify({ total: 2 }), { status: 200 })
+      if (/bulk_delete/.test(url)) return new Response(writeJson({ total: 2 }), { status: 200 })
       if (limited-- > 0)
-        return new Response(JSON.stringify({ error: 'Too many requests' }), { status: 429 })
-      return new Response(JSON.stringify([by(1, 'alice'), by(2, 'bob'), by(3, 'alice')]), {
+        return new Response(writeJson({ error: 'Too many requests' }), { status: 429 })
+      return new Response(writeJson([by(1, 'alice'), by(2, 'bob'), by(3, 'alice')]), {
         status: 200,
       })
     }) as typeof fetch

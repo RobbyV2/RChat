@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { getHomeSession, useStore } from '../store'
 import { advance, me, memoryStorage } from './fixtures'
 import { plain } from './helpers/secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const g = globalThis as { window?: unknown; document?: unknown; WebSocket?: unknown }
@@ -56,10 +57,10 @@ beforeEach(() => {
       const answer = answers.shift() ?? 200
       if (answer === 'down') throw new TypeError('fetch failed')
       if (answer !== 200)
-        return new Response(JSON.stringify({ error: 'Try again soon' }), { status: answer })
-      return new Response(JSON.stringify(me('bob')), { status: 200 })
+        return new Response(writeJson({ error: 'Try again soon' }), { status: answer })
+      return new Response(writeJson(me('bob')), { status: 200 })
     }
-    return new Response(JSON.stringify([]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
   useStore.setState({ me: null, token: null, guest: false, authExpired: false, bootError: null })
 })

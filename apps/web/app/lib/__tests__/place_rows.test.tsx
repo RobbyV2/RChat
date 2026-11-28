@@ -97,7 +97,7 @@ const seat = (world: ContractWorld, list: ComposerList) => {
                   { ik: 'B', name: 'Bob', m: 'join' },
                 ],
                 memberList: { hide: false, roles: null, channels: [] },
-                channels: [{ id: 'c1', name: 'deck', kind: 'text', perms: 2 ** 31 - 1 }],
+                channels: [{ id: 'c1', name: 'deck', kind: 'text', perms: 2n ** 31n - 1n }],
                 owners: [],
                 owner: null,
               },

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import type { Message, Unread, WsEvent } from '../types'
 import { textChannel, serverDetail, me, msg, until, user } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -13,7 +14,7 @@ let pages: Message[][] = []
 
 const range = (from: number, to: number, over: Partial<Message> = {}) =>
   Array.from({ length: to - from + 1 }, (_, i) => msg(from + i, over))
-const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
+const reply = (body: unknown) => new Response(writeJson(body), { status: 200 })
 const tick = () => flush()
 const live = (channel: number, id: number, author = 'bob'): WsEvent => ({
   type: 'message',

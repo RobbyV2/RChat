@@ -6,6 +6,7 @@ import { useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { textChannel, serverDetail, me, msg, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -30,7 +31,7 @@ const live = (channel: number, id: number): WsEvent => ({
 const tick = async () => {
   for (let i = 0; i < 5; i += 1) await Promise.resolve()
 }
-const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
+const reply = (body: unknown) => new Response(writeJson(body), { status: 200 })
 
 beforeEach(() => {
   ;(globalThis as { window?: unknown }).window = {

@@ -11,6 +11,7 @@ import {
 import type { ServerDetail } from '../types'
 import { me, serverDetail } from './fixtures'
 import { testAccount } from './test_account'
+import { writeJson } from '../api/masks'
 
 const realFetch = globalThis.fetch
 let asked: string[] = []
@@ -19,10 +20,10 @@ let answer: () => Response
 const place =
   (server: string, channel_id: number, shown: object | null = null) =>
   () =>
-    new Response(JSON.stringify({ server, channel_id, dm_id: null, thread_root_id: null, shown }), {
+    new Response(writeJson({ server, channel_id, dm_id: null, thread_root_id: null, shown }), {
       status: 200,
     })
-const notFound = () => new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+const notFound = () => new Response(writeJson({ error: 'Not found' }), { status: 404 })
 
 beforeEach(() => {
   asked = []

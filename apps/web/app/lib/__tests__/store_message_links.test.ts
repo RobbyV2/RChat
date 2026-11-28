@@ -5,6 +5,7 @@ import { home, installPrimaryAccount } from './home_instance'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
 import { plain } from './helpers/secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -80,39 +81,36 @@ beforeEach(() => {
       await hold
       flying -= 1
       const found = ids.flatMap(id => (readable[id] ? [{ ...readable[id], id }] : []))
-      return new Response(JSON.stringify(found), { status: 200 })
+      return new Response(writeJson(found), { status: 200 })
     }
     if (url === '/api/auth/login')
-      return new Response(JSON.stringify({ token: 't2', user: me('bob') }), { status: 200 })
+      return new Response(writeJson({ token: 't2', user: me('bob') }), { status: 200 })
     const loc = url.match(/^\/api\/messages\/(\d+)\/location\?preview=false$/)
     if (loc) {
       const id = Number(loc[1])
       lookups.push(id)
       const found = readable[id]
       return found
-        ? new Response(JSON.stringify(found), { status: 200 })
-        : new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+        ? new Response(writeJson(found), { status: 200 })
+        : new Response(writeJson({ error: 'Not found' }), { status: 404 })
     }
     if (url.startsWith('/api/channels/77/messages')) {
       pages.push(url)
-      return new Response(
-        JSON.stringify([msg(40, { channel_id: 77 }), msg(41, { channel_id: 77 })]),
-        {
-          status: 200,
-        }
-      )
+      return new Response(writeJson([msg(40, { channel_id: 77 }), msg(41, { channel_id: 77 })]), {
+        status: 200,
+      })
     }
     if (url === '/api/servers/s')
-      return new Response(JSON.stringify(serverDetail('s', { channels: [chan] })), { status: 200 })
+      return new Response(writeJson(serverDetail('s', { channels: [chan] })), { status: 200 })
     if (url.startsWith('/api/dms/4/messages')) {
       pages.push(url)
-      return new Response(JSON.stringify([dmRoot]), { status: 200 })
+      return new Response(writeJson([dmRoot]), { status: 200 })
     }
     if (url.startsWith('/api/messages/50/thread')) {
       pages.push(url)
-      return new Response(JSON.stringify([dmReply]), { status: 200 })
+      return new Response(writeJson([dmReply]), { status: 200 })
     }
-    return new Response(JSON.stringify([]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),

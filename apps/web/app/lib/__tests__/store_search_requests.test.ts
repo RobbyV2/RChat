@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { SearchArgs } from '../search'
 import { useStore } from '../store'
 import { memoryStorage, result } from './fixtures'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -35,13 +36,13 @@ const args = (q: string): SearchArgs => ({
 })
 
 const found = (ids: number[], next: string | null = null) =>
-  new Response(JSON.stringify(ids.map(id => result(id, 1))), {
+  new Response(writeJson(ids.map(id => result(id, 1))), {
     status: 200,
     headers: next === null ? {} : { 'X-Next-Cursor': next },
   })
 
 const refused = (status: number, error: string, kind: string) =>
-  new Response(JSON.stringify({ error, reason: { kind, retry_after: 1 } }), {
+  new Response(writeJson({ error, reason: { kind, retry_after: 1 } }), {
     status,
     headers: { 'Content-Type': 'application/json' },
   })

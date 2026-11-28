@@ -7,6 +7,7 @@ import { typerNames } from '../typing'
 import type { BlockedUser, WsEvent } from '../types'
 import { me, memoryStorage, msg, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -34,7 +35,7 @@ beforeEach(() => {
       body: init?.body as string | undefined,
     })
     const hit = routes.find(([re]) => re.test(url))
-    return new Response(JSON.stringify(hit ? hit[1] : []), { status: hit?.[2] ?? 200 })
+    return new Response(writeJson(hit ? hit[1] : []), { status: hit?.[2] ?? 200 })
   }) as typeof fetch
   Object.assign(globalThis, { localStorage: memoryStorage })
   g.window = {

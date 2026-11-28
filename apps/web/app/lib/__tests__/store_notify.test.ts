@@ -28,6 +28,7 @@ import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 import { keyId, newKeyPair } from '../p2p/keys'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -931,7 +932,7 @@ describe('membership', () => {
             : u.includes('/dms?ids=')
               ? [{ id: 4, other: user('alice'), is_self: false }]
               : []
-      return new Response(JSON.stringify(body), { status: 200 })
+      return new Response(writeJson(body), { status: 200 })
     }) as unknown as typeof fetch
     useStore.setState({ me: null, dms: [], servers: {}, reads: {} })
     const { start } = home.ws

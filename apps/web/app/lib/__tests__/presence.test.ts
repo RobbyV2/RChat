@@ -19,6 +19,7 @@ import {
 import { useStore, resetSessionCaches } from '../store'
 import type { Member, WsEvent } from '../types'
 import { member, paged, serverDetail } from './fixtures'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -193,7 +194,7 @@ describe('presence events in the store', () => {
     resetSessionCaches()
     replies = []
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify(replies.shift() ?? []), { status: 200 })) as typeof fetch
+      new Response(writeJson(replies.shift() ?? []), { status: 200 })) as typeof fetch
   })
   afterEach(() => {
     globalThis.fetch = realFetch
@@ -220,7 +221,7 @@ describe('presence events in the store', () => {
     const gate = new Promise<void>(r => (release = r))
     globalThis.fetch = (async () => {
       await gate
-      return new Response(JSON.stringify([member('bob'), member('carol', { online: true })]))
+      return new Response(writeJson([member('bob'), member('carol', { online: true })]))
     }) as typeof fetch
     const loading = st().loadMembers('s', true)
     dispatch(presence('bob', true))
@@ -262,7 +263,7 @@ describe('presence events in the store', () => {
     const gate = new Promise<void>(r => (release = r))
     globalThis.fetch = (async () => {
       await gate
-      return new Response(JSON.stringify([member('bob', { online: true }), member('carol')]))
+      return new Response(writeJson([member('bob', { online: true }), member('carol')]))
     }) as typeof fetch
     const loading = st().loadMembers('s', true)
     dispatch({ type: 'presence_snapshot', server: 's', online: ['carol'], online_count: 1 })

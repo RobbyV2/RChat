@@ -3,6 +3,7 @@ import { apiRoot, apiTail, prefixOf, versionedBase, versionedUrl } from '../api_
 import { InstanceConnection, endpointsFrom, fetchInstance, type Endpoints } from '../instances'
 import { InstanceRegistry } from '../client/instance_registry'
 import type { InstanceInfo } from '../types'
+import { writeJson } from '../api/masks'
 
 const g = globalThis as { WebSocket?: unknown }
 const real = { fetch: globalThis.fetch, WebSocket: g.WebSocket }
@@ -33,7 +34,7 @@ const doc = (origin: string, versions?: unknown): InstanceInfo => {
 }
 
 const jsonReply = (body: unknown) =>
-  new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+  new Response(writeJson(body), { headers: { 'content-type': 'application/json' } })
 const page = () =>
   new Response('<!DOCTYPE html><html><body>app</body></html>', {
     headers: { 'content-type': 'text/html; charset=utf-8' },
@@ -181,7 +182,7 @@ describe('instances from before versions', () => {
 
     const html = async (input: string) =>
       new URL(input).pathname === '/api/instance'
-        ? new Response(JSON.stringify(doc('https://odd.example', ['v1'])), {
+        ? new Response(writeJson(doc('https://odd.example', ['v1'])), {
             headers: { 'content-type': 'text/html' },
           })
         : jsonReply(doc('https://odd.example'))

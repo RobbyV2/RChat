@@ -6,6 +6,7 @@ import { home } from './home_instance'
 import type { DmSummary, WsEvent } from '../types'
 import { me, memoryStorage, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -40,7 +41,7 @@ beforeEach(() => {
     const url = String(input)
     calls.push({ method: init?.method ?? 'GET', url })
     const hit = routes.find(([re]) => re.test(url))
-    return new Response(JSON.stringify(hit ? hit[1] : []), { status: 200 })
+    return new Response(writeJson(hit ? hit[1] : []), { status: 200 })
   }) as typeof fetch
   Object.assign(globalThis, {
     localStorage: {

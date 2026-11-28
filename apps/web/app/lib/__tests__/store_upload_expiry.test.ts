@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import type { WsEvent } from '../types'
 import { me, serverDetail, until } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -10,7 +11,7 @@ let served = serverDetail('s')
 beforeEach(() => {
   served = serverDetail('s')
   globalThis.fetch = (async () =>
-    new Response(JSON.stringify(served), { status: 200 })) as unknown as typeof fetch
+    new Response(writeJson(served), { status: 200 })) as unknown as typeof fetch
   useStore.setState({
     guest: false,
     view: null,

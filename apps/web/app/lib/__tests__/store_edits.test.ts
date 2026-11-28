@@ -5,6 +5,7 @@ import { parseSed } from '../sed'
 import type { EditStub, Message, MessageMedia, ReplyRef, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -48,7 +49,7 @@ beforeEach(() => {
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
       patches.push({ url, body })
-      if (refuse !== null) return new Response(JSON.stringify({ error: refuse }), { status: 400 })
+      if (refuse !== null) return new Response(writeJson({ error: refuse }), { status: 400 })
       const id = Number(url.split('/').at(-1))
       const saved: Message = msg(id, {
         author: bob,
@@ -56,14 +57,14 @@ beforeEach(() => {
         edited_at: 500,
         reactions: [],
       })
-      return new Response(JSON.stringify(saved), { status: 200 })
+      return new Response(writeJson(saved), { status: 200 })
     }
     if (!init?.method || init.method === 'GET') {
       gets.push(url)
       const list = reads[url]
-      if (list) return new Response(JSON.stringify(list), { status: 200 })
+      if (list) return new Response(writeJson(list), { status: 200 })
     }
-    return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    return new Response(writeJson({ ok: true }), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: me('bob'),

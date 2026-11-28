@@ -20,6 +20,7 @@ import { itemFor } from '../actions/menu'
 import type { Friend, FriendRequest, Ping, Profile, UserRef, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 // The "Add friend" row of a menu on a message by `author`.
@@ -71,7 +72,7 @@ beforeEach(() => {
       body: init?.body as string | undefined,
     })
     const hit = routes.find(([re]) => re.test(url))
-    return new Response(JSON.stringify(hit ? hit[1] : []), { status: hit?.[2] ?? 200 })
+    return new Response(writeJson(hit ? hit[1] : []), { status: hit?.[2] ?? 200 })
   }) as typeof fetch
   Object.assign(globalThis, { localStorage: memoryStorage })
   g.window = {

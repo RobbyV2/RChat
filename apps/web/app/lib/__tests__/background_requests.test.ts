@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { BACKGROUND } from '../api'
 import { api } from './home_instance'
+import { writeJson } from '../api/masks'
 
 const realFetch = globalThis.fetch
 let sent: { path: string; background: string | null }[] = []
@@ -16,7 +17,7 @@ beforeEach(() => {
     const body = String(input).includes('/me')
       ? { username: 'alice', display_name: 'Alice', avatar_kind: 'identicon' }
       : { ok: true }
-    return new Response(JSON.stringify(body), {
+    return new Response(writeJson(body), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     })

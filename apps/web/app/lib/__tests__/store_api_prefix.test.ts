@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { home } from './home_instance'
 import { useStore } from '../store'
 import { advance, me, memoryStorage } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const g = globalThis as { window?: unknown; document?: unknown; WebSocket?: unknown }
@@ -37,7 +38,7 @@ class Socket {
 }
 
 const json = (body: unknown) =>
-  new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+  new Response(writeJson(body), { headers: { 'content-type': 'application/json' } })
 
 beforeEach(() => {
   jest.useFakeTimers()

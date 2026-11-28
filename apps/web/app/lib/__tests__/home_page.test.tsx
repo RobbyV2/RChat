@@ -14,6 +14,7 @@ import type { Contact } from '../p2p/contacts'
 import type { Channel, DmSummary } from '../types'
 import { me, memoryStorage, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const storage = new Map<string, string>()
@@ -81,7 +82,7 @@ beforeEach(() => {
   loc.pathname = '/'
   globalThis.fetch = (async (input: string | URL | Request) => {
     fetched.push(String(input))
-    return new Response(JSON.stringify([]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
   Object.assign(globalThis, {
     localStorage: {

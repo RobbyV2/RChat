@@ -13,6 +13,7 @@ import {
 } from '../search'
 import { useStore } from '../store'
 import { result } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const page = (top: number, count: number) =>
   Array.from({ length: count }, (_, i) => result(top - i, top - i))
@@ -142,7 +143,7 @@ beforeEach(() => {
   globalThis.fetch = (async (input: string | URL | Request) => {
     requests.push(new URL(String(input), 'http://localhost'))
     const next = nexts.shift() ?? null
-    return new Response(JSON.stringify(replies.shift() ?? []), {
+    return new Response(writeJson(replies.shift() ?? []), {
       status: 200,
       headers: next ? { 'X-Next-Cursor': next } : {},
     })

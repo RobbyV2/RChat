@@ -5,6 +5,7 @@ import { messagePlaces } from '../message_groups'
 import { clockSample } from '../send_clock'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -83,20 +84,20 @@ beforeEach(() => {
       posted.push({ content, device })
       const wait = postGate
       if (wait) await wait
-      if (refuse) return new Response(JSON.stringify({ error: 'Try again' }), { status: 500 })
+      if (refuse) return new Response(writeJson({ error: 'Try again' }), { status: 500 })
       nextId += 1
       const created_at = device + serverAhead
       return new Response(
-        JSON.stringify(msg(nextId, { channel_id: 77, author: user('bob'), content, created_at })),
+        writeJson(msg(nextId, { channel_id: 77, author: user('bob'), content, created_at })),
         { status: 200 }
       )
     }
     if (init?.method === 'POST' && url === '/api/media?place=c%3A77') {
       const wait = uploadGate
       if (wait) await wait
-      return new Response(JSON.stringify({ id: 'up1' }), { status: 200 })
+      return new Response(writeJson({ id: 'up1' }), { status: 200 })
     }
-    return new Response(JSON.stringify([]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
 })
 

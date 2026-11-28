@@ -19,6 +19,7 @@ import {
 import type { DmSummary, ServerSummary } from '../types'
 import { me, memoryStorage, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const ALL = new Set<SectionKey>(SECTIONS.map(s => s.key))
@@ -82,7 +83,7 @@ beforeEach(() => {
   globalThis.fetch = (async (input: string, init?: RequestInit) => {
     requests.push(`${init?.method ?? 'GET'} ${input}`)
     if ((init?.method ?? 'GET') === 'PATCH')
-      return new Response(JSON.stringify({ ...user('bob'), appear_offline: true }), {
+      return new Response(writeJson({ ...user('bob'), appear_offline: true }), {
         status: 200,
       })
     return new Response('[]', { status: 200 })

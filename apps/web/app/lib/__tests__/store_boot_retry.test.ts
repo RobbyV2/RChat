@@ -3,6 +3,7 @@ import { BOOT_RETRY_MS, useStore } from '../store'
 import { advance, me, memoryStorage, msg, serverDetail } from './fixtures'
 import { installPrimaryAccount } from './home_instance'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -51,15 +52,14 @@ beforeEach(() => {
       return new Response('Too Many Requests', { status: 429 })
     }
     if (url === '/api/servers/s')
-      return new Response(JSON.stringify(serverDetail('s', { channels: [chan] })), { status: 200 })
+      return new Response(writeJson(serverDetail('s', { channels: [chan] })), { status: 200 })
     if (url === '/api/servers/rchat')
-      return new Response(
-        JSON.stringify(serverDetail('rchat', { channels: [{ ...chan, id: 78 }] })),
-        { status: 200 }
-      )
+      return new Response(writeJson(serverDetail('rchat', { channels: [{ ...chan, id: 78 }] })), {
+        status: 200,
+      })
     if (url.startsWith('/api/channels/77/messages'))
-      return new Response(JSON.stringify([msg(40, { channel_id: 77 })]), { status: 200 })
-    return new Response(JSON.stringify([]), { status: 200 })
+      return new Response(writeJson([msg(40, { channel_id: 77 })]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),

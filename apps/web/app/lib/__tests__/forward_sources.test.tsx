@@ -20,6 +20,7 @@ import type { ForwardRef, Message, MessageLocation } from '../types'
 import { channelTarget, markPersonally, requestViewing, useViewing } from '../viewing'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { searchResults } from './helpers/loads'
+import { writeJson } from '../api/masks'
 
 // Server rendering reads the store's initial state, so the test state goes there too.
 const initial = useStore.getInitialState()
@@ -282,7 +283,7 @@ const answering = async (id: number, place: Record<string, unknown> | Response) 
   globalThis.fetch = (async () =>
     place instanceof Response
       ? place
-      : new Response(JSON.stringify(place), { status: 200 })) as unknown as typeof fetch
+      : new Response(writeJson(place), { status: 200 })) as unknown as typeof fetch
   try {
     await locateOnce(client.shown(), id)
   } finally {

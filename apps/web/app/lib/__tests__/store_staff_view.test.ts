@@ -2,6 +2,7 @@ import { flush, testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import { me, msg, serverDetail, textChannel } from './fixtures'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -39,13 +40,12 @@ beforeEach(() => {
     })
     if (url.endsWith('/staff_view')) {
       if (confirmStatus !== 200)
-        return new Response(JSON.stringify({ error: 'Wrong password' }), { status: confirmStatus })
+        return new Response(writeJson({ error: 'Wrong password' }), { status: confirmStatus })
       open = true
-      return new Response(JSON.stringify({ until: 1, remaining }), { status: 200 })
+      return new Response(writeJson({ until: 1, remaining }), { status: 200 })
     }
-    if (url.includes('/channels/7') && !open)
-      return new Response(JSON.stringify(asked), { status: 403 })
-    return new Response(JSON.stringify([msg(1), msg(2)]), { status: 200 })
+    if (url.includes('/channels/7') && !open) return new Response(writeJson(asked), { status: 403 })
+    return new Response(writeJson([msg(1), msg(2)]), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: { ...me('root'), is_site_admin: true },
@@ -169,7 +169,7 @@ test('a confirmation that runs out elsewhere leaves the view as it is', async ()
 test('other refusals stay errors', async () => {
   open = true
   globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ error: 'Missing permission' }), {
+    new Response(writeJson({ error: 'Missing permission' }), {
       status: 403,
     })) as typeof fetch
   await st().jumpToPresent('c7')

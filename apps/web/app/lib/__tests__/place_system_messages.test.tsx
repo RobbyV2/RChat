@@ -35,7 +35,7 @@ const RANDOM: Channel = { id: 2, name: 'random', kind: 'text', slowmode_seconds:
 const LOUNGE: Channel = { id: 3, name: 'lounge', kind: 'voice', slowmode_seconds: 0 }
 
 const peerChannel = (id: string, name: string, kind: string) =>
-  ({ id, name, kind, pos: 0, perms: 0 }) as unknown as ChannelView
+  ({ id, name, kind, pos: 0, perms: 0n }) as unknown as ChannelView
 
 const SAVED: SystemMessages = { channel_id: null, join_messages: true, leave_messages: true }
 

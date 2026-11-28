@@ -57,6 +57,7 @@ import { ownsP2pServer } from '../p2p/server/types'
 import { embed, me, media, memoryStorage, msg, user } from './fixtures'
 import { readText } from './masked_text'
 import samples from './fixtures/profanity.json'
+import { writeJson } from '../api/masks'
 
 interface Sample {
   text: string
@@ -726,7 +727,7 @@ describe('in messages', () => {
     g.document = { cookie: '' }
     const signIn = async (username: string) => {
       g.fetch = (async () =>
-        new Response(JSON.stringify({ token: 'tok', user: me(username) }), {
+        new Response(writeJson({ token: 'tok', user: me(username) }), {
           status: 200,
         })) as unknown as typeof fetch
       useStore.setState({ me: null })

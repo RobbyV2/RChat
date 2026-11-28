@@ -8,6 +8,7 @@ import type { CallRelays, MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { DEFAULT_FEATURES } from '../features'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const { files: p2p, relays: relayBook } = getHomeSession()
 
@@ -50,7 +51,7 @@ beforeEach(() => {
     removed.push(id)
   }
   globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown as typeof fetch
+    new Response(writeJson({ ok: true }), { status: 200 })) as unknown as typeof fetch
   useStore.setState({
     me: me('bob'),
     token: Secret.of('t'),
@@ -186,8 +187,8 @@ describe('P2P sends', () => {
       log.push(`post ${id}`)
       const status = answers.shift() ?? 200
       return status === 200
-        ? new Response(JSON.stringify(msg(77, { author: user('bob') })), { status })
-        : new Response(JSON.stringify({ error: 'Invalid p2p_id' }), { status })
+        ? new Response(writeJson(msg(77, { author: user('bob') })), { status })
+        : new Response(writeJson({ error: 'Invalid p2p_id' }), { status })
     }) as unknown as typeof fetch
     const file = new File(['hello'], 'a.txt')
     // A channel no other test sends in: the store drains each conversation once at a time.

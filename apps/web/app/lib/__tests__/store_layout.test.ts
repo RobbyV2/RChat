@@ -6,6 +6,7 @@ import type { DmSummary, ServerSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 import { Secret } from '../secret'
 import { plain } from './helpers/secret'
+import { writeJson } from '../api/masks'
 
 const grants = () =>
   Object.fromEntries(
@@ -37,7 +38,7 @@ const saved = (key: string): Layout | null => {
 const realFetch = globalThis.fetch
 const serve = (body: unknown) => {
   globalThis.fetch = (async () =>
-    new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
+    new Response(writeJson(body), { status: 200 })) as unknown as typeof fetch
 }
 
 beforeEach(() => {
@@ -375,10 +376,9 @@ describe('self dm pin', () => {
     })
     serve(dm(8, 'alice', true))
     globalThis.fetch = (async (input: string | URL | Request) =>
-      new Response(
-        JSON.stringify(String(input).includes('/messages') ? [] : dm(8, 'alice', true)),
-        { status: 200 }
-      )) as unknown as typeof fetch
+      new Response(writeJson(String(input).includes('/messages') ? [] : dm(8, 'alice', true)), {
+        status: 200,
+      })) as unknown as typeof fetch
     await st().startDm('alice')
     expect(pinned()).toEqual([8, 3])
     expect(recent()).toEqual([2])
@@ -409,7 +409,7 @@ describe('guest grants', () => {
 describe('guest access', () => {
   test('a guest locked out by a password change drops the server with a notice', async () => {
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ error: 'Password required' }), {
+      new Response(writeJson({ error: 'Password required' }), {
         status: 401,
       })) as unknown as typeof fetch
     useStore.setState({

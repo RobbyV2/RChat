@@ -5,6 +5,7 @@ import { clipOf, forwardKey } from '../forward'
 import type { Message } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -47,20 +48,20 @@ beforeEach(() => {
     const url = String(input).replace(/^https?:\/\/[^/]+/, '')
     if (url.includes('/location')) {
       return located
-        ? new Response(JSON.stringify(located), { status: 200 })
-        : new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+        ? new Response(writeJson(located), { status: 200 })
+        : new Response(writeJson({ error: 'Not found' }), { status: 404 })
     }
     if (hidden && url === '/api/servers/lounge')
-      return new Response(JSON.stringify(hidden), { status: 200 })
+      return new Response(writeJson(hidden), { status: 200 })
     if (init?.method === 'POST' && url.endsWith('/join')) {
       joins.push(url)
-      return new Response(JSON.stringify({ error: joinError }), { status: joinStatus })
+      return new Response(writeJson({ error: joinError }), { status: joinStatus })
     }
     if (init?.method === 'POST' && url.endsWith('/messages')) {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
       posts.push({ url, body })
       if (status !== 200)
-        return new Response(JSON.stringify({ error: 'Cannot forward that message' }), { status })
+        return new Response(writeJson({ error: 'Cannot forward that message' }), { status })
       const sent: Message = msg(50, {
         author: user('bob'),
         content: 'look at this',
@@ -72,9 +73,9 @@ beforeEach(() => {
           dropped: null,
         },
       })
-      return new Response(JSON.stringify(sent), { status: 200 })
+      return new Response(writeJson(sent), { status: 200 })
     }
-    return new Response(JSON.stringify([]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),

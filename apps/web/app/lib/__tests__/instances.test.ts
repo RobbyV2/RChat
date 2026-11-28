@@ -40,6 +40,7 @@ import { InstanceRegistry } from '../client/instance_registry'
 import { ApiClient, createApi } from '../api'
 import type { InstanceInfo } from '../types'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -143,7 +144,7 @@ const rejection = async (p: Promise<unknown>) => {
 }
 
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  new Response(writeJson(body), { status, headers: { 'Content-Type': 'application/json' } })
 
 describe('instance addresses', () => {
   test('normalizeOrigin accepts hosts and URLs and keeps only the origin', () => {

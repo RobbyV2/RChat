@@ -6,6 +6,7 @@ import { headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
 import { me, member, msg, serverDetail, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const line = (pieces: Piece[]) => pieces.map(p => p.text).join('')
@@ -52,7 +53,7 @@ beforeEach(() => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     requests.push({ url, body: (init?.body as string | undefined) ?? null })
-    return new Response(JSON.stringify(route(url)), { status: 200 })
+    return new Response(writeJson(route(url)), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: me('bob'),

@@ -10,6 +10,7 @@ import {
 import { useStore } from '../store'
 import type { Channel } from '../types'
 import { me, serverDetail } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -76,14 +77,14 @@ describe('topic text', () => {
 
 describe('setting a topic', () => {
   test('sends the cleaned topic and updates the cached channel', async () => {
-    reply = () => new Response(JSON.stringify({ ...general, topic: 'hello\nworld' }))
+    reply = () => new Response(writeJson({ ...general, topic: 'hello\nworld' }))
     expect(await st().setChannelTopic('s', 7, '  hello\nworld\u0007 ')).toBeNull()
     expect(sent).toEqual([{ topic: 'hello\nworld' }])
     expect(st().servers.s.channels[0].topic).toBe('hello\nworld')
   })
 
   test('a blank topic clears it', async () => {
-    reply = () => new Response(JSON.stringify({ ...general, topic: null }))
+    reply = () => new Response(writeJson({ ...general, topic: null }))
     expect(await st().setChannelTopic('s', 7, ' \n ')).toBeNull()
     expect(sent).toEqual([{ topic: null }])
     expect(st().servers.s.channels[0].topic).toBeNull()
@@ -91,7 +92,7 @@ describe('setting a topic', () => {
 
   test('returns the server error', async () => {
     reply = () =>
-      new Response(JSON.stringify({ error: 'Content blocked by profanity filter' }), {
+      new Response(writeJson({ error: 'Content blocked by profanity filter' }), {
         status: 400,
       })
     expect(await st().setChannelTopic('s', 7, 'rude')).toBe('Content blocked by profanity filter')

@@ -4,6 +4,7 @@ import { useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -41,9 +42,9 @@ beforeEach(() => {
       posts.push({ url, body })
       nextId += 1
       const sent: Message = msg(nextId, { author: user('bob'), content: String(body.content) })
-      return new Response(JSON.stringify(sent), { status: 200 })
+      return new Response(writeJson(sent), { status: 200 })
     }
-    return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    return new Response(writeJson({ ok: true }), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: me('bob'),
@@ -243,7 +244,7 @@ describe('partial quotes in live events', () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input).replace(/^https?:\/\/[^/]+/, '')
       gets.push(url)
-      return new Response(JSON.stringify(reply(url)), { status: 200 })
+      return new Response(writeJson(reply(url)), { status: 200 })
     }) as typeof fetch
   }
 

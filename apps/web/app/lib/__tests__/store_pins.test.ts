@@ -4,6 +4,7 @@ import { useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { textChannel, advance, drain, me, msg, serverDetail, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -35,7 +36,7 @@ beforeEach(() => {
       : url.endsWith('/pins')
         ? pinsReply
         : { ok: true }
-    return new Response(JSON.stringify(body), { status: 200 })
+    return new Response(writeJson(body), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     me: me('bob'),
@@ -142,7 +143,7 @@ describe('opening a pinned message from a notice', () => {
     const realFetchNow = globalThis.fetch
     globalThis.fetch = (async (input: string | URL | Request) => {
       requests.push({ method: 'GET', url: String(input) })
-      return new Response(JSON.stringify([msg(40)]), { status: 200 })
+      return new Response(writeJson([msg(40)]), { status: 200 })
     }) as typeof fetch
     useStore.setState({ toast: null })
     await st().openPinned('c1', 3)

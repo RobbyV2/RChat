@@ -26,6 +26,7 @@ import type { Message, Poll, ServerDetail, WsEvent } from '../types'
 import { managesPoll } from '../actions/message'
 import { advance, me, msg, serverDetail } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const poll = (over: Partial<Poll> = {}): Poll => ({
   kind: 'single',
@@ -226,7 +227,7 @@ describe('poll store', () => {
   const realWindow = (globalThis as { window?: unknown }).window
   let requests: { method: string; url: string; body: unknown }[] = []
   let respond: (method: string, url: string) => Response = () =>
-    new Response(JSON.stringify({}), { status: 200 })
+    new Response(writeJson({}), { status: 200 })
   const pollMsg = (p: Poll): Message => msg(10, { kind: 'poll', content: p.question, poll: p })
   const event = (p: Poll): WsEvent => ({
     type: 'poll_updated',
@@ -342,7 +343,7 @@ describe('poll store', () => {
 
   test('my vote from another tab reloads the poll', async () => {
     jest.useFakeTimers()
-    respond = () => new Response(JSON.stringify(poll({ mine: [2], voters: 1 })), { status: 200 })
+    respond = () => new Response(writeJson(poll({ mine: [2], voters: 1 })), { status: 200 })
     st().applyWsEvent({ type: 'poll_voted', username: 'carol', message_id: 10 })
     st().applyWsEvent({ type: 'poll_voted', username: 'bob', message_id: 99 })
     st().applyWsEvent({ type: 'poll_voted', username: 'bob', message_id: 10 })
@@ -355,7 +356,7 @@ describe('poll store', () => {
     const voted = poll({ mine: [3], voters: 1 })
     respond = (method, url) =>
       new Response(
-        JSON.stringify(
+        writeJson(
           url.endsWith('/close')
             ? { ...voted, closed: true }
             : url.endsWith('/options')
@@ -371,12 +372,12 @@ describe('poll store', () => {
     expect(shown()?.options).toHaveLength(4)
     await st().closePoll(10)
     expect(shown()?.closed).toBe(true)
-    respond = () => new Response(JSON.stringify({ error: 'This poll is closed' }), { status: 400 })
+    respond = () => new Response(writeJson({ error: 'This poll is closed' }), { status: 400 })
     expect(await st().addPollOption(10, 'Late', null)).toBe('This poll is closed')
   })
 
   test('creating a poll posts it as a message', async () => {
-    respond = () => new Response(JSON.stringify(msg(11, { kind: 'poll' })), { status: 200 })
+    respond = () => new Response(writeJson(msg(11, { kind: 'poll' })), { status: 200 })
     const req = draftRequest(draft())
     expect(await st().createPoll({ kind: 'channel', id: 1 }, req)).toBeNull()
     expect(await st().createPoll({ kind: 'dm', id: 4 }, req)).toBeNull()
@@ -389,7 +390,7 @@ describe('poll store', () => {
     const sent = requests[0].body as { content: string; poll: { question: string } }
     expect([sent.content, sent.poll.question]).toEqual(['', 'Lunch?'])
     respond = () =>
-      new Response(JSON.stringify({ error: 'A poll needs 2 to 20 options' }), { status: 400 })
+      new Response(writeJson({ error: 'A poll needs 2 to 20 options' }), { status: 400 })
     expect(await st().createPoll({ kind: 'channel', id: 1 }, req)).toBe(
       'A poll needs 2 to 20 options'
     )

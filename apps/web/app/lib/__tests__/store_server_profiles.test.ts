@@ -8,6 +8,7 @@ import { mayEditProfile, profileLockedFor } from '../selectors'
 import type { Member, MemberLook, Profile, ProfilesMode, ServerProfile, WsEvent } from '../types'
 import { CHANGE_PROFILE } from '../types'
 import { me, member, paged, serverDetail, until } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -30,7 +31,7 @@ beforeEach(() => {
     const rows = names.length
       ? names.flatMap(n => (directory[n] ? [directory[n]] : []))
       : Object.values(directory)
-    return new Response(JSON.stringify(rows), { status: 200 })
+    return new Response(writeJson(rows), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     guest: false,
@@ -131,7 +132,7 @@ const profileRoutes = (reply: (method: string, body: unknown) => Response) => {
   return calls
 }
 
-const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status })
+const json = (data: unknown, status = 200) => new Response(writeJson(data), { status })
 
 describe('your own server profile', () => {
   test('loading, saving and clearing keep the server page current', async () => {

@@ -45,6 +45,7 @@ import {
   user,
 } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const { files: p2p, relays: relayBook, rtc } = getHomeSession()
 
@@ -106,7 +107,7 @@ type Reply = (who: string, method: string, path: string, body: unknown) => unkno
 let reply: Reply = () => undefined
 
 const json = (body: unknown, status = 200) =>
-  body instanceof Response ? body : new Response(JSON.stringify(body), { status })
+  body instanceof Response ? body : new Response(writeJson(body), { status })
 
 const channel = { id: 77, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
 const summary = { name: 's', display_name: 's', creator: null, is_admin: false }
@@ -421,7 +422,7 @@ describe('P2P sends', () => {
     p2p.removeFile = (id: string) => void log.push(`remove ${id.slice(0, 4)}`)
   })
 
-  const taken = () => new Response(JSON.stringify({ error: 'Invalid p2p_id' }), { status: 400 })
+  const taken = () => new Response(writeJson({ error: 'Invalid p2p_id' }), { status: 400 })
   const posts = () => asked.filter(a => a.includes('POST /channels/77/messages'))
 
   test('a refusal of the P2P id that answers after the session ended is not retried', async () => {

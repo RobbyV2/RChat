@@ -5,6 +5,7 @@ import type { RChatState } from '../store_types'
 import type { Message, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -80,12 +81,12 @@ beforeEach(() => {
       await new Promise<void>(r => {
         open = r
       })
-      if (refuse) return new Response(JSON.stringify({ error: 'Try again' }), { status: 500 })
+      if (refuse) return new Response(writeJson({ error: 'Try again' }), { status: 500 })
       const thread = url.startsWith('/api/messages/9/')
       const m = sent(50, thread ? { channel_id: 77, thread_root_id: 9, content } : { content })
-      return new Response(JSON.stringify(m), { status: 200 })
+      return new Response(writeJson(m), { status: 200 })
     }
-    return new Response(JSON.stringify([]), { status: 200 })
+    return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
 })
 

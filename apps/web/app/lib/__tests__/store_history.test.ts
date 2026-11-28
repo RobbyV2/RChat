@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { getHomeSession, useStore } from '../store'
 import { ChannelPermBit, type Message, type WsEvent } from '../types'
 import { textChannel, me, media, msg, result, serverDetail, user } from './fixtures'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -21,7 +22,7 @@ let replies: unknown[] = []
 const serve = () => {
   globalThis.fetch = (async (input: string | URL | Request) => {
     requests.push(String(input))
-    return new Response(JSON.stringify(replies.shift() ?? []), { status: 200 })
+    return new Response(writeJson(replies.shift() ?? []), { status: 200 })
   }) as typeof fetch
 }
 const hang = () => {
@@ -124,7 +125,7 @@ describe('jumping to a message', () => {
     dispatch(live(500))
     globalThis.fetch = (async (input: string | URL | Request) => {
       requests.push(String(input))
-      return new Response(JSON.stringify({ error: 'boom' }), { status: 500 })
+      return new Response(writeJson({ error: 'boom' }), { status: 500 })
     }) as typeof fetch
     await st()
       .jumpTo('c1', 10)
@@ -194,7 +195,7 @@ describe('jumping to a message', () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       requests.push(String(input))
       await gate
-      return new Response(JSON.stringify(range(76, 124)), { status: 200 })
+      return new Response(writeJson(range(76, 124)), { status: 200 })
     }) as typeof fetch
     const jump = st().jumpTo('c1', 100)
     dispatch(live(125))

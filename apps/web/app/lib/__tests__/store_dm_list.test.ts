@@ -12,6 +12,7 @@ import { home } from './home_instance'
 import type { DmSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
 import { Secret } from '../secret'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -44,10 +45,10 @@ const pages = (byCursor: Record<string, [DmSummary[], string | null]>) => {
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input)
     calls.push(url)
-    if (/\/me$/.test(url)) return new Response(JSON.stringify(meNow), { status: 200 })
+    if (/\/me$/.test(url)) return new Response(writeJson(meNow), { status: 200 })
     const key = /[?&]cursor=([^&]*)/.exec(url)?.[1] ?? ''
     const [items, next] = byCursor[key] ?? [[], null]
-    return new Response(JSON.stringify(/\/dms\?limit=/.test(url) ? items : []), {
+    return new Response(writeJson(/\/dms\?limit=/.test(url) ? items : []), {
       status: 200,
       headers: next ? { 'X-Next-Cursor': next } : {},
     })
@@ -77,7 +78,7 @@ beforeEach(() => {
     const url = String(input)
     calls.push(url)
     const hit = routes.find(([re]) => re.test(url))
-    return new Response(JSON.stringify(hit ? hit[1] : []), { status: 200 })
+    return new Response(writeJson(hit ? hit[1] : []), { status: 200 })
   }) as typeof fetch
   Object.assign(globalThis, {
     localStorage: {
@@ -147,7 +148,7 @@ describe('dm list sort and filters', () => {
       const url = String(input)
       calls.push(url)
       const first = !url.includes('cursor=')
-      return new Response(JSON.stringify(first ? [dm(9, 'dave')] : [dm(10, 'erin')]), {
+      return new Response(writeJson(first ? [dm(9, 'dave')] : [dm(10, 'erin')]), {
         status: 200,
         headers: first ? { 'X-Next-Cursor': 'abc' } : {},
       })
