@@ -15,7 +15,7 @@ import { rowAnchor } from '../settings_page'
 import { useStore } from '../store'
 import type { AdminPlace } from '../store_types'
 import { ADMIN_SECTIONS } from '../view'
-import { me, paged, user } from './fixtures'
+import { me, user } from './fixtures'
 import { pagesOf } from './helpers/loads'
 import { Secret } from '../secret'
 
@@ -112,7 +112,6 @@ const small = (page: string) => {
 
 test('the controls of every section are 44 px high on touch screens', () => {
   const part = {
-    adminUsers: paged([user('bob')]),
     adminOverview: { user_count: 2, server_count: 1 },
   }
   for (const section of ADMIN_SECTIONS) expect(small(page(place(section), true, part))).toEqual([])
@@ -146,9 +145,7 @@ test('names on the page are marked for streamer mode', () => {
     <AccountRows pages={pagesOf([user('bob', { display_name: 'Bobby' })])} />
   )
   expect(/class="streamer[^"]*"[^>]*>Bobby/.test(users)).toBe(true)
-  const one = page(place('users', 'bob'), true, {
-    adminUsers: paged([user('bob', { display_name: 'Bobby' })]),
-  })
+  const one = page(place('users', 'bob'), true, {})
   expect(/<h1 class="[^"]*streamer[^"]*">bob<\/h1>/.test(one)).toBe(true)
 })
 

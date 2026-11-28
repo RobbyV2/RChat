@@ -1011,7 +1011,6 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'notePresence'
     | 'refreshMember'
     | 'loadAdminOverview'
-    | 'loadAdminUsers'
     | 'loadAdminServers'
     | 'adminDeleteServer'
     | 'banUser'
@@ -1574,19 +1573,6 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         set({ adminOverview: await live(api.adminOverview()) })
       }),
 
-    loadAdminUsers: (q, reset = false) =>
-      act(() =>
-        loadPage(
-          'admin_users',
-          () => get().adminUsers,
-          adminUsers => set({ adminUsers }),
-          cursor => api.adminUsers(cursor, q),
-          u => u.username,
-          q,
-          reset
-        )
-      ),
-
     loadAdminServers: (q, reset = false) =>
       act(() =>
         loadPage(
@@ -1920,10 +1906,6 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           )
         ),
         messages: mapLists(s.messages, reauthor),
-        adminUsers: {
-          ...s.adminUsers,
-          list: s.adminUsers.list.map(x => (x.username === u.username ? u : x)),
-        },
         interacted: mapPages(s.interacted, list =>
           mapWhere(
             list,
@@ -1988,10 +1970,6 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         adminOverview: s.adminOverview
           ? { ...s.adminOverview, user_count: Math.max(0, s.adminOverview.user_count - 1) }
           : s.adminOverview,
-        adminUsers: {
-          ...s.adminUsers,
-          list: s.adminUsers.list.filter(u => u.username !== ev.username),
-        },
       }))
       mapMemberInfo((username, m) => (username === ev.username ? null : m))
       set(s => (s.profile?.user.username === ev.username ? { profile: null } : {}))
@@ -2005,25 +1983,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         }
       }
     },
-    user_registered: ev => {
+    user_registered: () => {
       set(s => ({
         adminOverview: s.adminOverview
           ? { ...s.adminOverview, user_count: s.adminOverview.user_count + 1 }
           : s.adminOverview,
-        adminUsers:
-          (s.adminUsers.list.length > 0 || !s.adminUsers.hasMore) &&
-          matches(s.adminUsers.q, ev.user.username, ev.user.display_name)
-            ? {
-                ...s.adminUsers,
-                list: insertSorted(
-                  s.adminUsers.list,
-                  ev.user,
-                  (a, b) => a.username.localeCompare(b.username),
-                  u => u.username,
-                  s.adminUsers.hasMore
-                ),
-              }
-            : s.adminUsers,
       }))
     },
     brand_changed: ev => get().setBrand(ev.brand),

@@ -11,7 +11,7 @@ import { api } from './home_instance'
 import { instanceAuditLine } from '../instance_audit'
 import { useStore } from '../store'
 import type { InstanceAuditEntry } from '../types'
-import { drain, me, msg, paged, user } from './fixtures'
+import { drain, me, msg, user } from './fixtures'
 import { Secret } from '../secret'
 
 const realRemove = api.adminRemovePhrase
@@ -59,7 +59,6 @@ const signIn = (part: Partial<typeof initial>) =>
   Object.assign(initial, {
     token: 'tok',
     me: me('root', { is_site_admin: true }),
-    adminUsers: paged([user('root'), user('bob', { display_name: 'Bobby' })]),
     ...part,
   })
 

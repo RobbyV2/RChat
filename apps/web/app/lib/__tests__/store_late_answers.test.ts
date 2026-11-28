@@ -1226,14 +1226,6 @@ describe('the servers slice', () => {
         path === '/admin/overview' ? { server_count: 3, user_count: 40 } : undefined,
       keys: ['adminOverview'],
     }))
-
-  test('a page of an admin list', () =>
-    late({
-      hold: 'GET /admin/users',
-      start: () => st().loadAdminUsers('', true),
-      reply: (who, method, path) => (path.startsWith('/admin/users') ? [user('zed')] : undefined),
-      keys: ['adminUsers'],
-    }))
 })
 
 describe('reads, friends, selection and polls', () => {

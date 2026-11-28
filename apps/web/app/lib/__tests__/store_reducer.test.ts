@@ -26,7 +26,6 @@ beforeEach(() => {
     dms: [],
     panel: null,
     adminOverview: null,
-    adminUsers: paged([]),
   })
 })
 
@@ -299,12 +298,10 @@ describe('membership count math', () => {
       dms: [{ id: 1, other: user('bob'), is_self: false }],
       messages: { c1: [msg(1, { author: user('bob') }), msg(2, { author: user('alice') })] },
       adminOverview: { user_count: 5, server_count: 2 },
-      adminUsers: paged([user('bob')]),
     })
     dispatch({ type: 'banned', username: 'bob' })
     const s = st()
     expect(s.members.s.list.map(m => m.username)).toEqual(['alice'])
-    expect(s.adminUsers.list.map(u => u.username)).toEqual([])
     expect(s.dms).toHaveLength(0)
     expect(s.messages.c1.map(m => m.id)).toEqual([2])
     expect(s.adminOverview?.user_count).toBe(4)

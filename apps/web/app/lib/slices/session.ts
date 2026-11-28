@@ -106,7 +106,6 @@ import type {
   Me,
   ServerDetail,
   ServerSummaryLite,
-  UserRef,
   WsEvent,
 } from '../types'
 import {
@@ -2213,7 +2212,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         adminChanges: {},
         interacted: {},
         bans: {},
-        adminUsers: emptyPage<UserRef>(),
         adminServers: emptyPage<ServerSummaryLite>(),
         blocked: {},
         blockList: emptyPage<BlockedUser>(),

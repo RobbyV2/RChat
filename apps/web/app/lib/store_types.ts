@@ -307,7 +307,6 @@ export interface RChatState {
   adminChanges: Record<string, number>
   interacted: Record<string, Paged<UserRef>>
   bans: Record<string, Paged<ServerBan>>
-  adminUsers: Paged<UserRef>
   adminServers: Paged<ServerSummaryLite>
   // Usernames this account blocked (all of them, from GET /api/blocks/usernames).
   blocked: Blocked
@@ -887,7 +886,6 @@ export interface RChatState {
   declineCall: () => void
   hangupCall: () => void
   loadAdminOverview: () => Promise<void>
-  loadAdminUsers: (q: string, reset?: boolean) => Promise<void>
   loadAdminServers: (q: string, reset?: boolean) => Promise<void>
   adminDeleteServer: (name: string) => Promise<void>
   banUser: (username: string) => Promise<void>

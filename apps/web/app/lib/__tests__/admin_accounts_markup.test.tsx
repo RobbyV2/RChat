@@ -14,7 +14,7 @@ import { actionById, runAction } from '../actions/registry'
 import { api } from './home_instance'
 import { useStore } from '../store'
 import type { ActiveDialog } from '../store_types'
-import { drain, me, paged, user } from './fixtures'
+import { drain, me, user } from './fixtures'
 import { Secret } from '../secret'
 
 const realSignOut = api.adminSignOut
@@ -35,7 +35,6 @@ const signIn = (part: Partial<typeof initial> = {}) =>
   Object.assign(initial, {
     token: 'tok',
     me: me('root', { is_site_admin: true }),
-    adminUsers: paged([user('root'), user('dana', { display_name: 'Dana R.' })]),
     adminOverview: { server_count: 2, user_count: 2, temporary_count: 1 },
     ...part,
   })

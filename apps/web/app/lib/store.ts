@@ -44,7 +44,7 @@ import { scheduledInitial, scheduledSlice } from './scheduled_store'
 import { ownLoadsInitial } from './own_loads'
 import { selectionInitial, selectionSlice } from './selection_store'
 import { ANIM_DEFAULT } from './motion/setting'
-import type { BlockedUser, ServerSummaryLite, UserRef, WsEvent } from './types'
+import type { BlockedUser, ServerSummaryLite, WsEvent } from './types'
 
 export * from './attachments'
 export { siteSettings } from './features'
@@ -404,7 +404,6 @@ export function createChatStore(acct: AccountSession) {
       adminChanges: {},
       interacted: {},
       bans: {},
-      adminUsers: emptyPage<UserRef>(),
       adminServers: emptyPage<ServerSummaryLite>(),
       blocked: {},
       blockList: emptyPage<BlockedUser>(),
