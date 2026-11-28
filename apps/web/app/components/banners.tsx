@@ -3,6 +3,7 @@
 import { Name } from './name'
 import { personCalled } from '../lib/names'
 import { AccountProvider, useLiveSessions } from '../lib/client/react'
+import { plays } from '../lib/motion/play'
 import { useStore } from '../lib/store'
 import { temporaryNotice } from '../lib/temp_password'
 import { ViewActorTag } from './view_actor'
@@ -60,6 +61,7 @@ function AccountBanners() {
       )}
       {toast && !error && (
         <div
+          ref={plays('toast')}
           role="status"
           className={`${bannerLook} banner-toast bg-inverse-surface text-inverse-on-surface`}
         >
