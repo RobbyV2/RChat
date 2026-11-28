@@ -12,7 +12,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::access::overwrite_sql::overwrite_sql;
 use crate::api::access::perms::held;
 use crate::api::access::{
-    Proof, ResolvedMessage, ThreadHome, channel_manager_servers, forbidden, granted_servers,
+    Proof, ResolvedMessage, ThreadHome, channel_manager_servers, granted_servers,
     member_channel_rights, resolve_channel, resolve_dm, resolve_message,
 };
 use crate::api::admin::like_pattern;
@@ -2086,10 +2086,16 @@ async fn deliver(
         }
         None => {
             if (req.media_id.is_some() || req.p2p.is_some()) && lacks(held::ATTACH) {
-                return Err(forbidden("No permission to attach files in this channel"));
+                return Err(ApiError::perm(
+                    "No permission to attach files in this channel",
+                    "AttachFiles",
+                ));
             }
             if req.poll.is_some() && lacks(held::POLLS) {
-                return Err(forbidden("No permission to create polls in this channel"));
+                return Err(ApiError::perm(
+                    "No permission to create polls in this channel",
+                    "CreatePolls",
+                ));
             }
             let quote = quoted(db, user, place, req.reply_to, req.mention_reply).await?;
             let groups = match (&scope, place) {

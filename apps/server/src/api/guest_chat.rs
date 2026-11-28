@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 
 use super::access::overwrite_sql::overwrite_sql;
 use super::access::perms::{Perm, held};
-use super::access::{Proof, forbidden, not_found, resolve_channel, resolve_message};
+use super::access::{Proof, not_found, resolve_channel, resolve_message};
 use super::audit::{self, Action, Details, Entry, Target};
 use super::budget;
 use super::messages::{Quotes, cannot_reply, load_message, partial_quote};
@@ -76,7 +76,11 @@ async fn address(db: &Db, server: &str) -> Result<String, ApiError> {
 }
 
 fn paused() -> ApiError {
-    forbidden("Guest posting is paused by a moderator for up to 10 minutes")
+    ApiError::locked_by(
+        "Guest posting is paused by a moderator for up to 10 minutes",
+        "pause",
+        None,
+    )
 }
 
 /// Whether a moderator pause applies to this guest in the given server.

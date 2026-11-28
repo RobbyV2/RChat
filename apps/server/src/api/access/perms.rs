@@ -29,6 +29,40 @@ pub enum Perm {
     BypassSlowmode = 1 << 30,
 }
 
+impl Perm {
+    /// The permission's name in the registry.
+    pub fn name(self) -> &'static str {
+        match self {
+            Perm::ManageChannels => "ManageChannels",
+            Perm::DeleteMessages => "DeleteMessages",
+            Perm::Kick => "Kick",
+            Perm::DeleteServer => "DeleteServer",
+            Perm::ManageAdmins => "ManageAdmins",
+            Perm::MentionEveryone => "MentionEveryone",
+            Perm::ViewAuditLog => "ViewAuditLog",
+            Perm::TimeoutMembers => "TimeoutMembers",
+            Perm::ManageWebhooks => "ManageWebhooks",
+            Perm::ManageReports => "ManageReports",
+            Perm::ManageServer => "ManageServer",
+            Perm::ManageInvites => "ManageInvites",
+            Perm::ManageRoles => "ManageRoles",
+            Perm::AssignRoles => "AssignRoles",
+            Perm::ManageProfiles => "ManageProfiles",
+            Perm::PinMessages => "PinMessages",
+            Perm::BypassSlowmode => "BypassSlowmode",
+        }
+    }
+}
+
+/// The registry name of the lowest permission in `bits`.
+pub fn bit_name(bits: Mask) -> &'static str {
+    rchat_perms::registry::BITS
+        .iter()
+        .filter(|b| b.value & bits != 0)
+        .min_by_key(|b| b.value)
+        .map_or("member", |b| b.name)
+}
+
 pub const ALL_PERMS: i64 = masks::MGMT as i64;
 /// Every permission before `PinMessages` and `BypassSlowmode` existed.
 pub const PRE_SPLIT_PERMS: i64 = 127999;

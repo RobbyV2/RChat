@@ -38,8 +38,8 @@ pub(crate) mod subjects_walk;
 
 use overwrite_sql::{denied_to_some_sql, everyone_stage_sql, overwrite_sql, private_sql};
 use perms::{
-    ChannelAccess, Perm, PermRow, Restrict, Standing, VISITOR_CAPS, can_grant, channel_mask,
-    everyone_mask, held, perm_columns, perm_row,
+    ChannelAccess, Perm, PermRow, Restrict, Standing, VISITOR_CAPS, bit_name, can_grant,
+    channel_mask, everyone_mask, held, perm_columns, perm_row,
 };
 use rchat_perms::hier::{self, Rank, Tier};
 use rchat_perms::{Mask, masks};
@@ -107,7 +107,7 @@ impl ProfileRight {
 }
 
 pub fn timed_out_error() -> ApiError {
-    forbidden(TIMED_OUT)
+    ApiError::locked_by(TIMED_OUT, "timeout", None)
 }
 
 /// When the timeout of `username` in `server` ends (unix seconds), if they are timed out right
@@ -131,10 +131,6 @@ pub async fn timed_out<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
 
 fn banned() -> ApiError {
     ApiError(StatusCode::FORBIDDEN, BANNED.to_string(), None)
-}
-
-pub(crate) fn forbidden(msg: &str) -> ApiError {
-    ApiError(StatusCode::FORBIDDEN, msg.to_string(), None)
 }
 
 fn hidden(e: ApiError) -> ApiError {
@@ -1035,7 +1031,7 @@ impl ServerAccess {
     pub fn require_member(&self) -> Result<(), ApiError> {
         match self.is_member() {
             true => Ok(()),
-            false => Err(forbidden("Not a member")),
+            false => Err(ApiError::perm("Not a member", "member")),
         }
     }
 
@@ -1043,7 +1039,7 @@ impl ServerAccess {
     /// out and holds Change server profile, from everyone or one of their roles.
     pub async fn change_profile(&self, db: &Db) -> Result<ProfileRight, ApiError> {
         let (Some(user), true) = (&self.user, self.is_member()) else {
-            return Err(forbidden("Not a member"));
+            return Err(ApiError::perm("Not a member", "member"));
         };
         if timed_out(db, self.name(), &user.username).await?.is_some() {
             return Err(timed_out_error());
@@ -1052,7 +1048,7 @@ impl ServerAccess {
         let everyone = self.everyone(db).await?;
         let bits = rchat_perms::eval::server_bits(&who, everyone, &rchat_perms::rules::HOSTED);
         match bits & held::CHANGE_PROFILE {
-            0 => Err(forbidden("Missing permission")),
+            0 => Err(ApiError::perm("Missing permission", "ChangeProfile")),
             _ => Ok(ProfileRight {
                 server: self.name().to_string(),
                 username: user.username.clone(),
@@ -1106,7 +1102,7 @@ impl ServerAccess {
     ) -> Result<(i64, i64), ApiError> {
         let user = self
             .viewer()
-            .ok_or_else(|| forbidden("Missing permission"))?;
+            .ok_or_else(|| ApiError::perm("Missing permission", perm.name()))?;
         if self.via != Via::Staff
             && timed_out(&mut *conn, self.name(), &user.username)
                 .await?
@@ -1124,7 +1120,7 @@ impl ServerAccess {
             own
         };
         if mine & perm as i64 == 0 {
-            return Err(forbidden("Missing permission"));
+            return Err(ApiError::perm("Missing permission", perm.name()));
         }
         Ok((mine, own))
     }
@@ -1145,7 +1141,7 @@ impl ServerAccess {
         match (self.perms(db).await?, self.view_perms(db).await?) {
             (p, _) if p & bit != 0 => Ok(()),
             (_, v) if v & bit != 0 => Err(timed_out_error()),
-            _ => Err(forbidden("Missing permission")),
+            _ => Err(ApiError::perm("Missing permission", perm.name())),
         }
     }
 
@@ -1394,7 +1390,7 @@ impl ServerAccess {
     pub async fn require_moderate(&self, db: &Db, target: &str) -> Result<(), ApiError> {
         match self.moderates(db, target).await? {
             true => Ok(()),
-            false => Err(forbidden("You can't moderate this member")),
+            false => Err(ApiError::perm("You can't moderate this member", "rank")),
         }
     }
 
@@ -1415,7 +1411,10 @@ impl ServerAccess {
         let held = base == 0 || self.site_admin() || base & !self.server_bits(db).await? == 0;
         match held && can_grant(mine, self.site_admin(), perms) {
             true => Ok(()),
-            false => Err(forbidden("You can't grant permissions you don't have")),
+            false => Err(ApiError::perm(
+                "You can't grant permissions you don't have",
+                "rank",
+            )),
         }
     }
 
@@ -1926,7 +1925,7 @@ impl ResolvedChannel {
     /// channel who is not timed out. Slow mode is not checked.
     async fn send_rights(&self, db: &Db) -> Result<&User, ApiError> {
         let Some(user) = &self.server.user else {
-            return Err(forbidden("Not a member"));
+            return Err(ApiError::perm("Not a member", "member"));
         };
         self.server.require_member()?;
         if self.kind == ChannelKind::Voice {
@@ -1937,7 +1936,10 @@ impl ResolvedChannel {
             ));
         }
         if !self.member_rights(db).await?.send {
-            return Err(forbidden("No permission to send in this channel"));
+            return Err(ApiError::perm(
+                "No permission to send in this channel",
+                "SendMessages",
+            ));
         }
         self.timeout_gate(db).await?;
         Ok(user)
@@ -1973,7 +1975,7 @@ impl ResolvedChannel {
     ) -> Result<(), ApiError> {
         match self.member_rights(db).await?.holds(bits) {
             true => Ok(()),
-            false => Err(forbidden(refusal)),
+            false => Err(ApiError::perm(refusal, bit_name(bits))),
         }
     }
 
@@ -2059,7 +2061,7 @@ fn rules_by_channel(rows: &[AnyRow]) -> sqlx::Result<HashMap<i64, Vec<PermRow>>>
 /// A signed-in member of the channel's server, paced.
 fn channel_actor(db: &Db, channel: &ResolvedChannel) -> Result<(), ApiError> {
     if channel.server.user.is_none() {
-        return Err(forbidden("Not a member"));
+        return Err(ApiError::perm("Not a member", "member"));
     }
     channel.server.require_member()?;
     pace(db, channel.server.user.as_ref())
@@ -2302,7 +2304,10 @@ impl ResolvedMessage {
             .is_some();
         match started {
             true => Ok(()),
-            false => Err(forbidden("No permission to start threads in this channel")),
+            false => Err(ApiError::perm(
+                "No permission to start threads in this channel",
+                "StartThreads",
+            )),
         }
     }
 
@@ -2348,7 +2353,10 @@ impl ResolvedMessage {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
                 if !channel.member_rights(db).await?.send {
-                    return Err(forbidden("No permission to vote in this channel"));
+                    return Err(ApiError::perm(
+                        "No permission to vote in this channel",
+                        "SendMessages",
+                    ));
                 }
                 channel.timeout_gate(db).await
             }
@@ -2363,7 +2371,7 @@ impl ResolvedMessage {
     /// who is timed out in the channel's server. `Ok(true)` when a moderator acts on someone
     /// else's poll.
     pub async fn poll_manage_gate(&self, db: &Db) -> Result<bool, ApiError> {
-        let refused = || forbidden("Only the author or a moderator can do this");
+        let refused = || ApiError::perm("Only the author or a moderator can do this", "author");
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
@@ -2396,8 +2404,14 @@ impl ResolvedMessage {
                 let rights = channel.member_rights(db).await?;
                 match (rights.holds(held::PIN), rights.send) {
                     (true, true) => Ok(()),
-                    (false, _) => Err(forbidden("No permission to pin messages in this channel")),
-                    (true, false) => Err(forbidden("No permission to send in this channel")),
+                    (false, _) => Err(ApiError::perm(
+                        "No permission to pin messages in this channel",
+                        "PinMessages",
+                    )),
+                    (true, false) => Err(ApiError::perm(
+                        "No permission to send in this channel",
+                        "SendMessages",
+                    )),
                 }
             }
             (None, Some(did)) => self.dm_writer(db, did).await,
@@ -2410,14 +2424,20 @@ impl ResolvedMessage {
     /// Slow mode does not apply.
     pub async fn edit_gate(&self, db: &Db) -> Result<(), ApiError> {
         if !self.own() {
-            return Err(forbidden("You can only edit your own messages"));
+            return Err(ApiError::perm(
+                "You can only edit your own messages",
+                "author",
+            ));
         }
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel.server.require_member()?;
                 pace(db, self.user.as_ref())?;
                 if !channel.member_rights(db).await?.send {
-                    return Err(forbidden("No permission to send in this channel"));
+                    return Err(ApiError::perm(
+                        "No permission to send in this channel",
+                        "SendMessages",
+                    ));
                 }
                 channel.timeout_gate(db).await
             }
@@ -2440,7 +2460,7 @@ impl ResolvedMessage {
             };
         match allowed {
             true => Ok(()),
-            false => Err(forbidden("Not allowed")),
+            false => Err(ApiError::perm("Not allowed", "author")),
         }
     }
 }
@@ -2919,7 +2939,10 @@ pub async fn report_scope(
         (ReportMode::Staff, false, _) => return Err(not_found()),
         (ReportMode::Read, false, true) => {
             if !holds {
-                return Err(forbidden("Missing permission"));
+                return Err(ApiError::perm(
+                    "Missing permission",
+                    Perm::ManageReports.name(),
+                ));
             }
         }
         (ReportMode::Write, _, true) => match access.as_member() {
@@ -5849,7 +5872,10 @@ mod tests {
 
         assert_eq!(
             answer(&patch("bob", "open", r#"{"public_read":true}"#).await),
-            (403, br#"{"error":"Missing permission"}"#.as_slice()),
+            (
+                403,
+                br#"{"error":"Missing permission","reason":{"kind":"perm","control":"ManageServer"}}"#.as_slice()
+            ),
             "a member without the access permission"
         );
         assert_eq!(

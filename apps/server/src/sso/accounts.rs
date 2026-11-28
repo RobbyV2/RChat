@@ -109,11 +109,8 @@ pub fn has_password(user: &User) -> bool {
 pub async fn may_set_password(state: &AppState, user: &User) -> bool {
     has_password(user) || Settings::cached(&state.db).await.password_login
 }
-fn forbidden(message: &str) -> ApiError {
-    ApiError(StatusCode::FORBIDDEN, message.into(), None)
-}
 fn suspended() -> ApiError {
-    forbidden("This account is suspended")
+    ApiError::locked_by("This account is suspended", "suspension", None)
 }
 
 pub async fn sign_in(
@@ -143,7 +140,10 @@ async fn login(
             return Ok(result);
         }
     }
-    Err(forbidden("Sign-in changed. Try again"))
+    Err(ApiError::conflict(
+        StatusCode::FORBIDDEN,
+        "Sign-in changed. Try again",
+    ))
 }
 
 async fn linked_username(
@@ -170,7 +170,7 @@ async fn sign_in_once(
         .providers
         .iter()
         .find(|p| p.id == id.provider && p.issuer == id.issuer)
-        .ok_or_else(|| forbidden("Unknown sign-in provider"))?;
+        .ok_or_else(|| ApiError::conflict(StatusCode::FORBIDDEN, "Unknown sign-in provider"))?;
     let settings = Settings::cached(&state.db).await;
     let display = match (&id.display, provider.sync_profile) {
         (Some(raw), true) => display_from_claim(&state.db, raw).await?,
@@ -183,7 +183,10 @@ async fn sign_in_once(
     if let Some((username, _)) = confirmation
         && linked.as_deref() != Some(username)
     {
-        return Err(forbidden("Account does not match linked sign-in"));
+        return Err(ApiError::conflict(
+            StatusCode::FORBIDDEN,
+            "Account does not match linked sign-in",
+        ));
     }
     let directory_login =
         config.scim.as_ref().and_then(|s| s.provider.as_ref()) == Some(&id.provider);
@@ -218,7 +221,11 @@ async fn sign_in_once(
         Some(key) => key,
         None => {
             if !provider.auto_create || settings.registration == Registration::Closed {
-                return Err(forbidden("New accounts are closed"));
+                return Err(ApiError::off_site(
+                    StatusCode::FORBIDDEN,
+                    "New accounts are closed",
+                    &rchat_settings::items::AUTH_REGISTRATION,
+                ));
             }
             let suggestion = picked
                 .map(str::to_owned)

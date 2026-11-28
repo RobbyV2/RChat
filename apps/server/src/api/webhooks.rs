@@ -22,8 +22,8 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::perms::Perm;
 use crate::api::access::{
-    Proof, ResolvedChannel, ServerAccess, Via, denied, forbidden, plain_member_perms,
-    resolve_channel, resolve_message, resolve_server, timed_out_error, webhook_channel,
+    Proof, ResolvedChannel, ServerAccess, Via, denied, plain_member_perms, resolve_channel,
+    resolve_message, resolve_server, timed_out_error, webhook_channel,
 };
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::budget::slow_down;
@@ -565,7 +565,7 @@ async fn manager(state: &AppState, user: &User, name: &str) -> Result<ServerAcce
     match (access.perms(db).await?, access.view_perms(db).await?) {
         (p, _) if p & MANAGE_BITS != 0 => Ok(access),
         (_, v) if v & MANAGE_BITS != 0 => Err(timed_out_error()),
-        (_, _) => Err(forbidden("Missing permission")),
+        (_, _) => Err(ApiError::perm("Missing permission", "ManageWebhooks")),
     }
 }
 
@@ -593,7 +593,7 @@ async fn takeover(
     let plain = plain_member_perms(db, access.name(), &user.username).await?;
     match access.is_member() && plain & MANAGE_BITS != 0 {
         true => Ok(Some(plain)),
-        false => Err(forbidden("Missing permission")),
+        false => Err(ApiError::perm("Missing permission", "ManageWebhooks")),
     }
 }
 
@@ -766,7 +766,7 @@ pub(crate) async fn create_webhook(
     let db = &state.db;
     let plain = plain_member_perms(db, access.name(), &user.username).await?;
     if !access.is_member() || plain & MANAGE_BITS == 0 {
-        return Err(forbidden("Missing permission"));
+        return Err(ApiError::perm("Missing permission", "ManageWebhooks"));
     }
     rare::take(&state, Rare::Webhook, Some(&user))?;
     let channel = manager_channel(db, &access, &user, channel_id).await?;
@@ -1250,10 +1250,15 @@ async fn creator_may_group(db: &Db, hook: &Hook) -> Result<bool, ApiError> {
 /// budget is already used up.
 async fn upload_charge<'a>(db: &Db, hook: &'a Hook) -> Result<media::Charge<'a>, ApiError> {
     if !Settings::cached(db).await.asset_uploads {
-        return Err(forbidden("File uploads are turned off on this server"));
+        return Err(ApiError::off_site(
+            StatusCode::FORBIDDEN,
+            "File uploads are turned off on this server",
+            &rchat_settings::items::FEATURE_FILE_UPLOADS,
+        ));
     }
     let Some(owner) = hook.creator.as_deref() else {
-        return Err(forbidden(
+        return Err(ApiError::conflict(
+            StatusCode::FORBIDDEN,
             "This webhook has no owner, so it cannot upload files",
         ));
     };
@@ -1486,7 +1491,11 @@ async fn post(
             data,
         }) => {
             if !settings.asset_uploads {
-                return Err(forbidden("File uploads are turned off on this server"));
+                return Err(ApiError::off_site(
+                    StatusCode::FORBIDDEN,
+                    "File uploads are turned off on this server",
+                    &rchat_settings::items::FEATURE_FILE_UPLOADS,
+                ));
             }
             settings.check_profanity(ProfanityTarget::FileNames, &filename)?;
             let charge = upload_charge(db, hook).await?;
@@ -2222,13 +2231,15 @@ pub(crate) async fn create_outgoing(
     let access = manager(&state, &user, &name).await?;
     let db = &state.db;
     if !Settings::cached(db).await.outgoing_webhooks {
-        return Err(forbidden(
+        return Err(ApiError::off_site(
+            StatusCode::FORBIDDEN,
             "Outgoing webhooks are turned off on this instance",
+            &rchat_settings::items::OUTGOING_WEBHOOKS,
         ));
     }
     let plain = plain_member_perms(db, access.name(), &user.username).await?;
     if !access.is_member() || plain & MANAGE_BITS == 0 {
-        return Err(forbidden("Missing permission"));
+        return Err(ApiError::perm("Missing permission", "ManageWebhooks"));
     }
     rare::take(&state, Rare::Webhook, Some(&user))?;
     let hook_name = hook_name.trim().to_string();
@@ -2431,8 +2442,10 @@ pub(crate) async fn update_outgoing(
         Some(_) | None => before.url.clone(),
     };
     if enabled && !before.enabled && !Settings::cached(db).await.outgoing_webhooks {
-        return Err(forbidden(
+        return Err(ApiError::off_site(
+            StatusCode::FORBIDDEN,
             "Outgoing webhooks are turned off on this instance",
+            &rchat_settings::items::OUTGOING_WEBHOOKS,
         ));
     }
     let moves =
@@ -2718,13 +2731,18 @@ pub(crate) async fn test_outgoing(
     let access = manager(&state, &user, &name).await?;
     let db = &state.db;
     if !Settings::cached(db).await.outgoing_webhooks {
-        return Err(forbidden(
+        return Err(ApiError::off_site(
+            StatusCode::FORBIDDEN,
             "Outgoing webhooks are turned off on this instance",
+            &rchat_settings::items::OUTGOING_WEBHOOKS,
         ));
     }
     let row = managed_outgoing(db, &access, id).await?;
     if row.try_get::<i64, _>(5)? == 0 {
-        return Err(forbidden("This webhook is off"));
+        return Err(ApiError::conflict(
+            StatusCode::FORBIDDEN,
+            "This webhook is off",
+        ));
     }
     rare::take(&state, Rare::Webhook, Some(&user))?;
     queue(

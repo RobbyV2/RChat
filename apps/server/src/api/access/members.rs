@@ -8,7 +8,7 @@ use rchat_perms::rules::HOSTED;
 use sqlx::Row;
 
 use super::perms::{everyone_mask, member_who};
-use super::{ResolvedChannel, ServerAccess, forbidden};
+use super::{ResolvedChannel, ServerAccess};
 use crate::api::{ApiError, ServerSummaryLite, Settings, placeholders};
 use crate::db::Db;
 
@@ -54,8 +54,8 @@ pub fn refusal(why: Hidden, lite: &ServerSummaryLite) -> Option<ApiError> {
             SERVER_HIDDEN,
             "hide_members",
         )),
-        Hidden::Server => Some(forbidden(SERVER_HIDDEN)),
-        Hidden::Channel => Some(forbidden(CHANNEL_HIDDEN)),
+        Hidden::Server => Some(ApiError::perm(SERVER_HIDDEN, "ViewMembers")),
+        Hidden::Channel => Some(ApiError::perm(CHANNEL_HIDDEN, "ViewMembers")),
     }
 }
 

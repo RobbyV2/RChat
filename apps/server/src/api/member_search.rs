@@ -7,9 +7,9 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::members::{Roster, SERVER_HIDDEN, refusal};
-use crate::api::access::perms::Perm;
+use crate::api::access::perms::{Perm, bit_name};
 use crate::api::access::subjects::{Level, ProfileChoices, level_of, own_choice};
-use crate::api::access::{Proof, forbidden, resolve_server};
+use crate::api::access::{Proof, resolve_server};
 use crate::api::lookup::{self, LookupClass};
 use crate::api::passwords::joined_via;
 use crate::api::profiles::{Shown, shown_in};
@@ -523,17 +523,24 @@ pub(crate) async fn search_members(
     .await?;
     let perms = access.view_perms(db).await?;
     if perms & SEARCH_PERMS == 0 {
-        return Err(forbidden("Missing permission"));
+        return Err(ApiError::perm(
+            "Missing permission",
+            bit_name(SEARCH_PERMS as rchat_perms::Mask),
+        ));
     }
     let invites = perms & Perm::ManageInvites as i64 != 0;
     if search.via.is_some() && !invites {
-        return Err(forbidden("Missing permission"));
+        return Err(ApiError::perm(
+            "Missing permission",
+            bit_name(SEARCH_PERMS as rchat_perms::Mask),
+        ));
     }
     let settings = crate::api::Settings::cached(db).await;
     let list = match access.member_list(db, &settings).await? {
         Roster::Shown(list) => list,
         Roster::Hidden(why) => {
-            return Err(refusal(why, access.lite()).unwrap_or_else(|| forbidden(SERVER_HIDDEN)));
+            return Err(refusal(why, access.lite())
+                .unwrap_or_else(|| ApiError::perm(SERVER_HIDDEN, "ViewMembers")));
         }
     };
     let key = list.server().to_string();

@@ -29,6 +29,14 @@ import type { ExchangeResponse } from '../lib/types'
 import { sameSecret, Secret } from '../lib/secret'
 import { time } from '../lib/platform/time'
 import { fieldCls } from '../components/ui'
+import { refusalOf, type RefusalKind } from '../lib/api_errors'
+
+// Whether `e` is a refusal of `kind` about `control`.
+const refused = (e: unknown, kind: RefusalKind, control: string): boolean => {
+  const r = refusalOf(e)
+  return r.kind === kind && r.control === control
+}
+
 export default function SsoPage() {
   const [fragment, setFragment] = useState<string | null>(null)
   useEffect(() => {
@@ -145,9 +153,9 @@ function LocalReturn() {
           ? `Sign in with the provider account linked to ${i.username} on ${account.conn.host}.`
           : e instanceof ApiError && e.status === 403
             ? errorText(
-                /suspend/i.test(message)
+                refused(e, 'locked', 'suspension') || /suspend/i.test(message)
                   ? 'suspended'
-                  : /closed/i.test(message)
+                  : refused(e, 'off_site', 'registration') || /closed/i.test(message)
                     ? 'closed'
                     : 'not_allowed'
               )

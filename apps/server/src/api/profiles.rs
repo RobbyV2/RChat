@@ -9,8 +9,7 @@ use utoipa::ToSchema;
 
 use crate::api::access::perms::Perm;
 use crate::api::access::{
-    ProfileRight, Proof, ServerAccess, USER_SCOPE_SMALL, acting_on, forbidden, not_found,
-    resolve_server,
+    ProfileRight, Proof, ServerAccess, USER_SCOPE_SMALL, acting_on, not_found, resolve_server,
 };
 use crate::api::audit::{self, Details, Entry, Target};
 use crate::api::auth::{check_avatar, check_banner, clean_bio, clean_name_for, present};
@@ -635,7 +634,11 @@ fn answer(user: &User, profile: Stored, mode: ProfilesMode, shown: Shown) -> Ser
 }
 
 fn locked_error(until: i64) -> ApiError {
-    ApiError::locked("A moderator locked your server profile", until)
+    ApiError::locked_by(
+        "A moderator locked your server profile",
+        "profile",
+        Some(until),
+    )
 }
 
 /// `before` as its member may change it now: refused while a lock runs, and without a lock
@@ -716,7 +719,7 @@ async fn save(
 ) -> Result<Stored, ApiError> {
     let (key, username) = (right.server(), right.username());
     let Some((mut tx, before)) = open_member(&state.db, key, username).await? else {
-        return Err(forbidden("Not a member"));
+        return Err(ApiError::perm("Not a member", "member"));
     };
     let next = change(unlocked(&before)?);
     if before == next {

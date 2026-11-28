@@ -68,7 +68,8 @@ async fn timed_out_members_cannot_join_voice() {
     let other = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'den', 'voice', 0) RETURNING id").await;
     time_out(&state.db, "bob", now() + 600).await;
     let join = |user, channel_id| voice_msg(&state, user, 1, join_msg(channel_id));
-    let timed_out = Err(crate::api::access::TIMED_OUT.into());
+    let timed_out =
+        Err(crate::api::ApiError::locked_by(crate::api::access::TIMED_OUT, "timeout", None).into());
     assert_eq!(join("bob", cid).await, timed_out);
     join("carol", cid).await.expect("carol joins");
     time_out(&state.db, "carol", now() + 600).await;
@@ -124,7 +125,8 @@ async fn timed_out_members_cannot_turn_on_video_in_voice() {
             },
         )
     };
-    let timed_out = Err(crate::api::access::TIMED_OUT.into());
+    let timed_out =
+        Err(crate::api::ApiError::locked_by(crate::api::access::TIMED_OUT, "timeout", None).into());
     assert_eq!(
         signal("bob", serde_json::json!({"cam": true})).await,
         timed_out

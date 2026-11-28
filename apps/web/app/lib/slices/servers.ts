@@ -5,6 +5,7 @@ import type { AccountSession } from '../client/session'
 // sends, roles, bans, the admin lists, and leaving or losing a server.
 
 import { ApiError } from '../api'
+import { refusalOf } from '../api_errors'
 import type { PendingUpload } from '../attachments'
 import { hostedBan, purgeNote } from '../durations'
 import { siteSettings } from '../features'
@@ -436,7 +437,10 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
   const bannedHere = new Set<string>()
   const banCheck = (e: unknown, server: string | null | undefined) => {
-    if (!server || !(e instanceof ApiError && e.status === 403 && e.message === BANNED)) return e
+    const r = refusalOf(e)
+    const banned =
+      (r.kind === 'locked' && r.control === 'ban') || (r.status === 403 && r.message === BANNED)
+    if (!server || !banned) return e
     bannedFrom(server)
     return new Banned(BANNED)
   }

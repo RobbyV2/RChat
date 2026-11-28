@@ -16,9 +16,8 @@ use crate::api::access::perms::{
     perm_columns, perm_row, reflag, row_flags, rule_narrows, update_bits, update_role_bits,
 };
 use crate::api::access::{
-    BANNED, Caller, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden,
-    ranks, resolve_channel, resolve_invite, resolve_join, resolve_reading, resolve_server,
-    seen_among,
+    BANNED, Caller, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, ranks,
+    resolve_channel, resolve_invite, resolve_join, resolve_reading, resolve_server, seen_among,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -1000,7 +999,7 @@ pub(crate) async fn is_builtin(db: &Db, key: &str) -> bool {
 
 pub(crate) async fn guard_rchat(db: &Db, key: &str) -> Result<(), ApiError> {
     match is_builtin(db, key).await {
-        true => Err(forbidden("The rchat server is protected")),
+        true => Err(ApiError::forced("The rchat server is protected")),
         false => Ok(()),
     }
 }
@@ -2321,7 +2320,7 @@ async fn check_new_server(
     if public_read == Some(true) && !allowed.public_reading() {
         return Err(crate::api::policy::refused(
             &rchat_settings::items::PUBLIC_READING,
-            forbidden(PUBLIC_READING_OFF),
+            ApiError::perm(PUBLIC_READING_OFF, "member"),
         ));
     }
     Ok(NewServer {
@@ -3235,7 +3234,7 @@ pub(crate) async fn insert_member_locked(
     }
     let banned = crate::api::bans::banned(&mut *tx, server, username).await?;
     if banned {
-        return Err(forbidden(BANNED));
+        return Err(ApiError::locked_by(BANNED, "ban", None));
     }
     room_in_server(tx, limits, server).await?;
     room_for_account(tx, limits, username).await?;
@@ -3273,7 +3272,7 @@ pub(crate) async fn insert_member_locked(
     let member = access.member_in(&mut *tx, username).await?;
     match member {
         true => Ok(None),
-        false => Err(forbidden(BANNED)),
+        false => Err(ApiError::locked_by(BANNED, "ban", None)),
     }
 }
 
@@ -3604,7 +3603,7 @@ pub(crate) async fn update_server(
     if public_read == Some(Some(true)) && !allowed.public_reading() {
         return Err(crate::api::policy::refused(
             &rchat_settings::items::PUBLIC_READING,
-            forbidden(PUBLIC_READING_OFF),
+            ApiError::perm(PUBLIC_READING_OFF, "member"),
         ));
     }
     needs_invites(allowed.server_joining(), join)?;
@@ -5222,7 +5221,7 @@ async fn require_revoke(db: &Db, access: &ServerAccess, target: &str) -> Result<
         let roles = role_perms(db, access.name(), target).await?;
         let mine = access.perms(db).await?;
         if roles & !old != 0 && !can_grant(mine, false, roles) {
-            return Err(forbidden(REVOKE_RAISES));
+            return Err(ApiError::perm(REVOKE_RAISES, "rank"));
         }
     }
     Ok(())
@@ -5431,12 +5430,16 @@ pub(crate) async fn transfer_admin(
     };
     let granted = perm_bits(true, stored, 0);
     if !can_grant(mine, user.is_site_admin, granted) {
-        return Err(forbidden("You can't grant permissions you don't have"));
+        return Err(ApiError::perm(
+            "You can't grant permissions you don't have",
+            "rank",
+        ));
     }
     let own_roles = role_perms(&mut *tx, &key, &user.username).await?;
     if !can_grant(mine, user.is_site_admin, own_roles) {
-        return Err(forbidden(
+        return Err(ApiError::perm(
             "You hold roles with permissions your admin permissions don't include, so giving up admin would give you those",
+            "rank",
         ));
     }
     let actor = actor.staff_if(
@@ -5546,7 +5549,10 @@ pub(crate) async fn set_admin_perms(
     };
     let new = perm_bits(true, perms, 0);
     if new & !old != 0 && !can_grant(mine, user.is_site_admin, new) {
-        return Err(forbidden("You can't grant permissions you don't have"));
+        return Err(ApiError::perm(
+            "You can't grant permissions you don't have",
+            "rank",
+        ));
     }
     let actor = actor.staff_if(own.is_some_and(|o| new & !old != 0 && !can_grant(o, false, new)));
     if sqlx::query("UPDATE members SET perms = $1 WHERE server = $2 AND username = $3 AND is_admin <> 0 AND perms = $4")
@@ -5799,12 +5805,13 @@ async fn require_role_change(
     let mine = access.perms(db).await?;
     if access.order_guard(db).await? {
         if !can_grant(mine, access.site_admin(), role_perms) {
-            return Err(forbidden(
+            return Err(ApiError::perm(
                 "You can't change a role that has permissions you don't have",
+                "rank",
             ));
         }
         if !held_above(db, access, mine, Some(id)).await?.is_empty() {
-            return Err(forbidden(ROLE_HELD_ABOVE));
+            return Err(ApiError::perm(ROLE_HELD_ABOVE, "rank"));
         }
     }
     let role = ranks::role_rank_in(db, access.name(), id)
@@ -5812,7 +5819,7 @@ async fn require_role_change(
         .ok_or_else(|| not_found("Role not found"))?;
     match hier::manages_role(&access.actor(db).await?, &role, None) {
         true => Ok(mine),
-        false => Err(forbidden(ROLE_NOT_BELOW)),
+        false => Err(ApiError::perm(ROLE_NOT_BELOW, "rank")),
     }
 }
 
@@ -5835,7 +5842,10 @@ async fn check_locked_role_edit(
             false => adds & !current,
         };
     if !can_grant(mine, access.site_admin(), needed) {
-        return Err(forbidden("You can't grant permissions you don't have"));
+        return Err(ApiError::perm(
+            "You can't grant permissions you don't have",
+            "rank",
+        ));
     }
     let member = access.as_member();
     let held = guard
@@ -5858,8 +5868,8 @@ async fn check_locked_role_edit(
         None,
     );
     match (access.site_admin(), held, below) {
-        (false, true, _) => return Err(forbidden(ROLE_HELD_ABOVE)),
-        (false, false, false) => return Err(forbidden(ROLE_NOT_BELOW)),
+        (false, true, _) => return Err(ApiError::perm(ROLE_HELD_ABOVE, "rank")),
+        (false, false, false) => return Err(ApiError::perm(ROLE_NOT_BELOW, "rank")),
         (true, _, _) | (false, false, true) => {}
     }
     Ok(access.site_admin()
@@ -5877,7 +5887,7 @@ async fn require_below(db: &Db, access: &ServerAccess, id: i64) -> Result<(), Ap
         .ok_or_else(|| not_found("Role not found"))?;
     match hier::outranks(&access.rank(db).await?, &role) {
         true => Ok(()),
-        false => Err(forbidden(ROLE_ABOVE)),
+        false => Err(ApiError::perm(ROLE_ABOVE, "rank")),
     }
 }
 
@@ -5886,7 +5896,7 @@ const MENTIONABLE_NEEDS: &str =
 
 async fn require_mentionable(db: &Db, access: &ServerAccess, on: bool) -> Result<(), ApiError> {
     match on && !access.has_perm(db, Perm::MentionEveryone).await {
-        true => Err(forbidden(MENTIONABLE_NEEDS)),
+        true => Err(ApiError::perm(MENTIONABLE_NEEDS, "MentionEveryone")),
         false => Ok(()),
     }
 }
@@ -6344,7 +6354,7 @@ pub(crate) async fn delete_role(
         .denies
         .is_empty()
     {
-        return Err(forbidden(ROLE_DELETE_WIDENS));
+        return Err(ApiError::perm(ROLE_DELETE_WIDENS, "rank"));
     }
     let db = &state.db;
     let bypassed = access
@@ -6356,7 +6366,7 @@ pub(crate) async fn delete_role(
                 .is_empty()
             {
                 true => Ok(()),
-                false => Err(forbidden(ROLE_DELETE_WIDENS)),
+                false => Err(ApiError::perm(ROLE_DELETE_WIDENS, "rank")),
             }
         })
         .await;
@@ -6457,7 +6467,10 @@ pub(crate) async fn assign_role(
         .grants
         .is_empty()
     {
-        return Err(forbidden("This role gives channel access you don't have"));
+        return Err(ApiError::perm(
+            "This role gives channel access you don't have",
+            "rank",
+        ));
     }
     let (db, who, me) = (&state.db, target.as_str(), user.username.as_str());
     let bypassed = access
@@ -6474,7 +6487,10 @@ pub(crate) async fn assign_role(
                 .is_empty()
             {
                 true => Ok(()),
-                false => Err(forbidden("This role gives channel access you don't have")),
+                false => Err(ApiError::perm(
+                    "This role gives channel access you don't have",
+                    "rank",
+                )),
             }
         })
         .await;
@@ -6519,7 +6535,10 @@ pub(crate) async fn assign_role(
         false => member,
     };
     if !gives(rank, mine) {
-        return Err(forbidden("You can't assign this role to this member"));
+        return Err(ApiError::perm(
+            "You can't assign this role to this member",
+            "rank",
+        ));
     }
     let actor = actor.staff_if(access.site_admin() && !gives(member, own));
     let added = grant_role(&mut tx, &key, &target, id).await?;
@@ -6586,7 +6605,7 @@ pub(crate) async fn unassign_role(
         .denies
         .is_empty()
     {
-        return Err(forbidden(ROLE_UNASSIGN_WIDENS));
+        return Err(ApiError::perm(ROLE_UNASSIGN_WIDENS, "rank"));
     }
     let (db, who, me) = (&state.db, target.as_str(), user.username.as_str());
     let bypassed = access
@@ -6602,7 +6621,7 @@ pub(crate) async fn unassign_role(
                 .is_empty()
             {
                 true => Ok(()),
-                false => Err(forbidden(ROLE_UNASSIGN_WIDENS)),
+                false => Err(ApiError::perm(ROLE_UNASSIGN_WIDENS, "rank")),
             }
         })
         .await;
@@ -6847,14 +6866,17 @@ async fn check_rule_edit(
         delta::taken(before, after) == 0 || outranks_subject(db, access, subject).await?;
     match delta::check_overwrite_edit(mine as Mask, false, before, after, subject_ok) {
         Ok(()) => Ok(()),
-        Err(Refusal::Grants(_)) => Err(forbidden(
+        Err(Refusal::Grants(_)) => Err(ApiError::perm(
             "You can't allow permissions you don't have in this channel",
+            "rank",
         )),
-        Err(Refusal::DeniesModeration(_)) => Err(forbidden(
+        Err(Refusal::DeniesModeration(_)) => Err(ApiError::perm(
             "You can't deny moderation permissions you don't have in this channel",
+            "rank",
         )),
-        Err(Refusal::Outranked) => Err(forbidden(
+        Err(Refusal::Outranked) => Err(ApiError::perm(
             "You can't take moderation permissions from this role or member",
+            "rank",
         )),
     }
 }
@@ -7494,7 +7516,7 @@ async fn require_moves(
             (true, false) => MOVE_NOT_WITHIN,
             (true, true) => MOVE_HELD_ABOVE,
         };
-        return Err(forbidden(reason));
+        return Err(ApiError::perm(reason, "rank"));
     }
     Ok(access.site_admin() && place(movable(roles, plain, own, guard, &held)) != asked)
 }
@@ -8032,7 +8054,10 @@ pub(crate) async fn set_everyone_perms(
         let mine = eval::server_bits(&standing.who, everyone, &HOSTED);
         match delta::check_bits_edit(mine, exempt, everyone, after as Mask) {
             Ok(()) => Ok(()),
-            Err(_) => Err(forbidden("You can't grant permissions you don't have")),
+            Err(_) => Err(ApiError::perm(
+                "You can't grant permissions you don't have",
+                "rank",
+            )),
         }
     };
     let stored: Option<i64> = sqlx::query("SELECT everyone_perms FROM servers WHERE name = $1")

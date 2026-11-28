@@ -141,7 +141,11 @@ async fn view_members_decides_who_gets_the_member_list() {
         c.everyone(BASE & !VIEW_MEMBERS).await;
         assert_eq!(
             why(c.names("low", "").await),
-            (StatusCode::FORBIDDEN, SERVER_TEXT.to_string(), None),
+            (
+                StatusCode::FORBIDDEN,
+                SERVER_TEXT.to_string(),
+                Some((ReasonKind::Perm, Some("ViewMembers".to_string())))
+            ),
             "everyone lost View members"
         );
         assert_eq!(why(c.names("tmo", "").await).0, StatusCode::FORBIDDEN);
@@ -175,7 +179,7 @@ async fn a_channel_can_keep_the_member_list_from_its_viewers() {
             (
                 StatusCode::FORBIDDEN,
                 "You can't view the members of this channel".to_string(),
-                None
+                Some((ReasonKind::Perm, Some("ViewMembers".to_string())))
             )
         );
         assert_eq!(c.in_channel("low", c.general).await.expect("there"), ALL);

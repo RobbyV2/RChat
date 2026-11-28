@@ -139,18 +139,15 @@ pub(crate) const P2P_OFF: &str = "P2P is turned off on this site";
 /// the same rule as everyone.
 pub(super) async fn switched_on(state: &AppState, kind: CallKind) -> Result<(), Refused> {
     let allowed = crate::api::policy::effective(&state.db, None).await;
-    let forbidden = |text: &str| {
-        crate::api::ApiError(axum::http::StatusCode::FORBIDDEN, text.to_string(), None)
-    };
     match kind {
         CallKind::Rtc if !allowed.calls() => Err(crate::api::policy::refused(
             &rchat_settings::items::FEATURE_CALLS,
-            forbidden(CALLS_OFF),
+            crate::api::ApiError::perm(CALLS_OFF, "member"),
         )
         .into()),
         CallKind::P2p if !allowed.p2p() => Err(crate::api::policy::refused(
             crate::api::features::Feature::P2p.item(),
-            forbidden(P2P_OFF),
+            crate::api::ApiError::perm(P2P_OFF, "member"),
         )
         .into()),
         CallKind::Rtc | CallKind::P2p => Ok(()),
@@ -420,7 +417,7 @@ pub(super) async fn relay_signal(
             .await?
             .is_some()
         {
-            return Err(crate::api::access::TIMED_OUT.into());
+            return Err(crate::api::access::timed_out_error().into());
         }
         if !ws_voice_rights(&crate::ws::LAYER, &state.read(), &server, cid, user)
             .await

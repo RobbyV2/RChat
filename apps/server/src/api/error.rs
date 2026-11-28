@@ -37,7 +37,11 @@ pub enum ReasonKind {
     /// The server can't do it right now. Try again, after `retry_after` seconds when it is
     /// given.
     Unavailable,
-    /// A moderator locked it. `until` is when the lock ends.
+    /// A permission, a rank or a membership the caller lacks here. `control` is the
+    /// permission's name (as in `GET /api/v1/perms`), or `rank`, `member` or `author`.
+    Perm,
+    /// A moderator or staff locked it: `control` is `ban`, `timeout`, `pause`, `profile` or
+    /// `suspension`, and `until` is when the lock ends when it is known.
     Locked,
     /// Refused until the caller confirms. `control` is what to confirm and `channel` the
     /// channel it opens.
@@ -312,11 +316,21 @@ impl ApiError {
         )
     }
 
-    /// 403: locked by a moderator until `until`.
-    pub fn locked(error: impl Into<String>, until: i64) -> ApiError {
+    /// 403: the caller lacks the permission, rank or membership `control`.
+    pub fn perm(error: impl Into<String>, control: &str) -> ApiError {
+        ApiError::because(
+            StatusCode::FORBIDDEN,
+            error,
+            Reason::by(ReasonKind::Perm, control),
+        )
+    }
+
+    /// 403: locked by `control` (a ban, a timeout, a pause or a suspension), until `until`
+    /// when it is known.
+    pub fn locked_by(error: impl Into<String>, control: &str, until: Option<i64>) -> ApiError {
         let reason = Reason {
-            until: Some(until),
-            ..Reason::of(ReasonKind::Locked)
+            until,
+            ..Reason::by(ReasonKind::Locked, control)
         };
         ApiError::because(StatusCode::FORBIDDEN, error, reason)
     }
@@ -599,7 +613,8 @@ mod tests {
             (ApiError::conflict(StatusCode::CONFLICT, "a"), "conflict"),
             (ApiError::sign_in("a"), "sign_in"),
             (ApiError::unavailable("a", None), "unavailable"),
-            (ApiError::locked("a", 9), "locked"),
+            (ApiError::perm("a", "calls"), "perm"),
+            (ApiError::locked_by("a", "calls", Some(9)), "locked"),
             (ApiError::confirm(forbidden, "a", "calls", 7), "confirm"),
             (ApiError::forced("a"), "forced"),
             (ApiError::keys("a"), "keys"),
@@ -619,6 +634,8 @@ mod tests {
                     | ReasonKind::Limit
                     | ReasonKind::Capacity
                     | ReasonKind::Confirm
+                    | ReasonKind::Perm
+                    | ReasonKind::Locked
             );
             assert_eq!(
                 reason.control.as_deref(),
@@ -645,7 +662,7 @@ mod tests {
                 ReasonKind::Rate => Some(StatusCode::TOO_MANY_REQUESTS),
                 ReasonKind::SignIn => Some(StatusCode::UNAUTHORIZED),
                 ReasonKind::Unavailable => Some(StatusCode::SERVICE_UNAVAILABLE),
-                ReasonKind::Locked => Some(StatusCode::FORBIDDEN),
+                ReasonKind::Perm | ReasonKind::Locked => Some(StatusCode::FORBIDDEN),
                 ReasonKind::Forced => Some(StatusCode::FORBIDDEN),
                 ReasonKind::Keys => Some(StatusCode::CONFLICT),
                 ReasonKind::OffSite
@@ -667,7 +684,7 @@ mod tests {
         }
         kinds.sort();
         kinds.dedup();
-        assert_eq!(kinds.len(), 16);
+        assert_eq!(kinds.len(), 17);
     }
 
     #[test]
