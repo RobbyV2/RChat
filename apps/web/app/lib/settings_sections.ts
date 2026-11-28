@@ -180,6 +180,12 @@ const ROWS: Record<SettingsSection, SettingsRow[]> = {
       ],
     },
     {
+      id: 'user_avatars',
+      label: 'Profile pictures',
+      line: 'Show uploaded pictures, built-in avatars, or one kind of avatar for everyone.',
+      keywords: ['avatar', 'pfp', 'picture', 'identicon', 'appearance'],
+    },
+    {
       id: 'user_streamer',
       label: 'Streamer mode',
       line: 'Blurs server names, usernames, and DM names until hovered.',

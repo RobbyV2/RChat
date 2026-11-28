@@ -1,6 +1,7 @@
 // State and UI types of the store; store.ts re-exports them.
 
 import type { AvatarCrop } from './avatar_images'
+import type { AvatarMode } from './avatar_setting'
 import type { Secret as Sealed } from './secret'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
@@ -402,6 +403,8 @@ export interface RChatState {
   wsStatus: WsStatus
   theme: Theme
   streamer: boolean
+  // What this device draws for people: pictures, built-in avatars, or one kind for everyone.
+  avatarMode: AvatarMode
   iceHelpers: boolean
   // This account's link safety choices on this device.
   linkPrefs: LinkPrefs
@@ -462,6 +465,7 @@ export interface RChatState {
   setBrand: (raw: unknown) => void
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
+  setAvatarMode: (mode: AvatarMode) => void
   setIceHelpers: (on: boolean) => void
   setLinkPrefs: (prefs: LinkPrefs) => void
   trustLinkSite: (site: Site) => void

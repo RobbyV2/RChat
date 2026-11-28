@@ -1,6 +1,7 @@
 import {
   Bell,
   BookOpen,
+  CircleUserRound,
   Command,
   Copy,
   Eye,
@@ -17,6 +18,7 @@ import {
   Waypoints,
   type LucideIcon,
 } from 'lucide-react'
+import { AVATAR_MODES, AVATAR_MODE_LABELS, parseAvatarMode } from '../avatar_setting'
 import { UNAVAILABLE } from '../capabilities'
 import { DOCS_PATH, docsFor } from '../docs_link'
 import { instanceLabel } from '../instance_label'
@@ -99,6 +101,31 @@ export const settingsActions: Action[] = [
     keywords: ['blur', 'privacy'],
     available: () => true,
     run: ({ acct }) => acct.store.getState().setStreamer(!acct.store.getState().streamer),
+  },
+  {
+    id: 'avatars',
+    title: 'Profile pictures',
+    subtitle: ({ s }) => AVATAR_MODE_LABELS[parseAvatarMode(s.avatarMode)],
+    scope: 'global',
+    group: 'settings',
+    icon: CircleUserRound,
+    keywords: ['avatar', 'pfp', 'identicon', 'color', 'appearance'],
+    args: [
+      {
+        kind: 'choice',
+        name: 'value',
+        prompt: 'On this device, show',
+        choices: ({ s }) =>
+          AVATAR_MODES.map(mode => ({
+            value: mode,
+            label: AVATAR_MODE_LABELS[mode],
+            radio: true,
+            checked: parseAvatarMode(s.avatarMode) === mode,
+          })),
+      },
+    ],
+    available: () => true,
+    run: ({ acct }, { value }) => acct.store.getState().setAvatarMode(parseAvatarMode(value)),
   },
   {
     id: 'typing',

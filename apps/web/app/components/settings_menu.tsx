@@ -70,6 +70,7 @@ import { AnimationsSetting } from './animations_setting'
 import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button, LinkButton } from './controls'
 import { Row, Stack, Surface, Grid, Lift } from './layout'
+import { AVATAR_MODE_CHOICES, AVATAR_MODE_NOTES } from '../lib/avatar_setting'
 import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { DocsEntry } from './docs_entry'
@@ -795,6 +796,25 @@ function ChatSection() {
   )
 }
 
+// What this device draws for people, for every account and P2P identity on it.
+function AvatarModeSetting() {
+  const mode = useStore(s => s.avatarMode)
+  const setMode = useStore(s => s.setAvatarMode)
+  return (
+    <PageRow id="user_avatars">
+      <Stack gap="sm">
+        <Choice
+          label="Profile pictures"
+          value={mode}
+          options={AVATAR_MODE_CHOICES}
+          onChange={setMode}
+        />
+        <p className="text-xs text-on-surface-variant">{AVATAR_MODE_NOTES[mode]}</p>
+      </Stack>
+    </PageRow>
+  )
+}
+
 const SPOILER_CHOICES = [
   { value: 'click', label: 'On click' },
   { value: 'always', label: 'Always' },
@@ -979,6 +999,7 @@ function GeneralSection() {
           />
         </PageRow>
         <AnimationsSetting />
+        <AvatarModeSetting />
       </section>
       <PageRow id="user_streamer">
         <p className={sectionCls}>Streamer mode</p>

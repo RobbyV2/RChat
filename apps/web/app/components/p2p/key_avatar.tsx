@@ -4,6 +4,8 @@ import { useMemo } from 'react'
 import { minidenticon } from 'minidenticons'
 import { identiconInk } from '../../lib/identicon'
 import { validColor } from '../../lib/profile'
+import { builtIn } from '../../lib/avatar_setting'
+import { useAvatarView } from '../../lib/avatar_view'
 import type { Person } from '../../lib/people'
 
 // Identicons come from the identity key, so a look-alike name never gets the same picture. A
@@ -20,7 +22,9 @@ export function KeyAvatar({
   covered?: boolean
 }) {
   const mark = covered ? 'streamer ' : ''
-  const { username: ik, avatar_kind: kind, avatar_color: bg } = person
+  const view = useAvatarView()
+  const { username: ik } = person
+  const { kind, color: bg } = builtIn(person, view.mode)
   const shade = validColor(bg) ? bg.toLowerCase() : null
   const disc = kind === 'color' && shade !== null
   const src = useMemo(() => {

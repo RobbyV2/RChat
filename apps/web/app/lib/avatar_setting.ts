@@ -13,6 +13,13 @@ export const AVATAR_MODE_LABELS: Record<AvatarMode, string> = {
   color: 'Colors for everyone',
 }
 
+export const AVATAR_MODE_CHOICES: readonly { value: AvatarMode; label: string }[] = [
+  { value: 'pictures', label: 'Pictures' },
+  { value: 'builtin', label: 'Built-in avatars' },
+  { value: 'identicon', label: 'All identicons' },
+  { value: 'color', label: 'All colors' },
+]
+
 export const AVATAR_MODE_NOTES: Record<AvatarMode, string> = {
   pictures: 'Uploaded pictures load over the built-in avatars.',
   builtin: 'Everyone shows the identicon or color they chose. No pictures load.',

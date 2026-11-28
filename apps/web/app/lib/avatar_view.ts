@@ -7,7 +7,8 @@ import { useStore } from './store'
 export function useAvatarView(): AvatarView {
   const streamer = useStore(s => s.streamer)
   const served = useStore(s => s.settings.profile_pictures)
-  return { mode: 'pictures', streamer, served }
+  const mode = useStore(s => s.avatarMode)
+  return { mode, streamer, served }
 }
 
 // The address of an account's uploaded picture for a drawing of `size` CSS pixels; null when

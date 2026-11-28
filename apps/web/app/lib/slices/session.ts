@@ -1624,6 +1624,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'setBrand'
     | 'setTheme'
     | 'setStreamer'
+    | 'setAvatarMode'
     | 'setIceHelpers'
     | 'setLinkPrefs'
     | 'trustLinkSite'
@@ -1747,6 +1748,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     setTheme: client.device.setTheme,
     setStreamer: client.device.setStreamer,
+    setAvatarMode: client.device.setAvatarMode,
 
     setIceHelpers: on => {
       const relay = get().iceRelay

@@ -25,7 +25,7 @@ import { useGuestPostingCheck } from '../components/use_guest_posting_check'
 import { pollAccountCounts, startAccountCounts } from '../lib/client/account_counts'
 import { restoreStreamer, restoreTheme, startApp } from '../lib/start'
 import { answerAppRequests, takeAppRequest } from '../lib/app_requests'
-import { STREAMER_KEY, THEME_KEY } from '../lib/theme/device'
+import { AVATARS_KEY, STREAMER_KEY, THEME_KEY } from '../lib/theme/device'
 import { shareLoginHref } from '../lib/client/share_target'
 import { ContextMenu } from '../components/context_menu'
 import { MediaLightbox } from '../components/media_lightbox'
@@ -283,7 +283,7 @@ export function SessionServices() {
       const key = account.conn.scoped(historyKey(ownerOf(account.store.getState())))
       if (event.key === key || event.key === null) reloadHistory()
       if (event.key === THEME_KEY) restoreTheme(account)
-      if (event.key === STREAMER_KEY) restoreStreamer(account)
+      if (event.key === STREAMER_KEY || event.key === AVATARS_KEY) restoreStreamer(account)
       if (event.key?.startsWith('rchat_layout:')) account.store.getState().reloadLayout()
       if (event.key?.startsWith('rchat_emoji:')) account.store.getState().reloadEmoji()
       if (event.key?.startsWith('rchat_forward:')) account.store.getState().reloadForward()

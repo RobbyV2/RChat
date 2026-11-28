@@ -9,7 +9,8 @@ import { CallGuard } from './calls'
 import { createInstanceRegistry } from './instance_registry'
 import { ownInstance, writeLocal } from '../instances'
 import type { Theme } from '../types'
-import { STREAMER_KEY, keepTheme } from '../theme/device'
+import type { AvatarMode } from '../avatar_setting'
+import { AVATARS_KEY, STREAMER_KEY, keepTheme } from '../theme/device'
 import type { AccountId, AccountSession } from './session'
 
 const closed = {
@@ -61,6 +62,7 @@ function createClient() {
   const device = {
     theme: 'dark' as Theme,
     streamer: false,
+    avatarMode: 'pictures' as AvatarMode,
     setTheme(theme: Theme) {
       device.theme = theme
       keepTheme(theme)
@@ -71,6 +73,12 @@ function createClient() {
       writeLocal(STREAMER_KEY, streamer ? '1' : '0')
       if (typeof document !== 'undefined') document.body.classList.toggle('streamer-mode', streamer)
       for (const account of live) account.store.setState({ streamer })
+    },
+    // What this device draws for people, for every account and P2P identity on it.
+    setAvatarMode(avatarMode: AvatarMode) {
+      device.avatarMode = avatarMode
+      writeLocal(AVATARS_KEY, avatarMode)
+      for (const account of live) account.store.setState({ avatarMode })
     },
   }
 
