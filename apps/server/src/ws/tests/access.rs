@@ -1285,12 +1285,17 @@ async fn rosters_follow_the_member_list_rule(state: AppState) {
         "INSERT INTO members(server, username, joined_at) VALUES('club', 'carol', 1)",
     )
     .await;
-    exec(db, "INSERT INTO roles(id, server, name, color, perms) VALUES(70, 'club', 'mods', '#ffffff', 4)").await;
-    exec(
-        db,
-        "INSERT INTO user_roles(server, username, role_id) VALUES('club', 'carol', 70)",
-    )
-    .await;
+    let mods: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('club', 'mods', '#ffffff', 4) RETURNING id")
+        .fetch_one(db)
+        .await
+        .expect("role")
+        .try_get(0)
+        .expect("id");
+    sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('club', 'carol', $1)")
+        .bind(mods)
+        .execute(db)
+        .await
+        .expect("role holder");
     let mut bob = Access::new(Some(s("bob")), false, set(&["club"]));
     let mut carol = Access::new(Some(s("carol")), false, set(&["club"]));
     let mut root = Access::new(Some(s("root")), true, HashSet::new());
@@ -1319,7 +1324,7 @@ async fn rosters_follow_the_member_list_rule(state: AppState) {
         WsEvent::MemberRolesChanged {
             server: s("club"),
             username: s("alice"),
-            role_ids: vec![70],
+            role_ids: vec![mods],
         },
     ];
     let shown = |access: &Access| {
