@@ -198,14 +198,18 @@ function Bar({ gate, compose, list }: GateProps & { gate: Gate }) {
     case 'blocked':
       return (
         <GateNote>
-          You blocked <Name of={gate.name} look="font-medium" />. Remove the block to message them
-          again.
+          <span>
+            You blocked <Name of={gate.name} look="font-medium" />. Remove the block to message them
+            again.
+          </span>
         </GateNote>
       )
     case 'notMutual':
       return (
         <GateNote>
-          <Name of={gate.name} look="font-medium" /> isn&apos;t a mutual contact right now.
+          <span>
+            <Name of={gate.name} look="font-medium" /> isn&apos;t a mutual contact right now.
+          </span>
         </GateNote>
       )
   }

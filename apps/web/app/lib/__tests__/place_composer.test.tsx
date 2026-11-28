@@ -307,7 +307,9 @@ placeContract(composer, (kind, world) => {
       expect(drawn(alone)).toContain('This contact was removed.')
       const blocked = gated(() => {}, { contacts: [{ ik: 'B', name: 'Bob', state: 'blocked' }] })
       expect(blocked.gate.get().first?.kind).toBe('blocked')
-      expect(drawn(blocked)).toContain('You blocked')
+      expect(
+        /<span>You blocked .*Remove the block to message them again\.<\/span>/.test(drawn(blocked))
+      ).toBe(true)
     }
   })
 })
