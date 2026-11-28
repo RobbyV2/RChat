@@ -24,6 +24,7 @@ mod repost;
 mod rewrite;
 mod typing;
 mod widget;
+mod wire;
 
 async fn bulk_ids(
     state: &AppState,

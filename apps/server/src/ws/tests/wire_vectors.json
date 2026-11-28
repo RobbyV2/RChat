@@ -1,0 +1,330 @@
+{
+  "admin_changed": {
+    "bus": "{\"type\":\"admin_changed\",\"server\":\"s\",\"username\":\"s\",\"is_admin\":true,\"perms\":1}",
+    "client": "{\"type\":\"admin_changed\",\"server\":\"s\",\"username\":\"s\",\"is_admin\":true,\"perms\":1}"
+  },
+  "banned": {
+    "bus": "{\"type\":\"banned\",\"username\":\"s\"}",
+    "client": "{\"type\":\"banned\",\"username\":\"s\"}"
+  },
+  "brand_changed": {
+    "bus": "{\"type\":\"brand_changed\",\"brand\":{\"instance_name\":\"s\",\"app_name\":\"s\",\"short_name\":\"s\",\"about\":\"s\",\"links\":[{\"label\":\"s\",\"url\":\"s\"}],\"login_note\":\"s\",\"suggestions\":{\"mode\":\"add\",\"list\":[{\"url\":\"s\",\"label\":\"s\"}]},\"assets\":{}}}",
+    "client": "{\"type\":\"brand_changed\",\"brand\":{\"instance_name\":\"s\",\"app_name\":\"s\",\"short_name\":\"s\",\"about\":\"s\",\"links\":[{\"label\":\"s\",\"url\":\"s\"}],\"login_note\":\"s\",\"suggestions\":{\"mode\":\"add\",\"list\":[{\"url\":\"s\",\"label\":\"s\"}]},\"assets\":{}}}"
+  },
+  "bulk_delete_progress": {
+    "bus": "{\"type\":\"bulk_delete_progress\",\"username\":\"s\",\"job\":{\"id\":1,\"scope\":\"s\",\"status\":\"running\",\"deleted\":1,\"skipped\":1,\"estimate\":1,\"created_at\":1,\"finished_at\":1,\"error\":\"s\"}}",
+    "client": "{\"type\":\"bulk_delete_progress\",\"username\":\"s\",\"job\":{\"id\":1,\"scope\":\"s\",\"status\":\"running\",\"deleted\":1,\"skipped\":1,\"estimate\":1,\"created_at\":1,\"finished_at\":1,\"error\":\"s\"}}"
+  },
+  "call_state": {
+    "bus": "{\"type\":\"call_state\",\"dm_id\":1,\"dm_users\":[\"s\"],\"state\":\"ringing\",\"from\":\"s\",\"kind\":\"rtc\",\"video\":true,\"call_id\":\"s\",\"answered_at\":1,\"peers\":[{\"user\":\"s\",\"peer_id\":\"s\"}],\"relays\":[{\"user\":\"s\",\"hosts\":[\"s\"]}]}",
+    "client": "{\"type\":\"call_state\",\"dm_id\":1,\"dm_users\":[\"s\"],\"state\":\"ringing\",\"from\":\"s\",\"kind\":\"rtc\",\"video\":true,\"call_id\":\"s\",\"answered_at\":1,\"peers\":[{\"user\":\"s\",\"peer_id\":\"s\"}],\"relays\":[{\"user\":\"s\",\"hosts\":[\"s\"]}]}"
+  },
+  "channel_created": {
+    "bus": "{\"type\":\"channel_created\",\"server\":\"s\",\"channel\":{\"id\":1,\"name\":\"s\",\"kind\":\"text\",\"slowmode_seconds\":1,\"restrict_view\":true,\"restrict_send\":true,\"sensitive\":true,\"text_only\":true,\"my_perms\":1,\"topic\":\"s\",\"category_id\":1,\"position\":1,\"perm_sync\":true}}",
+    "client": "{\"type\":\"channel_created\",\"server\":\"s\",\"channel\":{\"id\":1,\"name\":\"s\",\"kind\":\"text\",\"slowmode_seconds\":1,\"restrict_view\":true,\"restrict_send\":true,\"sensitive\":true,\"text_only\":true,\"my_perms\":1,\"topic\":\"s\",\"category_id\":1,\"position\":1,\"perm_sync\":true}}"
+  },
+  "channel_deleted": {
+    "bus": "{\"type\":\"channel_deleted\",\"server\":\"s\",\"channel_id\":1,\"rules\":{\"restrict\":{\"view\":true,\"send\":true},\"rules\":[],\"everyone\":1}}",
+    "client": "{\"type\":\"channel_deleted\",\"server\":\"s\",\"channel_id\":1}"
+  },
+  "channel_perms_changed": {
+    "bus": "{\"type\":\"channel_perms_changed\",\"server\":\"s\",\"channel_id\":1}",
+    "client": "{\"type\":\"channel_perms_changed\",\"server\":\"s\",\"channel_id\":1}"
+  },
+  "channel_renamed": {
+    "bus": "{\"type\":\"channel_renamed\",\"server\":\"s\",\"channel\":{\"id\":1,\"name\":\"s\",\"kind\":\"text\",\"slowmode_seconds\":1,\"restrict_view\":true,\"restrict_send\":true,\"sensitive\":true,\"text_only\":true,\"my_perms\":1,\"topic\":\"s\",\"category_id\":1,\"position\":1,\"perm_sync\":true}}",
+    "client": "{\"type\":\"channel_renamed\",\"server\":\"s\",\"channel\":{\"id\":1,\"name\":\"s\",\"kind\":\"text\",\"slowmode_seconds\":1,\"restrict_view\":true,\"restrict_send\":true,\"sensitive\":true,\"text_only\":true,\"my_perms\":1,\"topic\":\"s\",\"category_id\":1,\"position\":1,\"perm_sync\":true}}"
+  },
+  "channel_updated": {
+    "bus": "{\"type\":\"channel_updated\",\"server\":\"s\",\"channel\":{\"id\":1,\"name\":\"s\",\"kind\":\"text\",\"slowmode_seconds\":1,\"restrict_view\":true,\"restrict_send\":true,\"sensitive\":true,\"text_only\":true,\"my_perms\":1,\"topic\":\"s\",\"category_id\":1,\"position\":1,\"perm_sync\":true}}",
+    "client": "{\"type\":\"channel_updated\",\"server\":\"s\",\"channel\":{\"id\":1,\"name\":\"s\",\"kind\":\"text\",\"slowmode_seconds\":1,\"restrict_view\":true,\"restrict_send\":true,\"sensitive\":true,\"text_only\":true,\"my_perms\":1,\"topic\":\"s\",\"category_id\":1,\"position\":1,\"perm_sync\":true}}"
+  },
+  "channels_perms_changed": {
+    "bus": "{\"type\":\"channels_perms_changed\",\"server\":\"s\",\"channel_ids\":[1]}",
+    "client": "{\"type\":\"channels_perms_changed\",\"server\":\"s\",\"channel_ids\":[1]}"
+  },
+  "dm_closed": {
+    "bus": "{\"type\":\"dm_closed\",\"username\":\"s\",\"dm_id\":1}",
+    "client": "{\"type\":\"dm_closed\",\"username\":\"s\",\"dm_id\":1}"
+  },
+  "dm_created": {
+    "bus": "{\"type\":\"dm_created\",\"dm_id\":1,\"dm_users\":[\"s\"]}",
+    "client": "{\"type\":\"dm_created\",\"dm_id\":1,\"dm_users\":[\"s\"]}"
+  },
+  "dm_reopened": {
+    "bus": "{\"type\":\"dm_reopened\",\"username\":\"s\",\"dm_id\":1}",
+    "client": "{\"type\":\"dm_reopened\",\"username\":\"s\",\"dm_id\":1}"
+  },
+  "dm_updated": {
+    "bus": "{\"type\":\"dm_updated\",\"dm_id\":1,\"dm_users\":[\"s\"],\"seal\":{\"on\":true,\"forced\":true,\"own\":true,\"server_forced\":true}}",
+    "client": "{\"type\":\"dm_updated\",\"dm_id\":1,\"dm_users\":[\"s\"],\"seal\":{\"on\":true,\"forced\":true,\"own\":true,\"server_forced\":true}}"
+  },
+  "embeds_removed": {
+    "bus": "{\"type\":\"embeds_removed\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"ord\":1,\"banner\":true}",
+    "client": "{\"type\":\"embeds_removed\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"ord\":1,\"banner\":true}"
+  },
+  "embeds_resolved": {
+    "bus": "{\"type\":\"embeds_resolved\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"embeds\":[{\"ord\":1,\"url\":\"s\",\"site_name\":\"s\",\"title\":\"s\",\"description\":\"s\",\"image_url\":\"s\",\"banner_removed\":true,\"color\":\"s\",\"media_kind\":\"image\"}]}",
+    "client": "{\"type\":\"embeds_resolved\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"embeds\":[{\"ord\":1,\"url\":\"s\",\"site_name\":\"s\",\"title\":\"s\",\"description\":\"s\",\"image_url\":\"s\",\"banner_removed\":true,\"color\":\"s\",\"media_kind\":\"image\"}]}"
+  },
+  "error": {
+    "bus": "{\"type\":\"error\",\"message\":\"s\",\"request\":{\"type\":\"call\",\"attempt_id\":1},\"reason\":{\"kind\":\"off_site\",\"control\":\"s\",\"retry_after\":1,\"field\":\"s\",\"until\":1,\"channel\":1}}",
+    "client": "{\"type\":\"error\",\"message\":\"s\",\"request\":{\"type\":\"call\",\"attempt_id\":1},\"reason\":{\"kind\":\"off_site\",\"control\":\"s\",\"retry_after\":1,\"field\":\"s\",\"until\":1,\"channel\":1}}"
+  },
+  "friend_added": {
+    "bus": "{\"type\":\"friend_added\",\"username\":\"s\",\"friend\":{\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"since\":1,\"online\":true}}",
+    "client": "{\"type\":\"friend_added\",\"username\":\"s\",\"friend\":{\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"since\":1,\"online\":true}}"
+  },
+  "friend_presence": {
+    "bus": "{\"type\":\"friend_presence\",\"username\":\"s\",\"friend\":\"s\",\"online\":true}",
+    "client": "{\"type\":\"friend_presence\",\"username\":\"s\",\"friend\":\"s\",\"online\":true}"
+  },
+  "friend_removed": {
+    "bus": "{\"type\":\"friend_removed\",\"username\":\"s\",\"friend\":\"s\"}",
+    "client": "{\"type\":\"friend_removed\",\"username\":\"s\",\"friend\":\"s\"}"
+  },
+  "friend_request_added": {
+    "bus": "{\"type\":\"friend_request_added\",\"username\":\"s\",\"request\":{\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"created_at\":1,\"incoming\":true}}",
+    "client": "{\"type\":\"friend_request_added\",\"username\":\"s\",\"request\":{\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"created_at\":1,\"incoming\":true}}"
+  },
+  "friend_request_removed": {
+    "bus": "{\"type\":\"friend_request_removed\",\"username\":\"s\",\"other\":\"s\"}",
+    "client": "{\"type\":\"friend_request_removed\",\"username\":\"s\",\"other\":\"s\"}"
+  },
+  "group_pings_seen": {
+    "bus": "{\"type\":\"group_pings_seen\",\"username\":\"s\",\"scope\":\"s\",\"message_ids\":[1]}",
+    "client": "{\"type\":\"group_pings_seen\",\"username\":\"s\",\"scope\":\"s\",\"message_ids\":[1]}"
+  },
+  "guest_name": {
+    "bus": "{\"type\":\"guest_name\",\"name\":\"s\"}",
+    "client": "{\"type\":\"guest_name\",\"name\":\"s\"}"
+  },
+  "layout_changed": {
+    "bus": "{\"type\":\"layout_changed\",\"server\":\"s\",\"layout\":{\"version\":1,\"uncategorized\":[1],\"categories\":[{\"id\":1,\"name\":\"s\",\"style\":\"default\",\"channels\":[1]}],\"separators\":[{\"id\":1,\"label\":\"s\",\"style\":\"dots\",\"category_id\":1,\"after\":1}]},\"created\":1,\"deleted\":{\"restrict\":{\"view\":true,\"send\":true},\"rules\":[],\"everyone\":1},\"before\":null}",
+    "client": "{\"type\":\"layout_changed\",\"server\":\"s\",\"layout\":{\"version\":1,\"uncategorized\":[1],\"categories\":[{\"id\":1,\"name\":\"s\",\"style\":\"default\",\"channels\":[1]}],\"separators\":[{\"id\":1,\"label\":\"s\",\"style\":\"dots\",\"category_id\":1,\"after\":1}]}}"
+  },
+  "media_removed": {
+    "bus": "{\"type\":\"media_removed\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"removed_by_author\":true}",
+    "client": "{\"type\":\"media_removed\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"removed_by_author\":true}"
+  },
+  "member_joined": {
+    "bus": "{\"type\":\"member_joined\",\"server\":\"s\",\"member\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\",\"is_admin\":true,\"is_creator\":true,\"online\":true,\"perms\":1,\"role_ids\":[1],\"joined_via\":{\"id\":1,\"label\":\"s\"},\"timeout\":{\"until\":1,\"remaining\":1,\"reason\":\"s\"},\"profile\":{\"name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"}}}",
+    "client": "{\"type\":\"member_joined\",\"server\":\"s\",\"member\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\",\"is_admin\":true,\"is_creator\":true,\"online\":true,\"perms\":1,\"role_ids\":[1],\"joined_via\":{\"id\":1,\"label\":\"s\"},\"timeout\":{\"until\":1,\"remaining\":1,\"reason\":\"s\"},\"profile\":{\"name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"}}}"
+  },
+  "member_kicked": {
+    "bus": "{\"type\":\"member_kicked\",\"server\":\"s\",\"username\":\"s\",\"banned\":true}",
+    "client": "{\"type\":\"member_kicked\",\"server\":\"s\",\"username\":\"s\",\"banned\":true}"
+  },
+  "member_left": {
+    "bus": "{\"type\":\"member_left\",\"server\":\"s\",\"username\":\"s\"}",
+    "client": "{\"type\":\"member_left\",\"server\":\"s\",\"username\":\"s\"}"
+  },
+  "member_profile": {
+    "bus": "{\"type\":\"member_profile\",\"server\":\"s\",\"username\":\"s\",\"profile\":{\"name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"bio\":true,\"view_only\":true}",
+    "client": "{\"type\":\"member_profile\",\"server\":\"s\",\"username\":\"s\",\"profile\":{\"name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"bio\":true}"
+  },
+  "member_roles_changed": {
+    "bus": "{\"type\":\"member_roles_changed\",\"server\":\"s\",\"username\":\"s\",\"role_ids\":[1]}",
+    "client": "{\"type\":\"member_roles_changed\",\"server\":\"s\",\"username\":\"s\",\"role_ids\":[1]}"
+  },
+  "member_timeout": {
+    "bus": "{\"type\":\"member_timeout\",\"server\":\"s\",\"username\":\"s\",\"until\":1,\"remaining\":1,\"reason\":\"s\"}",
+    "client": "{\"type\":\"member_timeout\",\"server\":\"s\",\"username\":\"s\",\"until\":1,\"remaining\":1,\"reason\":\"s\"}"
+  },
+  "members_purged": {
+    "bus": "{\"type\":\"members_purged\",\"server\":\"s\",\"usernames\":[\"s\"]}",
+    "client": "{\"type\":\"members_purged\",\"server\":\"s\"}"
+  },
+  "message": {
+    "bus": "{\"type\":\"message\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message\":{\"id\":1,\"channel_id\":1,\"dm_id\":1,\"thread_root_id\":1,\"author\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"content\":\"s\",\"created_at\":1,\"reply_count\":1,\"media\":{\"id\":\"s\",\"filename\":\"s\",\"kind\":\"server\",\"hoster\":\"s\",\"expires_at\":1,\"size\":1,\"mime\":\"s\",\"sha256\":\"s\",\"removed\":true,\"removed_by_author\":true,\"spoiler\":true,\"alt\":\"s\",\"placeholder\":{\"width\":1,\"height\":1,\"thumbhash\":\"s\"}},\"embeds\":[{\"ord\":1,\"url\":\"s\",\"site_name\":\"s\",\"title\":\"s\",\"description\":\"s\",\"image_url\":\"s\",\"banner_removed\":true,\"color\":\"s\",\"media_kind\":\"image\"}],\"no_previews\":true,\"kind\":\"s\",\"call\":{\"from\":\"s\",\"answered_at\":1,\"ended_at\":1,\"outcome\":\"s\",\"p2p\":true,\"video\":true},\"reactions\":[{\"emoji\":\"s\",\"count\":1,\"me\":true,\"first_at\":1}],\"reply_to\":{\"id\":1,\"author\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"content\":\"s\",\"has_media\":true,\"deleted\":true,\"mention\":true,\"partial\":true,\"forwarded\":true,\"forward\":{\"author\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"created_at\":1,\"source_id\":1,\"origin\":\"s\",\"origin_dm\":true,\"origin_channel\":\"s\",\"origin_channel_id\":1,\"origin_sensitive\":true,\"origin_server\":\"s\",\"origin_server_channel\":\"s\",\"dropped\":\"s\"}},\"edited_at\":1,\"forward\":{\"author\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"created_at\":1,\"source_id\":1,\"origin\":\"s\",\"origin_dm\":true,\"origin_channel\":\"s\",\"origin_channel_id\":1,\"origin_sensitive\":true,\"origin_server\":\"s\",\"origin_server_channel\":\"s\",\"dropped\":\"s\"},\"pinned_at\":1,\"pin_message_id\":1,\"group_mentions\":[{\"kind\":\"everyone\",\"role_id\":1}],\"poll\":{\"kind\":\"single\",\"question\":\"s\",\"options\":[{\"id\":1,\"text\":\"s\",\"emoji\":\"s\"}],\"anonymous\":true,\"show_results\":\"always\",\"allow_change\":true,\"allow_add\":true,\"min_choices\":1,\"max_choices\":1,\"scale\":1,\"closes_at\":1,\"closed\":true,\"voters\":1,\"results\":{\"counts\":[{\"option_id\":1,\"count\":1}],\"rounds\":[{\"counts\":[{\"option_id\":1,\"count\":1}],\"exhausted\":1,\"eliminated\":1}],\"winner\":1,\"distribution\":[1],\"average\":1.5},\"mine\":[1],\"snapshot\":true},\"webhook\":{\"id\":1,\"embeds\":[{\"title\":\"s\",\"description\":\"s\",\"url\":\"s\",\"color\":1,\"fields\":[{\"name\":\"s\",\"value\":\"s\",\"inline\":true}],\"footer\":{\"text\":\"s\"},\"author\":{\"name\":\"s\",\"url\":\"s\"},\"timestamp\":1}]},\"rich_embeds\":[{\"title\":\"s\",\"description\":\"s\",\"url\":\"s\",\"color\":1,\"fields\":[{\"name\":\"s\",\"value\":\"s\",\"inline\":true}],\"footer\":{\"text\":\"s\"},\"author\":{\"name\":\"s\",\"url\":\"s\"},\"timestamp\":1}],\"unreadable\":true}}",
+    "client": "{\"type\":\"message\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message\":{\"id\":1,\"channel_id\":1,\"dm_id\":1,\"thread_root_id\":1,\"author\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"content\":\"s\",\"created_at\":1,\"reply_count\":1,\"media\":{\"id\":\"s\",\"filename\":\"s\",\"kind\":\"server\",\"hoster\":\"s\",\"expires_at\":1,\"size\":1,\"mime\":\"s\",\"sha256\":\"s\",\"removed\":true,\"removed_by_author\":true,\"spoiler\":true,\"alt\":\"s\",\"placeholder\":{\"width\":1,\"height\":1,\"thumbhash\":\"s\"}},\"embeds\":[{\"ord\":1,\"url\":\"s\",\"site_name\":\"s\",\"title\":\"s\",\"description\":\"s\",\"image_url\":\"s\",\"banner_removed\":true,\"color\":\"s\",\"media_kind\":\"image\"}],\"no_previews\":true,\"kind\":\"s\",\"call\":{\"from\":\"s\",\"answered_at\":1,\"ended_at\":1,\"outcome\":\"s\",\"p2p\":true,\"video\":true},\"reactions\":[{\"emoji\":\"s\",\"count\":1,\"me\":true,\"first_at\":1}],\"reply_to\":{\"id\":1,\"author\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"content\":\"s\",\"has_media\":true,\"deleted\":true,\"mention\":true,\"partial\":true,\"forwarded\":true,\"forward\":{\"author\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"created_at\":1,\"source_id\":1,\"origin\":\"s\",\"origin_dm\":true,\"origin_channel\":\"s\",\"origin_channel_id\":1,\"origin_sensitive\":true,\"origin_server\":\"s\",\"origin_server_channel\":\"s\",\"dropped\":\"s\"}},\"edited_at\":1,\"forward\":{\"author\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"created_at\":1,\"source_id\":1,\"origin\":\"s\",\"origin_dm\":true,\"origin_channel\":\"s\",\"origin_channel_id\":1,\"origin_sensitive\":true,\"origin_server\":\"s\",\"origin_server_channel\":\"s\",\"dropped\":\"s\"},\"pinned_at\":1,\"pin_message_id\":1,\"group_mentions\":[{\"kind\":\"everyone\",\"role_id\":1}],\"poll\":{\"kind\":\"single\",\"question\":\"s\",\"options\":[{\"id\":1,\"text\":\"s\",\"emoji\":\"s\"}],\"anonymous\":true,\"show_results\":\"always\",\"allow_change\":true,\"allow_add\":true,\"min_choices\":1,\"max_choices\":1,\"scale\":1,\"closes_at\":1,\"closed\":true,\"voters\":1,\"results\":{\"counts\":[{\"option_id\":1,\"count\":1}],\"rounds\":[{\"counts\":[{\"option_id\":1,\"count\":1}],\"exhausted\":1,\"eliminated\":1}],\"winner\":1,\"distribution\":[1],\"average\":1.5},\"mine\":[1],\"snapshot\":true},\"webhook\":{\"id\":1,\"embeds\":[{\"title\":\"s\",\"description\":\"s\",\"url\":\"s\",\"color\":1,\"fields\":[{\"name\":\"s\",\"value\":\"s\",\"inline\":true}],\"footer\":{\"text\":\"s\"},\"author\":{\"name\":\"s\",\"url\":\"s\"},\"timestamp\":1}]},\"rich_embeds\":[{\"title\":\"s\",\"description\":\"s\",\"url\":\"s\",\"color\":1,\"fields\":[{\"name\":\"s\",\"value\":\"s\",\"inline\":true}],\"footer\":{\"text\":\"s\"},\"author\":{\"name\":\"s\",\"url\":\"s\"},\"timestamp\":1}],\"unreadable\":true}}"
+  },
+  "message_deleted": {
+    "bus": "{\"type\":\"message_deleted\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"id\":1,\"thread_root_id\":1,\"notice\":true}",
+    "client": "{\"type\":\"message_deleted\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"id\":1,\"thread_root_id\":1}"
+  },
+  "message_pinned": {
+    "bus": "{\"type\":\"message_pinned\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"pinned_at\":1,\"pinned_by\":\"s\"}",
+    "client": "{\"type\":\"message_pinned\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"pinned_at\":1,\"pinned_by\":\"s\"}"
+  },
+  "message_unpinned": {
+    "bus": "{\"type\":\"message_unpinned\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1}",
+    "client": "{\"type\":\"message_unpinned\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1}"
+  },
+  "message_updated": {
+    "bus": "{\"type\":\"message_updated\",\"server\":\"s\",\"channel_id\":1,\"id\":1,\"thread_root_id\":1,\"edited_at\":1,\"stub\":true,\"dm_users\":[\"s\"]}",
+    "client": "{\"type\":\"message_updated\",\"server\":\"s\",\"channel_id\":1,\"id\":1,\"thread_root_id\":1,\"edited_at\":1,\"stub\":true}"
+  },
+  "messages_deleted": {
+    "bus": "{\"type\":\"messages_deleted\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"thread_root_id\":1,\"ids\":[1],\"created\":[1],\"notices\":[1]}",
+    "client": "{\"type\":\"messages_deleted\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"thread_root_id\":1,\"ids\":[1]}"
+  },
+  "p2p_availability": {
+    "bus": "{\"type\":\"p2p_availability\",\"hoster\":\"s\",\"peer_id\":\"s\",\"ids\":[\"s\"],\"online\":true,\"scope_servers\":[\"s\"],\"scope_users\":[\"s\"]}",
+    "client": "{\"type\":\"p2p_availability\",\"hoster\":\"s\",\"peer_id\":\"s\",\"ids\":[\"s\"],\"online\":true}"
+  },
+  "p2p_hosted": {
+    "bus": "{\"type\":\"p2p_hosted\",\"live\":[\"s\"],\"checked\":[\"s\"],\"key\":\"s\",\"peer_id\":\"s\",\"now\":1}",
+    "client": "{\"type\":\"p2p_hosted\",\"live\":[\"s\"],\"checked\":[\"s\"],\"key\":\"s\",\"peer_id\":\"s\",\"now\":1}"
+  },
+  "p2p_peer": {
+    "bus": "{\"type\":\"p2p_peer\",\"message_id\":1,\"peer_id\":\"s\",\"token\":\"s\",\"expires_at\":1,\"error\":\"s\",\"relays\":[\"s\"]}",
+    "client": "{\"type\":\"p2p_peer\",\"message_id\":1,\"peer_id\":\"s\",\"token\":\"s\",\"expires_at\":1,\"error\":\"s\",\"relays\":[\"s\"]}"
+  },
+  "ping": {
+    "bus": "{\"type\":\"ping\",\"username\":\"s\",\"ping\":{\"id\":1,\"kind\":\"mention\",\"scope\":\"s\",\"server\":\"s\",\"message_id\":1,\"thread_root_id\":1,\"actor\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"emoji\":\"s\",\"excerpt\":\"s\",\"created_at\":1}}",
+    "client": "{\"type\":\"ping\",\"username\":\"s\",\"ping\":{\"id\":1,\"kind\":\"mention\",\"scope\":\"s\",\"server\":\"s\",\"message_id\":1,\"thread_root_id\":1,\"actor\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"emoji\":\"s\",\"excerpt\":\"s\",\"created_at\":1}}"
+  },
+  "ping_count": {
+    "bus": "{\"type\":\"ping_count\",\"username\":\"s\",\"scope\":\"s\",\"pings\":1,\"pings_until\":1,\"thread_pings\":[{\"root_id\":1,\"pings\":1,\"pings_until\":1}]}",
+    "client": "{\"type\":\"ping_count\",\"username\":\"s\",\"scope\":\"s\",\"pings\":1,\"pings_until\":1,\"thread_pings\":[{\"root_id\":1,\"pings\":1,\"pings_until\":1}]}"
+  },
+  "poll_updated": {
+    "bus": "{\"type\":\"poll_updated\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"thread_root_id\":1,\"created_at\":1,\"poll\":{\"kind\":\"single\",\"question\":\"s\",\"options\":[{\"id\":1,\"text\":\"s\",\"emoji\":\"s\"}],\"anonymous\":true,\"show_results\":\"always\",\"allow_change\":true,\"allow_add\":true,\"min_choices\":1,\"max_choices\":1,\"scale\":1,\"closes_at\":1,\"closed\":true,\"voters\":1,\"results\":{\"counts\":[{\"option_id\":1,\"count\":1}],\"rounds\":[{\"counts\":[{\"option_id\":1,\"count\":1}],\"exhausted\":1,\"eliminated\":1}],\"winner\":1,\"distribution\":[1],\"average\":1.5},\"mine\":[1],\"snapshot\":true}}",
+    "client": "{\"type\":\"poll_updated\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"thread_root_id\":1,\"created_at\":1,\"poll\":{\"kind\":\"single\",\"question\":\"s\",\"options\":[{\"id\":1,\"text\":\"s\",\"emoji\":\"s\"}],\"anonymous\":true,\"show_results\":\"always\",\"allow_change\":true,\"allow_add\":true,\"min_choices\":1,\"max_choices\":1,\"scale\":1,\"closes_at\":1,\"closed\":true,\"voters\":1,\"results\":{\"counts\":[{\"option_id\":1,\"count\":1}],\"rounds\":[{\"counts\":[{\"option_id\":1,\"count\":1}],\"exhausted\":1,\"eliminated\":1}],\"winner\":1,\"distribution\":[1],\"average\":1.5},\"mine\":[1],\"snapshot\":true}}"
+  },
+  "poll_voted": {
+    "bus": "{\"type\":\"poll_voted\",\"username\":\"s\",\"message_id\":1}",
+    "client": "{\"type\":\"poll_voted\",\"username\":\"s\",\"message_id\":1}"
+  },
+  "presence_changed": {
+    "bus": "{\"type\":\"presence_changed\",\"server\":\"s\",\"username\":\"s\",\"online\":true,\"online_count\":1}",
+    "client": "{\"type\":\"presence_changed\",\"server\":\"s\",\"username\":\"s\",\"online\":true,\"online_count\":1}"
+  },
+  "presence_mode": {
+    "bus": "{\"type\":\"presence_mode\",\"username\":\"s\",\"appear_offline\":true,\"seq\":1}",
+    "client": "{\"type\":\"presence_mode\",\"username\":\"s\",\"appear_offline\":true}"
+  },
+  "presence_snapshot": {
+    "bus": "{\"type\":\"presence_snapshot\",\"server\":\"s\",\"online\":[\"s\"],\"online_count\":1}",
+    "client": "{\"type\":\"presence_snapshot\",\"server\":\"s\",\"online\":[\"s\"],\"online_count\":1}"
+  },
+  "privacy_changed": {
+    "bus": "{\"type\":\"privacy_changed\",\"username\":\"s\",\"privacy\":{\"dms\":\"everyone\",\"friend_requests\":\"everyone\",\"profile\":\"default\"}}",
+    "client": "{\"type\":\"privacy_changed\",\"username\":\"s\",\"privacy\":{\"dms\":\"everyone\",\"friend_requests\":\"everyone\",\"profile\":\"default\"}}"
+  },
+  "reaction_added": {
+    "bus": "{\"type\":\"reaction_added\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"thread_root_id\":1,\"emoji\":\"s\",\"username\":\"s\",\"count\":1}",
+    "client": "{\"type\":\"reaction_added\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"thread_root_id\":1,\"emoji\":\"s\",\"username\":\"s\",\"count\":1}"
+  },
+  "reaction_removed": {
+    "bus": "{\"type\":\"reaction_removed\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"thread_root_id\":1,\"emoji\":\"s\",\"username\":\"s\",\"count\":1}",
+    "client": "{\"type\":\"reaction_removed\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"message_id\":1,\"thread_root_id\":1,\"emoji\":\"s\",\"username\":\"s\",\"count\":1}"
+  },
+  "read_updated": {
+    "bus": "{\"type\":\"read_updated\",\"username\":\"s\",\"scope\":\"s\",\"last_read\":1,\"pings_until\":1}",
+    "client": "{\"type\":\"read_updated\",\"username\":\"s\",\"scope\":\"s\",\"last_read\":1,\"pings_until\":1}"
+  },
+  "reports_changed": {
+    "bus": "{\"type\":\"reports_changed\",\"server\":\"s\",\"about\":\"s\",\"channel\":[1,true]}",
+    "client": "{\"type\":\"reports_changed\",\"server\":\"s\"}"
+  },
+  "resync": {
+    "bus": "{\"type\":\"resync\"}",
+    "client": "{\"type\":\"resync\"}"
+  },
+  "role_updated": {
+    "bus": "{\"type\":\"role_updated\",\"server\":\"s\",\"role\":{\"id\":1,\"name\":\"s\",\"color\":\"s\",\"perms\":1,\"mentionable\":true,\"position\":1,\"display_position\":1,\"hoist\":true,\"icon\":\"s\",\"color_names\":true}}",
+    "client": "{\"type\":\"role_updated\",\"server\":\"s\",\"role\":{\"id\":1,\"name\":\"s\",\"color\":\"s\",\"perms\":1,\"mentionable\":true,\"position\":1,\"display_position\":1,\"hoist\":true,\"icon\":\"s\",\"color_names\":true}}"
+  },
+  "roles_changed": {
+    "bus": "{\"type\":\"roles_changed\",\"server\":\"s\"}",
+    "client": "{\"type\":\"roles_changed\",\"server\":\"s\"}"
+  },
+  "roles_reordered": {
+    "bus": "{\"type\":\"roles_reordered\",\"server\":\"s\",\"order\":[1],\"display\":[1],\"version\":1}",
+    "client": "{\"type\":\"roles_reordered\",\"server\":\"s\",\"order\":[1],\"display\":[1],\"version\":1}"
+  },
+  "rtc_signal": {
+    "bus": "{\"type\":\"rtc_signal\",\"to\":\"s\",\"from\":\"s\",\"channel_id\":1,\"dm_id\":1,\"payload\":{}}",
+    "client": "{\"type\":\"rtc_signal\",\"to\":\"s\",\"from\":\"s\",\"channel_id\":1,\"dm_id\":1,\"payload\":{}}"
+  },
+  "scheduled_removed": {
+    "bus": "{\"type\":\"scheduled_removed\",\"username\":\"s\",\"id\":1,\"sent_message_id\":1}",
+    "client": "{\"type\":\"scheduled_removed\",\"username\":\"s\",\"id\":1,\"sent_message_id\":1}"
+  },
+  "scheduled_updated": {
+    "bus": "{\"type\":\"scheduled_updated\",\"username\":\"s\",\"scheduled\":{\"id\":1,\"scope\":\"s\",\"channel_id\":1,\"dm_id\":1,\"thread_root_id\":1,\"reply_to\":1,\"mention_reply\":true,\"content\":\"s\",\"media\":{\"id\":\"s\",\"filename\":\"s\",\"spoiler\":true,\"alt\":\"s\"},\"poll\":{\"allow_add\":true,\"allow_change\":true,\"anonymous\":true,\"duration_seconds\":1,\"kind\":\"single\",\"max_choices\":1,\"min_choices\":1,\"options\":[{\"emoji\":\"s\",\"text\":\"s\"}],\"question\":\"s\",\"scale\":1,\"show_results\":\"always\"},\"at\":1,\"next_at\":1,\"status\":\"waiting\",\"error\":\"s\",\"place\":{\"server\":\"s\",\"server_name\":\"s\",\"channel_name\":\"s\",\"dm_user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"}},\"created_at\":1,\"updated_at\":1}}",
+    "client": "{\"type\":\"scheduled_updated\",\"username\":\"s\",\"scheduled\":{\"id\":1,\"scope\":\"s\",\"channel_id\":1,\"dm_id\":1,\"thread_root_id\":1,\"reply_to\":1,\"mention_reply\":true,\"content\":\"s\",\"media\":{\"id\":\"s\",\"filename\":\"s\",\"spoiler\":true,\"alt\":\"s\"},\"poll\":{\"allow_add\":true,\"allow_change\":true,\"anonymous\":true,\"duration_seconds\":1,\"kind\":\"single\",\"max_choices\":1,\"min_choices\":1,\"options\":[{\"emoji\":\"s\",\"text\":\"s\"}],\"question\":\"s\",\"scale\":1,\"show_results\":\"always\"},\"at\":1,\"next_at\":1,\"status\":\"waiting\",\"error\":\"s\",\"place\":{\"server\":\"s\",\"server_name\":\"s\",\"channel_name\":\"s\",\"dm_user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"}},\"created_at\":1,\"updated_at\":1}}"
+  },
+  "seal_job_progress": {
+    "bus": "{\"type\":\"seal_job_progress\",\"username\":\"s\",\"job\":{\"id\":1,\"place\":\"s\",\"direction\":\"seal\",\"upto\":1,\"done\":1,\"from\":1,\"state\":\"running\",\"created_at\":1,\"finished_at\":1}}",
+    "client": "{\"type\":\"seal_job_progress\",\"username\":\"s\",\"job\":{\"id\":1,\"place\":\"s\",\"direction\":\"seal\",\"upto\":1,\"done\":1,\"from\":1,\"state\":\"running\",\"created_at\":1,\"finished_at\":1}}"
+  },
+  "server_banned": {
+    "bus": "{\"type\":\"server_banned\",\"server\":\"s\",\"username\":\"s\"}",
+    "client": "{\"type\":\"server_banned\",\"server\":\"s\",\"username\":\"s\"}"
+  },
+  "server_created": {
+    "bus": "{\"type\":\"server_created\",\"server\":{\"name\":\"s\",\"display_name\":\"s\",\"creator\":\"s\",\"has_password\":true,\"banner_color\":\"s\",\"name_color\":\"s\",\"public_read\":true,\"guest_voice\":true,\"guest_chat\":true,\"members_visible\":true,\"hide_members\":true,\"join_mode\":\"name\",\"listed\":true,\"profiles_mode\":\"all\",\"description\":\"s\",\"icon_kind\":\"letter\",\"icon_image\":\"s\",\"seal\":{\"on\":true,\"forced\":true,\"own\":true,\"server_forced\":true}}}",
+    "client": "{\"type\":\"server_created\",\"server\":{\"name\":\"s\",\"display_name\":\"s\",\"creator\":\"s\",\"has_password\":true,\"banner_color\":\"s\",\"name_color\":\"s\",\"public_read\":true,\"guest_voice\":true,\"guest_chat\":true,\"members_visible\":true,\"hide_members\":true,\"join_mode\":\"name\",\"listed\":true,\"profiles_mode\":\"all\",\"description\":\"s\",\"icon_kind\":\"letter\",\"icon_image\":\"s\",\"seal\":{\"on\":true,\"forced\":true,\"own\":true,\"server_forced\":true}}}"
+  },
+  "server_deleted": {
+    "bus": "{\"type\":\"server_deleted\",\"name\":\"s\"}",
+    "client": "{\"type\":\"server_deleted\",\"name\":\"s\"}"
+  },
+  "server_renamed": {
+    "bus": "{\"type\":\"server_renamed\",\"old_name\":\"s\",\"server\":{\"name\":\"s\",\"display_name\":\"s\",\"creator\":\"s\",\"has_password\":true,\"banner_color\":\"s\",\"name_color\":\"s\",\"public_read\":true,\"guest_voice\":true,\"guest_chat\":true,\"members_visible\":true,\"hide_members\":true,\"join_mode\":\"name\",\"listed\":true,\"profiles_mode\":\"all\",\"description\":\"s\",\"icon_kind\":\"letter\",\"icon_image\":\"s\",\"seal\":{\"on\":true,\"forced\":true,\"own\":true,\"server_forced\":true}}}",
+    "client": "{\"type\":\"server_renamed\",\"old_name\":\"s\",\"server\":{\"name\":\"s\",\"display_name\":\"s\",\"creator\":\"s\",\"has_password\":true,\"banner_color\":\"s\",\"name_color\":\"s\",\"public_read\":true,\"guest_voice\":true,\"guest_chat\":true,\"members_visible\":true,\"hide_members\":true,\"join_mode\":\"name\",\"listed\":true,\"profiles_mode\":\"all\",\"description\":\"s\",\"icon_kind\":\"letter\",\"icon_image\":\"s\",\"seal\":{\"on\":true,\"forced\":true,\"own\":true,\"server_forced\":true}}}"
+  },
+  "server_updated": {
+    "bus": "{\"type\":\"server_updated\",\"server\":{\"name\":\"s\",\"display_name\":\"s\",\"creator\":\"s\",\"has_password\":true,\"banner_color\":\"s\",\"name_color\":\"s\",\"public_read\":true,\"guest_voice\":true,\"guest_chat\":true,\"members_visible\":true,\"hide_members\":true,\"join_mode\":\"name\",\"listed\":true,\"profiles_mode\":\"all\",\"description\":\"s\",\"icon_kind\":\"letter\",\"icon_image\":\"s\",\"seal\":{\"on\":true,\"forced\":true,\"own\":true,\"server_forced\":true}}}",
+    "client": "{\"type\":\"server_updated\",\"server\":{\"name\":\"s\",\"display_name\":\"s\",\"creator\":\"s\",\"has_password\":true,\"banner_color\":\"s\",\"name_color\":\"s\",\"public_read\":true,\"guest_voice\":true,\"guest_chat\":true,\"members_visible\":true,\"hide_members\":true,\"join_mode\":\"name\",\"listed\":true,\"profiles_mode\":\"all\",\"description\":\"s\",\"icon_kind\":\"letter\",\"icon_image\":\"s\",\"seal\":{\"on\":true,\"forced\":true,\"own\":true,\"server_forced\":true}}}"
+  },
+  "settings_changed": {
+    "bus": "{\"type\":\"settings_changed\",\"settings\":{\"profanity_filter\":true,\"profanity_targets\":{\"messages\":true,\"links\":true,\"usernames\":true,\"server_names\":true,\"channel_names\":true,\"role_names\":true,\"file_names\":true,\"bios\":true,\"channel_topics\":true,\"category_names\":true},\"profanity_strict_file_names\":true,\"asset_previews\":true,\"asset_uploads\":true,\"p2p_attachments\":true,\"guests_enabled\":true,\"outgoing_webhooks\":true,\"server_reports\":true,\"instance_reports\":true,\"widgets\":true,\"widget_chat\":true,\"guest_chat_enabled\":true,\"guest_voice_enabled\":true,\"widget_read_links\":true,\"widget_bridge\":true,\"e2ee\":true,\"e2ee_compliance\":true,\"backup_phrase\":true,\"p2p_backup\":true,\"display_names\":true,\"onboarding\":true,\"password_login\":true,\"sfu\":true,\"p2p\":true,\"client_other_instances\":true,\"server_profiles\":true,\"docs\":true,\"scheduled_messages\":true,\"interactive_docs\":true,\"member_lists\":true,\"profile_pictures\":true,\"animated_profile_pictures\":true,\"gifs\":true,\"registration\":\"open\",\"upload_expiry_max_days\":1,\"server_creation\":\"everyone\",\"server_joining\":\"everyone\",\"server_search\":true,\"dm_creation\":\"everyone\",\"friend_requests\":true,\"public_reading\":true,\"builtin_server\":\"kept\",\"calls\":true,\"incoming_webhooks\":true,\"profile_visibility\":\"friends\",\"profile_choices\":\"any\",\"password_change\":\"required\",\"temp_password_hours\":1,\"guest_servers\":[\"s\"],\"encryption_required\":true,\"encryption_ready\":\"s\"}}",
+    "client": "{\"type\":\"settings_changed\",\"settings\":{\"profanity_filter\":true,\"profanity_targets\":{\"messages\":true,\"links\":true,\"usernames\":true,\"server_names\":true,\"channel_names\":true,\"role_names\":true,\"file_names\":true,\"bios\":true,\"channel_topics\":true,\"category_names\":true},\"profanity_strict_file_names\":true,\"asset_previews\":true,\"asset_uploads\":true,\"p2p_attachments\":true,\"guests_enabled\":true,\"outgoing_webhooks\":true,\"server_reports\":true,\"instance_reports\":true,\"widgets\":true,\"widget_chat\":true,\"guest_chat_enabled\":true,\"guest_voice_enabled\":true,\"widget_read_links\":true,\"widget_bridge\":true,\"e2ee\":true,\"e2ee_compliance\":true,\"backup_phrase\":true,\"p2p_backup\":true,\"display_names\":true,\"onboarding\":true,\"password_login\":true,\"sfu\":true,\"p2p\":true,\"client_other_instances\":true,\"server_profiles\":true,\"docs\":true,\"scheduled_messages\":true,\"interactive_docs\":true,\"member_lists\":true,\"profile_pictures\":true,\"animated_profile_pictures\":true,\"gifs\":true,\"registration\":\"open\",\"upload_expiry_max_days\":1,\"server_creation\":\"everyone\",\"server_joining\":\"everyone\",\"server_search\":true,\"dm_creation\":\"everyone\",\"friend_requests\":true,\"public_reading\":true,\"builtin_server\":\"kept\",\"calls\":true,\"incoming_webhooks\":true,\"profile_visibility\":\"friends\",\"profile_choices\":\"any\",\"password_change\":\"required\",\"temp_password_hours\":1,\"guest_servers\":[\"s\"],\"encryption_required\":true,\"encryption_ready\":\"s\"}}"
+  },
+  "staff_view_opened": {
+    "bus": "{\"type\":\"staff_view_opened\",\"username\":\"s\",\"channel_id\":1}",
+    "client": "{\"type\":\"staff_view_opened\",\"username\":\"s\",\"channel_id\":1}"
+  },
+  "tokens_revoked": {
+    "bus": "{\"type\":\"tokens_revoked\",\"username\":\"s\"}",
+    "client": "{\"type\":\"tokens_revoked\",\"username\":\"s\"}"
+  },
+  "typing": {
+    "bus": "{\"type\":\"typing\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"scope\":\"s\",\"username\":\"s\",\"display_name\":\"s\",\"until\":1}",
+    "client": "{\"type\":\"typing\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"scope\":\"s\",\"username\":\"s\",\"display_name\":\"s\",\"until\":1}"
+  },
+  "upload_expiry_changed": {
+    "bus": "{\"type\":\"upload_expiry_changed\",\"server\":\"s\"}",
+    "client": "{\"type\":\"upload_expiry_changed\",\"server\":\"s\"}"
+  },
+  "user_blocked": {
+    "bus": "{\"type\":\"user_blocked\",\"username\":\"s\",\"blocked\":{\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"blocked_at\":1}}",
+    "client": "{\"type\":\"user_blocked\",\"username\":\"s\",\"blocked\":{\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"blocked_at\":1}}"
+  },
+  "user_registered": {
+    "bus": "{\"type\":\"user_registered\",\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"}}",
+    "client": "{\"type\":\"user_registered\",\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"}}"
+  },
+  "user_shown": {
+    "bus": "{\"type\":\"user_shown\",\"username\":\"s\",\"online\":true}",
+    "client": "{\"type\":\"user_shown\",\"username\":\"s\",\"online\":true}"
+  },
+  "user_unblocked": {
+    "bus": "{\"type\":\"user_unblocked\",\"username\":\"s\",\"blocked\":\"s\"}",
+    "client": "{\"type\":\"user_unblocked\",\"username\":\"s\",\"blocked\":\"s\"}"
+  },
+  "user_updated": {
+    "bus": "{\"type\":\"user_updated\",\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"},\"scope\":{\"servers\":[\"s\"],\"views\":[\"s\"],\"users\":[\"s\"]}}",
+    "client": "{\"type\":\"user_updated\",\"user\":{\"username\":\"s\",\"display_name\":\"s\",\"avatar_kind\":\"identicon\",\"avatar_color\":\"s\",\"avatar_image\":\"s\"}}"
+  },
+  "voice_audio": {
+    "bus": "{\"type\":\"voice_audio\",\"server\":\"s\",\"channel_id\":1,\"username\":\"s\",\"muted\":true,\"deafened\":true}",
+    "client": "{\"type\":\"voice_audio\",\"server\":\"s\",\"channel_id\":1,\"username\":\"s\",\"muted\":true,\"deafened\":true}"
+  },
+  "voice_ended": {
+    "bus": "{\"type\":\"voice_ended\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"reason\":\"s\"}",
+    "client": "{\"type\":\"voice_ended\",\"server\":\"s\",\"channel_id\":1,\"dm_id\":1,\"dm_users\":[\"s\"],\"reason\":\"s\"}"
+  },
+  "voice_muted": {
+    "bus": "{\"type\":\"voice_muted\",\"server\":\"s\",\"channel_id\":1,\"username\":\"s\",\"muted\":true,\"staff\":true}",
+    "client": "{\"type\":\"voice_muted\",\"server\":\"s\",\"channel_id\":1,\"username\":\"s\",\"muted\":true,\"staff\":true}"
+  },
+  "voice_state": {
+    "bus": "{\"type\":\"voice_state\",\"server\":\"s\",\"channel_id\":1,\"users\":[\"s\"],\"audio\":[{\"username\":\"s\",\"muted\":true,\"deafened\":true}]}",
+    "client": "{\"type\":\"voice_state\",\"server\":\"s\",\"channel_id\":1,\"users\":[\"s\"],\"audio\":[{\"username\":\"s\",\"muted\":true,\"deafened\":true}]}"
+  }
+}
